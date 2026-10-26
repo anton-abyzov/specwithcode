@@ -146,6 +146,27 @@ class RefusalLine(unittest.TestCase):
             self.assertEqual(update.refusal_line('m4', AssertionError('Owned service has unexpected descendants')),
                              'REFUSAL descendants')
 
+    def test_the_service_s_own_server_browser_is_not_named_while_something_else_is(self):
+        """It is stopped by the update itself (M4, 1.0.86: "chrome-headless-shell x8, node"
+        named eight browsers that never kept the update waiting)."""
+        (self.state / 'server-runtime.json').write_text(json.dumps({'pid': 100, 'host': '127.0.0.1', 'port': 8319}))
+        browser = str(self.state.parent / 'tools/chrome-headless-shell/mac-arm64/131.0.6778/chrome-headless-shell')
+        table = {1: process(1, 0, '/sbin/launchd'), 100: process(100, 1, '/opt/node22/bin/node'),
+                 101: process(101, 100, '/usr/bin/caffeinate'), 110: process(110, 100, browser),
+                 111: process(111, 110, browser), 112: process(112, 100, browser), 113: process(113, 100, '/bin/zsh'),
+                 114: process(114, 113, '/usr/local/bin/node')}
+        error = AssertionError('Owned service has unexpected descendants')
+        with patch.object(update, 'read_processes', return_value=table):
+            self.assertEqual(update.refusal_line('m4', error), 'REFUSAL descendants node=1 zsh=1')
+        # A browser from anywhere else is named; with nothing else there, so is the service's own.
+        table[113] = process(113, 100, '/tmp/chrome-headless-shell')
+        del table[114]
+        with patch.object(update, 'read_processes', return_value=table):
+            self.assertEqual(update.refusal_line('m4', error), 'REFUSAL descendants chrome-headless-shell=1')
+        del table[113]
+        with patch.object(update, 'read_processes', return_value=table):
+            self.assertEqual(update.refusal_line('m4', error), 'REFUSAL descendants chrome-headless-shell=3')
+
     def test_timeouts_busy_and_environment_refusals(self):
         cases = [(subprocess.TimeoutExpired(['/usr/sbin/lsof', '-nP', '-t', '-iTCP:8319', '-sTCP:LISTEN'], 30),
                   'REFUSAL timeout lsof'),

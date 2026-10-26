@@ -19,6 +19,7 @@ import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 
 import { forkParked } from "../serverActivation.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -113,6 +114,7 @@ export const make = Effect.gen(function* () {
   // What the previous sweep found settleable, by thread. Only the same
   // verdict twice in a row settles anything.
   const suspects = yield* Ref.make<ReadonlyMap<ThreadId, string>>(new Map());
+  const updateHold = yield* ServiceUpdateHold.optional;
 
   /**
    * Whether a live provider process may still run this provider thread's
@@ -381,6 +383,10 @@ export const make = Effect.gen(function* () {
   });
 
   const sweep = Effect.fn("StrandedSubagents.sweep")(function* () {
+    // A held service is about to be updated, and the update reads the whole database while it
+    // holds: one settled subagent would make it read everything again. The interrupts the hold
+    // made strand subagents on purpose; the new release's restart recovery settles them.
+    if (yield* updateHold.isHeld) return 0;
     const threadIds = yield* projections.getRecoveryThreadIds("stranded-subagents");
     const previous = yield* Ref.get(suspects);
     const suspected = new Map<ThreadId, string>();

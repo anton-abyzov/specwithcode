@@ -33,21 +33,25 @@
  * confirm dialog can say so before anything closes.
  *
  * An automatic install waits for quiet instead, and a turn that only waits on a
- * person for an approval nobody gave would keep it waiting forever. While the
+ * person for an answer nobody gave would keep it waiting forever. While the
  * update agent waits for quiet, a sweep every `STALE_WAIT_SWEEP_MS` looks for
  * that case: when every blocker belongs to a thread whose pending requests are
- * all approvals (`APPROVAL_REQUEST_KINDS`) older than `STALE_WAIT_MS` and that
- * thread has had no activity for as long, those threads are stopped the way the
- * drain stops them (`releaseStaleWaits`): the turn ends `interrupted`, so the
- * person continues it, and the request is cancelled with a reason. Each such
- * approval is recorded first and asked again after the restart that installs
- * the update; a thread whose record cannot be written is left waiting. A thread
- * that waits on a real question or a sign-in is never stopped: it stays in
- * Needs you and keeps the install waiting. Just before each thread is stopped
- * its pending requests and latest event are read again, and a thread that
- * changed since it was picked (someone answered) is left alone. Any other work,
- * such as a turn still producing output, keeps the install waiting as before,
- * and the sweep touches nothing then.
+ * all approvals or questions (`STALE_WAIT_REQUEST_KINDS`) older than
+ * `STALE_WAIT_MS` and that thread has had no activity for as long, those
+ * threads are stopped the way the drain stops them (`releaseStaleWaits`): the
+ * turn ends `interrupted`, so the person continues it, and the request is
+ * cancelled with a reason. Each such request is recorded first and asked again
+ * after the restart that installs the update, so an unanswered question never
+ * holds an update back for good; a thread whose record cannot be written is
+ * left waiting. A sign-in is never stopped: it cannot be asked again, so it
+ * stays in Needs you and keeps the install waiting. A thread Needs you does not
+ * show (`hiddenFromNeedsYou`: archived, deleted, or resolved after its request
+ * was asked) waits on nobody, so it is stopped at the first look whatever it
+ * waits on, and what it asked is closed without being asked again. Just before
+ * each thread is stopped its pending requests and latest event are read again,
+ * and a thread that changed since it was picked (someone answered) is left
+ * alone. Any other work, such as a turn still producing output, keeps the
+ * install waiting as before, and the sweep touches nothing then.
  *
  * @module ServiceUpdatePreparation
  */
@@ -134,23 +138,51 @@ export const STALE_WAIT_MS = 30 * 60_000;
 /** How often the service looks for such threads while the update agent waits for quiet. */
 export const STALE_WAIT_SWEEP_MS = 5 * 60_000;
 export const STALE_WAIT_REASON =
-  "Stopped so the app could install its update: this turn waited more than 30 minutes for an answer. Continue it when you are back.";
+  "Stopped so the app could install its update: this turn waited more than 30 minutes for an answer. It is asked again after the restart.";
+/** Why a thread Needs you does not show was stopped for an automatic install. */
+export const HIDDEN_WAIT_REASON =
+  "Closed so the app could install its update: this thread is resolved or archived.";
 /** The agent status (`update_agent.py`) of an install that waits for a quiet moment. */
 const AGENT_WAITING_FOR_QUIET = "waiting-for-quiet";
 /** Blocker kinds a thread that only waits on a person can have. */
 const WAITING_KINDS: ReadonlySet<ServiceUpdateBlockerKind> = new Set(["run", "request", "session"]);
 /**
- * The request kinds a stale wait may be released for: approvals. A question
- * (`user_input`), a sign-in (`auth_refresh`) or a tool call waits on the person
- * for real and keeps blocking.
+ * The request kinds a stale wait may be released for: approvals and questions,
+ * which are recorded and asked again after the restart. A sign-in
+ * (`auth_refresh`) or a tool call cannot be asked again and keeps blocking.
  */
-export const APPROVAL_REQUEST_KINDS: ReadonlySet<string> = new Set([
+export const STALE_WAIT_REQUEST_KINDS: ReadonlySet<string> = new Set([
   "command",
   "file-read",
   "file-change",
   "permission",
   "mcp-elicitation",
+  "user_input",
 ]);
+
+/**
+ * Whether Needs you leaves a thread out, as the Threads pane does
+ * (`classifyProjectActions`): it is archived or deleted, or the person resolved
+ * it after each of its pending requests was asked. Nobody is shown what such a
+ * thread waits on, so it never holds an automatic install.
+ */
+export function hiddenFromNeedsYou(
+  thread: {
+    readonly archived: boolean;
+    readonly settled: boolean;
+    readonly settledAt: string | null;
+  },
+  requests: ReadonlyArray<{ readonly created_at: string | null }>,
+): boolean {
+  if (thread.archived) return true;
+  if (!thread.settled) return false;
+  const settledMs = thread.settledAt === null ? Number.NaN : Date.parse(thread.settledAt);
+  if (!Number.isFinite(settledMs)) return false;
+  return requests.every((request) => {
+    const askedMs = request.created_at === null ? Number.NaN : Date.parse(request.created_at);
+    return Number.isFinite(askedMs) && askedMs <= settledMs;
+  });
+}
 
 /**
  * Whether the update agent's `state.json` says an install waits for a quiet
@@ -307,6 +339,8 @@ export interface StaleWaitThread {
   readonly threadId: string;
   readonly requestIds: string;
   readonly latestSequence: number | null;
+  /** Needs you does not show it: what it asked is closed, not asked again. */
+  readonly hidden?: boolean;
 }
 
 const quoted = (values: ReadonlyArray<string>) => values.map((value) => `'${value}'`).join(", ");
@@ -1029,15 +1063,39 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           SELECT sequence, occurred_at FROM orchestration_v2_events
            WHERE thread_id = ${threadId} ORDER BY sequence DESC LIMIT 1
         `;
-        return { requests, latest: latest[0] ?? null };
+        const shown = yield* sql<{
+          readonly archived: number;
+          readonly settled: number;
+          readonly settled_at: string | null;
+        }>`
+          SELECT (deleted_at IS NOT NULL OR archived_at IS NOT NULL
+                  OR json_extract(payload_json, '$.archivedAt') IS NOT NULL) AS archived,
+                 json_extract(payload_json, '$.settledOverride') IS 'settled' AS settled,
+                 json_extract(payload_json, '$.settledAt') AS settled_at
+            FROM orchestration_v2_projection_threads
+           WHERE thread_id = ${threadId}
+        `;
+        const thread = shown[0];
+        const hidden =
+          thread !== undefined &&
+          hiddenFromNeedsYou(
+            {
+              archived: Boolean(thread.archived),
+              settled: Boolean(thread.settled),
+              settledAt: thread.settled_at,
+            },
+            requests,
+          );
+        return { requests, latest: latest[0] ?? null, hidden };
       });
 
     /**
-     * The threads that only wait on an approval, when nothing else blocks the
-     * update: every blocker is a run, request or session of such a thread, each
-     * of its pending requests is an approval (or a card asking a closed approval
-     * again) older than `STALE_WAIT_MS`, and
-     * nothing was recorded on it for as long. Empty otherwise.
+     * The threads that only wait on a person, when nothing else blocks the
+     * update: every blocker is a run, request or session of such a thread, and
+     * either Needs you does not show the thread (`hiddenFromNeedsYou`), or each
+     * of its pending requests is an approval or a question (or a card asking a
+     * closed one again) older than `STALE_WAIT_MS` and nothing was recorded on
+     * it for as long. Empty otherwise.
      */
     const selectStaleWaits = Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
@@ -1054,24 +1112,27 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       const selected: Array<StaleWaitThread> = [];
       for (const [threadId, seen] of kinds) {
         if (!seen.has("request")) return [];
-        const { requests, latest } = yield* readWaitState(threadId);
+        const { requests, latest, hidden } = yield* readWaitState(threadId);
         if (requests.length === 0) return [];
-        if (
-          !requests.every(
-            (request) =>
-              // A card that asks a closed approval again waits like that approval did.
-              (APPROVAL_REQUEST_KINDS.has(request.kind) ||
-                ClosedQuestions.isReopenedApprovalRequestId(request.runtime_request_id)) &&
-              request.created_at !== null &&
-              atOrBefore(request.created_at, cutoffMs),
+        if (!hidden) {
+          if (
+            !requests.every(
+              (request) =>
+                // A card that asks a closed approval again waits like that approval did.
+                (STALE_WAIT_REQUEST_KINDS.has(request.kind) ||
+                  ClosedQuestions.isReopenedApprovalRequestId(request.runtime_request_id)) &&
+                request.created_at !== null &&
+                atOrBefore(request.created_at, cutoffMs),
+            )
           )
-        )
-          return [];
-        if (!atOrBefore(latest?.occurred_at ?? null, cutoffMs)) return [];
+            return [];
+          if (!atOrBefore(latest?.occurred_at ?? null, cutoffMs)) return [];
+        }
         selected.push({
           threadId,
           requestIds: requests.map((request) => request.runtime_request_id).join("\n"),
           latestSequence: latest?.sequence ?? null,
+          ...(hidden ? { hidden: true } : {}),
         });
       }
       return selected;
@@ -1093,7 +1154,9 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
      * interrupt (a turn whose provider does not answer is ended locally, its
      * agent process closed), what is left ends `interrupted` with the update
      * named as the cause, and each request is cancelled with the reason. The
-     * person continues the thread when back.
+     * person continues the thread when back. A thread Needs you does not show
+     * is stopped the same way, with `HIDDEN_WAIT_REASON`, and nothing it asked
+     * is recorded to be asked again.
      */
     const releaseSelected = (selected: ReadonlyArray<StaleWaitThread>) =>
       Effect.gen(function* () {
@@ -1103,6 +1166,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         const deadline = nowMs + timings.deadlineMs;
         const activeRuns = yield* readActiveRuns;
         const stale: Array<string> = [];
+        const hidden = new Set<string>();
         const runs: Array<ActiveRun> = [];
         for (const thread of selected) {
           if (!(yield* unchangedSince(thread))) {
@@ -1113,15 +1177,19 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           }
           // Recorded before anything closes, and asked again after the restart
           // that installs the update. Without a record the thread keeps waiting.
-          const recorded = yield* recordOpenRequests(new Set(), {
-            threadIds: [thread.threadId],
-            afterRestart: true,
-          }).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
+          // A thread nobody is shown is not asked again.
+          const recorded =
+            thread.hidden === true ||
+            (yield* recordOpenRequests(new Set(), {
+              threadIds: [thread.threadId],
+              afterRestart: true,
+            }).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            ));
           if (!recorded) continue;
           stale.push(thread.threadId);
+          if (thread.hidden === true) hidden.add(thread.threadId);
           for (const run of activeRuns) {
             if (run.threadId !== thread.threadId) continue;
             runs.push(run);
@@ -1131,7 +1199,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
                 commandId: CommandId.make(`service-update:${nonce}:interrupt:${run.runId}`),
                 threadId: ThreadId.make(run.threadId),
                 runId: RunId.make(run.runId),
-                reason: STALE_WAIT_REASON,
+                reason: thread.hidden === true ? HIDDEN_WAIT_REASON : STALE_WAIT_REASON,
                 cause: "service_update",
               })
               .pipe(logged("stale-interrupt-failed", { threadId: run.threadId, runId: run.runId }));
@@ -1164,7 +1232,18 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
             { concurrency: "unbounded", discard: true },
           ),
         );
-        yield* cleanup.finalizeStuckRuns({ nonce, reason: STALE_WAIT_REASON, threadIds: stale });
+        // Each group ends with its own reason; an empty one is skipped, since no
+        // thread ids means every thread to the cleanup.
+        const groups = [
+          { reason: STALE_WAIT_REASON, threadIds: stale.filter((id) => !hidden.has(id)) },
+          { reason: HIDDEN_WAIT_REASON, threadIds: stale.filter((id) => hidden.has(id)) },
+        ].filter((group) => group.threadIds.length > 0);
+        for (const group of groups)
+          yield* cleanup.finalizeStuckRuns({
+            nonce,
+            reason: group.reason,
+            threadIds: group.threadIds,
+          });
         for (const request of yield* cleanup.listMessageModeRequests) {
           if (!scope.has(request.threadId)) continue;
           yield* threads
@@ -1176,11 +1255,12 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
             })
             .pipe(logged("stale-dismiss-failed", { requestId: request.requestId }));
         }
-        yield* cleanup.cancelPendingRequests({
-          nonce,
-          reason: STALE_WAIT_REASON,
-          threadIds: stale,
-        });
+        for (const group of groups)
+          yield* cleanup.cancelPendingRequests({
+            nonce,
+            reason: group.reason,
+            threadIds: group.threadIds,
+          });
         yield* cleanup.reconcileOrphanedSessions;
         return { releasedThreads: stale };
       });

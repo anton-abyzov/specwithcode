@@ -367,6 +367,28 @@ describe("DesktopUpdates Squirrel staging", () => {
     }),
   );
 
+  it.effect("saves window placement before the updater quits", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ quitAndInstallDoesNothing: true, windows: true });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const install = yield* updates.installPrepared("1.2.4").pipe(Effect.forkScoped);
+          yield* settle;
+          yield* Ref.set(desktopState.shutdownBegun, true);
+          yield* TestClock.adjust(Duration.millis(100));
+          yield* Fiber.join(install);
+          assert.deepEqual(harness.installSteps, ["flushWindowBounds", "quitAndInstall"]);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
   it.effect("an older install's watch leaves a later install alone", () =>
     Effect.gen(function* () {
       const secondStop = yield* Deferred.make<void>();

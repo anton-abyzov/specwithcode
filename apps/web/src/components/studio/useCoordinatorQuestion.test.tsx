@@ -40,6 +40,9 @@ vi.mock("../../state/use-orchestration-command", () => ({
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => commands.dismiss,
 }));
+// The host is back as soon as an answer waits for it.
+const hostReady = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("../../lib/durableComposerDraftBindings", () => ({ whenHostReady: hostReady }));
 const released = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/attachmentUploadQueue", async (original) => ({
   ...(await original<typeof import("../../lib/attachmentUploadQueue")>()),
@@ -110,7 +113,10 @@ const announced: string[] = [];
 const announce = (text: string) => {
   announced.push(text);
 };
-function Probe(props: { projection: OrchestrationV2ThreadProjection }) {
+function Probe(props: {
+  projection: OrchestrationV2ThreadProjection;
+  isThisDevice?: boolean | undefined;
+}) {
   current = useCoordinatorQuestion({
     environmentId,
     coordinatorId,
@@ -124,11 +130,12 @@ function Probe(props: { projection: OrchestrationV2ThreadProjection }) {
       if (errors.at(-1) === message) errors.push(null);
     },
     announce,
+    isThisDevice: props.isThisDevice,
   });
   return null;
 }
-const render = (value: OrchestrationV2ThreadProjection) =>
-  act(async () => root.render(<Probe projection={value} />));
+const render = (value: OrchestrationV2ThreadProjection, isThisDevice?: boolean) =>
+  act(async () => root.render(<Probe projection={value} isThisDevice={isThisDevice} />));
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -196,6 +203,47 @@ it("a refused answer is resent as a new command, never a replay of the refusal",
   expect(ids).toHaveLength(2);
   expect(ids[1]).not.toBe(ids[0]);
   expect(ids[1]).toMatch(/^answer:ask-user:binding:/);
+});
+
+// The answer that reached this Mac while its service was busy with an update.
+const notConnected = () =>
+  AsyncResult.failure(
+    Cause.fail(
+      Object.assign(new Error("Anton's MacBook M4MAX is not connected."), {
+        _tag: "EnvironmentRpcUnavailableError",
+      }),
+    ),
+  );
+
+it("an answer sent while this Mac is busy goes once it catches up, with no error", async () => {
+  await render(projection([layout]), true);
+  commands.respond.mockResolvedValueOnce(notConnected());
+  const sent = await act(() => current!.answerFromDraft("Tall", undefined));
+  expect(sent).toEqual({ keepUploads: false });
+  const ids = commands.respond.mock.calls.map(([value]) => String(value.input.commandId));
+  expect(ids).toHaveLength(2);
+  expect(ids[1]).toBe(ids[0]);
+  expect(hostReady).toHaveBeenCalledWith(environmentId, { cancelled: false });
+  expect(errors.filter(Boolean)).toEqual([]);
+});
+
+it("an answer this Mac never takes says it is busy, never that it is not connected", async () => {
+  await render(projection([layout]), true);
+  commands.respond.mockResolvedValue(notConnected());
+  hostReady.mockResolvedValueOnce(false);
+  await expect(act(() => current!.answerFromDraft("Tall", undefined))).rejects.toThrow(
+    "SpecWithCode on this Mac is busy",
+  );
+  expect(errors.join(" ")).not.toContain("not connected");
+});
+
+it("a dismissal this Mac never received goes again once it catches up", async () => {
+  await render(projection([layout]), true);
+  commands.dismiss.mockResolvedValueOnce(notConnected());
+  await act(async () => current!.dismiss(requestId));
+  await vi.waitFor(() => expect(commands.dismiss).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+  await vi.waitFor(() => expect(announced).toContain(QUESTION_DISMISSED));
+  expect(errors.filter(Boolean)).toEqual([]);
 });
 
 it("a question settled elsewhere refuses the send and says so", async () => {

@@ -55,7 +55,11 @@ import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { recoverySnoozeBlocks } from "./usageLimitRecovery.ts";
+import {
+  isStoppedThreadRefusal,
+  personStopHoldsRun,
+  recoverySnoozeBlocks,
+} from "./usageLimitRecovery.ts";
 import { withSimulatedUsage } from "../usage/providerUsageSummary.ts";
 import * as TaskRoutingEscalationWorker from "./TaskRoutingEscalationWorker.ts";
 import {
@@ -636,6 +640,32 @@ export const makeSweep = Effect.gen(function* () {
   // A user who switches back keeps their choice: each command is sent once.
   const sent = yield* Ref.make(new Set<string>());
   const markSent = (id: string) => Ref.update(sent, (current) => new Set(current).add(id));
+  /**
+   * Whether a person's Stop holds a stopped thread's last run (see
+   * `personStopHoldsRun`). Only a failed thread has a stop the sweep could
+   * continue, so no other thread is read. A failed read holds the thread when
+   * `failedReadHolds`, for a step that spends before the orchestrator sees it;
+   * otherwise the orchestrator's own check refuses what the sweep sends.
+   */
+  const stopHoldsThread = (thread: FallbackThread, failedReadHolds: boolean) =>
+    thread.status !== "failed" || thread.latestRunId === null
+      ? Effect.succeed(false)
+      : projections
+          .getThreadRecords(thread.id, ["turnItems"], {
+            turnItemTypes: ["run_interrupt_request"],
+            turnItemRunIds: [thread.latestRunId],
+          })
+          .pipe(
+            Effect.map((records) =>
+              personStopHoldsRun(
+                // Partial records in some reads carry no thread.
+                records.thread?.limitRecovery,
+                thread.latestRunId!,
+                records.turnItems ?? [],
+              ),
+            ),
+            Effect.orElseSucceed(() => failedReadHolds),
+          );
   const skipReset = (thread: FallbackThread, instanceId: ProviderInstanceId, reason: string) =>
     Effect.logInfo("orchestration-v2.provider-fallback.reset-skipped", {
       threadId: thread.id,
@@ -1043,11 +1073,14 @@ export const makeSweep = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const error = Cause.squash(cause);
+      // A refusal for a person's Stop counts as no failure either: once they
+      // arm the resume again, the step goes out under the next id.
       const replay =
-        typeof error === "object" &&
-        error !== null &&
-        "_tag" in error &&
-        error._tag === "OrchestratorCommandPreviouslyRejectedError";
+        isStoppedThreadRefusal(error) ||
+        (typeof error === "object" &&
+          error !== null &&
+          "_tag" in error &&
+          error._tag === "OrchestratorCommandPreviouslyRejectedError");
       const tries = (yield* Ref.get(dispatchTries)).get(baseCommandId) ?? {
         next: 0,
         failures: 0,
@@ -1493,6 +1526,14 @@ export const makeSweep = Effect.gen(function* () {
       }
       // Unknown project grants cannot authorize an automatic provider switch.
       if (Option.isNone(found)) continue;
+      // A person's Stop is final: no step, account read or handoff for its
+      // thread, and nothing recorded, so their later arm finds the stop as it was.
+      // Read once, and only for a thread the sweep would act on.
+      let held: boolean | undefined;
+      const stopHolds = Effect.gen(function* () {
+        held ??= yield* stopHoldsThread(thread, false);
+        return held;
+      });
       const project = found.value;
       const providersFor = (current: FallbackThread, currentProject = project) =>
         projectCompatibleProviders({
@@ -1510,7 +1551,7 @@ export const makeSweep = Effect.gen(function* () {
         });
       const openFailure = openFailures.get(thread.id);
       if (retryOnly) {
-        if (openFailure !== undefined)
+        if (openFailure !== undefined && !(yield* stopHolds))
           yield* providerRetry(thread, openFailure, providersFor, now, rereadProviders);
         continue;
       }
@@ -1569,6 +1610,16 @@ export const makeSweep = Effect.gen(function* () {
           }),
         );
       let step = stepFor(thread);
+      // Every later read, step, handoff and retry needs a step, a stop that
+      // could not open, or a limit stop under the switch rule.
+      if (
+        (step !== null ||
+          failedOpen !== null ||
+          openFailure !== undefined ||
+          (stoppedOnLimit(thread) && resolved.providerLimitAction === "switch")) &&
+        (yield* stopHolds)
+      )
+        continue;
       // A context stop reads stale providers before it moves, even when a
       // target is found: home with an old reading may have room again.
       if (
@@ -1643,6 +1694,7 @@ export const makeSweep = Effect.gen(function* () {
             yield* providerRetry(thread, openFailure, providersFor, now, rereadProviders);
           continue;
         }
+        if (yield* stopHolds) continue;
         // Nothing to continue: a thread the rule moved to API credits goes back
         // to its subscription. Sent once: after that, where the thread runs is
         // the person's choice again.
@@ -1692,6 +1744,10 @@ export const makeSweep = Effect.gen(function* () {
             step,
             Effect.gen(function* () {
               if ((yield* Ref.get(sent)).has(prepared.windowKey)) return;
+              // A person's Stop is final: its thread never spends a banked
+              // reset, and the orchestrator would refuse the continuation.
+              // Unread, nothing is spent either; the next sweep reads again.
+              if (yield* stopHoldsThread(thread, true)) return;
               yield* markSent(prepared.windowKey);
               reads.delete(step.instanceId);
               // The current-policy claim is the authorization boundary. Start the
@@ -1794,10 +1850,12 @@ export const makeSweep = Effect.gen(function* () {
                   threadId: thread.id,
                   cause,
                 });
+                // A Stop that landed after the check says nothing about the target.
                 if (
                   step.type === "switch" &&
                   command.type === "message.dispatch" &&
-                  command.modelSelection !== undefined
+                  command.modelSelection !== undefined &&
+                  !isStoppedThreadRefusal(Cause.squash(cause))
                 ) {
                   const target = fallbackSelectionKey(command.modelSelection);
                   yield* Ref.update(failedTargets, (current) =>

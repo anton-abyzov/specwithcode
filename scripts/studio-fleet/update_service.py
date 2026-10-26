@@ -15,6 +15,7 @@ import re
 
 from installation_descriptor import owned_path
 import live_database
+from quiescence import server_browser_pids
 from update_read import TERMINAL_RUNS, run_work
 
 
@@ -51,7 +52,8 @@ def assert_held(service, request, now=None):
     (written by ServiceUpdateHold while held, removed when the hold ends) names the running
     pid, began after this process started and has not ended; and `updates/config.json` still
     asks to force-install `request`, made during this hold and not cancelled. A service that
-    restarted, a hold that ended or a request that changed refuses the reap."""
+    restarted, a hold that ended or a request that changed refuses the reap. Returns when the
+    hold began."""
     updates = service['own'] / 'updates'
     values = {}
     for name in ('hold.json', 'config.json'):
@@ -67,6 +69,7 @@ def assert_held(service, request, now=None):
     assert None not in (began, ends, launched, requested) and launched <= began <= requested <= now < ends, HOLD_REFUSAL
     assert config.get('installMode') == 'force' and config.get('installRequestedAt') == request, HOLD_REFUSAL
     assert cancelled is None or (_utc(cancelled) is not None and _utc(cancelled) <= requested), HOLD_REFUSAL
+    return began
 
 # The install gate's settle when the running service holds itself for this very forced request:
 # a held service has refused every command that starts work and skipped its background ticks since
@@ -133,10 +136,11 @@ def native_work_counts(state):
 def _name(value):
     return re.sub(r'[^A-Za-z0-9._+-]', '_', posixpath.basename(str(value)))[:40] or '_'
 
-def descendant_names(pid, processes):
-    """Executable basenames beneath the service, with counts; the one supervisor is left out.
-    Only `ps comm` is read, never argv, so no argument or secret can appear."""
-    names, pending, seen, supervisor = {}, [pid], {pid}, False
+def descendant_names(pid, processes, home=None):
+    """Executable basenames beneath the service, with counts; the one supervisor is left out, and
+    with the service's `home` its own server browser (which an update stops itself) unless nothing
+    else is there. Only `ps comm` is read, never argv, so no argument or secret can appear."""
+    names, pending, seen, supervisor, tree = {}, [pid], {pid}, False, []
     while pending:
         parent = pending.pop()
         for child in sorted(processes.values(), key=lambda item: item['pid']):
@@ -147,6 +151,9 @@ def descendant_names(pid, processes):
             if not supervisor and parent == pid and child['executable'] == '/usr/bin/caffeinate':
                 supervisor = True
                 continue
-            name = _name(child['executable'])
-            names[name] = names.get(name, 0) + 1
+            tree.append(child)
+    browsers = server_browser_pids(processes, pid, home, tree) if home and tree and pid in processes else set()
+    for child in [item for item in tree if item['pid'] not in browsers] or tree:
+        name = _name(child['executable'])
+        names[name] = names.get(name, 0) + 1
     return ' '.join('%s=%d' % item for item in sorted(names.items())[:8]) or ('none' if supervisor else 'no-supervisor')

@@ -138,7 +138,12 @@ const projectionOf = (threadId: ThreadId) =>
     return yield* orchestrator.getThreadProjection(threadId);
   });
 
-/** Stop with the queue held, as a failure on the thread's provider leaves it. */
+/**
+ * Stops the turn with the queue held, standing in for a failure on the
+ * thread's provider. An update's Stop, since no fallback continues after a
+ * person's; its hold is the restart's (`queueHeldForRestart`), which a
+ * fallback releases the same way as a failure's.
+ */
 const stopHoldingQueue = (threadId: ThreadId) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -149,6 +154,7 @@ const stopHoldingQueue = (threadId: ThreadId) =>
       threadId,
       runId: active.id,
       holdQueue: true,
+      cause: "service_update",
     });
     return active.id;
   });

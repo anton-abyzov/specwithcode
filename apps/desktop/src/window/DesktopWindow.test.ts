@@ -32,6 +32,8 @@ vi.mock("electron", async (importOriginal) => ({
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       },
     ]),
+    on: vi.fn(),
+    removeListener: vi.fn(),
   },
 }));
 
@@ -55,6 +57,7 @@ import {
 } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import * as WindowPlacement from "./windowPlacement.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 const environmentInput = {
@@ -116,6 +119,8 @@ function makeFakeBrowserWindow() {
     }),
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
+    setBounds: vi.fn(),
+    unmaximize: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setFullScreen: vi.fn(),
     setOpacity: vi.fn(),
@@ -143,6 +148,7 @@ function makeFakeBrowserWindow() {
     setWindowButtonPosition: window.setWindowButtonPosition,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
     setAutoHideCursor: window.setAutoHideCursor,
+    setBounds: window.setBounds,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
     webContentsListeners,
@@ -221,6 +227,7 @@ function layerTest(input: {
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowMaximizedUpdates?: boolean[];
+  readonly mainWindowExtrasUpdates?: DesktopAppSettings.DesktopWindowPlacementExtras[];
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
@@ -234,11 +241,12 @@ function layerTest(input: {
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
     load: Effect.sync(() => desktopSettings),
-    setMainWindowBounds: (bounds, isMaximized) =>
+    setMainWindowBounds: (bounds, isMaximized, extras) =>
       Effect.gen(function* () {
         if (input.beforeMainWindowBoundsUpdate) {
           yield* input.beforeMainWindowBoundsUpdate(bounds);
         }
+        if (extras) input.mainWindowExtrasUpdates?.push(extras);
         const changed =
           desktopSettings.mainWindowBounds === null ||
           !desktopWindowBoundsEquivalence(desktopSettings.mainWindowBounds, bounds) ||
@@ -594,16 +602,18 @@ describe("DesktopWindow", () => {
     const displays = [
       { x: 0, y: 0, width: 1920, height: 1080 },
       { x: 1920, y: 0, width: 2560, height: 1440 },
-    ];
+    ].map((bounds) => WindowPlacement.toConnectedDisplay({ bounds }));
+    const saved = { bounds: persistedBounds, display: null, fullScreen: false };
 
-    assert.deepEqual(
-      DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, displays),
-      persistedBounds,
-    );
-    assert.deepEqual(
-      DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, [displays[0]!]),
-      DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
-    );
+    assert.deepEqual(WindowPlacement.resolveWindowPlacement(saved, displays), {
+      kind: "saved",
+      bounds: persistedBounds,
+      savedDisplayMissing: false,
+    });
+    assert.deepEqual(WindowPlacement.resolveWindowPlacement(saved, [displays[0]!]), {
+      kind: "default",
+      savedDisplayMissing: false,
+    });
   });
 
   it("recognizes only same-origin renderer navigations", () => {
@@ -823,6 +833,7 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.setWindowButtonPosition.mock.calls.length, 0);
 
         fakeWindow.isFullScreen.mockReturnValue(false);
+        fakeWindow.getBounds.mockReturnValue({ x: 1700, y: 90, width: 1400, height: 900 });
         fakeWindow.windowListeners.get("leave-full-screen")?.();
         assert.deepEqual(fakeWindow.setWindowButtonPosition.mock.lastCall, [{ x: 16, y: 15 }]);
       }).pipe(Effect.provide(layer));
@@ -887,6 +898,188 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.maximize.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  // M4's arrangement: built-in, a DELL to its right, a Studio Display to its
+  // upper left. Ids are the macOS display ids Electron reports.
+  const m4Displays = [
+    {
+      id: 1,
+      bounds: { x: 0, y: 0, width: 1512, height: 982 },
+      workArea: { x: 0, y: 34, width: 1512, height: 898 },
+    },
+    {
+      id: 2,
+      bounds: { x: 1512, y: 0, width: 1920, height: 1080 },
+      workArea: { x: 1512, y: 0, width: 1920, height: 1080 },
+    },
+    {
+      id: 3,
+      bounds: { x: -2048, y: -281, width: 2048, height: 1152 },
+      workArea: { x: -2048, y: -281, width: 2048, height: 1152 },
+    },
+  ];
+  const asElectronDisplays = (displays: typeof m4Displays) =>
+    displays as unknown as Electron.Display[];
+
+  it.effect("reopens full screen on the monitor it was full screen on", () =>
+    Effect.gen(function* () {
+      vi.mocked(Electron.screen.getAllDisplays).mockReturnValue(asElectronDisplays(m4Displays));
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const mainWindowExtrasUpdates: DesktopAppSettings.DesktopWindowPlacementExtras[] = [];
+      const callOrder: string[] = [];
+      fakeWindow.setFullScreen.mockImplementation(() => {
+        callOrder.push("setFullScreen");
+      });
+      // Restored into full screen: isFullScreen follows setFullScreen.
+      fakeWindow.isFullScreen.mockImplementation(() => callOrder.includes("setFullScreen"));
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        mainWindowExtrasUpdates,
+        onReveal: () => {
+          callOrder.push("reveal");
+        },
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          // Normal bounds on the built-in display, full screen on the Studio Display.
+          mainWindowBounds: { x: 0, y: 34, width: 1100, height: 780 },
+          mainWindowFullScreen: true,
+          mainWindowDisplay: { id: 3, bounds: m4Displays[2]!.bounds },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        const options = createdWindowOptions[0]!;
+        const createdBounds = {
+          x: options.x!,
+          y: options.y!,
+          width: options.width!,
+          height: options.height!,
+        };
+        fakeWindow.getNormalBounds.mockReturnValue(createdBounds);
+        assert.isTrue(
+          WindowPlacement.windowFitsWithinDisplay(
+            { x: options.x!, y: options.y!, width: options.width!, height: options.height! },
+            m4Displays[2]!.bounds,
+          ),
+        );
+        assert.equal(fakeWindow.setFullScreen.mock.calls.length, 0);
+        fakeWindow.windowListeners.get("ready-to-show")?.();
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+        // Full screen only after the window is revealed.
+        assert.deepEqual(callOrder, ["reveal", "setFullScreen"]);
+        assert.deepEqual(fakeWindow.setFullScreen.mock.calls, [[true]]);
+
+        // Leaving the restored full screen is the user's choice and is saved,
+        // although the normal bounds did not change.
+        fakeWindow.isFullScreen.mockReturnValue(false);
+        fakeWindow.getBounds.mockReturnValue({ ...createdBounds });
+        fakeWindow.windowListeners.get("leave-full-screen")?.();
+        yield* desktopWindow.flushMainWindowBounds;
+        assert.equal(mainWindowExtrasUpdates.at(-1)?.fullScreen, false);
+      }).pipe(Effect.provide(layer));
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.mocked(Electron.screen.getAllDisplays).mockReset())),
+    ),
+  );
+
+  it.effect("moves the window to its saved monitor when that monitor appears late", () =>
+    Effect.gen(function* () {
+      // Only the built-in display at launch; the DELL wakes up afterwards.
+      vi.mocked(Electron.screen.getAllDisplays).mockReturnValue(
+        asElectronDisplays([m4Displays[0]!]),
+      );
+      vi.mocked(Electron.screen.on).mockClear();
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const savedBounds = { x: 1683, y: 85, width: 1585, height: 898 };
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          mainWindowBounds: savedBounds,
+          mainWindowDisplay: { id: 2, bounds: m4Displays[1]!.bounds },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        assert.isUndefined(createdWindowOptions[0]?.x);
+        const screenCalls = (calls: unknown) => calls as readonly [string, () => void][];
+        const displayAdded = screenCalls(vi.mocked(Electron.screen.on).mock.calls).find(
+          ([eventName]) => eventName === "display-added",
+        )?.[1];
+        if (!displayAdded) {
+          return yield* Effect.die("display-added listener was not registered");
+        }
+        vi.mocked(Electron.screen.getAllDisplays).mockReturnValue(asElectronDisplays(m4Displays));
+        displayAdded();
+        assert.deepEqual(fakeWindow.setBounds.mock.calls, [[savedBounds]]);
+        assert.isTrue(
+          screenCalls(vi.mocked(Electron.screen.removeListener).mock.calls).some(
+            ([eventName]) => eventName === "display-added",
+          ),
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.mocked(Electron.screen.getAllDisplays).mockReset())),
+    ),
+  );
+
+  it.effect("saves full screen and the monitor it is on", () =>
+    Effect.gen(function* () {
+      vi.mocked(Electron.screen.getAllDisplays).mockReturnValue(asElectronDisplays(m4Displays));
+      const fakeWindow = makeFakeBrowserWindow();
+      fakeWindow.getNormalBounds.mockReturnValue({ x: 1700, y: 90, width: 1400, height: 900 });
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const mainWindowExtrasUpdates: DesktopAppSettings.DesktopWindowPlacementExtras[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        mainWindowExtrasUpdates,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        // Full screen on the Studio Display while the normal bounds stay on the DELL.
+        fakeWindow.isFullScreen.mockReturnValue(true);
+        fakeWindow.getBounds.mockReturnValue(m4Displays[2]!.bounds);
+        fakeWindow.windowListeners.get("enter-full-screen")?.();
+        yield* desktopWindow.flushMainWindowBounds;
+        assert.deepEqual(mainWindowExtrasUpdates.at(-1), {
+          fullScreen: true,
+          display: { id: 3, bounds: m4Displays[2]!.bounds },
+        });
+
+        fakeWindow.isFullScreen.mockReturnValue(false);
+        fakeWindow.getBounds.mockReturnValue({ x: 1700, y: 90, width: 1400, height: 900 });
+        fakeWindow.windowListeners.get("leave-full-screen")?.();
+        yield* desktopWindow.flushMainWindowBounds;
+        assert.deepEqual(mainWindowExtrasUpdates.at(-1), {
+          fullScreen: false,
+          display: { id: 2, bounds: m4Displays[1]!.bounds },
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.mocked(Electron.screen.getAllDisplays).mockReset())),
+    ),
   );
 
   // The window boots hidden with throttling disabled so first paint runs at
@@ -1131,8 +1324,9 @@ describe("DesktopWindow", () => {
 
         yield* desktopWindow.flushMainWindowBounds;
 
+        // The normal bounds are saved, never the full-screen frame (which is
+        // read only to find the monitor).
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 200, y: 130, width: 1400, height: 940 }]);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),

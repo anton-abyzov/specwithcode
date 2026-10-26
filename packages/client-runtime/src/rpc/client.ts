@@ -19,6 +19,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { RpcClientError } from "effect/rpc";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE } from "../errors/transport.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 
@@ -27,6 +28,8 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
   {
     environmentId: Schema.String,
     message: Schema.String,
+    /** The environment is the server on this machine, which is busy rather than gone. */
+    thisMachine: Schema.optionalKey(Schema.Literal(true)),
   },
 ) {}
 
@@ -137,10 +140,16 @@ const currentSession = Effect.fn("EnvironmentRpc.currentSession")(function* () {
       Option.match({
         onNone: () =>
           Effect.fail(
-            new EnvironmentRpcUnavailableError({
-              environmentId: supervisor.target.environmentId,
-              message: `${supervisor.target.label} is not connected.`,
-            }),
+            supervisor.thisMachine === true
+              ? new EnvironmentRpcUnavailableError({
+                  environmentId: supervisor.target.environmentId,
+                  message: THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE,
+                  thisMachine: true,
+                })
+              : new EnvironmentRpcUnavailableError({
+                  environmentId: supervisor.target.environmentId,
+                  message: `${supervisor.target.label} is not connected.`,
+                }),
           ),
         onSome: Effect.succeed,
       }),

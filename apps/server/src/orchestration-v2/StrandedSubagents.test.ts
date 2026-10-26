@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -164,7 +165,11 @@ const replace = <T extends { readonly id: unknown }>(list: ReadonlyArray<T>, nex
 /** An in-memory store that applies what the sweep commits, so a second sweep sees it. */
 function world(
   threads: ReadonlyArray<Mutable>,
-  options: { readonly live?: () => boolean; readonly sessionOpen?: boolean } = {},
+  options: {
+    readonly live?: () => boolean;
+    readonly sessionOpen?: boolean;
+    readonly held?: () => boolean;
+  } = {},
 ) {
   const state = new Map(threads.map((entry) => [entry.thread.id, entry]));
   const commits: Array<{ commandId: string; events: ReadonlyArray<OrchestrationV2DomainEvent> }> =
@@ -258,6 +263,15 @@ function world(
         }),
     }),
     IdAllocator.layer,
+    options.held === undefined
+      ? Layer.empty
+      : Layer.mock(ServiceUpdateHold.ServiceUpdateHold)({
+          isHeld: Effect.sync(() => options.held!()),
+          awaitReleased: Effect.void,
+          current: Effect.succeedNone,
+          installGated: Effect.succeed(false),
+          recordRefusal: () => Effect.void,
+        }),
   );
   const sweep = Effect.flatMap(StrandedSubagents.make, (sweeper) =>
     Effect.gen(function* () {
@@ -370,6 +384,29 @@ it.effect("settles work left by a process that exited after a completed parent t
       ["interrupted", "Stopped when the provider session ended"],
     );
     assert.deepEqual(notes(parent), ["sub_background"]);
+  });
+});
+
+it.effect("settles nothing while the service is held for an update", () => {
+  let held = true;
+  const { state, commits, sweep } = world(
+    [
+      projection({
+        thread: thread(PARENT),
+        runs: [run("run_1", 1, "completed")],
+        subagents: [native("sub_background", "run_1")],
+      }),
+    ],
+    { live: () => false, held: () => held },
+  );
+  return Effect.gen(function* () {
+    // The update reads the database while it holds: a sweep then would write and make it read
+    // everything again.
+    assert.deepEqual(yield* sweep, [0, 0, 0]);
+    assert.equal(commits.length, 0);
+    held = false;
+    assert.deepEqual(yield* sweep, [0, 1, 0]);
+    assert.equal(rowStatus(state.get(PARENT)!, "sub_background").status, "interrupted");
   });
 });
 

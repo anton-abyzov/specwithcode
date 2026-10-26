@@ -2,7 +2,9 @@
 
 Stdlib only; imported by update_agent and copied beside every installed agent. An
 unsupported predecessor is the only reason to consider an older release. Receipt
-text alone never authorizes another automatic apply.
+text alone never authorizes another automatic apply. Also holds an automatic pass's quiet
+decision and the agent's failed-install receipt readers and writer, moved here from
+update_agent.py (file-size cap).
 """
 import datetime
 import json
@@ -408,19 +410,116 @@ def withdrawn(agent, version):
     return 'downloaded', ua.CANCELLED
 
 
+SETTINGS_CHANGED = 'Automatic installation stopped because update settings changed.'
+
+
+def _automatic_consent_changed(agent, current):
+    return (not current['installAutomatically']
+            or current['repository'] != agent.config['repository']
+            or current['installRequestedAt'] != agent.config['installRequestedAt']
+            or current['installCancelledAt'] != agent.config['installCancelledAt'])
+
+
+def automatic_superseded(agent):
+    """True when the settings on disk already end this automatic pass (automatic_withdrawn's
+    settings check): a newer install request, a cancellation, installs turned off or another
+    repository. Checked before the pass's snapshot, a full read of minutes on M4, so a request
+    written meanwhile is served next (run_once) instead of after it. Changes no state; settings
+    that do not load leave the decision to automatic_withdrawn after the snapshot."""
+    ua = _ua(agent)
+    try:
+        return _automatic_consent_changed(agent, ua.load_config(agent.updates, agent.home))
+    except ua.AgentError:
+        return False
+
+
 def automatic_withdrawn(agent, verified):
     """Re-read mutable consent immediately after snapshots and immediately before apply."""
     ua = _ua(agent)
     current = ua.load_config(agent.updates, agent.home)
-    if (not current['installAutomatically']
-            or current['repository'] != agent.config['repository']
-            or current['installRequestedAt'] != agent.config['installRequestedAt']
-            or current['installCancelledAt'] != agent.config['installCancelledAt']):
+    if _automatic_consent_changed(agent, current):
         agent.state['automaticRetry'] = None
-        return 'downloaded', 'Automatic installation stopped because update settings changed.'
+        return 'downloaded', SETTINGS_CHANGED
     last = agent.state.get('lastInstall') or {}
     if holds(agent, last):
         held = automatic_retry(agent, verified)  # A slow snapshot can outlive the bounded retry window.
         if held:
             return 'error', held
     return None
+
+
+def install_when_quiet(agent, verified, helper_dir, newest, snapshot, baseline_path, install_request):
+    """An automatic pass's snapshot `newest`: apply once the kept baseline shows the same service and
+    work for quietMinutes; otherwise keep the older matching baseline (or this one) and wait."""
+    ua = _ua(agent)
+    baseline = agent.read_snapshot(baseline_path) if os.path.lexists(str(baseline_path)) else None
+    now = ua.utcnow()
+    quiet = False
+    same = (baseline is not None and baseline['servicePid'] == snapshot['servicePid']
+            and ua.work_counts(baseline['rows']['counts']) == ua.work_counts(snapshot['rows']['counts']))
+    if same:
+        since = ua.parse_time(baseline['observedAt'])
+        if since <= now + datetime.timedelta(minutes=5):
+            quiet = now - since >= datetime.timedelta(minutes=agent.config['quietMinutes'])
+        else:
+            same = False  # A future-dated baseline cannot prove quiet time.
+    if quiet:
+        return agent.apply(verified, helper_dir, newest, baseline_path, install_request)
+    if same:
+        ua.remove_path(newest, agent.home)  # Keep the older matching baseline so quiet time accrues.
+    else:
+        os.replace(str(newest), str(baseline_path))
+        baseline = snapshot
+    agent.state['quietSince'] = baseline['observedAt']
+    return agent.finish('waiting-for-quiet', 'Waiting for a quiet moment before installing SpecWithCode %s' % verified['version'])
+
+
+def settle_interrupted(agent):
+    """A pass that died while installing left a marker; record its outcome without retrying."""
+    ua = _ua(agent)
+    try:
+        marker = ua.read_json(agent.marker_path, agent.home)
+    except ua.AgentError:
+        marker = None
+    if not isinstance(marker, dict) or ua.version_tuple(marker.get('version')) is None:
+        return None
+    version = marker['version']
+    outcome = 'ok' if agent.inst['version'] == version else 'interrupted'
+    return agent.complete_install(version, marker.get('receipt'), outcome, marker.get('sourceCommit'),
+                                  marker.get('previousSourceCommit'))
+
+
+def disk_refusal(agent, receipt):
+    """The apply's own refusal when the disk had no room for its pre-update backup: it
+    stops in preflight with every pointer unchanged. None for any other failure."""
+    ua = _ua(agent)
+    try:
+        value = ua.read_json(ua.owned(pathlib.Path(receipt), agent.home), agent.home) if receipt else None
+    except (ua.AgentError, OSError):
+        return None
+    if not isinstance(value, dict) or value.get('phase') != 'preflight' or value.get('pointers') != 'unchanged':
+        return None
+    error = value.get('error')
+    prefix = 'AssertionError: '
+    if not isinstance(error, str) or not error.startswith(prefix + ua.DISK_REFUSAL):
+        return None
+    return error[len(prefix):].splitlines()[0][:200]
+
+
+def ensure_failure_receipt(agent, version, receipt, current):
+    """A helper that failed before writing its receipt still leaves one with its cause."""
+    ua = _ua(agent)
+    if not receipt:
+        return
+    try:
+        path = ua.owned(pathlib.Path(receipt), agent.home)
+        if os.path.lexists(str(path)):
+            return
+        log = ua.helper_log_path(path)
+        ua.write_json(path, {'identity': agent.identity, 'version': version, 'result': 'update-failed',
+                             'phase': 'preflight', 'exitOutcome': 'failed', 'stayedOn': current,
+                             'helperLog': str(log) if os.path.lexists(str(log)) else None,
+                             'stderrTail': ua.redact(ua.read_tail(log, agent.home))}, agent.home)
+    except (OSError, ua.AgentError) as error:
+        print(ua.runs.stamp('update-agent %s: could not write the failed-install receipt (%s)'
+                            % (agent.identity, type(error).__name__)), file=sys.stderr)

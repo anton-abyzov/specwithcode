@@ -632,6 +632,69 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("remembers full screen and the monitor for the main and project windows", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const bounds = { x: 1683, y: 85, width: 1585, height: 898 };
+        const display = { id: 2, bounds: { x: 1512, y: 0, width: 1920, height: 1080 } };
+        assert.isTrue(
+          (yield* settings.setMainWindowBounds(bounds, false, { fullScreen: true, display }))
+            .changed,
+        );
+        // Same bounds, now out of full screen: still a change worth saving.
+        assert.isTrue(
+          (yield* settings.setMainWindowBounds(bounds, false, { fullScreen: false, display }))
+            .changed,
+        );
+        assert.isFalse(
+          (yield* settings.setMainWindowBounds(bounds, false, { fullScreen: false, display }))
+            .changed,
+        );
+        yield* settings.setMainWindowBounds(bounds, false, { fullScreen: true, display });
+        yield* settings.setProjectWindowBounds("/work/alpha", bounds, false, {
+          fullScreen: true,
+          display,
+        });
+
+        const reloaded = yield* settings.load;
+        assert.isTrue(reloaded.mainWindowFullScreen);
+        assert.deepEqual(reloaded.mainWindowDisplay, display);
+        assert.deepEqual(reloaded.projectWindowBounds, [
+          { projectKey: "/work/alpha", bounds, maximized: false, fullScreen: true, display },
+        ]);
+
+        // A save without extras (an older code path) drops them again.
+        yield* settings.setMainWindowBounds(bounds, false);
+        const cleared = yield* settings.load;
+        assert.isUndefined(cleared.mainWindowFullScreen);
+        assert.isUndefined(cleared.mainWindowDisplay);
+      }),
+    ),
+  );
+
+  it.effect("ignores a damaged saved monitor without losing the bounds", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          JSON.stringify({
+            mainWindowBounds: { x: 10, y: 20, width: 1200, height: 800 },
+            mainWindowFullScreen: true,
+            mainWindowDisplay: { id: "dell", bounds: null },
+          }),
+        );
+        const loaded = yield* (yield* DesktopAppSettings.DesktopAppSettings).load;
+        assert.deepEqual(loaded.mainWindowBounds, { x: 10, y: 20, width: 1200, height: 800 });
+        assert.isTrue(loaded.mainWindowFullScreen);
+        assert.isUndefined(loaded.mainWindowDisplay);
+      }),
+    ),
+  );
+
   it.effect("does not persist an unchanged project window that is already the newest", () =>
     withSettings(
       Effect.gen(function* () {

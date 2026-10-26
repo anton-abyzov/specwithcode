@@ -119,8 +119,8 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
     """The rest of _read_state, in its read transaction. With `once`, the complete capture
     comes first: its legacy hashes are the guarded hashes (the same encoding), it hashes the
     logs' earlier rows in the same scan (log_prefixes), and it hands over the rows of
-    auth_sessions and the projection cursors, the only rows kept. The thread-keyed projections
-    are read again, row by row, as before. Otherwise every part reads its own rows in the
+    auth_sessions and the projection cursors, the only rows kept, and hashes the thread-keyed
+    projections per stream as it goes (ThreadRows). Otherwise every part reads its own rows in the
     original order, the capture last; with `check_idle`, protected rows first, then the idle
     check, then the rest. `keep` (kept_lines.Kept, with `once` only) is handed the capture's sorted
     lines."""
@@ -128,9 +128,10 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
     if once:
         # Complete schema and typed cells of every table, bound to the protected rows in
         # this same read transaction. Hashes and schema text only; no cell values.
-        scanned = {}
+        scanned, threads = {}, ThreadRows(db)
         def visit(table, rows):
             if table == 'auth_sessions' or table in CURSOR_COLUMNS: scanned[table] = rows
+            threads.visit(table, rows)
         prefixes = log_prefixes(db, tables, since) if since is not None else None
         database = continuity.capture_connection(db, widen_from, visit=visit, prefixes=prefixes,
                                                   **({'keep': keep} if keep is not None else {}))
@@ -149,7 +150,7 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
              'counts': counts, 'hashes': hashes, 'nativeWorkIdle': True}
     if 'auth_sessions' in tables:
         proof[AUTH_INVARIANT_KEY] = auth_invariant_hash(db, scanned.pop('auth_sessions') if once else None)
-    proof[ACTIVITY_KEY] = append_only_activity(db, tables, scanned)
+    proof[ACTIVITY_KEY] = append_only_activity(db, tables, scanned, threads if once else None)
     # Keep complete auth cells separate from every serializable public proof. A database
     # without the auth table has no session to capture (a migration may create it).
     auth = read_auth_sessions_in_transaction(db, proof) if include_auth and 'auth_sessions' in tables else None
@@ -254,14 +255,19 @@ def stream_column(columns):
     """A projection row belongs to its thread, or, with no thread column, its project."""
     return 'thread_id' if 'thread_id' in columns else 'project_id' if 'project_id' in columns else None
 
-def append_only_activity(db, tables, scanned=None):
+def append_only_activity(db, tables, scanned=None, threads=None):
     """In-memory hashes and row positions only; no content leaves the transaction. `scanned`
     holds rows of some of the tables read here (the projection cursors), read earlier in this
     transaction by the complete capture; each is used once and let go, and any other table is
-    read here, row by row."""
+    read here, row by row. `threads` (ThreadRows) holds the thread-keyed projections' hashes
+    from that same scan, which then reads none of them again."""
     def rows_of(table):
         return scanned.pop(table) if scanned is not None and table in scanned else db.execute('SELECT * FROM ' + table)
     logs = log_rowids(db, tables)
+    if threads is not None:
+        assert threads.visited == tables, 'The complete capture did not visit every table'
+        return {'logRowids': logs, 'threadTables': sorted(threads.tables), 'threadSha256': threads.digests(),
+                'cursorSha256': cursor_hashes(db, tables, rows_of)}
     thread_tables, buckets = [], {}
     for table in tables:
         columns = table_columns(db, table)
@@ -275,6 +281,41 @@ def append_only_activity(db, tables, scanned=None):
     return {'logRowids': logs, 'threadTables': sorted(thread_tables),
             'threadSha256': {key: thread_digest(lines) for key, lines in buckets.items()},
             'cursorSha256': cursor_hashes(db, tables, rows_of)}
+
+class ThreadRows:
+    """appendOnlyActivity's threadTables and threadSha256 from the complete capture's scan
+    (visit, handed each table's rows in name order), equal to append_only_activity's own read.
+    A stream's sorted lines are its tables' sorted lines in name order: each line starts with
+    its table's quoted name, and '"' sorts before every character a table name holds. So each
+    table's lines go into their stream's running hash (thread_digest's bytes) as the table is
+    visited, a run at a time (continuity.update_joined), and are let go with its rows: no table
+    is read again for the activity, and no stream's lines are held past their own table."""
+
+    def __init__(self, db):
+        self.db, self.visited, self.tables, self.hashers = db, [], [], {}
+
+    def visit(self, table, rows):
+        assert not self.visited or self.visited[-1] < table, 'Tables visited out of name order'
+        self.visited.append(table)
+        columns = table_columns(self.db, table)
+        key = stream_column(columns)
+        if not (is_projection_table(table) and key) or table in CURSOR_COLUMNS:
+            return
+        self.tables.append(table)
+        index, streams = columns.index(key), {}
+        for row in rows:
+            streams.setdefault(stream_key(row[index]), []).append(thread_line(table, row))
+        for stream, lines in streams.items():
+            hasher = self.hashers.get(stream)
+            if hasher is None:
+                hasher = self.hashers[stream] = hashlib.sha256(b'studio-thread-rows-v1\n')
+            else:
+                hasher.update(b'\n')
+            lines.sort()
+            continuity.update_joined(hasher, lines)
+
+    def digests(self):
+        return {stream: hasher.hexdigest() for stream, hasher in self.hashers.items()}
 
 def log_rowids(db, tables):
     """{log table: its largest rowid} (appendOnlyActivity logRowids)."""

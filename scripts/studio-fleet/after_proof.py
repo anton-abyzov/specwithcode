@@ -11,33 +11,41 @@ What it starts from, all taken by update.py in this process:
 - the reference read: base['before'], the last read before the restart that matched `before` (the
   read itself, or the final check's re-read), and the sorted lines the read before the restart
   kept of every log and every large table (kept_lines);
-- `mark`, right before the final check: a descriptor held on the old service's -wal, its salts and
-  the last frame published in its index;
+- `mark`, right before the final check: a descriptor held on the old service's -wal and a reader in
+  a child process (_Reader) holding a read transaction from then until the clone, so no checkpoint
+  copies a later frame into the database file and the log cannot restart (but once, after a
+  snapshot that read the file alone); `confirm`, after the final check, accepts that snapshot as
+  the reference's when nothing committed since the reference was read;
 - `stopped`, right after the APFS clone of the stopped service's files (state_backup.clone_state):
-  the frames the old log gained after the mark (the gap: a commit after the final check, such as a
-  session's heartbeat), checked against the clone, and the database file as the clone saw it.
+  the frames the old log gained after the reader's snapshot (the gap: commits after the final
+  check, such as a heartbeat or what SIGTERM's cancelled background work appends), checked against
+  the clone; the reference image (the clone with every gap page as the snapshot read it); and the
+  database file once the log the reader kept is folded into it, as the old service's close would.
 
 The clone is the database as the old service left it; from the reference it differs at most in
-the gap pages. In one read transaction on the live database (its WAL index header pinned before
-and after the snapshot opened):
+the gap pages, and the reference image is the reference's database. In one read transaction on the
+live database (its WAL index header pinned before and after the snapshot opened):
 
 1. Changed pages. Live pages are the latest -wal frame up to the snapshot's mxFrame, else the
    database file. The file is compared with the clone (stat alone when it was not written since
    the clone and no -wal was cloned; otherwise in 64 MiB chunks, then per page), and every page
    that differs must be one the live -wal holds and equal one of its frames (a checkpoint's copy)
    or, when the clone folded a -wal in, the page the file held under it. Changed pages are the
-   -wal pages whose latest frame differs from the clone.
+   -wal pages whose latest frame differs from the clone, and the gap pages.
 2. Owners. Every b-tree of sqlite_master is walked in both versions from its root, reading interior
    pages only (all leaves sit at one depth), plus the free lists and the overflow chains of every
    changed b-tree page's cells. Any change to a table writes a page it owns afterwards: a table
    whose tree has no changed page reads as in the reference. A changed page that nothing owns (it
    could be an overflow page of an unchanged row), page 1 beyond its header counters, the schema,
-   a page that moved between tables, a changed index of an otherwise untouched table, or a gap page
-   of a log, a projection keyed by thread or a kept table refuses.
+   or a changed index of an otherwise untouched table refuses; a page one table freed and another
+   took is in both tables' comparisons. Without the reference image (no reader, a reader lost
+   before the stop, or no confirmation) the gap's old version is unknown and a gap page of a log,
+   a projection keyed by thread or a kept table refuses.
 3. Tables. An untouched table copies its capture entries from the reference. A touched kept table
-   is compared row by row with the clone over the rowid ranges of its changed leaves (the other
-   leaves are the same pages in both trees), and its hashes are its kept lines with those rows
-   taken out and put in (kept_lines.merged_digest); a log may only gain rows above where it ended.
+   is compared row by row with the reference image (else the clone) over the rowid ranges of its
+   changed leaves (the other leaves are the same pages in both trees), and its hashes are its kept
+   lines with those rows taken out and put in (kept_lines.merged_digest); a log may only gain rows
+   above where it ended.
    Any other touched table is read again. Streams (threads, projects) whose projection rows changed
    are hashed again from their rows, and keep their order. The idle check, project and thread ids,
    the auth invariant and auth cells, the projection cursors, the log positions and the appended
@@ -47,20 +55,27 @@ The read never uses dbstat, so it works on SQLite builds without it. The -wal is
 WAL index publishes it (frames up to mxFrame, salts checked; checksums only for the old log, whose
 tail may be unpublished). It assumes that the database file changes only through SQLite while the
 services run: the old service's commits from the mark to its exit go through the held -wal, or a
-log created and removed again inside the stop window. Stdlib only.
+log created and removed again inside the stop window. Stdlib only; `python3 after_proof.py hold
+<database>` is the reader's child process.
 """
 if not __debug__:
     raise RuntimeError('Optimized Python is unsupported for owned-service safety checks')
 
+import contextlib
 import copy
 import hashlib
+import json
 import os
 import pathlib
 import re
+import select
+import signal
 import sqlite3
 import struct
+import subprocess
 import sys
 import urllib.parse
+import uuid
 
 import database_continuity as continuity
 import kept_lines
@@ -77,6 +92,9 @@ INDEX_VERSION = 3007000
 CHUNK_BYTES = 64 << 20
 FREE, SCHEMA = '(free)', '(schema)'
 TABLE_PAGES, INDEX_PAGES = (5, 13), (2, 10)
+READER_START_SECONDS, READER_STOP_SECONDS = 30, 10
+HOLD_SECONDS = 900  # A stop and clone that outlast it only cost the fast path: reader-lost, the full read decides.
+REFERENCE_PREFIX = '.page-proof-'
 
 
 class Refused(Exception):
@@ -161,24 +179,138 @@ class _Held:
         self.close()
 
 
-def mark(database):
+class _Reader:
+    """A read transaction on the live database in a child process (`python3 after_proof.py hold`),
+    from the mark until `stopped`. Its own process, so no descriptor this helper closes drops its
+    locks. While it reads, no checkpoint copies a frame past its snapshot into the database file,
+    the old service's last close cannot checkpoint and remove the log, and the log cannot restart,
+    unless the snapshot read the database file alone (read mark 0, every frame already copied): then
+    the first commit may restart it, and no later one can, as nothing is copied while it reads."""
+
+    def __init__(self, process, snapshot):
+        self.process, self.snapshot, self.answer = process, snapshot, None
+
+    @classmethod
+    def start(cls, database):
+        """A reader holding its snapshot, else None."""
+        try:
+            process = subprocess.Popen([sys.executable, '-B', '-E', '-s', os.path.abspath(__file__), 'hold', database],
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                       text=True, close_fds=True)
+        except OSError:
+            return None
+        reader = cls(process, None)
+        line = reader.line(READER_START_SECONDS)
+        try:
+            snapshot = json.loads(line) if line else None
+        except ValueError:
+            snapshot = None
+        if not isinstance(snapshot, dict) or 'mxFrame' not in snapshot:
+            reader.release()
+            return None
+        snapshot['salt'] = bytes.fromhex(snapshot['salt'])
+        snapshot['frameChecksum'] = tuple(snapshot['frameChecksum'])
+        reader.snapshot = snapshot
+        return reader
+
+    def line(self, seconds):
+        ready, _, _ = select.select([self.process.stdout], [], [], seconds)
+        return self.process.stdout.readline().strip() if ready else ''
+
+    def release(self):
+        """True when the reader still held its snapshot when let go. Idempotent; never raises."""
+        if self.answer is None:
+            self.answer = False
+            try:
+                if self.process.poll() is None:
+                    self.process.stdin.write('release\n')
+                    self.process.stdin.flush()
+                    self.answer = json.loads(self.line(READER_STOP_SECONDS) or '{}').get('held') is True
+            except (OSError, ValueError, AttributeError):
+                pass
+            try:
+                self.process.wait(timeout=READER_STOP_SECONDS)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            for stream in (self.process.stdin, self.process.stdout):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        return self.answer
+
+    def __del__(self):
+        self.release()
+
+
+def _hold(database):
+    """The child process of _Reader: opens a read transaction, prints the WAL index header of its
+    snapshot, and keeps it until a line (or the end) on stdin, or HOLD_SECONDS. The descriptors on
+    the database and -shm stay open to the end, so its SQLite locks stay too (live_database)."""
+    signal.alarm(HOLD_SECONDS)  # A helper that hangs never pins the log for long.
+    for suffix in ('', '-shm'):
+        live_database.hold_probe(database + suffix)
+    index_fd = live_database.held_probe(database + '-shm')
+    for _ in range(5):  # The header must not move while the snapshot opens: it is that snapshot's.
+        first = _index_header(index_fd)
+        db = live_database.connect(database)
+        db.execute('BEGIN')
+        db.execute('SELECT count(*) FROM sqlite_master').fetchall()
+        index = _index_header(index_fd)
+        if first is not None and index is not None and first['raw'] == index['raw']:
+            break
+        db.close()
+    else:
+        return 1
+    # With every frame copied into the file the snapshot may read the file alone (read mark 0).
+    print(json.dumps({'mxFrame': index['mxFrame'], 'salt': index['salt'].hex(), 'pageSize': index['pageSize'],
+                      'big': index['big'], 'nPage': index['nPage'], 'frameChecksum': list(index['frameChecksum']),
+                      'fromFile': index['nBackfill'] == index['mxFrame']}), flush=True)
+    sys.stdin.readline()
+    held = db.in_transaction and all(live_database.held_probe(database + suffix) is not None for suffix in ('', '-shm'))
+    print(json.dumps({'held': held}), flush=True)
+    db.close()
+    return 0
+
+
+def mark(database, reader=True):
     """Taken right before update.py's final check, while the old service runs: a descriptor held on
     its -wal (so its frames stay readable after the service's last close removes the file), the
-    generation's salts and the last frame the index published (every read that starts later sees
-    it; without the index, the second-to-last commit in the file, as read_delta reasons). None
+    generation's salts and the last frame of the snapshot after which the gap starts. With a
+    _Reader (`reader`), that snapshot is the reader's and stays readable from the files through the
+    stop (`stopped` builds it as the reference image when `confirm` showed it is the read before
+    the restart). Without one, the last frame the index published (every read that starts later
+    sees it; without the index, the second-to-last commit in the file, as read_delta reasons). None
     without a -wal: no proof after the restart."""
     database = os.path.abspath(str(database))
     try:
         fd = os.open(database + '-wal', os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
         return None
-    held = _Held(fd)
+    held, reading = _Held(fd), None
     try:
+        reading = _Reader.start(database) if reader else None
         header = _log_header(fd)
         if header is None:
             held.close()
+            if reading is not None:
+                reading.release()
             return None
         page_size, salt, big, running = header
+        if reading is not None:
+            snapshot = reading.snapshot
+            # A snapshot past frame 0 continues this file's generation, unless it read the file alone
+            # and a restart followed: then every frame in the file is after it.
+            if snapshot['pageSize'] in (0, page_size) and snapshot['big'] == big \
+                    and (snapshot['salt'] == salt or snapshot['fromFile'] or not snapshot['mxFrame']):
+                status, main = os.fstat(fd), os.stat(database)
+                return {'database': database, 'held': held, 'wal': [status.st_dev, status.st_ino], 'pageSize': page_size,
+                        'salt': snapshot['salt'], 'big': big, 'published': snapshot['mxFrame'],
+                        'running': snapshot['frameChecksum'], 'main': [main.st_dev, main.st_ino],
+                        'reader': reading, 'fromFile': snapshot['fromFile'], 'pages': snapshot['nPage'],
+                        'confirmed': False}
+            reading.release()
         # Read through the watermark's held probe only: opening -shm here and closing it would drop
         # this process's locks on it (live_database).
         probe = live_database.held_probe(database + '-shm')
@@ -198,68 +330,280 @@ def mark(database):
                 'main': [main.st_dev, main.st_ino]}
     except Exception:  # Never fails the update: no proof after the restart.
         held.close()
+        if reading is not None:
+            reading.release()
         return None
 
 
-def stopped(marked, clone, method):
+def confirm(marked, watermark, earlier, current):
+    """After update.py's final check. `earlier` is the watermark taken with the read the proof starts
+    from (base['before']), `current` the one that check ended on: the same object only when it read
+    nothing again. When it is, and nothing committed from `earlier` until after the mark, the reader's
+    snapshot holds exactly that read's rows and `stopped` may build it as the reference."""
+    if isinstance(marked, dict) and 'reader' in marked:
+        marked['confirmed'] = current is earlier and watermark.unchanged(earlier)
+
+
+def release(marked):
+    """Lets the mark's reader go (a failure before `stopped`). Idempotent; never raises."""
+    reader = marked.get('reader') if isinstance(marked, dict) else None
+    if reader is not None:
+        reader.release()
+
+
+def abandon(held):
+    """update.py's failure path: the mark's reader and the reference image go. Never raises."""
+    release(held)
+    discard(held)
+
+
+def discard(held):
+    """Removes the reference image `stopped` built. Idempotent; never raises."""
+    path = held.get('reference') if isinstance(held, dict) else None
+    if path:
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+
+
+def stopped(marked, clone, method, clonefile=None):
     """Right after backup_state_clone, before the new release starts: what the proof needs from
-    the stop, or {'reason'} when it cannot run. The old log must be the same generation; the frames
-    it gained after the mark are the gap. Every page the old log holds must read in the clone as its
-    last committed frame (the clone folds that log in), and when the -wal itself was cloned, the
-    pages the database file held under it are recorded (hashes only)."""
+    the stop, or {'reason'} when it cannot run. The old log must be the same generation (or, after a
+    snapshot that read the file alone, its one restart); the frames it gained after the mark are the
+    gap. Every page the old log holds must read in the clone as its last committed frame (the clone
+    folds that log in), and when the -wal itself was cloned, the pages the database file held under
+    it are recorded (hashes only).
+
+    With the mark's reader: the reference image is built when `confirm` allowed it (the clone, cloned
+    again with `clonefile`, its gap pages written back as the reader's snapshot holds them), the
+    reader is let go, and the log the old service could not fold in on its last close is folded into
+    the live database (_fold_live), so the new release starts as it does after a clean stop."""
     if not isinstance(marked, dict):
         return {'reason': 'no-log'}
-    held = marked['held']
+    reader = marked.get('reader')
     try:
         if method != 'clone':
-            return {'reason': 'not-a-clone'}
-        database, fd, page_size = marked['database'], held.fd, marked['pageSize']
-        try:
-            present = os.stat(database + '-wal')
-        except FileNotFoundError:
-            present = None
-        if present is not None and [present.st_dev, present.st_ino] != marked['wal']:
-            return {'reason': 'old-log-replaced'}
-        header, latest = _log_header(fd), {}
-        if header is None and os.fstat(fd).st_size == 0:
-            gap = _truncated_gap(database, marked)
-            if gap is None:
-                return {'reason': 'old-log-reset'}
-            present = None  # Checkpointed and emptied: the database file holds every frame.
-        elif header is None or header[0] != page_size or header[1] != marked['salt']:
-            return {'reason': 'old-log-reset'}
+            result = {'reason': 'not-a-clone'}
+        elif reader is not None:
+            result = _stopped_held(marked, clone, clonefile)
         else:
-            tail = _chain(fd, page_size, marked['salt'], marked['big'], marked['published'], marked['running'])
-            commits = [number for number, (_, size, _) in enumerate(tail, 1) if size]
-            committed = marked['published'] + (commits[-1] if commits else 0)
-            gap = sorted({page for page, _, _ in tail[:commits[-1]]}) if commits else []
-            for frame in range(1, committed + 1):
-                latest[_frame_page(fd, page_size, frame)] = frame
-        main = read_delta._main_file(database)
-        if main[:2] != marked['main']:
-            return {'reason': 'database-replaced'}
-        clone_fd = os.open(str(clone), os.O_RDONLY | os.O_NOFOLLOW)
-        try:
-            if _page_size(os.pread(clone_fd, 100, 0)) != page_size:
-                return {'reason': 'page-size'}
-            for page, frame in latest.items():
-                if os.pread(clone_fd, page_size, (page - 1) * page_size) != _frame_data(fd, page_size, frame):
-                    return {'reason': 'clone-differs-from-old-log'}
-        finally:
-            os.close(clone_fd)
-        under = {}
-        if present is not None:
-            with open(database, 'rb') as handle:
-                for page in latest:
-                    handle.seek((page - 1) * page_size)
-                    under[page] = hashlib.sha256(handle.read(page_size)).digest()
-        return {'clone': str(clone), 'gap': gap, 'walPresent': present is not None, 'mainUnder': under,
-                'main': main, 'pageSize': page_size}
+            result = _stopped(marked, clone)
     except Exception as error:  # Never fails the update: the full read decides.
-        return {'reason': 'old-log-unreadable' if isinstance(error, (OSError, struct.error, IndexError))
-                else 'error:' + type(error).__name__}
+        result = {'reason': 'old-log-unreadable' if isinstance(error, (OSError, struct.error, IndexError))
+                  else 'error:' + type(error).__name__}
     finally:
-        held.close()
+        marked['held'].close()
+    if reader is None:
+        return result
+    if not reader.release():
+        discard(result)
+        result = {'reason': 'reader-lost'}  # The snapshot may not have held the log through the stop.
+    folded = _fold_live(marked['database'])
+    if folded is not None and 'clone' in result:
+        if _folded_as_cloned(marked['database'], clone, marked['pageSize'], marked.get('logPages', ())):
+            result.update(walPresent=False, mainUnder={}, main=folded)
+        else:
+            discard(result)
+            result = {'reason': 'fold-differs'}
+    return result
+
+
+def _stopped(marked, clone):
+    database, fd, page_size = marked['database'], marked['held'].fd, marked['pageSize']
+    try:
+        present = os.stat(database + '-wal')
+    except FileNotFoundError:
+        present = None
+    if present is not None and [present.st_dev, present.st_ino] != marked['wal']:
+        return {'reason': 'old-log-replaced'}
+    header, latest = _log_header(fd), {}
+    if header is None and os.fstat(fd).st_size == 0:
+        gap = _truncated_gap(database, marked)
+        if gap is None:
+            return {'reason': 'old-log-reset'}
+        present = None  # Checkpointed and emptied: the database file holds every frame.
+    elif header is None or header[0] != page_size or header[1] != marked['salt']:
+        return {'reason': 'old-log-reset'}
+    else:
+        tail = _chain(fd, page_size, marked['salt'], marked['big'], marked['published'], marked['running'])
+        commits = [number for number, (_, size, _) in enumerate(tail, 1) if size]
+        committed = marked['published'] + (commits[-1] if commits else 0)
+        gap = sorted({page for page, _, _ in tail[:commits[-1]]}) if commits else []
+        for frame in range(1, committed + 1):
+            latest[_frame_page(fd, page_size, frame)] = frame
+    return _checked(marked, clone, gap, latest, present is not None)
+
+
+def _checked(marked, clone, gap, latest, present):
+    """The record `stopped` returns, once the clone holds every committed frame of the old log."""
+    database, fd, page_size = marked['database'], marked['held'].fd, marked['pageSize']
+    main = read_delta._main_file(database)
+    if main[:2] != marked['main']:
+        return {'reason': 'database-replaced'}
+    clone_fd = os.open(str(clone), os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        if _page_size(os.pread(clone_fd, 100, 0)) != page_size:
+            return {'reason': 'page-size'}
+        for page, frame in latest.items():
+            if os.pread(clone_fd, page_size, (page - 1) * page_size) != _frame_data(fd, page_size, frame):
+                return {'reason': 'clone-differs-from-old-log'}
+    finally:
+        os.close(clone_fd)
+    under = {}
+    if present:
+        with open(database, 'rb') as handle:
+            for page in latest:
+                handle.seek((page - 1) * page_size)
+                under[page] = hashlib.sha256(handle.read(page_size)).digest()
+    return {'clone': str(clone), 'gap': gap, 'walPresent': present, 'mainUnder': under,
+            'main': main, 'pageSize': page_size}
+
+
+def _stopped_held(marked, clone, clonefile):
+    """stopped with the reader: the log kept every frame since its snapshot (or restarted once after a
+    snapshot that read the file alone), so the gap is every committed frame after it, and each gap
+    page as the snapshot read it is its last frame up to the snapshot, else the database file's page
+    (no checkpoint copied a later frame into the file while the reader read)."""
+    database, fd, page_size = marked['database'], marked['held'].fd, marked['pageSize']
+    try:
+        present = os.stat(database + '-wal')
+    except FileNotFoundError:
+        return {'reason': 'old-log-reset'}
+    if [present.st_dev, present.st_ino] != marked['wal']:
+        return {'reason': 'old-log-replaced'}
+    header = _log_header(fd)
+    if header is None or header[0] != page_size or header[2] != marked['big']:
+        return {'reason': 'old-log-reset'}
+    published = marked['published']
+    if published and header[1] == marked['salt']:
+        start, running = published, marked['running']
+    elif not published or marked['fromFile']:
+        start, running = 0, header[3]  # Every frame in this generation is after the snapshot.
+    else:
+        return {'reason': 'old-log-reset'}
+    tail = _chain(fd, page_size, header[1], header[2], start, running)
+    commits = [number for number, (_, size, _) in enumerate(tail, 1) if size]
+    committed = start + (commits[-1] if commits else 0)
+    gap = sorted({page for page, _, _ in tail[:commits[-1]]}) if commits else []
+    latest, snapshot = {}, {}
+    for frame in range(1, committed + 1):
+        page = _frame_page(fd, page_size, frame)
+        latest[page] = frame
+        if frame <= start:
+            snapshot[page] = frame
+    marked['logPages'] = sorted(latest)  # What _fold_live writes into the live file.
+    result = _checked(marked, clone, gap, latest, True)
+    if 'clone' in result and marked.get('confirmed') and clonefile is not None:
+        try:
+            result['reference'] = _reference_image(marked, clone, clonefile, gap, snapshot)
+        except Refused as refusal:
+            result['referenceRefused'] = str(refusal)
+    return result
+
+
+def _reference_image(marked, clone, clonefile, gap, snapshot):
+    """The database as the reader's snapshot holds it, at a new path beside the backups: an APFS
+    clone of the clone (no data written) with every gap page written back as the snapshot read it
+    and the file cut to the snapshot's size. Raises Refused."""
+    database, fd, page_size = marked['database'], marked['held'].fd, marked['pageSize']
+    main_fd = os.open(database, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        pages = marked['pages'] or os.fstat(main_fd).st_size // page_size
+        if not pages or pages * page_size > os.stat(str(clone)).st_size:
+            raise Refused('reference-size')
+        folder = os.path.dirname(os.path.dirname(os.path.abspath(str(clone))))
+        _discard_stale_references(folder)
+        path = os.path.join(folder, '%s%d-%s.sqlite' % (REFERENCE_PREFIX, os.getpid(), uuid.uuid4().hex))
+        marked['reference'] = path  # update.py's failure path discards the mark until `stopped` returns.
+        if clonefile(os.fsencode(os.path.abspath(str(clone))), os.fsencode(path), 0) != 0:
+            raise Refused('reference-clone')
+        try:
+            out = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+            try:
+                for page in gap:
+                    if page > pages:
+                        continue  # Added after the snapshot.
+                    data = (_frame_data(fd, page_size, snapshot[page]) if page in snapshot
+                            else os.pread(main_fd, page_size, (page - 1) * page_size))
+                    if len(data) != page_size or os.pwrite(out, data, (page - 1) * page_size) != page_size:
+                        raise Refused('reference-write')
+                os.ftruncate(out, pages * page_size)
+                header = os.pread(out, 100, 0)
+            finally:
+                os.close(out)
+            counter, size, valid_for = (struct.unpack_from('>I', header, offset)[0] for offset in (24, 28, 92))
+            if counter == valid_for and size != pages:
+                raise Refused('reference-size')
+            return path
+        except BaseException:
+            discard(marked)
+            raise
+    finally:
+        os.close(main_fd)
+
+
+def _discard_stale_references(folder):
+    """Reference images a helper that died left behind (its process gone)."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        match = re.fullmatch(re.escape(REFERENCE_PREFIX) + r'([0-9]+)-[0-9a-f]{32}\.sqlite', name)
+        if match is None or int(match.group(1)) == os.getpid():
+            continue
+        try:
+            os.kill(int(match.group(1)), 0)
+        except ProcessLookupError:
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(folder, name))
+        except OSError:
+            pass
+
+
+def _folded_as_cloned(database, clone, page_size, pages):
+    """After _fold_live: the live file has the clone's size and, on every page the old log wrote, its
+    content. A fold that trusted an index the log's last commit never reached (another connection
+    kept the -shm through the stop) leaves the live file short of the clone, which folded the log
+    alone. Nothing of this helper holds a lock on the live database here."""
+    try:
+        if os.stat(database).st_size != os.stat(str(clone)).st_size:
+            return False
+        live = os.open(database, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            cloned = os.open(str(clone), os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                return all(os.pread(live, page_size, (page - 1) * page_size)
+                           == os.pread(cloned, page_size, (page - 1) * page_size) for page in pages)
+            finally:
+                os.close(cloned)
+        finally:
+            os.close(live)
+    except OSError:
+        return False
+
+
+def _fold_live(database):
+    """The old service could not fold its log into the database on its last close while the reader
+    read; with the service stopped and the reader gone, this does what that close does: a
+    TRUNCATE checkpoint, then the close of the last connection. Returns read_delta._main_file
+    afterwards, or None (the new release then starts on the log, as after an unclean stop). Only
+    while no service runs: update.py calls it between the clone and the restart."""
+    try:
+        uri = 'file:' + urllib.parse.quote(database, safe='/') + '?mode=rw'
+        db = sqlite3.connect(uri, uri=True, timeout=0, isolation_level=None)
+        try:
+            if db.execute('PRAGMA journal_mode').fetchone()[0] != 'wal':
+                return None
+            busy = db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0]
+        finally:
+            db.close()
+        try:
+            size = os.stat(database + '-wal').st_size
+        except FileNotFoundError:
+            size = 0
+        return read_delta._main_file(database) if busy == 0 and size == 0 else None
+    except (OSError, sqlite3.Error):
+        return None
 
 
 def _truncated_gap(database, marked):
@@ -319,6 +663,7 @@ def decide(state, held, kept, reference, since, include_auth, progress, lap):
         progress['afterProof'] = record
         if kept is not None:
             kept.clear()
+        discard(held)
 
 
 def prove(state, held, kept, reference, since, include_auth):
@@ -365,7 +710,8 @@ class _Proof:
         self.database, self.held, self.rows, self.capture = database, held, rows, capture
         self.since, self.include_auth = since, include_auth
         self.kept_tables = kept.tables
-        self.probes, self.db, self.clone_db, self.wal_fd, self.clone_fd = [], None, None, None, None
+        self.reference = held.get('reference')  # The database as the read the proof starts from saw it.
+        self.probes, self.db, self.clone_db, self.wal_fd, self.clone_fd, self.stop_fd = [], None, None, None, None, None
         self.cache, self.owners, self.overflow = {}, {'clone': {}, 'live': {}}, {'clone': set(), 'live': set()}
         self.leaves, self.ranges, self.kinds = {}, {}, {}
         self.explained = self.leaves_verified = 0
@@ -374,9 +720,8 @@ class _Proof:
         for connection in (self.db, self.clone_db):
             if connection is not None:
                 connection.close()
-        for fd in (self.wal_fd, self.clone_fd):
-            if fd is not None:
-                os.close(fd)
+        for fd in {self.wal_fd, self.clone_fd, self.stop_fd} - {None}:
+            os.close(fd)
         for path in self.probes:  # Only after the connection: closing a probe drops its locks.
             live_database.release_probe(path)
 
@@ -396,7 +741,8 @@ class _Proof:
             raise Refused('log-restarted')  # Frames read above may be another generation's.
         record = {'mode': 'pages', 'changedPages': len(self.changed | self.gap), 'walPages': len(self.frames),
                   'mainPagesExplained': self.explained, 'touchedTables': sorted(touched),
-                  'reusedTables': len(self.tables) - len(touched), 'leavesVerified': self.leaves_verified}
+                  'reusedTables': len(self.tables) - len(touched), 'leavesVerified': self.leaves_verified,
+                  'gapPages': len(self.gap), 'referenceImage': bool(self.reference)}
         return reads, record
 
     # Pages of the two versions.
@@ -451,21 +797,38 @@ class _Proof:
                 raise Refused('page-beyond-file')
 
     def open_clone(self):
-        clone = self.held['clone']
-        self.clone_fd = os.open(clone, os.O_RDONLY | os.O_NOFOLLOW)
-        header = os.pread(self.clone_fd, 100, 0)
-        if _page_size(header) != self.page_size or self.held['pageSize'] != self.page_size:
+        """The clone (the database at the stop, `stop_*`) and the old version the proof compares the
+        live database with (`clone_*`): the reference image when there is one, else the clone."""
+        self.stop_fd, self.stop_pages, header = self.open_version(self.held['clone'])
+        if self.held['pageSize'] != self.page_size:
             raise Refused('page-size')
         self.usable = self.page_size - header[20]
-        size = os.fstat(self.clone_fd).st_size
-        if size % self.page_size:
-            raise Refused('clone-size')
-        self.clone_pages = size // self.page_size
-        if self.pages < self.clone_pages:
+        if self.reference:
+            self.clone_fd, self.clone_pages, reference = self.open_version(self.reference)
+            if reference[20] != header[20] or self.clone_pages > self.stop_pages:
+                raise Refused('reference-size')
+        else:
+            self.clone_fd, self.clone_pages = self.stop_fd, self.stop_pages
+        if self.pages < self.stop_pages:
             raise Refused('database-shrank')
-        self.clone_db = sqlite3.connect('file:' + urllib.parse.quote(os.path.abspath(clone), safe='/') + '?mode=ro&immutable=1',
+        old = self.reference or self.held['clone']
+        self.clone_db = sqlite3.connect('file:' + urllib.parse.quote(os.path.abspath(old), safe='/') + '?mode=ro&immutable=1',
                                         uri=True)
         self.clone_db.execute('PRAGMA query_only=ON')
+
+    def open_version(self, path):
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            header = os.pread(fd, 100, 0)
+            if _page_size(header) != self.page_size:
+                raise Refused('page-size')
+            size = os.fstat(fd).st_size
+            if size % self.page_size:
+                raise Refused('clone-size')
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd, size // self.page_size, header
 
     def live_page(self, number):
         frames = self.frames.get(number)
@@ -477,27 +840,30 @@ class _Proof:
             raise Refused('short-read')
         return data
 
-    def clone_page(self, number):
-        data = os.pread(self.clone_fd, self.page_size, (number - 1) * self.page_size)
+    def clone_page(self, number, fd=None):
+        data = os.pread(self.clone_fd if fd is None else fd, self.page_size, (number - 1) * self.page_size)
         if len(data) != self.page_size:
             raise Refused('short-read')
         return data
 
+    def stop_page(self, number):
+        return self.clone_page(number, self.stop_fd)
+
     def page(self, version, number):
         if not 1 <= number <= (self.pages if version == 'live' else self.clone_pages):
             raise Refused('page-outside-database')
-        if number in self.changed:
-            return self.live_page(number) if version == 'live' else self.clone_page(number)
+        if version == 'live':
+            return self.live_page(number) if number in self.live_changed else self.stop_page(number)
         return self.clone_page(number)
 
     def compare_main(self):
         """The changed pages; every page of the database file that differs from the clone explained."""
         quick = not self.held['walPresent'] and read_delta._main_file(self.database) == self.held['main']
         if not quick:
-            limit = min(self.pages, self.clone_pages, os.fstat(self.main_fd).st_size // self.page_size) * self.page_size
+            limit = min(self.pages, self.stop_pages, os.fstat(self.main_fd).st_size // self.page_size) * self.page_size
             for offset in range(0, limit, CHUNK_BYTES):
                 length = min(CHUNK_BYTES, limit - offset)
-                main, clone = os.pread(self.main_fd, length, offset), os.pread(self.clone_fd, length, offset)
+                main, clone = os.pread(self.main_fd, length, offset), os.pread(self.stop_fd, length, offset)
                 if len(main) != length or len(clone) != length:
                     raise Refused('short-read')
                 if main == clone:
@@ -506,14 +872,17 @@ class _Proof:
                     data = main[start:start + self.page_size]
                     if data != clone[start:start + self.page_size]:
                         self.explain((offset + start) // self.page_size + 1, data)
-        for number in range(self.clone_pages + 1, self.pages + 1):
+        for number in range(self.stop_pages + 1, self.pages + 1):
             if number not in self.frames:
                 raise Refused('main-page-unexplained')  # The file grew past the clone without the log.
-        self.changed = set()
+        self.live_changed = set()
         for number in self.frames:
-            if number <= self.pages and (number > self.clone_pages or self.live_page(number) != self.clone_page(number)):
-                self.changed.add(number)
+            if number <= self.pages and (number > self.stop_pages or self.live_page(number) != self.stop_page(number)):
+                self.live_changed.add(number)
         self.gap = set(self.held['gap'])
+        # With the reference image the gap pages are changed pages like any other: their old version
+        # is readable. Without it they are only known to differ from the clone somewhere.
+        self.changed = self.live_changed | self.gap if self.reference else self.live_changed
         self.paged = self.changed | self.gap
 
     def explain(self, number, data):
@@ -541,7 +910,7 @@ class _Proof:
         self.structure = continuity.schema(self.db)
         if continuity.encoded(self.structure) != continuity.encoded(self.capture['schema']):
             raise Refused('schema')
-        if 1 in self.gap:
+        if 1 in self.gap and not self.reference:
             raise Refused('gap-touches-schema')  # A commit in the gap that grew the file or changed the schema.
         live, clone = (self.page(version, 1) for version in ('live', 'clone'))
         if live[:24] != clone[:24] or live[40:92] != clone[40:92] or live[100:] != clone[100:]:
@@ -693,12 +1062,11 @@ class _Proof:
                     raise Refused('schema')
                 if owner == SCHEMA:
                     continue
-                other = self.owners['live' if version == 'clone' else 'clone'].get(number)
-                if number in self.changed and other not in (None, FREE, owner) \
-                        and self.tree_table.get(other) != self.tree_table[owner]:
-                    raise Refused('page-moved')
+                # A page freed by one table and reused by another (an overflow chain a rewritten row
+                # gave up, taken by an appended event) is changed in both: each table's own changed
+                # pages put the rows on it in that table's comparison, so both are read as touched.
                 (indexed if self.tree_kind[owner] == 'index' else tables).add(self.tree_table[owner])
-                if version == 'clone' and number in self.gap:
+                if version == 'clone' and number in self.gap and not self.reference:
                     self.gap_tables.add(self.tree_table[owner])
         if indexed - tables:
             raise Refused('index-only')
@@ -853,3 +1221,9 @@ class _Proof:
                 return position, min(rowids)
         return None
 
+
+
+if __name__ == '__main__':
+    if len(sys.argv) == 3 and sys.argv[1] == 'hold':
+        sys.exit(_hold(os.path.abspath(sys.argv[2])))
+    sys.exit('usage: after_proof.py hold <database>')

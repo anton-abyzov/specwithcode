@@ -5,7 +5,17 @@ import { NETWORK_BLOCKING_HINT } from "./network.ts";
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/**
+ * Why a request to the server on this machine did not go: it has no session
+ * while it is busy or restarting (an update), and catches up on its own. It is
+ * never "not connected", which would tell someone on that Mac it is offline.
+ */
+export const THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE =
+  "SpecWithCode on this Mac is busy. Try again once it catches up.";
+
 const TRANSPORT_ERROR_PATTERNS = [
+  // Transient like "<machine> is not connected." below; the busy banner already says it.
+  new RegExp(`^${escapeRegExp(THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE)}$`),
   /\bSocketCloseError\b/i,
   /\bSocketOpenError\b/i,
   /\bSocketReadError\b/,

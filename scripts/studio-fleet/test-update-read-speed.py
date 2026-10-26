@@ -7,9 +7,9 @@ calls, are frozen below and must produce byte-identical proofs, auth, carried ro
 on synthetic databases, among them logs longer than one hash chunk and a since nothing can be
 carried from, because older and newer helpers compare each other's proofs. Then: idle work is
 refused before any table is read in full and in the read's own snapshot, the capture reads each
-table once and the thread-keyed projections once more, row by row (rows appended or not), no
-read peaks more than 5% above origin/main's memory, a database with two faults is refused as
-origin/main refused it except where the table names and the idle queries now come first or a
+table once, the thread-keyed projections too (rows appended or not), no read peaks more than 5%
+above origin/main's memory and a projection-heavy read or a table's row hash peaks well below
+it, a database with two faults is refused as origin/main refused it except where the table names and the idle queries now come first or a
 fault ended the read transaction, and a fault only the single scan meets gives origin/main's
 answer (also after a migration widened tables). A database with a virtual table is read in
 origin/main's order (test-update-read-virtual.py); the restore clone and the single prestate
@@ -24,6 +24,7 @@ import inspect
 import itertools
 import json
 import pathlib
+import random
 import re
 import shutil
 import sqlite3
@@ -652,8 +653,27 @@ class JoinedDigest(unittest.TestCase):
     def test_any_chunk_size_gives_the_same_hash(self):
         lines = ['ü☃😀', '', 'abc', 'x' * 10, '😀']
         expected = hashlib.sha256('\n'.join(lines).encode()).hexdigest()
-        for size in (1, 2, 3, 5, 7, 64):
+        for size in (0, 1, 2, 3, 5, 7, 64):
             self.assertEqual(continuity.joined_digest(lines, size), expected, size)
+
+    def test_update_joined_continues_a_hash_with_the_joined_text(self):
+        """ThreadRows feeds each table's lines of a stream into that stream's running hash."""
+        for lines in ([], [''], ['ü☃😀', '', 'abc'], ['x' * (2 * CHUNK + 3), 'y', 'z' * CHUNK]):
+            with self.subTest(count=len(lines)):
+                hasher = hashlib.sha256(b'prefix\n')
+                continuity.update_joined(hasher, lines)
+                self.assertEqual(hasher.hexdigest(), hashlib.sha256(('prefix\n' + '\n'.join(lines)).encode()).hexdigest())
+
+    def test_runs_hold_about_size_characters_and_a_long_line_alone(self):
+        lines, runs, sha256 = ['ab', 'cd', 'e' * 9, '', 'f', 'gh'], [], hashlib.sha256
+        class Recorder:
+            def __init__(self): self.real = sha256()
+            def update(self, data): runs.append(data); self.real.update(data)
+            def hexdigest(self): return self.real.hexdigest()
+        with patch.object(continuity.hashlib, 'sha256', Recorder):
+            value = continuity.joined_digest(lines, 4)
+        self.assertEqual(value, hashlib.sha256('\n'.join(lines).encode()).hexdigest())
+        self.assertEqual(runs, [b'ab\ncd', b'\n', b'eeeeeeeee', b'\n', b'\nf\ngh'])
 
 
 SELECT_ALL = re.compile(r'^\s*SELECT (?:rowid, )?\* FROM "?([A-Za-z0-9_]+)"?\s*$')
@@ -690,10 +710,10 @@ TABLE_TEXT = "SELECT name, CAST(sql AS BLOB) FROM sqlite_master WHERE type='tabl
 
 
 def single_scan_reads(proof, capture):
-    """Whole-table reads of a read with the capture: one each, and one more, row by row, of
-    each thread-keyed projection (the activity hashes), which is not kept in memory."""
-    threads = set(proof[update.ACTIVITY_KEY]['threadTables'])
-    return {table: 2 if table in threads else 1 for table in capture['summary']['tables']}
+    """Whole-table reads of a read with the capture: one each, the thread-keyed projections
+    too, whose activity hashes come from that scan (update_read.ThreadRows)."""
+    assert proof[update.ACTIVITY_KEY]['threadTables']
+    return {table: 1 for table in capture['summary']['tables']}
 
 
 class ReadCost(unittest.TestCase):
@@ -1066,8 +1086,8 @@ def traced_peak(read, *args):
 
 class PeakMemory(unittest.TestCase):
     """The single scan keeps only the rows it hands over (auth_sessions and the projection
-    cursors), reads the thread-keyed projections again row by row, and lets each table's rows
-    go before the next table is read, and the idle check's run statuses go before any of it:
+    cursors), hashes the thread-keyed projections per stream as it scans them, and lets each
+    table's rows go before the next table is read, and the idle check's run statuses go before any of it:
     no read peaks more than 5% above origin/main's, and each gives origin/main's answer."""
 
     def setUp(self):
@@ -1123,6 +1143,166 @@ class PeakMemory(unittest.TestCase):
         for since in (None, proof):
             with self.subTest(since=since is not None):
                 self.assert_within_origin(state, since, False)
+
+
+# Thread-keyed projections whose names sort around projection_threads, one a prefix of others
+# ('"' sorts before '_' and 's'), rows of one stream in several tables, the same row in two
+# tables, streams keyed by text, an integer, a real, a BLOB and NULL, a project-keyed table and
+# an empty one.
+PROJECTIONS = [
+    'CREATE TABLE projection_thread(thread_id, v)',
+    'CREATE TABLE projection_thread_items(thread_id TEXT, v)',
+    'CREATE TABLE projection_threadx(thread_id, v)',
+    'CREATE TABLE orchestration_v2_projection_steps(project_id TEXT, thread_id TEXT, v)',
+    'CREATE TABLE projection_board(project_id TEXT, v)',
+    'CREATE TABLE projection_unused(thread_id TEXT)',
+    "INSERT INTO projection_thread VALUES ('t-wait', 'a'), ('t-wait', 'a'), (7, x'00'), (NULL, 1), (2.5, 'r')",
+    "INSERT INTO projection_thread_items VALUES ('t-wait', 'a'), ('t-idle', 'b'), (x'01', 'c'), ('t-wait', '')",
+    "INSERT INTO projection_threadx VALUES ('t-wait', 'z'), (7, 7), ('t-new', NULL)",
+    "INSERT INTO orchestration_v2_projection_steps VALUES ('p1', 't-wait', 1), ('p1', NULL, 2), ('p2', 't-idle', 3)",
+    "INSERT INTO projection_board VALUES ('p1', 'x'), ('p1', 'x'), (NULL, 'y')",
+]
+
+
+class ProjectionsReadOnce(unittest.TestCase):
+    """The thread-keyed projections are hashed from the capture's one scan (ThreadRows): every
+    proof, auth, carried and capture field equals origin/main's and this release's own read in
+    the original order, and the row hashes equal the hash of the joined, encoded lines."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='studio-update-projections-once-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+
+    def original_order(self, state, include_auth, since, widen_from):
+        db = live_database.connect(state / 'statev2.sqlite')
+        try:
+            db.execute('BEGIN')
+            return outcome(lambda: update_read._read_tables(db, table_names(db), include_auth, since, True, widen_from))
+        finally:
+            db.close()
+
+    def test_every_field_matches_origin_main_and_the_original_order(self):
+        checked = 0
+        for variant in ('without-rowid', 'rowid-column'):
+            state = self.root / variant
+            build(state, variant)
+            updater_base.mutate_state(state, *PROJECTIONS)
+            proof, _, _, capture = REFERENCE['_read_state'](state, False, None, True, None)
+            threads = proof[update.ACTIVITY_KEY]['threadSha256']
+            self.assertIn('#7', threads)
+            self.assertIn('#null', threads)
+            updater_base.mutate_state(state, *CHECK, *APPEND, "INSERT INTO projection_thread_items VALUES ('t-new', 'd')",
+                                      "UPDATE projection_threadx SET v='y' WHERE thread_id='t-wait'")
+            for include_auth, since, widen_from in itertools.product((False, True), (None, proof),
+                                                                     (None, capture['schema']['columns'])):
+                label = (variant, include_auth, since is not None, widen_from is not None)
+                with self.subTest(label=label), traced_reads() as statements:
+                    old = outcome(REFERENCE['_read_state'], state, include_auth, since, True, widen_from)
+                    del statements[:]
+                    new = read_once(self, state, include_auth, since, True, widen_from, label)
+                    reads = whole_table_reads(statements)
+                    self.assertEqual(old[0], 'ok', old)
+                    self.assertEqual(frozen(new), frozen(old))
+                    self.assertEqual(sorted_json(new), sorted_json(old))
+                    self.assertEqual(frozen(self.original_order(state, include_auth, since, widen_from)), frozen(new))
+                    activity = new[1][0][update.ACTIVITY_KEY]
+                    self.assertLessEqual({'orchestration_v2_projection_steps', 'projection_board', 'projection_thread',
+                                          'projection_thread_items', 'projection_threadx', 'projection_unused'},
+                                         set(activity['threadTables']))
+                    self.assertEqual({table: reads.get(table) for table in activity['threadTables']},
+                                     dict.fromkeys(activity['threadTables'], 1))
+                    checked += 1
+        self.assertEqual(checked, 16)
+
+    def test_streams_hash_as_origin_main_over_random_tables_and_keys(self):
+        """Seeded: table names that are prefixes of others or differ in a digit or '_', several
+        stream columns, mixed key types and rows longer than a run hash as origin/main's own read."""
+        rnd, checked = random.Random(1074), 0
+        for trial in range(120):
+            db = sqlite3.connect(':memory:')
+            try:
+                names = set()
+                while len(names) < rnd.randint(1, 7):
+                    names.add(rnd.choice(('projection_', 'x_projection_', 'orchestration_v2_projection_', 'other_'))
+                              + ''.join(rnd.choice('a0_z9') for _ in range(rnd.randint(0, 3))))
+                for name in sorted(names):
+                    db.execute('CREATE TABLE %s(%s, w)' % (name, rnd.choice(('thread_id', 'project_id', 'v'))))
+                    db.executemany('INSERT INTO %s VALUES (?, ?)' % name, [
+                        (rnd.choice(('t1', 't1_', '', None, 3, 2.5, b'\x00', '#3', '\u00fc')),
+                         rnd.choice(('a', '', None, 1, b'', '"', 'x' * rnd.choice((5, CHUNK + 7)))))
+                        for _ in range(rnd.randint(0, 10))])
+                db.commit()
+                tables = table_names(db)
+                threads = update_read.ThreadRows(db)
+                for name in tables:
+                    threads.visit(name, list(db.execute('SELECT * FROM ' + name)))
+                self.assertEqual(update_read.append_only_activity(db, tables, {}, threads),
+                                 REFERENCE['append_only_activity'](db, tables), (trial, tables))
+                checked += bool(threads.tables)
+            finally:
+                db.close()
+        self.assertGreater(checked, 60)
+
+    def test_a_visit_out_of_name_order_is_refused_and_the_original_order_answers(self):
+        state = self.root / 'out-of-order'
+        build(state, 'without-rowid')
+        updater_base.mutate_state(state, *PROJECTIONS)
+        db = live_database.connect(state / 'statev2.sqlite')
+        try:
+            rows = update_read.ThreadRows(db)
+            rows.visit('projection_threadx', [])
+            with self.assertRaisesRegex(AssertionError, '^Tables visited out of name order$'):
+                rows.visit('projection_thread', [])
+        finally:
+            db.close()
+        real = continuity.capture_connection
+        def reversed_visits(db, widen_from=None, **kwargs):
+            if not kwargs: return real(db, widen_from)
+            seen = []
+            capture = real(db, widen_from, visit=lambda table, rows: seen.append((table, rows)), prefixes=kwargs['prefixes'])
+            for table, rows in reversed(seen): kwargs['visit'](table, rows)
+            return capture
+        expected = frozen(REFERENCE['_read_state'](state, False, None, True))
+        with patch.object(continuity, 'capture_connection', side_effect=reversed_visits), \
+                patch.object(update_read, '_read_tables', wraps=update_read._read_tables) as tables:
+            self.assertEqual(frozen(update._read_state(state, False, None, True)), expected)
+        self.assertEqual([call.kwargs for call in tables.call_args_list], [{'once': True}, {}])
+
+    def test_a_projection_heavy_read_peaks_well_below_origin_main(self):
+        """origin/main held every thread-keyed projection's lines at once, after the capture
+        had held its rows, its lines, their joined text and that text encoded."""
+        state = self.root / 'projections'
+        heavy(state, projections=1500)
+        proof = update._read_state(state, False, None, True)[0]
+        REFERENCE['_read_state'](state, False, None, True)
+        for since in (None, proof):
+            with self.subTest(since=since is not None):
+                (old, expected), (new, value) = (traced_peak(REFERENCE['_read_state'], state, False, since, True),
+                                                 traced_peak(update._read_state, state, False, since, True))
+                self.assertLess(new, old * 0.7, 'peak %d bytes, origin/main %d' % (new, old))
+                self.assertEqual(frozen(value), frozen(expected))
+
+    def test_row_hashes_match_the_joined_text_and_peak_below_origin_main(self):
+        reference = REFERENCE_CONTINUITY_MODULE
+        tables = {'empty': [], 'one-empty-text': [('',)], 'typed': [(None,), (1,), (1.0,), ('ü☃😀',), (b'\x00',), (b'',)],
+                  'long': [(index, 'x' * 1000 + str(index)) for index in range(4000)],
+                  'one-long-row': [('y' * (3 * CHUNK),), ('a',), ('z' * CHUNK,)]}
+        for name, rows in tables.items():
+            with self.subTest(name=name):
+                typed, legacy = sorted(map(continuity.typed_line, rows)), sorted(map(continuity.legacy_line, rows))
+                self.assertEqual(continuity.typed_rows_hash(rows), hashlib.sha256('\n'.join(typed).encode()).hexdigest())
+                self.assertEqual(continuity.legacy_rows_hash(rows), hashlib.sha256('\n'.join(legacy).encode()).hexdigest())
+                self.assertEqual(continuity.typed_rows_hash(rows), reference.typed_rows_hash(rows))
+                self.assertEqual(continuity.legacy_rows_hash(rows), reference.legacy_rows_hash(rows))
+        rows = tables['long']
+        for new, old in ((continuity.typed_rows_hash, reference.typed_rows_hash),
+                         (continuity.legacy_rows_hash, reference.legacy_rows_hash)):
+            with self.subTest(hash=new.__name__):
+                (old_peak, expected), (new_peak, value) = traced_peak(old, rows), traced_peak(new, rows)
+                self.assertEqual(value, expected)
+                # origin/main held the joined text and its encoded copy; now one run at a time.
+                self.assertLess(new_peak, old_peak * 0.7, (new_peak, old_peak))
 
 
 class IdleSnapshot(unittest.TestCase):

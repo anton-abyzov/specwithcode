@@ -1,4 +1,8 @@
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
+
+import { THIS_MACHINE_NOT_SENT } from "../../lib/transientSendRetry";
 
 import {
   QUESTION_ALREADY_SETTLED,
@@ -19,6 +23,7 @@ import {
   settledSendReason,
   settleQuestionAnswer,
   settleQuestionDismiss,
+  questionSendResult,
   shownAnswerProblem,
   type QuestionSendResult,
 } from "./questionSendOutcome";
@@ -388,5 +393,29 @@ describe("settledSendReason", () => {
       pendingRequestIds: ["ask-1", "ask-2"],
     });
     expect(waiting).toEqual({ threadId: "thread-1", requestId: "ask-1", text: "Network error" });
+  });
+});
+
+describe("questionSendResult", () => {
+  const notConnected = AsyncResult.failure(
+    Cause.fail(
+      Object.assign(new Error("Anton's MacBook M4MAX is not connected."), {
+        _tag: "EnvironmentRpcUnavailableError",
+      }),
+    ),
+  );
+
+  it("says the app's own machine is busy when it did not take the answer", () => {
+    expect(questionSendResult(notConnected, "Failed to submit user input.", true)).toEqual({
+      kind: "refused",
+      message: THIS_MACHINE_NOT_SENT,
+    });
+  });
+
+  it("keeps another machine's words", () => {
+    expect(questionSendResult(notConnected, "Failed to submit user input.")).toEqual({
+      kind: "refused",
+      message: "Anton's MacBook M4MAX is not connected.",
+    });
   });
 });

@@ -9,8 +9,11 @@ cell values; private auth cells stay in the separate auth structure.
 if not __debug__:
     raise RuntimeError('Optimized Python is unsupported for database preservation checks')
 
+import array
+import bisect
 import copy
 import hashlib
+import itertools
 import json
 import operator
 import pathlib
@@ -46,26 +49,36 @@ def legacy_line(row):
 
 
 def typed_rows_hash(rows, keep=None):
-    """`keep` (kept_lines.Kept.keeper) is handed the sorted lines and returns this same hash."""
-    if keep is not None:
-        return keep(sorted(typed_line(row) for row in rows))
-    return digest('\n'.join(sorted(typed_line(row) for row in rows)))
+    """`keep` (kept_lines.Kept.keeper) is handed the sorted lines and returns this same hash.
+    The joined text is hashed without encoding it whole (joined_digest)."""
+    return (keep or joined_digest)(sorted(typed_line(row) for row in rows))
 
 
 def legacy_rows_hash(rows, keep=None):
-    """The protected-row hash update.rows_snapshot publishes (BLOBs as hex strings)."""
-    if keep is not None:
-        return keep(sorted(legacy_line(row) for row in rows))
-    return digest('\n'.join(sorted(legacy_line(row) for row in rows)))
+    """The protected-row hash update.rows_snapshot publishes (BLOBs as hex strings), as
+    typed_rows_hash hashes."""
+    return (keep or joined_digest)(sorted(legacy_line(row) for row in rows))
 
 
 def joined_digest(lines, size=1 << 16):
-    """digest('\\n'.join(lines)), the joined text encoded `size` characters at a time: the
-    same bytes, without a second copy of the whole text."""
-    text, hasher = '\n'.join(lines), hashlib.sha256()
-    for start in range(0, len(text), size):
-        hasher.update(text[start:start + size].encode())
+    """digest('\\n'.join(lines)) of a list of lines, joined and encoded a run of lines of about
+    `size` characters at a time (a longer line is a run of its own): the same bytes, without the
+    whole joined text or its encoded copy."""
+    hasher = hashlib.sha256()
+    update_joined(hasher, lines, size)
     return hasher.hexdigest()
+
+
+def update_joined(hasher, lines, size=1 << 16):
+    """hasher.update('\\n'.join(lines).encode()), a run at a time, as joined_digest hashes.
+    `ends` holds where each line ends in the text without its separators, 8 bytes a line."""
+    ends, start = array.array('q', itertools.accumulate(map(len, lines))), 0
+    while start < len(lines):
+        # The first line at whose end the run holds `size` characters ends the run.
+        stop = min(bisect.bisect_left(ends, ends[start] - len(lines[start]) + size, start) + 1, len(lines))
+        if start: hasher.update(b'\n')
+        hasher.update('\n'.join(lines[start:stop]).encode())
+        start = stop
 
 
 def whole_and_prefix(rows, line, boundary, keep=None):

@@ -65,7 +65,8 @@ FORCE_WINDOW = datetime.timedelta(minutes=15)
 REQUEST_WINDOW = datetime.timedelta(minutes=2)
 APPLY_RETRIES = 2
 RETRYABLE_REFUSALS = ('Guarded prestate changed', 'Native work changed before restart', 'Native work is not idle',
-                      'Complete database prestate changed', 'Complete database changed before restart')
+                      'Complete database prestate changed', 'Complete database changed before restart',
+                      'Another installation operation is in progress for this home')  # e.g. a prune after install
 # A process beneath the service before the restart: a request's retry waits for it (or a hold reaps it).
 PROCESS_REFUSALS = ('Owned service has unexpected descendants', 'Owned service has unexpected or missing descendants',
                     'A new process started beneath the service while its browser stopped', 'Owned process identities changed during inventory')
@@ -556,6 +557,12 @@ def leave_background():
     except (AttributeError, OSError):
         pass  # Not macOS, or already a normal process.
 
+def leave_background_io():
+    """leave_background, and the default disk I/O policy in place of the agent's LowPriorityIO: for
+    the apply helper and a held snapshot, which a person waits for. Other snapshots stay throttled."""
+    leave_background()
+    runs.normal_disk_io()
+
 def find_gh_token(home):
     """`gh auth token` from known Homebrew locations, then PATH. Output stays in memory."""
     candidates = list(GH_PATHS)
@@ -579,16 +586,17 @@ def find_gh_token(home):
                 return value
     return None
 
-def run_helper_process(command, cwd, env, timeout, pass_fds=(), wait_detached=False, log_path=None, home=None):
+def run_helper_process(command, cwd, env, timeout, pass_fds=(), wait_detached=False, log_path=None, home=None, normal_io=False):
     """Run a verified helper. Returns 'ok', 'failed' or 'timeout'.
 
     Output is discarded unless log_path is given; then stdout and stderr go to that new
     private file (never to agent.log) so a failed install can be diagnosed afterwards.
     Snapshot children are ours and read-only, so subprocess may stop them on timeout.
     Apply children (wait_detached) are never signalled: they run in their own session,
-    keep the inherited pass lock until they exit and own any rollback themselves.
+    keep the inherited pass lock until they exit and own any rollback themselves. `normal_io`
+    children also leave the agent's disk throttle (leave_background_io).
     """
-    sink = subprocess.DEVNULL
+    sink, preexec = subprocess.DEVNULL, leave_background_io if normal_io else leave_background
     if log_path is not None:
         try:
             if home is not None:
@@ -599,12 +607,12 @@ def run_helper_process(command, cwd, env, timeout, pass_fds=(), wait_detached=Fa
     try:
         if not wait_detached:
             result = subprocess.run(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                    stdout=sink, stderr=sink, timeout=timeout, preexec_fn=leave_background)
+                                    stdout=sink, stderr=sink, timeout=timeout, preexec_fn=preexec)
             return 'ok' if result.returncode == 0 else 'failed'
         process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                    stdout=sink, stderr=sink,
                                    start_new_session=True, pass_fds=tuple(pass_fds),
-                                   preexec_fn=leave_background)
+                                   preexec_fn=preexec)
         try:
             return 'ok' if process.wait(timeout=timeout) == 0 else 'failed'
         except subprocess.TimeoutExpired:
@@ -1005,7 +1013,7 @@ class Agent(object):
             args += ['--request', request]
         outcome = run_helper_process(self.helper_command(helper_dir, args),
                                      str(helper_dir), self.helper_env(), SNAPSHOT_TIMEOUT,
-                                     log_path=output, home=self.home)
+                                     log_path=output, home=self.home, normal_io=request is not None)
         snapshot = self.read_snapshot(newest) if outcome == 'ok' else None
         refusal = read_tail(output, self.home) if snapshot is None and os.path.lexists(str(output)) else ''
         if os.path.lexists(str(output)):
@@ -1039,6 +1047,9 @@ class Agent(object):
                 attempt, retries, refused_apply, window = 0, 0, None, utcnow()
                 serving = self.config['installRequestedAt']
             attempt += 1
+            if not install_request and recovery.automatic_superseded(self):  # Ends as after the snapshot, without its full read.
+                self.state['automaticRetry'] = None
+                return self.finish('downloaded', recovery.SETTINGS_CHANGED)
             request = self.config['installRequestedAt'] if install_request and self.config['installMode'] == 'force' else None
             newest, snapshot, refused = self.take_snapshot(helper_dir, snapshots, request)
             runs.lap(self, 'snapshot')
@@ -1080,26 +1091,7 @@ class Agent(object):
                 self.set_status('waiting-for-quiet', 'New work started before the restart; trying again')
                 continue
             break
-        baseline = self.read_snapshot(baseline_path) if os.path.lexists(str(baseline_path)) else None
-        now = utcnow()
-        quiet = False
-        same = (baseline is not None and baseline['servicePid'] == snapshot['servicePid']
-                and work_counts(baseline['rows']['counts']) == work_counts(snapshot['rows']['counts']))
-        if same:
-            since = parse_time(baseline['observedAt'])
-            if since <= now + datetime.timedelta(minutes=5):
-                quiet = now - since >= datetime.timedelta(minutes=self.config['quietMinutes'])
-            else:
-                same = False  # A future-dated baseline cannot prove quiet time.
-        if quiet:
-            return self.apply(verified, helper_dir, newest, baseline_path, install_request)
-        if same:
-            remove_path(newest, self.home)  # Keep the older matching baseline so quiet time accrues.
-        else:
-            os.replace(str(newest), str(baseline_path))
-            baseline = snapshot
-        self.state['quietSince'] = baseline['observedAt']
-        return self.finish('waiting-for-quiet', 'Waiting for a quiet moment before installing SpecWithCode %s' % version)
+        return recovery.install_when_quiet(self, verified, helper_dir, newest, snapshot, baseline_path, install_request)
 
     def apply(self, verified, helper_dir, prestate, baseline_path, install_request, may_retry=False, serving=None):
         """Run the verified helper once. Its receipt's path means it refused before the restart and put every pointer
@@ -1138,7 +1130,7 @@ class Agent(object):
         pass_fds = (self.lock_fd,) if self.lock_fd is not None else ()
         outcome = run_helper_process(self.helper_command(helper_dir, args), str(helper_dir), runs.apply_env(self),
                                      APPLY_TIMEOUT, pass_fds=pass_fds, wait_detached=True,
-                                     log_path=helper_log_path(receipt))
+                                     log_path=helper_log_path(receipt), normal_io=True)
         runs.lap(self, 'apply')
         if may_retry and outcome == 'failed' and recovery.refused_before_restart(self, receipt, version):
             self.state['handledInstallRequestAt'] = handled  # Still pending until an attempt completes.
@@ -1184,13 +1176,13 @@ class Agent(object):
                                     'sourceCommit': expected_source, 'previousSourceCommit': previous_source}
         current = inst['version'] if inst is not None else 'its previous version'
         if outcome == 'failed':
-            self.ensure_failure_receipt(version, receipt, current)
+            recovery.ensure_failure_receipt(self, version, receipt, current)
         if outcome == 'timeout':
             return 'error', ('Installing SpecWithCode %s is taking longer than 15 minutes; it was left to finish. '
                              'See the update receipt.' % version)
         if outcome == 'interrupted':
             return 'error', 'The install of SpecWithCode %s was interrupted; SpecWithCode is on %s.' % (version, current)
-        disk = self.disk_refusal(receipt) if outcome == 'failed' else None
+        disk = recovery.disk_refusal(self, receipt) if outcome == 'failed' else None
         if disk:  # One cause the user can act on, not "see the receipt".
             return 'error', '%s; SpecWithCode stayed on %s.' % (disk, current)
         if inst is not None and inst['version'] == version and self.kept_after_restart(receipt):
@@ -1198,21 +1190,6 @@ class Agent(object):
             return 'error', ('SpecWithCode %s was kept after a restart check failed. The update was not '
                              'confirmed. See the update receipt.' % version)
         return 'error', 'SpecWithCode %s did not install; SpecWithCode stayed on %s. See the update receipt.' % (version, current)
-
-    def disk_refusal(self, receipt):
-        """The apply's own refusal when the disk had no room for its pre-update backup: it
-        stops in preflight with every pointer unchanged. None for any other failure."""
-        try:
-            value = read_json(owned(pathlib.Path(receipt), self.home), self.home) if receipt else None
-        except (AgentError, OSError):
-            return None
-        if not isinstance(value, dict) or value.get('phase') != 'preflight' or value.get('pointers') != 'unchanged':
-            return None
-        error = value.get('error')
-        prefix = 'AssertionError: '
-        if not isinstance(error, str) or not error.startswith(prefix + DISK_REFUSAL):
-            return None
-        return error[len(prefix):].splitlines()[0][:200]
 
     def kept_after_restart(self, receipt):
         """True only when the helper restarted into the new release, observed it and kept it (any `held-*`
@@ -1223,23 +1200,6 @@ class Agent(object):
             return False
         return isinstance(value, dict) and value.get('pointers') == 'new-release' \
             and str(value.get('rollback') or '').startswith('held-') and bool(value.get('attemptedAfter'))
-
-    def ensure_failure_receipt(self, version, receipt, current):
-        """A helper that failed before writing its receipt still leaves one with its cause."""
-        if not receipt:
-            return
-        try:
-            path = owned(pathlib.Path(receipt), self.home)
-            if os.path.lexists(str(path)):
-                return
-            log = helper_log_path(path)
-            write_json(path, {'identity': self.identity, 'version': version, 'result': 'update-failed',
-                              'phase': 'preflight', 'exitOutcome': 'failed', 'stayedOn': current,
-                              'helperLog': str(log) if os.path.lexists(str(log)) else None,
-                              'stderrTail': redact(read_tail(log, self.home))}, self.home)
-        except (OSError, AgentError) as error:
-            print(runs.stamp('update-agent %s: could not write the failed-install receipt (%s)'
-                             % (self.identity, type(error).__name__)), file=sys.stderr)
 
     def failed_switch_stands(self, last):
         """A recorded failure clears only when its helper receipt verifies completion."""
@@ -1256,19 +1216,6 @@ class Agent(object):
                 ranked = version_tuple(child.name)
                 if (ranked is not None and ranked <= installed) or child.name.startswith('.stage-'):
                     remove_path(child, self.home)
-
-    def settle_interrupted(self):
-        """A pass that died while installing left a marker; record its outcome without retrying."""
-        try:
-            marker = read_json(self.marker_path, self.home)
-        except AgentError:
-            marker = None
-        if not isinstance(marker, dict) or version_tuple(marker.get('version')) is None:
-            return None
-        version = marker['version']
-        outcome = 'ok' if self.inst['version'] == version else 'interrupted'
-        return self.complete_install(version, marker.get('receipt'), outcome, marker.get('sourceCommit'),
-                                     marker.get('previousSourceCommit'))
 
     def rotate_log(self):
         for name in SERVICE_LOGS:
@@ -1292,7 +1239,7 @@ class Agent(object):
         state['installedSourceCommit'] = self.inst['sourceCommit']
         installed = version_tuple(self.inst['version'])
         if state['status'] == 'installing' or os.path.lexists(str(self.marker_path)):
-            settled = self.settle_interrupted()
+            settled = recovery.settle_interrupted(self)
             if settled is not None:
                 return self.finish(*settled)
         # Manual or failed installs leave downloads and helpers only an agent install cleaned; drop any <= this version.

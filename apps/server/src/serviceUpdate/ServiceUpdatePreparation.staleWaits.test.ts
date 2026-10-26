@@ -25,7 +25,7 @@ const schema = [
   `CREATE TABLE orchestration_v2_projection_runtime_requests (runtime_request_id TEXT, thread_id TEXT, status TEXT, kind TEXT, created_at TEXT)`,
   `CREATE TABLE orchestration_v2_effect_outbox (thread_id TEXT, status TEXT, command_id TEXT, effect_type TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_sessions (thread_id TEXT, status TEXT)`,
-  `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, project_id TEXT)`,
+  `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, project_id TEXT, archived_at TEXT, deleted_at TEXT, payload_json TEXT)`,
   `CREATE TABLE projection_projects (project_id TEXT, title TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, provider_session_id TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, provider_turn_id TEXT, ordinal INTEGER, run_attempt_id TEXT)`,
@@ -71,8 +71,8 @@ const run = <E>(
     const sql = yield* SqlClient.SqlClient;
     for (const statement of schema) yield* sql.unsafe(statement);
     yield* sql`INSERT INTO projection_projects VALUES ('p1', 'EasyChamp')`;
-    yield* sql`INSERT INTO orchestration_v2_projection_threads VALUES
-      ('t1', 'Worker', 'p1'), ('t2', 'Docs', 'p1')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id, title, project_id, payload_json)
+      VALUES ('t1', 'Worker', 'p1', '{}'), ('t2', 'Docs', 'p1', '{}')`;
     const inScope = (threadIds: ReadonlyArray<string> | undefined) =>
       threadIds === undefined ? "1" : threadIds.map((id) => `'${id}'`).join(", ");
     const mocks = Layer.mergeAll(
@@ -274,12 +274,12 @@ it.live("releases a card that asks a closed approval again, as it released the a
         runs: [],
         requests: [["update-reopen-approval:req0", "cancelled"]],
       });
-      // A card that asks a real question again keeps the install waiting.
+      // A card that asks a question again is released like the question was.
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
         ('update-reopen:q0', 't2', 'pending', 'user_input', ${yield* minutesAgo(40)})`;
       yield* sql`INSERT INTO orchestration_v2_events (thread_id, occurred_at)
         VALUES ('t2', ${yield* minutesAgo(40)})`;
-      assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
+      assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, ["t2"]);
     }),
   );
 });
@@ -347,18 +347,27 @@ it.live("does not count a turn that is only running, with no request, as waiting
   );
 });
 
-it.live("keeps a 31-minute question waiting: it is a real question, shown in Needs you", () => {
+it.live("releases a question left 30 minutes, so it never holds the install back for good", () => {
   const fixture = newFixture(true);
   return run(fixture, (parts) =>
     Effect.gen(function* () {
       yield* waitingWorker(31, 31, "user_input");
+      assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, ["t1"]);
+      assert.deepEqual(yield* pending, {
+        runs: [["r1", "interrupted"]],
+        requests: [["req1", "cancelled"]],
+      });
+    }),
+  );
+});
+
+it.live("keeps a fresh question waiting: the person may still answer it", () => {
+  const fixture = newFixture(true);
+  return run(fixture, (parts) =>
+    Effect.gen(function* () {
+      yield* waitingWorker(10, 10, "user_input");
       assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
       assert.deepEqual(fixture.dispatched, []);
-      assert.deepEqual(fixture.cleanupCalls, []);
-      assert.deepEqual(yield* pending, {
-        runs: [["r1", "running"]],
-        requests: [["req1", "pending"]],
-      });
     }),
   );
 });
@@ -378,16 +387,87 @@ it.live("keeps a sign-in waiting however long it has waited", () => {
   );
 });
 
-it.live("keeps waiting when an approval waits beside a question on the same thread", () => {
+it.live("keeps waiting when an approval waits beside a sign-in on the same thread", () => {
   const fixture = newFixture(true);
   return run(fixture, (parts) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* waitingWorker(45, 45);
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
-        ('req2', 't1', 'pending', 'user_input', ${yield* minutesAgo(45)})`;
+        ('req2', 't1', 'pending', 'auth_refresh', ${yield* minutesAgo(45)})`;
       assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
       assert.deepEqual(fixture.dispatched, []);
+    }),
+  );
+});
+
+it.live("closes at once what an archived thread waits on, without asking it again", () => {
+  const fixture = newFixture(true);
+  const recorded: Array<ClosedQuestions.ClosedQuestion> = [];
+  return run(
+    fixture,
+    (parts) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // A sign-in asked a minute ago, on a thread the person archived: nobody sees it.
+        yield* waitingWorker(1, 1, "auth_refresh");
+        yield* sql`UPDATE orchestration_v2_projection_threads
+          SET archived_at = ${yield* minutesAgo(0)} WHERE thread_id = 't1'`;
+        assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, ["t1"]);
+        assert.deepEqual(recorded, []);
+        assert.deepEqual(fixture.dispatched[0], {
+          type: "run.interrupt",
+          runId: "r1",
+          reason: Preparation.HIDDEN_WAIT_REASON,
+          cause: "service_update",
+        });
+        assert.deepEqual(fixture.cleanupCalls, [
+          { step: "finalize", reason: Preparation.HIDDEN_WAIT_REASON, threadIds: ["t1"] },
+          { step: "requests", reason: Preparation.HIDDEN_WAIT_REASON, threadIds: ["t1"] },
+          { step: "sessions" },
+        ]);
+        assert.deepEqual(yield* pending, {
+          runs: [["r1", "interrupted"]],
+          requests: [["req1", "cancelled"]],
+        });
+      }),
+    recordingStore(fixture, recorded, true),
+  );
+});
+
+it.live("closes a question the person resolved its thread over, but not one asked after", () => {
+  const fixture = newFixture(true);
+  return run(fixture, (parts) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // A coordinator's question from 5 minutes ago, on a thread resolved 2 minutes ago.
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+        ('q1', 't1', 'pending', 'user_input', ${yield* minutesAgo(5)})`;
+      yield* sql`INSERT INTO orchestration_v2_events (thread_id, occurred_at)
+        VALUES ('t1', ${yield* minutesAgo(2)})`;
+      const resolved = JSON.stringify({
+        settledOverride: "settled",
+        settledAt: yield* minutesAgo(2),
+      });
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${resolved}
+        WHERE thread_id = 't1'`;
+      // The same on t2, but the question came after the resolve: it reopens the
+      // thread in Needs you, so it waits like any fresh question.
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+        ('q2', 't2', 'pending', 'user_input', ${yield* minutesAgo(1)})`;
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${resolved}
+        WHERE thread_id = 't2'`;
+      assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
+      yield* sql`UPDATE orchestration_v2_projection_runtime_requests SET status = 'resolved'
+        WHERE runtime_request_id = 'q2'`;
+      assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, ["t1"]);
+      assert.deepEqual(yield* pending, {
+        runs: [],
+        requests: [
+          ["q1", "cancelled"],
+          ["q2", "resolved"],
+        ],
+      });
     }),
   );
 });

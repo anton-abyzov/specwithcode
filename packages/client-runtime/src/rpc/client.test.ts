@@ -30,6 +30,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import { THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE } from "../errors/transport.ts";
 import {
   EnvironmentRpcRequestObserver,
   request,
@@ -65,7 +66,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   };
 }
 
-const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
+const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* (thisMachine?: true) {
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(AVAILABLE_CONNECTION_STATE);
   const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
     Option.none(),
@@ -74,6 +75,7 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
   const retryCount = yield* Ref.make(0);
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
+    ...(thisMachine ? { thisMachine } : {}),
     state,
     session: activeSession,
     prepared,
@@ -89,6 +91,37 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect("names another machine that has no session as not connected", () =>
+    Effect.gen(function* () {
+      const { supervisor } = yield* makeHarness();
+      const exit = yield* request(WS_METHODS.cloudGetRelayClientStatus, {}).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
+        _tag: "EnvironmentRpcUnavailableError",
+        message: "Test environment is not connected.",
+      });
+    }),
+  );
+
+  it.effect("says the server on this machine is busy, never not connected", () =>
+    Effect.gen(function* () {
+      const { supervisor } = yield* makeHarness(true);
+      const exit = yield* request(WS_METHODS.cloudGetRelayClientStatus, {}).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.exit,
+      );
+      const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
+      expect(error).toMatchObject({
+        _tag: "EnvironmentRpcUnavailableError",
+        message: THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE,
+        thisMachine: true,
+      });
+      expect((error as Error).message).not.toContain("not connected");
+    }),
+  );
+
   it.effect("reuses the session config stream instead of opening a duplicate subscription", () =>
     Effect.gen(function* () {
       const event: ServerConfigStreamEvent = {

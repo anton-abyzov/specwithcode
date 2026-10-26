@@ -77,4 +77,16 @@ describe("queuedRunActionsUnavailableReason", () => {
       }),
     ).toBe("This machine is not connected.");
   });
+  it("says the app's own machine is busy while it catches up, never not connected", () => {
+    const reason = queuedRunActionsUnavailableReason({
+      canOperateThread: true,
+      environmentUnavailable: true,
+      environmentLabel: "Anton's MacBook M4MAX",
+      isThisMachineCatchingUp: true,
+    });
+    expect(reason).toBe(
+      "SpecWithCode on this Mac is busy. The queue works again once it catches up.",
+    );
+    expect(reason).not.toContain("not connected");
+  });
 });

@@ -4,10 +4,11 @@
 Each test builds a small WAL database from scratch with the real statev2 table names and shapes
 (log rows with overflow-sized payloads, a projection keyed by thread large enough to be kept),
 runs the old service as a child process that keeps one connection open, takes the read before the
-restart (with its lines kept), marks the old log, stops that service, clones its files as
-update.py does (state_backup.clone_state), starts the new service as another child process and has
-it commit what a starting release writes. The page proof then either returns exactly what
-update_read._read_state returns for the same moment, or None.
+restart (with its lines kept), marks the old log (with the reader update.py starts, unless a test
+says otherwise), stops that service, clones its files as update.py does (state_backup.clone_state),
+starts the new service as another child process and has it commit what a starting release writes.
+The page proof then either returns exactly what update_read._read_state returns for the same
+moment, or None.
 
     python3 -B test-after-proof.py
     /usr/bin/python3 -B test-after-proof.py --measure ~/.specwithcode/m4/scratch/fast-install-profile/clone
@@ -62,6 +63,46 @@ for line in sys.stdin:
             db.execute('ROLLBACK')
         print('error %s' % error, flush=True)
 """
+
+# The service's own SQLite (node:sqlite) with its pragmas (apps/server/src/persistence/Sqlite.ts).
+NODE_WRITER = r"""
+import { DatabaseSync } from "node:sqlite";
+import readline from "node:readline";
+const db = new DatabaseSync(process.argv[1]);
+db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA journal_size_limit = 33554432;");
+console.log("ready");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    for (const [sql, parameters] of JSON.parse(line)) db.prepare(sql).run(...parameters);
+    db.exec("COMMIT");
+    console.log("ok");
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    console.log("error " + error.message);
+  }
+}).on("close", () => { db.close(); process.exit(0); });
+"""
+
+
+# Another process with the database open and idle: it keeps the -shm, so the next connection trusts it.
+IDLE_READER = r'''
+import sqlite3, sys
+db = sqlite3.connect('file:%s?mode=ro' % sys.argv[1], uri=True)
+db.execute('SELECT count(*) FROM sqlite_master').fetchall()
+print('open', flush=True)
+sys.stdin.read()
+'''
+
+
+def node_with_sqlite():
+    """STUDIO_TEST_NODE (run-tests.sh) or node on PATH, when it has node:sqlite; else None."""
+    node = os.environ.get('STUDIO_TEST_NODE') or shutil.which('node')
+    if not node:
+        return None
+    probe = subprocess.run([node, '--input-type=module', '-e', 'import "node:sqlite"'], capture_output=True)
+    return node if probe.returncode == 0 else None
+
 
 # The tables update_read reads by name, as statev2 declares them (October 2026), and a few others.
 SCHEMA = """
@@ -233,9 +274,10 @@ def startup_writes(rng, label='new', events=30, receipts=10):
 class Writer:
     """A service in its own process: one WAL connection, open until closed or killed."""
 
-    def __init__(self, database):
-        self.process = subprocess.Popen([sys.executable, '-c', WRITER, str(database)], stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, text=True)
+    def __init__(self, database, node=None):
+        command = ([node, '--no-warnings', '--input-type=module', '-e', NODE_WRITER, str(database)] if node
+                   else [sys.executable, '-c', WRITER, str(database)])
+        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         assert self.process.stdout.readline().strip() == 'ready'
 
     def commit(self, *statements):
@@ -275,30 +317,48 @@ def encoded(value):
 class Update:
     """update.py's steps around the restart, on a fixture database."""
 
-    def __init__(self, test, include_auth=False, since_expected=True, watermark=False, **shape):
-        self.test, self.include_auth = test, include_auth
+    def __init__(self, test, include_auth=False, since_expected=True, watermark=False, reader=True, pinned_commits=0,
+                 node=None, **shape):
+        self.test, self.include_auth, self.reader = test, include_auth, reader
         folder = tempfile.TemporaryDirectory(prefix='studio-after-proof-')
         test.addCleanup(folder.cleanup)
         self.root = pathlib.Path(folder.name).resolve()
         self.state = self.root / 'own' / 'userdata'
         self.database = self.state / 'statev2.sqlite'
         build(self.state, **shape)
-        self.old = Writer(self.database)
+        self.old = Writer(self.database, node)
         test.addCleanup(self.old.close)
         self.old.heartbeat(moment='2026-10-22T13:59:00Z')  # A running service's log has frames in it.
+        if pinned_commits:
+            # A long read (the read before the restart on a large database) keeps every checkpoint
+            # from copying the commits made meanwhile: the log is past the autocheckpoint at the mark.
+            pin = sqlite3.connect('file:%s?mode=ro' % self.database, uri=True)
+            pin.execute('BEGIN')
+            pin.execute('SELECT count(*) FROM sqlite_master').fetchall()
+            for index in range(pinned_commits):
+                self.old.commit(("INSERT OR REPLACE INTO scheduled_tasks VALUES ('pinned', ?)", ['%d * * * *' % index]))
+            pin.close()
         expected = update_read._read_state(self.state, False, None, True)[0] if since_expected else None
         with after_proof.keeping(self.database) as self.kept:
             before = update_read._read_state(self.state, include_auth, expected, True)
         self.before = before[0]
         self.reference = {'position': None, 'since': self.before, 'reads': (before[0], None, before[3])}
-        self.watermark = read_watermark.Watermark.open(self.database) if watermark else None
+        # update.py keeps one open from the read before the restart until the stop; with a reader, the
+        # mark is confirmed against it.
+        self.watermark = read_watermark.Watermark.open(self.database) if watermark or reader else None
+        self.taken = None
         if self.watermark is not None:
             test.addCleanup(self.watermark.close)
-            self.watermark.take()
+            self.taken = self.watermark.take()
         self.new = None
 
-    def mark(self):
-        self.marked = after_proof.mark(self.database)
+    def mark(self, reread=False):
+        """`reread`: update.py's final check read again after the read the proof starts from."""
+        self.marked = after_proof.mark(self.database, reader=self.reader)
+        self.test.addCleanup(after_proof.release, self.marked)
+        self.test.assertEqual(self.reader, 'reader' in (self.marked or {}))
+        current = self.watermark.take() if reread and self.watermark is not None else self.taken
+        after_proof.confirm(self.marked, self.watermark or read_watermark.NEVER_UNCHANGED, self.taken, current)
         return self.marked
 
     def stop(self, how='close'):
@@ -312,7 +372,8 @@ class Update:
         with patch.object(state_backup, 'backup_folder', return_value=target):
             backup, actual = state_backup.clone_state(self.state.parent, 'abc', update._clonefile())
         self.test.assertEqual(actual, 'clone', 'This volume cannot clone; the proof needs an APFS clone')
-        self.held = after_proof.stopped(self.marked, backup, method or actual)
+        self.held = after_proof.stopped(self.marked, backup, method or actual, update._clonefile())
+        self.test.addCleanup(after_proof.discard, self.held)
         return self.held
 
     def restart(self, rng=None, writes=True):
@@ -427,26 +488,139 @@ class Equal(unittest.TestCase):
         self.assert_same(flow)
 
     def test_a_restart_that_writes_nothing(self):
-        # With the watermark's index the old service's last commit counts as read; without it, the
-        # second-to-last commit is the mark and the last one (a heartbeat here) is read again.
-        for watermark, touched in ((True, []), (False, ['auth_sessions'])):
-            with self.subTest(watermark=watermark):
-                flow = Update(self, watermark=watermark)
+        # The reader's snapshot, or with the watermark's index the old service's last commit, counts
+        # as read; without either, the second-to-last commit is the mark and the last one (a
+        # heartbeat here) is read again.
+        for reader, watermark, touched in ((True, False, []), (False, True, []), (False, False, ['auth_sessions'])):
+            with self.subTest(reader=reader, watermark=watermark):
+                flow = Update(self, watermark=watermark, reader=reader)
                 flow.around_restart(writes=False)
                 self.assertEqual(self.assert_same(flow)['touchedTables'], touched)
 
     def test_a_log_left_behind_by_the_stop_is_explained_by_the_file_under_it(self):
-        flow = Update(self)
+        flow = Update(self, reader=False)
         flow.old.heartbeat('session-2', '2026-10-22T13:59:30Z')
         flow.around_restart(stop='kill')
         self.assertTrue(flow.held['walPresent'])
         record = self.assert_same(flow)
         self.assertGreater(record['mainPagesExplained'], 0)
 
+    def test_the_log_the_reader_kept_is_folded_into_the_live_database_before_the_restart(self):
+        for stop in ('close', 'kill'):
+            with self.subTest(stop=stop):
+                flow = Update(self)
+                self.assertTrue(flow.mark()['confirmed'])
+                flow.old.heartbeat('session-2', '2026-10-22T14:02:00Z')
+                flow.stop(stop)
+                self.assertGreater(os.path.getsize(str(flow.database) + '-wal'), 0)  # The reader kept the close from folding it.
+                held = flow.clone()
+                self.assertFalse(held['walPresent'], held)
+                self.assertFalse(os.path.exists(str(flow.database) + '-wal') and os.path.getsize(str(flow.database) + '-wal'))
+                self.assertEqual(flow.marked['reader'].process.poll(), 0)
+                flow.restart()
+                self.assertEqual(self.assert_same(flow)['mainPagesExplained'], 0)
+
+    def test_the_mark_is_confirmed_only_when_nothing_committed_since_the_read(self):
+        flow = Update(self)
+        self.assertTrue(flow.mark()['confirmed'])
+        flow = Update(self)
+        flow.old.commit(("UPDATE scheduled_tasks SET cron='changed' WHERE id='nightly'", []))
+        self.assertFalse(flow.mark()['confirmed'])
+        flow.stop()
+        self.assertNotIn('reference', flow.clone())
+        self.assertFalse(flow.marked['confirmed'])
+
+    def test_a_fold_the_live_log_refuses_keeps_the_log_for_the_new_release(self):
+        flow = Update(self)
+        flow.mark()
+        flow.old.heartbeat('session-2', '2026-10-22T14:02:00Z')
+        flow.stop()
+        with patch.object(after_proof, '_fold_live', return_value=None):
+            held = flow.clone()
+        self.assertTrue(held['walPresent'], held)
+        self.assertIn('reference', held)
+        flow.restart()
+        self.assert_same(flow)
+
+    def test_a_reference_image_is_removed_by_every_path(self):
+        flow = Update(self)
+        folder = flow.root / 'backups'
+        folder.mkdir()
+        dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+        dead.wait()
+        stale = folder / ('%s%d-%s.sqlite' % (after_proof.REFERENCE_PREFIX, dead.pid, 'a' * 32))
+        stale.write_bytes(b'')
+        flow.mark()
+        flow.old.heartbeat('session-2', '2026-10-22T14:02:00Z')
+        flow.stop()
+        path = flow.clone()['reference']
+        self.assertFalse(stale.exists())  # Left by a helper that died.
+        self.assertEqual(flow.marked['reference'], path)
+        after_proof.discard(flow.marked)  # update.py's failure path before `stopped` returned.
+        self.assertFalse(os.path.exists(path))
+
+    def test_the_old_services_shutdown_writes_decide_by_pages(self):
+        # 1.0.85 on M4: SIGTERM cancelled background work, which appended 51 events and 20 receipts
+        # and updated projections 0.4 s after the mark. The reference image reads them again.
+        with patch.object(kept_lines, 'KEEP_BYTES', 64 << 10):
+            flow = Update(self)
+        flow.mark()
+        rng = random.Random(85)
+        flow.old.commit(*[event(rng, 'shutdown-%d' % index, 't-1', 2000 + index, low=100, high=12000) for index in range(12)])
+        flow.old.commit(*[receipt('shutdown-%d' % index, 1) for index in range(5)])
+        flow.old.commit(("UPDATE orchestration_v2_projection_turn_items SET status='interrupted' WHERE turn_item_id='item-old-9'", []),
+                        ("UPDATE orchestration_v2_projection_threads SET updated_at=? WHERE thread_id='t-2'", ['2026-10-22T14:03:00Z']))
+        flow.stop()
+        held = flow.clone()
+        self.assertTrue(held['gap'] and held['reference'], held)
+        flow.restart()
+        record = self.assert_same(flow)
+        self.assertTrue(record['referenceImage'])
+        self.assertGreater(record['gapPages'], 0)
+        self.assertIn('orchestration_events', record['touchedTables'])
+        self.assertIn('orchestration_v2_projection_turn_items', record['touchedTables'])
+        self.assertFalse(os.path.exists(held['reference']))  # Removed once the proof ran.
+        self.assertEqual(flow.full()[2]['appendedRows']['orchestration_events'], 42)
+
+    def test_a_log_past_the_autocheckpoint_at_the_mark_keeps_its_generation(self):
+        # 1.0.85 on M4: the read before the restart pinned the log, so at the mark it was past the
+        # autocheckpoint; the old service's first commit after the mark copied every frame and its
+        # second restarted the log (old-log-reset). The reader blocks both.
+        for reader in (False, True):
+            with self.subTest(reader=reader):
+                flow = Update(self, reader=reader, pinned_commits=1100)
+                flow.mark()
+                for index in range(3):
+                    flow.old.commit(event(random.Random(index), 'shutdown-%d' % index, 't-1', 3000 + index, low=100, high=300))
+                flow.stop()
+                held = flow.clone()
+                flow.restart()
+                if not reader:
+                    self.assertEqual(held, {'reason': 'old-log-reset'})
+                    continue
+                self.assertIn('reference', held)
+                self.assertTrue(self.assert_same(flow)['referenceImage'])
+
+    def test_a_snapshot_that_read_the_file_alone_admits_one_restart(self):
+        flow = Update(self)
+        flow.old.checkpoint('PASSIVE')  # Every frame copied: the reader reads the file alone (read mark 0).
+        marked = flow.mark()
+        self.assertTrue(marked['fromFile'])
+        rng = random.Random(4)
+        for index in range(3):
+            flow.old.commit(event(rng, 'restart-%d' % index, 't-3', 4000 + index, low=100, high=9000))
+        with open(str(flow.database) + '-wal', 'rb') as handle:
+            self.assertNotEqual(handle.read(24)[16:24], marked['salt'])  # The first commit restarted the log.
+        flow.stop()
+        held = flow.clone()
+        self.assertTrue(held['gap'] and held['reference'], held)
+        flow.restart()
+        self.assertTrue(self.assert_same(flow)['referenceImage'])
+
     def test_an_old_log_its_close_checkpointed_and_emptied(self):
         # SQLite builds that keep the -wal (Apple's) checkpoint it on the last close and truncate it
         # to zero bytes; the gap's pages then come from the WAL index the close left.
-        flow = Update(self)
+        flow = Update(self, reader=False)
         flow.mark()
         flow.old.heartbeat('session-2', '2026-10-22T14:02:00Z')
         flow.old.checkpoint('PASSIVE')
@@ -479,6 +653,32 @@ class Equal(unittest.TestCase):
         with patch.object(after_proof.live_database, 'connect', side_effect=lambda *a, **k: guarded(connect(*a, **k))), \
                 patch.object(after_proof.sqlite3, 'connect', side_effect=lambda *a, **k: guarded(plain(*a, **k))):
             self.assert_same(flow)
+
+
+@unittest.skipUnless(node_with_sqlite(), 'needs Node 22 with node:sqlite (STUDIO_TEST_NODE)')
+class NodeService(unittest.TestCase):
+    """The old service on node:sqlite with its own pragmas, as on M4 for 1.0.85."""
+
+    setUp, assert_same = Equal.setUp, Equal.assert_same
+
+    def test_a_pinned_log_and_shutdown_writes_decide_by_pages(self):
+        for reader in (False, True):
+            with self.subTest(reader=reader):
+                flow = Update(self, reader=reader, pinned_commits=1100, node=node_with_sqlite())
+                flow.mark()
+                rng = random.Random(1085)
+                for index in range(3):  # Background work cancelled on SIGTERM, one commit each.
+                    flow.old.commit(event(rng, 'sigterm-%d' % index, 't-1', 5000 + index, low=100, high=6000),
+                                    receipt('sigterm-%d' % index, 1))
+                flow.stop()
+                held = flow.clone()
+                flow.restart()
+                if not reader:
+                    self.assertEqual(held, {'reason': 'old-log-reset'})
+                    continue
+                record = self.assert_same(flow)
+                self.assertTrue(record['referenceImage'])
+                self.assertIn('orchestration_events', record['touchedTables'])
 
 
 class Refuses(unittest.TestCase):
@@ -532,12 +732,16 @@ class Refuses(unittest.TestCase):
             with self.subTest(statement):
                 self.refused(self.after_restart(statement)[0], 'schema')
 
-    def test_a_page_that_moved_between_tables(self):
+    def test_a_page_that_moved_between_tables_reads_both_tables_again(self):
         flow = Update(self)
         new = flow.around_restart(writes=False)
         new.commit(('DELETE FROM checkpoint_diff_blobs', []))
         new.commit(*[("INSERT INTO auth_pairing_links VALUES (?,?)", ['big-%d' % index, 'x' * 9000]) for index in range(6)])
-        self.refused(flow, 'page-moved')
+        reads, record, _ = flow.decide()
+        self.assertEqual(record['mode'], 'pages', record)
+        self.assertTrue({'checkpoint_diff_blobs', 'auth_pairing_links'} <= set(record['touchedTables']))
+        full = flow.full()
+        self.assertEqual([json.dumps(reads[index]) for index in (0, 2, 3)], [json.dumps(full[index]) for index in (0, 2, 3)])
 
     def test_a_changed_page_of_the_file_that_no_frame_explains(self):
         flow = Update(self)
@@ -559,7 +763,7 @@ class Refuses(unittest.TestCase):
                 self.refused(flow, 'main-page-unexplained')
 
     def test_an_old_log_reset_between_the_mark_and_the_stop(self):
-        flow = Update(self)
+        flow = Update(self, reader=False)  # A reader blocks the reset (the RESTART checkpoint is busy).
         flow.mark()
         flow.old.checkpoint('RESTART')
         flow.old.heartbeat('session-2', '2026-10-22T14:02:00Z')
@@ -578,13 +782,77 @@ class Refuses(unittest.TestCase):
         self.assertEqual(flow.clone(), {'reason': 'old-log-reset'})
 
     def test_an_event_appended_between_the_final_check_and_the_stop(self):
+        # Without the reference image (no reader, or a final check that read again after it opened).
+        for reader, reread in ((False, False), (True, True)):
+            with self.subTest(reader=reader, reread=reread):
+                flow = Update(self, reader=reader)
+                flow.mark(reread=reread)
+                flow.old.commit(event(random.Random(1), 'late', 't-1', 999, low=100, high=200))
+                flow.stop()
+                self.assertNotIn('reference', flow.clone())
+                flow.restart()
+                self.assertIn(self.refused(flow)['reason'], {'gap-touches-log', 'gap-touches-schema'})
+
+    def test_a_fold_that_trusted_an_index_short_of_the_log(self):
+        # Another connection keeps the -shm through the stop, and the old service died between writing
+        # its last commit frame and publishing it: the clone, folded from the log alone, has that commit;
+        # a fold that trusts the index does not.
+        flow = Update(self)
+        other = subprocess.Popen([sys.executable, '-c', IDLE_READER, str(flow.database)], stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, universal_newlines=True)
+        self.addCleanup(other.wait)
+        self.addCleanup(other.stdin.close)
+        self.addCleanup(other.stdout.close)
+        self.assertEqual(other.stdout.readline(), 'open\n')
+        flow.mark()
+        flow.old.heartbeat('session-2', '2026-10-22T14:02:00Z')
+        flow.stop()
+        database = str(flow.database)
+        with open(database + '-shm', 'rb') as handle:  # This process holds no lock on the -shm.
+            index = after_proof._index_header(handle.fileno())
+        frame = 24 + index['pageSize']
+        copy = flow.root / 'copy'
+        copy.mkdir()
+        for suffix in ('', '-wal', '-shm'):
+            shutil.copyfile(database + suffix, str(copy / ('c.sqlite' + suffix)))
+        writer = sqlite3.connect(str(copy / 'c.sqlite'), isolation_level=None)
+        writer.execute("UPDATE scheduled_tasks SET cron='unpublished' WHERE id='nightly'")
+        with open(str(copy / 'c.sqlite-wal'), 'rb') as handle:
+            handle.seek(32 + index['mxFrame'] * frame)
+            unpublished = handle.read()
+        writer.close()
+        self.assertTrue(unpublished and len(unpublished) % frame == 0)
+        with open(database + '-wal', 'r+b') as handle:
+            handle.seek(32 + index['mxFrame'] * frame)
+            handle.write(unpublished)
+        self.assertEqual(flow.clone(), {'reason': 'fold-differs'})
+        self.assertFalse(os.path.exists(flow.marked['reference']))
+        other.stdin.close()
+        other.wait()
+        flow.restart(writes=False)
+        self.refused(flow, 'fold-differs')
+
+    def test_a_reader_lost_before_the_stop(self):
         flow = Update(self)
         flow.mark()
-        flow.old.commit(event(random.Random(1), 'late', 't-1', 999, low=100, high=200))
+        flow.marked['reader'].process.kill()
+        flow.marked['reader'].process.wait()
+        flow.old.commit(event(random.Random(2), 'late', 't-1', 998, low=100, high=200))
         flow.stop()
-        flow.clone()
+        self.assertEqual(flow.clone(), {'reason': 'reader-lost'})
         flow.restart()
-        self.assertIn(self.refused(flow)['reason'], {'gap-touches-log', 'gap-touches-schema'})
+        self.refused(flow, 'reader-lost')
+
+    def test_an_old_event_changed_in_the_gap_is_caught_by_both_reads(self):
+        flow = Update(self)
+        flow.mark()
+        flow.old.commit(("UPDATE orchestration_events SET event_type='tampered' WHERE sequence=4", []))
+        flow.stop()
+        self.assertIn('reference', flow.clone())
+        flow.restart()
+        self.refused(flow, 'old-log-row-changed')
+        rows, _, carried, _ = flow.full()
+        self.assertFalse(update_compare.same_guarded_rows(flow.before, rows, carried, auth_heartbeat=False))
 
     def test_no_clone_or_no_log(self):
         flow = Update(self)

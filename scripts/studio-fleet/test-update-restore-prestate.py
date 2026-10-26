@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import state_backup
 import update
 
 
@@ -64,7 +65,7 @@ class RestoreClone(unittest.TestCase):
             with self.subTest(code=errno.errorcode[code]):
                 target, calls = self.root / ('failed-%d.sqlite' % code), []
                 # What the failed clone left, longer than the source, is replaced by the copy.
-                with patch.object(update, '_clonefile', return_value=failing_clone(calls, self.source.read_bytes() + b'partial', code)):
+                with patch.object(state_backup, '_clonefile', return_value=failing_clone(calls, self.source.read_bytes() + b'partial', code)):
                     update.clone_file(self.source, target)
                 self.assertEqual(calls, [(os.fsencode(self.source), os.fsencode(target), 0)])
                 self.assertEqual(target.read_bytes(), self.source.read_bytes())
@@ -74,7 +75,7 @@ class RestoreClone(unittest.TestCase):
                              ('no-libc', {'side_effect': OSError('no C library')})):
             with self.subTest(name=name):
                 target = self.root / (name + '.sqlite')
-                with patch.object(update.ctypes, 'CDLL', **loader):
+                with patch.object(ctypes, 'CDLL', **loader):
                     self.assertIsNone(update._clonefile())
                     update.clone_file(self.source, target)
                 self.assertEqual(target.read_bytes(), self.source.read_bytes())
@@ -110,7 +111,7 @@ class RestoreClone(unittest.TestCase):
     def test_a_failed_restore_leaves_the_database_and_no_staged_file(self):
         own, state, backup = self.restore_fixture()
         calls = []
-        with patch.object(update, '_clonefile', return_value=failing_clone(calls, b'partial', errno.EIO)), \
+        with patch.object(state_backup, '_clonefile', return_value=failing_clone(calls, b'partial', errno.EIO)), \
                 patch.object(update.shutil, 'copyfile', side_effect=OSError(errno.ENOSPC, 'No space left on device')), \
                 self.assertRaises(OSError):
             update.restore_state(backup, own)

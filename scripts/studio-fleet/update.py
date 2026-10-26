@@ -6,14 +6,12 @@ if not __debug__:
 import argparse
 import contextlib
 import copy
-import ctypes
 import datetime
 import errno
 import hashlib
 import json
 import os
 import pathlib
-import plistlib
 import re
 import shlex
 import shutil
@@ -29,14 +27,16 @@ import urllib.error
 import urllib.request
 import uuid
 from launcher import (cli_alias_state, is_studio_wrapper, migrate_runtime_path, render_cli,
-                      render_legacy_cli, render_unnamed_cli, swap_cli_alias, restore_cli_alias, repoint_cli_alias)
-from release_policy import validate_manifest, validate_package, validate_upgrade
+                      swap_cli_alias, restore_cli_alias, repoint_cli_alias)
+from release_policy import validate_upgrade
+from release_check import release_manifest, release_verified
+import release_check
 from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             read_auth_sessions_in_transaction, restore_witness, rows_hash,
                             utc_timestamp, verify_restart_witness)
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
-                        reap_descendants, idle_providers, idle_provider_trees)
-from release_retention import prune_releases, prune_state_backups, prune_update_leftovers
+                        reap_descendants, idle_providers, idle_provider_trees, started_before)
+from release_retention import held_state_backups, prune_releases, prune_state_backups, prune_update_leftovers
 import after_proof
 import database_continuity as continuity
 import database_restart
@@ -46,6 +46,7 @@ import live_database
 import read_delta
 import read_watermark
 import settings_continuity
+import state_backup_prune
 from update_receipt import describe_error, write_preflight_failure
 from update_read import (TERMINAL_RUNS, _queue_held, run_work, AUTHORITY_TABLES, _read_state, _read_tables,
                          assert_idle, SINGLE_SCAN_SQLITE, ORDINARY_TABLE, virtual_tables, guarded_hashes,
@@ -63,18 +64,16 @@ from update_compare import (rows_carried_forward, same_guarded_rows, database_al
                             auth_since, guarded_row_counts, settings_preserved)
 from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REFUSAL, _utc, assert_held,
                             restart_old_release, native_work_counts, _name, descendant_names, gate_settle)
-from state_backup import (BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_space, backup_state,
+from state_backup import (_clonefile, clone_file, BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_space, backup_state,
                           clone_state, discard_unused_backup, write_private as _write_private)
+from service_handles import (LSOF_ATTEMPTS, LSOF_TIMEOUT_SECONDS, DATABASE_FILES, DETACHED_DATABASE, LOCKS_LOST, listeners,
+                             open_inodes, assert_database_attached, assert_database_locked)
 from service_launch_agent import upgraded_service_plist
 import managed_updates
 import studio_paths
 import update_request
 
 from installation_descriptor import InstallationDescriptor, cli_paths, current_owner, installation_lock, owned_path, validate_identity, web_session_policy
-ENV_KEYS = {'HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'STUDIO_HOME',
-            'STUDIO_HOST', 'STUDIO_PORT', 'STUDIO_MODE', 'STUDIO_NO_BROWSER',
-            'STUDIO_LOG_LEVEL', 'STUDIO_ENABLE_HOSTED_SERVICES', 'STUDIO_DEV_ALLOWED_ORIGINS',
-            'STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD', 'PWDEBUG', 'PLAYWRIGHT_HTML_OPEN'}
 def digest(value):
     return hashlib.sha256(value).hexdigest()
 
@@ -85,24 +84,6 @@ def run(command, timeout=10, **kwargs):
     value = subprocess.run(command, capture_output=True, timeout=timeout, **kwargs)
     assert value.returncode == 0, 'Owned operation failed; arbitrary command output withheld'
     return value.stdout
-
-def release_verified(release):
-    assert release.is_dir() and not release.is_symlink()
-    manifest = json.loads((release / 'studio-manifest.json').read_text())
-    validate_manifest(manifest)
-    package = release / 'package.json'
-    validate_package(manifest, package.read_bytes() if package.is_file() else None)
-    declared = set()
-    for entry in manifest['files']:
-        path = release / entry['path']
-        assert release in path.resolve().parents, 'Artifact path escapes release'
-        declared.add(entry['path'])
-        if entry['type'] == 'symlink':
-            assert path.is_symlink() and os.readlink(path) == entry['target']
-        else:
-            assert path.is_file() and not path.is_symlink() and digest(path.read_bytes()) == entry['sha256']
-    assert {str(p.relative_to(release)) for p in release.rglob('*') if p.is_file() or p.is_symlink()} == declared | {'studio-manifest.json'}
-    return manifest
 
 def _rows_snapshot(state, include_auth, since=None, *, include_database=False):
     """(rows, auth, carried), or (rows, auth, databaseCapture) with include_database."""
@@ -127,130 +108,10 @@ def rows_since_with_database(state, expected_rows):
     proof, _, carried, database = _read_state(state, False, expected_rows, True)
     return proof, carried, database
 
-LSOF_TIMEOUT_SECONDS = 30
-LSOF_ATTEMPTS = 2
-
-def listeners(port):
-    # lsof walks every open file; on a loaded Mac 5 s was not enough and failed the preflight.
-    for attempt in range(1, LSOF_ATTEMPTS + 1):
-        try:
-            result = subprocess.run(['/usr/sbin/lsof', '-nP', '-t', '-iTCP:' + str(port), '-sTCP:LISTEN'],
-                                    capture_output=True, text=True, timeout=LSOF_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            if attempt == LSOF_ATTEMPTS:
-                raise
-            continue
-        assert result.returncode in {0, 1}, 'Listening ports could not be read'
-        return sorted(set(int(value) for value in result.stdout.split()))
-
-DATABASE_FILES = ('statev2.sqlite', 'statev2.sqlite-wal', 'statev2.sqlite-shm')
-DETACHED_DATABASE = ('The SpecWithCode service is using a database log that was deleted from disk. '
-                     'Restart SpecWithCode, then update')
-LOCKS_LOST = ('The SpecWithCode service lost its SQLite locks on its database. '
-              'Restart SpecWithCode, then update')
-
-def open_inodes(pid):
-    """{path: inode} of the regular files `pid` holds open, from lsof's field output."""
-    for attempt in range(1, LSOF_ATTEMPTS + 1):
-        try:
-            result = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-p', str(pid), '-Fin'],
-                                    capture_output=True, text=True, timeout=LSOF_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            if attempt == LSOF_ATTEMPTS:
-                raise
-            continue
-        assert result.returncode in {0, 1}, 'Open service files could not be read'
-        files, inode = {}, None
-        for line in result.stdout.splitlines():
-            if line[:1] in {'p', 'f'}:
-                inode = None
-            elif line[:1] == 'i' and line[1:].isdigit():
-                inode = int(line[1:])
-            elif line[:1] == 'n' and inode is not None:
-                files.setdefault(line[1:], set()).add(inode)
-        return files
-
-def assert_database_attached(pid, state):
-    """The service's open statev2 database, -wal and -shm are the files on disk. When another
-    connection deletes the -wal and -shm while the service has them open (it can, once the
-    service's lock on the database file is lost), the service keeps writing a log no other
-    process can see. A read then misses its newest commits and races its checkpoints into
-    SQLITE_CORRUPT ("database disk image is malformed"), so no snapshot can be trusted until
-    the service reopens the database."""
-    held = open_inodes(pid)
-    for name in DATABASE_FILES:
-        path = str(state / name)
-        for inode in held.get(path, ()):
-            try:
-                current = os.stat(path).st_ino
-            except FileNotFoundError:
-                current = None
-            assert current == inode, DETACHED_DATABASE
-
-def assert_database_locked(state):
-    """Some process holds SQLite's locks on the database and on -shm. The running service holds
-    both for as long as its connection is open, so neither means it lost them: a process that
-    closes another descriptor for one of those files drops its own POSIX locks on it. Until it
-    reopens the database, any other open can rebuild -shm under it (SIGBUS) or delete -wal as
-    the "last" user, and no snapshot is safe to take."""
-    locks = live_database.service_locks(state / 'statev2.sqlite')
-    assert locks['database'] is not None and locks['index'] is not None, LOCKS_LOST
-
 def _service(identity):
     """The verified installation and its running service: receipt, LaunchAgent, launcher,
-    runtime record, port owner and executable. Reads no database."""
-    validate_identity(identity)
-    owner = InstallationDescriptor(identity, require_policy=False)
-    home, own, installation = owner.home, owner.own, owner.installation
-    receipt = json.loads(installation.read_text())
-    owner = InstallationDescriptor.from_receipt(identity, receipt, home=home)
-    label, plist, wrapper, launcher, port = owner.label, owner.plist, owner.wrapper, owner.launcher, owner.port
-    node = pathlib.Path(receipt['node'])
-    assert node.is_absolute() and node.is_file() and run([str(node), '--version']).strip() == b'v22.20.0', \
-        'The Node.js runtime is missing or is not v22.20.0'
-    release = safe_path(pathlib.Path(receipt['release']), home)
-    assert release == studio_paths.releases_root(home) / receipt['archiveSha256'][:20], \
-        'The installed release is outside the owned releases folder'
-    manifest = release_verified(release)
-    assert manifest['sourceCommit'] == receipt['sourceCommit'] and manifest['product'] == 'SpecWeave Studio', \
-        'The installed release does not match its receipt'
-    content = plistlib.loads(plist.read_bytes())
-    assert content['Label'] == label and content['ProgramArguments'] == ['/usr/bin/caffeinate', '-s', str(launcher)], \
-        'The service LaunchAgent does not match the installation'
-    assert content['WorkingDirectory'] == str(own) and content['StandardOutPath'] == str(own / 'stdout.log') and content['StandardErrorPath'] == str(own / 'stderr.log'), \
-        'The service LaunchAgent does not match the installation'
-    lines = launcher.read_text().splitlines()
-    assert lines[:4] == ['#!/bin/sh', 'set -eu', 'umask 077', 'cd ' + shlex.quote(str(own))] and len(lines) == 5, \
-        'The service launcher does not match the installation'
-    tokens = shlex.split(lines[4])
-    assert tokens[:4] == ['exec', '/usr/bin/env', '-i', 'HOME=' + str(home)], 'The service launcher does not match the installation'
-    index = tokens.index(str(node))
-    environment = dict(token.split('=', 1) for token in tokens[3:index])
-    assert len(environment) == index - 3 and set(environment).issubset(ENV_KEYS), 'The service launcher sets unexpected variables'
-    assert environment.get('USER') == environment.get('LOGNAME') == owner.user, 'Launcher names another OS user'
-    assert environment['STUDIO_HOME'] == str(own) and environment['STUDIO_PORT'] == str(port), 'The service launcher does not match the installation'
-    assert environment['STUDIO_HOST'] == '127.0.0.1' and environment['STUDIO_MODE'] == 'web', 'The service launcher does not match the installation'
-    assert environment['STUDIO_NO_BROWSER'] == 'true' and environment['STUDIO_ENABLE_HOSTED_SERVICES'] == 'false', \
-        'The service launcher does not match the installation'
-    assert tokens[index:] == [str(node), str(release / 'bin.mjs'), 'start', '--no-browser', '--host', '127.0.0.1', '--port', str(port), '--base-dir', str(own), '--mode', 'web'], \
-        'The service launcher does not match the installation'
-    prefix = tokens[1:index + 2]
-    migrate_runtime_path(prefix, home, node)  # Reject missing/custom paths even for a read-only prestate.
-    # Any wrapper format a Studio release wrote; an update rewrites it in the current one.
-    assert wrapper.read_text() in {render_legacy_cli(prefix), render_unnamed_cli(prefix), render_cli(prefix)}, \
-        'The specweave-studio command does not match the installation'
-    live = run(['/bin/launchctl', 'print', owner.domain + '/' + label], text=True)
-    pid = re.search(r'^\s*pid = (\d+)\s*$', live, re.M)
-    assert pid and re.search(r'^\s*state = running\s*$', live, re.M) and 'path = ' + str(plist) in live, \
-        'The SpecWithCode service is not running'
-    runtime = json.loads((own / 'userdata/server-runtime.json').read_text())
-    assert runtime['pid'] == int(pid.group(1)) and runtime['host'] == '127.0.0.1' and runtime['port'] == port, \
-        'The running service does not match its runtime record'
-    assert listeners(port) == [runtime['pid']], 'Port belongs to another process'
-    command = run(['/bin/ps', '-p', str(runtime['pid']), '-o', 'command='], text=True)
-    assert str(node) in command and str(release / 'bin.mjs') in command, 'Running executable does not match the owned release'
-    return {'home': home, 'own': own, 'installation': installation, 'receipt': receipt, 'label': label, 'plist': plist,
-            'wrapper': wrapper, 'launcher': launcher, 'content': content, 'node': node, 'runtime': runtime, 'owner': owner}
+    runtime record, port owner and executable. Reads no database (release_check.service)."""
+    return release_check.service(identity, run, listeners, release_verified)
 
 SERVICE_KEYS = ('home', 'own', 'installation', 'receipt', 'label', 'plist', 'wrapper', 'launcher', 'content', 'node', 'runtime')
 
@@ -268,6 +129,8 @@ def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
     file_hashes = {name: digest(data) for name, data in contents.items()}
     assert_database_attached(runtime['pid'], own / 'userdata')
     assert_database_locked(own / 'userdata')
+    if reads is None:  # Stray descendants refuse before the full read, not minutes after it; the proof's capture follows it.
+        capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments'])
     rows, auth, carried, database = reads or _read_state(own / 'userdata', include_auth, since, True, widen_from)
     other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS if port != receipt['port']}
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': service['owner'].uid, 'port': receipt['port'], 'webSessionPolicy': service['owner'].policy, 'serviceLabel': label, 'servicePid': runtime['pid'],
@@ -308,21 +171,29 @@ def snapshot(identity, request=None):
     proof.update(snapshotMode='held-service', installRequestedAt=request)
     return proof
 
-def reap(identity, request, report=None):
+def reap(identity, request, report=None, stale=False):
     """Update now's fallback when a held service never quiets: stop the processes left beneath
     the verified service (quiescence.reap_descendants), by pid and only after proving each
     one's identity, and only while that service is held for `request` (assert_held, checked
     first and again before every signal). The service, its supervisor and its server browser
-    keep running, so its update hold stays in place. Reads no database and changes no file.
+    keep running, so its update hold stays in place. Changes no file. `stale` (the agent's early
+    reap) stops only what started before the hold began, with nothing started since beneath it
+    (quiescence.started_before), and only while native_work_counts, the one database read here,
+    shows no work, first and before every signal.
     `report` (optional) holds the record as it is built, for a failed reap's record."""
     report = {} if report is None else report
-    report.update(schemaVersion=1, identity=identity, result='refused')
+    report.update(schemaVersion=1, identity=identity, result='refused', stale=stale)
     service = _service(identity)
     pid = service['runtime']['pid']
     report['servicePid'] = pid
-    assert_held(service, request)
+    began = assert_held(service, request)
+
+    def idle():  # The early reap's own check, first and again before every signal.
+        assert not stale or idle_agents.idle(native_work_counts(service['own'] / 'userdata')), 'Native work is not idle'
+    idle()
     reap_descendants(pid, service['owner'].uid, str(service['node']), service['content']['ProgramArguments'], report=report,
-                     guard=lambda: assert_held(service, request))
+                     guard=lambda: (assert_held(service, request), idle()),
+                     select=started_before(began.timestamp()) if stale else None)
     report.update(result='reaped', observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
     return dict(report)
 
@@ -528,30 +399,6 @@ def snapshot_reusing(identity, earlier, carried):
     same `since`), for a database the read watermark shows unchanged since that read."""
     return _snapshot(identity, False, reads=(earlier['rows'], None, carried, earlier['databaseCapture']))[0]
 
-def _clonefile():
-    """libc clonefile(2) (macOS), or None where there is none."""
-    try:
-        function = ctypes.CDLL(None, use_errno=True).clonefile
-    except (OSError, AttributeError, TypeError):
-        return None
-    function.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32)
-    function.restype = ctypes.c_int
-    return function
-
-def clone_file(source, target):
-    """Copies `source` to the new file `target` as an APFS clone (clonefile(2)): no data is
-    written, so a multi-GB database is back in well under a second while the service is
-    stopped. clonefile never copies: where it cannot clone (ENOTSUP on another file system,
-    EXDEV across volumes) it fails at once. Any failure, or no clonefile at all (not macOS),
-    falls back to a plain byte copy, which replaces anything a failed clone left at `target`."""
-    clonefile = _clonefile()
-    try:
-        cloned = clonefile is not None and clonefile(os.fsencode(source), os.fsencode(target), 0) == 0
-    except (OSError, ctypes.ArgumentError):
-        cloned = False
-    if not cloned:
-        shutil.copyfile(source, target)
-
 def restore_state(backup, own):
     """Puts the pre-update database, and the settings.json saved with it, back while the
     service is stopped: a new release may rewrite settings.json once when it starts."""
@@ -636,24 +483,6 @@ def job_loaded(domain, label):
         return True
     except (AssertionError, OSError, subprocess.TimeoutExpired):
         return False
-
-def held_state_backups(own):
-    """The pre-update copies a held rollback's receipt still names: after a failed state restore that
-    copy is the only database from before the migration, so space pruning keeps it."""
-    held = []
-    try:
-        receipts = sorted((own / 'updates' / 'receipts').glob('update-*.json'))
-    except OSError:
-        return held
-    for path in receipts:
-        try:
-            value = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        if (isinstance(value, dict) and str(value.get('rollback') or '').startswith('held')
-                and isinstance(value.get('stateBackup'), str)):
-            held.append(value['stateBackup'])
-    return held
 
 def backup_state_clone(own, commit):
     """The pre-update copy, taken while the old service is stopped (state_backup.clone_state):
@@ -986,12 +815,13 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     assert allow_project_migrations or not allow_existing_browser_heartbeat or original_auth is not None, \
         'Restart heartbeat proof requires the auth sessions table'
     lap('beforeRead')
-    # A clone shares blocks with the live database only until either side writes, so an old
-    # copy grows toward the database's full size: keep the newest one beside the copy made
-    # below, so updates never pile them up and fill the disk. Pruned first, so the space it
-    # frees counts in the free-space check that follows.
+    # Old clones grow toward the database's size. A verified update prunes them after it exits
+    # (state_backup_prune), not while the service is held; copies a failed or hand-run update left
+    # go here, which removes nothing after a verified update.
+    agent_run = state_backup_prune.agent_receipt(home, identity, output)
     try:
-        pruned_state_backups, prune_error = prune_state_backups(home, keep=held_state_backups(own), keep_newest=1), None
+        pruned_state_backups, prune_error = prune_state_backups(
+            home, keep=held_state_backups(own), keep_newest=state_backup_prune.KEPT_AFTER_INSTALL if agent_run else 1), None
     except Exception as error:  # Pruning never fails an update.
         pruned_state_backups, prune_error = [], type(error).__name__
     # A disk too full for the copy refuses here, before staging, a pointer or a stop. The previous
@@ -1000,10 +830,18 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     clonefile = _clonefile()
     needed, free = backup_space(own, home, clonefile)
     if free < needed:
-        try:
-            dropped = prune_state_backups(home, keep=held_state_backups(own), keep_newest=0, only_if_frees=needed - free)
-        except Exception as error:
-            dropped, prune_error = [], prune_error or type(error).__name__
+        # The newest older copy goes only when the others cannot cover what is short.
+        dropped = []
+        for keep_newest in (1, 0):
+            try:
+                removed = prune_state_backups(home, keep=held_state_backups(own), keep_newest=keep_newest, only_if_frees=needed - free)
+            except Exception as error:
+                removed, prune_error = [], prune_error or type(error).__name__
+            dropped += removed
+            if removed:
+                needed, free = backup_space(own, home, clonefile)
+                if free >= needed:
+                    break
         pruned_state_backups = pruned_state_backups + dropped
         try:
             assert_backup_space(own, home, clonefile)
@@ -1043,12 +881,15 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             raise AssertionError(TOO_SLOW_TO_RESTART) from None
         staged = json.loads(value)
         staged_release = pathlib.Path(staged['release'])
-        manifest = release_verified(staged_release)
-        validate_upgrade(release_verified(pathlib.Path(old_release))['version'], manifest['version'])
+        # The version gate reads only manifests: publish_release verifies every staged byte next,
+        # and the old release was verified with the running service by the snapshot above.
+        upgrade = release_manifest(staged_release)['version']
+        validate_upgrade(release_manifest(pathlib.Path(old_release))['version'], upgrade)
         budget_left()
         # A published release is inert: no pointer names it until the check below passes, and
         # a retry reuses it (publish_release), so the prestate is checked once, before pointers.
         manifest = publish_release(staged_release, new_release)
+        assert manifest['version'] == upgrade, 'The staged release changed while it was published'
     progress_file.set(version=manifest['version'])
     def replaced(value):
         lines = value.decode().splitlines()
@@ -1066,9 +907,14 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                     'startup': {'autoBootstrapProjectFromCwd': False, 'presentation': 'overview'}})
     budget_left()
     lap('verifyAndStage')
+    # A re-read here measured against `before` itself (a held request rebases `expected` on it) is
+    # the read the check before the restart would take: that check reuses it while the watermark
+    # shows no commit since, instead of reading the whole database a third time.
+    prestate_read = None
     if unchanged_since(before_mark):  # The rows, appended rows and capture of the read above.
         current, current_carried = snapshot_reusing(identity, before, carried), carried
     else:
+        prestate_mark = watermark.take()
         position, reads = delta_since('expected', expected['rows'])
         if reads is not None:  # Only auth sessions changed: every other check of a snapshot runs.
             current_carried = reads[1]
@@ -1077,6 +923,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             current, _, current_carried = snapshot_since(identity, expected['rows'])
         base['expected'] = {'position': position, 'since': expected['rows'],
                             'reads': (current['rows'], current_carried, current.get('databaseCapture'))}
+        if expected['rows'] == before['rows']:
+            prestate_read = (prestate_mark, position, base['expected']['reads'])
     assert_prestate(expected, current, current_carried, auth_baseline=before['rows'])
     lap('prestateCheck')
     # Written only once the prestate holds, so a refusal above leaves no folder behind.
@@ -1109,7 +957,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'readinessDeadlineSeconds': READINESS_DEADLINE_SECONDS,
                 'readyBySecondsFromStart': READY_BY_SECONDS_FROM_START,
                 'expectedNewHashes': {name: digest(value) for name, value in new_bytes.items()},
-                'prunedStateBackups': pruned_state_backups, 'agentTimings': install_progress.agent_timings()}
+                'prunedStateBackups': pruned_state_backups, 'agentTimings': install_progress.agent_timings(),
+                'diskIoPolicy': install_progress.disk_io_policy()}
     if prune_error:
         progress['stateBackupPruneError'] = prune_error
     progress['timings'] = timings  # The phases done when each receipt below is written.
@@ -1118,7 +967,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     plist_hashes = {before['fileHashes']['plist']}  # Plus the rewritten LaunchAgent once written.
     state_backup = None
     service_stopped = service_started = False
-    after = None
+    after = held = None
     after_carried = None
     current_auth = None
     try:
@@ -1153,18 +1002,25 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         time.sleep(settle)
         lap('gateSettle')
         passed = [before_mark]  # Taken right before the last read (full or read_delta) that matched `before`.
+        reused_prestate = [prestate_read]
         def assert_unchanged_before_restart():
             if unchanged_since(passed[0]):  # That read stands: it would read the same rows again.
                 return
-            mark = watermark.take()
-            position, reads = delta_since('before', before['rows'])
-            if reads is not None:
-                current_rows, current_carried, current_database = reads
-            elif 'databaseCapture' in before:
-                current_rows, current_carried, current_database = rows_since_with_database(own / 'userdata', before['rows'])
+            reusable, reused_prestate[0] = reused_prestate[0], None
+            if reusable is not None and watermark.unchanged(reusable[0]):
+                # The prestate re-read: the same `since`, nothing committed after it. It is checked
+                # against `before` below like a fresh read.
+                mark, position, (current_rows, current_carried, current_database) = reusable
             else:
-                current_rows, current_carried = rows_since(own / 'userdata', before['rows'])
-                current_database = None
+                mark = watermark.take()
+                position, reads = delta_since('before', before['rows'])
+                if reads is not None:
+                    current_rows, current_carried, current_database = reads
+                elif 'databaseCapture' in before:
+                    current_rows, current_carried, current_database = rows_since_with_database(own / 'userdata', before['rows'])
+                else:
+                    current_rows, current_carried = rows_since(own / 'userdata', before['rows'])
+                    current_database = None
             assert same_guarded_rows(before['rows'], current_rows, current_carried,
                                      auth_heartbeat=allow_existing_browser_heartbeat), 'Native work changed before restart'
             assert_provable_reconnects(current_rows)
@@ -1218,8 +1074,11 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # so a write the old service made meanwhile stops the update with the old release still
         # running instead of rolling the new one back.
         assert_same_service_pid()
-        held = after_proof.mark(own / 'userdata' / 'statev2.sqlite')  # The old log, for the proof after the restart.
+        # The old log and a reader holding its snapshot through the stop, for the proof after the restart.
+        reference_mark = passed[0]
+        held = after_proof.mark(own / 'userdata' / 'statev2.sqlite')
         assert_unchanged_before_restart()
+        after_proof.confirm(held, watermark, reference_mark, passed[0])
         watermark.close()  # No connection of this helper stays open while the service closes its own.
         # Refused before the stop, with the old service running: no room for the copy, or no time left.
         assert_clone_headroom(own, home)
@@ -1237,7 +1096,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         lap('serviceStop')
         # The new release migrates the database on start; a rollback must restore both.
         state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])
-        held = after_proof.stopped(held, state_backup, progress['stateBackupMethod'])
+        held = after_proof.stopped(held, state_backup, progress['stateBackupMethod'], _clonefile())
         lap('backupClone')
         progress['phase'] = 'restart-requested'
         progress['restartStartedAt'] = restart_started_at
@@ -1375,14 +1234,14 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                                      else 'verified-appended-activity' if before['rows'] != after['rows'] else 'byte-identical',
                   'completeDatabaseContinuity': database_continuity,
                   'settingsContinuity': settings_continuity_report,
-                  'prunedStateBackups': progress['prunedStateBackups']}
+                  'stateBackup': progress['stateBackup'], 'prunedStateBackups': progress['prunedStateBackups']}
         if migration_cells is not None:
             result['migrationProtectedCells'] = migration_cells
         if widenings:
             # Names only: which protected tables gained which empty columns.
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
-        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings')
+        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings', 'diskIoPolicy')
                        if key in progress})
         if after_carried is not None:
             # Counts only: how many log rows the services appended after the prestate.
@@ -1403,6 +1262,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # The new release's update agent replaces an older one, as the desktop installs its own: a Mac
         # whose desktop app is old or never opened kept its first agent otherwise. Never fails the update.
         result['updateAgent'] = update_request.refresh_agent(home, identity, new_release)
+        # Older state copies go once this helper exits; the prune adds them to prunedStateBackups.
+        result['stateBackupPrune'] = state_backup_prune.spawn(identity, home, output, pathlib.Path(__file__).resolve())
         finish('cleanup')
         result['timings'] = timings
         output.write_text(json.dumps(result, indent=2) + '\n')
@@ -1410,6 +1271,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         print(json.dumps({'identity': identity, 'result': 'updated', 'archiveSha256': archive_sha, 'servicePid': after['servicePid'], 'report': str(output)}))
     except BaseException as error:
         lap('untilFailure')  # The phase that failed, up to the failure.
+        after_proof.abandon(held)  # The reader and the reference image, whichever exist by now.
         progress_file.rollback()
         if restart_requested and not service_started:
             # launchd refused the job or did not answer: the new release may run only if it is loaded.
@@ -1562,7 +1424,7 @@ def _refusal_detail(code, own):
             counts = native_work_counts(own / 'userdata')
             return ' '.join('%s=%d' % (key, counts[key]) for key in ('runs', 'queued', 'requests', 'effects', 'sessions', 'held'))
         pid = json.loads((own / 'userdata/server-runtime.json').read_text())['pid']
-        return descendant_names(int(pid), read_processes())
+        return descendant_names(int(pid), read_processes(), str(own))
     except Exception:
         return ''
 
@@ -1601,6 +1463,8 @@ def main():
     parser.add_argument('--snapshot', type=pathlib.Path)
     parser.add_argument('--reap', type=pathlib.Path, help='Stop the processes left beneath the service; write the record here')
     parser.add_argument('--request', help='With --reap or --snapshot: the forced install request (installRequestedAt) it serves')
+    parser.add_argument('--prune-state-backups', type=pathlib.Path, help="After a verified update: prune older state copies; this is its receipt")
+    parser.add_argument('--stale', action='store_true', help='With --reap: only what started before the hold began')
     parser.add_argument('--prestate', type=pathlib.Path)
     parser.add_argument('--archive', type=pathlib.Path)
     parser.add_argument('--sha256')
@@ -1610,11 +1474,15 @@ def main():
     parser.add_argument('--allow-existing-browser-heartbeat', action='store_true',
                         help='Prove bounded existing web and desktop reconnects under the installation web-session policy')
     args = parser.parse_args()
-    if args.reap:
+    if args.prune_state_backups:
+        state_backup_prune.announce_ready()  # Every module is loaded: the helper that started this may exit.
+        state_backup_prune.background_disk_io()
+        state_backup_prune.after_install(args.identity, current_owner()['home'], args.prune_state_backups)
+    elif args.reap:
         assert not args.snapshot and not args.prestate and args.request and not os.path.lexists(str(args.reap))
         record = {}
         try:
-            reap(args.identity, args.request, record)
+            reap(args.identity, args.request, record, stale=args.stale)
         except Exception as error:
             record.update(result='failed', error=refusal_line(args.identity, error)[len('REFUSAL '):])
             raise

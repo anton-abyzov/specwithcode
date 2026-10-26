@@ -176,6 +176,24 @@ describe("EnvironmentSupervisor setup budget for the server on this machine", ()
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("marks only the loopback primary as this machine for its requests", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ setup: Effect.never });
+      const loopback = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      const remote = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      const plain = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY).pipe(
+        Effect.provide(harness.dependencies),
+      );
+      expect(loopback.thisMachine).toBe(true);
+      expect(remote.thisMachine).toBe(false);
+      expect(plain.thisMachine).toBe(false);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("still gives up on a remote server after 15 seconds", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ setup: Effect.sleep("25 seconds") });

@@ -986,6 +986,7 @@ export function ProjectWorkspaceSurface({
     reportError: setError,
     retireError,
     announce: announceQuestion,
+    isThisDevice: hostIsThisDevice,
   });
   const sendFromComposer = useCallback(
     (text: string, attachments: ReadonlyArray<ChatAttachment> | undefined) =>

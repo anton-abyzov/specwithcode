@@ -229,6 +229,8 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
    with self.assertRaisesRegex(AssertionError,r'free \(after removing 1 older update copy\)$'):self.execute()
   self.assertEqual(list(root.iterdir()),[old[0]])
  def test_old_state_copies_are_pruned_before_free_space_is_measured(self):
+  # A helper writing outside the agent's receipts (this harness, a hand run) starts no prune after
+  # the install, so it prunes before the copy as before (test-state-backup-prune.py covers the agent's).
   root=studio_paths.backups_root(self.home);old=[]
   for day in (1,2,3):
    folder=root/('pre-abc123def456-2026100%dT000000Z-%s'%(day,'0'*32));folder.mkdir(parents=True);(folder/'statev2.sqlite').write_bytes(b'x')
@@ -1020,22 +1022,58 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
     self.execute()
    value=json.loads(self.output.read_text());self.assertEqual(value['phase'],'verified')
    self.assertEqual(bool(self.reused),watermark)
-   for key in ('timings','backup','restartStartedAt'):value.pop(key)
+   for key in ('timings','backup','stateBackup','restartStartedAt'):value.pop(key)  # Paths in each run's own home, and times.
    value['after'].pop('observedAt')
    # Each run has its own temporary home, which the pointer files name: their hashes differ.
    value['after'].pop('fileHashes')
    return json.dumps(value,sort_keys=True,indent=1)
   self.assertEqual(receipt(True),receipt(False))
  def test_a_change_after_the_before_read_reads_in_full_until_one_matches(self):
-  # Staging wrote (a usage-limit check): the prestate check and the check after the gate read
-  # in full; nothing changed after that read, so the last check before the stop lets it stand.
+  # Staging wrote (a usage-limit check): the prestate check reads in full, measured against the
+  # before read's rows; nothing changed after it, so the checks after the gate and before the stop
+  # compare that same read instead of reading again.
   state=self.use_captured_waiting_state();self.on_stage=lambda:waiting_check(state,'staging')
   reads,counting=self.counted_full_reads()
   with counting:self.execute()
   result=json.loads(self.output.read_text())
   self.assertEqual(result['phase'],'verified');self.assertEqual(self.reused,[])
-  self.assertEqual(reads,[False,False,False,True])
+  self.assertEqual(reads,[False,False,True])
   self.assertEqual(result['appendedLogRows'],{'orchestration_events':1,'orchestration_command_receipts':1})
+ def test_a_held_write_after_the_before_read_is_read_in_full_once(self):
+  # M4, 1.0.88: a write during the before read made the prestate check read the 21.5 GB database
+  # in full, and the check after the gate read it in full again, past the restart budget. A held
+  # request rebases the prestate on the helper's own read, so that re-read is the check's read.
+  service=self.use_held_admission();state=self.own/'userdata';self.on_stage=lambda:waiting_check(state,'staging')
+  reads,counting=self.counted_full_reads()
+  with counting,patch.object(update,'_service',return_value=service):self.execute()
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(reads,[False,False,True])
+  self.assertEqual(result['appendedLogRows'],{'orchestration_events':1,'orchestration_command_receipts':1})
+ def test_a_held_write_before_the_gate_check_is_not_hidden_by_the_reused_read(self):
+  # The prestate re-read is reused only while nothing committed after it: a write during the
+  # gate settle makes the check after the gate read in full, and that read refuses.
+  service=self.use_held_admission();state=self.own/'userdata';self.on_stage=lambda:waiting_check(state,'staging')
+  settle=update.gate_settle
+  def settle_while_the_project_changes(*args,**kwargs):
+   mutate_state(state,"UPDATE projection_projects SET title='changed during the gate settle'");return settle(*args,**kwargs)
+  reads,counting=self.counted_full_reads()
+  with counting,patch.object(update,'_service',return_value=service),\
+       patch.object(update,'gate_settle',side_effect=settle_while_the_project_changes):
+   with self.assertRaisesRegex(AssertionError,'changed before restart'):self.execute()
+  self.assertEqual(reads,[False,False,False]);self.assertEqual((self.backups,self.launchd,self.restart_calls),([],[],[]))
+  # Refused by the check after the gate, not later by the one before the stop.
+  self.assertNotIn('checkBeforeRestart',json.loads(self.output.read_text())['timings'])
+ def test_a_held_write_after_the_reused_read_is_still_read_and_refused(self):
+  service=self.use_held_admission();state=self.own/'userdata';self.on_stage=lambda:waiting_check(state,'staging')
+  guard=self.quiescence_guard
+  def browser_stop_while_the_project_changes(*args,**kwargs):
+   value=guard(*args,**kwargs);mutate_state(state,"UPDATE projection_projects SET title='changed before the stop'");return value
+  self.quiescence_guard=browser_stop_while_the_project_changes
+  reads,counting=self.counted_full_reads()
+  with counting,patch.object(update,'_service',return_value=service),\
+       patch.object(update,'assert_quiescence',side_effect=lambda *a,**k:self.quiescence_guard(*a,**k)):
+   with self.assertRaisesRegex(AssertionError,'changed before restart'):self.execute()
+  self.assertEqual(reads,[False,False,False]);self.assertEqual((self.backups,self.launchd,self.restart_calls),([],[],[]))
  def test_a_write_right_before_the_stop_is_read_in_full_and_refused(self):
   state=self.use_captured_waiting_state();guard=self.quiescence_guard
   def browser_stop_while_the_project_changes(*args,**kwargs):

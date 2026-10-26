@@ -14,8 +14,9 @@ rewriting state.json drops the key, so the desktop falls back to today's path on
 
 Every write replaces the whole file, bumps `rev` and never overwrites a terminal record. Also
 holds the pass lock and the service log rotation, moved here from update_agent.py (file-size
-cap), and the pass's own phase timings (Timings): `agentTimings` in run.json, and in the apply
-helper's environment (TIMINGS_ENV), which install-progress.json and the update receipt copy.
+cap), the pass's own phase timings (Timings): `agentTimings` in run.json, and in the apply
+helper's environment (TIMINGS_ENV), which install-progress.json and the update receipt copy,
+and the disk priority the agent gives the helpers a person waits for (normal_disk_io).
 Stdlib only and Python 3.9 compatible, like the agent it is installed beside.
 """
 import datetime
@@ -345,3 +346,34 @@ def rotate_service_log(path, limit=SERVICE_LOG_LIMIT, kept=SERVICE_LOG_KEPT):
         return False
     finally:
         os.close(fd)
+
+
+# ---------------------------------------------------------------- helper disk priority
+
+# sys/resource.h: the process-wide disk I/O policy. launchd's LowPriorityIO, which the agent runs
+# under, sets IOPOL_THROTTLE (3), and children inherit it; the helper records its own in the
+# update receipt (install_progress.disk_io_policy, `diskIoPolicy`).
+IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_DEFAULT = 0, 0, 0
+
+
+def _setiopolicy():
+    """libc's setiopolicy_np, looked up in the agent itself: a child between fork and exec
+    must not load a library or look up a symbol. None off macOS."""
+    try:
+        import ctypes
+        return ctypes.CDLL(None).setiopolicy_np
+    except (ImportError, OSError, AttributeError):
+        return None
+
+
+_SET_IOPOLICY = _setiopolicy()
+
+
+def normal_disk_io():
+    """In a child before exec: the default disk I/O policy in place of the inherited throttle.
+    Best effort, like leaving darwin background: a child never fails to start over it."""
+    try:
+        if _SET_IOPOLICY is not None:
+            _SET_IOPOLICY(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_DEFAULT)
+    except Exception:
+        pass

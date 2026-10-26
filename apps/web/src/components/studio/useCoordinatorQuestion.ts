@@ -32,6 +32,8 @@ import {
 import type { ProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { useLatestRef } from "../../hooks/useLatestRef";
 import { releaseDraftAttachment } from "../../lib/attachmentUploadQueue";
+import { whenHostReady } from "../../lib/durableComposerDraftBindings";
+import { isUnsentHostFailure, retryTransientSend } from "../../lib/transientSendRetry";
 import { useQuestionSettleAnnouncements } from "../chat/questionLiveStatus";
 import {
   answerProblemFor,
@@ -102,8 +104,11 @@ export function useCoordinatorQuestion(input: {
   readonly retireError: (message: string) => void;
   /** Tells a screen reader the answer was sent or the question settled. */
   readonly announce?: ((text: string) => void) | undefined;
+  /** The coordinator's host is the app's own machine: busy while it catches up, never gone. */
+  readonly isThisDevice?: boolean | undefined;
 }): CoordinatorQuestion | null {
   const { environmentId, coordinatorId, projection, composer, reportError, retireError } = input;
+  const isThisDevice = input.isThisDevice === true;
   const announce = input.announce ?? announceNothing;
   const projectionRef = useLatestRef(projection);
   const respondCommand = useOrchestrationCommand(threadEnvironment.respondToUserInput, {
@@ -223,28 +228,36 @@ export function useCoordinatorQuestion(input: {
       inFlight.current.add(request.requestId);
       settle.claim(request.requestId);
       setRespondingRequestIds((current) => [...current, request.requestId]);
-      const result = await respondCommand({
-        environmentId,
-        input: {
-          commandId: CommandId.make(
-            questionAnswerCommandId({
+      // The answer's command id makes a repeat safe: a host that is busy or
+      // restarting (an update) takes it once it is back instead of failing it.
+      const result = await retryTransientSend(
+        () =>
+          respondCommand({
+            environmentId,
+            input: {
+              commandId: CommandId.make(
+                questionAnswerCommandId({
+                  requestId: request.requestId,
+                  answers: requestAnswers,
+                  attachmentIdsByQuestionId: Object.fromEntries(
+                    Object.entries(attachmentsByQuestionId).map(([id, list]) => [
+                      id,
+                      list.map((file) => file.id),
+                    ]),
+                  ),
+                }),
+              ),
+              threadId: coordinatorId,
               requestId: request.requestId,
               answers: requestAnswers,
-              attachmentIdsByQuestionId: Object.fromEntries(
-                Object.entries(attachmentsByQuestionId).map(([id, list]) => [
-                  id,
-                  list.map((file) => file.id),
-                ]),
-              ),
-            }),
-          ),
-          threadId: coordinatorId,
-          requestId: request.requestId,
-          answers: requestAnswers,
-          ...(Object.keys(attachmentsByQuestionId).length > 0 ? { attachmentsByQuestionId } : {}),
-          ...(answeredInChat ? { answeredInChat: true } : {}),
-        },
-      });
+              ...(Object.keys(attachmentsByQuestionId).length > 0
+                ? { attachmentsByQuestionId }
+                : {}),
+              ...(answeredInChat ? { answeredInChat: true } : {}),
+            },
+          }),
+        { waitForHost: () => whenHostReady(environmentId, { cancelled: false }) },
+      );
       inFlight.current.delete(request.requestId);
       setRespondingRequestIds((current) => current.filter((id) => id !== request.requestId));
       const threadId = coordinatorId;
@@ -254,7 +267,7 @@ export function useCoordinatorQuestion(input: {
       // retires it has nothing new to say.
       let saidSettled = false;
       const problem = settleQuestionAnswer({
-        result: questionSendResult(result, "The answer was not sent."),
+        result: questionSendResult(result, "The answer was not sent.", isThisDevice),
         requestId: request.requestId,
         answers: requestAnswers,
         files: attachmentsByQuestionId,
@@ -285,6 +298,7 @@ export function useCoordinatorQuestion(input: {
       announce,
       coordinatorId,
       environmentId,
+      isThisDevice,
       projectionRef,
       reportError,
       respondCommand,
@@ -344,13 +358,20 @@ export function useCoordinatorQuestion(input: {
       const waitingAtSend = pendingRequestIds;
       settle.claim(requestId);
       setRespondingRequestIds((current) => [...current, requestId]);
-      void dismissCommand({ environmentId, input: { threadId, requestId } }).then((result) => {
+      // Only a dismissal the host never received goes again.
+      void retryTransientSend(
+        () => dismissCommand({ environmentId, input: { threadId, requestId } }),
+        {
+          waitForHost: () => whenHostReady(environmentId, { cancelled: false }),
+          retryable: isUnsentHostFailure,
+        },
+      ).then((result) => {
         setRespondingRequestIds((current) => current.filter((id) => id !== requestId));
         // As for an answer: a settled reason once shown is not said again.
         let shown: string | null = null;
         let saidSettled = false;
         const problem = settleQuestionDismiss({
-          result: questionSendResult(result, "The question was not dismissed."),
+          result: questionSendResult(result, "The question was not dismissed.", isThisDevice),
           requestId,
           runtimeRequests: () => projectionRef.current?.runtimeRequests,
           settle,
@@ -370,6 +391,7 @@ export function useCoordinatorQuestion(input: {
       coordinatorId,
       dismissCommand,
       environmentId,
+      isThisDevice,
       pendingRequestIds,
       projectionRef,
       reportError,

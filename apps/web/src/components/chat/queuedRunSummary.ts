@@ -1,3 +1,5 @@
+import { THIS_MACHINE_BUSY_TITLE } from "../../lib/machineStatus";
+
 /**
  * How a queued message reads in the queue: one plain line instead of the
  * start of a Markdown report, and how long it has waited.
@@ -47,8 +49,12 @@ export function queuedRunActionsUnavailableReason(input: {
   readonly canOperateThread: boolean;
   readonly environmentUnavailable: boolean;
   readonly environmentLabel: string | null;
+  /** The app's own machine is busy, not gone, while its server catches up. */
+  readonly isThisMachineCatchingUp?: boolean;
 }): string | null {
   if (!input.canOperateThread) return "This connection cannot change threads.";
+  if (input.environmentUnavailable && input.isThisMachineCatchingUp)
+    return `${THIS_MACHINE_BUSY_TITLE}. The queue works again once it catches up.`;
   if (input.environmentUnavailable)
     return `${input.environmentLabel ?? "This machine"} is not connected.`;
   return null;

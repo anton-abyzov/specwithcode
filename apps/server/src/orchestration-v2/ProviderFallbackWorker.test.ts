@@ -25,6 +25,7 @@ import {
   API_CREDIT_IDLE_RETURN_MS,
   apiCreditOrigin,
   apiCreditReturnCommand,
+  FALLBACK_DISPATCH_ATTEMPTS,
   limitFallbackReturnCommand,
   LIMIT_FALLBACK_MESSAGE_PREFIX,
   limitResetAt,
@@ -40,7 +41,9 @@ import {
 } from "./ProviderFallbackWorker.ts";
 import { resolveUsageLimitsAfterProbe } from "../provider/providerUsageLimits.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { STOPPED_THREAD_REFUSAL } from "./usageLimitRecovery.ts";
 
 const now = Date.parse("2026-10-09T12:00:00.000Z");
 const resetsAt = "2026-10-09T14:00:00.000Z";
@@ -1086,14 +1089,23 @@ describe("sweep redeem path", () => {
     env?: Record<string, string>;
     /** What changed on the thread between the sweep's snapshot and the claim. */
     now?: Record<string, unknown>;
+    /** Stop requests recorded on the stopped run, and the thread's recovery choice. */
+    interrupts?: ReadonlyArray<{ readonly cause?: "service_update" }>;
+    limitRecovery?: Record<string, unknown>;
+    /** The Stop requests appear only from this read of them on (a raced Stop). */
+    stopFromRead?: number;
+    /** How the listed thread differs from a limit stop. */
+    thread?: Record<string, unknown>;
   }) {
     const state = {
       run: 0,
       consumed: 0,
       refreshed: 0,
+      stopReads: 0,
       fresh: input.fresh,
       dispatched: [] as OrchestrationV2ServerCommand[],
     };
+    const listed = { ...limited, ...input.thread };
     const deps = Layer.mergeAll(
       Layer.mock(Projects.ProjectService)({
         getById: () => Effect.succeed(Option.some(legacyProject)),
@@ -1113,16 +1125,30 @@ describe("sweep redeem path", () => {
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         getShellSnapshot: () =>
           Effect.succeed({
-            threads: [{ ...limited, latestRunId: RunId.make(`r${state.run}`) }],
+            threads: [{ ...listed, latestRunId: RunId.make(`r${state.run}`) }],
           } as never),
         getThreadShell: () =>
           Effect.succeed({
-            ...limited,
+            ...listed,
             latestRunId: RunId.make(`r${state.run}`),
             ...input.now,
           } as never),
-        getThreadRecords: (threadId) =>
-          Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+        getThreadRecords: (threadId, _fields, filter) =>
+          filter?.turnItemTypes?.includes("run_interrupt_request")
+            ? Effect.sync(() => {
+                state.stopReads += 1;
+                const stopped = state.stopReads >= (input.stopFromRead ?? 1);
+                return {
+                  thread: { ...listed, limitRecovery: input.limitRecovery ?? null },
+                  turnItems: (stopped ? (input.interrupts ?? []) : []).map((interrupt) => ({
+                    type: "run_interrupt_request",
+                    runId: RunId.make(`r${state.run}`),
+                    message: "Stop",
+                    ...interrupt,
+                  })),
+                } as never;
+              })
+            : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         dispatch: (command) =>
@@ -1218,6 +1244,81 @@ describe("sweep redeem path", () => {
       yield* sweep();
       expect(state.consumed).toBe(0);
       expect(state.dispatched).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("never spends a banked reset on a thread a person stopped", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const { state, sweep } = yield* harness({
+        cached: banked(100),
+        fresh: banked(100),
+        interrupts: [{}],
+      });
+      yield* sweep();
+      yield* TestClock.adjust("31 seconds");
+      yield* sweep();
+      // Not even the account is read for it.
+      expect(state.refreshed).toBe(0);
+      expect(state.consumed).toBe(0);
+      expect(state.dispatched).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("never spends a banked reset on a Stop that lands during the account read", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const { state, sweep } = yield* harness({
+        cached: banked(100),
+        fresh: banked(100),
+        interrupts: [{}],
+        stopFromRead: 2,
+      });
+      yield* sweep();
+      expect(state.refreshed).toBe(1);
+      expect(state.consumed).toBe(0);
+      expect(state.dispatched).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("reads no Stop for a failed thread it has nothing to send for", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const { state, sweep } = yield* harness({
+        cached: banked(100),
+        fresh: banked(100),
+        interrupts: [{}],
+        thread: { lastErrorClass: "validation_error" },
+      });
+      for (let i = 0; i < 3; i++) {
+        yield* sweep();
+        yield* TestClock.adjust("31 seconds");
+      }
+      expect(state.stopReads).toBe(0);
+      expect(state.dispatched).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("redeems after a service update's Stop, or once the person arms it again", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const update = yield* harness({
+        cached: banked(100),
+        fresh: banked(100),
+        interrupts: [{ cause: "service_update" }],
+      });
+      yield* update.sweep();
+      expect(update.state.consumed).toBe(1);
+      expect(update.state.dispatched.map((c) => c.commandId)).toEqual(["limit-reset:t1:r0"]);
+
+      const rearmed = yield* harness({
+        cached: banked(100),
+        fresh: banked(100),
+        interrupts: [{}],
+        limitRecovery: { runId: "r0", resetAt: null, autoResume: true, explicitArm: true },
+      });
+      yield* rearmed.sweep();
+      expect(rearmed.state.consumed).toBe(1);
     }),
   );
 
@@ -2017,6 +2118,176 @@ describe("sweep switch path down the fallback order", () => {
         manualContinuationOfRunId: limited.latestRunId,
         modelSelection: { instanceId: codex2Id, model: "gpt-6" },
       });
+    }),
+  );
+
+  itEffect.effect(
+    "sends nothing for a thread a person stopped, and switches once they arm it",
+    () =>
+      Effect.gen(function* () {
+        const state = {
+          stopped: true,
+          rearmed: false,
+          refuse: false,
+          attempted: [] as OrchestrationV2ServerCommand[],
+        };
+        const providers = () => [
+          withUsage(provider(claudeId, "claudeAgent", stoppedAt), 100),
+          codexWithRoom(codexId, stoppedAt),
+        ];
+        const deps = Layer.mergeAll(
+          Layer.mock(Projects.ProjectService)({
+            getById: () => Effect.succeed(Option.some(legacyProject)),
+          }),
+          fallbackPolicyTestLayer({
+            ...settings,
+            providerLimitFallbackModels: [{ instanceId: codexId, model: "gpt-6" }],
+          }),
+          Layer.mock(Providers.ProviderRegistry)({
+            getProviders: Effect.sync(providers),
+            refreshInstance: () => Effect.sync(providers),
+          }),
+          Layer.mock(Instances.ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(undefined),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getShellSnapshot: () => Effect.succeed({ threads: [limited] } as never),
+            getThreadShell: () => Effect.succeed(limited as never),
+            getThreadRecords: (threadId, _fields, filter) =>
+              filter?.turnItemTypes?.includes("run_interrupt_request")
+                ? Effect.sync(
+                    () =>
+                      ({
+                        thread: {
+                          ...limited,
+                          limitRecovery: state.rearmed
+                            ? {
+                                runId: limited.latestRunId,
+                                resetAt: limited.usageLimitResetAt,
+                                autoResume: true,
+                                explicitArm: true,
+                              }
+                            : null,
+                        },
+                        turnItems: state.stopped
+                          ? [
+                              {
+                                type: "run_interrupt_request",
+                                runId: limited.latestRunId,
+                                message: "Stop",
+                              },
+                            ]
+                          : [],
+                      }) as never,
+                  )
+                : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+          }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            dispatch: (command) => {
+              state.attempted.push(command);
+              // The orchestrator's refusal of a Stop that landed after the sweep's check.
+              return state.refuse
+                ? Effect.fail(
+                    new Orchestrator.OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause: STOPPED_THREAD_REFUSAL,
+                    }),
+                  )
+                : Effect.succeed({ sequence: 1, storedEvents: [] });
+            },
+          }),
+        );
+        yield* Effect.gen(function* () {
+          yield* TestClock.setTime(stoppedAt + 30_000);
+          const sweep = yield* makeSweep;
+          for (let i = 0; i < 3; i++) {
+            yield* sweep();
+            yield* TestClock.adjust("1 minute");
+          }
+          expect(state.attempted).toEqual([]);
+          // A Stop that raced the check: refused, and the target is not marked failed.
+          state.stopped = false;
+          state.refuse = true;
+          yield* sweep();
+          expect(state.attempted).toHaveLength(1);
+          state.refuse = false;
+          state.stopped = true;
+          state.rearmed = true;
+          for (let i = 0; i < 3 && state.attempted.length < 2; i++) {
+            yield* TestClock.adjust("1 minute");
+            yield* sweep();
+          }
+        }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+        expect(state.attempted).toHaveLength(2);
+        expect(state.attempted[1]).toMatchObject({
+          type: "message.dispatch",
+          manualContinuationOfRunId: limited.latestRunId,
+          modelSelection: { instanceId: codexId, model: "gpt-6" },
+        });
+      }),
+  );
+
+  itEffect.effect("switches right after the person's arm however often a Stop refused it", () =>
+    Effect.gen(function* () {
+      const state = { refuse: true, attempted: [] as OrchestrationV2ServerCommand[], sent: 0 };
+      const providers = () => [
+        withUsage(provider(claudeId, "claudeAgent", stoppedAt), 100),
+        codexWithRoom(codexId, stoppedAt),
+      ];
+      const deps = Layer.mergeAll(
+        Layer.mock(Projects.ProjectService)({
+          getById: () => Effect.succeed(Option.some(legacyProject)),
+        }),
+        fallbackPolicyTestLayer({
+          ...settings,
+          providerLimitFallbackModels: [{ instanceId: codexId, model: "gpt-6" }],
+        }),
+        Layer.mock(Providers.ProviderRegistry)({
+          getProviders: Effect.sync(providers),
+          refreshInstance: () => Effect.sync(providers),
+        }),
+        Layer.mock(Instances.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(undefined),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getShellSnapshot: () => Effect.succeed({ threads: [limited] } as never),
+          getThreadShell: () => Effect.succeed(limited as never),
+          // Each Stop lands after the sweep's check, so the orchestrator refuses.
+          getThreadRecords: (threadId, _fields, filter) =>
+            filter?.turnItemTypes?.includes("run_interrupt_request")
+              ? Effect.succeed({ thread: limited, turnItems: [] } as never)
+              : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) => {
+            state.attempted.push(command);
+            if (!state.refuse) state.sent += 1;
+            return state.refuse
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: STOPPED_THREAD_REFUSAL,
+                  }),
+                )
+              : Effect.succeed({ sequence: 1, storedEvents: [] });
+          },
+        }),
+      );
+      yield* Effect.gen(function* () {
+        yield* TestClock.setTime(stoppedAt + 30_000);
+        const sweep = yield* makeSweep;
+        for (let i = 0; i < FALLBACK_DISPATCH_ATTEMPTS + 1; i++) {
+          yield* sweep();
+          yield* TestClock.adjust("1 minute");
+        }
+        expect(state.attempted.length).toBeGreaterThan(FALLBACK_DISPATCH_ATTEMPTS);
+        // The person arms it: the next sweep switches, with no rest for the refusals.
+        state.refuse = false;
+        yield* sweep();
+      }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+      expect(state.sent).toBe(1);
     }),
   );
 });

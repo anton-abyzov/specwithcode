@@ -31,9 +31,11 @@ more access than it has, and a machine's access setting still caps workers there
 handoff carries the coordinator's mode to the project it moves to.
 
 A thread that waits on you shows **Waiting on you** and is listed in **Needs you**. A thread with
-nothing in progress that stays quiet for 30 minutes is listed as stalled. An approval left for 30
-minutes without activity no longer holds back an automatic update: the update stops that turn so
-it can continue later. Questions and sign-ins still hold updates until you answer them.
+nothing in progress that stays quiet for 30 minutes is listed as stalled. An approval or a
+question left for 30 minutes without activity no longer holds back an automatic update: the update
+stops that turn so it can continue later, and asks the question or approval again after the
+restart. A thread you resolved or archived never holds an update back. Sign-ins still hold updates
+until you sign in.
 
 ## Provider differences
 

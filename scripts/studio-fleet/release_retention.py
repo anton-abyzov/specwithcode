@@ -190,6 +190,26 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
     return sorted(removed)
 
 
+def held_state_backups(own):
+    """The pre-update copies a held rollback's receipt still names: after a failed state restore that
+    copy is the only database from before the migration, so space pruning keeps it. Moved from
+    update.py (file-size cap)."""
+    held = []
+    try:
+        receipts = sorted((own / 'updates' / 'receipts').glob('update-*.json'))
+    except OSError:
+        return held
+    for path in receipts:
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if (isinstance(value, dict) and str(value.get('rollback') or '').startswith('held')
+                and isinstance(value.get('stateBackup'), str)):
+            held.append(value['stateBackup'])
+    return held
+
+
 def prune_incoming(home, installed, now=None, recent_seconds=RECENT_SECONDS):
     """Deletes install/incoming leftovers; returns the names removed. A staging folder outlives
     update.py only when the agent killed the helper; a release bundle or .tar.gz is removed once

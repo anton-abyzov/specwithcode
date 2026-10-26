@@ -1,11 +1,13 @@
 import { useNavigate } from "@tanstack/react-router";
 import { DESKTOP_INSTALL_APPLY_MS, type ServiceUpdateBlocker } from "@specweave-studio/contracts";
-import { RotateCwIcon, SparklesIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import * as Schema from "effect/Schema";
+import { RotateCwIcon, SparklesIcon, XIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { respondToConfirmDialog } from "../../confirmDialog";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { isElectron } from "../../env";
+import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { useStudioServiceUpdateState } from "../../state/serviceUpdate";
@@ -54,6 +56,8 @@ import {
 } from "./restartHoldWindow";
 import { RestartRunningWorkList } from "./RestartRunningWorkList";
 import { onRestartToUpdateRequest } from "./restartToUpdateRequests";
+import { keepLiveQuestionBlockers, waitingKey } from "./liveQuestionThreads";
+import { useLiveWaitingThreads } from "./useLiveWaitingThreads";
 import { useServiceQuestionBlockers } from "./useServiceQuestionBlockers";
 import {
   canPressUpdateAgain,
@@ -73,6 +77,17 @@ import {
 const RESTART_WATCHDOG_MS = DESKTOP_INSTALL_APPLY_MS;
 // While an update waits for running work to finish, check this often.
 const IDLE_CHECK_MS = 15_000;
+
+/** The version whose "Update waits on N questions" hint the person dismissed. */
+const WAIT_HINT_DISMISSED_KEY = "specwithcode:update-wait-hint-dismissed";
+
+const readWaitHintDismissed = (): string | null => {
+  try {
+    return getLocalStorageItem(WAIT_HINT_DISMISSED_KEY, Schema.String);
+  } catch {
+    return null;
+  }
+};
 
 const errorText = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
@@ -131,11 +146,23 @@ function SidebarRestartToUpdateButton() {
   // An Update now run (0988): this window only follows it, in one toast.
   const runState = serviceState?.run ?? null;
   const liveRun = liveServiceUpdateRun(serviceState);
-  // An automatic install that waits for quiet never closes a question (0991):
-  // the sidebar names the questions it waits for, beside Update now.
+  // An automatic install that waits for quiet (0991): a short hint under
+  // Update now says how many open questions it waits on.
   const automaticWait =
     liveRun === null && serviceState?.status === "waiting-for-quiet" && service.progress === null;
-  const runBlockers = useServiceQuestionBlockers(liveRun, automaticWait);
+  // What Needs you reads, live: a question answered, or a thread resolved or
+  // archived, drops out at once, and any change asks the service again.
+  const liveWaiting = useLiveWaitingThreads(environmentId);
+  const lookedBlockers = useServiceQuestionBlockers(
+    liveRun,
+    automaticWait,
+    waitingKey(liveWaiting),
+  );
+  const runBlockers = useMemo(
+    () => keepLiveQuestionBlockers(lookedBlockers, liveWaiting),
+    [lookedBlockers, liveWaiting],
+  );
+  const [waitHintDismissedFor, setWaitHintDismissedFor] = useState(readWaitHintDismissed);
   const serviceStateRef = useRef(serviceState);
   useEffect(() => {
     serviceStateRef.current = serviceState;
@@ -732,14 +759,48 @@ function SidebarRestartToUpdateButton() {
   ) : (
     button
   );
-  const automaticWaitLine = automaticWait ? describeAutomaticInstallWait(runBlockers) : null;
-  if (automaticWaitLine === null) return content;
+  const automaticWaitHint = automaticWait ? describeAutomaticInstallWait(runBlockers) : null;
+  const hintVersion = serviceState?.downloadedVersion ?? serviceState?.availableVersion ?? null;
+  if (automaticWaitHint === null || (hintVersion !== null && waitHintDismissedFor === hintVersion))
+    return content;
   return (
     <div className="flex shrink-0 flex-col gap-1 self-start">
       {content}
-      <p data-testid="sidebar-update-question-wait" className="text-2xs text-muted-foreground">
-        {automaticWaitLine}
-      </p>
+      <div className="flex items-start gap-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <p
+                data-testid="sidebar-update-question-wait"
+                className="min-w-0 text-2xs text-muted-foreground"
+              >
+                {automaticWaitHint.line}
+              </p>
+            }
+          />
+          <TooltipPopup side="top" align="start" className="max-w-72">
+            {automaticWaitHint.detail}
+          </TooltipPopup>
+        </Tooltip>
+        {hintVersion === null ? null : (
+          <button
+            type="button"
+            aria-label="Dismiss"
+            data-testid="sidebar-update-question-wait-dismiss"
+            className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground outline-hidden ring-ring hover:text-foreground focus-visible:ring-2"
+            onClick={() => {
+              setWaitHintDismissedFor(hintVersion);
+              try {
+                setLocalStorageItem(WAIT_HINT_DISMISSED_KEY, hintVersion, Schema.String);
+              } catch {
+                // Dismissed for this window only.
+              }
+            }}
+          >
+            <XIcon aria-hidden className="size-3" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

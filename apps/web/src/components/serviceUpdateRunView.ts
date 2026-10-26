@@ -119,18 +119,25 @@ export function describePersonRequests(counts: {
 }
 
 /**
- * What an automatic install waiting on unanswered questions says (0991):
- * it never closes them, so it says how many it waits for and where, beside
- * Update now. Null when no question or approval holds it.
+ * What an automatic install waiting on open questions says, under Update now:
+ * a short hint (`line`), with where they are and what happens to them in its
+ * tooltip (`detail`). The install does not wait on them for good: one left
+ * 30 minutes on a quiet thread is closed for the install and asked again after
+ * the restart. Null when no question or approval holds it.
  */
 export function describeAutomaticInstallWait(
   blockers: ReadonlyArray<ServiceUpdateBlocker>,
-): string | null {
+): { readonly line: string; readonly detail: string } | null {
   const waiting = personRequestBlockers(blockers);
   const threads = nameQuestionThreads(waiting);
-  const what = describePersonRequests(countPersonRequests(waiting));
+  const counts = countPersonRequests(waiting);
+  const what = describePersonRequests(counts);
   if (threads === null || what === null) return null;
-  return `Update ready: waiting for ${what} you haven't answered, in ${threads}.`;
+  const one = counts.questions + counts.approvals === 1;
+  return {
+    line: `Update waits on ${what}.`,
+    detail: `In ${threads}. The update installs once ${one ? "it is" : "they are"} answered or ${one ? "has" : "have"} waited 30 minutes; anything still open is asked again after the restart. Update now installs right away.`,
+  };
 }
 
 /** The helper's phase name (`checkBeforeRestart`) as words (`check before restart`). */

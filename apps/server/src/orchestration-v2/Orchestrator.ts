@@ -4,6 +4,7 @@ import {
   invalidatesDeferredResolution,
 } from "./DeferredThreadResolution.ts";
 import { runtimeModeSessionsToDetach } from "./RuntimeModeSessions.ts";
+import { fallbackMove } from "./providerOpenFailure.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { guardProjectCreation } from "../project/ProjectCommandAdmission.ts";
 import {
@@ -11,8 +12,11 @@ import {
   applyLimitObservation,
   derivedLimitResumeAt,
   hasFreshLimitPermission,
+  limitResumeDisarm,
+  personStopHoldsRun,
+  STOPPED_THREAD_REFUSAL,
   recoverySnoozeBlocks,
-  updateLimitRecovery,
+  threadWithLimitRecovery,
 } from "./usageLimitRecovery.ts";
 import {
   isBlockingRuntimeRequest,
@@ -185,7 +189,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
-import { SYSTEM_INTERRUPT_REASONS } from "./systemInterruptReasons.ts";
+import { isPersonStopRequest } from "./systemInterruptReasons.ts";
 import * as SteersInFlight from "./SteersInFlight.ts";
 import {
   lostWorkNoteEvents,
@@ -510,6 +514,36 @@ function isLimitRecoveryResume(command: {
   readonly creationSource?: string | undefined;
 }): boolean {
   return command.creationSource === "server" && command.commandId.startsWith("limit-resume:");
+}
+
+/**
+ * Provider fallback's continuations of a limit stop on the same provider:
+ * after a redeemed reset, on Codex credits or on billing
+ * (`sameProviderContinuation` in ProviderFallbackWorker). API credits
+ * (`limit-api:`) is a server continuation already.
+ */
+const SAME_PROVIDER_CONTINUATION_PREFIXES = [
+  "limit-reset:",
+  "limit-credits:",
+  "limit-billing:",
+] as const;
+
+/**
+ * The server's own continuation of a stopped thread, other than usage-limit
+ * recovery's resume (which its gates check): every provider fallback, on the
+ * same provider or another one (`limit-fallback:`, `provider-fallback:`,
+ * `limit-api:`), the way back (`limit-return:`) and the ready-provider retry.
+ */
+function isFallbackContinuation(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+): boolean {
+  return (
+    command.creationSource === "server" &&
+    !isLimitRecoveryResume(command) &&
+    !isNativeMaintenanceCommand(command) &&
+    (isServerContinuation(command) ||
+      SAME_PROVIDER_CONTINUATION_PREFIXES.some((prefix) => command.commandId.startsWith(prefix)))
+  );
 }
 
 /**
@@ -3555,33 +3589,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
         case "thread.metadata.update": {
-          const limitRecovery = updateLimitRecovery(
-            thread.limitRecovery,
-            command.limitRecovery,
-            command.commandId,
-            command.limitRecoveryPolicyArm,
-            command.limitRecoveryAffinity,
-          );
           return {
-            ...thread,
+            ...(command.limitRecovery === undefined
+              ? thread
+              : threadWithLimitRecovery(
+                  thread,
+                  command.limitRecovery,
+                  command.commandId,
+                  now,
+                  command.limitRecoveryPolicyArm,
+                  command.limitRecoveryAffinity,
+                )),
             ...(command.title === undefined ? {} : { title: command.title }),
-            ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
-            ...(command.limitRecovery !== undefined &&
-            limitRecovery?.snooze === true &&
-            Date.parse(limitRecovery.resetAt ?? "") > DateTime.toEpochMillis(now)
-              ? {
-                  snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt!),
-                  // Recovery changes acknowledge the same stopped run; keep its
-                  // metadata timestamp from appearing as a fresh failure wake.
-                  snoozedAt: now,
-                }
-              : command.limitRecovery !== undefined &&
-                  thread.limitRecovery?.snooze &&
-                  thread.snoozedUntil != null &&
-                  DateTime.toEpochMillis(thread.snoozedUntil) ===
-                    Date.parse(thread.limitRecovery.resetAt ?? "")
-                ? { snoozedUntil: null, snoozedAt: null }
-                : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
@@ -5241,6 +5260,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: handoffRefusal,
         });
       }
+      // Provider fallback continues a stopped thread by itself, on the same
+      // provider or another one. After a person's Stop it waits for them, like
+      // recovery's resume. The run it names and the thread's last run both count:
+      // a later hop names the first run, and Stop marks the last.
+      if (isFallbackContinuation(command)) {
+        const named =
+          command.manualContinuationOfRunId ??
+          fallbackMove(command.threadId, command.messageId)?.runId;
+        const latest = latestExecutedRun(projection.runs)?.id;
+        for (const runId of new Set([named, latest])) {
+          if (runId === undefined) continue;
+          if (yield* stopHoldsLimitResume(command, projection, RunId.make(runId))) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: STOPPED_THREAD_REFUSAL,
+            });
+          }
+        }
+      }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -5298,7 +5337,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const armedBy = (requestId: CommandId | undefined) =>
             command.commandId.endsWith(`:${requestId ?? "legacy"}`);
           if (
-            !limitRecoveryResumeAllowed(projection, source.id, armedBy, nowMs, command.commandId)
+            !limitRecoveryResumeAllowed(projection, source.id, armedBy, nowMs, command.commandId) ||
+            (yield* stopHoldsLimitResume(command, projection, source.id))
           ) {
             yield* refuseLimitResume(command, events, projection, source.id, armedBy, nowMs);
             return;
@@ -5316,7 +5356,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (requestId) => requestId === command.usageLimitRecoveryRequestId,
             nowMs,
             isLimitRecoveryResume(command) ? command.commandId : undefined,
-          )
+          ) ||
+          (yield* stopHoldsLimitResume(command, projection, command.usageLimitContinuationOfRunId))
         ) {
           yield* refuseLimitResume(
             command,
@@ -9727,6 +9768,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
 
   /**
+   * Whether a person's Stop holds a run that recovery or provider fallback
+   * would continue by itself (see `personStopHoldsRun`). Stop turns recovery's
+   * resume off (see holdStoppedThread); this refuses one a policy armed anyway,
+   * and every fallback continuation.
+   */
+  const stopHoldsLimitResume = (
+    command: OrchestrationV2ServerCommand,
+    projection: Pick<OrchestrationV2ThreadProjection, "thread">,
+    runId: RunId,
+  ) =>
+    projectionStore
+      .getThreadRecords(projection.thread.id, ["turnItems"], {
+        turnItemTypes: ["run_interrupt_request"],
+        turnItemRunIds: [runId],
+      })
+      .pipe(
+        Effect.map(({ turnItems }) =>
+          personStopHoldsRun(projection.thread.limitRecovery, runId, turnItems),
+        ),
+        mapDispatchError(command),
+      );
+
+  /**
    * A restart continuation may follow only a run nobody asked to stop, or one a
    * service update interrupted. Any other stop (the user, an agent) is final.
    */
@@ -9751,7 +9815,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         mapDispatchError(command),
       );
 
-  /** Records Stop for a run without replacing a marker already written by its interrupt. */
+  /**
+   * Records Stop for a run. A marker its interrupt already wrote stays, unless
+   * only an agent, an update or a watchdog wrote it and this is a person's
+   * Stop: theirs replaces it (same id), so the run counts as stopped by them.
+   */
   const markStoppedRun = Effect.fnUntraced(function* (input: {
     readonly command: Extract<
       OrchestrationV2ServerCommand,
@@ -9767,12 +9835,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const pendingItems = (yield* Ref.get(events)).flatMap((event) =>
       event.type === "turn-item.updated" ? [event.payload] : [],
     );
+    const pendingMarkers = pendingItems.filter(
+      (item) => item.runId === run.id && item.type === "run_interrupt_request",
+    );
+    const markers =
+      pendingMarkers.length > 0
+        ? pendingMarkers
+        : (yield* readInterruptRequests(command, run.id).pipe(mapDispatchError(command))).filter(
+            (item) => item.runId === run.id && item.type === "run_interrupt_request",
+          );
+    const message = command.reason ?? "Interrupt requested";
     if (
-      pendingItems.some((item) => item.runId === run.id && item.type === "run_interrupt_request") ||
-      (yield* stopReachedRun(command, thread.id, run.id))
+      markers.length > 0 &&
+      (!isPersonStopRequest({ cause: command.cause, message }) ||
+        markers.some((item) => item.type === "run_interrupt_request" && isPersonStopRequest(item)))
     ) {
       return;
     }
+    const id = idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-request" });
+    const replaced = markers.find((item) => item.id === id);
     yield* emit(
       events,
       command,
@@ -9784,7 +9865,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: run.providerInstanceId,
       occurredAt: now,
       payload: {
-        id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-request" }),
+        id,
         threadId: thread.id,
         runId: run.id,
         nodeId: run.rootNodeId,
@@ -9792,14 +9873,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerTurnId: null,
         nativeItemRef: null,
         parentItemId: null,
-        ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: pendingItems }),
+        ordinal:
+          replaced?.ordinal ?? (yield* nextTurnItemOrdinal({ thread, turnItems: pendingItems })),
         status: "completed",
         title: "Interrupt requested",
         startedAt: now,
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_request",
-        message: command.reason ?? "Interrupt requested",
+        message,
         ...(command.cause === undefined ? {} : { cause: command.cause }),
       },
     });
@@ -9847,7 +9929,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: forUpdate ? holdForRestart(run) : holdForPerson(run),
         });
       }
-      const pullRequests = thread.pullRequests ?? [];
+      // A thread its usage limit stopped would resume by itself at the reset. A
+      // person's Stop turns that off, and their explicit arm with it; an
+      // update's Stop resumes on its own and leaves the choice as it was.
+      let current = thread;
+      if (input.command.cause !== "service_update") {
+        const { turnItems } = yield* projectionStore
+          .getThreadRecords(thread.id, ["turnItems"], { turnItemTypes: ["error"] })
+          .pipe(mapDispatchError(input.command));
+        const disarm = limitResumeDisarm(thread, runs, turnItems);
+        // An arm the person made before the Stop no longer speaks for them,
+        // even one already turned off (see personStopHoldsRun).
+        const recovery = thread.limitRecovery;
+        if (disarm !== null || recovery?.explicitArm === true) {
+          current = {
+            ...(disarm === null
+              ? { ...thread, limitRecovery: recovery && { ...recovery, explicitArm: false } }
+              : threadWithLimitRecovery(thread, disarm, input.command.commandId, input.now)),
+            updatedAt: input.now,
+          };
+          yield* emitEvent({
+            type: "thread.metadata-updated",
+            threadId: thread.id,
+            occurredAt: input.now,
+            payload: current,
+          });
+        }
+      }
+      const pullRequests = current.pullRequests ?? [];
       if (pullRequests.some((link) => link.watch !== undefined)) {
         yield* emitEvent({
           type: "thread.pull-request-synced",
@@ -9855,7 +9964,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: thread.providerInstanceId,
           occurredAt: input.now,
           payload: {
-            ...thread,
+            ...current,
             pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
           },
         });
@@ -11210,10 +11319,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : (yield* projectionStore.getThreadRecords(childThreadId, ["turnItems"], {
               turnItemTypes: ["run_interrupt_request"],
             })).turnItems.flatMap((item) =>
-              item.type === "run_interrupt_request" &&
-              item.cause !== "service_update" &&
-              item.cause !== "agent" &&
-              !(item.cause === undefined && SYSTEM_INTERRUPT_REASONS.has(item.message))
+              item.type === "run_interrupt_request" && isPersonStopRequest(item)
                 ? [item.runId]
                 : [],
             ),

@@ -51,6 +51,18 @@ def agent_timings(environ=None):
     return value
 
 
+def disk_io_policy():
+    """This helper's disk I/O policy, for the update receipt (`diskIoPolicy`): getiopolicy_np's
+    IOPOL_DEFAULT (0) when the agent lifted its LowPriorityIO throttle (3) for this apply
+    (update_agent_run.normal_disk_io), None where it cannot be read."""
+    try:
+        import ctypes
+        value = ctypes.CDLL(None).getiopolicy_np(0, 0)  # IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS
+    except (ImportError, OSError, AttributeError):
+        return None
+    return value if value >= 0 else None
+
+
 def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
 

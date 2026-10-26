@@ -32,6 +32,10 @@ export interface DesktopSettings {
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
+  // Left out when false or unknown, so settings written by older builds and
+  // test fixtures keep their shape.
+  readonly mainWindowFullScreen?: boolean;
+  readonly mainWindowDisplay?: DesktopWindowDisplay;
   // Where each project's own window was last placed. A list rather than a map
   // because object key order is not stable for integer-like keys, and the
   // order matters here: oldest first, most recently saved last, so the cap
@@ -65,6 +69,28 @@ export interface DesktopProjectWindowState {
   readonly projectKey: string;
   readonly bounds: DesktopWindowBounds;
   readonly maximized: boolean;
+  readonly fullScreen?: boolean;
+  readonly display?: DesktopWindowDisplay;
+}
+
+// The monitor a window was showing on when it was saved. The id is the
+// operating system's display id (CGDirectDisplayID on macOS), which stays the
+// same for one monitor across restarts; the bounds tell how far the monitor
+// moved when the arrangement changed.
+export interface DesktopWindowDisplay {
+  readonly id: number;
+  readonly bounds: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+}
+
+// What a window remembers besides its normal bounds and maximized state.
+export interface DesktopWindowPlacementExtras {
+  readonly fullScreen: boolean;
+  readonly display: DesktopWindowDisplay | null;
 }
 
 export interface DesktopSettingsChange {
@@ -101,6 +127,15 @@ export const DesktopWindowBoundsSchema = Schema.Struct({
   height: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_MAIN_WINDOW_SIZE.height)),
 });
 export type DesktopWindowBounds = typeof DesktopWindowBoundsSchema.Type;
+export const DesktopWindowDisplaySchema = Schema.Struct({
+  id: Schema.Int,
+  bounds: Schema.Struct({
+    x: Schema.Int,
+    y: Schema.Int,
+    width: Schema.Int.check(Schema.isGreaterThan(0)),
+    height: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+});
 export const DEFAULT_MAIN_WINDOW_SIZE = {
   width: 1100,
   height: 780,
@@ -140,6 +175,9 @@ const DesktopSettingsDocument = Schema.Struct({
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  // Loose like the monitor below: a bad value must not reset every setting.
+  mainWindowFullScreen: Schema.optionalKey(Schema.Unknown),
+  mainWindowDisplay: Schema.optionalKey(Schema.Unknown),
   // Kept loose and normalised entry by entry on load, so one damaged entry is
   // dropped on its own instead of failing the whole document and resetting
   // every other setting.
@@ -173,6 +211,8 @@ const DesktopSettingsJson = fromLenientJson(DesktopSettingsDocument);
 const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
 const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
+const decodeDesktopWindowDisplay = Schema.decodeUnknownOption(DesktopWindowDisplaySchema);
+const desktopWindowDisplayEquivalence = Schema.toEquivalence(DesktopWindowDisplaySchema);
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(DesktopWindowBoundsSchema);
 
 const settingsChange = (settings: DesktopSettings, changed: boolean): DesktopSettingsChange => ({
@@ -214,11 +254,13 @@ export class DesktopAppSettings extends Context.Service<
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+      extras?: DesktopWindowPlacementExtras,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setProjectWindowBounds: (
       projectKey: string,
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+      extras?: DesktopWindowPlacementExtras,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -271,6 +313,47 @@ export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds |
   return Option.getOrNull(decodeDesktopWindowBounds(value));
 }
 
+export function normalizeWindowDisplay(value: unknown): DesktopWindowDisplay | null {
+  return Option.getOrNull(decodeDesktopWindowDisplay(value));
+}
+
+// Only the keys that differ from "not full screen, monitor unknown", so an
+// entry saved without them reads back equal to one that never had them.
+function placementExtrasFields(extras: DesktopWindowPlacementExtras | undefined): {
+  readonly fullScreen?: true;
+  readonly display?: DesktopWindowDisplay;
+} {
+  return {
+    ...(extras?.fullScreen === true ? { fullScreen: true as const } : {}),
+    ...(extras?.display ? { display: extras.display } : {}),
+  };
+}
+
+function mainWindowExtrasFields(extras: DesktopWindowPlacementExtras | undefined): {
+  readonly mainWindowFullScreen?: true;
+  readonly mainWindowDisplay?: DesktopWindowDisplay;
+} {
+  const { fullScreen, display } = placementExtrasFields(extras);
+  return {
+    ...(fullScreen ? { mainWindowFullScreen: fullScreen } : {}),
+    ...(display ? { mainWindowDisplay: display } : {}),
+  };
+}
+
+function samePlacementExtras(
+  savedFullScreen: boolean | undefined,
+  savedDisplay: DesktopWindowDisplay | undefined,
+  extras: DesktopWindowPlacementExtras | undefined,
+): boolean {
+  const display = extras?.display ?? undefined;
+  return (
+    (savedFullScreen === true) === (extras?.fullScreen === true) &&
+    (savedDisplay === undefined || display === undefined
+      ? savedDisplay === display
+      : desktopWindowDisplayEquivalence(savedDisplay, display))
+  );
+}
+
 function isValidProjectWindowKey(value: unknown): value is string {
   return (
     typeof value === "string" && value.length > 0 && value.length <= MAX_PROJECT_WINDOW_KEY_LENGTH
@@ -297,7 +380,7 @@ function normalizeProjectWindowBounds(value: unknown): readonly DesktopProjectWi
     if (typeof entry !== "object" || entry === null) {
       continue;
     }
-    const { projectKey, bounds, maximized } = entry as Record<string, unknown>;
+    const { projectKey, bounds, maximized, fullScreen, display } = entry as Record<string, unknown>;
     if (!isValidProjectWindowKey(projectKey)) {
       continue;
     }
@@ -306,10 +389,12 @@ function normalizeProjectWindowBounds(value: unknown): readonly DesktopProjectWi
       continue;
     }
     entriesByKey.delete(projectKey);
+    const normalizedDisplay = normalizeWindowDisplay(display);
     entriesByKey.set(projectKey, {
       projectKey,
       bounds: normalizedBounds,
       maximized: maximized === true,
+      ...placementExtrasFields({ fullScreen: fullScreen === true, display: normalizedDisplay }),
     });
   }
 
@@ -347,6 +432,12 @@ function normalizeDesktopSettingsDocument(
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
+    ...(mainWindowBounds === null
+      ? {}
+      : mainWindowExtrasFields({
+          fullScreen: parsed.mainWindowFullScreen === true,
+          display: normalizeWindowDisplay(parsed.mainWindowDisplay),
+        })),
     projectWindowBounds: normalizeProjectWindowBounds(parsed.projectWindowBounds),
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
@@ -388,6 +479,12 @@ function toDesktopSettingsDocument(
   }
   if (settings.mainWindowMaximized) {
     document.mainWindowMaximized = true;
+  }
+  if (settings.mainWindowBounds !== null && settings.mainWindowFullScreen === true) {
+    document.mainWindowFullScreen = true;
+  }
+  if (settings.mainWindowBounds !== null && settings.mainWindowDisplay !== undefined) {
+    document.mainWindowDisplay = settings.mainWindowDisplay;
   }
   if (settings.projectWindowBounds.length > 0) {
     document.projectWindowBounds = settings.projectWindowBounds;
@@ -448,16 +545,23 @@ function setMainWindowBounds(
   settings: DesktopSettings,
   bounds: DesktopWindowBounds,
   isMaximized: boolean,
+  extras?: DesktopWindowPlacementExtras,
 ): DesktopSettings {
-  return settings.mainWindowBounds !== null &&
+  if (
+    settings.mainWindowBounds !== null &&
     desktopWindowBoundsEquivalence(settings.mainWindowBounds, bounds) &&
-    settings.mainWindowMaximized === isMaximized
-    ? settings
-    : {
-        ...settings,
-        mainWindowBounds: bounds,
-        mainWindowMaximized: isMaximized,
-      };
+    settings.mainWindowMaximized === isMaximized &&
+    samePlacementExtras(settings.mainWindowFullScreen, settings.mainWindowDisplay, extras)
+  ) {
+    return settings;
+  }
+  const { mainWindowFullScreen: _fullScreen, mainWindowDisplay: _display, ...rest } = settings;
+  return {
+    ...rest,
+    mainWindowBounds: bounds,
+    mainWindowMaximized: isMaximized,
+    ...mainWindowExtrasFields(extras),
+  };
 }
 
 function setProjectWindowBounds(
@@ -465,6 +569,7 @@ function setProjectWindowBounds(
   projectKey: string,
   bounds: DesktopWindowBounds,
   isMaximized: boolean,
+  extras?: DesktopWindowPlacementExtras,
 ): DesktopSettings {
   if (!isValidProjectWindowKey(projectKey)) {
     return settings;
@@ -479,7 +584,8 @@ function setProjectWindowBounds(
     newest !== undefined &&
     newest.projectKey === projectKey &&
     newest.maximized === isMaximized &&
-    desktopWindowBoundsEquivalence(newest.bounds, bounds)
+    desktopWindowBoundsEquivalence(newest.bounds, bounds) &&
+    samePlacementExtras(newest.fullScreen, newest.display, extras)
   ) {
     return settings;
   }
@@ -488,7 +594,7 @@ function setProjectWindowBounds(
     ...settings,
     projectWindowBounds: capProjectWindowBounds([
       ...entries.filter((entry) => entry.projectKey !== projectKey),
-      { projectKey, bounds, maximized: isMaximized },
+      { projectKey, bounds, maximized: isMaximized, ...placementExtrasFields(extras) },
     ]),
   };
 }
@@ -726,8 +832,8 @@ export const make = Effect.gen(function* () {
       );
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
-    setMainWindowBounds: (bounds, isMaximized) =>
-      persist((settings) => setMainWindowBounds(settings, bounds, isMaximized)).pipe(
+    setMainWindowBounds: (bounds, isMaximized, extras) =>
+      persist((settings) => setMainWindowBounds(settings, bounds, isMaximized, extras)).pipe(
         Effect.withSpan("desktop.settings.setMainWindowBounds", {
           attributes: {
             x: bounds.x,
@@ -735,13 +841,17 @@ export const make = Effect.gen(function* () {
             width: bounds.width,
             height: bounds.height,
             isMaximized,
+            isFullScreen: extras?.fullScreen === true,
+            displayId: extras?.display?.id ?? -1,
           },
         }),
       ),
     // The project key is left out of the span on purpose: it can contain a
     // filesystem path.
-    setProjectWindowBounds: (projectKey, bounds, isMaximized) =>
-      persist((settings) => setProjectWindowBounds(settings, projectKey, bounds, isMaximized)).pipe(
+    setProjectWindowBounds: (projectKey, bounds, isMaximized, extras) =>
+      persist((settings) =>
+        setProjectWindowBounds(settings, projectKey, bounds, isMaximized, extras),
+      ).pipe(
         Effect.withSpan("desktop.settings.setProjectWindowBounds", {
           attributes: {
             x: bounds.x,
@@ -817,10 +927,12 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
         load: SynchronizedRef.get(settingsRef),
-        setMainWindowBounds: (bounds, isMaximized) =>
-          update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
-        setProjectWindowBounds: (projectKey, bounds, isMaximized) =>
-          update((settings) => setProjectWindowBounds(settings, projectKey, bounds, isMaximized)),
+        setMainWindowBounds: (bounds, isMaximized, extras) =>
+          update((settings) => setMainWindowBounds(settings, bounds, isMaximized, extras)),
+        setProjectWindowBounds: (projectKey, bounds, isMaximized, extras) =>
+          update((settings) =>
+            setProjectWindowBounds(settings, projectKey, bounds, isMaximized, extras),
+          ),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

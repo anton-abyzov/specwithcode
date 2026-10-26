@@ -63,6 +63,7 @@ import {
   isSettledRunStatus,
   resolveVisibleWorktreeSetup,
   resolveWorktreeSetupProgress,
+  switchThreadBackToPick,
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
@@ -443,7 +444,7 @@ import {
   useDurableThreadDraftRestore,
   whenHostReady,
 } from "~/lib/durableComposerDraftBindings";
-import { retryTransientSend } from "~/lib/transientSendRetry";
+import { isUnsentHostFailure, retryTransientSend } from "~/lib/transientSendRetry";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import {
   applyProviderInstanceSettings,
@@ -5113,6 +5114,8 @@ function useChatViewState(props: ChatViewProps) {
     activeContextWindow,
     activeCoordinatorShell,
     activeDraftLogicalProjectKey,
+    activeEnvironmentConnectionPhase,
+    activeEnvironmentIsThisMachine,
     activeEnvironmentServerBrowser,
     activeEnvironmentUnavailable,
     activeEnvironmentUnavailableLabel,
@@ -9572,6 +9575,8 @@ export default function ChatView(props: ChatViewProps) {
     activeContextWindow,
     activeCoordinatorShell,
     activeDraftLogicalProjectKey,
+    activeEnvironmentConnectionPhase,
+    activeEnvironmentIsThisMachine,
     activeEnvironmentServerBrowser,
     activeEnvironmentUnavailable,
     activeEnvironmentUnavailableLabel,
@@ -9959,6 +9964,8 @@ export default function ChatView(props: ChatViewProps) {
     canOperateThread,
     environmentUnavailable: activeEnvironmentUnavailable,
     environmentLabel: activeEnvironmentUnavailableLabel,
+    isThisMachineCatchingUp:
+      activeEnvironmentIsThisMachine && isThisMachineCatchingUp(activeEnvironmentConnectionPhase),
   });
   // The same rule that files the thread under Blocked, so the two never disagree.
   const activeThreadBlocker = activeThreadShell ? threadBlocker(activeThreadShell) : null;
@@ -10602,16 +10609,39 @@ export default function ChatView(props: ChatViewProps) {
                 : usageResetAt(pairingProvider, 100, approachingNowMs, pairing.original.model),
             ...room,
             onBack: () => {
-              const selection = {
-                instanceId: pairing.original.instanceId,
-                model: pairing.original.model,
-              } as ModelSelection;
-              if (projectRouting?.saveCoordinatorModel)
-                void projectRouting.saveCoordinatorModel(selection);
-              else
-                onProviderModelSelect(selection.instanceId, selection.model, {
-                  focusComposer: false,
-                });
+              const threadId = activeThreadShell?.id;
+              if (threadId === undefined) return;
+              void switchThreadBackToPick({
+                selection: {
+                  instanceId: pairing.original.instanceId,
+                  model: pairing.original.model,
+                } as ModelSelection,
+                setThreadModel: (selection) =>
+                  updateThreadMetadata({
+                    environmentId,
+                    input: { threadId, modelSelection: selection },
+                  }),
+                selectInComposer: (selection) => {
+                  if (projectRouting?.saveCoordinatorModel)
+                    void projectRouting.saveCoordinatorModel(selection);
+                  else
+                    onProviderModelSelect(selection.instanceId, selection.model, {
+                      focusComposer: false,
+                    });
+                },
+              }).then((outcome) => {
+                if (outcome.ok) return;
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: `Could not switch back to ${originalLabel.pick}`,
+                    description:
+                      outcome.error instanceof Error
+                        ? outcome.error.message
+                        : "The thread kept its current model.",
+                  }),
+                );
+              });
             },
           };
         })();
@@ -13602,14 +13632,23 @@ export default function ChatView(props: ChatViewProps) {
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      const result = await respondToThreadApproval({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          requestId,
-          decision,
+      // A decision the host never received goes again once it is back. One it
+      // may have received is not: the host does not deduplicate decisions.
+      const result = await retryTransientSend(
+        () =>
+          respondToThreadApproval({
+            environmentId,
+            input: {
+              threadId: activeThreadId,
+              requestId,
+              decision,
+            },
+          }),
+        {
+          waitForHost: () => whenHostReady(environmentId, { cancelled: false }),
+          retryable: isUnsentHostFailure,
         },
-      });
+      );
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
@@ -13688,36 +13727,46 @@ export default function ChatView(props: ChatViewProps) {
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
       const waitingAtSend = pendingUserInputIdsRef.current;
-      const result = await respondToThreadUserInput({
-        environmentId,
-        input: {
-          // The same answer sent again replays one command instead of a refused second one.
-          commandId: CommandId.make(
-            questionAnswerCommandId({
+      // The answer's command id makes a repeat safe, so a host that is busy or
+      // restarting (an update) takes it once it is back instead of failing it.
+      const result = await retryTransientSend(
+        () =>
+          respondToThreadUserInput({
+            environmentId,
+            input: {
+              // The same answer sent again replays one command instead of a refused second one.
+              commandId: CommandId.make(
+                questionAnswerCommandId({
+                  requestId,
+                  answers,
+                  attachmentIdsByQuestionId: Object.fromEntries(
+                    [...attachmentsByQuestionId].map(([id, list]) => [
+                      id,
+                      list.map((attachment) => attachment.id),
+                    ]),
+                  ),
+                }),
+              ),
+              threadId: activeThreadId,
               requestId,
               answers,
-              attachmentIdsByQuestionId: Object.fromEntries(
-                [...attachmentsByQuestionId].map(([id, list]) => [
-                  id,
-                  list.map((attachment) => attachment.id),
-                ]),
-              ),
-            }),
-          ),
-          threadId: activeThreadId,
-          requestId,
-          answers,
-          ...(attachmentsByQuestionId.size > 0
-            ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
-            : {}),
-          ...(chatReply ? { answeredInChat: true } : {}),
-        },
-      });
+              ...(attachmentsByQuestionId.size > 0
+                ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
+                : {}),
+              ...(chatReply ? { answeredInChat: true } : {}),
+            },
+          }),
+        { waitForHost: () => whenHostReady(environmentId, { cancelled: false }) },
+      );
       userInputResponsesInFlight.current.delete(responseKey);
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       const threadId = activeThreadId;
       const problem = settleQuestionAnswer({
-        result: questionSendResult(result, "Failed to submit user input."),
+        result: questionSendResult(
+          result,
+          "Failed to submit user input.",
+          activeEnvironmentIsThisMachine,
+        ),
         requestId,
         answers,
         files: Object.fromEntries(attachmentsByQuestionId),
@@ -13737,6 +13786,7 @@ export default function ChatView(props: ChatViewProps) {
       return false;
     },
     [
+      activeEnvironmentIsThisMachine,
       activeThreadId,
       announceAnswer,
       answerSettle,
@@ -13764,12 +13814,25 @@ export default function ChatView(props: ChatViewProps) {
       );
       const waitingAtSend = pendingUserInputIdsRef.current;
       const threadId = activeThreadId;
-      const result = await dismissThreadUserInput({
-        environmentId,
-        input: { threadId, requestId },
-      });
+      // Only a dismissal the host never received goes again: a repeat of one
+      // it took would come back as "already answered".
+      const result = await retryTransientSend(
+        () =>
+          dismissThreadUserInput({
+            environmentId,
+            input: { threadId, requestId },
+          }),
+        {
+          waitForHost: () => whenHostReady(environmentId, { cancelled: false }),
+          retryable: isUnsentHostFailure,
+        },
+      );
       const problem = settleQuestionDismiss({
-        result: questionSendResult(result, "Failed to dismiss the question."),
+        result: questionSendResult(
+          result,
+          "Failed to dismiss the question.",
+          activeEnvironmentIsThisMachine,
+        ),
         requestId,
         runtimeRequests: () => serverProjectionRef.current?.runtimeRequests,
         settle: answerSettle,
@@ -13782,6 +13845,7 @@ export default function ChatView(props: ChatViewProps) {
       return result;
     },
     [
+      activeEnvironmentIsThisMachine,
       activeThreadId,
       announceAnswer,
       answerSettle,

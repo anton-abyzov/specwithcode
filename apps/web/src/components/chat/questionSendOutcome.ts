@@ -9,6 +9,7 @@ import {
   type AtomCommandResult,
 } from "@specweave-studio/client-runtime/state/runtime";
 
+import { hostSendFailureText } from "../../lib/transientSendRetry";
 import {
   isRecordedQuestionAnswer,
   isSettledRequestRefusal,
@@ -36,11 +37,13 @@ export type QuestionSendResult =
 export function questionSendResult(
   result: AtomCommandResult<unknown, unknown>,
   fallback: string,
+  /** The question's host is the app's own machine, which is busy rather than gone. */
+  isThisMachine = false,
 ): QuestionSendResult {
   if (result._tag === "Success") return { kind: "sent" };
   if (isAtomCommandInterrupted(result)) return { kind: "interrupted" };
   const error = squashAtomCommandFailure(result);
-  return { kind: "refused", message: error instanceof Error ? error.message : fallback };
+  return { kind: "refused", message: hostSendFailureText(error, { isThisMachine, fallback }) };
 }
 
 export interface QuestionSendProblem {
