@@ -264,7 +264,15 @@ try {
 
   const page = await first.context.newPage();
   await page.goto(origin, { waitUntil: "networkidle" });
-  await page.getByRole("link", { name: "Durable drafts proof", exact: true }).click();
+  const projectLink = page.getByRole("link", { name: "Durable drafts proof", exact: true });
+  // A project in a scratch folder is listed under the collapsed Automated group.
+  if (!(await projectLink.isVisible().catch(() => false))) {
+    await page
+      .getByRole("button", { name: /^Automated/ })
+      .first()
+      .click();
+  }
+  await projectLink.click();
   await page.locator("#project-prompt").waitFor();
   const projectUrl = page.url();
   await page.locator("#project-prompt").fill(COORDINATOR_TEXT);

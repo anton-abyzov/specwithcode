@@ -1,9 +1,10 @@
 import { createRouter, RouterHistory } from "@tanstack/react-router";
 
+import { trackSettingsOriginNavigation } from "./components/settings/settingsEntryScope";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter(history: RouterHistory) {
-  return createRouter({
+  const router = createRouter({
     routeTree,
     history,
     context: {},
@@ -12,6 +13,8 @@ export function getRouter(history: RouterHistory) {
     // settings or pull-request navigation.
     defaultPreload: "intent",
   });
+  trackSettingsOriginNavigation(router);
+  return router;
 }
 
 export type AppRouter = ReturnType<typeof getRouter>;

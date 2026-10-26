@@ -263,28 +263,38 @@ export function takeFileSurfaceOpener(surface: RightPanelSurface): HTMLElement |
   return opener;
 }
 
-function openInPanel(target: ViewerFileTarget, opener: HTMLElement | null) {
-  useRightPanelStore.getState().openFile(target.threadRef, target.path, target.line);
+function openInPanel(
+  threadRef: ScopedThreadRef,
+  target: ViewerFileTarget,
+  opener: HTMLElement | null,
+) {
+  useRightPanelStore.getState().openFile(threadRef, target.path, target.line);
   if (!readerTakesFocusFrom(opener)) return;
-  const thread = useRightPanelStore.getState().byThreadKey[scopedThreadKey(target.threadRef)];
+  const thread = useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)];
   const opened = thread?.surfaces.find((surface) => surface.id === thread.activeSurfaceId);
   if (opened?.kind === "file") fileSurfaceOpenedFrom.set(opened, opener);
 }
 
-function opensFocused(target: ViewerFileTarget, opener: HTMLElement | null): boolean {
+function opensFocused(
+  threadRef: ScopedThreadRef,
+  target: ViewerFileTarget,
+  opener: HTMLElement | null,
+): boolean {
   if (focusedFileHosts === 0 || target.path === ".") return false;
   if (opener !== null && openerKeepsPanel(opener)) return false;
-  return fileReaderPlacement(fileReaderLayoutFor(target.threadRef)) === "focused";
+  return fileReaderPlacement(fileReaderLayoutFor(threadRef)) === "focused";
 }
 
 /**
  * Opens a file where the reader sees it: in the overlay when it is in front;
  * else in the focused viewer when the right panel would leave the
  * conversation under 560 px or the reader under 480 px (D-05); else in the
- * thread's side panel. `opener` is the link that asked, when the caller has
- * it; without it the link is read now. Whatever else opens a file in the
- * panel (the Files tree, search, a menu, reopening a closed tab) calls the
- * panel store itself and opens it there.
+ * thread's side panel. A file no thread owns (a link in a Library document)
+ * opens only in the overlay: the panel and the focused viewer belong to a
+ * thread. `opener` is the link that asked, when the caller has it; without it
+ * the link is read now. Whatever else opens a file in the panel (the Files
+ * tree, search, a menu, reopening a closed tab) calls the panel store itself
+ * and opens it there.
  */
 export function openFileInFront(target: ViewerFileTarget, opener?: HTMLElement | null): void {
   const overlay = useViewerOverlayStore.getState();
@@ -292,13 +302,15 @@ export function openFileInFront(target: ViewerFileTarget, opener?: HTMLElement |
     overlay.showLinked({ kind: "file", file: target });
     return;
   }
+  const { threadRef } = target;
+  if (threadRef === null) return;
   const from = opener === undefined ? openingElement() : opener;
-  if (opensFocused(target, from)) {
+  if (opensFocused(threadRef, target, from)) {
     // The panel stays as it was, and nothing counts as the reader's choice there.
     useFocusedFileStore.setState({ file: target, from });
     return;
   }
-  openInPanel(target, from);
+  openInPanel(threadRef, target, from);
 }
 
 /**
@@ -308,10 +320,10 @@ export function openFileInFront(target: ViewerFileTarget, opener?: HTMLElement |
  */
 export function moveFocusedFileToPanel(): void {
   const { file, from } = useFocusedFileStore.getState();
-  if (file === null) return;
+  if (file === null || file.threadRef === null) return;
   useFocusedFileStore.setState({ file: null, from: null });
   stepOutOfViewerOverlay();
-  openInPanel(file, from);
+  openInPanel(file.threadRef, file, from);
 }
 
 /**

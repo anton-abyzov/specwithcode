@@ -210,7 +210,13 @@ export function HtmlRenderDocument(props: {
       const path = absoluteEvidencePath(requested, target.cwd);
       if (path === undefined) return reply(frame, htmlRenderError(id, "Invalid path"));
       // The file pane reads through the connection's file grant and the server's path guards.
-      openFileInFront({ threadRef: target.threadRef, cwd: target.cwd, path, line });
+      openFileInFront({
+        environmentId: target.threadRef.environmentId,
+        threadRef: target.threadRef,
+        cwd: target.cwd,
+        path,
+        line,
+      });
       reply(frame, htmlRenderResult(id));
     };
     const fileRequest = (event: MessageEvent) => {

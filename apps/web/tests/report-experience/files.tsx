@@ -374,7 +374,15 @@ function Root() {
       type="button"
       className="text-left underline underline-offset-2"
       data-fixture-link={path}
-      onClick={() => openFileInFront({ threadRef, cwd: "", path, line: undefined })}
+      onClick={() =>
+        openFileInFront({
+          environmentId: "fixture" as never,
+          threadRef,
+          cwd: "",
+          path,
+          line: undefined,
+        })
+      }
     >
       {label}
     </button>

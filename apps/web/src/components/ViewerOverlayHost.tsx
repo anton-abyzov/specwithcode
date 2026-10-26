@@ -348,7 +348,7 @@ function closeFocusedFile() {
 function FocusedFileActions(props: { readonly file: ViewerFileTarget }) {
   const { file } = props;
   const beside = useFileReaderPlacement(file.threadRef) === "beside";
-  const read = useProjectFileQuery(file.threadRef.environmentId, file.cwd, file.path);
+  const read = useProjectFileQuery(file.environmentId, file.cwd, file.path);
   if (read.error !== null && (read.data?.contents ?? null) === null && mayBeMissing(read.readError))
     return null;
   return (

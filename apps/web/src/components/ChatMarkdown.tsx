@@ -214,7 +214,7 @@ import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { openFileInFront, stepOutOfViewerOverlay, viewerOverlayInFront } from "~/lib/openInFront";
-import { InViewerOverlay } from "~/viewerOverlayStore";
+import { InViewerOverlay, type ViewerFileTarget } from "~/viewerOverlayStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -1371,7 +1371,8 @@ interface MarkdownFileLinkProps {
   label: string;
   copyMarkdown: string;
   theme: "light" | "dark";
-  threadRef?: ScopedThreadRef | undefined;
+  /** The message has somewhere to open a file: its thread, or the viewer overlay. */
+  canOpenFiles: boolean;
   onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
   openInEditorMenuLabel: string;
@@ -2112,7 +2113,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   label,
   copyMarkdown,
   theme,
-  threadRef,
+  canOpenFiles,
   onOpen,
   onOpenInPanel,
   openInEditorMenuLabel,
@@ -2171,12 +2172,20 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       onOpenMedia();
       return;
     }
-    if (threadRef && panelPath) {
+    if (canOpenFiles && panelPath) {
       onOpenInPanel(panelPath, line);
       return;
     }
     handleOpenInEditor();
-  }, [handleOpenInEditor, line, onOpenDocument, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
+  }, [
+    canOpenFiles,
+    handleOpenInEditor,
+    line,
+    onOpenDocument,
+    onOpenInPanel,
+    onOpenMedia,
+    panelPath,
+  ]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -2377,7 +2386,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const canOpenInEditor = onOpen !== undefined;
   const canOpenInBrowser = onOpenInBrowser !== undefined;
-  const canOpenInPanel = threadRef !== undefined && Boolean(panelPath);
+  const canOpenInPanel = canOpenFiles && Boolean(panelPath);
   const hasPrimaryAction = hasMarkdownFilePrimaryAction({
     canOpenInEditor,
     canOpenInBrowser,
@@ -2459,7 +2468,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
-    previous.threadRef === next.threadRef &&
+    previous.canOpenFiles === next.canOpenFiles &&
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
@@ -2543,7 +2552,14 @@ function useChatMarkdownState({
           preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
         createAssetUrl,
         onOpenFile: threadRef
-          ? (path) => openFileInFront({ threadRef, cwd: cwd ?? "", path, line: undefined })
+          ? (path) =>
+              openFileInFront({
+                environmentId: threadRef.environmentId,
+                threadRef,
+                cwd: cwd ?? "",
+                path,
+                line: undefined,
+              })
           : undefined,
       }).then(
         (preview) => {
@@ -2847,18 +2863,29 @@ function useChatMarkdownState({
   // Inside the viewer overlay, files open in the overlay, in the viewer's
   // place, rather than in the side panel behind it or as another viewer.
   const inViewerOverlay = use(InViewerOverlay);
+  // Where a file link opens from: the thread, or, for a document no thread
+  // owns (a Library file), the overlay it is shown in, read by its server.
+  const fileOpensFrom = useMemo(
+    () =>
+      threadRef
+        ? { environmentId: threadRef.environmentId, threadRef }
+        : inViewerOverlay && environmentId !== null
+          ? { environmentId, threadRef: null }
+          : null,
+    [environmentId, inViewerOverlay, threadRef],
+  );
   // A bare filename resolves to the workspace root, which is rarely where the
   // file is, so ask the index before opening. Absolute host paths open as-is.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
-      if (!threadRef) return;
+      if (fileOpensFrom === null) return;
       // Claimed on every open so a synchronous one supersedes a lookup already
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) => {
         const hostPath = cwd && !isAbsolutePath(path) ? resolvePathLinkTarget(path, cwd) : path;
         openFileInFront({
-          threadRef,
+          ...fileOpensFrom,
           cwd: cwd ?? "",
           path,
           line,
@@ -2886,11 +2913,11 @@ function useChatMarkdownState({
     [
       canUseShellActions,
       cwd,
+      fileOpensFrom,
       findWorkspaceBasenameMatch,
       openInPreferredEditor,
       revealFileInFileManager,
       revealInFileManagerLabel,
-      threadRef,
     ],
   );
   const revealMarkdownFileInFileManager = useCallback(
@@ -2907,11 +2934,11 @@ function useChatMarkdownState({
   // A file found nowhere still gets an answer: every place that was looked
   // in, beside the report or in a notice, never an empty viewer.
   const showUnresolvedFile = useCallback(
-    (meta: MarkdownFileLinkMeta, ref: ScopedThreadRef) => {
+    (meta: MarkdownFileLinkMeta, from: Pick<ViewerFileTarget, "environmentId" | "threadRef">) => {
       const tried = meta.unresolved ?? [meta.filePath];
       if (viewerOverlayInFront()) {
         openFileInFront({
-          threadRef: ref,
+          ...from,
           cwd: cwd ?? "",
           path: meta.filePath,
           line: meta.line,
@@ -2984,7 +3011,8 @@ function useChatMarkdownState({
           label={label}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
-          threadRef={threadRef}
+          // Media needs a thread's media viewer; the file pane would read it as text.
+          canOpenFiles={fileOpensFrom !== null && (threadRef !== undefined || !canPreviewMedia)}
           {...(isDirectory
             ? { onOpen: openFolder }
             : canUseShellActions
@@ -2992,8 +3020,8 @@ function useChatMarkdownState({
               : {})}
           onOpenInPanel={openFileInPanel}
           onOpenDocument={
-            fileLinkMeta.unresolved && threadRef
-              ? () => showUnresolvedFile(fileLinkMeta, threadRef)
+            fileLinkMeta.unresolved && fileOpensFrom
+              ? () => showUnresolvedFile(fileLinkMeta, fileOpensFrom)
               : isMarkdownDocument
                 ? () => setDocumentTarget({ path: fileLinkMeta.filePath })
                 : opensInViewer
@@ -3030,6 +3058,7 @@ function useChatMarkdownState({
       canOperatePreview,
       cwd,
       fileLinkParentSuffixByPath,
+      fileOpensFrom,
       openFileInPanel,
       openFolder,
       openInPreferredEditor,

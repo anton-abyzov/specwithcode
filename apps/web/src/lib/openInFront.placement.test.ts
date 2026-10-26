@@ -65,6 +65,7 @@ describe("openFileInFront (1049 AC-06, D-05)", () => {
   const ref = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-front"));
   const fileId = "file:docs/notes.md";
   const target = (overrides: Partial<ViewerFileTarget> = {}): ViewerFileTarget => ({
+    environmentId: ref.environmentId,
     threadRef: ref,
     cwd: "/work/repo",
     path: "docs/notes.md",

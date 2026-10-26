@@ -299,7 +299,13 @@ describe("file reader close, Escape and focus (1049 AC-06)", () => {
     children?: ReactNode,
   ) {
     link.focus();
-    openFileInFront({ threadRef: ref, cwd: "", path: "docs/notes.md", line: undefined });
+    openFileInFront({
+      environmentId: ref.environmentId,
+      threadRef: ref,
+      cwd: "",
+      path: "docs/notes.md",
+      line: undefined,
+    });
     const state = panelState();
     await renderPanel(
       {
@@ -528,7 +534,7 @@ describe("file links open beside or in front by the room there is (1049 AC-06, D
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
   const openFromLink = (opener: HTMLElement = link, path = "docs/notes.md", line?: number) => {
     opener.focus();
-    openFileInFront({ threadRef: ref, cwd: "", path, line });
+    openFileInFront({ environmentId: ref.environmentId, threadRef: ref, cwd: "", path, line });
   };
   /** A button in a layer with these attributes, as the Files tree, a menu or a dialog has. */
   const inside = (attributes: Record<string, string>) => {
@@ -582,7 +588,13 @@ describe("file links open beside or in front by the room there is (1049 AC-06, D
     expect(useRightPanelStore.getState().threadPanelVisibilityByThreadKey).toEqual({});
     expect(useRightPanelStore.getState().userActionRevisionByThreadKey).toEqual({});
     expect(useFocusedFileStore.getState()).toEqual({
-      file: { threadRef: ref, cwd: "", path: "docs/notes.md", line: 12 },
+      file: {
+        environmentId: ref.environmentId,
+        threadRef: ref,
+        cwd: "",
+        path: "docs/notes.md",
+        line: 12,
+      },
       from: link,
     });
   });
@@ -644,7 +656,13 @@ describe("file links open beside or in front by the room there is (1049 AC-06, D
     const label = document.createElement("span");
     link.append(label);
     link.addEventListener("click", () =>
-      openFileInFront({ threadRef: ref, cwd: "", path: "docs/notes.md", line: undefined }),
+      openFileInFront({
+        environmentId: ref.environmentId,
+        threadRef: ref,
+        cwd: "",
+        path: "docs/notes.md",
+        line: undefined,
+      }),
     );
     (document.activeElement as HTMLElement | null)?.blur();
     label.click();
@@ -733,7 +751,14 @@ describe("the focused file viewer (1049 AC-06, D-05)", () => {
     report({ rowWidth: 900 });
     link.focus();
     await act(() =>
-      openFileInFront({ threadRef: ref, cwd: "", path: "docs/notes.md", line: 12, ...extra }),
+      openFileInFront({
+        environmentId: ref.environmentId,
+        threadRef: ref,
+        cwd: "",
+        path: "docs/notes.md",
+        line: 12,
+        ...extra,
+      }),
     );
   }
 

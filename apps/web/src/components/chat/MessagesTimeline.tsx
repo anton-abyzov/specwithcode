@@ -5082,6 +5082,7 @@ function UserMessageMentionChip(props: {
             onClick={() => {
               if (ctx.threadRef)
                 openFileInFront({
+                  environmentId: ctx.threadRef.environmentId,
                   threadRef: ctx.threadRef,
                   cwd: ctx.markdownCwd ?? ctx.workspaceRoot ?? "",
                   path: props.record.path,

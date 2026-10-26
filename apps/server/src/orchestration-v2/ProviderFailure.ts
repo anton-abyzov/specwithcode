@@ -35,6 +35,8 @@ export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 /** A run whose thread folder and branch were deleted; every provider fails it the same way. */
 export const WORKSPACE_BRANCH_MISSING_FAILURE_CODE = "workspace_branch_missing";
+/** The thread's folder is gone (or is a file) and SpecWithCode can't recreate it. */
+export const WORKSPACE_MISSING_FAILURE_CODE = "workspace_missing";
 
 /**
  * Whether a failed run should hold the thread's queued messages. A provider
@@ -50,7 +52,11 @@ export function shouldHoldQueueAfterFailure(input: {
 }): boolean {
   const { failure } = input;
   if (failure === undefined) return false;
-  if (failure.code === WORKSPACE_BRANCH_MISSING_FAILURE_CODE) return true;
+  if (
+    failure.code === WORKSPACE_BRANCH_MISSING_FAILURE_CODE ||
+    failure.code === WORKSPACE_MISSING_FAILURE_CODE
+  )
+    return true;
   return (
     failure.class !== "validation_error" &&
     input.failedProviderInstanceId === input.queuedProviderInstanceId

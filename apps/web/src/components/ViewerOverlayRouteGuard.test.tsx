@@ -170,7 +170,13 @@ describe("ViewerOverlayRouteGuard", () => {
     });
     await act(async () =>
       useFocusedFileStore.setState({
-        file: { threadRef: report.threadRef!, cwd: "/repo", path: "docs/notes.md", line: 3 },
+        file: {
+          environmentId: report.threadRef!.environmentId,
+          threadRef: report.threadRef!,
+          cwd: "/repo",
+          path: "docs/notes.md",
+          line: 3,
+        },
         from: null,
       }),
     );
