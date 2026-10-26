@@ -6,7 +6,11 @@ import {
   createProjectFaviconUrlAtomFamily,
   EMPTY_ASSET_URL_ATOM,
 } from "@specweave-studio/client-runtime/state/assets";
-import type { AssetResource, EnvironmentId } from "@specweave-studio/contracts";
+import {
+  type AssetResource,
+  assetResourceReadsHostFiles,
+  type EnvironmentId,
+} from "@specweave-studio/contracts";
 import { useCallback } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -44,10 +48,7 @@ export function useAssetUrlState(
     sessionError: fileAccessSession.error,
   });
   const canReadResource =
-    fileAccess.canReadFiles ||
-    (resource?._tag !== "workspace-file" &&
-      resource?._tag !== "media-file" &&
-      resource?._tag !== "draft-workspace-file");
+    fileAccess.canReadFiles || resource === null || !assetResourceReadsHostFiles(resource);
   const preparedConnection = usePreparedConnection(environmentId);
   const connectionPhase = fileEnvironment.presentation?.connection.phase ?? "available";
   const result = useAtomValue(

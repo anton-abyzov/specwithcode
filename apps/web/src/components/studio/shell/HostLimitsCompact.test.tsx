@@ -133,7 +133,7 @@ describe("HostLimitsCompactView", () => {
     );
     expect(
       [...(claude?.querySelectorAll(".sws-hl-compact-window") ?? [])].map((el) => el.textContent),
-    ).toEqual(["Session87% leftin 2h 0m"]);
+    ).toEqual(["Short-term87% leftin 2h 0m"]);
     expect(codex?.hasAttribute("data-coordinator")).toBe(false);
     expect(codex?.querySelectorAll(".sws-hl-compact-window")).toHaveLength(1);
   });
@@ -196,10 +196,10 @@ describe("HostLimitsCompactView", () => {
     }));
     expect(windows).toEqual([
       { rank: "other", text: "5-hour70% leftin 2h 0m" },
-      { rank: "binding", text: "Weekly, runs out first12% leftin 4d 4h" },
+      { rank: "binding", text: "Weekly, least left12% leftin 4d 4h" },
       // A spent weekly: the 5-hour's 90% is not usable, and it says why.
       { rank: "other", text: "5-hourBlockedby Weekly, usable again in 2d 2h" },
-      { rank: "binding", text: "Weekly, runs out firstLimit reachedin 2d 2h" },
+      { rank: "binding", text: "Weekly, least leftLimit reachedin 2d 2h" },
     ]);
   });
 });

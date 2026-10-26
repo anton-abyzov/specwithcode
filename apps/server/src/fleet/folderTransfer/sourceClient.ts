@@ -54,6 +54,10 @@ export interface SourceClientOptions {
   readonly fetch?: typeof globalThis.fetch;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly signal?: AbortSignal;
+  /** False makes every request a single attempt: background calls never wait out the retries. */
+  readonly retry?: boolean;
+  /** Caps each attempt's timeout, for calls that must give up quickly. */
+  readonly timeoutMs?: number;
 }
 
 export class SourceClient {
@@ -81,6 +85,8 @@ export class SourceClient {
       `${FOLDER_TRANSFER_PREFIX}/${this.options.operationId}/${action}`,
       this.base,
     );
+    const limit = Math.min(timeoutMs, this.options.timeoutMs ?? timeoutMs);
+    const retries = this.options.retry === false ? 0 : RETRY_DELAYS_MS.length;
     for (let attempt = 0; ; attempt += 1) {
       this.options.signal?.throwIfAborted();
       let response: Response | null = null;
@@ -94,8 +100,8 @@ export class SourceClient {
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           signal: this.options.signal
-            ? AbortSignal.any([this.options.signal, AbortSignal.timeout(timeoutMs)])
-            : AbortSignal.timeout(timeoutMs),
+            ? AbortSignal.any([this.options.signal, AbortSignal.timeout(limit)])
+            : AbortSignal.timeout(limit),
         });
       } catch (cause) {
         if (this.options.signal?.aborted) throw cause;
@@ -107,8 +113,7 @@ export class SourceClient {
           throw new SourceClientError("outdated_source", 404);
         return response;
       }
-      if (attempt >= RETRY_DELAYS_MS.length)
-        throw new SourceClientError("unreachable", response?.status ?? null);
+      if (attempt >= retries) throw new SourceClientError("unreachable", response?.status ?? null);
       await this.sleep(RETRY_DELAYS_MS[attempt]!);
     }
   }

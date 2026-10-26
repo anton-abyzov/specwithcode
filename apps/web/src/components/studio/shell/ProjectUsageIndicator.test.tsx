@@ -23,7 +23,7 @@ vi.mock("../../settings/providerDriverMeta", () => ({
   getDriverOption: (id: string) => ({ label: id === "codex" ? "Codex" : "Claude" }),
 }));
 vi.mock("../../usage/UsageLimits", () => ({ resetCreditsSummary: () => "" }));
-vi.mock("./HostLimits", () => ({ HostLimitsCompact: () => null }));
+vi.mock("./HostLimits", () => ({ AccountLimits: () => null, HostLimitsCompact: () => null }));
 
 import { MachineLimitsPanel, SubscriptionUsageSummary } from "./ProjectUsageIndicator";
 import { closeUsageSheet, useUsageSheetRequest } from "../../usage/usageSheetStore";
@@ -89,7 +89,7 @@ afterEach(async () => {
   container.remove();
 });
 describe("machine limits", () => {
-  it("lists every machine's sign-ins and goes back to the models", async () => {
+  it("lists limits by account and goes back to the models", async () => {
     const back = vi.fn();
     await act(async () =>
       root.render(
@@ -101,7 +101,7 @@ describe("machine limits", () => {
         />,
       ),
     );
-    expect(container.textContent).toContain("Limits by machine");
+    expect(container.textContent).toContain("Limits by account");
     expect(container.textContent).toContain("This project's tokens");
     const backButton = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "Models",

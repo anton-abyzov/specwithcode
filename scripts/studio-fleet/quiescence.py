@@ -7,7 +7,10 @@ The one process an update may stop is the service's own headless server browser:
 chrome-headless-shell from the service's own tools directory, started directly by
 the owned service on one of its own profiles, plus that browser's helpers.
 `assert_quiescence` stops it gracefully right before the restart and reports it.
-Anything else beneath the service still refuses the update. Two fallbacks stop more,
+The service's own SpecWithCode Connect tunnel (the managed cloudflared, see
+_managed_tunnels) is infrastructure the restart replaces: it never keeps an update
+waiting and is never signalled. Anything else beneath the service still refuses the
+update. Two fallbacks stop more,
 each between snapshots and never as part of one: `reap_descendants` for a held service
 (Update now), and, with `select=idle_provider_trees`, the provider servers an idle
 service keeps open between turns (a normal update, update.py idle_agent_refusal).
@@ -199,6 +202,43 @@ def _server_browsers(processes, root_pid, uid, home, candidates):
     return browsers
 
 
+# The service's own SpecWithCode Connect tunnel (apps/server/src/cloud/ManagedEndpointRuntime.ts):
+# the managed cloudflared the service installs under its tools directory
+# (packages/shared/src/relayClient.ts: <base-dir>/tools/cloudflared/<version>/<platform>-<arch>/cloudflared)
+# and starts directly with exactly these arguments; its token is in the environment, never argv.
+# It runs for as long as the service does and the restart replaces it, so it is not work: it never
+# keeps an update waiting, and no update or reap signals it. A cloudflared from anywhere else, with
+# other arguments, started deeper (from a terminal), or with anything beneath it is work as before.
+MANAGED_TUNNEL_ARGUMENTS = ['tunnel', '--no-autoupdate', '--loglevel', 'info', '--output', 'default', 'run']
+MANAGED_TUNNEL_MAX = 1
+
+
+def _managed_tunnel_executable(home):
+    return re.compile(re.escape(home) + r'/tools/cloudflared/\d{1,6}(?:\.\d{1,6}){0,3}/darwin-(?:arm64|x64)/cloudflared')
+
+
+def _managed_tunnels(root_pid, uid, home, descendants):
+    """The service's own tunnel among its descendants, by structure: a direct child of the root,
+    owned by the service's user, running the owned cloudflared, with nothing beneath it. More than
+    MANAGED_TUNNEL_MAX such processes are none of them. A capture also proves each one's kernel
+    executable and argv (_assert_managed_tunnel)."""
+    if home is None:
+        return []
+    executable = _managed_tunnel_executable(home)
+    parents = {item['parent'] for item in descendants}
+    found = [item for item in descendants if item['parent'] == root_pid and item['uid'] == uid
+             and executable.fullmatch(item['executable']) and item['pid'] not in parents]
+    return found if len(found) <= MANAGED_TUNNEL_MAX else []
+
+
+def _assert_managed_tunnel(arguments, kernel_executable, tunnel):
+    """The kernel argv and executable of a structurally matched tunnel: exactly the command
+    ManagedEndpointRuntime starts, from the file ps listed."""
+    assert isinstance(arguments, list) and len(arguments) == 1 + len(MANAGED_TUNNEL_ARGUMENTS) \
+        and posixpath.basename(arguments[0]) == 'cloudflared' and arguments[1:] == MANAGED_TUNNEL_ARGUMENTS \
+        and kernel_executable == tunnel['executable'], 'Owned service has unexpected descendants'
+
+
 def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True, supervisor_of=None):
     root = processes.get(pid)
     assert root and pid > 0 and root['uid'] == uid, 'Owned service process identity changed'
@@ -218,7 +258,8 @@ def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True,
             pending.append(child['pid'])
     # The verified LaunchAgent requires exactly this supervisor, with no work
     # beneath it. Even idle native/MCP/repl resources require operator review.
-    # The service's own server browser is the one exception (see _server_browsers).
+    # The service's own server browser (see _server_browsers) and its own tunnel (_managed_tunnels)
+    # are the exceptions.
     # The supervisor is a caffeinate started directly by the service; one started deeper (an
     # agent's `caffeinate -i npm test`) is work like any other. `supervisor_of` (the reap)
     # picks the one with the LaunchAgent's arguments when the service has several.
@@ -231,8 +272,12 @@ def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True,
     others = [item for item in descendants if item['pid'] != supervisor['pid']]
     assert not others or home is not None, 'Owned service has unexpected or missing descendants'
     assert supervisor['parent'] == pid and supervisor['uid'] == uid, 'Supervisor parent or owner changed'
+    # The service's own tunnel is set apart: it is neither work nor stopped (_managed_tunnels).
+    tunnels = _managed_tunnels(pid, uid, home, others)
+    others = [item for item in others if item not in tunnels]
     browsers = _server_browsers(processes, pid, uid, home, others) if others and check_browsers else []
-    return root, parent, supervisor, browsers, sorted(others, key=lambda item: item['pid'])
+    return (root, parent, supervisor, browsers, sorted(others, key=lambda item: item['pid']),
+            sorted(tunnels, key=lambda item: item['pid']))
 
 
 def _hash(value):
@@ -266,12 +311,14 @@ def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader,
     assert kernel(argv_reader, first[2]['pid']) == supervisor_argv, 'Supervisor arguments differ from the verified LaunchAgent'
     for browser in first[3]:
         _server_browser_argv(kernel(argv_reader, browser['pid']), home)
+    for tunnel in first[5]:
+        _assert_managed_tunnel(kernel(argv_reader, tunnel['pid']), kernel(executable_reader, tunnel['pid']), tunnel)
     for item in first[4]:
         # ps reports a name the process chose; the kernel resolves the file it actually runs.
         assert kernel(executable_reader, item['pid']) == item['executable'], 'Owned service has unexpected descendants'
     second = _owned_tree(process_reader(), pid, uid, executable, home)
     assert first == second, 'Owned process identities changed during inventory'
-    root, parent, supervisor, browsers, others = second
+    root, parent, supervisor, browsers, others, _ = second
     proof = {'root': _identity(root), 'parentIdentitySha256': _hash(parent),
              'supervisor': _identity(supervisor), 'treeSha256': _hash([root, parent, supervisor]),
              'descendantCount': 1}
@@ -488,8 +535,8 @@ def _reap_inventory(pid, uid, executable, supervisor_argv, process_reader, argv_
         return chosen
 
     processes = process_reader()
-    root, _, supervisor, _, others = _owned_tree(processes, pid, uid, executable, home, check_browsers=False,
-                                                 supervisor_of=supervisor_of)
+    root, _, supervisor, _, others, _ = _owned_tree(processes, pid, uid, executable, home, check_browsers=False,
+                                                    supervisor_of=supervisor_of)
     assert argv_reader(supervisor['pid']) == supervisor_argv, 'Supervisor arguments differ from the verified LaunchAgent'
     return processes, root, others, _spared_browsers(processes, pid, uid, home, others)
 
@@ -558,6 +605,12 @@ def idle_providers(pid, uid, executable, supervisor_argv, *, process_reader=None
     return names
 
 
+def managed_tunnel_pids(processes, root_pid, home, descendants):
+    """Pids of the service's own tunnel among `descendants`, which never keeps an update waiting:
+    a refusal does not name it."""
+    return {item['pid'] for item in _managed_tunnels(root_pid, processes[root_pid]['uid'], home, descendants)}
+
+
 def server_browser_pids(processes, root_pid, home, descendants):
     """Pids of the service's own server browser among `descendants` (processes beneath
     `root_pid`), which an update stops itself: a refusal names what else keeps it waiting."""
@@ -611,9 +664,10 @@ def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=No
 
     The service and its supervisor are verified as for a snapshot; the supervisor is the
     caffeinate the service started with the LaunchAgent's arguments, and any other caffeinate
-    is work. Every other process beneath the service, except its own server browser, is
-    recorded by pid, owner, start time and the executable the kernel resolves; one whose
-    executable cannot be read is never signalled. SIGTERM, then SIGKILL for what is still
+    is work. Every other process beneath the service, except its own server browser and its own
+    tunnel (_managed_tunnels), is recorded by pid, owner, start time and the executable the
+    kernel resolves; one whose executable cannot be read is never signalled. SIGTERM, then
+    SIGKILL for what is still
     there. Each round takes one inventory; each signal goes to one pid, right after that pid
     alone is read again, and only while it still matches its record and is still beneath its
     recorded parent (or was adopted by launchd as that parent exited). `guard` (update.py:

@@ -62,7 +62,8 @@ type PairPhoneSettingsProps = {
 };
 
 /**
- * Prepare the phone route before minting a short-lived pairing credential.
+ * The private QR alternative to SpecWithCode Connect sign-in: prepare the
+ * phone route before minting a short-lived pairing credential.
  */
 export const PairPhoneSettings = memo(function PairPhoneSettings({
   endpoint,
@@ -172,9 +173,9 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
     ? "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer."
     : address === null
       ? hasAccessControls
-        ? "Your phone needs an address to reach this computer. Set up Tailscale HTTPS for this machine first."
-        : "Your phone needs an address to reach this computer. Set up Tailscale Serve for it with `specweave-studio pair --tailscale`, or open these settings in the SpecWithCode desktop app."
-      : `Scan a code with the SpecWithCode app on your iPhone. It connects to ${address.httpBaseUrl.replace(/\/$/u, "")}.`;
+        ? "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead."
+        : "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`."
+      : `Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to ${address.httpBaseUrl.replace(/\/$/u, "")}.`;
 
   const content = (
     <>
@@ -234,7 +235,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
     return (
       <SettingsDisclosure
         {...searchableSetting(PAIR_PHONE_SETTING)}
-        title="Pair over Tailscale or your network"
+        title="Or pair with a private QR code"
       >
         {content}
       </SettingsDisclosure>

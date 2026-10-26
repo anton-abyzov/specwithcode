@@ -34,6 +34,13 @@ const stringList = (value: unknown, max: number): Array<string> => {
   return value as Array<string>;
 };
 
+/** Routes a committed copy still answers with the grant its commit revoked. */
+const REPLAYABLE: ReadonlyMap<string, "commit" | "release" | "hello"> = new Map([
+  ["POST commit", "commit"],
+  ["POST release", "release"],
+  ["GET hello", "hello"],
+]);
+
 /**
  * Serves one copy to its destination. Every route needs the operation's bearer;
  * every refusal before authorization is the same 401 so the endpoint reveals
@@ -48,7 +55,11 @@ export async function handleSourceRequest(
     const match = /^\/([a-f0-9-]{36})\/([a-z]+)$/.exec(request.path);
     if (!match) return json(404, { error: "not_found" });
     const [, operationId, action] = match as unknown as [string, string, string];
-    const loaded = await transfers.authorize(operationId, bearerToken(request.authorization));
+    const loaded = await transfers.authorize(
+      operationId,
+      bearerToken(request.authorization),
+      REPLAYABLE.get(`${request.method} ${action}`),
+    );
     const body = async () => {
       const bytes = await request.body();
       if (bytes.byteLength > MAX_REQUEST_BYTES) throw new SourceTransferError(413, "too_large");

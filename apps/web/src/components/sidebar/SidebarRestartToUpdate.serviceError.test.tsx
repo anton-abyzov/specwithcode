@@ -276,7 +276,11 @@ describe("Update now beside a failed service update pass", () => {
     render();
     expect(label()).toBe("Update now");
     const description = String(button()?.props["aria-label"]);
-    expect(description).toContain(`${LOG_DELETED}.`);
+    // An older agent's "Restart SpecWithCode, then update" reads as what Update now does.
+    expect(description).toContain(
+      "The SpecWithCode service is using a database log that was deleted from disk. Press Update now: SpecWithCode saves that log, restarts its background service and then updates.",
+    );
+    expect(description).not.toContain("Restart SpecWithCode");
     expect(description).toContain(
       "The SpecWithCode service on this Mac still runs 0.2.4; this installs 0.2.5.",
     );
@@ -318,7 +322,13 @@ describe("Update now beside a failed service update pass", () => {
       lastInstall: { version: "0.2.5", at: iso(Date.now()), result: "failed" },
     });
     await advance(2_000);
-    expect(lastToast()).toMatchObject({ type: "error", description: LOG_DELETED });
+    // An older agent's "Restart SpecWithCode, then update" reads as what Update now does.
+    expect(lastToast()).toMatchObject({
+      type: "error",
+      description:
+        "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Press Update now: SpecWithCode saves that log, restarts its background service and then updates",
+    });
+    expect(lastToast().description).not.toContain("Restart SpecWithCode");
     expect(label()).toBe("Retry update");
     // A later state of the agent does not take the failed attempt up again.
     calls.length = 0;

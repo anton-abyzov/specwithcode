@@ -7,7 +7,8 @@ update.py. The agent never stops or signals the Studio service; only that verifi
 helper restarts it. GitHub tokens stay in memory: they are never written, logged or
 placed in exception text. Helper output is discarded; only short status lines print.
 Stdlib only and Python 3.9 compatible (macOS /usr/bin/python3); copied with its siblings
-update_agent_reap.py, update_agent_cache.py and update_request.py into the updater LaunchAgent location.
+update_agent_reap.py, update_agent_cache.py, update_request.py, update_agent_pause.py, service_hold.py,
+service_handles.py and live_database.py into the updater LaunchAgent location (update_request.AGENT_FILES).
 """
 import argparse
 import datetime
@@ -36,6 +37,8 @@ import update_agent_reap as reaper  # noqa: E402  Update now's fallback; install
 import update_agent_cache as cache  # noqa: E402  Shipped beside this file.
 import update_request  # noqa: E402  Shipped beside this file.
 import update_agent_recovery as recovery  # noqa: E402  Shipped beside this file.
+import update_agent_pause as pause  # noqa: E402  Shipped beside this file, with service_hold.py.
+from update_agent_pause import TIMED_OUT, WAITING, WAITING_REASONS, refusal_reason  # noqa: E402,F401  Refusals moved there.
 import update_agent_run as runs  # noqa: E402  Shipped beside this file: run.json, the pass lock, log rotation.
 import installation_descriptor  # noqa: E402  Shipped beside this file.
 import studio_paths  # noqa: E402  Shipped beside this file.
@@ -82,29 +85,7 @@ SYSTEM_PYTHON = '/usr/bin/python3'
 GH_PATHS = ('/opt/homebrew/bin/gh', '/usr/local/bin/gh')
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 SIGN_IN = 'Sign in with `gh auth login` so Studio can read private releases.'
-WAITING = 'Waiting for running sessions and open SpecWithCode terminals to finish'
-TIMED_OUT = "The updater's check took too long; retrying"
 CANCELLED = 'Update cancelled'
-# What the snapshot helper's refusal means, in the words the app shows. The helper's
-# output is read only for its REFUSAL line or these phrases; it is never logged or kept.
-WAITING_REASONS = (
-    ('Native work is not idle', 'Waiting for running tasks, queued messages and open questions to finish'),
-    ('has unexpected descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
-    ('unexpected or missing descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
-)
-# update.py idle_agent_refusal: only the service's own idle provider servers are open (idle_agents.py).
-IDLE_AGENTS = ('Waiting for a quiet moment, then closing idle agent processes so the update can install',
-               'Closed idle agent processes; installing after a quiet moment')
-# update.py database_restart_refusal: the service lost its database locks; only a restart recovers it.
-# Shown only while the helper restarts it itself (restarted=, wait=, retry=); otherwise the person must.
-RECOVERING = ('Restarting SpecWithCode to recover its database',
-              'Restarted SpecWithCode to recover its database; installing after a quiet moment')
-RESTART_FAULTS = {'locks-lost': 'The SpecWithCode service lost its SQLite locks on its database',
-                  'detached': 'The SpecWithCode service is using a database log that was deleted from disk'}
-# `REFUSAL <code> <detail>`, the helper's structured reason; details are counts and names only.
-REFUSAL_LINE = re.compile(r'^REFUSAL ([a-z][a-z-]{0,31})(?: ([ -~]{0,400}))?$', re.M)
-WORK_NOUNS = (('runs', 'running task'), ('queued', 'queued message'), ('requests', 'open request'),
-              ('effects', 'finishing step'), ('sessions', 'active session'))
 STATUSES = ('disabled', 'up-to-date', 'available', 'downloading', 'downloaded', 'waiting-for-quiet',
             'installing', 'installed', 'manual-required', 'error')
 LIMITS = {'list': 10 << 20, PLAN_ASSET: 256 << 10, SUMS_ASSET: 256 << 10, MANIFEST_ASSET: 4 << 20,
@@ -131,11 +112,13 @@ DEFAULT_CONFIG = {'schemaVersion': 1, 'checkAutomatically': True, 'downloadInBac
                   'installAutomatically': True, 'channel': 'stable', 'quietMinutes': 10,
                   'repository': DEFAULT_REPOSITORY, 'installRequestedAt': None, 'checkRequestedAt': None,
                   'installMode': 'normal', 'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None,
-                  'installRunId': None}
+                  'installRunId': None, 'pauseWorkAfterMinutes': 10, 'automaticPausePostponedUntil': None}
 STATE_KEYS = ('schemaVersion', 'agentVersion', 'status', 'installedVersion', 'installedSourceCommit',
               'availableVersion', 'availableTag', 'availableNotes', 'availablePublishedAt',
               'downloadedVersion', 'checkedAt', 'quietSince', 'message', 'lastInstall',
-              'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt', 'automaticRetry', 'runSupport')
+              'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt', 'automaticRetry', 'runSupport',
+              'automaticWaitSince', 'automaticPauseAt', 'automaticLastBusyAt',  # update_agent_pause: an automatic
+              'automaticPausedAt')  # install's wait for work, and its last drain {version, at}.
 
 _REDACT = set()  # In-memory only: values scrubbed from any text the agent emits.
 
@@ -514,11 +497,13 @@ def load_config(updates, home):
              and all(type(config[key]) is bool for key in ('checkAutomatically', 'downloadInBackground',
                                                             'installAutomatically'))
              and config['channel'] in ('stable', 'preview')
+             and type(config['pauseWorkAfterMinutes']) is int and 1 <= config['pauseWorkAfterMinutes'] <= 10080
              and type(config['quietMinutes']) is int and 0 <= config['quietMinutes'] <= 10080
              and isinstance(config['repository'], str) and REPOSITORY.fullmatch(config['repository']) is not None
              and '..' not in config['repository'] and config['installMode'] in ('normal', 'force')
              and all(config[key] is None or (isinstance(config[key], str) and 0 < len(config[key]) <= 100)
-                     for key in ('installRequestedAt', 'checkRequestedAt', 'installHoldUntil', 'installCancelledAt'))
+                     for key in ('installRequestedAt', 'checkRequestedAt', 'installHoldUntil', 'installCancelledAt',
+                                 'automaticPausePostponedUntil'))
              and (config['installRunId'] is None or runs.valid_run_id(config['installRunId'])))
     _refuse_if(not valid, 'Update settings are invalid')
     return config
@@ -538,7 +523,7 @@ def load_state(path, home):
         return state
     for key in STATE_KEYS:
         value = raw.get(key)
-        if key in ('lastInstall', 'automaticRetry'):
+        if key in ('lastInstall', 'automaticRetry', 'automaticPausedAt'):
             state[key] = value if isinstance(value, dict) else None
         elif key in ('schemaVersion', 'agentVersion', 'runSupport'):
             continue
@@ -629,35 +614,6 @@ def install_cancelled(config):
     """True when the desktop cancelled the pending install request after making it."""
     cancelled, requested = parse_time(config['installCancelledAt']), parse_time(config['installRequestedAt'])
     return cancelled is not None and (requested is None or cancelled > requested)
-
-def refusal_reason(refusal, outcome):
-    """(status, message) for a refused snapshot. The helper's last REFUSAL line wins; older
-    helpers print none, so the phrase table stays. Only an environment fault, or a database fault
-    that no automatic restart will clear, is an error."""
-    found = REFUSAL_LINE.findall(refusal) if outcome != 'timeout' else [('timeout', '')]
-    code, detail = found[-1] if found else ('', '')
-    detail = re.sub(r'[^A-Za-z0-9 ._:,=()+-]', '', detail).strip()[:200]
-    if code == 'timeout':
-        return 'waiting-for-quiet', TIMED_OUT
-    if code == 'environment':
-        return 'error', 'SpecWithCode cannot be updated right now: ' + (detail or 'the service does not match its installation')
-    if code == 'native-work':
-        counts = {key: int(value) for key, value in re.findall(r'([a-z]+)=(\d{1,6})', detail)}
-        parts = ['%d %s%s' % (counts[key], noun, '' if counts[key] == 1 else 's')
-                 for key, noun in WORK_NOUNS if counts.get(key)]
-        return 'waiting-for-quiet', WAITING_REASONS[0][1] + (' (%s)' % ', '.join(parts) if parts else '')
-    if code in ('descendants', 'idle-agents'):
-        pairs = re.findall(r'([A-Za-z0-9._+-]{1,40})=(\d{1,4})', detail)
-        names = ['%s%s' % (name, '' if count == '1' else ' x' + count)
-                 for name, count in pairs if name not in ('wait', 'stopped')][:6]
-        message = WAITING_REASONS[1][1] if code == 'descendants' else IDLE_AGENTS['stopped' in dict(pairs)]
-        return 'waiting-for-quiet', message + (' (%s)' % ', '.join(names) if names else '')
-    if code == 'restart-needed':
-        if re.search(r'(?:^| )(?:restarted|wait|retry)=', detail):
-            return 'waiting-for-quiet', RECOVERING['restarted=' in detail]
-        fault = RESTART_FAULTS.get(detail.split(' ')[0], 'The SpecWithCode service lost its hold on its database')
-        return 'error', 'SpecWithCode cannot be updated right now: %s. Restart SpecWithCode, then update' % fault
-    return 'waiting-for-quiet', next((message for phrase, message in WAITING_REASONS if phrase in refusal), WAITING)
 
 def helper_log_path(receipt):
     """The private helper output file kept next to an update receipt."""
@@ -1068,7 +1024,9 @@ class Agent(object):
                             continue  # A newer request this pass took on: its own attempts and window.
                         return self.settle(verified, refused_apply, 'failed', install_request,  # The user's cause as it is.
                                            shown=None if refused[0] == 'waiting-for-quiet' else refused)
-                    return self.finish(*refused)
+                    if install_request:  # An explicit request never drains: no pause time or Later stays on show.
+                        return pause.forget(self.state) or self.finish(*refused)
+                    return pause.after_refusal(self, verified, refused)
                 self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
                 if (ended := recovery.withdrawn(self, version)):  # Written while the snapshot ran: no reap.
                     return self.finish(*ended)
@@ -1091,6 +1049,7 @@ class Agent(object):
                 self.set_status('waiting-for-quiet', 'New work started before the restart; trying again')
                 continue
             break
+        pause.forget(self.state)  # Idle: nothing to pause any more.
         return recovery.install_when_quiet(self, verified, helper_dir, newest, snapshot, baseline_path, install_request)
 
     def apply(self, verified, helper_dir, prestate, baseline_path, install_request, may_retry=False, serving=None):
@@ -1108,7 +1067,7 @@ class Agent(object):
         os.replace(str(prestate), str(kept))
         if os.path.lexists(str(baseline_path)):
             remove_path(baseline_path, self.home)
-        self.state['quietSince'] = None
+        self.state['quietSince'] = pause.forget(self.state)  # Nothing waits once an install starts.
         before = recovery.installation_fingerprint(self) if not install_request else None
         if install_request: self.state['automaticRetry'] = None  # Explicit requests start fresh.
         handled = self.state['handledInstallRequestAt']
@@ -1258,7 +1217,7 @@ class Agent(object):
         check_request = config['checkRequestedAt'] is not None and \
             config['checkRequestedAt'] != state.get('handledCheckRequestAt')
         if not config['checkAutomatically'] and not install_request and not check_request:
-            return self.finish('disabled', 'Automatic update checks are off')
+            return pause.forget(state) or self.finish('disabled', 'Automatic update checks are off')
         meta = self.load_release(state['availableVersion']) if state.get('availableVersion') else None
         # A request for a release newer than the cached one (the desktop saw it first) needs a fresh check.
         wanted = (update_request.bound(config) or {}).get('version') if install_request else None
@@ -1283,7 +1242,7 @@ class Agent(object):
                 state['handledInstallRequestAt'] = config['installRequestedAt']
             if last.get('version') == self.inst['version'] and self.failed_switch_stands(last):
                 return self.finish('error', 'Updating to SpecWithCode %s failed. See the update receipt.' % last['version'])
-            return self.finish('up-to-date', None)
+            return pause.forget(state) or self.finish('up-to-date', None)
         refused = install_request and update_request.refuse(config, state, meta['version'])  # Bound to another version.
         if meta.get('manual') or meta.get('rejected') or not meta.get('plan') or refused:
             if install_request:
@@ -1294,7 +1253,7 @@ class Agent(object):
         version = meta['version']
         verified = self.load_verified(meta)
         if verified is None:
-            state['downloadedVersion'] = None
+            state['downloadedVersion'] = pause.forget(state)  # A new download waits for work afresh.
             if not (config['downloadInBackground'] or install_request):
                 return self.finish('available', None)
             rejected = self.load_rejected(version)
@@ -1315,7 +1274,7 @@ class Agent(object):
             self.set_status('downloaded', None)
         state['downloadedVersion'] = version
         if not (config['installAutomatically'] or install_request):
-            return self.finish('downloaded', None)
+            return pause.forget(state) or self.finish('downloaded', None)
         if not install_request and recovery.holds(self, last):
             held = recovery.automatic_retry(self, verified)
             if held:
@@ -1348,6 +1307,7 @@ def run_once(home, identity, test_mode, out):
                 agent.config = load_config(updates, home)
                 agent.inst = load_installation(home, identity)
                 agent.run, agent.timings = runs.claim(agent), runs.Timings()  # A pass's own clock.
+                agent.pass_started = utcnow()  # update_agent_pause: a grace counts from the start of its pass.
                 code = agent.run_pass()
             except AgentError as error:
                 agent.state['automaticRetry'] = None
@@ -1398,7 +1358,9 @@ def install_launch_agent(home, identity, out):
         os.chmod(str(target_dir), 0o700)
         files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
                  for name in (studio_paths.__file__, update_request.__file__, recovery.__file__, installation_descriptor.__file__,
-                              runs.__file__, here / 'managed_updates.py', here / 'migrate_home.py', __file__)]  # Modules first.
+                              runs.__file__, pause.service_hold.__file__, here / 'live_database.py', here / 'service_handles.py',
+                              pause.__file__, here / 'managed_updates.py',
+                              here / 'migrate_home.py', __file__)]  # Modules first.
 
         def same(path, data):
             return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data

@@ -65,9 +65,12 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
    */
   newBadgeInstanceIds?: ReadonlySet<ProviderInstanceId>;
   /**
-   * A usage mark on the provider: amber when its account is low, red when a
-   * confirmed read says every model on it is out. The button stays usable so
-   * the list can show why.
+   * A usage mark on the provider, from its account-wide windows only: amber at
+   * 20% left or less, or when a spent limit still accepts extra usage; red only
+   * when a fresh read blocks every model on the account. `text` names the
+   * window (`5% of the 5-hour limit left, resets in 55m`) and joins the
+   * button's tooltip and accessible name. The button stays usable so the list
+   * can show why.
    */
   getInstanceUsage?: (
     entry: ProviderInstanceEntry,

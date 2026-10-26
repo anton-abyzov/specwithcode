@@ -4,7 +4,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@specweave-studio/contracts";
-import { memo, type ReactNode, use, useEffect, useMemo, useState } from "react";
+import { memo, type ReactNode, use, useEffect, useId, useMemo, useState } from "react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -23,6 +23,7 @@ import {
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
+import { isAvailabilityBlocking } from "../../studio/modelAvailability";
 import {
   ComposerControl,
   ComposerControlChevron,
@@ -30,7 +31,12 @@ import {
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { ModelUsageMeter, useModelPickerUsage, type ModelPickerUsageConfig } from "./ModelUsage";
+import {
+  ModelUsageMarkRing,
+  ModelUsageMeter,
+  useModelPickerUsage,
+  type ModelPickerUsageConfig,
+} from "./ModelUsage";
 
 import { ModelStateTag, ModelStateTip, modelStateText, type ModelState } from "./ModelStateTag";
 import { ModelChipFitContext, useOwnModelChipFit, type ModelChipFit } from "./modelChipFit";
@@ -159,6 +165,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? usage.text(props.triggerInstanceId ?? activeInstanceId, selectedUsage)
       : null;
   const selectedUsageText = selectedUsageCopy?.long ?? null;
+  // What a spent limit means for the next turn, as the meter says it.
+  const nextOnLimit =
+    selectedUsage && isAvailabilityBlocking(selectedUsage) && usage?.nextOnLimit
+      ? usage.nextOnLimit
+      : null;
+  const selectedUsageLabel = selectedUsageCopy
+    ? `${selectedUsageCopy.label}${nextOnLimit ? `; the next turn runs on ${nextOnLimit}` : ""}`
+    : null;
+  const usageDescriptionId = useId();
 
   const [showingSecondary, setShowingSecondary] = useState(false);
   const setIsMenuOpen = (open: boolean) => {
@@ -289,10 +304,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   );
   const fit = parts ? (props.fit ?? hostFit ?? ownFit) : null;
   // Every fit keeps the whole identity for keyboard and screen reader users.
+  // The name stays short (model, what is left, the window); the description has the rest.
   const chipAriaLabel =
     parts || stateCopy
-      ? `Model: ${currentLabel}${stateAria ?? ""}.${selectedUsageText ? ` ${selectedUsageText.replace(/\.$/, "")}.` : ""} Change model`
+      ? `Model: ${currentLabel}${stateAria ?? ""}${selectedUsageLabel ? `, ${selectedUsageLabel}` : ""}. Change model`
       : undefined;
+  const hostAriaLabel =
+    props.triggerAriaLabel && selectedUsageLabel
+      ? props.triggerAriaLabel.replace(/\.? Change model$/, `, ${selectedUsageLabel}. Change model`)
+      : props.triggerAriaLabel;
 
   const tooltip = state ? (
     <ModelStateTip
@@ -328,11 +348,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               render={
                 <ComposerControl
                   aria-label={
-                    props.triggerAriaLabel ??
+                    hostAriaLabel ??
                     chipAriaLabel ??
                     allModelNames ??
-                    (selectedUsageText ? `${triggerName}. ${selectedUsageText}` : undefined)
+                    (selectedUsageLabel ? `${triggerName}, ${selectedUsageLabel}` : undefined)
                   }
+                  {...(selectedUsageText ? { "aria-describedby": usageDescriptionId } : {})}
                   size={size}
                   data-chat-provider-model-picker="true"
                   data-model-state={state?.kind}
@@ -385,23 +406,28 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     ) : null}
                   </span>
                 ) : triggerEntry && props.triggerLabel === undefined ? (
-                  <ProviderInstanceIcon
-                    driverKind={triggerEntry.driverKind}
-                    displayName={triggerEntry.displayName}
-                    accentColor={triggerEntry.accentColor}
-                    acpRegistryAgentId={triggerEntry.acpRegistryAgentId}
-                    acpRegistryIconUrl={triggerEntry.acpRegistryIconUrl}
-                    showBadge={showInstanceBadge}
-                    className="size-4"
-                    iconClassName={cn("size-4", props.activeProviderIconClassName)}
-                    indicatorBackground={
-                      props.instanceIndicatorBackground ?? "var(--contrast-input)"
-                    }
-                    badgeClassName={cn(
-                      "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
-                      size === "xs" && "shadow-none",
-                    )}
-                  />
+                  <span className="relative flex shrink-0 items-center">
+                    <ProviderInstanceIcon
+                      driverKind={triggerEntry.driverKind}
+                      displayName={triggerEntry.displayName}
+                      accentColor={triggerEntry.accentColor}
+                      acpRegistryAgentId={triggerEntry.acpRegistryAgentId}
+                      acpRegistryIconUrl={triggerEntry.acpRegistryIconUrl}
+                      showBadge={showInstanceBadge}
+                      className="size-4"
+                      iconClassName={cn("size-4", props.activeProviderIconClassName)}
+                      indicatorBackground={
+                        props.instanceIndicatorBackground ?? "var(--contrast-input)"
+                      }
+                      badgeClassName={cn(
+                        "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
+                        size === "xs" && "shadow-none",
+                      )}
+                    />
+                    {parts && selectedUsage && selectedUsageCopy ? (
+                      <ModelUsageMarkRing state={selectedUsage} text={selectedUsageCopy} />
+                    ) : null}
+                  </span>
                 ) : null}
                 {parts ? (
                   <>
@@ -452,6 +478,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   <ModelUsageMeter
                     state={selectedUsage}
                     text={selectedUsageCopy}
+                    nowMs={usage?.nowMs ?? Date.now()}
+                    nextOnLimit={nextOnLimit}
                     {...(parts ? { chip: true } : {})}
                     {...(!parts && props.usageValueHiddenClassName
                       ? { hideValueClassName: props.usageValueHiddenClassName }
@@ -470,6 +498,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               <span aria-hidden="true" className="flex shrink-0 items-center">
                 <ComposerControlChevron size={size} />
               </span>
+              {selectedUsageText ? (
+                <span id={usageDescriptionId} hidden>
+                  {selectedUsageText}
+                </span>
+              ) : null}
             </PopoverTrigger>
           }
         />

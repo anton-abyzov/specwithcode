@@ -240,3 +240,43 @@ describe("copy plan preview", () => {
     expect(onClone).toHaveBeenCalledExactlyOnceWith("repo:api", true);
   });
 });
+
+describe("reduced preview", () => {
+  it("counts folders only on the destination as kept there, not copied", async () => {
+    await render(
+      <CopyPlanPreview
+        status={status([
+          row({ id: "repo:a", status: "diverged", needsDecision: true, choices: ["keep-mine"] }),
+          row({ id: "repo:b", status: "new" }),
+          row({ id: "repo:c", status: "only-here" }),
+          row({ id: "repo:d", status: "only-here" }),
+        ])}
+        onDecide={() => {}}
+        onClone={() => {}}
+        disabled={false}
+        machines={{ here: "M3", source: "M4" }}
+        onlyChanges
+      />,
+    );
+    expect(container.querySelectorAll('[data-slot="copy-row"]')).toHaveLength(1);
+    expect(container.querySelector('[data-slot="copy-preview-untouched"]')?.textContent).toBe(
+      "1 other folder is new or unchanged and is copied as it is. 2 kept on M3: those folders are only there.",
+    );
+    await render(
+      <CopyPlanPreview
+        status={status([
+          row({ id: "repo:a", status: "diverged", needsDecision: true, choices: ["keep-mine"] }),
+          row({ id: "repo:c", status: "only-here" }),
+        ])}
+        onDecide={() => {}}
+        onClone={() => {}}
+        disabled={false}
+        machines={{ here: "M3", source: "M4" }}
+        onlyChanges
+      />,
+    );
+    expect(container.querySelector('[data-slot="copy-preview-untouched"]')?.textContent).toBe(
+      "1 kept on M3: that folder is only there.",
+    );
+  });
+});

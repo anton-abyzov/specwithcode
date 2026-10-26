@@ -14,6 +14,8 @@ const history = vi.hoisted(() => ({
   series: [] as UsageLimitHistorySeries[],
   calls: 0,
   fail: null as "reject" | "unknown-tag" | null,
+  // Whether each environment's session grant has loaded yet.
+  granted: true,
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
@@ -23,7 +25,9 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
+  readEnvironmentScope: () => history.granted,
+  useEnvironmentsWithScope: (environments: ReadonlyArray<{ readonly environmentId: string }>) =>
+    new Set(history.granted ? environments.map(({ environmentId }) => environmentId) : []),
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { consumeResetCredit: "consume", usageLimitHistory: "history" },
@@ -119,6 +123,7 @@ describe("pooled limits show burn, run-out and a quota chart", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     history.calls = 0;
     history.fail = null;
+    history.granted = true;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -158,6 +163,18 @@ describe("pooled limits show burn, run-out and a quota chart", () => {
     expect(chart?.querySelector('[data-series="recorded"]')).not.toBeNull();
     expect(chart?.querySelector('[data-series="projected"]')).not.toBeNull();
     expect(chart?.querySelector("svg")?.getAttribute("aria-label")).toContain("now 62% of 200%");
+  });
+
+  it("reads the history once the session grant lands after the connection", async () => {
+    history.series = [recorded("work@example.com", 34), recorded("home@example.com", 95)];
+    history.granted = false;
+    await render();
+    expect(history.calls).toBe(0);
+    expect(panel()?.textContent ?? "").toContain("Collecting history");
+    history.granted = true;
+    await render();
+    expect(history.calls).toBe(2);
+    expect(panel()?.textContent ?? "").toContain("3%/h");
   });
 
   it.each(["reject", "unknown-tag"] as const)(

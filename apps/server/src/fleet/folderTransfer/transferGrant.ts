@@ -79,7 +79,16 @@ export function bearerToken(header: string | undefined | null): string | null {
  */
 export function verifyTransferGrant(
   record: TransferGrantRecord | null,
-  request: { readonly operationId: string; readonly token: string | null; readonly now: number },
+  request: {
+    readonly operationId: string;
+    readonly token: string | null;
+    readonly now: number;
+    /**
+     * Accepts a grant revoked for this reason. The commit route passes "committed",
+     * so a retried commit whose first reply was lost gets the same answer again.
+     */
+    readonly revokedFor?: string;
+  },
 ):
   | { readonly ok: true; readonly record: TransferGrantRecord }
   | { readonly ok: false; readonly reason: TransferGrantRefusal } {
@@ -91,7 +100,14 @@ export function verifyTransferGrant(
     return { ok: false, reason: "invalid" };
   if (record.operationId !== request.operationId || record.scope !== TRANSFER_GRANT_SCOPE)
     return { ok: false, reason: "operation" };
-  if (record.revokedAt !== null) return { ok: false, reason: "revoked" };
+  if (
+    record.revokedAt !== null &&
+    (request.revokedFor === undefined || record.revokedReason !== request.revokedFor)
+  )
+    return { ok: false, reason: "revoked" };
+  // A grant revoked by the commit only replays that finished answer, so it stays
+  // readable after the idle and lifetime limits; Undo can ask days later.
+  if (record.revokedAt !== null) return { ok: true, record };
   if (request.now >= transferGrantExpiresAt(record)) return { ok: false, reason: "expired" };
   return { ok: true, record: { ...record, lastUsedAt: request.now } };
 }

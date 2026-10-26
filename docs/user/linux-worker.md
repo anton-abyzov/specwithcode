@@ -11,6 +11,11 @@ work off your own computers; it does not start sessions on a provider's VMs.
 SpecWithCode does not use provider cloud sessions; a Linux VPS you rent is the
 replacement.
 
+To only open the host from your desktop app, a browser or your iPhone,
+[SpecWithCode Connect](./remote-access.md#specwithcode-connect) is enough and
+needs no Tailscale. For now, letting your Mac start work on the host also needs
+Tailscale on both, so this page sets it up.
+
 > **Use API keys on a VPS, never a subscription.** We do not recommend signing
 > Claude Code (Pro or Max) or Codex (ChatGPT) subscriptions in on Hetzner, AWS
 > or any other rented server or VPN. Providers treat sign-ins from datacenter
@@ -25,8 +30,8 @@ replacement.
 
 Any Linux virtual machine you control works the same way, whoever rents it to
 you: Hetzner, Hostinger, DigitalOcean, AWS EC2, Azure, Google Cloud or a box at
-home. The fleet only needs the host to join your tailnet; it never looks at the
-provider. Pick an Ubuntu 24.04 or Debian 12 image on x64 or arm64 (AWS Graviton,
+home. For now, the fleet needs the host to join your tailnet; it never looks at
+the provider. Pick an Ubuntu 24.04 or Debian 12 image on x64 or arm64 (AWS Graviton,
 Hetzner CAX and Azure Dpsv5 machines are arm64).
 
 Tailscale connects outward, so the host needs no open inbound port: leave the

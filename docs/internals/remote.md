@@ -1,10 +1,16 @@
 # Remote architecture
 
 Each connection joins a client to one environment over HTTP and WebSocket. The
-environment owns providers, execution, files, and durable state. Direct access,
-Tailscale, SSH, and SpecWithCode Connect change how the client reaches that server; they do
-not introduce another execution model. See
+environment owns providers, execution, files, and durable state. SpecWithCode Connect,
+direct access, Tailscale, and SSH change how the client reaches that server; they do
+not introduce another execution model. SpecWithCode Connect is the default route
+from anywhere; Tailscale is an optional direct route. See
 [remote access](../user/remote-access.md) for setup.
+
+Worker delegation is the exception today. A coordinator that invites a worker,
+starts or manages work on it, or copies a folder to it dials the worker's
+Tailscale (ts.net) address, so both machines need Tailscale for those features.
+They do not run over SpecWithCode Connect yet.
 
 ## Identity is independent of the route
 

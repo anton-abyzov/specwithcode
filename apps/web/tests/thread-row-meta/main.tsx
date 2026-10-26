@@ -34,7 +34,6 @@ const claude = ProviderInstanceId.make("claudeAgent");
 const gpt = { instanceId: codex, model: "gpt-6.1-sol" } as ModelSelection;
 const astra = { instanceId: codex, model: "gpt-6-astra" } as ModelSelection;
 const opus = { instanceId: claude, model: "claude-opus-5-5" } as ModelSelection;
-const astra = { instanceId: codex, model: "gpt-6-astra" } as ModelSelection;
 // Devin runs the same model under its own slug: a fallback that must not read "Sol for Sol".
 const devinSol = { instanceId: "acpRegistry_devin", model: "gpt-6-1-sol-medium" } as ModelSelection;
 
@@ -219,7 +218,13 @@ function Harness() {
         <div className="sws-thread-head-text">
           <h2>{threads[0]!.title}</h2>
           <span className="sws-thread-head-chips">
-            <ThreadModelBadge thread={threads[0]!} entries={entries} variant="chip" focusable />
+            <ThreadModelBadge
+              thread={threads[0]!}
+              entries={entries}
+              variant="chip"
+              focusable
+              header
+            />
             {/* RoutingDecisionChip's trigger as it renders for a lane decision. */}
             <button
               type="button"

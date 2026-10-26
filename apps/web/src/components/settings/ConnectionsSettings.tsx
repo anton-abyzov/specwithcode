@@ -785,9 +785,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             </p>
           ) : shareablePairingUrl === null ? (
             <p className="text-2xs text-muted-foreground">
-              No address another machine can open yet. Turn on Tailscale HTTPS or Network access
-              above for a shareable link, or copy the code and enter it with this machine&apos;s
-              address.
+              No address another machine can open yet. Turn on SpecWithCode Connect, Tailscale HTTPS
+              or Network access above for a shareable link, or copy the code and enter it with this
+              machine&apos;s address.
             </p>
           ) : null}
         </div>
@@ -3563,8 +3563,9 @@ export function ConnectionsSettings() {
         control = checkButton("Check");
         break;
       case "not-found":
-        description =
-          "Tailscale isn't running on this computer, or MagicDNS is off. Start Tailscale, then check again.";
+        description = hasCloudPublicConfig()
+          ? "Optional, for a direct route on your tailnet. Tailscale isn't running here, or MagicDNS is off."
+          : "Tailscale isn't running on this computer, or MagicDNS is off. Start Tailscale, then check again.";
         control = checkButton("Check again");
         break;
       case "outside-studio":
@@ -3664,7 +3665,7 @@ export function ConnectionsSettings() {
             }
           />
         ) : desktopServerExposureState?.localServiceAttached ? (
-          "Limited to this machine by the SpecWithCode service. Other devices, like your phone, can use Tailscale HTTPS."
+          "Limited to this machine by the SpecWithCode service. Other devices, like your phone, can use SpecWithCode Connect or Tailscale HTTPS."
         ) : desktopServerExposureState ? (
           "Limited to this machine. Turning this on serves the app over unencrypted HTTP."
         ) : (
@@ -3677,7 +3678,7 @@ export function ConnectionsSettings() {
         ) : isLocalBackendNetworkAccessible ? (
           <span className="block text-warning-foreground">
             Not encrypted: anyone on the same network can capture the sign-in. For remote access,
-            use Tailscale HTTPS.
+            use SpecWithCode Connect or Tailscale HTTPS.
           </span>
         ) : null
       }
@@ -3789,20 +3790,20 @@ export function ConnectionsSettings() {
             ) : null}
             {canManageLocalBackend && desktopBridge ? (
               <>
+                {canReadRelay || canManageRelay ? (
+                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
+                ) : null}
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
                 {renderWslRow()}
-                {canReadRelay || canManageRelay ? (
-                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
-                ) : null}
               </>
             ) : canManageLocalBackend ? (
               <>
-                <StudioListenerRow policy={currentAuthPolicy} desktop={Boolean(desktopBridge)} />
                 {canReadRelay || canManageRelay ? (
                   <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
                 ) : null}
+                <StudioListenerRow policy={currentAuthPolicy} desktop={Boolean(desktopBridge)} />
               </>
             ) : null}
           </SettingsSection>
@@ -3873,7 +3874,7 @@ export function ConnectionsSettings() {
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "Let your other devices connect to SpecWithCode over your local network. This mode uses plain HTTP, so its traffic is not encrypted: anyone on the same network can capture the sign-in and use it to control the app. Turn it on only on a network you trust, and use Tailscale HTTPS for remote access. Pair devices to give them access. The app will restart."
+                    ? "Let your other devices connect to SpecWithCode over your local network. This mode uses plain HTTP, so its traffic is not encrypted: anyone on the same network can capture the sign-in and use it to control the app. Turn it on only on a network you trust, and use SpecWithCode Connect or Tailscale HTTPS for remote access. Pair devices to give them access. The app will restart."
                     : "Devices connected over your local network will disconnect. Existing tunnels, such as SpecWithCode Connect or Tailscale HTTPS, keep working. SpecWithCode will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>

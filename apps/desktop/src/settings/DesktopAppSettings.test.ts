@@ -131,6 +131,7 @@ describe("DesktopSettings", () => {
       downloadAutomatically: true,
       installAutomatically: false,
       forceInstallAfterMinutes: 2,
+      pauseWorkAfterMinutes: 10,
     });
     assert.strictEqual(
       DesktopAppSettings.setUpdatePreferences(off, { installAutomatically: false }),
@@ -149,6 +150,27 @@ describe("DesktopSettings", () => {
     assert.strictEqual(DesktopAppSettings.normalizeForceInstallAfterMinutes(-3), 2);
     assert.strictEqual(DesktopAppSettings.normalizeForceInstallAfterMinutes("x"), 2);
     assert.strictEqual(DesktopAppSettings.normalizeForceInstallAfterMinutes(99_999), 1440);
+  });
+
+  it("keeps the automatic pause wait within range and stores a changed one", () => {
+    const base = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
+    assert.strictEqual(base.updatePreferences.pauseWorkAfterMinutes, 10);
+    const thirty = DesktopAppSettings.setUpdatePreferences(base, { pauseWorkAfterMinutes: 30 });
+    assert.strictEqual(thirty.updatePreferences.pauseWorkAfterMinutes, 30);
+    assert.strictEqual(
+      DesktopAppSettings.setUpdatePreferences(thirty, { pauseWorkAfterMinutes: 30 }),
+      thirty,
+    );
+    // Another preference's change keeps the chosen wait.
+    assert.strictEqual(
+      DesktopAppSettings.setUpdatePreferences(thirty, { forceInstallAfterMinutes: 5 })
+        .updatePreferences.pauseWorkAfterMinutes,
+      30,
+    );
+    // The agent never pauses work at once: zero and junk fall back to the default.
+    assert.strictEqual(DesktopAppSettings.normalizePauseWorkAfterMinutes(0), 10);
+    assert.strictEqual(DesktopAppSettings.normalizePauseWorkAfterMinutes("x"), 10);
+    assert.strictEqual(DesktopAppSettings.normalizePauseWorkAfterMinutes(99_999), 1440);
   });
 
   it("defaults packaged nightly builds to the nightly update channel", () => {

@@ -13,7 +13,11 @@ import { ProviderModelPicker } from "../../src/components/chat/ProviderModelPick
 import type { ModelPickerUsageConfig } from "../../src/components/chat/ModelUsage";
 import { deriveProviderInstanceEntries } from "../../src/providerInstances";
 import { applyThemePalette } from "../../src/themePalette";
-import { HostLimitsCompactView } from "../../src/components/studio/shell/HostLimits";
+import {
+  AccountLimitsView,
+  HostLimitsCompactView,
+} from "../../src/components/studio/shell/HostLimits";
+import { fallbackModelState } from "../../src/components/chat/ModelStateTag";
 import type { HostLimitBlock } from "../../src/studio/hostLimitsModel";
 import "../../src/components/studio/shell/usage.css";
 import "./fixture.css";
@@ -43,6 +47,12 @@ const window = (
   label,
   usedPercent,
   resetsAt: iso(NOW + resetIn),
+  // Hosts report each window's length; Claude's and Codex's are 5 hours and a week.
+  ...(kind === "session"
+    ? { windowDurationMins: 300 }
+    : kind === "weekly"
+      ? { windowDurationMins: 10_080 }
+      : {}),
   ...(modelScope ? { modelScope } : {}),
 });
 
@@ -102,7 +112,39 @@ const provider = (
   ...over,
 });
 
+// 1054 chip states. `thread` is the reported case: the home model, 5% of the 5-hour left.
+const CHIP_CLAUDE: Record<string, () => ServerProviderUsageLimits | undefined> = {
+  thread: () =>
+    limits([
+      window("five_hour", "session", "Session", 95, 55 * MIN),
+      window("seven_day", "weekly", "Weekly", 45, 3 * 24 * HOUR),
+    ]),
+  home: () => limits(claudeWindows.room!),
+  returned: () =>
+    limits([
+      window("five_hour", "session", "Session", 3, 4 * HOUR + 50 * MIN),
+      window("seven_day", "weekly", "Weekly", 46, 3 * 24 * HOUR),
+    ]),
+  spent: () => limits(claudeWindows.account!),
+  "spent-next": () => limits(claudeWindows.account!),
+  fallback: () => limits(claudeWindows.account!),
+  extra: () => limits(claudeWindows.account!, 2 * MIN, { ordinaryUsageAllowed: true }),
+  stale: () =>
+    limits(
+      [
+        window("five_hour", "session", "Session", 58, 2 * HOUR),
+        window("seven_day", "weekly", "Weekly", 40, 3 * 24 * HOUR),
+      ],
+      25 * MIN,
+    ),
+  unknown: () => limits([], 2 * MIN, { unavailable: { reason: "probeFailed" } }),
+  loading: () => undefined,
+  switch: () => limits(claudeWindows.room!, 3 * MIN, { accountChangedAt: iso(NOW - MIN) }),
+  offline: () => limits(claudeWindows.room!),
+};
+
 const claudeLimits = (scenario: string): ServerProviderUsageLimits | undefined => {
+  if (scenario.startsWith("chip-")) return CHIP_CLAUDE[scenario.slice(5)]?.();
   if (["warning", "locked", "signed-out", "not-installed"].includes(scenario))
     return limits(claudeWindows.account!);
   if (scenario === "denied")
@@ -158,13 +200,17 @@ const scenarioProviders = (scenario: string): ServerProvider[] => [
       { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", badge: "new" },
     ],
     claudeLimits(scenario),
-    scenario === "warning"
-      ? { status: "warning", message: "Usage probe warning" }
-      : scenario === "signed-out"
-        ? { status: "warning", auth: { status: "unauthenticated" } }
-        : scenario === "not-installed"
-          ? { status: "warning", installed: false }
-          : {},
+    scenario === "chip-pertoken"
+      ? { auth: { status: "authenticated", type: "apiKey", label: "Claude API key" } as never }
+      : scenario.startsWith("chip-")
+        ? { auth: { status: "authenticated", type: "subscription", label: "Claude Max" } as never }
+        : scenario === "warning"
+          ? { status: "warning", message: "Usage probe warning" }
+          : scenario === "signed-out"
+            ? { status: "warning", auth: { status: "unauthenticated" } }
+            : scenario === "not-installed"
+              ? { status: "warning", installed: false }
+              : {},
   ),
   // Claude models through GitHub Copilot: another account, no usage reported.
   provider(
@@ -274,7 +320,7 @@ const limitsView = {
         <h2 className="sws-machine-limits-title">Limits by machine</h2>
         <p>
           Each machine uses its own sign-ins. When a provider has several limit windows, the one
-          that runs out first is brighter.
+          with the least left is brighter.
         </p>
       </header>
       <HostLimitsCompactView
@@ -290,6 +336,167 @@ const limitsView = {
   ),
 };
 
+// `?case=accounts`: the limits view by account. One Claude account signed in on two
+// machines (read 2 and 9 minutes ago), the fallback order, and an unidentified Grok.
+const accountRow = (
+  key: string,
+  instanceId: string,
+  driver: string,
+  label: string,
+  identity: string | null,
+  used: number[],
+  readAgo: number,
+) => ({
+  ...limitRow(driver, label, identity ?? "", used),
+  key,
+  instanceId,
+  identity,
+  plan: driver === "claudeAgent" ? "Max" : "Plus",
+  checkedAt: NOW - readAgo,
+});
+const ACCOUNT_BLOCKS = [
+  {
+    ...LIMIT_BLOCKS[0]!,
+    providers: [
+      accountRow(
+        "claude:you",
+        "claudeAgent",
+        "claudeAgent",
+        "Claude",
+        "you@work.example",
+        [95, 45],
+        2 * MIN,
+      ),
+      accountRow("codex:you", "codex", "codex", "Codex", "you@work.example", [12, 27], 2 * MIN),
+      accountRow("instance:grok:grok", "grok", "grok", "Grok", null, [40], 3 * MIN),
+    ],
+  },
+  {
+    ...LIMIT_BLOCKS[1]!,
+    providers: [
+      accountRow(
+        "claude:you",
+        "claudeAgent",
+        "claudeAgent",
+        "Claude",
+        "you@work.example",
+        [96, 45],
+        9 * MIN,
+      ),
+      accountRow(
+        "claude:team",
+        "claudeWork",
+        "claudeAgent",
+        "Claude (team)",
+        "team@company.example",
+        [30, 62],
+        4 * MIN,
+      ),
+    ],
+  },
+] as unknown as HostLimitBlock[];
+
+function AccountsFixture() {
+  return (
+    <main className="mx-auto flex min-h-screen max-w-sm flex-col gap-3 p-4">
+      <div className="sws-usage-popover sws-machine-limits" data-machine-limits="">
+        <header className="sws-usage-popover-head">
+          <h2 className="sws-machine-limits-title">Limits by account</h2>
+          <p>
+            A limit belongs to the account, so every model and machine on it shares it. Of several
+            windows, the one with the least left is brighter.
+          </p>
+        </header>
+        <AccountLimitsView
+          blocks={ACCOUNT_BLOCKS}
+          now={NOW}
+          current={{ environmentId: "studio" as never, instanceId: "claudeAgent" }}
+          fallbackOrder={[
+            { instanceId: "codex", label: "Codex · GPT-6.1-Sol" },
+            { instanceId: "github-copilot", label: "Copilot · Claude Opus 5.5" },
+          ]}
+          surface="coordinator"
+        />
+      </div>
+    </main>
+  );
+}
+
+const CHIP_CASES = [
+  "thread",
+  "home",
+  "fallback",
+  "returned",
+  "spent",
+  "spent-next",
+  "extra",
+  "stale",
+  "loading",
+  "unknown",
+  "pertoken",
+  "switch",
+  "offline",
+];
+
+/** One composer row whose trigger is a model chip, as the coordinator's and threads' are. */
+function ChipRow({ name }: { readonly name: string }) {
+  const scenarioName = `chip-${name}`;
+  const [{ entries, options }] = useState(() => pickerData(scenarioName));
+  const fallback = name === "fallback";
+  const shown = fallback
+    ? { instanceId: "codex", model: "gpt-6.1-sol", provider: "Codex", label: "GPT-6.1-Sol" }
+    : {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        provider: "Claude Code",
+        label: "Opus 5.5",
+      };
+  const [usage] = useState<ModelPickerUsageConfig>(() => ({
+    connected: name !== "offline",
+    machineLabel: "Studio Mac",
+    running: null,
+    surface: "coordinator",
+    nextOnLimit: name === "spent-next" ? "GPT-6.1-Sol" : null,
+  }));
+  const state = fallback
+    ? fallbackModelState({
+        pick: { provider: "Claude Code", model: "Opus 5.5", full: "Claude Code · Opus 5.5" },
+        running: { provider: "Codex", model: "GPT-6.1-Sol", full: "Codex · GPT-6.1-Sol" },
+        reason: "usage limit",
+      })
+    : null;
+  return (
+    <div className="flex flex-col gap-1" data-chip-case={name}>
+      <p className="text-2xs text-muted-foreground">{name}</p>
+      <div className="@container/composer-surface flex min-w-0 items-center gap-2 rounded-2xl border bg-card px-3 py-2">
+        <ProviderModelPicker
+          activeInstanceId={shown.instanceId as ProviderInstanceId}
+          model={shown.model}
+          lockedProvider={null}
+          instanceEntries={entries}
+          modelOptionsByInstance={options}
+          keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+          size="sm"
+          triggerParts={{ provider: shown.provider, model: shown.label }}
+          triggerState={state}
+          usage={usage}
+          onInstanceModelChange={() => {}}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ChipsFixture() {
+  return (
+    <main className="flex min-h-screen w-full flex-col gap-2 p-3" data-chips="">
+      {CHIP_CASES.map((name) => (
+        <ChipRow key={name} name={name} />
+      ))}
+    </main>
+  );
+}
+
 function Composer(props: {
   readonly scenario: string;
   readonly initial: { instanceId: string; model: string };
@@ -304,6 +511,7 @@ function Composer(props: {
     running: props.running
       ? { instanceId: "claudeAgent" as ProviderInstanceId, model: "claude-opus-5-5" }
       : null,
+    surface: "thread",
   }));
   return (
     <div className="flex flex-col gap-1">
@@ -352,6 +560,8 @@ const TRIGGER_CASES = [
 const OPUS = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
 
 function Fixture() {
+  if (scenario === "chips") return <ChipsFixture />;
+  if (scenario === "accounts") return <AccountsFixture />;
   if (scenario === "triggers") {
     return (
       <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-3 p-4">
@@ -362,19 +572,26 @@ function Fixture() {
       </main>
     );
   }
-  const running = scenario === "running";
-  const initial = params.has("selected-claude")
-    ? OPUS
-    : running ||
-        ["warning", "account", "model", "denied", "locked", "signed-out", "not-installed"].includes(
-          scenario,
-        )
-      ? { instanceId: "codex", model: "gpt-6.1-sol" }
-      : scenario.startsWith("grok-")
-        ? { instanceId: "grok", model: "grok-4.7" }
-        : scenario === "unprepared"
-          ? { instanceId: "github-copilot-cm", model: "claude-opus-5.5" }
-          : OPUS;
+  const running = scenario === "running" || scenario === "running-same";
+  const initial =
+    params.has("selected-claude") || scenario === "running-same"
+      ? OPUS
+      : running ||
+          [
+            "warning",
+            "account",
+            "model",
+            "denied",
+            "locked",
+            "signed-out",
+            "not-installed",
+          ].includes(scenario)
+        ? { instanceId: "codex", model: "gpt-6.1-sol" }
+        : scenario.startsWith("grok-")
+          ? { instanceId: "grok", model: "grok-4.7" }
+          : scenario === "unprepared"
+            ? { instanceId: "github-copilot-cm", model: "claude-opus-5.5" }
+            : OPUS;
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-end gap-3 p-4 pb-6">
       <p className="text-sm text-muted-foreground">

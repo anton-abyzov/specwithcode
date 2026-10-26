@@ -10,6 +10,7 @@ import {
   SERVICE_REQUEST_EXPIRED,
   SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceInstallTarget,
+  serviceRefusalText,
 } from "./SidebarRestartToUpdate.logic";
 
 // The agent's last pass was refused for a fault Update now gets past, while it
@@ -20,6 +21,11 @@ const LOG_DELETED =
   "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update";
 const LOCKS_LOST =
   "SpecWithCode cannot be updated right now: The SpecWithCode service lost its SQLite locks on its database. Restart SpecWithCode, then update";
+// The same refusals as agents since 1085 word them: Update now restarts the service.
+const LOG_DELETED_NOW =
+  "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Press Update now: SpecWithCode saves that log, restarts its background service and then updates";
+const LOCKS_LOST_NOW =
+  "SpecWithCode cannot be updated right now: The SpecWithCode service lost its SQLite locks on its database. Press Update now: SpecWithCode restarts its background service and then updates";
 
 // The app already runs the release the service lacks (it updated on quit).
 const appCurrent: DesktopUpdateState = {
@@ -74,7 +80,7 @@ describe("a service whose last update pass failed", () => {
       serviceVersion: "1.0.63",
       label: "Update now",
       description: [
-        `${LOG_DELETED}.`,
+        `${LOG_DELETED_NOW}.`,
         "The SpecWithCode service on this Mac still runs 1.0.62; this installs 1.0.63.",
         SERVICE_UPDATE_NOW_DESCRIPTION,
       ].join(" "),
@@ -94,19 +100,37 @@ describe("a service whose last update pass failed", () => {
   it("offers it for both refusals a held request gets past, whatever the agent's check time", () => {
     // update.py restarts the service for a held forced request when it lost
     // its SQLite locks too, and the refusal says nothing of the last check.
-    for (const message of [LOG_DELETED, LOCKS_LOST]) {
+    // An older agent's wording never asks for a restart Cmd+Q cannot do.
+    for (const [message, shown] of [
+      [LOG_DELETED, LOG_DELETED_NOW],
+      [LOCKS_LOST, LOCKS_LOST_NOW],
+      [LOG_DELETED_NOW, LOG_DELETED_NOW],
+      [LOCKS_LOST_NOW, LOCKS_LOST_NOW],
+    ] as const) {
       for (const checkedAt of [failed.checkedAt, null]) {
         const refused = { ...failed, message, checkedAt };
         expect(isServiceErrorWithRelease(refused)).toBe(true);
-        expect(getRestartToUpdateView(appCurrent, refused)?.description).toBe(
+        expect(isRestartRefusalWithRelease(refused)).toBe(true);
+        const description = getRestartToUpdateView(appCurrent, refused)?.description;
+        expect(description).not.toContain("Restart SpecWithCode");
+        expect(description).toBe(
           [
-            `${message}.`,
+            `${shown}.`,
             "The SpecWithCode service on this Mac still runs 1.0.62; this installs 1.0.63.",
             SERVICE_UPDATE_NOW_DESCRIPTION,
           ].join(" "),
         );
       }
     }
+  });
+
+  it("rewrites only the older wording of these refusals", () => {
+    expect(serviceRefusalText(LOG_DELETED)).toBe(LOG_DELETED_NOW);
+    expect(serviceRefusalText(LOCKS_LOST)).toBe(LOCKS_LOST_NOW);
+    expect(serviceRefusalText(LOG_DELETED_NOW)).toBe(LOG_DELETED_NOW);
+    expect(serviceRefusalText("Could not reach the release feed")).toBe(
+      "Could not reach the release feed",
+    );
   });
 
   it("installs the newest of the agent's release and the app's versions", () => {

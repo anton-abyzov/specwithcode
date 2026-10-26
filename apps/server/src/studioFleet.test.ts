@@ -78,6 +78,51 @@ describe("private fleet boundary", () => {
       })._tag,
     ).toBe("None");
   });
+  it("skips one invalid machine line on read but keeps duplicates and writes strict", async () => {
+    const machine = (n: number, url = `https://m${n}.tailnet.ts.net`) => ({
+      id: `m${n}`,
+      label: `Mac M${n}`,
+      environmentId: `environment-m${n}`,
+      url,
+      scopes: [AuthOrchestrationReadScope],
+    });
+    const raw = {
+      version: 1,
+      machines: [machine(1), machine(2, "https://example.com"), machine(3)],
+    };
+    const config = parseFleetConfig(raw, { tolerant: true });
+    expect(config.machines.map((m) => m.id)).toEqual(["m1", "m3"]);
+    expect(config.invalidEntries).toEqual([
+      { index: 1, label: "Mac M2", reason: expect.stringContaining("ts.net") },
+    ]);
+    // Strict is the default, used by every write.
+    expect(() => parseFleetConfig(raw)).toThrow("securely");
+    for (const duplicate of [
+      { ...machine(3), id: "m1" },
+      { ...machine(3), environmentId: "environment-m1" },
+      machine(3, "https://m1.tailnet.ts.net"),
+    ])
+      expect(() =>
+        parseFleetConfig({ ...raw, machines: [...raw.machines, duplicate] }, { tolerant: true }),
+      ).toThrow("securely");
+    expect(() => parseFleetConfig({ ...raw, endpoint: "evil" }, { tolerant: true })).toThrow(
+      "securely",
+    );
+
+    const dir = await mkdtemp(join(tmpdir(), "studio-fleet-test-"));
+    dirs.push(dir);
+    await writeFile(join(dir, "studio-fleet.json"), JSON.stringify(raw), { mode: 0o600 });
+    const read = await readFleetConfig(dir);
+    expect(read?.machines.map((m) => m.id)).toEqual(["m1", "m3"]);
+    const snapshot = await discoverFleet(read, "127.0.0.1", fetcher());
+    expect(snapshot.machines).toHaveLength(2);
+    expect(snapshot.invalidEntries).toEqual([
+      { kind: "config", index: 1, label: "Mac M2", reason: expect.stringContaining("ts.net") },
+    ]);
+    expect(
+      (await discoverFleet(parseFleetConfig(source()), "127.0.0.1", fetcher())).invalidEntries,
+    ).toBeUndefined();
+  });
   it("reads only an owner-only regular file and refuses symlink credentials", async () => {
     const dir = await mkdtemp(join(tmpdir(), "studio-fleet-test-"));
     dirs.push(dir);

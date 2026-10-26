@@ -7,6 +7,7 @@ import type {
   ProvisionService,
 } from "@specweave-studio/contracts";
 
+import type { ConnectLinkMode } from "../cloud/connectLinkMode.ts";
 import type { ProvisionHost } from "./host.ts";
 import type { ProvisionPlatformKey } from "./manifest.ts";
 import type { CheckedTarget } from "./target.ts";
@@ -35,6 +36,13 @@ export interface ProvisionOptions {
   readonly loginShellPath: () => string | undefined;
   /** Remote mode: the running server's own PATH. */
   readonly serverPath?: string;
+  /**
+   * How this machine is linked to SpecWithCode Connect; read from the home's
+   * secret files when not given. A managed link makes Tailscale optional.
+   */
+  readonly connectLinkMode?: ConnectLinkMode;
+  /** `install`: plan Tailscale even when Connect reaches this machine; `skip`: never plan it. */
+  readonly tailscale?: "auto" | "install" | "skip";
   /** The Node.js running this command. */
   readonly runtime: { readonly version: string; readonly execPath: string };
   readonly onEvent?: (event: ProvisionEvent) => void;
@@ -100,7 +108,9 @@ export interface Probes {
   node: Probe;
   claude: Probe & { ours: boolean | null };
   codex: Probe & { ours: boolean | null };
+  /** `found` is null when Tailscale is missing or its version could not be read; `path` tells them apart. */
   tailscale: Probe & { state: string | null };
+  connect: ConnectLinkMode;
   server: Probe & { launchers: Record<string, string | null> };
   /** macOS: the desktop app or a managed launch agent that already runs the server. */
   manager: { kind: "desktop" | "managed"; label: string; version: string | null } | null;

@@ -191,7 +191,10 @@ class InstallNow(AgentCase):
             with self.subTest(output=output):
                 self.control(snapshotFail=True, snapshotError=output)
                 self.assertEqual(self.run_agent(), 1 if status == 'error' else 0)
-                self.assertEqual((self.state()['status'], self.state()['message']), (status, message))
+                state = self.state()
+                # The test home publishes no CLI credential: no pause is announced.
+                self.assertIsNone(state['automaticPauseAt'])
+                self.assertEqual((state['status'], state['message']), (status, message))
                 self.assertNotIn('REFUSAL', self.log)
 
     def test_an_environment_refusal_ends_a_forced_request_at_once(self):
@@ -498,7 +501,7 @@ class InstallNow(AgentCase):
         state = self.state()
         self.assertEqual((state['status'], state['message']), ('error', (
             'SpecWithCode cannot be updated right now: The SpecWithCode service lost its SQLite locks on its '
-            'database. Restart SpecWithCode, then update')))
+            'database. Press Update now: SpecWithCode restarts its background service and then updates')))
         self.assertEqual(state['handledInstallRequestAt'], self.REQUESTED)
         last = state['lastInstall']
         self.assertEqual((last['result'], last['receipt'], last['refusedBeforeRestart']),

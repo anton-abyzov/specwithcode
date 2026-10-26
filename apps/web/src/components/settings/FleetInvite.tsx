@@ -289,7 +289,7 @@ export function FleetInvitePanel({
               onClick={() => void controller.create()}
             >
               {pending === "create"
-                ? "Checking Tailscale…"
+                ? "Making the line…"
                 : canManage
                   ? createLabel
                   : "Manage access required"}
@@ -358,14 +358,19 @@ export function tailscaleReadinessView(
           title: "Could not check Tailscale",
           description: "The app tries again on its own.",
         }
-      : { ...none, kind: "checking", title: "Checking Tailscale…", description: "" };
+      : {
+          ...none,
+          kind: "checking",
+          title: "Checking whether Tailscale is ready on this machine…",
+          description: "",
+        };
   switch (status.state) {
     case "not_installed":
       return {
         kind: "not_installed",
         title: "Tailscale is not installed",
         description:
-          "Install Tailscale on this machine, open it and sign in. This updates on its own once it is installed.",
+          "For a main machine to start work here, install Tailscale on this machine, open it and sign in. This updates on its own once it is installed.",
         action: "install",
         downloadUrl: tailscaleDownloadUrl(status.platform),
         brewCommand:
@@ -416,7 +421,7 @@ export interface TailscaleReadiness {
 /**
  * Whether a failed status read means the check itself failed. Right after a
  * page load the connection is still starting, which reads as missing access;
- * that stays "Checking Tailscale…" and the next look settles it.
+ * that stays on checking and the next look settles it.
  */
 export function countsAsTailscaleCheckFailure(failure: unknown): boolean {
   return !(failure instanceof FleetInviteFailure && failure.reason === "permission");
@@ -627,9 +632,11 @@ export function FleetInviteDialog({
         <DialogHeader>
           <DialogTitle>Invite this machine to another one</DialogTitle>
           <DialogDescription>
-            Your main machine can then start work here. Both need Tailscale, signed in to the same
-            tailnet. This publishes the app here on this machine&apos;s private Tailscale name,
-            never on the public internet.
+            Your main machine can then start work here. For now, letting a main machine start work
+            on this one also needs Tailscale on both, signed in to the same tailnet. This publishes
+            the app here on this machine&apos;s private Tailscale name, never on the public
+            internet. Your app and phone can already reach this machine through SpecWithCode Connect
+            without Tailscale.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -669,7 +676,9 @@ export function FleetInviteDialog({
 /**
  * Beside Invite this machine: Tailscale's state here, with Install or Sign in
  * when it is not ready, and the dialog the button opens. One check serves
- * both; it looks again sooner while the dialog is open.
+ * both; it looks again sooner while the dialog is open. Only a main machine
+ * starting work here needs Tailscale; SpecWithCode Connect reaches this
+ * machine without it.
  */
 export function FleetInviteArea({
   environmentId,

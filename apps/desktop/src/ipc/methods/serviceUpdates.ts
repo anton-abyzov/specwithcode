@@ -31,6 +31,7 @@ import {
   makeServiceUpdateController,
   NO_AUTOMATIC_UPDATES,
   parseServiceInstallOptions,
+  postponeAutomaticPauseChange,
   refreshThenRunAgent,
   repairServiceAgent,
   selectAgentScriptPath,
@@ -147,6 +148,15 @@ export class ServiceUpdateCancelError extends Schema.TaggedError<ServiceUpdateCa
 ) {
   override get message(): string {
     return "The update could not be cancelled. Try again in a moment.";
+  }
+}
+
+export class ServiceUpdatePostponeError extends Schema.TaggedError<ServiceUpdatePostponeError>()(
+  "ServiceUpdatePostponeError",
+  {},
+) {
+  override get message(): string {
+    return "The update could not be postponed. Try again in a moment.";
   }
 }
 
@@ -602,6 +612,27 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
           if (files !== null) yield* runs.cancelUnclaimed(files, null, at);
           agentFailure = null;
           yield* logInfo("service update install cancelled", {});
+          return yield* publish;
+        }),
+    }),
+  );
+
+  // "Later" on an automatic install waiting for running work: the agent pauses
+  // nothing for an hour. Only the config changes; no agent pass is started,
+  // since the next scheduled one reads it and a kicked pass would only find
+  // the same work running. The reply already shows the moved time.
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: IpcChannels.SERVICE_UPDATE_POSTPONE_CHANNEL,
+      payload: Schema.Void,
+      result: StudioServiceUpdateStateSchema,
+      handler: () =>
+        Effect.gen(function* () {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          if (!(yield* syncConfig(postponeAutomaticPauseChange(nowMs)))) {
+            return yield* new ServiceUpdatePostponeError();
+          }
+          yield* logInfo("automatic service update pause postponed", {});
           return yield* publish;
         }),
     }),

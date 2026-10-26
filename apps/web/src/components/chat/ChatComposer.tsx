@@ -279,6 +279,7 @@ import { ModelChipFitContext, type ModelChipFit } from "./modelChipFit";
 import type { ModelStateHeader } from "./ModelPickerContent";
 import { fallbackModelState } from "./ModelStateTag";
 import { modelLabel } from "../../studio/shellModel";
+import { MachineLimitsPanel } from "../studio/shell/ProjectUsageIndicator";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
   type ComposerCommandItem,
@@ -437,6 +438,10 @@ const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
+const EMPTY_LIMIT_FALLBACK_ORDER: ReadonlyArray<{
+  readonly instanceId: string;
+  readonly label: string;
+}> = [];
 
 const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
@@ -1640,6 +1645,17 @@ export interface ChatComposerProps {
   reportedModelSelection?: ModelSelection | null;
   /** The picked model a usage-limit fallback runs instead of; null when none. */
   limitFallbackFrom?: { readonly instanceId: string; readonly model: string } | null;
+  /**
+   * Where the server moves the thread's next turn while its model is out of
+   * room (the pre-turn fallback rule), and the model it moves from; null when
+   * the turn stays.
+   */
+  limitNextTurn?: {
+    readonly from: { readonly instanceId: string; readonly model: string };
+    readonly label: string;
+  } | null;
+  /** The project's fallback models, best first, for the picker's limits view. */
+  limitFallbackOrder?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
   modelStateHeader?: ModelStateHeader | null;
 
   // Context window
@@ -1785,6 +1801,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadModelSelection,
     reportedModelSelection,
     limitFallbackFrom = null,
+    limitNextTurn = null,
+    limitFallbackOrder = EMPTY_LIMIT_FALLBACK_ORDER,
     activeContextWindow,
     compactThreadUnavailable,
     compactDisabled,
@@ -2222,17 +2240,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // one still reconnecting keeps its last read, judged by its age.
   const environmentPhase = environmentUnavailable?.connection.phase;
   const environmentConnected = environmentPhase !== "offline" && environmentPhase !== "error";
-  const modelPickerUsage = useMemo(
-    () => ({
-      connected: environmentConnected,
-      machineLabel: usageMachineLabel || null,
-      running:
-        runningInstanceId && runningModel
-          ? { instanceId: runningInstanceId, model: runningModel }
-          : null,
-    }),
-    [environmentConnected, runningInstanceId, runningModel, usageMachineLabel],
-  );
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
@@ -2510,6 +2517,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       fallbackFrom: limitFallbackFrom as ModelSelection | null,
     });
   const displayedModel = displayedIdentity.current;
+  // "next on <model>" belongs to the model the chip shows, never to another pick.
+  const nextOnLimit =
+    limitNextTurn &&
+    limitNextTurn.from.instanceId === displayedModel.instanceId &&
+    limitNextTurn.from.model === displayedModel.model
+      ? limitNextTurn.label
+      : null;
+  const modelPickerUsage = useMemo(
+    () => ({
+      connected: environmentConnected,
+      environmentId,
+      machineLabel: usageMachineLabel || null,
+      surface: "thread" as const,
+      nextOnLimit,
+      running:
+        runningInstanceId && runningModel
+          ? { instanceId: runningInstanceId, model: runningModel }
+          : null,
+    }),
+    [
+      environmentConnected,
+      environmentId,
+      nextOnLimit,
+      runningInstanceId,
+      runningModel,
+      usageMachineLabel,
+    ],
+  );
   const preferredLabel = displayedIdentity.preferred
     ? composerModelLabel(displayedIdentity.preferred)
     : null;
@@ -5734,7 +5769,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
           : {})}
         getModelDisabledReason={getModelDisabledReason}
-        {...(routesProjectMessage ? {} : { usage: modelPickerUsage })}
+        {...(routesProjectMessage
+          ? {}
+          : {
+              usage: modelPickerUsage,
+              secondaryView: {
+                label: "Limits by account",
+                render: ({ back, close }: { back: () => void; close: () => void }) => (
+                  <MachineLimitsPanel
+                    projectEnvironmentId={environmentId}
+                    coordinatorInstanceId={displayedModel.instanceId as ProviderInstanceId}
+                    fallbackOrder={limitFallbackOrder}
+                    surface="thread"
+                    onBack={back}
+                    onClose={close}
+                  />
+                ),
+              },
+            })}
         usageValueHiddenClassName="@max-[520px]/composer-surface:hidden"
         onInstanceModelChange={(instanceId, model) => {
           setMultipleModelSelections(null);

@@ -5,6 +5,7 @@ import {
   MessageId,
   projectExecutionIsFenced,
   type ModelSelection,
+  type OrchestrationV2LimitPreswitchOrigin,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
@@ -76,6 +77,8 @@ import {
   apiCreditReturnCommand,
   limitFallbackReturnCommand,
   limitResetAt,
+  preswitchReturnBlock,
+  preswitchReturnCommand,
   queuedRunsPinnedTo,
   reachedLimitWindow,
   usageWindowKey,
@@ -116,6 +119,8 @@ export {
   apiCreditReturnCommand,
   limitFallbackReturnCommand,
   limitResetAt,
+  preswitchReturnBlock,
+  preswitchReturnCommand,
   reachedLimitWindow,
 } from "./limitFallbackReturn.ts";
 export {
@@ -150,6 +155,23 @@ const UNREPORTED_TARGET_CHECK_MAX_AGE_MS = 60_000;
 
 /** No-usage fallbacks the way back passes on its way home, at most. */
 const LIMIT_RETURN_MAX_NO_USAGE_HOPS = 4;
+
+type PreswitchOrigin = OrchestrationV2LimitPreswitchOrigin;
+
+/** One way back the sweep may send: where it goes, and the command for a thread as it is. */
+interface WayBack {
+  readonly home: ModelSelection;
+  readonly attemptKey: string;
+  /** Set for the way back from a usage pre-switch, which its thread record holds. */
+  readonly preswitch: PreswitchOrigin | null;
+  readonly returnCommand: (
+    current: FallbackThread,
+    attempt: number,
+  ) => Extract<
+    OrchestrationV2ServerCommand,
+    { type: "thread.model-selection.set" | "message.dispatch" }
+  > | null;
+}
 
 /**
  * Whether a usage-limit stop still describes the account: its reset time is
@@ -666,6 +688,29 @@ export const makeSweep = Effect.gen(function* () {
             ),
             Effect.orElseSucceed(() => failedReadHolds),
           );
+  /**
+   * Whether a person's Stop holds the thread's latest run, whatever its
+   * status: a server move with no turn of its own (the way back from a
+   * pre-switch) must not move a thread a person stopped. A failed read holds.
+   */
+  const stopHoldsLatestRun = (thread: FallbackThread) =>
+    thread.latestRunId === null
+      ? Effect.succeed(false)
+      : projections
+          .getThreadRecords(thread.id, ["turnItems"], {
+            turnItemTypes: ["run_interrupt_request"],
+            turnItemRunIds: [thread.latestRunId],
+          })
+          .pipe(
+            Effect.map((records) =>
+              personStopHoldsRun(
+                records.thread?.limitRecovery,
+                thread.latestRunId!,
+                records.turnItems ?? [],
+              ),
+            ),
+            Effect.orElseSucceed(() => true),
+          );
   const skipReset = (thread: FallbackThread, instanceId: ProviderInstanceId, reason: string) =>
     Effect.logInfo("orchestration-v2.provider-fallback.reset-skipped", {
       threadId: thread.id,
@@ -850,7 +895,9 @@ export const makeSweep = Effect.gen(function* () {
       ),
     );
   // Runs are read once per thread, latest run and instance; the rest repeats each sweep.
-  const origins = yield* Ref.make(new Map<string, ApiCreditOrigin | null>());
+  const origins = yield* Ref.make(
+    new Map<string, ApiCreditOrigin | { readonly preswitch: PreswitchOrigin } | null>(),
+  );
   // Whether a stop was its own instance's Claude plan limit, read once per stopped run.
   const planStops = yield* Ref.make(new Map<string, boolean>());
   const planLimitOutlived = (thread: FallbackThread, providers: ReadonlyArray<ServerProvider>) =>
@@ -894,12 +941,13 @@ export const makeSweep = Effect.gen(function* () {
     >(),
   );
   // Whether this thread, as given, has a way back to send. Reads only the
-  // thread's runs, once per latest run; never the current shell.
+  // thread's runs, once per latest run and selection; never the current shell.
   const apiCreditReturnPlan = Effect.fn("ProviderFallbackWorker.apiCreditReturnPlan")(function* (
     thread: FallbackThread,
     providers: ReadonlyArray<ServerProvider>,
     nowMs: number,
     ruleOn: boolean,
+    rule: ProviderFallbackRule,
   ) {
     if (thread.latestRunId === null) return null;
     // On an API-key instance the API-credit rule put it there; anywhere else,
@@ -907,12 +955,22 @@ export const makeSweep = Effect.gen(function* () {
     const apiCredits = isClaudeApiKeyProvider(
       providers.find((provider) => provider.instanceId === thread.providerInstanceId),
     );
-    const returnCommand = (current: FallbackThread, found: ApiCreditOrigin, attempt: number) =>
-      apiCredits
-        ? apiCreditReturnCommand(current, found, providers, nowMs, { ruleOn, attempt })
-        : limitFallbackReturnCommand(current, found, providers, nowMs, attempt);
-    const key = `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}`;
+    const key = `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}:${thread.modelSelection.model}`;
     let origin = (yield* Ref.get(origins)).get(key);
+    // A pre-switch since this was cached is read again (1075): one onto a
+    // model the person had picked before with the same latest run, or one from
+    // another model than the cached pre-switch came from.
+    const preferred =
+      thread.modelIdentity?.preswitched === true ? thread.modelIdentity.preferred : null;
+    if (
+      preferred != null &&
+      (origin === null ||
+        (origin !== undefined &&
+          (!("preswitch" in origin) ||
+            origin.preswitch.modelSelection.instanceId !== preferred.instanceId ||
+            origin.preswitch.modelSelection.model !== preferred.model)))
+    )
+      origin = undefined;
     if (origin === undefined) {
       const records = yield* projections
         .getThreadRecords(thread.id, ["runs"])
@@ -928,7 +986,15 @@ export const makeSweep = Effect.gen(function* () {
           Effect.map(({ turnItems }) => limitResetAt(runId, turnItems)),
           Effect.orElseSucceed(() => undefined),
         );
-      if (found === null) origin = null;
+      // A thread the usage pre-switch moved has no stopped run to follow
+      // home; its thread record keeps where it came from (1075).
+      const preswitch = records.thread?.limitPreswitchFrom ?? null;
+      // A recorded pre-switch outranks a limit-fallback continuation: a pick
+      // after it clears the record, so the record is newer than any way back
+      // the runs show, and its origin is where the thread ran before it. On
+      // per-token API credits the way off them comes first (#599).
+      if (preswitch !== null && !apiCredits) found = null;
+      if (found === null) origin = preswitch === null ? null : { preswitch };
       else {
         let resetAt = yield* stoppedResetAt(found.stoppedRunId);
         if (resetAt === undefined) return null;
@@ -967,9 +1033,44 @@ export const makeSweep = Effect.gen(function* () {
       yield* Ref.update(origins, (current) => new Map(current).set(key, cached));
     }
     if (origin === null) return null;
-    const attemptKey = `${thread.id}:${origin.continuedByRunId}`;
-    if ((yield* Ref.get(sent)).has(`limit-api-returned:${attemptKey}`)) return null;
-    const tries = (yield* Ref.get(returnTries)).get(attemptKey) ?? {
+    let way: WayBack;
+    if ("preswitch" in origin) {
+      const preswitch = origin.preswitch;
+      const blocked = preswitchReturnBlock(preswitch, providers, rule);
+      if (blocked !== null) {
+        const noted = `limit-preswitch-blocked:${preswitch.commandId}:${blocked}`;
+        if (!(yield* Ref.get(sent)).has(noted)) {
+          yield* markSent(noted);
+          yield* Effect.logInfo("orchestration-v2.provider-fallback.preswitch-return-blocked", {
+            threadId: thread.id,
+            to: preswitch.modelSelection.instanceId,
+            model: preswitch.modelSelection.model,
+            reason: blocked,
+          });
+        }
+        return null;
+      }
+      way = {
+        home: preswitch.modelSelection,
+        attemptKey: preswitch.commandId,
+        preswitch,
+        returnCommand: (current, attempt) =>
+          preswitchReturnCommand(current, preswitch, providers, rule, nowMs, attempt),
+      };
+    } else {
+      const found = origin;
+      way = {
+        home: found.modelSelection,
+        attemptKey: `${thread.id}:${found.continuedByRunId}`,
+        preswitch: null,
+        returnCommand: (current, attempt) =>
+          apiCredits
+            ? apiCreditReturnCommand(current, found, providers, nowMs, { ruleOn, attempt })
+            : limitFallbackReturnCommand(current, found, providers, nowMs, attempt),
+      };
+    }
+    if ((yield* Ref.get(sent)).has(`limit-api-returned:${way.attemptKey}`)) return null;
+    const tries = (yield* Ref.get(returnTries)).get(way.attemptKey) ?? {
       next: 0,
       failures: 0,
       lastFailureAt: 0,
@@ -979,19 +1080,30 @@ export const makeSweep = Effect.gen(function* () {
       nowMs - tries.lastFailureAt < API_CREDIT_RETURN_COOLDOWN_MS
     )
       return null;
-    const command = returnCommand(thread, origin, tries.next);
+    const command = way.returnCommand(thread, tries.next);
     if (command === null) return null;
-    return { command, origin, attemptKey, tries, returnCommand };
+    return { ...way, command, tries, originKey: key };
   });
+  // A pre-switch origin is cached until its way back goes out or a newer
+  // pre-switch replaces it: the same idle thread can pre-switch to the same
+  // model again with no run between (1075).
+  const forgetOrigin = (key: string) =>
+    Ref.update(origins, (current) => {
+      if (!current.has(key)) return current;
+      const without = new Map(current);
+      without.delete(key);
+      return without;
+    });
   const apiCreditReturn = Effect.fn("ProviderFallbackWorker.apiCreditReturn")(function* (
     thread: FallbackThread,
     providers: ReadonlyArray<ServerProvider>,
     nowMs: number,
     ruleOn: boolean,
+    rule: ProviderFallbackRule,
   ) {
-    const plan = yield* apiCreditReturnPlan(thread, providers, nowMs, ruleOn);
+    const plan = yield* apiCreditReturnPlan(thread, providers, nowMs, ruleOn, rule);
     if (plan === null) return null;
-    const { origin, attemptKey, tries, returnCommand } = plan;
+    const { home, attemptKey, tries, returnCommand, preswitch, originKey } = plan;
     // Checked against the thread as it is now: a turn may have started since the snapshot.
     const shell = yield* projections
       .getThreadShell(thread.id)
@@ -1003,12 +1115,22 @@ export const makeSweep = Effect.gen(function* () {
     )
       return null;
     const current = yield* withRequestDetail(shell);
-    const command = returnCommand(current, origin, tries.next);
+    const command = returnCommand(current, tries.next);
     if (command === null) return null;
     // The queue that would pull the thread straight back runs first; the sends
     // the way back moves home, held or not, do not hold it.
     const records = yield* projections.getThreadRecords(thread.id, ["runs"]).pipe(Effect.option);
     if (Option.isNone(records)) return null;
+    if (preswitch !== null) {
+      // A pick since the move cleared the origin: the person's pick wins (1060).
+      // A newer pre-switch replaced it: the next sweep reads that one.
+      if (records.value.thread?.limitPreswitchFrom?.commandId !== preswitch.commandId) {
+        yield* forgetOrigin(originKey);
+        return null;
+      }
+      // A person's Stop holds the thread where it is, whatever its last run's status.
+      if (yield* stopHoldsLatestRun(current)) return null;
+    }
     const pinned = queuedRunsPinnedTo(records.value.runs, thread.providerInstanceId);
     if (pinned.length > 0) {
       const { messages = [] } = yield* projections
@@ -1019,11 +1141,11 @@ export const makeSweep = Effect.gen(function* () {
       const holding = queuedRunsHoldingWayBack(
         { thread: current, runs: pinned, messages },
         thread.providerInstanceId,
-        origin.modelSelection,
+        home,
       );
       if (holding.length > 0) return null;
     }
-    return { command, attemptKey, tries };
+    return { command, attemptKey, tries, originKey: preswitch === null ? null : originKey };
   });
   // A thread the provider never answered resends its request instead of
   // continuing nothing (see limitRestartRequest).
@@ -1692,7 +1814,9 @@ export const makeSweep = Effect.gen(function* () {
         // Most threads have no way back to send. Judged on the snapshot first,
         // so they cost no lock, settings read or shell re-read each sweep.
         // The rule-off answer is the looser one: it can only find more.
-        if ((yield* apiCreditReturnPlan(thread, providersFor(thread), now, false)) === null) {
+        if (
+          (yield* apiCreditReturnPlan(thread, providersFor(thread), now, false, resolved)) === null
+        ) {
           // No way back: a provider that could not open runs the turn again once it can.
           if (openFailure !== undefined)
             yield* providerRetry(thread, openFailure, providersFor, now, rereadProviders);
@@ -1709,6 +1833,7 @@ export const makeSweep = Effect.gen(function* () {
               providersFor(current, currentProject),
               now,
               rule.providerLimitUseApiCredits === true,
+              rule,
             );
             if (back === null) return;
             // Going home from a fallback whose turn failed continues that turn.
@@ -1718,6 +1843,9 @@ export const makeSweep = Effect.gen(function* () {
                 : back.command;
             yield* threads.dispatch(command).pipe(
               Effect.tap(() => markSent(`limit-api-returned:${back.attemptKey}`)),
+              Effect.tap(() =>
+                back.originKey === null ? Effect.void : forgetOrigin(back.originKey),
+              ),
               Effect.tap(() =>
                 Effect.logInfo("orchestration-v2.provider-fallback.api-credits-returned", {
                   threadId: thread.id,

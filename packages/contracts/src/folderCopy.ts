@@ -79,6 +79,36 @@ export const FolderCopySourceSummary = Schema.Struct({
   secretFiles: Schema.Array(Schema.Struct({ path: bounded(4096), size: count })),
   linksOutside: count,
   warnings: Schema.Array(bounded(2000)),
+  /**
+   * What measuring left out to stay fast: rebuildable folders (dependencies, build
+   * output, caches) are not counted, and linked worktrees inside the folder are not
+   * copied. Older sources omit it.
+   */
+  skipped: Schema.optional(
+    Schema.Struct({
+      rebuildableFolders: count,
+      worktrees: Schema.Array(bounded(4096)),
+      /**
+       * Skipped worktrees with uncommitted (staged, unstaged or untracked) changes,
+       * which stay on this machine. Older sources omit it.
+       */
+      dirtyWorktrees: Schema.optional(Schema.Array(bounded(4096))),
+      /**
+       * Skipped worktrees whose status check failed or timed out; they may hold
+       * uncommitted changes. Older sources omit it.
+       */
+      uncheckedWorktrees: Schema.optional(Schema.Array(bounded(4096))),
+      /**
+       * Skipped worktrees on a detached HEAD no branch contains, or with a rebase,
+       * merge, cherry-pick or revert in progress: committed work there would not
+       * travel. Older sources omit it.
+       */
+      strandedWorktrees: Schema.optional(Schema.Array(bounded(4096))),
+      /** True totals before the lists above were capped. Older sources omit them. */
+      worktreeCount: Schema.optional(count),
+      dirtyCount: Schema.optional(count),
+    }),
+  ),
 });
 export type FolderCopySourceSummary = typeof FolderCopySourceSummary.Type;
 
@@ -98,6 +128,26 @@ export const FolderCopySourceStatus = Schema.Struct({
     "cancelled",
   ]),
   summary: Schema.NullOr(FolderCopySourceSummary),
+  /** Files and bytes measured so far while scanning, or hashed so far while building. */
+  progress: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        files: count,
+        bytes: count,
+        /**
+         * What the source is doing (older sources omit it): "listing" files,
+         * "checking-worktrees" for uncommitted changes, copying the "git-snapshot"
+         * (files/bytes are Git data copied) or "hashing" the selected files.
+         */
+        step: Schema.optional(
+          Schema.Literals(["listing", "checking-worktrees", "git-snapshot", "hashing"]),
+        ),
+        /** While hashing: the selected files and bytes to read in all. */
+        totalFiles: Schema.optional(count),
+        totalBytes: Schema.optional(count),
+      }),
+    ),
+  ),
   error: Schema.NullOr(bounded(2000)),
   releaseReason: Schema.NullOr(bounded(500)),
   /** Secret files the person approved for this destination: paths and sizes only. */
@@ -256,6 +306,11 @@ export const FolderCopyRow = Schema.Struct({
   moreConflicts: count,
   cloneAvailable: Schema.Boolean,
   clone: Schema.Boolean,
+  /**
+   * Files on this machine the row's plan overwrites or moves to the backup folder,
+   * even when the row needs no decision. Older destinations omit it.
+   */
+  replacing: Schema.optional(count),
 });
 export type FolderCopyRow = typeof FolderCopyRow.Type;
 
@@ -308,6 +363,8 @@ export const FolderCopyStatus = Schema.Struct({
       bytesToMove: count,
       bytesPresent: count,
       decisionsNeeded: count,
+      /** Sum of the rows' `replacing`. Older destinations omit it. */
+      replacing: Schema.optional(count),
     }),
   ),
   checks: Schema.Array(

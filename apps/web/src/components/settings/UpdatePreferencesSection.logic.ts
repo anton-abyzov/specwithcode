@@ -1,8 +1,31 @@
-import type { StudioServiceUpdateState } from "@specweave-studio/contracts";
+import type {
+  DesktopUpdatePreferences,
+  StudioServiceUpdateState,
+} from "@specweave-studio/contracts";
 
-import { isServiceErrorWithRelease } from "../sidebar/SidebarRestartToUpdate.logic";
+import { formatPauseTime } from "../serviceUpdateRunView";
+import {
+  isServiceErrorWithRelease,
+  serviceRefusalText,
+} from "../sidebar/SidebarRestartToUpdate.logic";
 
 export type ServiceUpdateAction = "check" | "install" | "none";
+
+/** An automatic service install pauses running work after this long unless Settings says otherwise. */
+export const DEFAULT_PAUSE_WORK_AFTER_MINUTES = 10;
+
+/** Choices offered in Settings, in minutes; none below 10, since the agent passes every 10 minutes. */
+export const PAUSE_WORK_AFTER_OPTIONS = [10, 30, 60] as const;
+
+/** The saved wait, or the default on desktops from before it existed. */
+export function pauseWorkAfterMinutes(
+  preferences: Pick<DesktopUpdatePreferences, "pauseWorkAfterMinutes"> | null | undefined,
+): number {
+  const saved = preferences?.pauseWorkAfterMinutes;
+  return typeof saved === "number" && Number.isFinite(saved) && saved >= 1
+    ? saved
+    : DEFAULT_PAUSE_WORK_AFTER_MINUTES;
+}
 
 /** One line under "Studio service" saying where its update stands. */
 export function describeServiceUpdate(state: StudioServiceUpdateState): string {
@@ -27,7 +50,9 @@ export function describeServiceUpdate(state: StudioServiceUpdateState): string {
     case "downloaded":
       return `${installed}. Version ${next ?? "?"} is ready to install.`;
     case "waiting-for-quiet":
-      return `${installed}. Version ${next ?? "?"} installs once no session has worked for a while.`;
+      return state.automaticPauseAt
+        ? `${installed}. Version ${next ?? "?"} installs at ${formatPauseAt(state.automaticPauseAt)}; running turns pause then and continue after the update.`
+        : `${installed}. Version ${next ?? "?"} installs once running work finishes, or press Update now.`;
     case "installing":
       return `${installed}. Installing version ${next ?? "?"}.`;
     case "installed":
@@ -35,8 +60,16 @@ export function describeServiceUpdate(state: StudioServiceUpdateState): string {
     case "manual-required":
       return state.message ?? `${installed}. This update needs a manual install.`;
     case "error":
-      return state.message ?? `${installed}. The last update check failed.`;
+      return state.message !== null
+        ? serviceRefusalText(state.message)
+        : `${installed}. The last update check failed.`;
   }
+}
+
+/** The pause time in the person's locale, or the raw value when it does not parse. */
+function formatPauseAt(value: string): string {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? formatPauseTime(ms) : value;
 }
 
 /** A stale available, downloaded or waiting state for the version the service already runs. */

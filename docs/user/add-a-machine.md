@@ -3,9 +3,17 @@
 Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
 
 Let coordinators on your main machine start work on your other computers: a
-second Mac, a Linux box or a VPS. Every machine reaches the others by its own
-private Tailscale name, so it does not matter which network each one is on, and
-one machine moving to another network does not cut the others off.
+second Mac, a Linux box or a VPS.
+
+To only open a machine from your other devices (the desktop app, a browser or
+your iPhone), you do not need this page or Tailscale. Turn on
+[SpecWithCode Connect](./remote-access.md#specwithcode-connect) on that machine
+instead.
+
+For now, letting a main machine start work on another one also needs Tailscale
+on both. The main machine reaches each worker by its private Tailscale name, so
+it does not matter which network each one is on, and one machine moving to
+another network does not cut the others off.
 
 Joining always takes the same three steps:
 
@@ -35,7 +43,9 @@ first place is covered in [Install SpecWithCode](./install.md).
 
 ## Before you start: Tailscale on both machines
 
-Do this once, on the main machine and on every worker.
+Starting work on another machine still goes over Tailscale, even when both
+machines use SpecWithCode Connect. Do this once, on the main machine and on
+every worker.
 
 1. Install Tailscale from [tailscale.com/download](https://tailscale.com/download).
    On a Mac with Homebrew you can instead run `brew install --cask tailscale` in
@@ -248,7 +258,8 @@ two from **Settings > Project > Machines** so the coordinator finds that copy
 machine, whether this app can see it, its worker grants and its shared projects.
 
 **Keep SpecWithCode running on the worker.** Coordinators can only start work
-there while its app or server is running and Tailscale is connected. With the
+there while its app or server is running and Tailscale is connected on both
+machines. With the
 desktop app, leave the app open. A [background
 service](./background-service.md) keeps it running across restarts.
 

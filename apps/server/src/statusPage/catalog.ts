@@ -11,6 +11,7 @@ import {
   type StatusServiceGroup,
 } from "@specweave-studio/contracts";
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
+import { isTailnetHost } from "@specweave-studio/shared/hostClassification";
 
 import type { FeedReading } from "./feeds.ts";
 
@@ -134,6 +135,16 @@ export type TailscaleState =
   | { readonly state: "running"; readonly dnsName: string | null }
   | { readonly state: "unavailable" };
 
+/**
+ * SpecWithCode Connect on this Mac. `managed` runs a tunnel for phone and
+ * browser access; `publish_only` only publishes agent activity. `tunnel` is
+ * the connector's runtime state, `unknown` when this process cannot see it.
+ */
+export interface ConnectState {
+  readonly mode: "managed" | "publish_only" | "not_linked";
+  readonly tunnel: "running" | "down" | "unknown";
+}
+
 export interface StatusInputs {
   readonly now: number;
   readonly serverVersion: string;
@@ -144,6 +155,8 @@ export interface StatusInputs {
   readonly coordinators: ReadonlyArray<CoordinatorState>;
   readonly fleet: StudioFleetSnapshot | null;
   readonly tailscale: TailscaleState | null;
+  /** Absent or null when not read. */
+  readonly connect?: ConnectState | null;
   readonly feeds: Partial<Record<FeedId, FeedReading>>;
   /** null when not checked yet. */
   readonly releaseFeedReachable: boolean | null;
@@ -216,6 +229,29 @@ export interface BuiltService {
 }
 
 export const OBSERVED_WINDOW_MS = 60 * 60 * 1000;
+
+const isTailnetUrl = (url: string): boolean => {
+  try {
+    return isTailnetHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Tailscale is optional: its row shows only when it runs here or a paired
+ * machine is reached at a tailnet address (`.ts.net` or a Tailscale IP).
+ */
+export function showsTailscale(
+  tailscale: TailscaleState | null,
+  fleet: StudioFleetSnapshot | null,
+): boolean {
+  if (tailscale === null) return false;
+  return (
+    tailscale.state === "running" ||
+    (fleet?.machines ?? []).some((machine) => isTailnetUrl(machine.url))
+  );
+}
 
 /** Which feeds the next check needs, given what is configured. */
 export function neededFeeds(input: {
@@ -486,17 +522,21 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
     });
   }
 
-  if (
-    input.tailscale !== null &&
-    (input.tailscale.state === "running" || (input.fleet?.machines.length ?? 0) > 0)
-  ) {
+  const connect = input.connect ?? null;
+  const connectManaged = connect?.mode === "managed";
+  if (input.tailscale !== null && showsTailscale(input.tailscale, input.fleet)) {
+    const running = input.tailscale.state === "running";
+    // Connect's managed link reaches this Mac without a tailnet, so Tailscale
+    // missing is only a fault when nothing else covers remote access.
     const local = component(
       "tailscale:local",
       "Tailscale on this Mac",
-      input.tailscale.state === "running" ? "operational" : "degraded",
-      input.tailscale.state === "running"
+      running || connectManaged ? "operational" : "degraded",
+      running
         ? (input.tailscale.dnsName ?? "Connected")
-        : "Tailscale is not running or not installed.",
+        : connectManaged
+          ? "Not running; Connect covers phone and browser access."
+          : "Not running or not installed; machines at .ts.net addresses need it.",
     );
     const tailscaleComponents = [local, publicComponent(input.feeds.tailscale, "tailscale")];
     services.push({
@@ -504,12 +544,56 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
       group: "machines",
       name: "Tailscale",
       level: levelOf(tailscaleComponents),
-      detail: detailOf(tailscaleComponents, "Connected to the tailnet."),
+      detail: detailOf(
+        tailscaleComponents,
+        running ? "Connected to the tailnet." : "Not running; optional here.",
+      ),
       source: "This Mac and status.tailscale.com",
       sourceUrl: FEEDS.tailscale.pageUrl,
-      dependents: ["Remote machines", "Phone and browser access over Tailscale"],
+      dependents: ["Remote machines (worker delegation)"],
       components: tailscaleComponents,
       tracksIncidents: false,
+    });
+  }
+
+  if (connect !== null) {
+    const linkDetail =
+      connect.mode === "managed"
+        ? "Linked with a managed tunnel."
+        : connect.mode === "publish_only"
+          ? "Linked to publish agent activity only; no tunnel."
+          : "Not linked. Phone and browser access over Connect is off.";
+    // Not linking is a choice, not a fault: the row informs rather than degrades.
+    const connectComponents = [component("connect:link", "Link", "operational", linkDetail)];
+    if (connect.mode === "managed") {
+      connectComponents.push(
+        component(
+          "connect:tunnel",
+          "Tunnel",
+          connect.tunnel === "running"
+            ? "operational"
+            : connect.tunnel === "down"
+              ? "degraded"
+              : "unknown",
+          connect.tunnel === "running"
+            ? "Connector running."
+            : connect.tunnel === "down"
+              ? "Connector is not running; the relay cannot reach this Mac."
+              : "Connector state not reported.",
+        ),
+      );
+    }
+    services.push({
+      id: "connect",
+      group: "machines",
+      name: "SpecWithCode Connect",
+      level: levelOf(connectComponents),
+      detail: detailOf(connectComponents, linkDetail),
+      source: "This Mac",
+      sourceUrl: null,
+      dependents: ["Phone and browser access"],
+      components: connectComponents,
+      tracksIncidents: connectManaged,
     });
   }
 

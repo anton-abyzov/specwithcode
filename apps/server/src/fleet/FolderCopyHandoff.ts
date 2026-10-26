@@ -31,6 +31,19 @@ const MAX_MANIFEST_REPOSITORIES = 128;
 const HEAD = /^[a-f0-9]{40}$/;
 
 const text = (value: unknown, max: number) => String(value ?? "").slice(0, max);
+/** A non-negative whole number for a wire count. */
+const count = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0;
+};
+/** Linked worktree paths listed in a status; the summary's own list may be longer. */
+const MAX_SKIPPED_WORKTREES = 200;
+const PROGRESS_STEPS: ReadonlySet<string> = new Set([
+  "listing",
+  "checking-worktrees",
+  "git-snapshot",
+  "hashing",
+]);
 
 /** Maps the folder transfer services' errors to the wire error. */
 export function folderCopyError(cause: unknown): FolderCopyError {
@@ -65,6 +78,14 @@ export function folderCopyError(cause: unknown): FolderCopyError {
 export const attempt = <A>(task: () => Promise<A>) =>
   Effect.tryPromise({ try: task, catch: folderCopyError });
 
+/** A capped, bounded list of skipped worktree paths, or nothing when the source omitted it. */
+const skippedList = <K extends string>(key: K, paths: ReadonlyArray<string> | undefined) =>
+  paths
+    ? ({
+        [key]: paths.slice(0, MAX_SKIPPED_WORKTREES).map((path) => text(path, 4096)),
+      } as Record<K, Array<string>>)
+    : ({} as Partial<Record<K, Array<string>>>);
+
 export function sourceStatus(record: SourceOperationRecord): FolderCopySourceStatus {
   return {
     copyRoot: record.folder,
@@ -91,8 +112,44 @@ export function sourceStatus(record: SourceOperationRecord): FolderCopySourceSta
           })),
           linksOutside: record.summary.linksOutside,
           warnings: record.summary.warnings.map((warning) => text(warning, 2000)),
+          ...(record.summary.skipped
+            ? {
+                skipped: {
+                  rebuildableFolders: count(record.summary.skipped.rebuildableFolders),
+                  worktrees: record.summary.skipped.worktrees
+                    .slice(0, MAX_SKIPPED_WORKTREES)
+                    .map((path) => text(path, 4096)),
+                  ...skippedList("dirtyWorktrees", record.summary.skipped.dirtyWorktrees),
+                  ...skippedList("uncheckedWorktrees", record.summary.skipped.uncheckedWorktrees),
+                  ...skippedList("strandedWorktrees", record.summary.skipped.strandedWorktrees),
+                  ...(record.summary.skipped.worktreeCount !== undefined
+                    ? { worktreeCount: count(record.summary.skipped.worktreeCount) }
+                    : {}),
+                  ...(record.summary.skipped.dirtyCount !== undefined
+                    ? { dirtyCount: count(record.summary.skipped.dirtyCount) }
+                    : {}),
+                },
+              }
+            : {}),
         }
       : null,
+    ...(record.progress
+      ? {
+          progress: {
+            files: count(record.progress.files),
+            bytes: count(record.progress.bytes),
+            ...(record.progress.step && PROGRESS_STEPS.has(record.progress.step)
+              ? { step: record.progress.step }
+              : {}),
+            ...(record.progress.totalFiles !== undefined
+              ? { totalFiles: count(record.progress.totalFiles) }
+              : {}),
+            ...(record.progress.totalBytes !== undefined
+              ? { totalBytes: count(record.progress.totalBytes) }
+              : {}),
+          },
+        }
+      : {}),
     error: record.error === null ? null : text(record.error, 2000),
     releaseReason: record.releaseReason === null ? null : text(record.releaseReason, 500),
     ...(record.secrets !== undefined
@@ -135,6 +192,7 @@ function row(planRow: Plan["rows"][number]): FolderCopyRow {
     moreConflicts: Math.max(0, planRow.conflicts.length - MAX_ROW_CONFLICTS),
     cloneAvailable: planRow.cloneAvailable,
     clone: planRow.clone,
+    ...(planRow.replacing !== undefined ? { replacing: count(planRow.replacing) } : {}),
   };
 }
 
@@ -161,7 +219,18 @@ export function copyStatus(record: DestinationRecord, plan: Plan | null): Folder
     progress: record.progress,
     disk: record.disk,
     rows: plan ? plan.rows.map(row) : [],
-    totals: plan ? plan.totals : null,
+    totals: plan
+      ? {
+          filesToMove: plan.totals.filesToMove,
+          bytesToMove: plan.totals.bytesToMove,
+          bytesPresent: plan.totals.bytesPresent,
+          decisionsNeeded: plan.totals.decisionsNeeded,
+          // A plan saved by an older version has no count; omit it rather than show 0.
+          ...(typeof plan.totals.replacing === "number"
+            ? { replacing: count(plan.totals.replacing) }
+            : {}),
+        }
+      : null,
     checks: record.checks.map((check) => ({
       repo: check.repo,
       ok: check.ok,

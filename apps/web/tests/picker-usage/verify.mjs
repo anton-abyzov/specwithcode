@@ -127,7 +127,7 @@ try {
         );
         if (scenario === "account") {
           assert.match(text, /Weekly limit reached · resets in 2d 5h/);
-          assert.match(text, /Every Claude model on this account shares it/);
+          assert.match(text, /Every Claude model on the account shares it/);
           assert.equal(
             await page.locator("[data-model-picker-usage-mark=full]").count(),
             1,
@@ -277,7 +277,7 @@ try {
       const label = await page
         .locator("[data-chat-provider-model-picker]")
         .getAttribute("aria-label");
-      assert.match(label ?? "", /Claude Opus 5\.5\. The Claude account's weekly limit is used up/);
+      assert.match(label ?? "", /Claude Opus 5\.5, weekly limit reached, resets in 2d 5h/);
       await page.goto(`${origin}/?case=triggers&theme=${theme}`);
       await page.locator("[data-model-usage-meter=offline]").waitFor();
       await page.screenshot({

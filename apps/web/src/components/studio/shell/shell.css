@@ -376,14 +376,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   :is(
     [data-model-chip-part="provider"],
     [data-model-chip-part="state-full"],
-    [data-model-chip-part="usage-value"]
+    [data-model-chip-part="usage-detail"]
   ),
 [data-model-chip][data-model-fit="short"]
   :is(
     [data-model-chip-part="provider"],
     [data-model-chip-part="state-full"],
     [data-model-chip-part="state-short"],
-    [data-model-chip-part="usage-value"]
+    [data-model-chip-part="usage-value"],
+    [data-model-chip-part="usage-detail"]
   ),
 [data-model-chip][data-model-fit="name"]
   :is(
@@ -391,7 +392,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
     [data-model-chip-part="state-full"],
     [data-model-chip-part="state-short"],
     [data-model-chip-part="usage-ring"],
-    [data-model-chip-part="usage-value"]
+    [data-model-chip-part="usage-value"],
+    [data-model-chip-part="usage-detail"]
   ),
 [data-model-chip][data-model-fit="icon"]
   :is(
@@ -399,7 +401,9 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
     [data-model-chip-part="model"],
     [data-model-chip-part="state-full"],
     [data-model-chip-part="state-short"],
-    [data-model-chip-part="usage-value"]
+    [data-model-chip-part="usage-ring"],
+    [data-model-chip-part="usage-value"],
+    [data-model-chip-part="usage-detail"]
   ) {
   position: absolute;
   inset-inline-end: 0;
@@ -407,18 +411,53 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   visibility: hidden;
   pointer-events: none;
 }
+/* At the icon fit the usage ring wraps the provider mark, so the two take one icon's room.
+   It is out of flow at every fit, so it never changes what the chip measures. */
+.sws-model-mark-ring {
+  display: none;
+}
+[data-model-chip][data-model-fit="icon"] .sws-model-mark-ring {
+  position: absolute;
+  inset: -0.1875rem;
+  display: block;
+  pointer-events: none;
+}
+.sws-model-mark-ring svg {
+  width: 100%;
+  height: 100%;
+}
+.sws-model-mark-ring circle {
+  r: 5.5px;
+  stroke-width: 0.9px;
+}
 /* A list line's model unit (rowModelFit.ts): data-row-fit says how much shows. A part it
    leaves out stays mounted out of flow and invisible, so the next measurement still
    reads its width; the unit clips it. */
 .sws-model:has([data-row-part]) {
   position: relative;
 }
-.sws-model[data-row-fit="model"] [data-row-part="provider"] {
+.sws-model[data-row-fit="model"] [data-row-part="provider"],
+.sws-model[data-row-fit="name"] [data-row-part="provider"],
+.sws-model[data-row-fit="mark"] [data-row-part="provider"] {
   position: absolute;
   inset-inline-end: 0;
   top: 0;
   white-space: nowrap;
   visibility: hidden;
+  pointer-events: none;
+}
+/* The thread header's chip: at `name` a long name keeps its first 3 em (the width the fit
+   counts), at `mark` it leaves the line whole. It is clipped out of sight rather than
+   hidden, so a screen reader still hears it and the next measurement still reads it. */
+.sws-model[data-row-fit="name"] [data-row-part="name"] {
+  min-width: 3em;
+}
+.sws-model[data-row-fit="mark"] [data-row-part="name"] {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 0;
+  white-space: nowrap;
+  clip-path: inset(50%);
   pointer-events: none;
 }
 .sws-model-chip {
@@ -2686,6 +2725,12 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   font-size: 13px;
   font-weight: 600;
   /* Double-click renames; in a draggable title row it would zoom the window. */
+  -webkit-app-region: no-drag;
+}
+/* In the desktop title bar, Electron gives a drag region's pointer to the window: a chip
+   that shows a tooltip on hover (the model chip, a handoff badge) must leave the region
+   too, or hovering it shows nothing. */
+.sws-thread-head [data-slot="tooltip-trigger"] {
   -webkit-app-region: no-drag;
 }
 

@@ -75,6 +75,29 @@ export const AssetResource = Schema.Union([
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
+/**
+ * Whether a kind is served from files on the environment host. Minting a URL
+ * for one needs filesystem:read, the grant that reads the file directly; design
+ * images match `design.get`. Other kinds need only orchestration:read: their
+ * bytes come from thread state, the project record, an app bundle or GitHub,
+ * never from a path the caller names. The record is exhaustive, so a new kind
+ * must be classified here.
+ */
+const ASSET_READS_HOST_FILES: Record<AssetResource["_tag"], boolean> = {
+  "workspace-file": true,
+  "media-file": true,
+  "draft-workspace-file": true,
+  "design-asset": true,
+  attachment: false,
+  "tool-output-image": false,
+  "project-favicon": false,
+  "native-app-icon": false,
+  "github-media": false,
+};
+
+export const assetResourceReadsHostFiles = (resource: AssetResource): boolean =>
+  ASSET_READS_HOST_FILES[resource._tag];
+
 export const AssetCreateUrlInput = Schema.Struct({
   resource: AssetResource,
 });

@@ -219,7 +219,13 @@ export function ProjectThreadHeader(props: {
           </Tip>
         )}
         <span className="sws-thread-head-chips">
-          <ThreadModelBadge thread={thread} entries={providerEntries} variant="chip" focusable />
+          <ThreadModelBadge
+            thread={thread}
+            entries={providerEntries}
+            variant="chip"
+            focusable
+            header
+          />
           <RoutingDecisionChip
             routing={thread.routing}
             entries={providerEntries}

@@ -118,26 +118,109 @@ export function describePersonRequests(counts: {
   return parts.length === 0 ? null : parts.join(" and ");
 }
 
+/** "2:41 PM" in the person's locale. */
+export function formatPauseTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+export interface AutomaticInstallWait {
+  readonly line: string;
+  readonly detail: string;
+  /**
+   * Set when the agent waits for running work and has said when it pauses it
+   * (`automaticPauseAt`): the sidebar then offers Install now and Later beside
+   * the hint.
+   */
+  readonly pauseAt?: string;
+  /**
+   * The pause time, when open questions or approvals are what `line` names:
+   * shown under it so the person still sees when running work pauses.
+   */
+  readonly pauseLine?: string;
+  /**
+   * Set when the agent waits for running work, has no pause time, and its
+   * message says the automatic pause did not happen: the sidebar then offers
+   * Update now beside the hint.
+   */
+  readonly updateNow?: true;
+}
+
+/** What the agent's message says when its automatic pause did not happen. */
+const MISSED_PAUSE_MARKER = "Choose Update now";
+
+const MISSED_PAUSE_DETAIL =
+  "The update could not pause running work on its own. Update now pauses the running turns, installs and restarts the background service, and the paused turns continue where they left off.";
+
+/** The agent's message, when it says the automatic pause did not happen. */
+function missedPauseMessage(message: string | null | undefined): string | null {
+  const text = message?.trim() ?? "";
+  return text.includes(MISSED_PAUSE_MARKER) ? text : null;
+}
+
+const PAUSE_DETAIL =
+  "The update has waited for running work to finish. Then SpecWithCode pauses the running turns, installs and restarts its background service, and the paused turns continue where they left off. Install now does it right away; Later waits another hour.";
+
 /**
- * What an automatic install waiting on open questions says, under Update now:
- * a short hint (`line`), with where they are and what happens to them in its
- * tooltip (`detail`). The install does not wait on them for good: one left
- * 30 minutes on a quiet thread is closed for the install and asked again after
- * the restart. Null when no question or approval holds it.
+ * What an automatic install that waits says, under Update now: a short hint
+ * (`line`), with where and what happens in its tooltip (`detail`).
+ *
+ * Open questions or approvals come first: the install does not wait on them
+ * for good (one left 30 minutes on a quiet thread is closed for the install
+ * and asked again after the restart), and their wording stays as it was.
+ * When the agent has also published when it pauses running work (`pauseAt`,
+ * from `automaticPauseAt`), that time follows as `pauseLine`. With no
+ * question or approval, the pause time is the line itself; a time already
+ * passed means the agent's next pass, minutes away. With no pause time and
+ * an agent `message` saying the automatic pause did not happen, that message
+ * is the line (after any questions) and `updateNow` offers Update now.
+ * Null when nothing holds it that the person can act on.
  */
 export function describeAutomaticInstallWait(
   blockers: ReadonlyArray<ServiceUpdateBlocker>,
-): { readonly line: string; readonly detail: string } | null {
+  pause: {
+    readonly pauseAt?: string | null;
+    readonly nowMs?: number;
+    readonly formatTime?: (ms: number) => string;
+    readonly message?: string | null;
+  } = {},
+): AutomaticInstallWait | null {
   const waiting = personRequestBlockers(blockers);
   const threads = nameQuestionThreads(waiting);
   const counts = countPersonRequests(waiting);
   const what = describePersonRequests(counts);
-  if (threads === null || what === null) return null;
-  const one = counts.questions + counts.approvals === 1;
-  return {
-    line: `Update waits on ${what}.`,
-    detail: `In ${threads}. The update installs once ${one ? "it is" : "they are"} answered or ${one ? "has" : "have"} waited 30 minutes; anything still open is asked again after the restart. Update now installs right away.`,
-  };
+  const pauseAt = pause.pauseAt ?? null;
+  const pauseMs = pauseAt === null ? Number.NaN : Date.parse(pauseAt);
+  const pauseLine =
+    pauseAt !== null && Number.isFinite(pauseMs)
+      ? `${
+          pauseMs > (pause.nowMs ?? Date.now())
+            ? `Installs at ${(pause.formatTime ?? formatPauseTime)(pauseMs)}.`
+            : "Installs shortly."
+        } Running turns pause then and continue after the update.`
+      : null;
+  const missed = pauseLine === null ? missedPauseMessage(pause.message) : null;
+  if (threads !== null && what !== null) {
+    const one = counts.questions + counts.approvals === 1;
+    const detail = `In ${threads}. The update installs once ${one ? "it is" : "they are"} answered or ${one ? "has" : "have"} waited 30 minutes; anything still open is asked again after the restart. Update now installs right away.`;
+    if (missed !== null) {
+      return {
+        line: `Update waits on ${what}.`,
+        detail: `${detail} ${missed}`,
+        updateNow: true,
+      };
+    }
+    return pauseLine === null || pauseAt === null
+      ? { line: `Update waits on ${what}.`, detail }
+      : {
+          line: `Update waits on ${what}.`,
+          detail: `${detail} ${PAUSE_DETAIL}`,
+          pauseAt,
+          pauseLine,
+        };
+  }
+  if (missed !== null) return { line: missed, detail: MISSED_PAUSE_DETAIL, updateNow: true };
+  if (pauseLine === null || pauseAt === null) return null;
+  return { line: pauseLine, detail: PAUSE_DETAIL, pauseAt };
 }
 
 /** The helper's phase name (`checkBeforeRestart`) as words (`check before restart`). */

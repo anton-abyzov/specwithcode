@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -32,6 +32,7 @@ import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDial
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
+import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 import { copyDestinationKey, type HandoffFolderMethod } from "../../studio/folderCopy";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { isArchivedMember } from "../../studio/projectListVisibility";
@@ -107,7 +108,15 @@ export function ProjectMachineHandoff({
   const [canRestart, setCanRestart] = useState(false);
   // A safe copy of the folder is the default; Git-only handoff stays available.
   const [method, setMethod] = useState<HandoffFolderMethod>("copy");
-  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyBusy, setCopyBusyState] = useState(false);
+  const [copyLocked, setCopyLocked] = useState(false);
+  // Read when the dialog closes: a measure or copy still running is watched until it is ready.
+  const copyRunning = useRef(false);
+  const setCopyBusy = useCallback((value: boolean) => {
+    copyRunning.current = value;
+    setCopyBusyState(value);
+  }, []);
+  const [copyWatch, setCopyWatch] = useState(0);
   // A synchronous gate catches double-clicks before React paints the disabled button.
   const running = useRef(false);
   // The operation this dialog prepared without publishing, until a transfer tries to publish it.
@@ -269,6 +278,8 @@ export function ProjectMachineHandoff({
   const changeOpen = (value: boolean) => {
     // Closing cancels an unpublished review, so the next opening starts from the choices.
     if (!value && phase !== "complete" && discardPreview() === "none") setError(null);
+    // The folder copy keeps running on the machines; say when it is ready.
+    if (!value && open && copyRunning.current) setCopyWatch((count) => count + 1);
     setOpen(value);
     onOpenChange?.(value);
   };
@@ -517,6 +528,19 @@ export function ProjectMachineHandoff({
 
   return (
     <>
+      {!open && copyWatch > 0 && (
+        <HandoffFolderCopyWatcher
+          key={copyWatch}
+          environmentId={project.environmentId}
+          projectId={project.id}
+          machineLabel={(environmentId) =>
+            environments.find((item) => item.environmentId === environmentId)?.label ??
+            "the other machine"
+          }
+          sourceLabel={source?.label ?? "this machine"}
+          onOpenDialog={() => changeOpen(true)}
+        />
+      )}
       <Tip
         label={
           sourceReady
@@ -583,6 +607,7 @@ export function ProjectMachineHandoff({
           setMethod(next);
         }}
         copyBusy={copyBusy}
+        copyLocked={copyLocked}
         copyFlow={
           method === "folder" ? undefined : (
             <HandoffFolderCopy
@@ -609,6 +634,7 @@ export function ProjectMachineHandoff({
               }
               canMove={sourceReady}
               onBusyChange={setCopyBusy}
+              onCloseLockChange={setCopyLocked}
               onOpenProject={({ environmentId, projectId, folder }) => {
                 void navigate({
                   to: "/projects/$projectKey",

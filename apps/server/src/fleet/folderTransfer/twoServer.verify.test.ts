@@ -254,9 +254,11 @@ describe("folder copy between two isolated sides", () => {
       );
       matched[repository || "(umbrella)"] = true;
     }
-    const worktree = NodePath.join(folder, "repositories/svc-a-wt-feature");
-    expect(git(worktree, "rev-parse", "--abbrev-ref", "HEAD")).toBe("feature");
-    expect(git(worktree, "status", "--porcelain")).toContain("src/a.ts");
+    // The worktree inside the folder stays behind; its branch came with svc-a.
+    expect(NodeFS.existsSync(NodePath.join(folder, "repositories/svc-a-wt-feature"))).toBe(false);
+    expect(git(NodePath.join(folder, "repositories/svc-a"), "rev-parse", "feature")).toBe(
+      git(NodePath.join(fixture.root, "repositories/svc-a"), "rev-parse", "feature"),
+    );
     expect(
       NodeFS.lstatSync(NodePath.join(folder, ".cursor/skills/appstore")).isSymbolicLink(),
     ).toBe(true);

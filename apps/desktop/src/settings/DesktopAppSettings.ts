@@ -108,6 +108,17 @@ export function normalizeForceInstallAfterMinutes(value: unknown): number {
     ? Math.min(Math.round(value), MAX_FORCE_INSTALL_AFTER_MINUTES)
     : DEFAULT_FORCE_INSTALL_AFTER_MINUTES;
 }
+
+/** An automatic service install pauses running work after waiting this long for it. */
+export const DEFAULT_PAUSE_WORK_AFTER_MINUTES = 10;
+const MAX_PAUSE_WORK_AFTER_MINUTES = 24 * 60;
+
+/** Whole minutes from 1 (the agent never pauses work at once) to a day; else the default. */
+export function normalizePauseWorkAfterMinutes(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? Math.min(Math.round(value), MAX_PAUSE_WORK_AFTER_MINUTES)
+    : DEFAULT_PAUSE_WORK_AFTER_MINUTES;
+}
 // Background updates are on by default: check, download, and install at the
 // next quit (app) or quiet moment (service). Each step has its own switch.
 export const DEFAULT_UPDATE_PREFERENCES: DesktopUpdatePreferences = {
@@ -115,6 +126,7 @@ export const DEFAULT_UPDATE_PREFERENCES: DesktopUpdatePreferences = {
   downloadAutomatically: true,
   installAutomatically: true,
   forceInstallAfterMinutes: DEFAULT_FORCE_INSTALL_AFTER_MINUTES,
+  pauseWorkAfterMinutes: DEFAULT_PAUSE_WORK_AFTER_MINUTES,
 };
 const MIN_MAIN_WINDOW_SIZE = {
   width: 840,
@@ -193,6 +205,7 @@ const DesktopSettingsDocument = Schema.Struct({
       downloadAutomatically: Schema.optionalKey(Schema.Boolean),
       installAutomatically: Schema.optionalKey(Schema.Boolean),
       forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
+      pauseWorkAfterMinutes: Schema.optionalKey(Schema.Number),
     }),
   ),
   // Newer form of the WSL toggle. `wslMode` is still accepted on load so
@@ -454,6 +467,9 @@ function normalizeDesktopSettingsDocument(
       forceInstallAfterMinutes: normalizeForceInstallAfterMinutes(
         parsed.updatePreferences?.forceInstallAfterMinutes,
       ),
+      pauseWorkAfterMinutes: normalizePauseWorkAfterMinutes(
+        parsed.updatePreferences?.pauseWorkAfterMinutes,
+      ),
     },
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
@@ -512,7 +528,10 @@ function toDesktopSettingsDocument(
     settings.updatePreferences.installAutomatically !==
       defaults.updatePreferences.installAutomatically ||
     (settings.updatePreferences.forceInstallAfterMinutes ?? DEFAULT_FORCE_INSTALL_AFTER_MINUTES) !==
-      (defaults.updatePreferences.forceInstallAfterMinutes ?? DEFAULT_FORCE_INSTALL_AFTER_MINUTES)
+      (defaults.updatePreferences.forceInstallAfterMinutes ??
+        DEFAULT_FORCE_INSTALL_AFTER_MINUTES) ||
+    (settings.updatePreferences.pauseWorkAfterMinutes ?? DEFAULT_PAUSE_WORK_AFTER_MINUTES) !==
+      (defaults.updatePreferences.pauseWorkAfterMinutes ?? DEFAULT_PAUSE_WORK_AFTER_MINUTES)
   ) {
     document.updatePreferences = { ...settings.updatePreferences };
   }
@@ -639,12 +658,16 @@ export function setUpdatePreferences(
     forceInstallAfterMinutes: normalizeForceInstallAfterMinutes(
       patch.forceInstallAfterMinutes ?? settings.updatePreferences.forceInstallAfterMinutes,
     ),
+    pauseWorkAfterMinutes: normalizePauseWorkAfterMinutes(
+      patch.pauseWorkAfterMinutes ?? settings.updatePreferences.pauseWorkAfterMinutes,
+    ),
   };
   const current = settings.updatePreferences;
   return next.checkAutomatically === current.checkAutomatically &&
     next.downloadAutomatically === current.downloadAutomatically &&
     next.installAutomatically === current.installAutomatically &&
-    next.forceInstallAfterMinutes === current.forceInstallAfterMinutes
+    next.forceInstallAfterMinutes === current.forceInstallAfterMinutes &&
+    next.pauseWorkAfterMinutes === current.pauseWorkAfterMinutes
     ? settings
     : { ...settings, updatePreferences: next };
 }

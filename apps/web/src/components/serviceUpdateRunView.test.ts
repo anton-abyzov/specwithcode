@@ -105,6 +105,84 @@ describe("describeAutomaticInstallWait", () => {
       describeAutomaticInstallWait([{ ...question("Tools"), questions: 0, approvals: 0 }]),
     ).toBeNull();
   });
+
+  it("says when running work pauses for the install, with Install now and Later", () => {
+    const nowMs = Date.parse("2026-10-26T14:30:00.000Z");
+    const pauseAt = "2026-10-26T14:41:00.000Z";
+    const formatTime = (ms: number) => (ms === Date.parse(pauseAt) ? "2:41 PM" : "other");
+    expect(describeAutomaticInstallWait([], { pauseAt, nowMs, formatTime })).toEqual({
+      line: "Installs at 2:41 PM. Running turns pause then and continue after the update.",
+      detail:
+        "The update has waited for running work to finish. Then SpecWithCode pauses the running turns, installs and restarts its background service, and the paused turns continue where they left off. Install now does it right away; Later waits another hour.",
+      pauseAt,
+    });
+    // Due already: the agent's next pass pauses the work, minutes away.
+    expect(
+      describeAutomaticInstallWait([], {
+        pauseAt,
+        nowMs: Date.parse("2026-10-26T14:45:00.000Z"),
+        formatTime,
+      })?.line,
+    ).toBe("Installs shortly. Running turns pause then and continue after the update.");
+    // Questions are the blocker: their wording leads, and the pause time
+    // follows with Install now and Later.
+    const asked = describeAutomaticInstallWait([question("Fix login")], {
+      pauseAt,
+      nowMs,
+      formatTime,
+    });
+    expect(asked?.line).toBe("Update waits on 1 question.");
+    expect(asked?.pauseLine).toBe(
+      "Installs at 2:41 PM. Running turns pause then and continue after the update.",
+    );
+    expect(asked?.pauseAt).toBe(pauseAt);
+    expect(asked?.detail).toContain('In "Fix login".');
+    expect(asked?.detail).toContain("Later waits another hour.");
+    // Questions and no pause time: as before, no pause line or actions.
+    const questionsOnly = describeAutomaticInstallWait([question("Fix login")], {
+      pauseAt: null,
+      nowMs,
+    });
+    expect(questionsOnly?.line).toBe("Update waits on 1 question.");
+    expect(questionsOnly?.pauseAt).toBeUndefined();
+    expect(questionsOnly?.pauseLine).toBeUndefined();
+    // Not waiting on work, an older agent, or a time that does not parse: nothing.
+    expect(describeAutomaticInstallWait([], { pauseAt: null, nowMs })).toBeNull();
+    expect(describeAutomaticInstallWait([], { nowMs })).toBeNull();
+    expect(describeAutomaticInstallWait([], { pauseAt: "soon", nowMs })).toBeNull();
+  });
+
+  it("shows the agent's message with Update now when its automatic pause did not happen", () => {
+    const nowMs = Date.parse("2026-10-26T14:30:00.000Z");
+    const message =
+      "The automatic pause did not happen: a turn could not be paused. Choose Update now to install.";
+    expect(describeAutomaticInstallWait([], { pauseAt: null, nowMs, message })).toEqual({
+      line: message,
+      detail:
+        "The update could not pause running work on its own. Update now pauses the running turns, installs and restarts the background service, and the paused turns continue where they left off.",
+      updateNow: true,
+    });
+    // Questions still lead; the message joins the tooltip and Update now is offered.
+    const asked = describeAutomaticInstallWait([question("Fix login")], {
+      pauseAt: null,
+      nowMs,
+      message,
+    });
+    expect(asked?.line).toBe("Update waits on 1 question.");
+    expect(asked?.detail).toContain(message);
+    expect(asked?.updateNow).toBe(true);
+    // Any other message, or a pause time, is not a missed pause.
+    expect(
+      describeAutomaticInstallWait([], { pauseAt: null, nowMs, message: "Waiting for work." }),
+    ).toBeNull();
+    const scheduled = describeAutomaticInstallWait([], {
+      pauseAt: "2026-10-26T14:41:00.000Z",
+      nowMs,
+      message,
+    });
+    expect(scheduled?.pauseAt).toBe("2026-10-26T14:41:00.000Z");
+    expect(scheduled?.updateNow).toBeUndefined();
+  });
 });
 
 describe("describeServiceUpdateRun", () => {

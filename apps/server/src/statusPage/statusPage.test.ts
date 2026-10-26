@@ -1,5 +1,5 @@
 // @effect-diagnostics globalDate:off
-import type { ServerProvider } from "@specweave-studio/contracts";
+import { rollupStatusLevels, type ServerProvider } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -341,6 +341,98 @@ describe("status catalog", () => {
       level: "major_outage",
     });
     expect(services.find((entry) => entry.id === "tailscale")!.level).toBe("operational");
+  });
+
+  const tailnetFleet = (url: string): StatusInputs["fleet"] => ({
+    configured: true,
+    connectPermission: "access:write",
+    observedAt: "2026-10-16T15:00:00.000Z",
+    listener: "network",
+    machines: [
+      {
+        id: "m1" as never,
+        label: "M1",
+        environmentId: "env-m1" as never,
+        url,
+        status: "reachable",
+        pairingConfigured: true,
+      },
+    ],
+  });
+
+  it("does not degrade for missing Tailscale when Connect is linked", () => {
+    const services = buildStatusServices(
+      inputs({
+        fleet: tailnetFleet("https://m1.tailnet.ts.net"),
+        tailscale: { state: "unavailable" },
+        connect: { mode: "managed", tunnel: "running" },
+      }),
+    );
+    const tailscale = services.find((entry) => entry.id === "tailscale")!;
+    expect(tailscale.level).toBe("operational");
+    expect(tailscale.dependents).toEqual(["Remote machines (worker delegation)"]);
+    expect(services.find((entry) => entry.id === "connect")).toMatchObject({
+      name: "SpecWithCode Connect",
+      level: "operational",
+      dependents: ["Phone and browser access"],
+    });
+    // Feeds are not read here, so GitHub stays unknown; nothing is degraded.
+    expect(rollupStatusLevels(services.map((entry) => entry.level))).toBe("unknown");
+    expect(
+      services.filter((entry) => entry.level !== "unknown").map((entry) => entry.level),
+    ).toEqual(services.filter((entry) => entry.level !== "unknown").map(() => "operational"));
+  });
+
+  it("hides Tailscale when it is absent and no machine uses a tailnet address", () => {
+    const services = buildStatusServices(
+      inputs({
+        fleet: tailnetFleet("https://m1.example.com"),
+        tailscale: { state: "unavailable" },
+      }),
+    );
+    expect(services.some((entry) => entry.id === "tailscale")).toBe(false);
+  });
+
+  it("shows Tailscale for a machine at a Tailscale IP address", () => {
+    const services = buildStatusServices(
+      inputs({
+        fleet: tailnetFleet("http://100.101.102.103:3773"),
+        tailscale: { state: "unavailable" },
+      }),
+    );
+    expect(services.find((entry) => entry.id === "tailscale")!.level).toBe("degraded");
+  });
+
+  it("degrades missing Tailscale only when tailnet machines need it and Connect is not linked", () => {
+    const tailscale = buildStatusServices(
+      inputs({
+        fleet: tailnetFleet("https://m1.tailnet.ts.net"),
+        tailscale: { state: "unavailable" },
+        connect: { mode: "not_linked", tunnel: "unknown" },
+      }),
+    ).find((entry) => entry.id === "tailscale")!;
+    expect(tailscale.level).toBe("degraded");
+  });
+
+  it("shows Connect as informational when not linked and degraded when its tunnel is down", () => {
+    const notLinked = buildStatusServices(
+      inputs({ connect: { mode: "not_linked", tunnel: "unknown" } }),
+    ).find((entry) => entry.id === "connect")!;
+    expect(notLinked.level).toBe("operational");
+    expect(notLinked.detail).toContain("Not linked");
+
+    const publishOnly = buildStatusServices(
+      inputs({ connect: { mode: "publish_only", tunnel: "unknown" } }),
+    ).find((entry) => entry.id === "connect")!;
+    expect(publishOnly.level).toBe("operational");
+    expect(publishOnly.components.map((entry) => entry.id)).toEqual(["connect:link"]);
+
+    const down = buildStatusServices(inputs({ connect: { mode: "managed", tunnel: "down" } })).find(
+      (entry) => entry.id === "connect",
+    )!;
+    expect(down.level).toBe("degraded");
+    expect(down.detail).toBe("Tunnel: Connector is not running; the relay cannot reach this Mac.");
+    expect(down.tracksIncidents).toBe(true);
   });
 
   it("stays unknown, not failing, when every feed is offline", () => {

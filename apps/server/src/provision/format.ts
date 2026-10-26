@@ -16,7 +16,10 @@ const MARK: Record<ProvisionItem["status"], string> = {
 export function formatItemLine(item: ProvisionItem): string {
   const found = item.found ?? "missing";
   const version =
-    item.status === "ok" || item.status === "kept-newer" || item.status === "changed"
+    item.status === "ok" ||
+    item.status === "kept-newer" ||
+    item.status === "changed" ||
+    item.status === "skipped"
       ? found
       : `${found} -> ${item.wanted}`;
   return `${MARK[item.status]}  ${item.label.padEnd(36)} ${version}${item.detail ? `  ${item.detail}` : ""}`;

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   blockingWindow,
+  windowName,
+  windowTitle,
   effectiveLeftPercent,
   windowAppliesToModel,
   windowModelScope,
@@ -84,5 +86,37 @@ describe("effectiveLeftPercent", () => {
     // No model: only the account-wide windows count.
     expect(effectiveLeftPercent([session(10), fable(100)], now)).toBe(90);
     expect(effectiveLeftPercent([weekly(100, passed)], now)).toBeNull();
+  });
+});
+
+describe("windowName", () => {
+  const named = (label: string, extra: Record<string, unknown> = {}) => ({
+    id: "w",
+    label,
+    ...extra,
+  });
+  it("names known durations, never Session", () => {
+    expect(windowName(named("Session", { windowDurationMins: 300 }))).toBe("5-hour");
+    expect(windowName(named("Session"))).toBe("short-term");
+    expect(windowName({ id: "five_hour", label: "Session" })).toBe("5-hour");
+    expect(windowName(named("team: Session", { windowDurationMins: 60 }))).toBe("team: 1-hour");
+    expect(windowName(named("Weekly", { windowDurationMins: 10080 }))).toBe("weekly");
+    expect(windowTitle(named("Weekly", { windowDurationMins: 10080 }))).toBe("Weekly");
+  });
+  it("falls back to the label and keeps the family and the Codex bucket prefix", () => {
+    expect(windowName(named("Monthly", { windowDurationMins: 43200 }))).toBe("monthly");
+    expect(windowName(named("Primary"))).toBe("primary");
+    expect(
+      windowName({ id: "seven_day_fable", label: "Weekly · Fable", windowDurationMins: 10080 }),
+    ).toBe("Fable weekly");
+    expect(windowTitle({ id: "seven_day_fable", label: "Weekly · Fable" })).toBe("Fable weekly");
+    expect(
+      windowName(
+        named("GPT-5.3-Codex-Spark: Session", {
+          windowDurationMins: 300,
+          modelScope: "GPT-5.3-Codex-Spark",
+        }),
+      ),
+    ).toBe("GPT-5.3-Codex-Spark: 5-hour");
   });
 });

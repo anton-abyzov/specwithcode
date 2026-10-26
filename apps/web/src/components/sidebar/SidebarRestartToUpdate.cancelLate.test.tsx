@@ -91,6 +91,9 @@ const IDLE: ServerPrepareServiceUpdateResult = { idle: true, stoppedThreads: 0, 
 // What the agent writes for M4's refusal, and around the restart it makes for a held request.
 const DETACHED =
   "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update";
+// What the toast shows for it: the older agent's restart reads as what Update now does.
+const DETACHED_SHOWN =
+  "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Press Update now: SpecWithCode saves that log, restarts its background service and then updates";
 const RESTARTING = "Restarting SpecWithCode to recover its database";
 
 const calls: string[] = [];
@@ -592,7 +595,7 @@ describe("Update now: another window's Cancel that the agent's pass refused the 
     };
     await advance(2_000);
     expect(lastToast().type).toBe("error");
-    expect(lastToast().description).toContain(DETACHED);
+    expect(lastToast().description).toContain(DETACHED_SHOWN);
     expect(label()).toBe("Retry update");
   });
 });

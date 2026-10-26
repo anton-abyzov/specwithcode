@@ -393,6 +393,35 @@ describe("handoff file method", () => {
     expect(onMethodChange).not.toHaveBeenCalled();
   });
 
+  it("lets a running copy close unless it locks the dialog for a critical step", async () => {
+    const onMethodChange = vi.fn();
+    await handoff({
+      method: "copy",
+      onMethodChange,
+      copyFlow: <p data-testid="copy-flow">Copy flow</p>,
+      copyBusy: true,
+      copyLocked: false,
+    });
+    // Measuring and copying keep running on the machines: closing is allowed,
+    // switching the file method is not.
+    expect(button("Close").disabled).toBe(false);
+    expect(document.querySelector('[data-slot="dialog-close"][aria-label="Close"]')).not.toBeNull();
+    await click(methodRadio("Use the folder as it is"));
+    expect(onMethodChange).not.toHaveBeenCalled();
+    await escape();
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+    vi.mocked(props.onOpenChange).mockClear();
+    await click(button("Close"));
+    expect(props.onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+    vi.mocked(props.onOpenChange).mockClear();
+
+    await handoff({ copyLocked: true });
+    expect(button("Close").disabled).toBe(true);
+    expect(document.querySelector('[data-slot="dialog-close"][aria-label="Close"]')).toBeNull();
+    await escape();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+  });
+
   it("switches to the Git handoff and back without losing the file choice", async () => {
     const onMethodChange = vi.fn();
     await handoff({ method: "copy", onMethodChange, copyFlow: <p>Copy flow</p> });

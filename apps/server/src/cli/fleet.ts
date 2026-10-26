@@ -208,7 +208,22 @@ const listCommand = Command.make("list", { baseDir: baseDirFlag }).pipe(
         try: () => readFleetConfig(baseDir),
         catch: fleetFailure,
       });
+      const skipped = (config?.invalidEntries ?? []).map(
+        (entry) =>
+          `#${entry.index + 1}${entry.label ? ` ${entry.label}` : ""}\tskipped: ${entry.reason}`,
+      );
       if (config === null || config.machines.length === 0) {
+        if (skipped.length > 0) {
+          yield* Console.log(
+            [
+              ...skipped,
+              "",
+              "No valid machines are configured; fix or remove the lines above.",
+              "",
+            ].join("\n"),
+          );
+          return;
+        }
         yield* Console.log(
           `No other machines are configured. Run \`${cliName()} fleet invite --coordinator '<main-machine-environment-id>'\` on one. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here. Then \`fleet add\` here.\n`,
         );
@@ -221,6 +236,7 @@ const listCommand = Command.make("list", { baseDir: baseDirFlag }).pipe(
             (machine) =>
               `${machine.id}\t${machine.label}\t${machine.url}\t${machine.status}${machine.pairingConfigured ? "" : "\tno management token"}`,
           ),
+          ...skipped,
           "",
         ].join("\n"),
       );

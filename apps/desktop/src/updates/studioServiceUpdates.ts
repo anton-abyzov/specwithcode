@@ -42,6 +42,13 @@ import { readRunView, type RunFiles } from "./updateRun.ts";
 
 export const SERVICE_AGENT_IDENTITIES = new Set(["m4", "m1", "m3"]);
 export const SERVICE_AGENT_QUIET_MINUTES = 10;
+/**
+ * How long an automatic install waits for running work before the agent
+ * pauses it (`pauseWorkAfterMinutes`), when no preference says otherwise.
+ */
+export const SERVICE_AGENT_PAUSE_WORK_AFTER_MINUTES = 10;
+/** "Later" on a waiting automatic install moves its pause this far ahead. */
+export const SERVICE_AUTOMATIC_PAUSE_POSTPONE_MS = 60 * 60_000;
 
 export interface ManagedServiceInstallation {
   readonly identity: string;
@@ -131,6 +138,14 @@ export interface ServiceAgentConfig {
    * with run support claims that run; older agents ignore the key.
    */
   readonly installRunId?: string | null;
+  /**
+   * How long an automatic install waits for running work before the agent
+   * pauses it and installs, in whole minutes (at least 1). Older agents
+   * ignore it and keep waiting for a quiet service.
+   */
+  readonly pauseWorkAfterMinutes: number;
+  /** "Later": until then the agent pauses no work for an automatic install. */
+  readonly automaticPausePostponedUntil: string | null;
   readonly repository?: string;
 }
 
@@ -245,8 +260,14 @@ export function effectiveUpdatePreferences(
         installAutomatically: saved.installAutomatically,
         automaticUpdatesAllowed: true,
         ...withForceInstallAfter(saved),
+        ...withPauseWorkAfter(saved),
       }
-    : { ...NO_AUTOMATIC_UPDATES, automaticUpdatesAllowed: false, ...withForceInstallAfter(saved) };
+    : {
+        ...NO_AUTOMATIC_UPDATES,
+        automaticUpdatesAllowed: false,
+        ...withForceInstallAfter(saved),
+        ...withPauseWorkAfter(saved),
+      };
 }
 
 // How long a forced install waits applies whether or not self-update runs.
@@ -254,6 +275,13 @@ function withForceInstallAfter(saved: DesktopUpdatePreferences) {
   return saved.forceInstallAfterMinutes === undefined
     ? {}
     : { forceInstallAfterMinutes: saved.forceInstallAfterMinutes };
+}
+
+// Shown as saved even while self-update is off, like the forced wait above.
+function withPauseWorkAfter(saved: DesktopUpdatePreferences) {
+  return saved.pauseWorkAfterMinutes === undefined
+    ? {}
+    : { pauseWorkAfterMinutes: saved.pauseWorkAfterMinutes };
 }
 
 export function agentChannel(channel: DesktopUpdateChannel): "stable" | "preview" {
@@ -272,10 +300,41 @@ export interface ServiceAgentConfigChange {
   readonly installRequest?: ServiceInstallRequestRecord | null;
   /** Null clears it: a request outside a run must never be claimed for one. */
   readonly installRunId?: string | null;
+  /** "Later" sets it; null clears it. */
+  readonly automaticPausePostponedUntil?: string | null;
 }
 
 function stringOrNullValue(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+/**
+ * What "Later" writes: the agent pauses no running work for an automatic
+ * install until an hour from `nowMs`. Nothing else in the config changes and
+ * no agent pass is started; the next scheduled one reads it.
+ */
+export function postponeAutomaticPauseChange(nowMs: number): ServiceAgentConfigChange {
+  return {
+    automaticPausePostponedUntil: DateTime.formatIso(
+      DateTime.makeUnsafe(nowMs + SERVICE_AUTOMATIC_PAUSE_POSTPONE_MS),
+    ),
+  };
+}
+
+/** The longest wait written; the agent refuses a config past a week, which would block updates. */
+export const SERVICE_AGENT_MAX_PAUSE_WORK_AFTER_MINUTES = 24 * 60;
+
+/**
+ * Whole minutes from 1 to a day: the preference, else the config's copy, else
+ * the default. A wait past a day is cut to a day.
+ */
+function pauseWorkAfterMinutes(preferred: unknown, previous: unknown): number {
+  for (const value of [preferred, previous]) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 1) {
+      return Math.min(Math.round(value), SERVICE_AGENT_MAX_PAUSE_WORK_AFTER_MINUTES);
+    }
+  }
+  return SERVICE_AGENT_PAUSE_WORK_AFTER_MINUTES;
 }
 
 /**
@@ -360,6 +419,18 @@ export function buildServiceAgentConfig(
         ? input.installRequest
         : installRequestRecord(previous.installRequest),
     ...runIdField(input.installRunId, previous.installRunId),
+    // The saved preference wins; a build with self-update off sends none and
+    // keeps what the config held.
+    pauseWorkAfterMinutes: pauseWorkAfterMinutes(
+      input.preferences.pauseWorkAfterMinutes,
+      previous.pauseWorkAfterMinutes,
+    ),
+    automaticPausePostponedUntil:
+      input.automaticPausePostponedUntil !== undefined
+        ? input.automaticPausePostponedUntil
+        : isoMillis(previous.automaticPausePostponedUntil) !== null
+          ? (previous.automaticPausePostponedUntil as string)
+          : null,
     ...(typeof previous.repository === "string" ? { repository: previous.repository } : {}),
   };
 }
@@ -530,7 +601,40 @@ export function toServiceUpdateState(input: {
     updatedAt: stringOrNull(record.updatedAt),
     pendingInstall: pending(status, record.handledInstallRequestAt),
     ...(input.run ? { run: input.run } : {}),
+    ...automaticPauseField(record.automaticPauseAt, input.configText),
   };
+}
+
+/**
+ * The agent's `automaticPauseAt`, moved to a "Later" it has not read yet: the
+ * agent publishes max(wait start + grace, postponement), so a postponement in
+ * the config that lies later is where the next pass puts it. Absent when the
+ * agent writes no such key (agents before automatic pauses).
+ */
+function automaticPauseField(
+  value: unknown,
+  configText: string | null | undefined,
+): { readonly automaticPauseAt?: string | null } {
+  if (value === undefined) return {};
+  const at = isoMillis(value);
+  if (at === null) return { automaticPauseAt: null };
+  const postponed = isoMillis(configPostponedUntil(configText));
+  return {
+    automaticPauseAt:
+      postponed !== null && postponed > at
+        ? DateTime.formatIso(DateTime.makeUnsafe(postponed))
+        : (value as string),
+  };
+}
+
+function configPostponedUntil(configText: string | null | undefined): unknown {
+  if (!configText) return null;
+  try {
+    const config = JSON.parse(configText) as Partial<ServiceAgentConfig> | null;
+    return config?.automaticPausePostponedUntil ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** The agent advertises run support (`runSupport: 1` in state.json); older agents never write it. */

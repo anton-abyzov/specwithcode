@@ -182,6 +182,47 @@ describe("repository matrix", () => {
     expect(result.actions).toEqual([
       expect.objectContaining({ path: "b.ts", kind: "write", replaces: true }),
     ]);
+    // No question, but the clean b.ts here is overwritten: the row says so.
+    expect(row(result)).toMatchObject({ status: "same", replacing: 1 });
+    expect(result.totals).toMatchObject({ decisionsNeeded: 0, replacing: 1 });
+  });
+
+  it("an empty destination replaces nothing", () => {
+    const result = plan({
+      repositories: [sourceRepo(".", { status: [" M b.ts"] })],
+      entries: [file("a.ts", "a1"), file("b.ts", "b2")],
+      destination: { files: [], repositories: [] },
+    });
+    expect(result.rows.every((item) => item.replacing === 0)).toBe(true);
+    expect(result.totals.replacing).toBe(0);
+  });
+
+  it("keep-both does not count as replacing; take-theirs and mirror removals do", () => {
+    const input = {
+      repositories: [sourceRepo(".", { status: [" M a.ts"] })],
+      entries: [file("a.ts", "a1")],
+      destination: {
+        files: [here("a.ts", "a9")],
+        repositories: [destinationRepo(".", { status: [" M a.ts"] })],
+      },
+    };
+    expect(plan({ ...input, decisions: { "file:a.ts": "keep-both" } }).totals.replacing).toBe(0);
+    expect(plan({ ...input, decisions: { "file:a.ts": "take-theirs" } }).totals.replacing).toBe(1);
+    const mirrored = plan({
+      repositories: [],
+      relations: {},
+      entries: [file("a.md", "a", { repo: null, class: "untracked" })],
+      destination: {
+        files: [
+          here("a.md", "a", { repo: null, class: "untracked" }),
+          here("old.md", "o", { repo: null, class: "untracked" }),
+        ],
+        repositories: [],
+      },
+      mirror: true,
+    });
+    expect(row(mirrored, "files").replacing).toBe(1);
+    expect(mirrored.totals.replacing).toBe(1);
   });
 
   it("both dirty, same file differs: a per-file conflict", () => {

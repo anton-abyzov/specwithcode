@@ -124,6 +124,30 @@ describe("UpdatePreferencesSection", () => {
     expect(installButton()!.props.disabled).toBe(false);
   });
 
+  it("saves the automatic pause wait chosen under Pause running work after", async () => {
+    bridge.setUpdatePreferences.mockImplementation(async (patch: object) => ({
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      installAutomatically: true,
+      ...patch,
+    }));
+    bridge.getUpdatePreferences.mockImplementationOnce(async () => ({
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      installAutomatically: true,
+    }));
+    await render();
+    const select = renderer!.root.findAll(
+      (node) => typeof node.props.onValueChange === "function" && node.props.value === "10",
+    )[0];
+    expect(select).toBeDefined();
+    expect(select!.props.disabled).toBe(false);
+    await act(async () => {
+      select!.props.onValueChange("30");
+    });
+    expect(bridge.setUpdatePreferences).toHaveBeenCalledWith({ pauseWorkAfterMinutes: 30 });
+  });
+
   it("offers no Install now while an Update now run goes on", async () => {
     bridge.getServiceUpdateState.mockImplementationOnce(
       async () =>

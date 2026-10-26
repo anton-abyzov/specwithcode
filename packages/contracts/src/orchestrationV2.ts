@@ -393,6 +393,19 @@ export const OrchestrationV2ThreadProjectMoveLink = Schema.Struct({
 });
 export type OrchestrationV2ThreadProjectMoveLink = typeof OrchestrationV2ThreadProjectMoveLink.Type;
 
+/**
+ * Where the usage pre-switch (`limit-preswitch:`) moved an idle thread from,
+ * so the way back finds it after a restart: the model it ran before, the
+ * pre-switch command, and when the usage window it moved in resets, when the
+ * provider said. A pick by a person or an agent clears it.
+ */
+export const OrchestrationV2LimitPreswitchOrigin = Schema.Struct({
+  modelSelection: ModelSelection,
+  commandId: CommandId,
+  resetAt: Schema.NullOr(Schema.String),
+});
+export type OrchestrationV2LimitPreswitchOrigin = typeof OrchestrationV2LimitPreswitchOrigin.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -458,6 +471,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   routing: Schema.optional(Schema.NullOr(TaskRoutingDecision)),
   /** The model this thread stands in for: its launch moved off it because it had no room. */
   launchFallbackFrom: Schema.optional(Schema.NullOr(ModelSelection)),
+  /** The model a usage pre-switch moved this thread off, until it goes back or a pick replaces it. */
+  limitPreswitchFrom: Schema.optional(Schema.NullOr(OrchestrationV2LimitPreswitchOrigin)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -2153,6 +2168,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       kind: Schema.NullOr(Schema.Literals(["fallback", "running"])),
       /** The fallback dates from the launch (no room then), so no reset brings it back on its own. */
       launched: Schema.optional(Schema.Boolean),
+      /** The usage pre-switch moved the idle thread before its limit; the way back follows room. */
+      preswitched: Schema.optional(Schema.Boolean),
     }),
   ),
   ...OrchestrationV2CreationFields,

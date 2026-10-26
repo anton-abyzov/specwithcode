@@ -269,8 +269,10 @@ describe("portable external linked worktrees", () => {
     expect(git(overlay, "rev-parse", "after-measure")).toBe(git(selected, "rev-parse", "HEAD"));
   });
 
+  // An internal worktree is left out (its branch travels with the main repository),
+  // so the main repository's snapshot must still be coherent and carry that branch.
   it.each([false, true])(
-    "keeps a coherent internal split-index worktree (concurrent commits: %s)",
+    "skips an internal split-index worktree and keeps its branch coherent (concurrent commits: %s)",
     async (concurrent) => {
       const { root, main, selected } = fixture();
       const sourceRoot = NodePath.join(root, "umbrella");
@@ -283,7 +285,6 @@ describe("portable external linked worktrees", () => {
       git(scopedMain, "worktree", "repair", scopedLinked);
       const beforeMain = git(scopedMain, "rev-parse", "HEAD");
       const beforeLinked = git(scopedLinked, "rev-parse", "HEAD");
-      const beforeIndex = git(scopedLinked, "ls-files", "--stage");
       const sources = new SourceTransfers(NodePath.join(root, "state"));
       const id = NodeCrypto.randomUUID();
       const offer = await sources.offer({
@@ -313,6 +314,7 @@ describe("portable external linked worktrees", () => {
           selection: DEFAULT_SELECTION,
         });
         await settle(copies, id, "previewed");
+        expect((await sources.read(id))?.summary?.skipped?.worktrees).toEqual(["linked"]);
         if (concurrent) {
           git(scopedMain, "commit", "--allow-empty", "-qm", "new main commit during transfer");
           // Commit via commit-tree + update-ref so staged/unstaged work is unchanged.
@@ -332,12 +334,13 @@ describe("portable external linked worktrees", () => {
         const applied = await settle(copies, id, "applied");
         expect(applied.checks.filter((check) => !check.ok)).toEqual([]);
         expect(git(NodePath.join(target, "main"), "rev-parse", "HEAD")).toBe(beforeMain);
-        expect(git(NodePath.join(target, "linked"), "rev-parse", "HEAD")).toBe(beforeLinked);
+        expect(git(NodePath.join(target, "main"), "rev-parse", "unfinished")).toBe(beforeLinked);
+        expect(NodeFS.existsSync(NodePath.join(target, "linked"))).toBe(false);
         git(NodePath.join(target, "main"), "fsck", "--connectivity-only");
-        git(NodePath.join(target, "linked"), "fsck", "--connectivity-only");
-        expect(git(NodePath.join(target, "linked"), "ls-files", "--stage")).toBe(beforeIndex);
-        expect(git(NodePath.join(target, "main"), "worktree", "list", "--porcelain")).not.toContain(
-          sourceRoot,
+        const registered = git(NodePath.join(target, "main"), "worktree", "list", "--porcelain");
+        expect(registered).not.toContain(sourceRoot);
+        expect(registered.split("\n").filter((line) => line.startsWith("worktree "))).toHaveLength(
+          1,
         );
         if (concurrent)
           await expect(sources.assertCurrentSnapshot(id)).rejects.toMatchObject({

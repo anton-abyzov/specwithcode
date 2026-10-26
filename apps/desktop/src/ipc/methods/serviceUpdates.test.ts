@@ -4,6 +4,7 @@ import * as OS from "node:os";
 import * as Path from "node:path";
 import { it as effectIt } from "@effect/vitest";
 import type { DesktopUpdateState, StudioServiceUpdateState } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -789,6 +790,100 @@ describe("installServiceUpdates", () => {
         expect([...files.files.keys()]).toEqual(["config.json"]);
       }),
     );
+  });
+
+  describe("Later on an automatic install waiting for running work", () => {
+    /** A controller whose state shows the postponement once config.json holds one. */
+    const postponeController = (configs: Array<Record<string, unknown>>, kicks: string[]) => {
+      let postponedUntil: string | null = null;
+      return controllerWith(
+        {
+          ensureAgent: async () => {
+            kicks.push("ensureAgent");
+          },
+          writeConfig: (input) => {
+            configs.push({ ...input });
+            if (typeof input.automaticPausePostponedUntil === "string") {
+              postponedUntil = input.automaticPausePostponedUntil;
+            }
+          },
+          readState: () => ({
+            ...frozen,
+            status: "waiting-for-quiet",
+            downloadedVersion: "1.0.61",
+            automaticPauseAt: postponedUntil ?? "1970-01-01T00:10:00.000Z",
+          }),
+        },
+        kicks,
+      );
+    };
+
+    effectIt.effect(
+      "writes the pause an hour ahead, starts no agent pass and publishes the moved time",
+      () => {
+        const configs: Array<Record<string, unknown>> = [];
+        const kicks: string[] = [];
+        const controller = postponeController(configs, kicks);
+        return withServiceUpdates(controller, (_changes, _readState, invoke) =>
+          Effect.gen(function* () {
+            const configsBefore = configs.length;
+            const kicksBefore = [...kicks];
+            const publishedBefore = published.length;
+            const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+            const expected = DateTime.formatIso(DateTime.makeUnsafe(nowMs + 60 * 60_000));
+            const answer = (yield* invoke(
+              IpcChannels.SERVICE_UPDATE_POSTPONE_CHANNEL,
+            )) as StudioServiceUpdateState;
+            yield* settleAll;
+            // One config write, carrying the postponement with the preferences.
+            expect(configs.slice(configsBefore)).toHaveLength(1);
+            expect(configs[configsBefore]).toMatchObject({
+              automaticPausePostponedUntil: expected,
+            });
+            expect(configs[configsBefore]).not.toHaveProperty("installRequestedAt");
+            expect(configs[configsBefore]).not.toHaveProperty("checkRequestedAt");
+            // No agent pass: the next scheduled one reads it.
+            expect(kicks).toEqual(kicksBefore);
+            // The reply and every window carry the moved time.
+            expect(answer.automaticPauseAt).toBe(expected);
+            expect(published.slice(publishedBefore).at(-1)?.automaticPauseAt).toBe(expected);
+          }),
+        );
+      },
+    );
+
+    effectIt.effect("rejects when the postponement could not be written", () => {
+      const configs: Array<Record<string, unknown>> = [];
+      const kicks: string[] = [];
+      const controller = postponeController(configs, kicks);
+      let failWrites = false;
+      const writeConfig = controller.writeConfig;
+      const failing: ServiceUpdateController = {
+        ...controller,
+        writeConfig: (input) => {
+          if (failWrites) throw new Error("disk full");
+          writeConfig(input);
+        },
+      };
+      return withServiceUpdates(failing, (_changes, readState, invoke) =>
+        Effect.gen(function* () {
+          const kicksBefore = [...kicks];
+          failWrites = true;
+          const refused = yield* invoke(IpcChannels.SERVICE_UPDATE_POSTPONE_CHANNEL).pipe(
+            Effect.as(null),
+            Effect.catchDefect((defect) => Effect.succeed(defect)),
+          );
+          expect(refused).not.toBeNull();
+          expect(String(refused)).toContain(
+            "The update could not be postponed. Try again in a moment.",
+          );
+          yield* settleAll;
+          expect(kicks).toEqual(kicksBefore);
+          // Nothing moved: the agent's own time still shows.
+          expect((yield* readState).automaticPauseAt).toBe("1970-01-01T00:10:00.000Z");
+        }),
+      );
+    });
   });
 
   effectIt.effect("passes later releases on while an agent refresh hangs", () => {

@@ -126,11 +126,13 @@ provisioning profile.
 
 These follow [security.md](security.md) where it covers the desktop:
 
-- The embedded server stays on loopback. Reach other devices through Tailscale
-  Serve, not the `0.0.0.0` exposure mode.
+- The embedded server stays on loopback. Reach other devices through
+  SpecWithCode Connect (**Settings → Connections → SpecWithCode Connect**), not
+  the `0.0.0.0` exposure mode. Tailscale Serve is optional; it is still
+  required today for worker delegation and folder copy.
 - The connection catalog is encrypted with the OS secure store (Keychain on
   macOS) and kept in the SpecWithCode state folder, never in web storage.
 - The CLIProxyAPI management key and provider tokens stay server-side; the
   renderer never receives them.
-- Hosted relay and telemetry stay off. Self-update is on by default and
+- Telemetry stays off. Self-update is on by default and
   reads only SpecWithCode's own releases; see [updates.md](updates.md).

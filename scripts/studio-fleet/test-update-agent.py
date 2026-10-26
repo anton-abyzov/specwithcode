@@ -856,7 +856,9 @@ class PassBehaviour(AgentCase):
         self.assertEqual(self.run_agent(), 0)
         state = self.state()
         self.assertEqual(state['status'], 'waiting-for-quiet')
+        # The test home publishes no CLI credential: it waits for quiet and never pauses work.
         self.assertEqual(state['message'], 'Waiting for running tasks, queued messages and open questions to finish')
+        self.assertIsNone(state['automaticPauseAt'])
         self.assertIsNone(state['quietSince'])
         self.assertEqual(list((self.updates / 'snapshots').iterdir()), [])
         self.assertEqual(self.apply_calls(), [])
@@ -874,6 +876,7 @@ class PassBehaviour(AgentCase):
             self.assertEqual(self.run_agent(), 0)
             self.assertEqual(self.state()['status'], 'waiting-for-quiet')
             self.assertEqual(self.state()['message'], message)
+            self.assertIsNone(self.state()['automaticPauseAt'])  # No CLI credential published.
             # The helper's output is read, never kept or logged.
             self.assertEqual(list((self.updates / 'snapshots').iterdir()), [])
             self.assertNotIn('descendants', self.log)
@@ -1556,9 +1559,13 @@ runpy.run_path(script, run_name='__main__')
         imported = sorted(set(re.findall(r'^import ([a-z_]+)', source, re.M)) & set(local))
         build = (HERE.parent / 'lib/studio-service-updater.ts').read_text()
         shipped = re.search(r'MAC_SERVICE_UPDATER_FILES = \[([^\]]*)\]', build).group(1)
-        # migrate_home is its own entry point, shipped and installed beside the agent.
-        self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent', 'managed_updates', 'migrate_home'] + imported))
-        self.assertEqual(imported, ['installation_descriptor', 'studio_paths', 'update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_agent_run', 'update_request'])
+        # migrate_home is its own entry point, shipped and installed beside the agent; service_hold,
+        # service_handles and its live_database are update_agent_pause's own imports.
+        self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)),
+                         sorted(['update_agent', 'managed_updates', 'migrate_home', 'service_hold', 'service_handles',
+                                 'live_database'] + imported))
+        self.assertEqual(imported, ['installation_descriptor', 'studio_paths', 'update_agent_cache', 'update_agent_pause',
+                                    'update_agent_reap', 'update_agent_recovery', 'update_agent_run', 'update_request'])
 
     def hold_lock_and_install(self):
         holder = os.open(str(self.updates / 'agent.lock'), os.O_RDWR | os.O_CREAT, 0o600)

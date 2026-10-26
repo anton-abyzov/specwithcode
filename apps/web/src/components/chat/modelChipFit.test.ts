@@ -32,9 +32,11 @@ describe("modelChipShows", () => {
       MODEL_CHIP_FITS.filter((fit) => modelChipShows(fit, part));
     expect(shown("provider")).toEqual(["full"]);
     expect(shown("state-full")).toEqual(["full"]);
-    expect(shown("usage-value")).toEqual(["full"]);
+    expect(shown("usage-value")).toEqual(["full", "model"]);
+    expect(shown("usage-detail")).toEqual(["full"]);
     expect(shown("state-short")).toEqual(["model"]);
-    expect(shown("usage-ring")).toEqual(["full", "model", "short", "icon"]);
+    // At `icon` the ring wraps the mark instead (ModelUsageMarkRing), out of flow.
+    expect(shown("usage-ring")).toEqual(["full", "model", "short"]);
     expect(shown("model")).toEqual(["full", "model", "short", "name"]);
   });
 });

@@ -98,6 +98,9 @@ export function useProjectCoordinatorModelControls(input: {
     onSwitchBack?: (() => void) | null;
     switching?: boolean;
   } | null;
+  /** The model the next turn moves to while the shown one is out of room. */
+  nextOnLimit?: string | null;
+  fallbackOrder?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
   canOperate: boolean;
   connected: boolean;
   revision: number | null;
@@ -138,6 +141,8 @@ export function useProjectCoordinatorModelControls(input: {
       environmentId: input.project.environmentId,
       value: input.model ?? null,
       running: input.running ?? null,
+      nextOnLimit: input.nextOnLimit ?? null,
+      fallbackOrder: input.fallbackOrder ?? [],
       requiresFolderGrants,
       folderPolicy,
       disabled:

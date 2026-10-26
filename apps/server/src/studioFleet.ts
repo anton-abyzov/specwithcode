@@ -34,6 +34,8 @@ export interface FleetConfig {
   /** Explicit operator delegation for preapproved machines, never auth administration. */
   readonly allowConnectFrom?: typeof AuthOrchestrationOperateScope;
   readonly machines: ReadonlyArray<FleetTarget>;
+  /** Machine lines skipped by a tolerant read; absent when every line parsed. */
+  readonly invalidEntries?: ReadonlyArray<FleetConfigInvalidEntry>;
 }
 export const fleetConnectPermission = (config: FleetConfig | null) =>
   config?.allowConnectFrom ?? AuthAccessWriteScope;
@@ -78,8 +80,83 @@ const text = (v: unknown, max: number): v is string =>
   v.length <= max &&
   !/[\u0000-\u001f\u007f]/u.test(v);
 
-/** Local operator configuration only. Request payloads cannot choose a URL, token or scope. */
-export function parseFleetConfig(raw: unknown): FleetConfig {
+/** A machine line the server skipped; the reason never quotes the line's values. */
+export interface FleetConfigInvalidEntry {
+  readonly index: number;
+  readonly label?: string;
+  readonly reason: string;
+}
+class FleetEntryError extends Error {}
+
+/** One machine line; throws FleetEntryError with an operator-facing reason. */
+function parseFleetTarget(m: unknown, allowConnectFrom: unknown): FleetTarget {
+  const invalid = (reason: string): never => {
+    throw new FleetEntryError(reason);
+  };
+  if (!record(m)) return invalid("the entry is not an object.");
+  if (!keys(m, ["id", "label", "environmentId", "url", "managementToken", "scopes"]))
+    return invalid("the entry has an unknown key.");
+  if (!text(m.id, 48) || !/^[a-z0-9][a-z0-9-]*$/.test(m.id))
+    return invalid("id must be lowercase letters, digits and dashes.");
+  if (!text(m.label, 80)) return invalid("label is missing or malformed.");
+  if (!text(m.environmentId, 150)) return invalid("environmentId is missing or malformed.");
+  if (!text(m.url, 300)) return invalid("url is missing or malformed.");
+  let url: URL;
+  try {
+    url = new URL(m.url);
+  } catch {
+    return invalid("url is not a valid address.");
+  }
+  // Restrict even operator-configured relays to private Tailscale HTTPS origins.
+  if (
+    url.protocol !== "https:" ||
+    !/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.ts\.net$/i.test(url.hostname) ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  )
+    return invalid(
+      "url must be a private https://<name>.ts.net address with no path, query or credentials.",
+    );
+  if (
+    m.managementToken !== undefined &&
+    (!text(m.managementToken, 8192) || /\s/.test(m.managementToken))
+  )
+    return invalid("managementToken is malformed.");
+  const scopes = m.scopes ?? [...AuthStandardClientScopes];
+  if (
+    !Array.isArray(scopes) ||
+    !scopes.length ||
+    scopes.some((s) => !AuthGrantScope.literals.includes(s)) ||
+    new Set(scopes).size !== scopes.length ||
+    !scopes.includes(AuthOrchestrationReadScope)
+  )
+    return invalid("scopes must be distinct known scopes including orchestration:read.");
+  if (
+    allowConnectFrom !== undefined &&
+    scopes.some((scope) => !(AuthStandardClientScopes as ReadonlyArray<string>).includes(scope))
+  )
+    return invalid("scopes exceed what allowConnectFrom permits.");
+  return {
+    id: m.id,
+    label: m.label,
+    environmentId: EnvironmentId.make(m.environmentId),
+    url: url.origin,
+    scopes,
+    ...(m.managementToken === undefined ? {} : { managementToken: m.managementToken }),
+  };
+}
+
+/**
+ * Local operator configuration only. Request payloads cannot choose a URL, token or scope.
+ * Strict by default (every write validates this way). `tolerant` is for reading:
+ * a malformed machine line is skipped and listed in `invalidEntries`, so one bad
+ * line does not hide every other machine. A malformed document, or two lines
+ * sharing an id, environment or address, still rejects the whole file.
+ */
+export function parseFleetConfig(raw: unknown, options: { tolerant?: boolean } = {}): FleetConfig {
   const invalid = () => {
     throw new FleetError("config");
   };
@@ -96,69 +173,33 @@ export function parseFleetConfig(raw: unknown): FleetConfig {
   const ids = new Set<string>();
   const envs = new Set<string>();
   const urls = new Set<string>();
-  const machines = raw.machines.map((m): FleetTarget => {
-    if (
-      !record(m) ||
-      !keys(m, ["id", "label", "environmentId", "url", "managementToken", "scopes"]) ||
-      !text(m.id, 48) ||
-      !/^[a-z0-9][a-z0-9-]*$/.test(m.id) ||
-      !text(m.label, 80) ||
-      !text(m.environmentId, 150) ||
-      !text(m.url, 300)
-    )
-      return invalid();
-    let url: URL;
+  const machines: FleetTarget[] = [];
+  const invalidEntries: FleetConfigInvalidEntry[] = [];
+  raw.machines.forEach((m: unknown, index) => {
+    let target: FleetTarget;
     try {
-      url = new URL(m.url);
-    } catch {
-      return invalid();
+      target = parseFleetTarget(m, raw.allowConnectFrom);
+    } catch (error) {
+      if (!options.tolerant || !(error instanceof FleetEntryError)) return invalid();
+      const label = record(m) && text(m.label, 80) ? m.label : undefined;
+      invalidEntries.push({
+        index,
+        ...(label === undefined ? {} : { label }),
+        reason: error.message,
+      });
+      return;
     }
-    // Restrict even operator-configured relays to private Tailscale HTTPS origins.
-    if (
-      url.protocol !== "https:" ||
-      !/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.ts\.net$/i.test(url.hostname) ||
-      url.username ||
-      url.password ||
-      url.pathname !== "/" ||
-      url.search ||
-      url.hash
-    )
+    if (ids.has(target.id) || envs.has(target.environmentId) || urls.has(target.url))
       return invalid();
-    if (ids.has(m.id) || envs.has(m.environmentId) || urls.has(url.origin)) return invalid();
-    ids.add(m.id);
-    envs.add(m.environmentId);
-    urls.add(url.origin);
-    if (
-      m.managementToken !== undefined &&
-      (!text(m.managementToken, 8192) || /\s/.test(m.managementToken))
-    )
-      return invalid();
-    const scopes = m.scopes ?? [...AuthStandardClientScopes];
-    if (
-      !Array.isArray(scopes) ||
-      !scopes.length ||
-      scopes.some((s) => !AuthGrantScope.literals.includes(s)) ||
-      new Set(scopes).size !== scopes.length ||
-      !scopes.includes(AuthOrchestrationReadScope)
-    )
-      return invalid();
-    if (
-      raw.allowConnectFrom !== undefined &&
-      scopes.some((scope) => !(AuthStandardClientScopes as ReadonlyArray<string>).includes(scope))
-    )
-      return invalid();
-    return {
-      id: m.id,
-      label: m.label,
-      environmentId: EnvironmentId.make(m.environmentId),
-      url: url.origin,
-      scopes,
-      ...(m.managementToken === undefined ? {} : { managementToken: m.managementToken }),
-    };
+    ids.add(target.id);
+    envs.add(target.environmentId);
+    urls.add(target.url);
+    machines.push(target);
   });
   return {
     version: 1,
     machines,
+    ...(invalidEntries.length ? { invalidEntries } : {}),
     ...(raw.allowConnectFrom === AuthOrchestrationOperateScope
       ? { allowConnectFrom: AuthOrchestrationOperateScope }
       : {}),
@@ -199,7 +240,7 @@ export async function readFleetConfigSource(baseDir: string): Promise<unknown> {
 
 export async function readFleetConfig(baseDir: string): Promise<FleetConfig | null> {
   const source = await readFleetConfigSource(baseDir);
-  return source === null ? null : parseFleetConfig(source);
+  return source === null ? null : parseFleetConfig(source, { tolerant: true });
 }
 
 export type FleetFetch = typeof globalThis.fetch;
@@ -345,6 +386,14 @@ export async function discoverFleet(
         };
       }),
     ),
+    ...(config?.invalidEntries?.length
+      ? {
+          invalidEntries: config.invalidEntries.map((entry) => ({
+            kind: "config" as const,
+            ...entry,
+          })),
+        }
+      : {}),
   };
 }
 export async function connectFleet(

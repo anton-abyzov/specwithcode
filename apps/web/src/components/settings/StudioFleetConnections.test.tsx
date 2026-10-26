@@ -316,6 +316,46 @@ describe("private machine roster", () => {
     const off = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
     expect(autoConnectSwitch(StudioFleetRoster(off.props))?.props.checked).toBe(false);
   });
+  it("lists a skipped fleet-file line beside the machines that still loaded", () => {
+    const reason = "url must be a private https://<name>.ts.net address.";
+    const message = (tree: unknown) =>
+      visitElements(
+        tree,
+        (element) =>
+          element.props.role === "alert" &&
+          Array.isArray(element.props.children) &&
+          element.props.children.includes(`Invalid entry in fleet config: ${reason}`),
+      );
+    const tree = render({
+      snapshot: {
+        ...snapshot,
+        invalidEntries: [{ kind: "config", index: 2, label: "Linux VPS", reason }],
+      },
+    });
+    expect(message(tree)).not.toBeNull();
+    expect(visitElements(tree, (element) => element.props.children === "Linux VPS")).not.toBeNull();
+    expect(connectButton(tree)).not.toBeNull();
+    // Shown even when no machine line parsed.
+    expect(
+      message(
+        render({
+          snapshot: {
+            ...snapshot,
+            machines: [],
+            invalidEntries: [{ kind: "config", index: 0, reason }],
+          },
+        }),
+      ),
+    ).not.toBeNull();
+    expect(
+      message(
+        render({
+          failed: true,
+          snapshot: { ...snapshot, invalidEntries: [{ kind: "config", index: 0, reason }] },
+        }),
+      ),
+    ).toBeNull();
+  });
   it("hides the automatic switch when this server lists no private machines", () => {
     const tree = render({
       snapshot: { ...snapshot, machines: [] },

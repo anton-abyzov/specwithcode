@@ -17,6 +17,8 @@ vi.mock("../../hooks/useSettings", () => ({
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
+  useEnvironmentsWithScope: (environments: ReadonlyArray<{ readonly environmentId: string }>) =>
+    new Set(environments.map(({ environmentId }) => environmentId)),
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { consumeResetCredit: "consume" } }));
 // One function for every render, as the real hook memoizes it.

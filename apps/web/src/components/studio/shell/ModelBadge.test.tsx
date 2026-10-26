@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { OrchestrationV2ThreadShell } from "@specweave-studio/contracts";
 vi.mock("../../../state/entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("./Tip", () => ({ Tip: ({ children }: { children: React.ReactNode }) => children }));
-import { ModelBadge, ThreadModelBadge } from "./ModelBadge";
+import { ModelBadge, modelConnection, ThreadModelBadge } from "./ModelBadge";
 
 describe("ThreadModelBadge", () => {
   it.each(["fallback", "running", null] as const)("keeps %s identity in one model unit", (kind) => {
@@ -47,10 +47,10 @@ describe("ThreadModelBadge", () => {
         kind: "fallback",
       },
     }) as unknown as OrchestrationV2ThreadShell;
-  const render = (current: { instanceId: string; model: string }) => {
+  const render = (current: { instanceId: string; model: string }, header = false) => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(
-      <ThreadModelBadge thread={shell(current)} entries={new Map()} />,
+      <ThreadModelBadge thread={shell(current)} entries={new Map()} header={header} />,
     );
     return host.firstElementChild!;
   };
@@ -63,13 +63,51 @@ describe("ThreadModelBadge", () => {
       { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
     ]) {
       const root = render(current);
-      // Only the provider word gives way; the pick is in the tooltip and the sentence.
+      // Only the provider word may give way; the pick is in the tooltip and the sentence.
       expect(parts(root)).toEqual(["provider", "provider"]);
+      expect(root.hasAttribute("data-row-line")).toBe(false);
       expect(root.querySelectorAll(".sws-model-mark")).toHaveLength(1);
       const suffix = root.querySelector('.sws-model-state[data-model-state="fallback"]')!;
       expect(suffix.querySelector("[data-fallback-glyph]")).not.toBeNull();
       expect(suffix.textContent).toBe(", fallback for Claude Code · Opus 5.5 (usage limit)");
     }
+  });
+
+  it("lets only the header's chip leave the name out of sight", () => {
+    const root = render({ instanceId: "codex", model: "gpt-6-astra" }, true);
+    expect(root.getAttribute("data-row-line")).toBe("header");
+    expect(parts(root)).toEqual(["provider", "provider", "name"]);
+  });
+
+  it("names a connection only beside another that reads as the same provider", () => {
+    type Entries = Parameters<typeof modelConnection>[0];
+    type Entry = Entries extends ReadonlyMap<string, infer E> ? E : never;
+    const entry = (instanceId: string, driverKind: string, displayName: string, more = {}) =>
+      [
+        instanceId,
+        {
+          instanceId,
+          driverKind,
+          displayName,
+          isDefault: false,
+          enabled: true,
+          models: [],
+          ...more,
+        } as unknown as Entry,
+      ] as const;
+    const codex = entry("codex", "codex", "Codex", { isDefault: true });
+    const work = entry("codex_work", "codex", "Codex Work");
+    const gemini = entry("gemini", "acpRegistry", "Gemini CLI", { acpRegistryAgentId: "gemini" });
+    const both: Entries = new Map([codex, work, gemini]);
+    expect(modelConnection(both, "codex_work")).toBe("Codex Work");
+    expect(modelConnection(both, "codex")).toBe("Codex");
+    // A lone registry agent is the only way to its provider: its name adds nothing.
+    expect(modelConnection(both, "gemini")).toBeNull();
+    expect(modelConnection(new Map([codex]), "codex")).toBeNull();
+    // A connection just removed stays a moment, disabled; it leaves Codex alone again.
+    const removed = entry("codex_work", "codex", "Codex Work", { enabled: false });
+    expect(modelConnection(new Map([codex, removed]), "codex")).toBeNull();
+    expect(modelConnection(both, "devin")).toBeNull();
   });
 
   it("leaves a plain model badge without fit parts", () => {

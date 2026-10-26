@@ -1,5 +1,11 @@
 /** Looks at the machine: what is installed, where, and whether it runs. Changes nothing. */
 import type { ProvisionProvider, ProvisionService } from "@specweave-studio/contracts";
+import {
+  MACOS_TAILSCALE_APP_CLI_ENV,
+  MACOS_TAILSCALE_APP_EXECUTABLE,
+} from "@specweave-studio/tailscale";
+
+import { connectSecretsDir, readConnectLinkMode } from "../cloud/connectLinkMode.ts";
 
 import { isUserBusError } from "../systemdUserBus.ts";
 import { type ProvisionHost, userManagerExec } from "./host.ts";
@@ -145,6 +151,7 @@ export async function versionOf(
   path: string | null,
   args = ["--version"],
   pathValue?: string,
+  extraEnv?: Readonly<Record<string, string>>,
 ) {
   if (!path) return null;
   const result = await host.exec(path, args, {
@@ -153,6 +160,7 @@ export async function versionOf(
       DISABLE_AUTOUPDATER: "1",
       NO_COLOR: "1",
       ...(pathValue === undefined ? {} : { PATH: pathValue }),
+      ...extraEnv,
     },
   });
   return result.code === 0 ? parseVersion(`${result.stdout}\n${result.stderr}`) : null;
@@ -177,6 +185,8 @@ export async function ownsLauncher(
   return text.split("\n")[1] === OUR_LAUNCHER_MARKER;
 }
 
+const MACOS_TAILSCALE_APP_BUNDLE = "/Applications/Tailscale.app";
+
 export async function probeAll(ctx: Ctx): Promise<Probes> {
   const { host, paths } = ctx;
   const searchPath = searchPathFor(ctx);
@@ -192,9 +202,22 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
   const codexPath = await which("codex");
   const tailscalePath =
     (await which("tailscale")) ??
-    ((await host.isExecutable("/Applications/Tailscale.app/Contents/MacOS/Tailscale"))
-      ? "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    ((await host.isExecutable(MACOS_TAILSCALE_APP_EXECUTABLE))
+      ? MACOS_TAILSCALE_APP_EXECUTABLE
       : null);
+  // An app bundle whose executable cannot run still counts as installed: never install over it.
+  const tailscaleBundle =
+    tailscalePath === null &&
+    ctx.target.platform === "darwin" &&
+    (await host.exists(MACOS_TAILSCALE_APP_BUNDLE))
+      ? MACOS_TAILSCALE_APP_BUNDLE
+      : null;
+  // Without a terminal the app's executable starts the GUI and exits 0 unless told to be the CLI,
+  // also when reached through a `tailscale` symlink on PATH; the plain CLI ignores the variable.
+  const tailscaleEnv =
+    tailscalePath !== null && ctx.target.platform === "darwin"
+      ? MACOS_TAILSCALE_APP_CLI_ENV
+      : undefined;
 
   const privateNode = join(paths.home, "runtime/node", nodeDownload(ctx.key).stem, "bin/node");
   const runtimeOk = /^v22\.(\d+)\./u.exec(ctx.options.runtime.version);
@@ -212,7 +235,10 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
 
   let tailscaleState: string | null = null;
   if (tailscalePath) {
-    const status = await host.exec(tailscalePath, ["status", "--json"], { timeoutMs: 10_000 });
+    const status = await host.exec(tailscalePath, ["status", "--json"], {
+      timeoutMs: 10_000,
+      ...(tailscaleEnv ? { env: tailscaleEnv } : {}),
+    });
     tailscaleState = /"BackendState":\s*"([A-Za-z]+)"/u.exec(status.stdout)?.[1] ?? null;
   }
 
@@ -283,8 +309,8 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
       ),
     },
     tailscale: {
-      found: await versionOf(host, tailscalePath, ["version"], searchPath),
-      path: tailscalePath,
+      found: await versionOf(host, tailscalePath, ["version"], searchPath, tailscaleEnv),
+      path: tailscalePath ?? tailscaleBundle,
       state: tailscaleState,
     },
     server: { found: serverFound, path: join(paths.binDir, "specwithcode"), launchers },
@@ -294,6 +320,9 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
     linger,
     sleepMasked,
     providers,
+    connect:
+      ctx.options.connectLinkMode ??
+      (await readConnectLinkMode(connectSecretsDir(paths.home), (path) => host.readText(path))),
   };
 }
 

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - private 0600 records need exclusive create, fsync and rename.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - private 0600 records need exclusive create, fsync and rename (retried on Windows locks).
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -23,7 +23,29 @@ export async function writeJson(file: string, value: unknown): Promise<void> {
   } finally {
     await handle.close();
   }
-  await NodeFSP.rename(temporary, file);
+  await renameOverReader(temporary, file);
+}
+
+// About 2 seconds, like atomicWrite.ts: a status read of the record can hold it
+// open while an update replaces it, and Windows refuses that rename until it closes.
+const LOCKED_RENAME_RETRIES = 20;
+const LOCKED_RENAME_RETRY_MS = 100;
+
+async function renameOverReader(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await NodeFSP.rename(from, to);
+      return;
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      const locked = code === "EBUSY" || code === "EPERM" || code === "EACCES";
+      if (process.platform !== "win32" || !locked || attempt >= LOCKED_RENAME_RETRIES) {
+        await NodeFSP.rm(from, { force: true }).catch(() => undefined);
+        throw cause;
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCKED_RENAME_RETRY_MS));
+    }
+  }
 }
 
 export async function readJson<T>(file: string): Promise<T | null> {

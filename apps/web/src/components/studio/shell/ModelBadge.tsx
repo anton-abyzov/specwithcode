@@ -13,7 +13,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../../providerInstances";
 import { useServerConfigs } from "../../../state/entities";
-import { modelLabel } from "../../../studio/shellModel";
+import { modelLabel, providerShortLabel } from "../../../studio/shellModel";
 import {
   ProviderInstanceIcon,
   resolveProviderInstanceAcpRegistryIconUrl,
@@ -123,29 +123,39 @@ export function ModelBadge(props: {
   focusable?: boolean;
   /**
    * Fit the unit to the room its line has (rowModelFit.ts): the provider word gives way,
-   * whole, before the line's other chips.
+   * whole, before the line's other chips. `header`, the thread header's chip, may also
+   * trim a long name and then leave it out.
    */
-  fit?: boolean;
+  fit?: boolean | "header";
+  /** The provider connection that runs the model, when it needs naming (modelConnection). */
+  connection?: string | null;
 }) {
   const label = modelLabel(props.entry, props.instanceId, props.model);
   const [element, setElement] = useState<HTMLSpanElement | null>(null);
-  useRowModelFit(element, props.fit === true);
+  useRowModelFit(element, props.fit === true || props.fit === "header");
   const state = props.state ?? null;
   // A fitted unit may leave the provider's word out, so a screen reader hears it from a
   // twin that always stays; otherwise a Claude model reached through Copilot would
   // read as native Claude Code.
   const providerPart = props.fit ? { "data-row-part": "provider", "aria-hidden": true } : {};
+  // The header's leanest fit leaves the name out of sight, but never out of the name.
+  const header = props.fit === "header";
+  const namePart = header ? { "data-row-part": "name" } : {};
+  const connection = props.connection ?? null;
   const badge = (
     <span
       ref={setElement}
       tabIndex={props.focusable ? 0 : undefined}
       data-model-state={state?.kind}
+      data-row-line={header ? "header" : undefined}
       className={cn("sws-model", props.variant === "chip" && "sws-model-chip", props.className)}
     >
       <ModelBadgeMark entry={props.entry} instanceId={props.instanceId} provider={label.provider} />
       {label.full === label.model ? (
         // "Grok 5" already names its maker; saying Grok twice helps nobody.
-        <span className="sws-model-name">{label.model}</span>
+        <span className="sws-model-name" {...namePart}>
+          {label.model}
+        </span>
       ) : (
         <>
           {props.fit ? (
@@ -159,7 +169,9 @@ export function ModelBadge(props: {
           <span className="sws-model-sep" {...providerPart} aria-hidden>
             ·
           </span>
-          <span className="sws-model-name">{label.model}</span>
+          <span className="sws-model-name" {...namePart}>
+            {label.model}
+          </span>
         </>
       )}
       {state ? <ModelStateTag state={state} /> : null}
@@ -167,7 +179,18 @@ export function ModelBadge(props: {
   );
   return props.tooltip ? (
     <Tip
-      label={props.state ? <ModelStateTip current={label.full} state={props.state} /> : label.full}
+      label={
+        props.state ? (
+          <ModelStateTip current={label.full} connection={connection} state={props.state} />
+        ) : connection ? (
+          <span className="sws-model-state-tip">
+            <strong>{label.full}</strong>
+            <span className="sws-model-state-tip-detail">Connection: {connection}</span>
+          </span>
+        ) : (
+          label.full
+        )
+      }
     >
       {badge}
     </Tip>
@@ -176,12 +199,56 @@ export function ModelBadge(props: {
   );
 }
 
+/**
+ * The provider connection that runs the model, named only when another connection on
+ * the same machine reads as the same provider: "Codex Work" beside the default Codex.
+ * A lone connection (one Gemini CLI registry agent) adds nothing to "Gemini · …".
+ */
+export function modelConnection(
+  entries: ReadonlyMap<string, ProviderInstanceEntry>,
+  instanceId: string,
+): string | null {
+  const entry = entries.get(instanceId);
+  const name = entry?.displayName.trim() ?? "";
+  if (!entry || name === "") return null;
+  // Another enabled connection that reads as the same provider; a removed one lingers
+  // disabled for a moment and names nothing.
+  const others =
+    (enabledByProvider(entries).get(providerShortLabel(entry, instanceId)) ?? 0) -
+    (entry.enabled ? 1 : 0);
+  return others > 0 ? name : null;
+}
+
+// Every row asks with the same map, so its providers are counted once per map.
+const providerCounts = new WeakMap<
+  ReadonlyMap<string, ProviderInstanceEntry>,
+  Map<string, number>
+>();
+
+function enabledByProvider(
+  entries: ReadonlyMap<string, ProviderInstanceEntry>,
+): ReadonlyMap<string, number> {
+  let counts = providerCounts.get(entries);
+  if (!counts) {
+    counts = new Map();
+    for (const entry of entries.values()) {
+      if (!entry.enabled) continue;
+      const provider = providerShortLabel(entry, entry.instanceId);
+      counts.set(provider, (counts.get(provider) ?? 0) + 1);
+    }
+    providerCounts.set(entries, counts);
+  }
+  return counts;
+}
+
 /** Shared shell identity: works in unopened rows without loading transcripts. */
 export function ThreadModelBadge(props: {
   thread: Pick<OrchestrationV2ThreadShell, "modelSelection" | "modelIdentity">;
   entries: ReadonlyMap<string, ProviderInstanceEntry>;
   variant?: "row" | "chip";
   focusable?: boolean;
+  /** The thread header's chip: it may trim, then leave out, the model's name. */
+  header?: boolean;
 }) {
   const identity = props.thread.modelIdentity;
   const current = identity?.current ?? props.thread.modelSelection;
@@ -222,7 +289,8 @@ export function ThreadModelBadge(props: {
       {...(props.variant ? { variant: props.variant } : {})}
       {...(props.focusable ? { focusable: true } : {})}
       state={state}
-      fit
+      fit={props.header ? "header" : true}
+      connection={modelConnection(props.entries, current.instanceId)}
       tooltip
     />
   );

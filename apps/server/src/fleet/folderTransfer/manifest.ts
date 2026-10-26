@@ -20,6 +20,10 @@ export const CHUNK_SIZE = 8 * 1024 * 1024;
 /** A copy refuses folders with more entries than this instead of exhausting memory. */
 export const MAX_ENTRIES = 2_000_000;
 const HASH_CONCURRENCY = 8;
+/** Directory children are stat'ed this many at a time; entries keep their sorted order. */
+const STAT_CONCURRENCY = 64;
+/** A scan reports progress at most this often. */
+const PROGRESS_INTERVAL_MS = 250;
 const READ_BUFFER = 1024 * 1024;
 
 export type EntryType = "file" | "directory" | "symlink";
@@ -69,6 +73,22 @@ export interface RepositoryInfo {
 
 export type ClassTotals = Record<FileClass, { files: number; bytes: number }>;
 
+export interface FolderScanSkipped {
+  /** Rebuildable folders recorded as collapsed without counting what is inside them. */
+  readonly rebuildableFolders: number;
+  /** Linked worktrees inside the root whose main repository is inside it too, relative to the root. */
+  readonly worktrees: ReadonlyArray<string>;
+  /** Skipped worktrees with uncommitted (staged, unstaged or untracked) changes. */
+  readonly dirtyWorktrees?: ReadonlyArray<string>;
+  /** Skipped worktrees whose status could not be read in time; they may hold changes. */
+  readonly uncheckedWorktrees?: ReadonlyArray<string>;
+  /**
+   * Skipped worktrees whose commits would not travel: a detached HEAD that no local
+   * branch contains, or a rebase, merge, cherry-pick or revert in progress.
+   */
+  readonly strandedWorktrees?: ReadonlyArray<string>;
+}
+
 export interface FolderScan {
   readonly root: string;
   readonly entries: Array<ManifestEntry>;
@@ -77,15 +97,44 @@ export interface FolderScan {
   readonly warnings: Array<string>;
   /** Informational scope/portability notes, not incomplete-snapshot warnings. */
   readonly notices?: Array<string>;
+  /** What the scan left out to stay fast. */
+  readonly skipped?: FolderScanSkipped;
+}
+
+export interface ScanProgress {
+  readonly files: number;
+  readonly bytes: number;
+  /** Set while the skipped worktrees are checked for uncommitted changes. */
+  readonly step?: "checking-worktrees";
+}
+
+export interface ScanOptions {
+  readonly expandRebuildable?: boolean;
+  readonly maxEntries?: number;
+  /** Files and bytes listed so far, at most every 250 ms. */
+  readonly onProgress?: (progress: ScanProgress) => void;
+  /** Checked at least once per folder; true stops the scan with a "stopped" FolderScanError. */
+  readonly shouldStop?: () => boolean;
+  /**
+   * Walk linked worktrees of repositories inside the root like any repository.
+   * Only the private Git snapshot uses it, to list the relative pointers it wrote.
+   */
+  readonly keepLinkedWorktrees?: boolean;
+  /** Test seam: per-worktree time limit for the uncommitted-changes check. */
+  readonly worktreeStatusTimeoutMs?: number;
 }
 
 export class FolderScanError extends Error {
-  readonly reason: "not-a-folder" | "too-many-entries" | "unreadable" | "git-failed";
+  readonly reason: "not-a-folder" | "too-many-entries" | "unreadable" | "git-failed" | "stopped";
   constructor(reason: FolderScanError["reason"], detail?: string) {
     super(detail ?? reason);
     this.reason = reason;
   }
 }
+
+/** True for the error a scan throws when its `shouldStop` check asked it to stop. */
+export const isScanStopped = (cause: unknown): boolean =>
+  cause instanceof FolderScanError && cause.reason === "stopped";
 
 export function emptyTotals(): ClassTotals {
   return Object.fromEntries(
@@ -263,43 +312,182 @@ export function withoutCredentials(value: string): string | null {
   }
 }
 
-async function sizeOfTree(absolute: string): Promise<{ files: number; bytes: number }> {
-  let files = 0;
-  let bytes = 0;
-  const pending = [absolute];
-  while (pending.length > 0) {
-    const directory = pending.pop()!;
-    let children: Array<NodeFS.Dirent>;
-    try {
-      children = await NodeFSP.readdir(directory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const child of children) {
-      const location = NodePath.join(directory, child.name);
-      if (child.isDirectory()) pending.push(location);
-      else if (child.isFile()) {
-        files += 1;
-        try {
-          bytes += (await NodeFSP.lstat(location)).size;
-        } catch {
-          // Gone while counting: the count is an estimate for the selection screen.
-        }
-      }
-    }
+/**
+ * The Git directory of a linked worktree at `absolute` whose main repository is
+ * inside `realRoot`, read from the `.git` file and `commondir` without running
+ * Git. It is such a worktree only when `.git` is a FILE whose `gitdir` resolves to
+ * `<main>/.git/worktrees/<name>` and whose `commondir` resolves to that `<main>/.git`.
+ * Being named by `git worktree list` is not enough: an independent repository
+ * re-created at a stale worktree path must be read as a repository.
+ * Null when it is not such a worktree or cannot be read.
+ */
+async function innerWorktreeGitDir(absolute: string, realRoot: string): Promise<string | null> {
+  try {
+    const gitFile = NodePath.join(absolute, ".git");
+    const stat = await NodeFSP.lstat(gitFile);
+    if (!stat.isFile() || stat.size > 4096) return null;
+    const match = /^gitdir:\s*(.+?)\s*$/m.exec(await NodeFSP.readFile(gitFile, "utf8"));
+    if (!match) return null;
+    const gitDir = NodePath.resolve(absolute, match[1]!);
+    const realGitDir = await NodeFSP.realpath(gitDir);
+    const worktrees = NodePath.dirname(realGitDir);
+    const mainGit = NodePath.dirname(worktrees);
+    if (NodePath.basename(worktrees) !== "worktrees" || NodePath.basename(mainGit) !== ".git")
+      return null;
+    if (!(await NodeFSP.lstat(mainGit)).isDirectory()) return null;
+    const common = await NodeFSP.realpath(
+      NodePath.resolve(
+        realGitDir,
+        (await NodeFSP.readFile(NodePath.join(realGitDir, "commondir"), "utf8")).trim(),
+      ),
+    );
+    if (common !== mainGit) return null;
+    const mainTop = NodePath.dirname(mainGit);
+    return mainTop === realRoot || mainTop.startsWith(`${realRoot}${NodePath.sep}`) ? gitDir : null;
+  } catch {
+    return null;
   }
-  return { files, bytes };
+}
+
+/** Skipped worktrees checked at once, and each check's time limit. */
+const WORKTREE_STATUS_CONCURRENCY = 4;
+const WORKTREE_STATUS_TIMEOUT_MS = 10_000;
+
+/** Markers in a worktree's Git directory of an operation that leaves commits on no branch. */
+const STRANDING_MARKERS = [
+  "rebase-merge",
+  "rebase-apply",
+  "MERGE_HEAD",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+];
+
+/**
+ * Whether a skipped worktree's committed work would stay behind: an operation in
+ * progress, or a detached HEAD no local branch contains. Null when that could not
+ * be decided in time: its Git commands share one deadline, the status check's limit.
+ */
+async function worktreeStranded(
+  folder: string,
+  gitDir: string | undefined,
+  timeoutMs: number,
+): Promise<boolean | null> {
+  if (gitDir) {
+    for (const marker of STRANDING_MARKERS)
+      if (await NodeFSP.lstat(NodePath.join(gitDir, marker)).catch(() => null)) return true;
+    // A HEAD naming a branch travels with the main repository's refs.
+    const head = await NodeFSP.readFile(NodePath.join(gitDir, "HEAD"), "utf8").catch(() => null);
+    if (head !== null && head.startsWith("ref: ")) return false;
+  }
+  const deadline = Date.now() + timeoutMs;
+  const git = (args: ReadonlyArray<string>) => {
+    const left = deadline - Date.now();
+    return left <= 0
+      ? Promise.resolve(null)
+      : runGit(folder, args, { allowFailure: true, timeoutMs: left }).catch(() => null);
+  };
+  const symbolic = await git(["symbolic-ref", "-q", "HEAD"]);
+  if (!symbolic) return null;
+  if (symbolic.code === 0) return false;
+  const head = await git(["rev-parse", "--verify", "-q", "HEAD"]);
+  if (!head) return null;
+  // An unborn detached HEAD has no commits to lose.
+  if (head.code !== 0) return false;
+  const containing = await git([
+    "for-each-ref",
+    "--count=1",
+    "--format=%(refname)",
+    "--contains",
+    "HEAD",
+    "refs/heads",
+  ]);
+  if (!containing || containing.code !== 0) return null;
+  return containing.stdout.trim().length === 0;
+}
+
+/**
+ * Which skipped worktrees hold uncommitted work: staged, unstaged or untracked
+ * changes (submodules ignored), and which hold commits that would not travel
+ * (stranded). A check that fails or times out is "unknown".
+ */
+async function worktreeChanges(
+  realRoot: string,
+  folders: ReadonlyArray<string>,
+  gitDirs: ReadonlyMap<string, string>,
+  options: ScanOptions,
+): Promise<{ dirty: Array<string>; unknown: Array<string>; stranded: Array<string> }> {
+  const verdicts: Array<"clean" | "dirty" | "unknown"> = folders.map(() => "unknown");
+  const stranded: Array<boolean> = folders.map(() => false);
+  const timeoutMs = options.worktreeStatusTimeoutMs ?? WORKTREE_STATUS_TIMEOUT_MS;
+  let checked = 0;
+  await forEachLimited(folders, WORKTREE_STATUS_CONCURRENCY, async (folder, index) => {
+    if (options.shouldStop?.()) throw new FolderScanError("stopped");
+    const absolute = NodePath.join(realRoot, folder);
+    const [result, strandedVerdict] = await Promise.all([
+      runGit(
+        absolute,
+        ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all"],
+        { allowFailure: true, timeoutMs },
+      ).catch(() => null),
+      worktreeStranded(absolute, gitDirs.get(folder), timeoutMs).catch(() => null),
+    ]);
+    if (result && result.code === 0 && strandedVerdict !== null)
+      verdicts[index] = result.stdout.length > 0 ? "dirty" : "clean";
+    else if (result && result.code === 0 && result.stdout.length > 0) verdicts[index] = "dirty";
+    stranded[index] = strandedVerdict === true;
+    checked += 1;
+    options.onProgress?.({ files: checked, bytes: 0, step: "checking-worktrees" });
+  });
+  if (options.shouldStop?.()) throw new FolderScanError("stopped");
+  return {
+    dirty: folders.filter((_, index) => verdicts[index] === "dirty"),
+    unknown: folders.filter((_, index) => verdicts[index] === "unknown"),
+    stranded: folders.filter((_, index) => stranded[index]),
+  };
+}
+
+const SKIPPED_WORKTREES_NAMED = 20;
+
+const SKIPPED_WORKTREES_PREFIX = /^\d+ linked worktree\(s\) inside this folder are not copied/;
+
+/** True for the notice naming the skipped worktrees; summaries keep it first. */
+export const isSkippedWorktreesNotice = (notice: string) => SKIPPED_WORKTREES_PREFIX.test(notice);
+
+const nameSome = (paths: ReadonlyArray<string>) =>
+  paths.slice(0, SKIPPED_WORKTREES_NAMED).join(", ") +
+  (paths.length > SKIPPED_WORKTREES_NAMED
+    ? ` and ${paths.length - SKIPPED_WORKTREES_NAMED} more`
+    : "");
+
+function skippedWorktreesNotice(
+  paths: ReadonlyArray<string>,
+  dirty: ReadonlyArray<string>,
+  unknown: ReadonlyArray<string>,
+  stranded: ReadonlyArray<string>,
+): string {
+  const changes =
+    dirty.length > 0
+      ? ` ${dirty.length} of them have uncommitted changes that stay on this machine: ${nameSome(dirty)}. Commit them first to copy that work.`
+      : "";
+  const unchecked =
+    unknown.length > 0
+      ? ` ${unknown.length} could not be checked for uncommitted changes and may hold some: ${nameSome(unknown)}.`
+      : "";
+  const strandedText =
+    stranded.length > 0
+      ? ` ${stranded.length} have commits on no branch that would not travel: ${nameSome(stranded)}. Create a branch there, or finish the rebase, merge or cherry-pick, to copy them.`
+      : "";
+  return `${paths.length} linked worktree(s) inside this folder are not copied: ${nameSome(paths)}. Their committed branches are copied with the main repository; uncommitted changes in them stay on this machine.${changes}${unchecked}${strandedText}`;
 }
 
 /**
  * Lists the folder without following any link: every entry's path, type, mode,
  * size and mtime, each file's class, and each repository's refs, status and
- * worktrees. Rebuildable ignored folders are counted, not listed, until selected.
+ * worktrees. Rebuildable ignored folders are recorded, not opened, until selected.
+ * Linked worktrees inside the root whose main repository is inside it too are not
+ * listed: their branches travel with the main repository.
  */
-export async function scanFolder(
-  root: string,
-  options: { readonly expandRebuildable?: boolean; readonly maxEntries?: number } = {},
-): Promise<FolderScan> {
+export async function scanFolder(root: string, options: ScanOptions = {}): Promise<FolderScan> {
   let realRoot: string;
   try {
     realRoot = await NodeFSP.realpath(root);
@@ -313,6 +501,26 @@ export async function scanFolder(
   const totals = emptyTotals();
   const warnings: Array<string> = [];
   const notices: Array<string> = [];
+  /** Worktree folders named by a main repository inside the root. */
+  const listedWorktrees = new Set<string>();
+  /** Relative paths of the worktree folders the walk left out, and their Git directories. */
+  const skippedWorktrees: Array<string> = [];
+  const skippedGitDirs: Array<string> = [];
+  let rebuildableFolders = 0;
+  let files = 0;
+  let bytes = 0;
+  let lastReport = Date.now();
+  let sinceCheck = 0;
+  const report = (force = false) => {
+    if (!options.onProgress) return;
+    const now = Date.now();
+    if (!force && now - lastReport < PROGRESS_INTERVAL_MS) return;
+    lastReport = now;
+    options.onProgress({ files, bytes });
+  };
+  const checkStop = () => {
+    if (options.shouldStop?.()) throw new FolderScanError("stopped");
+  };
   const push = (entry: ManifestEntry) => {
     if (entries.length >= maxEntries) throw new FolderScanError("too-many-entries");
     entries.push(entry);
@@ -320,31 +528,63 @@ export async function scanFolder(
       totals[entry.class].files += entry.collapsed?.files ?? 1;
       totals[entry.class].bytes += entry.size;
     }
+    if (entry.type === "file") {
+      files += 1;
+      bytes += entry.size;
+    }
+    sinceCheck += 1;
+    if (sinceCheck >= 256) {
+      sinceCheck = 0;
+      report();
+    }
   };
 
+  /** "skipped" tells the caller to take back the folder's own entry. */
   const walk = async (
     absolute: string,
     repos: ReadonlyArray<RepoContext>,
     insideGitData: boolean,
-  ): Promise<void> => {
+  ): Promise<"walked" | "skipped"> => {
+    checkStop();
+    report();
     let children: Array<NodeFS.Dirent>;
     try {
       children = await NodeFSP.readdir(absolute, { withFileTypes: true });
     } catch (cause) {
       if (absolute === realRoot) throw new FolderScanError("unreadable", String(cause));
       warnings.push(`Could not read ${relativeOf(realRoot, absolute)}`);
-      return;
+      return "walked";
     }
     children.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     let scope = repos;
     if (!insideGitData) {
       const gitChild = children.find((child) => child.name === ".git");
+      // A linked worktree of a repository inside the root is not walked or read
+      // with Git: its branches travel with the main repository's refs.
+      if (gitChild && absolute !== realRoot && !options.keepLinkedWorktrees) {
+        const gitDir = await innerWorktreeGitDir(absolute, realRoot);
+        if (gitDir !== null) {
+          skippedWorktrees.push(relativeOf(realRoot, absolute));
+          skippedGitDirs.push(gitDir);
+          return "skipped";
+        }
+      }
       if (gitChild) {
         try {
           const stat = await NodeFSP.lstat(NodePath.join(absolute, ".git"));
           if (stat.isDirectory() || stat.isFile()) {
             const read = await readRepository(realRoot, absolute, stat);
-            repositories.push(read.info);
+            const inside = read.info.worktrees.filter((tree) => tree.path !== null);
+            if (!options.keepLinkedWorktrees)
+              for (const tree of inside) listedWorktrees.add(NodePath.join(realRoot, tree.path!));
+            repositories.push(
+              inside.length > 0
+                ? {
+                    ...read.info,
+                    worktrees: read.info.worktrees.filter((tree) => tree.path === null),
+                  }
+                : read.info,
+            );
             const outside = read.info.worktrees.filter((tree) => tree.path === null);
             if (outside.length > 0)
               notices.push(
@@ -361,21 +601,25 @@ export async function scanFolder(
       }
     }
     const innermost = scope.at(-1) ?? null;
-    for (const child of children) {
+    const safe = children.map((child) =>
+      isSafeRelativePath(relativeOf(realRoot, NodePath.join(absolute, child.name)), "linux"),
+    );
+    const stats: Array<NodeFS.Stats | null> = Array.from({ length: children.length }, () => null);
+    await forEachLimited(children, STAT_CONCURRENCY, async (child, index) => {
+      if (!safe[index]) return;
+      stats[index] = await NodeFSP.lstat(NodePath.join(absolute, child.name)).catch(() => null);
+    });
+    for (const [index, child] of children.entries()) {
       const location = NodePath.join(absolute, child.name);
       const relative = relativeOf(realRoot, location);
-      if (!isSafeRelativePath(relative, "linux")) {
+      if (!safe[index]) {
         warnings.push(
           `Skipped an entry whose name cannot be copied safely below ${relativeOf(realRoot, absolute)}`,
         );
         continue;
       }
-      let stat: NodeFS.Stats;
-      try {
-        stat = await NodeFSP.lstat(location);
-      } catch {
-        continue;
-      }
+      const stat = stats[index];
+      if (!stat) continue;
       const gitData = insideGitData || (child.name === ".git" && innermost?.absolute === absolute);
       // Git daemon sockets and transient writer locks are local runtime state,
       // never part of a portable snapshot or a reason to block later transfer.
@@ -415,32 +659,172 @@ export async function scanFolder(
             () => false,
           ))
         ) {
-          const counted = await sizeOfTree(location);
+          // Dependencies and build output are recreated on the destination; opening
+          // them would cost one stat per file (millions in a large umbrella).
+          rebuildableFolders += 1;
           push({
             ...base,
             type: "directory",
-            size: counted.bytes,
+            size: 0,
             class: fileClass,
-            collapsed: { files: counted.files },
+            collapsed: { files: 0 },
           });
           continue;
         }
+        const mark = entries.length;
         push({ ...base, type: "directory", size: 0, class: fileClass });
-        await walk(location, scope, gitData);
+        if ((await walk(location, scope, gitData)) === "skipped") entries.length = mark;
       } else {
         warnings.push(`Skipped ${relative}: not a file, folder or link.`);
       }
     }
+    return "walked";
   };
 
   await walk(realRoot, [], false);
-  return { root: realRoot, entries, repositories, totals, warnings, notices };
+  checkStop();
+  if (skippedWorktrees.length > 0 || listedWorktrees.size > 0)
+    await dropSkippedWorktrees({
+      realRoot,
+      entries,
+      repositories,
+      totals,
+      folders: skippedWorktrees,
+      listed: listedWorktrees,
+      gitDirs: skippedGitDirs,
+    });
+  const gitDirOfSkipped = new Map(
+    skippedWorktrees.map((folder, index) => [folder, skippedGitDirs[index]!] as const),
+  );
+  skippedWorktrees.sort();
+  const changes =
+    skippedWorktrees.length > 0
+      ? await worktreeChanges(realRoot, skippedWorktrees, gitDirOfSkipped, options)
+      : { dirty: [], unknown: [], stranded: [] };
+  // First, so a cap on the number of notices can never drop it.
+  if (skippedWorktrees.length > 0)
+    notices.unshift(
+      skippedWorktreesNotice(skippedWorktrees, changes.dirty, changes.unknown, changes.stranded),
+    );
+  // Dropped registrations were counted while listing; the totals no longer hold them.
+  files = FILE_CLASSES.reduce((sum, name) => sum + totals[name].files, 0);
+  bytes = FILE_CLASSES.reduce((sum, name) => sum + totals[name].bytes, 0);
+  report(true);
+  return {
+    root: realRoot,
+    entries,
+    repositories,
+    totals,
+    warnings,
+    notices,
+    skipped: {
+      rebuildableFolders,
+      worktrees: skippedWorktrees,
+      ...(skippedWorktrees.length > 0
+        ? {
+            dirtyWorktrees: changes.dirty,
+            uncheckedWorktrees: changes.unknown,
+            strandedWorktrees: changes.stranded,
+          }
+        : {}),
+    },
+  };
+}
+
+/**
+ * Takes the skipped worktrees out of their main repositories: drops each one's
+ * `.git/worktrees/<name>` registration (so the destination never gets a dangling
+ * worktree) and the status lines that name the folder (`?? wt/` in a main checkout
+ * that holds its own worktrees unignored).
+ */
+async function dropSkippedWorktrees(input: {
+  readonly realRoot: string;
+  readonly entries: Array<ManifestEntry>;
+  readonly repositories: Array<RepositoryInfo>;
+  readonly totals: ClassTotals;
+  readonly folders: ReadonlyArray<string>;
+  readonly listed: ReadonlySet<string>;
+  readonly gitDirs: ReadonlyArray<string>;
+}): Promise<void> {
+  const { realRoot, entries, repositories, totals } = input;
+  const admins = new Set<string>();
+  for (const gitDir of input.gitDirs) {
+    const resolved = await NodeFSP.realpath(gitDir).catch(() => gitDir);
+    if (resolved.startsWith(`${realRoot}${NodePath.sep}`))
+      admins.add(relativeOf(realRoot, resolved));
+  }
+  // Registrations of listed worktrees, found the way the portable snapshot finds
+  // registrations outside the root: by the admin folder's `gitdir` pointer.
+  const skippedFolders = new Set([
+    ...input.listed,
+    ...input.folders.map((folder) => NodePath.join(realRoot, folder)),
+  ]);
+  for (const info of repositories.filter((repo) => repo.kind === "main")) {
+    const prefix = info.path === "." ? ".git/worktrees/" : `${info.path}/.git/worktrees/`;
+    for (const entry of entries) {
+      if (entry.type !== "file" || !entry.path.startsWith(prefix)) continue;
+      const rest = entry.path.slice(prefix.length);
+      if (!/^[^/]+\/gitdir$/.test(rest)) continue;
+      const admin = entry.path.slice(0, -"/gitdir".length);
+      if (admins.has(admin)) continue;
+      try {
+        const pointer = (
+          await NodeFSP.readFile(NodePath.join(realRoot, entry.path), "utf8")
+        ).trim();
+        const gitFile = NodePath.resolve(NodePath.join(realRoot, admin), pointer);
+        const folder = NodePath.dirname(gitFile);
+        const real = await NodeFSP.realpath(folder).catch(() => folder);
+        if (skippedFolders.has(folder) || skippedFolders.has(real)) admins.add(admin);
+      } catch {
+        // An unreadable registration stays as it was.
+      }
+    }
+  }
+  if (admins.size > 0) {
+    const dropped = (path: string) => {
+      for (const admin of admins) if (path === admin || path.startsWith(`${admin}/`)) return true;
+      return false;
+    };
+    let kept = 0;
+    for (const entry of entries) {
+      if (dropped(entry.path)) {
+        if (entry.type === "file" || entry.collapsed) {
+          totals[entry.class].files -= entry.collapsed?.files ?? 1;
+          totals[entry.class].bytes -= entry.size;
+        }
+        continue;
+      }
+      entries[kept] = entry;
+      kept += 1;
+    }
+    entries.length = kept;
+  }
+  if (input.folders.length === 0) return;
+  for (const [index, info] of repositories.entries()) {
+    const repoPrefix = info.path === "." ? "" : `${info.path}/`;
+    const status = info.status.filter((line) => {
+      const path = `${repoPrefix}${line.slice(3).replace(/\/$/, "")}`;
+      if (input.folders.some((folder) => path === folder || path.startsWith(`${folder}/`)))
+        return false;
+      // Git collapses `?? .worktrees/` when the folder holds only worktrees; the
+      // copy has nothing in it there, so the line would never match.
+      if (!input.folders.some((folder) => folder.startsWith(`${path}/`))) return true;
+      return entries.some(
+        (entry) =>
+          entry.path.startsWith(`${path}/`) && (entry.type !== "directory" || entry.collapsed),
+      );
+    });
+    if (status.length !== info.status.length) repositories[index] = { ...info, status };
+  }
 }
 
 /** Re-lists a collapsed rebuildable folder once the person selects rebuildable files. */
-export async function expandCollapsed(scan: FolderScan): Promise<FolderScan> {
+export async function expandCollapsed(
+  scan: FolderScan,
+  options: Omit<ScanOptions, "expandRebuildable"> = {},
+): Promise<FolderScan> {
   if (!scan.entries.some((entry) => entry.collapsed)) return scan;
-  return scanFolder(scan.root, { expandRebuildable: true });
+  return scanFolder(scan.root, { ...options, expandRebuildable: true });
 }
 
 export interface HashedFile {
@@ -503,22 +887,38 @@ export class FileChangedError extends Error {
   }
 }
 
-/** Runs `work` over `items` with at most `limit` in flight. */
+/**
+ * Runs `work` over `items` with at most `limit` in flight. On the first failure no
+ * worker takes another item, and the call rejects with that failure only after
+ * every item already in flight settled, so a caller's cleanup or retry never
+ * races a stale worker.
+ */
 export async function forEachLimited<T>(
   items: ReadonlyArray<T>,
   limit: number,
   work: (item: T, index: number) => Promise<void>,
 ): Promise<void> {
   let next = 0;
+  let failed = false;
+  let failure: unknown;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
+    while (!failed) {
       const index = next;
       next += 1;
       if (index >= items.length) return;
-      await work(items[index]!, index);
+      try {
+        await work(items[index]!, index);
+      } catch (cause) {
+        if (!failed) {
+          failed = true;
+          failure = cause;
+        }
+        return;
+      }
     }
   });
   await Promise.all(workers);
+  if (failed) throw failure;
 }
 
 /**

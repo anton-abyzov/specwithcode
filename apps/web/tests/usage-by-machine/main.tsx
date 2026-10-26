@@ -191,7 +191,7 @@ function PopoverCase() {
               <PopoverTitle>Limits by machine</PopoverTitle>
               <p>
                 Each machine uses its own sign-ins. Every limit window is listed; when a provider
-                has several, the one that runs out first is brighter.
+                has several, the one with the least left is brighter.
               </p>
             </header>
             <HostLimitsCompactView

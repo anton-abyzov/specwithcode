@@ -87,15 +87,53 @@ const SERVICE_TAKES_REQUESTS: ReadonlySet<StudioServiceUpdateState["status"]> = 
 ]);
 
 /**
- * The agent's refusals that an Update now request gets past, exactly as
- * update_agent.py (refusal_reason) writes them: the service lost its SQLite
- * locks or its database log, and update.py (database_restart_refusal)
- * restarts it for a held forced request, then installs.
+ * The refusals for a service on a deleted database log or without its SQLite
+ * locks, as service_handles.py words them. Agents before 1085 end them with
+ * "Restart SpecWithCode, then update", which nobody can do from the app: Cmd+Q
+ * leaves the background service running. Their wording since says that Update
+ * now (or Try again) restarts the service and updates, which update.py
+ * (database_restart_refusal) does for an explicit request.
  */
-const RESTART_NEEDED_REFUSALS: ReadonlySet<string> = new Set([
-  "SpecWithCode cannot be updated right now: The SpecWithCode service lost its SQLite locks on its database. Restart SpecWithCode, then update",
-  "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update",
-]);
+export const DETACHED_DATABASE_REFUSAL =
+  "The SpecWithCode service is using a database log that was deleted from disk. Press Update now: SpecWithCode saves that log, restarts its background service and then updates";
+export const LOCKS_LOST_REFUSAL =
+  "The SpecWithCode service lost its SQLite locks on its database. Press Update now: SpecWithCode restarts its background service and then updates";
+const LEGACY_REFUSALS: ReadonlyArray<readonly [legacy: string, current: string]> = [
+  [
+    "The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update",
+    DETACHED_DATABASE_REFUSAL,
+  ],
+  [
+    "The SpecWithCode service lost its SQLite locks on its database. Restart SpecWithCode, then update",
+    LOCKS_LOST_REFUSAL,
+  ],
+];
+const REFUSAL_PREFIX = "SpecWithCode cannot be updated right now: ";
+
+/**
+ * The agent's refusals that an Update now request gets past, exactly as
+ * update_agent.py (refusal_reason) writes them, in both wordings: the service
+ * lost its SQLite locks or its database log, and update.py
+ * (database_restart_refusal) restarts it for an explicit request, then installs.
+ */
+const RESTART_NEEDED_REFUSALS: ReadonlySet<string> = new Set(
+  LEGACY_REFUSALS.flatMap(([legacy, current]) => [
+    `${REFUSAL_PREFIX}${legacy}`,
+    `${REFUSAL_PREFIX}${current}`,
+  ]),
+);
+
+/**
+ * The agent's message as the person reads it: an older agent's "Restart
+ * SpecWithCode, then update" for these refusals becomes the current wording,
+ * which offers Update now instead. Any other message is returned unchanged.
+ */
+export function serviceRefusalText(message: string): string {
+  for (const [legacy, current] of LEGACY_REFUSALS) {
+    if (message.includes(legacy)) return message.replace(legacy, current);
+  }
+  return message;
+}
 
 /** What the update agent says when an install request lapsed before it could start. */
 export const SERVICE_REQUEST_EXPIRED =
@@ -245,7 +283,7 @@ export function getRestartToUpdateView(
   // The agent's own words for the failure Update now gets past stay beside the action.
   const serviceFailure =
     service && isServiceErrorWithRelease(serviceState)
-      ? serviceState.message.replace(/\.?$/, ".")
+      ? serviceRefusalText(serviceState.message).replace(/\.?$/, ".")
       : null;
   // Nothing is on disk yet when only the running app is ahead: say what runs.
   const what =
@@ -1034,7 +1072,12 @@ export function serviceUpdateToast(
           : forced
             ? `Updating to ${version}${clock}`
             : `Preparing to install ${version}${clock}`,
-        description: running + (restarted || blockers || progress.message || fallback),
+        description:
+          running +
+          (restarted ||
+            blockers ||
+            (progress.message ? serviceRefusalText(progress.message) : null) ||
+            fallback),
         action: forced ? null : "update-now",
         cancel: true,
       };
@@ -1072,7 +1115,11 @@ export function serviceUpdateToast(
       return {
         type: "error",
         title: `Could not install ${version}`,
-        description: progress.message ?? "See Settings > About for the update receipt.",
+        // An older agent's "Restart SpecWithCode, then update" reads as what Update now does.
+        description:
+          progress.message !== null
+            ? serviceRefusalText(progress.message)
+            : "See Settings > About for the update receipt.",
         action: "retry",
         cancel: false,
       };

@@ -9,7 +9,7 @@ import {
   UsageProviderKind,
 } from "@specweave-studio/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { blockingWindow, isLiveWindow } from "@specweave-studio/shared/usageWindows";
+import { blockingWindow, isLiveWindow, windowTitle } from "@specweave-studio/shared/usageWindows";
 import { useNavigate } from "@tanstack/react-router";
 import {
   elapsedShare,
@@ -23,7 +23,7 @@ import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
-import { blockedLabel, usageToneTextClass } from "../../studio/usageIndicatorModel";
+import { blockedLabel, usageToneTextClassOfUsed } from "../../studio/usageIndicatorModel";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
@@ -104,7 +104,7 @@ function WindowBar({
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${remaining}% left${
+  const summary = `${windowTitle(window)}: ${remaining}% left${
     timeLeft === null ? "" : `, ${timeLeft}% of the window left`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
@@ -192,14 +192,14 @@ export function LimitWindows({
           return (
             <Fragment key={window.id}>
               <span className="flex min-w-0 items-center gap-2 text-xs opacity-60">
-                <span className="truncate text-muted-foreground">{window.label}</span>
+                <span className="truncate text-muted-foreground">{windowTitle(window)}</span>
               </span>
               <div className="opacity-40">
                 <WindowBar color={color} window={window} now={now} />
               </div>
               <span className="truncate text-xs text-muted-foreground">
                 {blockedLabel(
-                  { label: blocker.label, resetsAt: Number.isFinite(at) ? at : null },
+                  { label: windowTitle(blocker), resetsAt: Number.isFinite(at) ? at : null },
                   now,
                 )}
               </span>
@@ -209,9 +209,9 @@ export function LimitWindows({
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
+              <span className="truncate text-muted-foreground">{windowTitle(window)}</span>
               <span
-                className={`ms-auto shrink-0 font-medium tabular-nums ${usageToneTextClass(remainingPercent(window))}`}
+                className={`ms-auto shrink-0 font-medium tabular-nums ${usageToneTextClassOfUsed(window.usedPercent)}`}
               >
                 {window.usedPercent >= 100 ? "Limit reached" : `${remainingPercent(window)}% left`}
               </span>

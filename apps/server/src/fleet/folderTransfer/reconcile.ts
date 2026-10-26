@@ -85,6 +85,12 @@ export interface PlanRow {
   readonly conflicts: ReadonlyArray<FileConflict>;
   readonly cloneAvailable: boolean;
   readonly clone: boolean;
+  /**
+   * Destination files this row's plan overwrites or moves to the backup folder
+   * (actions with `replaces`, including mirror removals), even when no decision
+   * is needed. Always set by `planReconcile`.
+   */
+  readonly replacing?: number;
 }
 
 /**
@@ -140,6 +146,8 @@ export interface Plan {
     readonly bytesToMove: number;
     readonly bytesPresent: number;
     readonly decisionsNeeded: number;
+    /** Sum of the rows' `replacing`. */
+    readonly replacing: number;
   };
   readonly warnings: ReadonlyArray<string>;
 }
@@ -701,6 +709,13 @@ export function planReconcile(input: PlanInput): Plan {
       clone: false,
     });
   rows.push(...onlyHere);
+  // What Apply overwrites or backs up, per row: a row can need no decision and
+  // still replace clean tracked files with the source's uncommitted versions.
+  const replacing = new Map<string, number>();
+  for (const action of actions)
+    if (action.replaces) replacing.set(action.row, (replacing.get(action.row) ?? 0) + 1);
+  for (const [index, row] of rows.entries())
+    rows[index] = { ...row, replacing: replacing.get(row.id) ?? 0 };
   const git = [...repoPlans.values()].flatMap((plan) => (plan.step ? [plan.step] : []));
   return {
     rows,
@@ -716,6 +731,7 @@ export function planReconcile(input: PlanInput): Plan {
           (sum, row) => sum + row.conflicts.filter((conflict) => conflict.decision === null).length,
           0,
         ),
+      replacing: rows.reduce((sum, row) => sum + (row.replacing ?? 0), 0),
     },
     warnings,
   };

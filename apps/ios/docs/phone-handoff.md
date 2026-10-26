@@ -16,7 +16,7 @@ source heartbeat is a refusal, not permission to run a duplicate. Machines witho
 the handoff API show its error; their ordinary chat and pairing still work.
 
 This does not create a network route. Every destination must be reachable from
-the phone over its configured LAN, Tailscale or deployed Connect endpoint. A
+the phone over its deployed Connect endpoint, LAN or Tailscale. A
 loopback-only Mac is not reachable merely because the phone shares its Wi-Fi.
 Simulator fixtures and local server fault tests do not prove physical two-Mac
 failover or off-LAN connectivity.

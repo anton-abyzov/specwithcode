@@ -22,6 +22,10 @@ const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
  */
 export const MACOS_TAILSCALE_APP_EXECUTABLE =
   "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+/** The environment the app-bundle executable needs to act as the CLI. */
+export const MACOS_TAILSCALE_APP_CLI_ENV: Readonly<Record<string, string>> = {
+  TAILSCALE_BE_CLI: "1",
+};
 
 type TailscaleExecutableLabel = "tailscale" | "tailscale.exe" | "Tailscale.app";
 
@@ -43,7 +47,7 @@ const tailscaleExecutablesForPlatform = (
       {
         path: MACOS_TAILSCALE_APP_EXECUTABLE,
         label: "Tailscale.app",
-        env: { TAILSCALE_BE_CLI: "1" },
+        env: MACOS_TAILSCALE_APP_CLI_ENV,
       },
     ];
   }

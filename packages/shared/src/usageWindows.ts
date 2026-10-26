@@ -115,3 +115,50 @@ export function effectiveUsedPercent(
   }
   return used;
 }
+
+type NamedWindow = Pick<Window, "id" | "label" | "modelScope"> & {
+  readonly windowDurationMins?: number | undefined;
+};
+
+const DURATION_NAMES: ReadonlyMap<number, string> = new Map([
+  [300, "5-hour"],
+  [10080, "weekly"],
+]);
+
+/**
+ * A window's name for a sentence, the same on every surface: `5-hour`,
+ * `weekly`, `Fable weekly`, or `GPT-5.3-Codex-Spark: weekly` for a Codex
+ * model bucket. A known duration names the window; otherwise its label does.
+ * Never "Session", which reads as the chat session rather than a limit.
+ */
+export function windowName(window: NamedWindow): string {
+  const colon = window.label.indexOf(": ");
+  const prefix = colon > 0 ? window.label.slice(0, colon) : null;
+  const rest = prefix === null ? window.label : window.label.slice(colon + 2);
+  const [head = rest] = rest.split(" · ");
+  const mins = window.windowDurationMins;
+  const known =
+    mins === undefined
+      ? undefined
+      : (DURATION_NAMES.get(mins) ??
+        (mins % 60 === 0 && mins < 1440 ? `${mins / 60}-hour` : undefined));
+  // Claude's 5-hour is `five_hour`; a session of unreported length is only short.
+  const session = /^session$/i.test(head.trim());
+  const base =
+    known ??
+    (session
+      ? window.id === "five_hour"
+        ? "5-hour"
+        : "short-term"
+      : head.charAt(0).toLowerCase() + head.slice(1));
+  if (prefix !== null) return `${prefix}: ${base}`;
+  const family = windowModelScope(window as Window);
+  return family ? `${family} ${base}` : base;
+}
+
+/** `windowName` as a heading or list label: `5-hour`, `Weekly`, `Fable weekly`. */
+export function windowTitle(window: NamedWindow): string {
+  const name = windowName(window);
+  // A Codex bucket keeps its own name as reported.
+  return window.label.includes(": ") ? name : name.charAt(0).toUpperCase() + name.slice(1);
+}

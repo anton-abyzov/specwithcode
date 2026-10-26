@@ -98,7 +98,7 @@ export function describePhoneNetworkHint(hint: PhoneNetworkHint): string {
     case "tailnet":
       return "Your iPhone needs the Tailscale app, signed in to the same tailnet as this computer.";
     case "same-network":
-      return "Your iPhone needs to be on the same Wi-Fi as this computer.";
+      return "Your iPhone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.";
     case "anywhere":
       return "Your iPhone must be able to open this address. Keep this computer awake and online.";
   }

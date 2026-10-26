@@ -32,7 +32,7 @@ import {
   join,
 } from "./context.ts";
 import { ownsLauncher, versionOf } from "./probe.ts";
-import { item } from "./plan.ts";
+import { item, tailscaleItem } from "./plan.ts";
 
 // ---------------------------------------------------------------------------
 // Root steps
@@ -40,7 +40,9 @@ import { item } from "./plan.ts";
 export function buildRootPlan(ctx: Ctx, p: Probes): RootPlan {
   const linux = isLinux(ctx.target);
   const needsGit = linux && compareVersions(p.git.found, GIT_MIN_VERSION) < 0;
-  const needsTailscale = p.tailscale.found === null;
+  // Planned only when missing and wanted (no Connect link, or --with-tailscale); an
+  // installed app bundle on macOS is never planned, so `installer -pkg` never runs over it.
+  const needsTailscale = tailscaleItem(ctx, p).status === "planned";
   return {
     platform: linux ? "linux" : "darwin",
     user: ctx.host.user,

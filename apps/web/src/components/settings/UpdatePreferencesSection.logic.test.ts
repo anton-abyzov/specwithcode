@@ -4,8 +4,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { SERVICE_REQUEST_EXPIRED } from "../sidebar/SidebarRestartToUpdate.logic";
 import {
   describeServiceUpdate,
+  PAUSE_WORK_AFTER_OPTIONS,
+  pauseWorkAfterMinutes,
   resolveServiceUpdateAction,
 } from "./UpdatePreferencesSection.logic";
+import { formatPauseTime } from "../serviceUpdateRunView";
 
 const state = (overrides: Partial<StudioServiceUpdateState>): StudioServiceUpdateState => ({
   status: "up-to-date",
@@ -25,11 +28,36 @@ const LOG_DELETED =
   "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update";
 
 describe("UpdatePreferencesSection.logic", () => {
+  it("reads the automatic pause wait, defaulting to 10 minutes", () => {
+    expect(pauseWorkAfterMinutes(null)).toBe(10);
+    expect(pauseWorkAfterMinutes({})).toBe(10);
+    expect(pauseWorkAfterMinutes({ pauseWorkAfterMinutes: 30 })).toBe(30);
+    // The agent never pauses work at once.
+    expect(pauseWorkAfterMinutes({ pauseWorkAfterMinutes: 0 })).toBe(10);
+    // None below 10: the agent passes every 10 minutes.
+    expect(PAUSE_WORK_AFTER_OPTIONS).toEqual([10, 30, 60]);
+    expect(Math.min(...PAUSE_WORK_AFTER_OPTIONS)).toBe(10);
+  });
+
   it("describes each service update stage", () => {
     expect(describeServiceUpdate(state({}))).toBe("Version 0.1.4. Up to date.");
     expect(
       describeServiceUpdate(state({ status: "waiting-for-quiet", downloadedVersion: "0.2.0" })),
-    ).toBe("Version 0.1.4. Version 0.2.0 installs once no session has worked for a while.");
+    ).toBe(
+      "Version 0.1.4. Version 0.2.0 installs once running work finishes, or press Update now.",
+    );
+    const pauseAt = "2026-10-26T14:41:00.000Z";
+    const waiting = describeServiceUpdate(
+      state({
+        status: "waiting-for-quiet",
+        downloadedVersion: "0.2.0",
+        automaticPauseAt: pauseAt,
+      }),
+    );
+    expect(waiting).toBe(
+      `Version 0.1.4. Version 0.2.0 installs at ${formatPauseTime(Date.parse(pauseAt))}; running turns pause then and continue after the update.`,
+    );
+    expect(waiting).not.toContain("no session has worked");
     expect(
       describeServiceUpdate(
         state({ status: "manual-required", message: "SpecWithCode 0.2.0 needs a manual upgrade." }),
@@ -80,8 +108,11 @@ describe("UpdatePreferencesSection.logic", () => {
       message: LOG_DELETED,
     });
     expect(resolveServiceUpdateAction(failed)).toBe("install");
-    // The failure stays shown next to the action.
-    expect(describeServiceUpdate(failed)).toBe(failed.message);
+    // The failure stays shown next to the action, offering Update now
+    // instead of the older agent's restart Cmd+Q cannot do.
+    expect(describeServiceUpdate(failed)).toBe(
+      "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Press Update now: SpecWithCode saves that log, restarts its background service and then updates",
+    );
     // Offered by its feed, not yet on disk, is not enough.
     expect(
       resolveServiceUpdateAction({

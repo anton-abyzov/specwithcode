@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildPhonePairingUrl,
+  describePhoneNetworkHint,
   phonePairingCodeState,
   resolvePhonePairingAddress,
 } from "./PairPhone.logic";
@@ -89,6 +90,15 @@ describe("resolvePhonePairingAddress", () => {
         currentOrigin: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("describePhoneNetworkHint", () => {
+  it("points a same Wi-Fi pairing to SpecWithCode Connect for reaching it from anywhere", () => {
+    expect(describePhoneNetworkHint("same-network")).toBe(
+      "Your iPhone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.",
+    );
+    expect(describePhoneNetworkHint("tailnet")).toContain("Tailscale app");
   });
 });
 

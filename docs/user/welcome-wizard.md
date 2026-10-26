@@ -16,10 +16,10 @@ You can add more computers before continuing:
   [Install the CLI](./install.md#command-line) and run `specwithcode connect` on each
   computer you want to add, then start SpecWithCode or run `specwithcode serve` so the
   computer stays available.
-- **Add a computer** connects directly to a server on your network or tailnet.
-  Start the server with `specwithcode serve`, then run `specwithcode pair --tailscale` and paste
-  the pairing link. You can also run `specwithcode serve --host <address>` and use
-  `specwithcode pair` when the server is already reachable on your network.
+- **Add a computer** connects directly to a server on your network. Start the server with
+  `specwithcode serve --host <address>`, then run `specwithcode pair` and paste the pairing
+  link. If you use Tailscale, you can instead start it with `specwithcode serve` and run
+  `specwithcode pair --tailscale`.
 
 Saved computers and computers discovered through SpecWithCode Connect are selected by
 default. Uncheck any you do not want to set up; this does not disconnect them.

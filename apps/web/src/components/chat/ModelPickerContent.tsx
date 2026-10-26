@@ -50,12 +50,14 @@ import {
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import {
+  ModelPickerAccountLine,
   ModelPickerRunningNote,
   ModelPickerUsageBand,
+  rowAvailability,
   rowShowsAvailability,
   type ModelPickerUsage,
 } from "./ModelUsage";
-import { isAvailabilityBlocking } from "../../studio/modelAvailability";
+import { isAvailabilityBlocking, railLimitSentence } from "../../studio/modelAvailability";
 
 type ModelPickerItem = {
   slug: string;
@@ -906,14 +908,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!usage) return null;
       // Account-wide windows only: a spent Fable weekly never marks all of Claude.
       const state = usage.availability(entry.instanceId, null);
-      if (isAvailabilityBlocking(state)) {
-        return { tone: "full" as const, text: usage.text(entry.instanceId, state).short };
-      }
-      if (state.kind === "exhausted") {
-        return { tone: "warn" as const, text: usage.text(entry.instanceId, state).short };
-      }
+      const sentence = () =>
+        railLimitSentence(state, {
+          nowMs: usage.nowMs,
+          label: usage.text(entry.instanceId, state).label,
+        });
+      if (isAvailabilityBlocking(state)) return { tone: "full" as const, text: sentence() };
+      if (state.kind === "exhausted") return { tone: "warn" as const, text: sentence() };
       if (state.kind === "room" && state.tone !== "ok") {
-        return { tone: state.tone, text: usage.text(entry.instanceId, state).short };
+        return { tone: "warn" as const, text: sentence() };
       }
       return null;
     },
@@ -927,14 +930,40 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         .get(running.instanceId)
         ?.find((option) => option.slug === running.model)
     : undefined;
+  // No band over a mixed list: the account line names the limits of the providers
+  // whose rows show, the displayed model's provider first.
+  const accountLineMarked = usage?.running?.instanceId ?? props.activeInstanceId;
+  const accountLineEntries = useMemo(() => {
+    const ids = new Set<ProviderInstanceId>();
+    for (const model of filteredModelByKey.values()) ids.add(model.instanceId);
+    return [...ids]
+      .toSorted(
+        (left, right) => Number(right === accountLineMarked) - Number(left === accountLineMarked),
+      )
+      .flatMap((id) => {
+        const entry = entryByInstanceId.get(id);
+        return entry ? [entry] : [];
+      });
+  }, [accountLineMarked, entryByInstanceId, filteredModelByKey]);
+  const pickedDiffers =
+    running !== null &&
+    (running.instanceId !== props.activeInstanceId || running.model !== activeModelSlug);
+  const activeEntryForNote = entryByInstanceId.get(props.activeInstanceId);
+  const activeOption = modelOptionsByInstance
+    .get(props.activeInstanceId)
+    ?.find((option) => option.slug === activeModelSlug);
   const runningNote =
     running && !onToggleModel ? (
       <ModelPickerRunningNote
         runningLabel={`${runningOption ? getTriggerDisplayModelName(runningOption) : running.model}${
           runningEntry ? ` (${runningEntry.displayName})` : ""
         }`}
-        pickedDiffers={
-          running.instanceId !== props.activeInstanceId || running.model !== activeModelSlug
+        pickLabel={
+          pickedDiffers
+            ? `${activeOption ? getTriggerDisplayModelName(activeOption) : activeModelSlug}${
+                activeEntryForNote ? ` (${activeEntryForNote.displayName})` : ""
+              }`
+            : null
         }
       />
     ) : null;
@@ -1113,6 +1142,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             ) : null}
             {usage && selectedEntry && !isSearching && alternativesFor === null ? (
               <ModelPickerUsageBand entry={selectedEntry} usage={usage} />
+            ) : usage ? (
+              <ModelPickerAccountLine
+                entries={accountLineEntries}
+                usage={usage}
+                markedInstanceId={onToggleModel ? null : accountLineMarked}
+              />
             ) : null}
 
             {alternativesFor !== null ? (
@@ -1212,7 +1247,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                             usageState,
                             selectedInstanceId !== "favorites" && !isSearching,
                           )
-                            ? usage.text(model.instanceId, usageState)
+                            ? usage.text(model.instanceId, rowAvailability(usageState))
                             : null
                         }
                         onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}

@@ -15,7 +15,7 @@ import re
 
 from installation_descriptor import owned_path
 import live_database
-from quiescence import server_browser_pids
+from quiescence import managed_tunnel_pids, server_browser_pids
 from update_read import TERMINAL_RUNS, run_work
 
 
@@ -138,8 +138,8 @@ def _name(value):
 
 def descendant_names(pid, processes, home=None):
     """Executable basenames beneath the service, with counts; the one supervisor is left out, and
-    with the service's `home` its own server browser (which an update stops itself) unless nothing
-    else is there. Only `ps comm` is read, never argv, so no argument or secret can appear."""
+    with the service's `home` its own server browser (which an update stops itself) and its own
+    tunnel (which never keeps it waiting) unless nothing else is there. Only `ps comm` is read, never argv, so no argument or secret can appear."""
     names, pending, seen, supervisor, tree = {}, [pid], {pid}, False, []
     while pending:
         parent = pending.pop()
@@ -152,8 +152,9 @@ def descendant_names(pid, processes, home=None):
                 supervisor = True
                 continue
             tree.append(child)
-    browsers = server_browser_pids(processes, pid, home, tree) if home and tree and pid in processes else set()
-    for child in [item for item in tree if item['pid'] not in browsers] or tree:
+    spared = (server_browser_pids(processes, pid, home, tree) | managed_tunnel_pids(processes, pid, home, tree)
+              if home and tree and pid in processes else set())
+    for child in [item for item in tree if item['pid'] not in spared] or tree:
         name = _name(child['executable'])
         names[name] = names.get(name, 0) + 1
     return ' '.join('%s=%d' % item for item in sorted(names.items())[:8]) or ('none' if supervisor else 'no-supervisor')

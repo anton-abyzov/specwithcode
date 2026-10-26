@@ -35,9 +35,10 @@ export function PhoneSetupDialog(props: {
   if (address === null) {
     instructions = (
       <p>
-        This computer needs a private HTTPS address before your phone can connect. Set up Tailscale
-        on this computer and your iPhone, sign in to the same tailnet, then enable Tailscale HTTPS
-        in Connections.
+        The simplest way to reach this computer from your iPhone is to sign in to SpecWithCode
+        Connect in the desktop app. No Tailscale is needed. To pair with a private QR code instead,
+        this computer needs a private HTTPS address: set up Tailscale on this computer and your
+        iPhone, sign in to the same tailnet, then enable Tailscale HTTPS in Connections.
       </p>
     );
   } else if (address.hint === "tailnet") {
@@ -70,12 +71,12 @@ export function PhoneSetupDialog(props: {
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {code?.status === "ready" ? "Scan with your iPhone" : "Connect your iPhone"}
+            {code?.status === "ready" ? "Scan with your iPhone" : "Pair your iPhone with a QR code"}
           </DialogTitle>
           <DialogDescription>
             {code?.status === "ready"
               ? `This code works once and expires at ${code.expiresAt}. Keep this computer awake.`
-              : "Prepare the connection first, then make a fresh one-time code."}
+              : "This is the private alternative to signing in with SpecWithCode Connect. Prepare the connection first, then make a fresh one-time code."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

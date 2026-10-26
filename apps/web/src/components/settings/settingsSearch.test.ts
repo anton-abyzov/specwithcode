@@ -171,6 +171,15 @@ describe("searchSettings", () => {
     }
   });
 
+  it("lets browsers find SpecWithCode Connect as the way to reach machines without Tailscale", () => {
+    const item = SETTINGS_SEARCH_ITEMS.find((entry) => entry.id === "studio-connect");
+    expect(item?.desktopOnly).toBeUndefined();
+    const terms = item?.searchTerms.join(" ") ?? "";
+    expect(terms).toContain("remote access");
+    expect(terms).toContain("tunnel");
+    expect(terms).toContain("without tailscale");
+  });
+
   it("registers the WSL backend as a desktop-only setting", () => {
     expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "wsl-backend")).toMatchObject({
       id: "wsl-backend",

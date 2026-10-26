@@ -222,6 +222,7 @@ function inputsFor(day: number, at: number): StatusInputs {
       ],
     },
     tailscale: { state: "running", dnsName: "m4.example.ts.net" },
+    connect: { mode: "managed", tunnel: "running" },
     feeds: feedsFor(day),
     releaseFeedReachable: day !== 12,
   };

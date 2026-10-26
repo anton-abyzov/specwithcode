@@ -4,8 +4,10 @@ import { EnvironmentAuthorizationError } from "./auth.ts";
 
 /**
  * Provisioning a fleet machine: the pinned packages a worker needs (git, gh,
- * Node.js 22, Claude Code, Codex, Tailscale) plus the SpecWithCode server and
- * its service, installed or verified on the machine itself. The readback is
+ * Node.js 22, Claude Code, Codex) plus the SpecWithCode server and its
+ * service, installed or verified on the machine itself. Tailscale is optional:
+ * checked when present, installed only when SpecWithCode Connect does not
+ * already reach the machine (otherwise its item is `skipped`). The readback is
  * what `specwithcode provision --json` prints and what Settings > Connections
  * shows; it never carries a credential, only whether a sign-in exists.
  */
@@ -34,6 +36,7 @@ export type ProvisionItemId = typeof ProvisionItemId.Type;
  * - `planned`: a dry run would change it.
  * - `needs-root`: waits for the one root command in `rootStep`.
  * - `user-action`: only the user can do it; `command` says how.
+ * - `skipped`: not needed here, or left out on request; `detail` says why.
  */
 export const ProvisionItemStatus = Schema.Literals([
   "pending",

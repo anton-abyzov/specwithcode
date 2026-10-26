@@ -46,7 +46,7 @@ export const LABELS: Record<ProvisionItemId, string> = {
   node: "Node.js 22",
   claude: "Claude Code",
   codex: "Codex",
-  tailscale: "Tailscale",
+  tailscale: "Tailscale (optional)",
   server: "SpecWithCode server",
   service: "Background service",
   "service-path": "Agent commands on the service PATH",
@@ -106,6 +106,60 @@ export function versioned(
   );
 }
 
+export const TAILSCALE_NOT_NEEDED =
+  "Not needed: this machine is reached through SpecWithCode Connect. Install Tailscale only if you also want a direct tailnet route.";
+
+/**
+ * Tailscale is optional: an installed one is only checked, and a missing one
+ * is installed only when nothing else reaches this machine (no managed
+ * SpecWithCode Connect link) or --with-tailscale asks for it.
+ */
+export function tailscaleItem(ctx: Ctx, p: Probes): ProvisionItem {
+  const linux = isLinux(ctx.target);
+  const wanted = `>= ${TAILSCALE_MIN_VERSION}`;
+  const found = p.tailscale.found;
+  if (compareVersions(found, TAILSCALE_MIN_VERSION) >= 0)
+    return item("tailscale", wanted, found, "ok", `State: ${p.tailscale.state ?? "unknown"}.`);
+  if (found !== null)
+    return item(
+      "tailscale",
+      wanted,
+      found,
+      "user-action",
+      "An older Tailscale is installed; provisioning leaves it to its own updates.",
+      linux
+        ? "sudo apt-get install --only-upgrade tailscale"
+        : "Update Tailscale from its menu or the App Store.",
+    );
+  // A command that answers with no readable version is still an install; never install over it.
+  if (p.tailscale.path !== null)
+    return item(
+      "tailscale",
+      wanted,
+      null,
+      "ok",
+      `Installed at ${p.tailscale.path}; its version could not be read. State: ${p.tailscale.state ?? "unknown"}.`,
+    );
+  const choice = ctx.options.tailscale ?? "auto";
+  if (choice === "skip")
+    return item(
+      "tailscale",
+      wanted,
+      null,
+      "skipped",
+      p.connect === "managed" ? TAILSCALE_NOT_NEEDED : "Skipped by request.",
+    );
+  if (choice === "auto" && p.connect === "managed")
+    return item("tailscale", wanted, null, "skipped", TAILSCALE_NOT_NEEDED);
+  return item(
+    "tailscale",
+    wanted,
+    null,
+    "planned",
+    "Installs Tailscale (root step); signing in stays your step.",
+  );
+}
+
 export function planItems(ctx: Ctx, p: Probes): ProvisionItem[] {
   const linux = isLinux(ctx.target);
   const items: ProvisionItem[] = [];
@@ -130,35 +184,7 @@ export function planItems(ctx: Ctx, p: Probes): ProvisionItem[] {
             "xcode-select --install",
           ),
   );
-  const tailscaleOk = compareVersions(p.tailscale.found, TAILSCALE_MIN_VERSION) >= 0;
-  items.push(
-    tailscaleOk
-      ? item(
-          "tailscale",
-          `>= ${TAILSCALE_MIN_VERSION}`,
-          p.tailscale.found,
-          "ok",
-          `State: ${p.tailscale.state ?? "unknown"}.`,
-        )
-      : p.tailscale.found !== null
-        ? item(
-            "tailscale",
-            `>= ${TAILSCALE_MIN_VERSION}`,
-            p.tailscale.found,
-            "user-action",
-            "An older Tailscale is installed; provisioning leaves it to its own updates.",
-            linux
-              ? "sudo apt-get install --only-upgrade tailscale"
-              : "Update Tailscale from its menu or the App Store.",
-          )
-        : item(
-            "tailscale",
-            `>= ${TAILSCALE_MIN_VERSION}`,
-            null,
-            "planned",
-            "Installs Tailscale (root step); signing in stays your step.",
-          ),
-  );
+  items.push(tailscaleItem(ctx, p));
   items.push(
     p.node.found !== null &&
       compareVersions(p.node.found, NODE_VERSION) >= 0 &&

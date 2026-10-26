@@ -263,123 +263,20 @@ DATABASE_RESTART_REASONS = {LOCKS_LOST: 'locks-lost', DETACHED_DATABASE: 'detach
 
 def wait_for_database_owner(identity, old_pid, deadline=database_restart.READY_SECONDS):
     """The restarted service's pid once it runs and holds its database locks, else None."""
-    ends = time.monotonic() + deadline
-    while time.monotonic() < ends:
-        time.sleep(1)
-        try:
-            service = _service(identity)
-            pid = service['runtime']['pid']
-            if pid != old_pid and live_database.service_locks(service['own'] / 'userdata/statev2.sqlite')['database'] == pid:
-                return pid
-        except (AssertionError, OSError, ValueError, KeyError, subprocess.TimeoutExpired):
-            continue
-    return None
+    return database_restart.wait_for_owner(database_restart.Names(globals()), identity, old_pid, deadline)
 
-def database_restart_refusal(identity, error, report=None, now=None):
-    """A snapshot refused because the service lost its database locks or its log: restart the
-    verified service when database_restart's conditions hold. Returns the REFUSAL line, or None
-    to keep refusal_line's; raises when a check cannot be made. `report` holds the record."""
-    reason = DATABASE_RESTART_REASONS.get(str(error)) if isinstance(error, AssertionError) else None
-    if reason is None:
-        return None
-    home = pathlib.Path.home().resolve()
-    service = _service(identity)
-    own, pid, owner = service['own'], service['runtime']['pid'], service['owner']
-    state, updates = own / 'userdata', safe_path(own / 'updates', home)
-    quiet_path, marker_path = updates / database_restart.QUIET_MARKER, updates / database_restart.MARKER
-    now = now or datetime.datetime.now(datetime.timezone.utc)
-    config = idle_agents.read_json(updates / 'config.json') or {}
-    request = database_restart.forced_request(config)
-    held = False
-    if request:
-        try:
-            assert_held(service, request, now)
-            held = True
-        except (AssertionError, OSError, ValueError):
-            pass
+def database_restart_refusal(identity, error, report=None, now=None, request=None):
+    """database_restart.restart_refusal over this module's checks; `request` is the explicit
+    request the snapshot serves (--request), which alone may stop a service on a deleted log."""
+    return database_restart.restart_refusal(database_restart.Names(globals()), identity, error, report, now, request)
 
-    def quiet():
-        """False, and the quiet window starts again, for work, a terminal or anything else
-        beneath the service. Checked first, and again right before the restart."""
-        try:
-            assert idle_agents.idle(native_work_counts(state)), 'Native work is not idle'
-            idle_providers(pid, owner.uid, str(service['node']), service['content']['ProgramArguments'])
-        except AssertionError:
-            if os.path.lexists(str(quiet_path)):
-                quiet_path.unlink()
-            return False
-        return True
-    if not held:
-        if reason != 'locks-lost' or not (request or idle_agents.allowed(config)) or not quiet():
-            return None
-        if not request:
-            marker, left = idle_agents.observe(idle_agents.read_json(quiet_path), pid,
-                                               idle_agents.work_digest(guarded_row_counts(state)), now,
-                                               idle_agents.quiet_minutes(config))
-            if left:
-                _write_private(quiet_path, (json.dumps(marker, indent=2) + '\n').encode())
-                return database_restart.refusal(reason, wait=left)
-    wait = database_restart.restart_wait(idle_agents.read_json(marker_path), pid, now)
-    if wait:
-        return database_restart.refusal(reason, retry=wait)
-    files = [state / name for name in DATABASE_FILES if (state / name).exists()]
-    others = database_restart.other_openers(files, {pid, os.getpid()}, LSOF_TIMEOUT_SECONDS)
-    if others:
-        return database_restart.refusal(reason, others=len(others))
-    # Last: the same service still has the fault, so a service restarted meanwhile is left alone.
-    try:
-        if reason == 'detached':
-            assert_database_attached(pid, state)
-        else:
-            assert_database_locked(state)
-    except AssertionError as again:
-        if str(again) != str(error):
-            raise
-    else:
-        return None
-    # The lsof waits above can take a minute: the service may have been restarted, and work may
-    # have started, since. Nothing holds new work outside a held request (idle_agent_refusal's
-    # guard=settled does the same before every signal).
-    if _service(identity)['runtime']['pid'] != pid or not (held or quiet()):
-        return None
-    report = {} if report is None else report
-    report.update(schemaVersion=1, identity=identity, reason=reason, servicePid=pid, result='refused',
-                  trigger='held' if held else 'update-now' if request else 'idle')
-    receipts = safe_path(updates / 'receipts', home)
-    receipts.mkdir(mode=0o700, exist_ok=True)
-    record = safe_path(receipts / ('database-restart-%s-%s.json' % (now.strftime('%Y%m%dT%H%M%SZ'), uuid.uuid4().hex[:8])), home)
-    try:
-        # Written first, so a restart that fails part way still counts against RESTART_EVERY.
-        _write_private(marker_path, (json.dumps({'schemaVersion': 1, 'servicePid': pid, 'restartedAt': now.isoformat()}) + '\n').encode())
-        if os.path.lexists(str(quiet_path)):
-            quiet_path.unlink()
-        if reason == 'detached':
-            try:
-                stop_then_start_service(owner.domain, service['label'], pid)
-            except AssertionError as stopped:
-                if str(stopped) != DETACHED_STOP_TIMEOUT:
-                    raise
-                # Still running and still saving, or stuck: never killed. RESTART_EVERY holds the
-                # next attempt; the person sees the agent's error until then.
-                report['result'] = 'stop-timed-out'
-                return database_restart.refusal(reason, retry=int(database_restart.RESTART_EVERY.total_seconds()))
-        else:
-            restart_service(owner.domain, service['label'], service['plist'], None, None, pid, service['receipt']['port'])
-        report['result'] = 'restart-requested'
-        report['newServicePid'] = wait_for_database_owner(identity, pid)
-        if report['newServicePid'] is not None:
-            report['result'] = 'restarted'
-    finally:  # Whatever was sent is recorded, even when the restart failed.
-        report['observedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        _write_private(record, (json.dumps(report, indent=2) + '\n').encode())
-    return database_restart.refusal(reason, restarted=1)
-
-def snapshot_refusal(identity, error):
+def snapshot_refusal(identity, error, request=None):
     """The REFUSAL line for a refused snapshot: a fallback's (database restart, idle agents)
     when one applies."""
-    for fallback in (database_restart_refusal, idle_agent_refusal):
+    for fallback in (lambda: database_restart_refusal(identity, error, request=request),
+                     lambda: idle_agent_refusal(identity, error)):
         try:
-            line = fallback(identity, error)
+            line = fallback()
         except Exception:  # Not idle, a terminal is open, or the service changed: wait as before.
             line = None
         if line:
@@ -1515,7 +1412,7 @@ def main():
         except Exception as error:
             release_database_snapshot(marker)
             traceback.print_exc()
-            print(snapshot_refusal(args.identity, error), file=sys.stderr, flush=True)
+            print(snapshot_refusal(args.identity, error, args.request), file=sys.stderr, flush=True)
             sys.exit(1)
         args.snapshot.write_text(json.dumps(value, indent=2) + '\n')
         print(json.dumps({'identity': args.identity, 'result': 'snapshotted', 'report': str(args.snapshot), 'servicePid': value['servicePid']}))
