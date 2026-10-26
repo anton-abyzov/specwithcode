@@ -79,6 +79,19 @@ describe("thread report helpers", () => {
     ]);
   });
 
+  it("finds SpecWeave's lettered increment folders, matched to disk without case", () => {
+    expect(
+      reportIncrementCandidates({
+        title: "Follow-up",
+        branch: "inc/0657E-dark-theme-followup",
+        text: "Saved in .specweave/increments/0713B-production-rollout.",
+      }),
+    ).toEqual([
+      { kind: "folder", value: "0657e-dark-theme-followup" },
+      { kind: "folder", value: "0713b-production-rollout", fromText: true },
+    ]);
+  });
+
   it("names files by day, title and key, and reads the key back", () => {
     const name = reportFileName({
       savedAt: "2026-10-12T07:30:00.000Z",

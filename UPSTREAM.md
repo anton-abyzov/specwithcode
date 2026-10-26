@@ -1,10 +1,10 @@
 # Upstream provenance
 
-SpecWeave Studio is an independent MIT fork of [T3 Code](https://github.com/pingdotgg/t3code), pinned to commit `10f39eb9ac80c9a4b7f5097575dd2addc3b6f631` (nightly 20261007.2761).
+SpecWithCode is independently maintained. Its inherited code baseline is [T3 Code](https://github.com/pingdotgg/t3code), pinned to commit `10f39eb9ac80c9a4b7f5097575dd2addc3b6f631` (nightly 20261007.2761).
 
-The original MIT LICENSE and `Copyright (c) 2026 T3 Tools Inc.` notice are retained verbatim. Third-party and vendored/reference notices remain applicable. The notice generator treats @specweave-studio/ packages as first party without removing inherited attribution.
+The original MIT license text in THIRD_PARTY_NOTICES.md and `Copyright (c) 2026 T3 Tools Inc.` notice are retained verbatim. Third-party and vendored/reference notices remain applicable. The notice generator treats @specweave-studio/ packages as first party without removing inherited attribution.
 
-Studio changes product/CLI/package/runtime/data identities and defaults to its own private home and loopback port. Hosted cloud/relay, product telemetry and self-update are disabled by default. Native provider protocols, commands/events, approvals, steering/queues, direct pairing and Git checkpoints remain. Original installed apps, stores and services are independent and preserved.
+Studio changes product/CLI/package/runtime/data identities and defaults to its own private home and loopback port. Hosted cloud/relay and product telemetry are disabled by default. Self-update uses only the owned release feed. Native provider protocols, commands/events, approvals, steering/queues, direct pairing and Git checkpoints remain. Original installed apps, stores and services are independent and preserved.
 
 .repos/ reference trees are unmodified inherited development references and excluded from deployment artifacts. Cryptographic/replay/binary fixtures preserve original bytes; historical names there are provenance/test data, not runtime defaults. The canonical SpecWeave increment 0885 tracks integration and validation.
 

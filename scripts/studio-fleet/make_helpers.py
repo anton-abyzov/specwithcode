@@ -27,7 +27,7 @@ import tempfile
 PRODUCT = 'SpecWeave Studio deployment helpers'  # A kept identity: docs/studio/naming.md.
 MANIFEST = 'deployment-helpers-manifest.json'
 SOURCE_PATHS = ('scripts/studio-fleet', 'scripts/studio-projects/version.mjs', 'scripts/lib/cli-executable-imports.ts',
-                'scripts/lib/cli-external-packages.ts', 'scripts/lib/third-party-licenses.ts', 'LICENSE',
+                'scripts/lib/cli-external-packages.ts', 'scripts/lib/third-party-licenses.ts', 'THIRD_PARTY_NOTICES.md', 'UPSTREAM.md',
                 'package.json', 'pnpm-lock.yaml')
 ENTRYPOINTS = ('scripts/studio-fleet/update.py', 'scripts/studio-fleet/network-transition.py',
                'scripts/studio-fleet/install.py')

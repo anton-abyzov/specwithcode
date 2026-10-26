@@ -219,7 +219,7 @@ function optionStatus(input: {
   if (provider.auth.status === "unauthenticated") return "signed-out";
   if (isGeminiSpendProvider(provider)) return "never-automatic";
   if (isPaidModelOn(provider, model)) return "per-token";
-  if (isUnknownBillingAgent(provider)) return "named-only";
+  if (isUnknownBillingAgent(provider, model)) return "named-only";
   if (input.limited) return "limited";
   if (usageDeniesTurn(provider)) return "full";
   if (!canTakeTurn(provider)) return "not-ready";

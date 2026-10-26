@@ -16,6 +16,18 @@ final class ThreadUITests: SWCUITestCase {
     attachScreenshot("Approval resolved")
   }
 
+  /// A settled thought says how long it took, beside the thread's provider mark (0965 D-04, D-05).
+  func testSettledThoughtShowsItsDuration() throws {
+    for appearance in ["light", "dark"] {
+      launch(route: "thread", appearance: appearance)
+      _ = hittableButton("Approve")  // the transcript has loaded
+      let thought = button("Thought for 14s")
+      for _ in 0..<6 where !thought.isHittable { app.swipeDown() }
+      XCTAssertTrue(thought.isHittable, "The settled thought should name its duration")
+      attachScreenshot("Thought row, \(appearance)")
+    }
+  }
+
   func testSendingAddsTheMessageAndAReply() throws {
     launch(route: "thread")
     _ = hittableButton("Approve")

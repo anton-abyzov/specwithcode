@@ -82,6 +82,8 @@ minutes. The rate is per minute between the first and last span end.
 `specweave-studio doctor` reads the same trace files and the database's file sizes, never the
 database itself, so it is safe while the server runs. It reports:
 
+- the machine's 5-minute load average, where the OS reports it (warn when it passes the core
+  count: the computer is busy now, so timings from the last few minutes are suspect);
 - the latency of a coordinator send, thread commands and agent turn starts (warn at a 1 s p90,
   fail at 3 s);
 - every database read over 250 ms, grouped by the code that ran it (fail at 1 s);

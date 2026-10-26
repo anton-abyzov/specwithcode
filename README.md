@@ -8,9 +8,9 @@ SpecWithCode is a free desktop workspace for the coding agents you already pay f
 
 It is built on [SpecWeave](https://github.com/anton-abyzov/specweave), the open-source CLI (`npm install -g specweave`) that keeps that record in git. Website: [spec-weave.com/studio](https://spec-weave.com/studio).
 
-Built for teams of 2–10 people. Free, MIT licensed, no account. You bring your own provider subscriptions or API keys; SpecWithCode supplies no inference, resells no tokens and charges no seat fee to run agents on your team's machines. What is free today stays free; teams can pay for hosted private skills and support ([pricing](https://spec-weave.com/pricing)).
+Built for teams of 2–10 people. Free, no account. You bring your own provider subscriptions or API keys; SpecWithCode supplies no inference, resells no tokens and charges no seat fee to run agents on your team's machines. What is free today stays free; teams can pay for hosted private skills and support ([pricing](https://spec-weave.com/pricing)).
 
-Automatic fallback requires an explicit configured choice before selecting ACP agents whose billing is unknown. See [automatic provider fallback](docs/studio/getting-started.md#automatic-provider-fallback).
+Automatic fallback requires an explicit configured choice before selecting ACP agents whose billing is unknown. See [when a provider runs out](docs/user/usage.md#when-a-provider-runs-out).
 
 HTML reports open from a compact preview into a focused reader. The conversation stays available through Show thread. See the [report experience](docs/reports/report-experience.md) for behavior and compatibility limits.
 
@@ -85,6 +85,6 @@ Contributor notes, architecture and focused checks are in [AGENTS.md](AGENTS.md)
 
 Early access. Projects, providers, usage limits, machines, routines and the Telegram and Google connections are in the current build and in daily use. Live project runs are recorded with Codex and Claude Code; Grok Build and OpenCode have tutorial runs; Cursor and Antigravity workers have no recorded project run yet. See the [changelog](CHANGELOG.md).
 
-## Credits
+## Source and third-party notices
 
-SpecWithCode includes MIT-licensed open-source code. The original copyright and license notices are kept in [LICENSE](LICENSE), with source provenance in [UPSTREAM.md](UPSTREAM.md).
+Source is available for inspection. No new project-wide license is granted for original SpecWithCode material; previously distributed versions retain their existing grants. Third-party code and assets retain their own licenses and required notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -88,6 +88,31 @@ class ProgressFile(unittest.TestCase):
         self.assertGreater(later['heartbeatAt'], first['heartbeatAt'])
         self.assertEqual(install_progress.HEARTBEAT_SECONDS, 5)
 
+    def test_the_start_a_reader_derives_stays_the_apply_start_through_every_lap(self):
+        # A reader (the desktop's parseInstallProgress) takes phaseStartedAt minus the timings as
+        # the apply's start: laps outside PHASES (a re-read the watermark or read_delta answered) keep it.
+        import datetime
+        from unittest.mock import patch
+        start = datetime.datetime(2026, 10, 25, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        clock = [start]
+        stamp = lambda: clock[0].isoformat().replace('+00:00', 'Z')
+        def derived():
+            value = self.read()
+            at = datetime.datetime.fromisoformat(value['phaseStartedAt'].replace('Z', '+00:00'))
+            return value['phase'], at - datetime.timedelta(milliseconds=sum(value['timings'].values()))
+        laps = [('beforeRead', 3_000, 'backupSpace'), ('backupSpace', 100, 'verifyAndStage'),
+                ('verifyAndStage', 900, 'prestateCheck'), ('watermarkSkip', 5, 'prestateCheck'), ('deltaRead', 40, 'prestateCheck'),
+                ('prestateCheck', 200, 'swapPointers'), ('swapPointers', 10, 'gateSettle'), ('gateSettle', 12_000, 'checkBeforeRestart'),
+                ('watermarkSkip', 30_000, 'checkBeforeRestart'), ('checkBeforeRestart', 20, 'stop')]
+        with patch.object(install_progress, 'now', side_effect=stamp), \
+                install_progress.ProgressWriter(self.updates, heartbeat_seconds=60) as progress:
+            timings = {}
+            for ended, ms, phase in laps:
+                clock[0] += datetime.timedelta(milliseconds=ms)
+                timings[ended] = timings.get(ended, 0) + ms
+                progress.lap(ended, timings)
+                self.assertEqual(derived(), (phase, start), ended)
+
     def test_a_finished_record_stays_finished(self):
         with install_progress.ProgressWriter(self.updates, heartbeat_seconds=0.02) as progress:
             progress.finish('verified', {'total': 9})

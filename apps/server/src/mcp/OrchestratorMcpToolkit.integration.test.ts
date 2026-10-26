@@ -69,7 +69,10 @@ import {
 } from "../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "../orchestration-v2/ProviderContinuationRequests.ts";
-import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import {
+  checkpointWorkspace,
+  uncheckpointedWorkspace,
+} from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   decodeProviderReplayNdjson,
@@ -421,6 +424,27 @@ const PROJECTION_WAIT_MS = process.platform === "win32" ? 90_000 : 30_000;
 // slow runner; a fixed 10 s budget timed out on Windows with the child still running.
 const TERMINAL_WAIT_MS = PROJECTION_WAIT_MS;
 
+// A timed-out wait names the state it last saw, so a CI-only failure can be
+// diagnosed from the log instead of only knowing which thread it was.
+function describeProjection(projection: OrchestrationV2ThreadProjection | undefined): string {
+  if (projection === undefined) return "none";
+  return JSON.stringify({
+    runs: projection.runs.map((run) => ({
+      id: run.id,
+      status: run.status,
+      userMessageId: run.userMessageId,
+      delegatedCompletion: run.delegatedCompletion,
+    })),
+    providerTurns: projection.providerTurns.map((turn) => turn.status),
+    subagents: projection.subagents.map((task) => ({
+      id: task.id,
+      status: task.status,
+      delivery: task.completionDelivery?.state,
+    })),
+    messages: projection.messages.length,
+  });
+}
+
 function waitForProjection(
   orchestrator: Orchestrator.OrchestratorV2Shape,
   threadId: ThreadId,
@@ -431,15 +455,19 @@ function waitForProjection(
     // projection read and reactor step is slow, and 1,000 short polls (about
     // five seconds) ran out before the fan-out deliveries settled.
     const deadline = (yield* Clock.currentTimeMillis) + PROJECTION_WAIT_MS;
+    let last: OrchestrationV2ThreadProjection | undefined;
     while ((yield* Clock.currentTimeMillis) < deadline) {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       if (predicate(projection)) {
         return projection;
       }
+      last = projection;
       yield* Effect.sleep("15 millis");
     }
     return yield* Effect.die(
-      new Error(`Timed out waiting for orchestration projection ${threadId}.`),
+      new Error(
+        `Timed out waiting for orchestration projection ${threadId}. Last projection: ${describeProjection(last)}`,
+      ),
     );
   });
 }
@@ -540,7 +568,12 @@ describe("orchestrator MCP toolkit", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
+          // Nothing here asserts on checkpoints. Every thread shares this one
+          // workspace, where checkpoint captures run one at a time at about a
+          // dozen Git commands each, so in a Git repository the twelve-child
+          // fan-out queued ~150 Git processes and on Windows outlasted a
+          // projection wait.
+          const cwd = yield* uncheckpointedWorkspace("orchestrator-mcp-toolkit");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();

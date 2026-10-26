@@ -35,6 +35,12 @@ private struct ChatScreen: View {
   @State private var showingHandoff = false
   @State private var showingIncrement = false
 
+  /// A thread's thinking rows carry its provider's mark; a coordinator chat has no single provider.
+  private var thinkingBrand: String? {
+    guard case let .thread(ref) = target else { return nil }
+    return model.thread(ref)?.identity.providerBrand
+  }
+
   var body: some View {
     transcript
       .edgeBar(.bottom) { composerArea }
@@ -102,6 +108,7 @@ private struct ChatScreen: View {
           TranscriptRowView(
             row: row,
             busyRequests: busyRequests,
+            thinkingBrand: thinkingBrand,
             onDecision: { requestId, decision in respond(requestId, decision) },
             onOpenThread: { nav.push(.chat(.thread($0))) },
             onOpenLink: { url in
@@ -266,7 +273,7 @@ private struct ChatScreen: View {
     if let last = session.rows.last {
       switch last.kind {
       case let .assistant(markdown, _): length = markdown.count
-      case let .reasoning(text, _): length = text.count
+      case let .reasoning(text, _, _): length = text.count
       case let .plan(steps): length = steps.filter { $0.status == .completed }.count
       default: length = 0
       }

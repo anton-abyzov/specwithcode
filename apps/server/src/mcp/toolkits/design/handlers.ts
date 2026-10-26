@@ -12,6 +12,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as Access from "../../McpToolAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { unavailable } from "../../threadAccess.ts";
+import { projectReachable, refuseRevoked, workGrantOf } from "../../workGrantAccess.ts";
 import { DesignScreenshotToolkit, DesignToolkit } from "./tools.ts";
 
 /**
@@ -22,7 +23,23 @@ import { DesignScreenshotToolkit, DesignToolkit } from "./tools.ts";
 export const designCaller = Effect.fn("mcp.design.caller")(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   if (scope.thread === undefined) {
-    return { actor: { kind: "user" }, audience: "agents" } satisfies DesignService.DesignCaller;
+    // Another machine's work reaches only the projects its grant covers, and
+    // never this machine's Playground.
+    const work = yield* workGrantOf({ scope, caller: undefined });
+    if (work === undefined)
+      return { actor: { kind: "user" }, audience: "agents" } satisfies DesignService.DesignCaller;
+    yield* refuseRevoked(work);
+    // The check reads the project without adding a requirement; capture the
+    // context here so the service's own context cannot widen it.
+    const context = yield* Effect.context<never>();
+    return {
+      actor: { kind: "user" },
+      audience: "agents",
+      admits: (owner) =>
+        owner.kind === "playground"
+          ? Effect.succeed(false)
+          : projectReachable(work, owner.projectId).pipe(Effect.provideContext(context)),
+    } satisfies DesignService.DesignCaller;
   }
   const threads = yield* ThreadManagement.ThreadManagementService;
   const thread = yield* threads
@@ -34,6 +51,10 @@ export const designCaller = Effect.fn("mcp.design.caller")(function* () {
       message: "The calling thread was not found.",
     });
   }
+  // A thread another machine's work started keeps to its own project (below),
+  // and stops with its grant.
+  const work = yield* workGrantOf({ scope, caller: thread });
+  if (work !== undefined) yield* refuseRevoked(work);
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const playground = yield* folders.isScratch(thread.projectId);
   return {

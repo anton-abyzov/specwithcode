@@ -76,7 +76,8 @@ import { parseScopedThreadKey, scopeThreadRef } from "@specweave-studio/client-r
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { UserMessageExecutionOrigin, UserMessageProvenance } from "./UserMessageProvenance";
-import { WorkerMessageBody } from "../studio/WorkerMessageBody";
+import { RelayedMessage, type RelayedMessageSource } from "../studio/RelayedMessage";
+import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { limitContinuationNote, restartContinuationNote } from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
@@ -110,7 +111,7 @@ const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
 import { resolveChatListAnchoredEndSpace } from "@specweave-studio/shared/chatList";
 import { toolActivityFaviconUrl } from "@specweave-studio/shared/favicon";
-import { formatDuration } from "@specweave-studio/shared/orchestrationTiming";
+import { formatDuration, thoughtLabel } from "@specweave-studio/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@specweave-studio/shared/projectFavicon";
 import { claudeSkillInvocation } from "@specweave-studio/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -345,6 +346,9 @@ import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
+import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import { NewMessagesDivider, useUnreadSince } from "./NewMessagesDivider";
+import { firstUnreadRowId } from "./newMessagesDivider.logic";
 import { type TimestampFormat } from "@specweave-studio/contracts/settings";
 import {
   formatChatTimestampTooltip,
@@ -491,6 +495,8 @@ interface TimelineRowSharedState {
   timelineDetail: TimelineDetail;
   /** The other threads of this thread's project, which a plain mention of their title links to. */
   mentionThreads: ReadonlyArray<ThreadLinkTarget>;
+  /** The row the "New" divider sits above: the first message the person has not read. */
+  newMessagesRowId: string | null;
 }
 
 interface TimelineRowActivityState {
@@ -1512,6 +1518,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
 
   const fileFolders = useThreadFileFolders(rows, markdownCwd);
+  const localLastVisitedAt = useUiStateStore((store) =>
+    routeThreadKey ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
+  );
+  const unreadSince = useUnreadSince(
+    routeThreadKey ?? null,
+    resolveThreadLastVisitedAt(timelineShell?.lastVisitedAt, localLastVisitedAt),
+    timelineShell !== null,
+  );
+  const newMessagesRowId = useMemo(() => firstUnreadRowId(rows, unreadSince), [rows, unreadSince]);
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       citationRequest: readyCitationRequest,
@@ -1563,6 +1578,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       reportFallbackTitle,
       timelineDetail,
       mentionThreads,
+      newMessagesRowId,
     }),
     [
       readyCitationRequest,
@@ -1613,6 +1629,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       reportFallbackTitle,
       timelineDetail,
       mentionThreads,
+      newMessagesRowId,
     ],
   );
   const compactionAwaitingRow =
@@ -2184,6 +2201,12 @@ function TimelineMinimapNavigationButton({
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
+/** The "New" divider, above the one row where the person's unread messages begin. */
+function NewMessagesDividerAbove({ rowId }: { rowId: string }) {
+  const { newMessagesRowId } = use(TimelineRowCtx);
+  return newMessagesRowId === rowId ? <NewMessagesDivider /> : null;
+}
+
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
@@ -2234,6 +2257,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       }
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
+      <NewMessagesDividerAbove rowId={row.id} />
       {isWorkLogRow ? (
         <WorkLogBlock
           continues={row.continuesWorkLog}
@@ -2395,6 +2419,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const senderThreadId = row.message.senderThreadId;
+  const senderShell = useThreadShell(
+    senderThreadId !== undefined && senderThreadId !== projectRouting?.coordinatorThreadId
+      ? scopeThreadRef(ctx.activeThreadEnvironmentId, senderThreadId)
+      : null,
+  );
   const resources = useMemo(
     () => selectMessageImageResources(row.message.attachments),
     [row.message.attachments],
@@ -2585,6 +2614,199 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ? row.message.scheduledTaskId
       : null;
 
+  const projectedItemStatus =
+    row.projectedItem &&
+    row.projectedItem.item.status !== "completed" &&
+    row.projectedItem.item.status !== "pending" &&
+    row.projectedItem.item.status !== "waiting" ? (
+      <div className="me-1 flex items-center gap-1.5">
+        <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive-foreground">
+          {row.projectedItem.item.status}
+        </span>
+      </div>
+    ) : null;
+  const relayFrom: RelayedMessageSource | null =
+    row.message.createdBy === "agent" &&
+    routineTaskId === null &&
+    !row.message.routedNote &&
+    !resolveUserMessagePresentation(row.message).isAutomation
+      ? senderThreadId === undefined
+        ? "agent"
+        : senderThreadId === projectRouting?.coordinatorThreadId
+          ? "coordinator"
+          : "thread"
+      : null;
+  const attachmentBlocks = (
+    <>
+      {(regularImages.length > 0 || userVideos.length > 0) && (
+        <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
+          {regularImages.map((image) => (
+            <div
+              key={image.id}
+              className={cn(
+                "bg-background/70",
+                image.source?.kind === "snap-shot" && image.previewUrl
+                  ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
+                  : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+              )}
+            >
+              {image.previewUrl ? (
+                <button
+                  type="button"
+                  className="block h-full w-full cursor-zoom-in"
+                  aria-label={`Preview ${image.name}`}
+                  onClick={() => {
+                    const preview = buildExpandedImagePreview(regularImages, image.id);
+                    if (!preview) return;
+                    ctx.onImageExpand(preview);
+                  }}
+                >
+                  <img
+                    src={image.previewUrl}
+                    alt={image.name}
+                    className="block size-full object-cover"
+                  />
+                </button>
+              ) : (
+                <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground">
+                  {image.name}
+                </div>
+              )}
+              {image.previewUrl && image.source?.kind === "snap-shot" ? (
+                <SnapShotAttachmentDetails source={image.source} />
+              ) : null}
+            </div>
+          ))}
+          {userVideos.map((file) => (
+            <UserVideoAttachment key={file.id} file={file} />
+          ))}
+        </div>
+      )}
+      {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
+        <div className="mb-2 flex flex-col gap-1">
+          {unchippedFiles.map((file) => {
+            const fileIdentity = (
+              <>
+                <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
+                <span className="min-w-0 flex-1 truncate">{file.name}</span>
+              </>
+            );
+            if (file.downloadable !== false) {
+              return (
+                <div key={file.id} className="flex min-w-0 items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Preview ${file.name}`}
+                    onClick={() => ctx.onFileOpen(file)}
+                    className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+                  >
+                    {fileIdentity}
+                    <EyeIcon className="size-4 shrink-0" />
+                  </button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          aria-label={`Download ${file.name}`}
+                          onClick={() => ctx.onFileDownload(file)}
+                        />
+                      }
+                    >
+                      <DownloadIcon />
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+                  </Tooltip>
+                </div>
+              );
+            }
+
+            return (
+              <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                {fileIdentity}
+              </div>
+            );
+          })}
+          {unknownAttachments.map((attachment) => (
+            <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+              <PierreEntryIcon pathValue={attachment.name} kind="file" theme={ctx.resolvedTheme} />
+              <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+
+  // Another agent's message (the coordinator's, or another thread's) reads as a
+  // quiet relayed note on the left, so the person's own messages stay primary.
+  if (relayFrom !== null) {
+    const fromCoordinator = relayFrom === "coordinator";
+    return (
+      <div data-relayed-row="">
+        <RelayedMessage
+          label={
+            fromCoordinator
+              ? "Message from coordinator"
+              : senderShell?.title.trim()
+                ? `Message from ${senderShell.title.trim()}`
+                : relayFrom === "thread"
+                  ? "Message from another thread"
+                  : "Message from another agent"
+          }
+          source={relayFrom}
+          view={
+            fromCoordinator && projectRouting
+              ? { label: "View coordinator", onOpen: projectRouting.openCoordinator }
+              : relayFrom === "thread" && senderThreadId
+                ? { label: "View thread", onOpen: () => ctx.onOpenThread(senderThreadId) }
+                : null
+          }
+          createdAt={row.message.createdAt}
+          timestampFormat={ctx.timestampFormat}
+          original={row.message.text}
+          text={resolvedContext.text}
+          detail={ctx.timelineDetail}
+          renderMarkdown={(part) => (
+            <div onCopyCapture={onBodyCopyCapture}>
+              <UserMessageBody
+                text={part}
+                renderContextReference={renderContextReference}
+                skills={ctx.skills}
+                markdownCwd={ctx.markdownCwd}
+                tone="muted"
+              />
+            </div>
+          )}
+          attachments={
+            regularImages.length > 0 ||
+            userVideos.length > 0 ||
+            unchippedFiles.length > 0 ||
+            unknownAttachments.length > 0
+              ? attachmentBlocks
+              : undefined
+          }
+          actions={
+            <>
+              <UserMessageExecutionOrigin
+                message={row.message}
+                runs={ctx.runs}
+                environmentId={ctx.activeThreadEnvironmentId}
+                threadRef={ctx.threadRef}
+                onOpenThread={ctx.onOpenThread}
+              />
+              {typeof revertTurnCount === "number" ? (
+                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+              ) : null}
+            </>
+          }
+        />
+        {projectedItemStatus}
+      </div>
+    );
+  }
+
   return (
     <div className="group flex flex-col items-end gap-1">
       <UserMessageProvenance
@@ -2620,133 +2842,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 : "Agent"
               : "You"}
           </MessageAuthorHeading>
-          {(regularImages.length > 0 || userVideos.length > 0) && (
-            <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
-              {regularImages.map((image) => (
-                <div
-                  key={image.id}
-                  className={cn(
-                    "bg-background/70",
-                    image.source?.kind === "snap-shot" && image.previewUrl
-                      ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-                      : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
-                  )}
-                >
-                  {image.previewUrl ? (
-                    <button
-                      type="button"
-                      className="block h-full w-full cursor-zoom-in"
-                      aria-label={`Preview ${image.name}`}
-                      onClick={() => {
-                        const preview = buildExpandedImagePreview(regularImages, image.id);
-                        if (!preview) return;
-                        ctx.onImageExpand(preview);
-                      }}
-                    >
-                      <img
-                        src={image.previewUrl}
-                        alt={image.name}
-                        className="block size-full object-cover"
-                      />
-                    </button>
-                  ) : (
-                    <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground">
-                      {image.name}
-                    </div>
-                  )}
-                  {image.previewUrl && image.source?.kind === "snap-shot" ? (
-                    <SnapShotAttachmentDetails source={image.source} />
-                  ) : null}
-                </div>
-              ))}
-              {userVideos.map((file) => (
-                <UserVideoAttachment key={file.id} file={file} />
-              ))}
-            </div>
-          )}
-          {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
-            <div className="mb-2 flex flex-col gap-1">
-              {unchippedFiles.map((file) => {
-                const fileIdentity = (
-                  <>
-                    <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
-                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                  </>
-                );
-                if (file.downloadable !== false) {
-                  return (
-                    <div key={file.id} className="flex min-w-0 items-center gap-1">
-                      <button
-                        type="button"
-                        aria-label={`Preview ${file.name}`}
-                        onClick={() => ctx.onFileOpen(file)}
-                        className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
-                      >
-                        {fileIdentity}
-                        <EyeIcon className="size-4 shrink-0" />
-                      </button>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              size="icon-xs"
-                              variant="ghost-muted"
-                              aria-label={`Download ${file.name}`}
-                              onClick={() => ctx.onFileDownload(file)}
-                            />
-                          }
-                        >
-                          <DownloadIcon />
-                        </TooltipTrigger>
-                        <TooltipPopup side="top">Download {file.name}</TooltipPopup>
-                      </Tooltip>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                    {fileIdentity}
-                  </div>
-                );
-              })}
-              {unknownAttachments.map((attachment) => (
-                <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                  <PierreEntryIcon
-                    pathValue={attachment.name}
-                    kind="file"
-                    theme={ctx.resolvedTheme}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
+          {attachmentBlocks}
           <div onCopyCapture={onBodyCopyCapture}>
-            {row.message.createdBy === "agent" && resolvedContext.text.trim().length > 0 ? (
-              // Another agent's message reads like a worker's in the coordinator:
-              // its opening, folded by the thread's detail level, with the exact original.
-              <WorkerMessageBody
-                original={row.message.text}
-                text={resolvedContext.text}
-                detail={ctx.timelineDetail}
-                renderMarkdown={(part) => (
-                  <UserMessageBody
-                    text={part}
-                    renderContextReference={renderContextReference}
-                    skills={ctx.skills}
-                    markdownCwd={ctx.markdownCwd}
-                  />
-                )}
-              />
-            ) : (
-              <CollapsibleUserMessageBody
-                text={resolvedContext.text}
-                renderContextReference={renderContextReference}
-                skills={ctx.skills}
-                markdownCwd={ctx.markdownCwd}
-              />
-            )}
+            <CollapsibleUserMessageBody
+              text={resolvedContext.text}
+              renderContextReference={renderContextReference}
+              skills={ctx.skills}
+              markdownCwd={ctx.markdownCwd}
+            />
           </div>
         </div>
       )}
@@ -2758,16 +2861,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           onOpenCoordinator={projectRouting?.openCoordinator}
         />
       ) : null}
-      {row.projectedItem &&
-      row.projectedItem.item.status !== "completed" &&
-      row.projectedItem.item.status !== "pending" &&
-      row.projectedItem.item.status !== "waiting" ? (
-        <div className="me-1 flex items-center gap-1.5">
-          <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive-foreground">
-            {row.projectedItem.item.status}
-          </span>
-        </div>
-      ) : null}
+      {projectedItemStatus}
       <div className="flex w-full max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <UserMessageExecutionOrigin
           message={row.message}
@@ -4669,7 +4763,10 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             <ReactMarkdown
               remarkPlugins={[
                 CHAT_REMARK_GFM,
-                [remarkThoughtPreview, row.active ? "Thinking" : "Thought"],
+                [
+                  remarkThoughtPreview,
+                  row.active ? "Thinking" : thoughtLabel(row.entry.structuredPayload),
+                ],
               ]}
             >
               {row.entry.detail ?? label}
@@ -5629,6 +5726,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
+  /** Another agent's relayed message reads in muted prose. */
+  tone?: "muted";
 }) {
   const ctx = use(TimelineRowCtx);
   if (props.text.length === 0) {
@@ -5640,7 +5739,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
-      className="text-foreground"
+      className={props.tone === "muted" ? "text-muted-foreground" : "text-foreground"}
       lineBreaks
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
@@ -6660,7 +6759,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     isReasoning && expanded
       ? workEntry.toolLifecycleStatus === "inProgress"
         ? "Thinking"
-        : "Thought"
+        : thoughtLabel(workEntry.structuredPayload)
       : questionHeading ||
         (pathLabel
           ? `${pathLabel.verb} ${pathLabel.path}${pathLabel.moreCount > 0 ? ` +${pathLabel.moreCount} more` : ""}`
@@ -6855,7 +6954,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                     CHAT_REMARK_GFM,
                     [
                       remarkThoughtPreview,
-                      workEntry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought",
+                      workEntry.toolLifecycleStatus === "inProgress"
+                        ? "Thinking"
+                        : thoughtLabel(workEntry.structuredPayload),
                     ],
                   ]}
                 >

@@ -466,6 +466,21 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   for spent,stage,given in ((0,lambda:self.clock.__setitem__(0,self.clock[0]+budget+1),[budget]),(100,outlast,[budget-100]),(budget,None,[])):
    self.stage_timeouts,self.clock[0],self.on_stage=[],1000.0,stage;self.snapshot_since=lambda i,r,a=False,s=spent:(self.clock.__setitem__(0,self.clock[0]+s),since(i,r,a))[1]
    self.assertRaisesRegex(AssertionError,'^'+update.TOO_SLOW_TO_RESTART+'$',self.execute);self.assertEqual(self.stage_timeouts,given);self.assertEqual((self.restart_calls,self.backups),([],[]));self.assertEqual({p:p.read_bytes() for p in self.original},self.original)
+ def test_a_full_re_read_that_cannot_finish_in_time_refuses_before_it_starts(self):
+  # Each full read takes 140 s: the before-read and the prestate read leave less than that after
+  # the gate settles, so the check after the gate refuses instead of reading a third time.
+  state=self.use_captured_waiting_state();self.on_stage=lambda:waiting_check(state,'staging')
+  real_read,reads=update._read_state,[]
+  def slow(*args,**kwargs):reads.append(self.restarted);self.clock[0]+=140;return real_read(*args,**kwargs)
+  real_gate=update.write_install_gate
+  def gate(own,home):real_gate(own,home);waiting_check(state,'gate')
+  with patch.object(update,'_read_state',side_effect=slow),patch.object(update,'write_install_gate',side_effect=gate), \
+       self.assertRaisesRegex(AssertionError,'^'+update.TOO_SLOW_TO_RESTART+'$'):
+   self.execute()
+  self.assertEqual(reads,[False,False]);self.assertEqual((self.backups,self.restart_calls),([],[]))
+  result=json.loads(self.output.read_text())
+  self.assertEqual((result['phase'],result['pointers']),('pointers-written','previous-release'))
+  self.assertGreaterEqual(result['timings']['beforeRead'],140_000)
  def test_a_service_that_binds_after_45_seconds_is_still_ready_in_time(self):
   # Quick readings must not run out of attempts before the deadline: the wait is time-bound.
   restarted={};real=self.snapshot_since;readings=[]
@@ -1022,7 +1037,7 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
     self.execute()
    value=json.loads(self.output.read_text());self.assertEqual(value['phase'],'verified')
    self.assertEqual(bool(self.reused),watermark)
-   for key in ('timings','backup','stateBackup','restartStartedAt'):value.pop(key)  # Paths in each run's own home, and times.
+   for key in ('timings','backup','stateBackup','restartStartedAt','readDeltaMisses'):value.pop(key)  # Paths in each run's own home, and times; misses differ by design.
    value['after'].pop('observedAt')
    # Each run has its own temporary home, which the pointer files name: their hashes differ.
    value['after'].pop('fileHashes')
@@ -1039,6 +1054,10 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   self.assertEqual(result['phase'],'verified');self.assertEqual(self.reused,[])
   self.assertEqual(reads,[False,False,True])
   self.assertEqual(result['appendedLogRows'],{'orchestration_events':1,'orchestration_command_receipts':1})
+  # The receipt says why the prestate re-read went to a full read (this fixture keeps no -wal, so
+  # there is no log position; test-update-read-delta.py covers the WAL reasons). The checks before
+  # the stop reused that read and missed nothing.
+  self.assertEqual(result['readDeltaMisses'],[{'against':'expected','reason':'no-position'}])
  def test_a_held_write_after_the_before_read_is_read_in_full_once(self):
   # M4, 1.0.88: a write during the before read made the prestate check read the 21.5 GB database
   # in full, and the check after the gate read it in full again, past the restart budget. A held
@@ -1074,6 +1093,45 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
        patch.object(update,'assert_quiescence',side_effect=lambda *a,**k:self.quiescence_guard(*a,**k)):
    with self.assertRaisesRegex(AssertionError,'changed before restart'):self.execute()
   self.assertEqual(reads,[False,False,False]);self.assertEqual((self.backups,self.launchd,self.restart_calls),([],[],[]))
+ def watch_reads(self):
+  """Every watermark take and check, -wal position and delta re-read, in order: (kind, value)."""
+  events,watermark,delta=[],update.read_watermark.Watermark,update.read_delta
+  take,unchanged,position,reread=watermark.take,watermark.unchanged,delta.position,delta.reread
+  def taken(self_):value=take(self_);events.append(('take',value));return value
+  def checked(self_,earlier):value=unchanged(self_,earlier);events.append(('unchanged',earlier,value));return value
+  def positioned(*args):value=position(*args);events.append(('position',value));return value
+  def reread_(state,base,since,**kwargs):events.append(('reread',base));return reread(state,base,since,**kwargs)
+  stack=contextlib.ExitStack()
+  for target,name,side_effect,spec in ((watermark,'take',taken,True),(watermark,'unchanged',checked,True),
+                                        (delta,'position',positioned,False),(delta,'reread',reread_,False)):
+   stack.enter_context(patch.object(target,name,autospec=spec,side_effect=side_effect))
+  return events,stack
+ def test_the_reused_prestate_read_is_the_one_both_the_mark_and_the_base_name(self):
+  # passed[0] and base['before'] advance together on the reused read (the proof after the restart
+  # starts from both): a commit after it is checked against the prestate read's mark and re-read
+  # against the -wal position taken right after that mark, not the before-read's.
+  service=self.use_held_admission();state=self.own/'userdata';self.on_stage=lambda:waiting_check(state,'staging')
+  guard=self.quiescence_guard
+  def browser_stop_while_the_service_appends(*args,**kwargs):
+   value=guard(*args,**kwargs)
+   if not self.restarted:waiting_check(state,'stop')
+   return value
+  self.quiescence_guard=browser_stop_while_the_service_appends
+  reads,counting=self.counted_full_reads();events,watching=self.watch_reads()
+  with counting,watching,patch.object(update,'_service',return_value=service),\
+       patch.object(update,'assert_quiescence',side_effect=lambda *a,**k:self.quiescence_guard(*a,**k)):
+   self.execute()
+  self.assertEqual(json.loads(self.output.read_text())['phase'],'verified')
+  self.assertEqual(reads,[False,False,False,True])  # Before, prestate (reused after the gate), before the stop, after.
+  # The marks taken right before a read: each is followed at once by that read's -wal position.
+  takes=[at for at,event in enumerate(events) if event[0]=='take' and events[at+1][0]=='position']
+  before_mark,prestate_mark=events[takes[0]][1],events[takes[1]][1]
+  prestate_position=events[takes[1]+1][1]
+  rereads=[at for at,event in enumerate(events) if event[0]=='reread']
+  self.assertEqual(len(rereads),2)  # The prestate check, then the last check before the stop.
+  check=[event for event in events[:rereads[-1]] if event[0]=='unchanged'][-1]
+  self.assertIs(check[1],prestate_mark);self.assertFalse(check[2]);self.assertIsNot(check[1],before_mark)
+  self.assertIs(events[rereads[-1]][1]['position'],prestate_position)
  def test_a_write_right_before_the_stop_is_read_in_full_and_refused(self):
   state=self.use_captured_waiting_state();guard=self.quiescence_guard
   def browser_stop_while_the_project_changes(*args,**kwargs):

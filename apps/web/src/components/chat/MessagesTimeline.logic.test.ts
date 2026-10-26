@@ -124,6 +124,23 @@ describe("work entry labels", () => {
     expect(
       liveWorkEntryLabel({ ...thought, toolLifecycleStatus: "completed" }, undefined, false),
     ).toBe(thought.detail);
+    // A settled thought with a measured span says how long it took (0965 D-05).
+    expect(
+      liveWorkEntryLabel(
+        {
+          ...thought,
+          detail: "",
+          toolLifecycleStatus: "completed",
+          structuredPayload: {
+            type: "reasoning",
+            startedAt: DateTime.makeUnsafe("2026-10-25T12:00:00.000Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-25T12:00:12.000Z"),
+          } as unknown as NonNullable<WorkLogEntry["structuredPayload"]>,
+        },
+        undefined,
+        false,
+      ),
+    ).toBe("Thought for 12s");
     expect(workEntryDisplayLabel(thought, undefined)).toBe(thought.detail);
     expect(workEntryIsVisibleInGroup(thought)).toBe(true);
     expect(workEntryIsVisibleInGroup({ ...thought, toolLifecycleStatus: "completed" })).toBe(true);

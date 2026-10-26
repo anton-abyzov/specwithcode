@@ -14,7 +14,7 @@ export function runtimePackage(version) {
     version,
     private: true,
     type: "module",
-    license: "MIT",
+    license: "UNLICENSED",
     engines: { node: "^22.20.0" },
     bin: { ...RUNTIME_BINS },
   };

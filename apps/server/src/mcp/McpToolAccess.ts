@@ -26,6 +26,7 @@ import {
   readCaller,
   unavailable,
 } from "./threadAccess.ts";
+import { assertThreadChangeable, workGrantOf } from "./workGrantAccess.ts";
 
 // Only the classes below assign these, from their static blocks, so nothing
 // outside this module can build a declaration or a handlers layer.
@@ -170,14 +171,20 @@ export const writesThreads = <P, A, E, R>(
   declare((params: P) =>
     Effect.gen(function* () {
       const caller = yield* writingCaller;
+      // Another machine's work changes only threads its grant covers and its
+      // own coordinator owns, the caller's own thread included: a revoked
+      // grant stops that too.
+      const underGrant = (yield* workGrantOf(caller)) !== undefined;
       for (const threadId of threads(params)) {
-        if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
-        const target = yield* caller.threads
-          .getThreadShell(threadId)
-          .pipe(Effect.mapError(unavailable));
-        if (target !== null && target.deletedAt === null) {
-          yield* assertTargetWithinLimits(caller.limits, target);
-        }
+        const own = threadId === undefined || threadId === caller.scope.thread?.threadId;
+        if (own && !underGrant) continue;
+        const target =
+          threadId === undefined || own
+            ? caller.caller
+            : yield* caller.threads.getThreadShell(threadId).pipe(Effect.mapError(unavailable));
+        if (target === undefined || target === null || target.deletedAt !== null) continue;
+        if (underGrant) yield* assertThreadChangeable(caller, target);
+        if (!own) yield* assertTargetWithinLimits(caller.limits, target);
       }
       // The target's user can raise its modes after the check above; the
       // orchestrator checks again under the thread's lock and records its

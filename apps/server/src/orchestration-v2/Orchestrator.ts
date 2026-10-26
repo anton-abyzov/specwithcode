@@ -98,6 +98,8 @@ import {
   type TurnItemId,
 } from "@specweave-studio/contracts";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { launchFallbackAfterMove } from "@specweave-studio/shared/threadModelIdentity";
 import {
   derivePendingBackgroundWork,
@@ -5367,6 +5369,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (requestId) => requestId === command.usageLimitRecoveryRequestId,
             nowMs,
           );
+          return;
+        }
+      }
+
+      // Recovery never resumes a detour onto API credits the project's rule
+      // no longer allows; the way back takes the thread home instead.
+      if (
+        (command.usageLimitContinuationOfRunId !== undefined || isLimitRecoveryResume(command)) &&
+        Option.isSome(serverSettings)
+      ) {
+        const settings = yield* serverSettings.value.getSettings.pipe(mapDispatchError(command));
+        const rule = resolveProjectSettings(settings, projection.thread.projectId).settings;
+        const stoppedRunId =
+          command.usageLimitContinuationOfRunId ?? latestExecutedRun(projection.runs)?.id;
+        if (
+          stoppedRunId !== undefined &&
+          apiCreditDetourResumeRefused(projection.thread, projection.runs, rule)
+        ) {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          yield* refuseLimitResume(command, events, projection, stoppedRunId, () => false, nowMs);
           return;
         }
       }

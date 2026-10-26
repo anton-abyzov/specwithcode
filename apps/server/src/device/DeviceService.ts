@@ -225,6 +225,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       enabled: value.enableDeviceSupport,
       agentAccessEnabled: value.enableAgentDeviceAccess,
       onboardingCompleted: value.deviceOnboardingCompleted,
+      maxBootedDevices: value.maxBootedDevices,
     })),
     Effect.mapError(
       (cause) =>
@@ -726,6 +727,30 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return result.serial ?? result.id ?? device.id;
   });
 
+  /** Simulators boot only below the configured per-host limit; physical devices never count. */
+  const ensureBootCapacity = Effect.fn("DeviceService.ensureBootCapacity")(function* (
+    state: DeviceServiceState,
+    device: DeviceSummary,
+  ) {
+    const { maxBootedDevices } = yield* readDeviceSettings;
+    if (maxBootedDevices === null) return;
+    const running = new Map<DeviceId, string>();
+    for (const entry of [
+      ...state.devices.filter((entry) => entry.booted),
+      ...(state.bootingDevices ?? []),
+    ]) {
+      if (entry.hostId === device.hostId && !entry.physical) running.set(entry.id, entry.name);
+    }
+    if (running.size < maxBootedDevices) return;
+    return yield* new DeviceBootError({
+      hostId: device.hostId,
+      deviceId: device.id,
+      reason: "limit_reached",
+      diagnostics: `Limit: ${maxBootedDevices}. Running: ${[...running.values()].join(", ")}.`,
+      cause: undefined,
+    });
+  });
+
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(function* (input) {
     const host = yield* resolveHost(input.hostId);
     yield* ensurePlatform(host, input.platform);
@@ -763,6 +788,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
       }
     }
     if (!device.booted && input.boot !== false) {
+      if (!device.physical) yield* ensureBootCapacity(state, device);
       const booting = { ...device, threadId: input.threadId };
       yield* publish((current) => ({
         ...current,

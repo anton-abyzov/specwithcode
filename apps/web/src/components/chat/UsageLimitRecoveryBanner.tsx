@@ -128,7 +128,7 @@ export function fallbackUnavailableReason(
     case "too-small":
       return "context window too small";
     case "unverified":
-      return "usage not read yet";
+      return "no recent usage reading";
     case "not-ready":
       return manuallySelectable ? "provider warning" : "not set up on this machine";
     case "excluded":

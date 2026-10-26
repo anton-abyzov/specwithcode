@@ -1,5 +1,6 @@
 import type { ThreadId } from "@specweave-studio/contracts";
 import { parseRoutedMessage } from "@specweave-studio/shared/routedMessage";
+import { resolveStudioMcpToolId } from "@specweave-studio/shared/studioMcpToolPresentation";
 
 type Message = {
   readonly id: string;
@@ -244,31 +245,95 @@ export function routedRepliesForThread<At = string>(
   return replies;
 }
 
+/** A coordinator tool call, as its turn items record it. */
+type ToolCall = {
+  readonly type: string;
+  readonly status?: string | undefined;
+  readonly toolName?: string | null | undefined;
+  readonly input?: unknown;
+  readonly output?: unknown;
+};
+
+/**
+ * Where the coordinator's studio_thread_send calls delivered each forwarded
+ * message, keyed by the message they forwarded. A call that has not finished,
+ * failed, or left the message waiting in a held queue delivered nothing yet, so
+ * it names no thread: the follow-up stays in view with what the coordinator said.
+ */
+function forwardTargets(
+  turnItems: readonly ToolCall[],
+): ReadonlyMap<string, readonly (string | null)[]> {
+  const targets = new Map<string, (string | null)[]>();
+  for (const item of turnItems) {
+    if (item.type !== "dynamic_tool") continue;
+    if (resolveStudioMcpToolId(item.toolName) !== "studio_thread_send") continue;
+    const input = item.input as { forwardMessageId?: unknown; threadId?: unknown } | null;
+    if (typeof input?.forwardMessageId !== "string" || typeof input.threadId !== "string") continue;
+    const output = JSON.stringify(item.output ?? null);
+    const delivered =
+      item.status === "completed" &&
+      !/"isError"\s*:\s*true/.test(output) &&
+      !/\\?"queueHeld\\?"\s*:\s*true/.test(output);
+    targets.set(input.forwardMessageId, [
+      ...(targets.get(input.forwardMessageId) ?? []),
+      delivered ? input.threadId : null,
+    ]);
+  }
+  return targets;
+}
+
 /**
  * Follow-ups typed in a worker that the coordinator only passed back to that
- * same worker, with its replies. Sending a thread its own message is routine,
- * so the coordinator conversation leaves the exchange out; a follow-up it moved
- * elsewhere, kept, or has not answered yet still shows.
+ * same worker, with its replies in that turn. Sending a thread its own message
+ * is routine, so the coordinator conversation leaves the exchange out; a
+ * follow-up it moved elsewhere, kept, has not answered yet, or failed to pass on
+ * still shows.
+ *
+ * The coordinator's own forward calls decide it: whatever it said around them,
+ * a follow-up every forward delivered to its source worker went home. Without a
+ * recorded forward, the replies' thread links decide it: some reply links the
+ * source worker and none links another thread. Nothing is decided while a reply
+ * is still streaming.
  */
 export function returnedFollowUpIds(
-  messages: readonly (Message & { readonly streaming?: boolean | undefined })[],
+  messages: readonly (Message & {
+    readonly streaming?: boolean | undefined;
+    readonly runId?: string | null | undefined;
+  })[],
   project: { readonly id: string; readonly environmentId: string },
   workers: readonly Worker[],
+  turnItems: readonly ToolCall[] = [],
 ): ReadonlySet<string> {
+  const forwards = forwardTargets(turnItems);
   const ids = new Set<string>();
   messages.forEach((message, index) => {
     const source = projectCoordinatorMessageDisplay(message, project, workers).sourceThread;
     if (source === null) return;
     const replies: string[] = [];
-    let linked: string[] | null = null;
+    const linked = new Set<string>();
+    let answered = false;
+    let streaming = false;
     for (const next of messages.slice(index + 1)) {
       if (next.role === "user") break;
       if (next.role !== "assistant") continue;
+      // A follow-up steered into a running turn shares it with an earlier
+      // request; only the replies of the follow-up's own turn are its.
+      const runId = message.runId ?? null;
+      if (runId !== null && (next.runId ?? null) !== runId) continue;
       replies.push(next.id);
-      if (linked === null && !next.streaming && next.text.trim() !== "")
-        linked = linkedThreadIds(next.text);
+      if (next.streaming) streaming = true;
+      if (next.streaming || next.text.trim() === "") continue;
+      answered = true;
+      for (const id of linkedThreadIds(next.text)) linked.add(id);
     }
-    if (linked === null || linked.length === 0 || linked.some((id) => id !== source.id)) return;
+    if (streaming) return;
+    const delivered = forwards.get(message.id);
+    const elsewhere = [...linked].some((id) => id !== source.id);
+    const home =
+      delivered !== undefined
+        ? delivered.every((id) => id === source.id) && !elsewhere
+        : answered && linked.has(source.id) && !elsewhere;
+    if (!home) return;
     ids.add(message.id);
     for (const id of replies) ids.add(id);
   });

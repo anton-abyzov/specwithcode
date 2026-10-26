@@ -6,6 +6,7 @@ import Weave
 struct TranscriptRowView: View {
   let row: TranscriptRow
   let busyRequests: Set<String>
+  var thinkingBrand: String? = nil
   let onDecision: (String, ApprovalDecision) -> Void
   let onOpenThread: (ThreadRef) -> Void
   var onOpenLink: ((URL) -> Void)? = nil
@@ -29,8 +30,8 @@ struct TranscriptRowView: View {
           .padding(.trailing, WeaveSpacing.s2)
       }
 
-    case let .reasoning(text, streaming):
-      ReasoningRow(text: text, streaming: streaming)
+    case let .reasoning(text, streaming, seconds):
+      ReasoningRow(text: text, streaming: streaming, seconds: seconds, brand: thinkingBrand)
         .padding(.leading, Self.textInset)
 
     case let .tool(title, detail, symbol, status):
@@ -69,11 +70,48 @@ struct TranscriptRowView: View {
   }
 }
 
+/// The provider's mark, muted, breathing while the thought streams (still under
+/// Reduce Motion); the crafted dots when the chat has no single provider.
+private struct ThinkingMark: View {
+  let brand: String?
+  let streaming: Bool
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    if let brand {
+      if streaming && !reduceMotion {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+          mark(brand).opacity(ThinkingGlyph.pulseOpacity(at: context.date.timeIntervalSinceReferenceDate))
+        }
+      } else {
+        mark(brand)
+      }
+    } else {
+      ThinkingGlyph(size: 14, pulsing: streaming)
+    }
+  }
+
+  private func mark(_ brand: String) -> some View {
+    ProviderMark(brand, size: 14).saturation(0).opacity(0.7)
+  }
+}
+
 /// The model's reasoning, collapsed to one line until tapped.
 private struct ReasoningRow: View {
   let text: String
   let streaming: Bool
+  let seconds: Int?
+  let brand: String?
   @State private var expanded = false
+
+  /// "Thought for 12s", "Thought for 1m 5s", or "Thought" when unmeasured.
+  private var settledLabel: String {
+    guard let seconds else { return "Thought" }
+    if seconds < 60 { return "Thought for \(seconds)s" }
+    let hours = seconds / 3600, minutes = (seconds % 3600) / 60, rest = seconds % 60
+    let parts = [hours > 0 ? "\(hours)h" : nil, minutes > 0 ? "\(minutes)m" : nil, rest > 0 ? "\(rest)s" : nil]
+    return "Thought for " + parts.compactMap { $0 }.joined(separator: " ")
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
@@ -81,9 +119,9 @@ private struct ReasoningRow: View {
         withAnimation(.snappy) { expanded.toggle() }
       } label: {
         HStack(spacing: WeaveSpacing.s2) {
-          ThinkingGlyph(size: 14, pulsing: streaming)
+          ThinkingMark(brand: brand, streaming: streaming)
             .frame(width: 20)
-          Text(streaming ? "Thinking…" : "Thought")
+          Text(streaming ? "Thinking…" : settledLabel)
             .font(.weave(.callout, weight: .medium))
           Image(systemName: expanded ? "chevron.up" : "chevron.down")
             .font(.system(size: 11, weight: .semibold))
@@ -95,7 +133,7 @@ private struct ReasoningRow: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .accessibilityLabel(streaming ? "Thinking" : "Thought")
+      .accessibilityLabel(streaming ? "Thinking" : settledLabel)
       .accessibilityValue(expanded ? "Expanded" : "Collapsed")
       .accessibilityHint(expanded ? "Hides the reasoning" : "Shows the reasoning")
       if expanded {

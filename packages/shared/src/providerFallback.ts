@@ -291,17 +291,33 @@ export function reportsNoUsage(provider: ServerProvider): boolean {
   return provider.usageLimits === undefined;
 }
 
+/** A Cursor instance signed in with a Cursor API key (`api-key`). */
+function isCursorApiKeyProvider(provider: ServerProvider): boolean {
+  return provider.driver === "cursor" && /api[-_ ]?key/i.test(provider.auth.type ?? "");
+}
+
 /**
- * An ACP agent other than verified GitHub Copilot. Without usage telemetry
- * the app cannot establish its billing. Missing branding is not evidence
- * of free capacity. So
- * nothing moves a thread there on its own; only a fallback order, project
- * default or provider order that names it does. Identified by the registry
- * icon the server derives from the agent id, never the editable name.
+ * A target whose billing the app cannot establish, so nothing moves a thread
+ * there on its own; only a fallback order, project default or provider order
+ * that names it does. Two kinds: an ACP agent other than verified GitHub
+ * Copilot (without usage telemetry, and missing branding is not evidence of
+ * free capacity), identified by the registry icon the server derives from
+ * the agent id, never the editable name; and, given `model`, a model its
+ * provider itself reports as `unknown` billing (Pi or OpenCode on an
+ * `anthropic` id that may be a Claude Max login or an API key). A Cursor API
+ * key counts too while it reports no usage: it draws on the Cursor plan, so
+ * it stays an ordinary candidate (not per-token), but only a plan usage read
+ * shows that plan has room.
  */
-export function isUnknownBillingAgent(provider: ServerProvider | undefined): boolean {
+export function isUnknownBillingAgent(
+  provider: ServerProvider | undefined,
+  model?: string | undefined,
+): boolean {
+  if (provider === undefined) return false;
+  if (model !== undefined && providerModelBilling(provider, model) === "unknown") return true;
+  if (isCursorApiKeyProvider(provider) && reportsNoUsage(provider)) return true;
   return (
-    provider?.driver === "acpRegistry" &&
+    provider.driver === "acpRegistry" &&
     reportsNoUsage(provider) &&
     !isGitHubCopilotIcon(null, provider.iconUrl)
   );
@@ -348,7 +364,7 @@ function roomOn(
   },
 ): "verified" | "unreported" | null {
   if (input.limited?.has(provider.instanceId) || isPaidModelOn(provider, model)) return null;
-  if (input.named !== true && isUnknownBillingAgent(provider)) return null;
+  if (input.named !== true && isUnknownBillingAgent(provider, model)) return null;
   if (reportsNoUsage(provider)) return canTakeTurn(provider) ? "unreported" : null;
   if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return null;
   const used = providerUsedPercent(provider, input.nowMs, model);
@@ -865,7 +881,7 @@ function resolveProviderFallbackPass(input: {
       !input.limitedInstanceIds?.has(provider.instanceId) &&
       canTakeTurn(provider) &&
       !isPaidModelOn(provider, proven.model) &&
-      !isUnknownBillingAgent(provider) &&
+      !isUnknownBillingAgent(provider, proven.model) &&
       (perTokenHome === null || !reportsNoUsage(provider)) &&
       (used === null || used < (input.belowPercent ?? 100))
     ) {
@@ -920,7 +936,7 @@ function resolveProviderFallbackPass(input: {
         usable(provider, candidateModel(provider)) &&
         (perTokenHome === null || !reportsNoUsage(provider)) &&
         !isPaidModelOn(provider, candidateModel(provider)) &&
-        !isUnknownBillingAgent(provider) &&
+        !isUnknownBillingAgent(provider, candidateModel(provider)) &&
         !excluded(provider.instanceId, candidateModel(provider)),
     )
     .map((provider, order) => ({ provider, order, rank: rank(provider) }))
@@ -1043,7 +1059,7 @@ export function resolveWorkerLaunchSelection(input: {
       provider !== undefined &&
       canTakeTurn(provider) &&
       !isPaidModelOn(provider, coordinator.model) &&
-      !isUnknownBillingAgent(provider) &&
+      !isUnknownBillingAgent(provider, coordinator.model) &&
       !full(provider, coordinator.model) &&
       !isExcludedFallbackModel(
         input.rule.providerLimitExcludedModels,
@@ -1346,7 +1362,8 @@ export function resolveCoordinatorTurnSelection(input: {
       isGeminiSpendProvider(current) ||
       isPaidModelBilling(providerModelBilling(current, thread.model)) ||
       (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true) ||
-      (isUnknownBillingAgent(current) && !ruleNamesInstance(input.rule, thread.instanceId));
+      (isUnknownBillingAgent(current, thread.model) &&
+        !ruleNamesInstance(input.rule, thread.instanceId));
     if (
       current !== undefined &&
       !paid &&

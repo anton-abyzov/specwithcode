@@ -55,6 +55,35 @@ describe("resolveReportIncrement", () => {
     ).toBe("0973-budget-vs-actuals");
   });
 
+  it("files a report under SpecWeave's lettered increment, not its plain sibling", async () => {
+    const root = await project(["0657-dark-theme", "0657E-dark-theme-followup"]);
+    const home = await temp("studio-home-");
+    expect(
+      await resolveReportIncrement(root, {
+        threadId: "t1",
+        title: "Follow-up",
+        branch: "inc/0657E-dark-theme-followup",
+        home,
+      }),
+    ).toBe("0657E-dark-theme-followup");
+  });
+
+  it("keeps the letter when a lettered branch only starts like its folder", async () => {
+    const root = await project(["0657-dark-theme", "0657E-dark-theme-followup", "1000-perf"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t1", home };
+    expect(
+      await resolveReportIncrement(root, { ...source, title: "x", branch: "fix/0657E-followup" }),
+    ).toBe("0657E-dark-theme-followup");
+    expect(
+      await resolveReportIncrement(root, {
+        ...source,
+        title: "Make it 1000x-faster",
+        branch: null,
+      }),
+    ).toBeNull();
+  });
+
   it("never guesses when a number names no folder or two folders", async () => {
     const root = await project(["0973-a", "0973-b"]);
     const home = await temp("studio-home-");

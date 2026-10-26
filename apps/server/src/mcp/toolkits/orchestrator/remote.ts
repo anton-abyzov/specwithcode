@@ -23,8 +23,10 @@ import type { RemoteTool } from "../../../fleet/RemoteStudioMcpClient.ts";
 import { isTerminalThreadStatus } from "../../../fleet/remoteWorkerMatching.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
+import { delegationRefusal, outgoingDelegation } from "../../../fleet/workGrantPolicy.ts";
 import { loadCaller, readCaller } from "../../threadAccess.ts";
 import { explainThreadNotFound } from "../../threadNotFoundHint.ts";
+import { refuseRevoked, workGrantOf } from "../../workGrantAccess.ts";
 
 const MAX_WAIT_MS = 60 * 60 * 1_000;
 const DEFAULT_WAIT_MS = 10 * 60 * 1_000;
@@ -103,6 +105,61 @@ const requireThreadCaller = Effect.gen(function* () {
   return context.caller;
 });
 
+/**
+ * Work another machine started here reaches a thread on a third machine only
+ * as far as its own launches may go: never back along the path it came by,
+ * never past the hop limit, and only to a thread this calling thread launched
+ * there. That machine sees this one's coordinator, not the work's origin, so
+ * the check is made here. Listing another machine's threads is refused to it.
+ * A legacy grant (the owner's own machines) still reads, waits on and lists
+ * threads anywhere, its origin included, as before grants: only a send or an
+ * interrupt, which acts on the thread, is kept off the path it came by.
+ */
+const assertGrantMayReach = (
+  caller: { readonly id: ThreadId },
+  machine: OrchestratorMcpMachineRef,
+  remoteThreadId: string | undefined,
+  access: "observe" | "act",
+) =>
+  Effect.gen(function* () {
+    const context = yield* loadCaller();
+    const work = yield* workGrantOf(context);
+    if (work === undefined) return;
+    yield* refuseRevoked(work);
+    if (work.grant.legacy === true && access === "observe") return;
+    const workers = yield* RemoteWorkers.RemoteWorkers;
+    const outgoing = outgoingDelegation({
+      localEnvironmentId: context.scope.environmentId,
+      targetEnvironmentId: machine.environmentId,
+      origin: work.origin,
+    });
+    if (!outgoing.ok)
+      return yield* new OrchestratorMcpFailure({
+        code: outgoing.code,
+        message: delegationRefusal(
+          outgoing,
+          new Map([
+            ...(yield* workers.machineLabels),
+            [context.scope.environmentId, "this machine"],
+          ]),
+        ),
+      });
+    // A legacy grant (the owner's own machines) reaches their threads as before.
+    if (work.grant.legacy === true) return;
+    const launched =
+      remoteThreadId !== undefined &&
+      (yield* workers.launchedBy({
+        callerThreadId: caller.id,
+        machineId: machine.id,
+        remoteThreadId,
+      }));
+    if (!launched)
+      return yield* new OrchestratorMcpFailure({
+        code: "outside_grant_scope",
+        message: `This thread runs ${work.coordinatorLabel}'s work, which may reach only the threads it launched on ${machine.label}.`,
+      });
+  });
+
 /** The remote thread may not run with broader modes than the caller here, as for a local one. */
 const assertWithinCallerModes = (machine: OrchestratorMcpMachineRef, threadId: string) =>
   Effect.gen(function* () {
@@ -162,10 +219,15 @@ export const routeThread = <I extends Target, A, B, RL, RR>(
       : yield* remote(resolved.target.machine, rest);
   });
 
-export const readRemote = (machine: OrchestratorMcpMachineRef, input: Record<string, unknown>) =>
-  requireThreadCaller.pipe(
-    Effect.andThen(proxied(OrchestratorMcpThreadReadResult, machine, "studio_thread_read", input)),
-  );
+export const readRemote = (
+  machine: OrchestratorMcpMachineRef,
+  input: { readonly threadId: string } & Record<string, unknown>,
+) =>
+  Effect.gen(function* () {
+    const caller = yield* requireThreadCaller;
+    yield* assertGrantMayReach(caller, machine, input.threadId, "observe");
+    return yield* proxied(OrchestratorMcpThreadReadResult, machine, "studio_thread_read", input);
+  });
 
 export const waitRemote = (
   machine: OrchestratorMcpMachineRef,
@@ -176,6 +238,7 @@ export const waitRemote = (
 ) =>
   Effect.gen(function* () {
     const caller = yield* requireThreadCaller;
+    yield* assertGrantMayReach(caller, machine, input.threadId, "observe");
     const timeoutMs = Math.min(MAX_WAIT_MS, Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_MS));
     const result = yield* proxied(
       OrchestratorMcpThreadWaitResult,
@@ -203,6 +266,7 @@ export const sendRemote = (
 ) =>
   Effect.gen(function* () {
     const caller = yield* requireThreadCaller;
+    yield* assertGrantMayReach(caller, machine, input.threadId, "act");
     yield* assertWithinCallerModes(machine, input.threadId);
     const workers = yield* RemoteWorkers.RemoteWorkers;
     // A run started there is always followed: the send and noting its run are not cut apart.
@@ -237,7 +301,8 @@ export const interruptRemote = (
   input: { readonly threadId: string } & Record<string, unknown>,
 ) =>
   Effect.gen(function* () {
-    yield* requireThreadCaller;
+    const caller = yield* requireThreadCaller;
+    yield* assertGrantMayReach(caller, machine, input.threadId, "act");
     yield* assertWithinCallerModes(machine, input.threadId);
     return yield* proxied(
       OrchestratorMcpThreadInterruptResult,
@@ -254,6 +319,7 @@ export const listRemote = (
 ) =>
   Effect.gen(function* () {
     const caller = yield* requireThreadCaller;
+    yield* assertGrantMayReach(caller, machine, undefined, "observe");
     const workers = yield* RemoteWorkers.RemoteWorkers;
     const projectId =
       input.projectId ??

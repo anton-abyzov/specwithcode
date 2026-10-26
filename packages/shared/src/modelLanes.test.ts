@@ -14,6 +14,7 @@ import {
   classifyLane,
   classifyLaneByRules,
   describePreference,
+  learnedPreferenceBillingBlock,
   preferenceMatch,
   resolveLaneRouting,
   suggestPreferenceKeywords,
@@ -399,5 +400,196 @@ describe("preference helpers", () => {
     expect(describePreference(preference({ keywords: ["translate"] }), providers)).toBe(
       '"translate": use claudeAgent · Claude Sonnet 5.5',
     );
+  });
+});
+
+describe("a learned preference for a paid model", () => {
+  // A Claude CLI on Anthropic API credits: every turn bills the key.
+  const claudeApi = provider(
+    "claude-api",
+    "claudeAgent",
+    [model("claude-opus-5-5", "Claude Opus 5.5"), model("claude-sonnet-5-5", "Claude Sonnet 5.5")],
+    { auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true } },
+    null,
+  );
+  const apiOpus = sel("claude-api", "claude-opus-5-5");
+  const prefer = preference({ lane: "routine", action: { kind: "prefer", model: apiOpus } });
+  const routeRoutine = (over: Partial<Parameters<typeof resolveLaneRouting>[0]> = {}) =>
+    resolveLaneRouting({
+      lanes: { complex: [], routine: [] },
+      preferences: [prefer],
+      task: { text: "Fix the typo in README" },
+      classification: classifyTask({ text: "Fix the typo in README" }),
+      laneHint: "routine",
+      baseline: opus,
+      providers: [claude, claudeApi],
+      nowMs: now,
+      policy: { ...policy, paidApi: "never" },
+      ...over,
+    });
+
+  it("never moves a worker onto API credits by itself", () => {
+    // Refused for billing, the rule counts as absent: with empty lanes the
+    // lanes have nothing to say, so Auto (or the baseline) decides.
+    expect(routeRoutine()).toBeNull();
+    // With a lane list, the list decides and the decision says why.
+    const result = routeRoutine({ lanes: { complex: [], routine: [sonnet] } });
+    expect(result?.found).toBe(true);
+    expect(result?.decision).toMatchObject({ moved: true, selection: sonnet });
+    expect(result?.decision.skipped?.[0]).toContain("billed per token");
+    // Nor a model whose billing its provider cannot establish (Pi on `anthropic`).
+    const pi = provider(
+      "pi",
+      "pi",
+      [{ ...model("anthropic/claude-opus-5-5", "Claude Opus 5.5"), billing: "unknown" }],
+      { auth: { status: "authenticated", type: "pi" } },
+      null,
+    );
+    const piPrefer = preference({
+      lane: "routine",
+      action: { kind: "prefer", model: sel("pi", "anthropic/claude-opus-5-5") },
+    });
+    expect(routeRoutine({ providers: [claude, pi], preferences: [piPrefer] })).toBeNull();
+    const unknown = routeRoutine({
+      providers: [claude, pi],
+      preferences: [piPrefer],
+      lanes: { complex: [], routine: [sonnet] },
+    });
+    expect(unknown?.decision.selection).toEqual(sonnet);
+    expect(unknown?.decision.skipped?.[0]).toContain("billing unknown");
+  });
+
+  it("falls through instead of refusing when only a refused rule set the lanes", () => {
+    // The baseline is at its switch threshold; a refused rule must not turn
+    // that into "no permitted model", which would fail the launch.
+    const busyClaude = provider(
+      "claudeAgent",
+      "claudeAgent",
+      [model("claude-opus-5-5", "Claude Opus 5.5")],
+      {},
+      96,
+    );
+    expect(routeRoutine({ providers: [busyClaude, claudeApi], switchAtPercent: 95 })).toBeNull();
+  });
+
+  it("honours a rule the person made from the routing chip, whatever the billing", () => {
+    const own = preference({
+      lane: "routine",
+      action: { kind: "prefer", model: apiOpus },
+      recordedBy: "person",
+    });
+    expect(routeRoutine({ preferences: [own] })?.decision).toMatchObject({
+      moved: true,
+      selection: apiOpus,
+      billing: "api",
+    });
+    // A coordinator-stamped rule is still checked.
+    expect(
+      routeRoutine({ preferences: [{ ...own, recordedBy: "coordinator" as const }] }),
+    ).toBeNull();
+  });
+
+  it("moves it when the user put the model in a lane or Auto's paid-API setting allows it", () => {
+    expect(routeRoutine({ lanes: { complex: [], routine: [apiOpus] } })?.decision).toMatchObject({
+      moved: true,
+      selection: apiOpus,
+      billing: "api",
+    });
+    // Auto's cap applies by tier: Standard allows Sonnet on the key, not Opus.
+    const apiSonnet = sel("claude-api", "claude-sonnet-5-5");
+    const paidStandard = { ...policy, mode: "auto" as const, paidApi: "standard" as const };
+    expect(routeRoutine({ policy: paidStandard })).toBeNull();
+    expect(
+      routeRoutine({
+        policy: paidStandard,
+        preferences: [
+          preference({ lane: "routine", action: { kind: "prefer", model: apiSonnet } }),
+        ],
+      })?.decision.selection,
+    ).toEqual(apiSonnet);
+  });
+
+  it("ignores a paid-API setting left over after Auto was turned off", () => {
+    // Turning Auto off keeps `paidApi` but hides it; it must grant nothing.
+    const apiSonnet = sel("claude-api", "claude-sonnet-5-5");
+    const sonnetRule = preference({
+      lane: "routine",
+      action: { kind: "prefer", model: apiSonnet },
+    });
+    const leftover = { ...policy, mode: "off" as const, paidApi: "standard" as const };
+    expect(routeRoutine({ policy: leftover, preferences: [sonnetRule] })).toBeNull();
+    expect(
+      learnedPreferenceBillingBlock(apiSonnet, {
+        providers: [claude, claudeApi],
+        lanes: { complex: [], routine: [] },
+        policy: leftover,
+      }),
+    ).toContain("billed per token");
+    // Absent mode reads as off too.
+    expect(
+      routeRoutine({ policy: { ...policy, paidApi: "standard" }, preferences: [sonnetRule] }),
+    ).toBeNull();
+  });
+
+  it("does not let a refused coordinator rule shadow the person's own rule", () => {
+    const { taskClass } = classifyTask({ text: "Fix the typo in README" });
+    const own = preference({
+      id: "own",
+      keywords: ["typo"],
+      taskClass,
+      action: { kind: "prefer", model: sonnet },
+      recordedBy: "person",
+      createdAt: "2026-10-20T00:00:00.000Z",
+    });
+    // Same score (keywords + task class), newer, refused for billing.
+    const coordinator = preference({
+      id: "coordinator",
+      keywords: ["readme"],
+      taskClass,
+      action: { kind: "prefer", model: apiOpus },
+      recordedBy: "coordinator",
+      createdAt: "2026-10-21T00:00:00.000Z",
+    });
+    expect(routeRoutine({ preferences: [own] })?.decision.selection).toEqual(sonnet);
+    const result = routeRoutine({ preferences: [own, coordinator] });
+    expect(result?.decision).toMatchObject({ moved: true, selection: sonnet });
+    expect(result?.decision.skipped?.[0]).toContain("billed per token");
+    // A refused unattributed (legacy) rule falls through the same way.
+    const { recordedBy: _author, ...legacy } = coordinator;
+    expect(routeRoutine({ preferences: [own, legacy] })?.decision.selection).toEqual(sonnet);
+  });
+
+  it("honours a model its provider reports as subscription-billed (OpenCode Go on Pi)", () => {
+    // Pi signs in as `pi`, which names no plan; the model's own billing does.
+    const goModel = "opencode-go/kimi-k3";
+    const pi = provider(
+      "pi",
+      "pi",
+      [{ ...model(goModel, "Kimi K3"), billing: "subscription" }],
+      { auth: { status: "authenticated", type: "pi" } },
+      null,
+    );
+    const go = sel("pi", goModel);
+    const input = { providers: [claude, pi], lanes: { complex: [], routine: [] }, policy };
+    expect(learnedPreferenceBillingBlock(go, input)).toBeNull();
+    expect(
+      routeRoutine({
+        providers: [claude, pi],
+        preferences: [preference({ lane: "routine", action: { kind: "prefer", model: go } })],
+      })?.decision,
+    ).toMatchObject({ moved: true, selection: go, billing: "subscription" });
+    // A per-token sign-in still bills every model, whatever the model reports.
+    const keyed = { ...pi, auth: { status: "authenticated" as const, type: "apiKey" } };
+    expect(learnedPreferenceBillingBlock(go, { ...input, providers: [claude, keyed] })).toContain(
+      "billed per token",
+    );
+  });
+
+  it("keeps a subscription preference working", () => {
+    const sub = preference({ lane: "routine", action: { kind: "prefer", model: sonnet } });
+    expect(routeRoutine({ preferences: [sub] })?.decision).toMatchObject({
+      moved: true,
+      selection: sonnet,
+    });
   });
 });

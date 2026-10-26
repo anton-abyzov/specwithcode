@@ -1,4 +1,9 @@
-import { isOrchestrationV2WorkActive, type OrchestrationV2Subagent } from "@specweave-studio/contracts";
+import {
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
+} from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 
 /** Unknown settled timing must not turn a task's age into its work duration. */
 export function deriveSubagentElapsedMs(
@@ -50,6 +55,21 @@ export function formatDuration(durationMs: number): string {
   if (minutes > 0) parts.push(`${minutes}m`);
   if (seconds > 0) parts.push(`${seconds}s`);
   return parts.join(" ");
+}
+
+/**
+ * A settled thinking row's label: "Thought for 12s", "Thought for 1m 5s".
+ * Replayed or imported items carry no measurable span and keep "Thought".
+ */
+export function thoughtLabel(
+  item: Pick<OrchestrationV2TurnItem, "startedAt" | "completedAt"> | undefined,
+): string {
+  if (!item?.startedAt || !item.completedAt) return "Thought";
+  const seconds = Math.round(
+    (DateTime.toEpochMillis(item.completedAt) - DateTime.toEpochMillis(item.startedAt)) / 1_000,
+  );
+  if (!Number.isFinite(seconds) || seconds < 1) return "Thought";
+  return `Thought for ${seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1_000)}`;
 }
 
 function isLatestRunSettled(

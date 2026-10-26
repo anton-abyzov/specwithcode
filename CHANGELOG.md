@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Messages agents send each other now read as quiet notes instead of large bubbles. On a thread page, the coordinator's message is headed "Message from coordinator", another thread's "Message from <thread>"; on the coordinator page a worker's is headed "Message from <thread>". The text is in muted prose under that header, followed by "View coordinator" or "View thread" and its time, so the person's own messages stay the bubbles on the page. The header is the one fold control: a long message shows its opening until the header opens it, a short one folds to the header, and "Copy original" waits on hover. A thread now also marks where the messages since the last visit begin with a "New" divider.
+
 - Every routine runs in a thread of its own instead of the project's coordinator. Before, a routine without a thread (every routine made in the Routines form, such as "New Relic repair watch") woke the coordinator on each run, and a routine the coordinator scheduled for itself posted into the coordinator's conversation, so watches and reports buried the coordinator's planning. Now a routine's first run starts a thread named after it and later runs continue that thread, keeping the routine's history in one place; a deleted or archived thread is replaced on the next run. Existing routines move on their next run, with nothing to do: one without a thread, or one bound to the coordinator, gets its own thread then. A worker that schedules "wake me when CI finishes" still gets that run in its own thread. Project settings > Routines, the Routines pane and Settings > Routines name each routine's thread ("Own thread" until its first run) and open it, and a routine's results still reach Telegram, headed by the routine's name.
 
 - HTML reports now open in a focused reader from a compact preview, with matching app colors and preserved document state on current Chromium. New report guidance emphasizes readable headings and useful diagrams. Historical pages keep their authored content.
@@ -71,6 +73,8 @@
 - A project keeps one identity, name and coordinator window across machine handoffs, with threads from its explicitly linked machines and readable earlier coordinator history. Requests retain their recorded machine and model.
 - Coordinator transfers fence the source before starting the destination and retain recovery after interrupted responses. Offline hosts and native session continuity limits are visible. Existing independent projects are not automatically merged.
 - Project names such as EasyChamp remain consistent in the sidebar, coordinator, settings and handoff review. Renames target the active owner, including when settings are scoped to an older machine.
+
+- Present SpecWithCode independently and separate required third-party notices from project licensing. Existing third-party terms and prior grants remain unchanged.
 
 ## 1.0.8 — Coordinator recovery and project navigation
 

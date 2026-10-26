@@ -710,19 +710,23 @@ describe("project coordinator surface", () => {
     const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
     expect(conversation.querySelector("[data-report-artifact]")).toBeNull();
     expect(conversation.textContent).not.toContain("Open report");
-    // Sent by stays; the opening shows as written and says how much more there is.
-    expect(conversation.textContent).toContain("Sent by");
+    // A quiet relayed note names its thread and links back to it; the opening
+    // shows as written and the disclosure says how much more there is.
+    const relay = conversation.querySelector('[data-relayed-message="thread"]')!;
+    expect(relay.closest("article")!.className).toContain("project-message-relay");
+    expect(relay.querySelector("h3")!.textContent).toBe("Message from Thread worker");
+    expect(conversation.textContent).not.toContain("Sent by");
+    expect(conversation.textContent).toContain("View thread");
     expect(conversation.textContent).toContain(
       "Both machines are back and the UI no longer freezes.",
     );
     expect(conversation.textContent).not.toContain("Nothing needs you right now.");
-    const toggle = [...conversation.querySelectorAll("button")].find(
-      (b) => b.textContent === "Show full message",
-    )!;
+    const toggle = relay.querySelector<HTMLButtonElement>("h3 [aria-expanded]")!;
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    const hidden = /^Show full message, ([\d,]+) more characters$/.exec(
-      toggle.getAttribute("aria-label")!,
-    );
+    const hidden =
+      /^Message from Thread worker\. Show full message, ([\d,]+) more characters$/.exec(
+        toggle.getAttribute("aria-label")!,
+      );
     expect(Number(hidden![1]!.replaceAll(",", ""))).toBeGreaterThan(answer.length / 2);
     expect(Number(hidden![1]!.replaceAll(",", ""))).toBeLessThan(answer.length);
     expect(document.getElementById(toggle.getAttribute("aria-controls")!)).not.toBeNull();
@@ -767,10 +771,11 @@ describe("project coordinator surface", () => {
     const scope = container.querySelector<HTMLElement>("[data-conversation-find-scope]")!;
     await act(async () => setConversationFindState({ query: "worktree", scope }));
     expect(folded()).toBe("open");
-    // Show less still folds it while that find stays open.
-    const less = [...conversation.querySelectorAll("button")].find(
-      (b) => b.textContent === "Show less",
+    // Its disclosure still folds it while that find stays open.
+    const less = conversation.querySelector<HTMLButtonElement>(
+      "[data-relayed-message] h3 [aria-expanded]",
     )!;
+    expect(less.getAttribute("aria-expanded")).toBe("true");
     await act(async () => less.click());
     expect(folded()).toBe("folded");
     // Closing find and searching the same word again opens it again.
@@ -832,7 +837,7 @@ describe("project coordinator surface", () => {
     state.timelineDetail = "concise";
     await render();
     expect(fold()).toBe("folded");
-    expect(conversation().textContent).toContain("Sent by");
+    expect(conversation().textContent).toContain("Message from Thread worker");
     expect(conversation().textContent).toContain("Checked the release branch end to end today.");
     expect(conversation().textContent).not.toContain("Nothing was published.");
     // Verbose shows every word, and Show less still folds it.
@@ -842,8 +847,7 @@ describe("project coordinator surface", () => {
     expect(fold()).toBe("open");
     expect(conversation().textContent).toContain("Nothing was published.");
     // Opened by Verbose, not by the reader: its controls stay at its end, not over the text.
-    const footer = () =>
-      conversation().querySelector('[aria-label="Copy original message"]')!.parentElement!;
+    const footer = () => conversation().querySelector("[data-relayed-message-footer]")!;
     expect(footer().className).not.toContain("sticky");
     // The reader folds it and opens it again: now the controls follow them down.
     const toggle = () =>

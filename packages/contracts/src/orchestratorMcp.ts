@@ -903,7 +903,11 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       label: Schema.NullOr(Schema.String),
       /** Model options a target may select (for example reasoning effort). */
       options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
-      /** True when a paid router or keyed API bills this model per token. Older machines omit it. */
+      /**
+       * True when this model costs money per token: a paid router or keyed API
+       * serves it, or the instance itself is billed per token (API credits,
+       * Bedrock, Gemini/Vertex). Older machines omit it.
+       */
       paid: Schema.optional(Schema.Boolean),
     }),
   ),
@@ -968,7 +972,7 @@ export const OrchestratorMcpMachineProvider = Schema.Struct({
   available: Schema.Boolean,
   usage: Schema.optional(OrchestratorMcpProviderUsage),
   allowedByGrant: Schema.optional(Schema.Boolean),
-  /** Models a paid router or keyed API bills per token; never a limit handoff target. */
+  /** Models billed per token (by their router, API or the instance's sign-in); never a limit handoff target. */
   paidModels: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OrchestratorMcpMachineProvider = typeof OrchestratorMcpMachineProvider.Type;

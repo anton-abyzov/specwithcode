@@ -1121,3 +1121,165 @@ it.effect("manages learned model preferences for a project via studio_model_pref
     expect((finalList.at(-1)?.result as any).preferences).toHaveLength(0);
   }),
 );
+
+it.effect("refuses a learned preference that would send workers to API credits", () =>
+  Effect.gen(function* () {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const projectId = ProjectId.make("project");
+    const claudeMax = ProviderInstanceId.make("claudeAgent");
+    const claudeApi = ProviderInstanceId.make("claude-api");
+    const caller = {
+      id: sourceThreadId,
+      projectId,
+      providerInstanceId: claudeMax,
+      modelSelection: { instanceId: claudeMax, model: "claude-opus-5-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as OrchestrationV2ThreadShell;
+    const instance = (
+      instanceId: ProviderInstanceId,
+      auth: ServerProvider["auth"],
+    ): ServerProvider => ({
+      instanceId,
+      driver: "claudeAgent" as ServerProvider["driver"],
+      enabled: true,
+      installed: true,
+      version: "test",
+      status: "ready",
+      auth,
+      checkedAt: "2026-10-25T00:00:00.000Z",
+      models: [
+        { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+        {
+          slug: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+      slashCommands: [],
+      skills: [],
+    });
+    // Pi signs in as `pi`; its OpenCode Go models report flat-rate billing.
+    const pi = ProviderInstanceId.make("pi");
+    const goModel = "opencode-go/kimi-k3";
+    const providers = [
+      instance(claudeMax, { status: "authenticated", type: "max" }),
+      instance(claudeApi, { status: "authenticated", type: "apiKey", apiKeyBilling: true }),
+      {
+        ...instance(pi, { status: "authenticated", type: "pi" }),
+        driver: "pi" as ServerProvider["driver"],
+        models: [
+          {
+            slug: goModel,
+            name: "Kimi K3",
+            isCustom: false,
+            capabilities: null,
+            billing: "subscription" as const,
+          },
+        ],
+      },
+    ];
+    const settingsRef = yield* Ref.make({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {},
+    });
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "session",
+        thread: {
+          threadId: sourceThreadId,
+          providerSessionId: "session",
+          providerInstanceId: claudeMax,
+        },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () => Effect.succeed(caller),
+      }),
+      Layer.mock(Project.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            id === projectId
+              ? Option.some({ id, workspaceRoot: "/projects/test" } as unknown as ProjectRecord)
+              : Option.none(),
+          ),
+      }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getSettings: Ref.get(settingsRef),
+        updateSettings: (patch) =>
+          Ref.updateAndGet(settingsRef, (current) => applyServerSettingsPatch(current, patch)),
+      }),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "studio-model-pref-paid-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+    const record = (instanceId: ProviderInstanceId, model = "claude-opus-5-5") =>
+      toolkit
+        .handle("studio_model_preference", {
+          action: "record",
+          lane: "routine",
+          preference: { kind: "prefer", model: { instanceId, model } },
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+
+    const refused = yield* record(claudeApi);
+    expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect((refused.at(-1)?.result as { message: string }).message).toContain("billed per token");
+    const stored = yield* Ref.get(settingsRef);
+    expect(
+      (
+        stored.projectSettingsOverrides as Record<
+          string,
+          { readonly learnedModelPreferences?: ReadonlyArray<unknown> }
+        >
+      )[projectId]?.learnedModelPreferences ?? [],
+    ).toEqual([]);
+
+    // The subscription stays a preference the coordinator may record, and the
+    // rule says who made it so routing checks it again when used.
+    const recorded = yield* record(claudeMax);
+    expect((recorded.at(-1)?.result as { action: string }).action).toBe("record");
+    const kept = yield* Ref.get(settingsRef);
+    expect(
+      (
+        kept.projectSettingsOverrides as Record<
+          string,
+          { readonly learnedModelPreferences?: ReadonlyArray<{ readonly recordedBy?: string }> }
+        >
+      )[projectId]?.learnedModelPreferences?.map((rule) => rule.recordedBy),
+    ).toEqual(["coordinator"]);
+
+    // A paid-API setting left over after Auto was turned off is hidden in
+    // Settings and has no effect, so it does not let Sonnet on the key in.
+    const withRouting = (mode: "off" | "auto") =>
+      Ref.update(settingsRef, (current) => ({
+        ...current,
+        taskRouting: { ...DEFAULT_TASK_ROUTING_SETTINGS, mode, paidApi: "standard" as const },
+      }));
+    yield* withRouting("off");
+    const flatRate = yield* record(pi, goModel);
+    expect((flatRate.at(-1)?.result as { action: string }).action).toBe("record");
+    const leftover = yield* record(claudeApi, "claude-sonnet-5-5");
+    expect(leftover.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    yield* withRouting("auto");
+    const allowed = yield* record(claudeApi, "claude-sonnet-5-5");
+    expect((allowed.at(-1)?.result as { action: string }).action).toBe("record");
+  }),
+);

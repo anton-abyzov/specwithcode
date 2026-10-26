@@ -9,7 +9,11 @@ import {
   type ProjectRepository,
 } from "@specweave-studio/contracts";
 import { sameRunModel } from "@specweave-studio/shared/threadModelIdentity";
-import { withLearnedPreference } from "@specweave-studio/shared/modelLanes";
+import {
+  learnedPreferenceBillingBlock,
+  withLearnedPreference,
+} from "@specweave-studio/shared/modelLanes";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -55,7 +59,9 @@ import {
   admitLaunch,
   assertAccountInGrant,
   assertProjectInGrant,
+  assertProjectReadable,
   recordLaunchOrigin,
+  refuseRevoked,
   workGrantOf,
 } from "../../workGrantAccess.ts";
 import { launchRemote, launchTarget, placementSkippable } from "./remoteLaunch.ts";
@@ -661,6 +667,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   studio_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
+      // Another machine's work changes only projects its grant covers, and never
+      // the scripts this machine runs when it prepares a worktree.
+      const work = yield* assertProjectReadable(yield* readCaller(), input.projectId);
+      if (work !== undefined && input.scripts !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: `Project scripts run on this machine, so only its user changes them; ${work.coordinatorLabel}'s work cannot. Ask the user here to change them in project settings.`,
+        });
       // Pause, archive and auto-resume are the user's lifecycle controls; an agent must not lift them.
       const lifecycle = input.workspaceSettings;
       if (input.workspaceRoot !== undefined)
@@ -738,6 +752,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   studio_project_clone: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      // A clone lands outside every project, so only a grant covering every
+      // project here may make one.
+      const work = yield* workGrantOf(yield* readCaller());
+      if (work !== undefined) yield* refuseRevoked(work);
+      if (work !== undefined && work.grant.projects.kind !== "all")
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot clone repositories here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Connections > Who can run work on this Mac.`,
+        });
       const repositories = yield* Repositories.SourceControlRepositoryService;
       return yield* repositories.cloneRepository(input).pipe(
         Effect.mapError(
@@ -798,6 +821,34 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               "Pass preference: {kind: 'prefer', model}, {kind: 'avoid', model}, or {kind: 'lane', lane}.",
           });
         }
+        // A rule recorded here is not the person's own choice: it may not
+        // send workers to a paid or unknown-billing model they did not allow
+        // (routing checks coordinator rules again when one is used).
+        if (input.preference.kind === "prefer") {
+          const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+          if (Option.isSome(registry)) {
+            const providers = yield* registry.value.getProviders;
+            const project = yield* (yield* Project.ProjectService)
+              .getById(projectId)
+              .pipe(Effect.mapError(unavailable));
+            const rule = resolveProjectSettings(
+              settings,
+              projectId,
+              Option.getOrUndefined(project),
+            ).settings;
+            const blocked = learnedPreferenceBillingBlock(input.preference.model, {
+              providers,
+              lanes: rule.modelLanes,
+              policy: rule.taskRouting,
+            });
+            if (blocked !== null) {
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: `Not recorded: ${input.preference.model.model} on ${input.preference.model.instanceId} is ${blocked}. Only the person can send work there, by adding it to a model lane or allowing paid API models in Auto.`,
+              });
+            }
+          }
+        }
         const crypto = yield* Crypto.Crypto;
         const id = `pref-${(yield* crypto.randomUUIDv4.pipe(Effect.orDie)).slice(0, 12)}`;
         const now = yield* DateTime.now;
@@ -808,6 +859,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ...(input.lane !== undefined ? { lane: input.lane } : {}),
           action: input.preference,
           ...(input.note !== undefined ? { note: input.note } : {}),
+          recordedBy: "coordinator",
           createdAt: DateTime.formatIso(now),
         };
         const updated = withLearnedPreference(preferences, recorded);

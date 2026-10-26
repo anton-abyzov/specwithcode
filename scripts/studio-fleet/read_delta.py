@@ -127,27 +127,33 @@ def position(database):
             'frame': commits[-2] if len(commits) > 1 else 0, 'main': main}
 
 
-def written_pages(database, earlier):
+def written_pages(database, earlier, why=None):
     """The page numbers of every frame after `earlier` (a position) in the same -wal generation,
     read inside the caller's read transaction, so they include every commit its snapshot holds.
     None when the -wal is another file or generation, or shorter than `earlier` said, or when the
     database file is another file or was written since (a swap, a copy over it, a checkpoint):
-    the -wal says nothing about pages written to the database file itself."""
-    if not isinstance(earlier, dict) or not isinstance(earlier.get('main'), list):
+    the -wal says nothing about pages written to the database file itself. `why`, a dict, is
+    given the reason for None (a receipt diagnostic)."""
+    def miss(reason):
+        if why is not None:
+            why['reason'] = reason
         return None
+    if not isinstance(earlier, dict) or not isinstance(earlier.get('main'), list):
+        return miss('no-position')
     try:
         if _main_file(database) != earlier['main']:
-            return None
+            return miss('main-file-changed')  # A checkpoint, a swap or a copy over it.
         with open(str(database) + '-wal', 'rb') as handle:
             status = os.fstat(handle.fileno())
             header = _header(handle)
-            if status.st_ino != earlier['walInode'] or header is None \
-                    or header[0] != earlier['pageSize'] or header[1] != earlier['salt']:
-                return None
+            if status.st_ino != earlier['walInode']:
+                return miss('wal-replaced')
+            if header is None or header[0] != earlier['pageSize'] or header[1] != earlier['salt']:
+                return miss('wal-reset')
             frame_bytes = FRAME_HEADER_BYTES + earlier['pageSize']
             start = WAL_HEADER_BYTES + earlier['frame'] * frame_bytes
             if status.st_size < start:
-                return None
+                return miss('wal-shorter')
             handle.seek(start)
             pages = set()
             while True:
@@ -162,11 +168,13 @@ def written_pages(database, earlier):
             # A log reset while the frames were read would have new salts here.
             handle.seek(0)
             again = _header(handle)
-            if again is None or again[1] != earlier['salt'] or _main_file(database) != earlier['main']:
-                return None
+            if again is None or again[1] != earlier['salt']:
+                return miss('wal-reset')
+            if _main_file(database) != earlier['main']:
+                return miss('main-file-changed')
             return pages
     except OSError:
-        return None
+        return miss('unreadable')
 
 
 def _auth_pages(db):
@@ -187,14 +195,20 @@ def _activity(rows):
     return continuity.encoded(rows.get(ACTIVITY_KEY)) if isinstance(rows, dict) else None
 
 
-def reread(state, base, since):
+def reread(state, base, since, why=None):
     """(rows, carried, capture) as a full read (update_read._read_state, with the capture when
     `base` has one) measuring appended rows against `since` would return now, or None when it
     cannot be shown cheaply (see the module docstring). `base` is {'position', 'since', 'reads':
     (rows, carried, capture)}: an earlier read, the position taken right before it and the rows
     it measured appended rows against. Reads must measure against the same log positions, as
-    appended rows depend on `since` only through its activity."""
-    if not isinstance(base, dict) or base.get('position') is None or _activity(base['since']) != _activity(since):
+    appended rows depend on `since` only through its activity. `why`, a dict, is given the reason
+    for None, and for pages outside auth sessions how many there were (a receipt diagnostic)."""
+    why = {} if why is None else why
+    if not isinstance(base, dict) or base.get('position') is None:
+        why['reason'] = 'no-position'
+        return None
+    if _activity(base['since']) != _activity(since):
+        why['reason'] = 'activity-changed'
         return None
     rows, carried, capture = copy.deepcopy(base['reads'])
     database = state / 'statev2.sqlite'
@@ -202,15 +216,25 @@ def reread(state, base, since):
     try:
         db.execute('BEGIN')
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-        pages = written_pages(database, base['position'])  # After the snapshot was taken above.
-        if pages is None or virtual_tables(db, tables):
+        pages = written_pages(database, base['position'], why)  # After the snapshot was taken above.
+        if pages is None:
+            return None
+        if virtual_tables(db, tables):
+            why['reason'] = 'virtual-tables'
             return None
         if not pages:
             return rows, carried, capture  # No commit since the earlier read.
         if AUTH_TABLE not in tables or AUTH_TABLE not in rows.get('counts', {}):
+            why['reason'] = 'no-auth-table'
             return None
         allowed = _auth_pages(db)
-        if allowed is None or not pages <= allowed:
+        if allowed is None:
+            why['reason'] = 'no-dbstat'
+            return None
+        if not pages <= allowed:
+            # Page numbers only: naming their tables would scan dbstat over the whole file.
+            outside = sorted(pages - allowed)
+            why.update(reason='pages-outside-auth', pagesOutsideAuth=len(outside), samplePages=outside[:8])
             return None
         cells = list(db.execute('SELECT * FROM ' + AUTH_TABLE))
         legacy = {'count': len(cells), 'sha256': continuity.legacy_rows_hash(cells)}

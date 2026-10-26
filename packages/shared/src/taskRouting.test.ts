@@ -459,6 +459,11 @@ describe("resolveTaskRouting", () => {
     expect(billing(pi("paid-router"))).toBe("paid-router");
     expect(billing(pi())).toBe("unknown");
     expect(billing(pi("api"))).toBe("api");
+    // OpenCode Go on Pi: the provider reports the model as flat-rate.
+    expect(billing(pi("subscription"))).toBe("subscription");
+    expect(
+      billing({ ...pi("subscription"), auth: { status: "authenticated", type: "api-key" } }),
+    ).toBe("api");
     // A sign-in billed per token stays paid whatever the model says.
     expect(billing({ ...pi("local"), auth: { status: "authenticated", type: "api-key" } })).toBe(
       "api",

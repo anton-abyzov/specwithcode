@@ -25,6 +25,7 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
 import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
+import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { isBlockingRuntimeRequest, withPendingRequestDetail } from "./blockingRuntimeRequest.ts";
 import {
   LIMIT_CHECK_INTERVAL_MS,
@@ -71,8 +72,12 @@ export function limitRecoveryCommand(
   snooze = false,
   derivedRoom = false,
   accountChangedMs: number | null = null,
+  /** The stop is on an API-credit detour the rule no longer allows (`apiCreditDetourResumeRefused`). */
+  apiCreditDetourRefused = false,
 ): OrchestrationV2ServerCommand | null {
   if (!isLimitRecoveryCandidate(thread) || !thread.latestRunId) return null;
+  // Neither armed nor resumed: the way back takes the thread home instead.
+  if (apiCreditDetourRefused) return null;
   const resetMs = Date.parse(thread.usageLimitResetAt ?? "");
   const validReset = hasValidLimitReset(thread);
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
@@ -249,6 +254,36 @@ export const makeSweep = Effect.gen(function* () {
         );
       return instance;
     });
+  // Whether each stopped run sits on a detour the API-credit rule made; a
+  // run's history up to it never changes.
+  const detourRuns = yield* Ref.make<ReadonlyMap<string, boolean>>(new Map());
+  /**
+   * Whether recovery must leave this stop alone under `rule`: the API-credit
+   * rule moved the thread to an API-key instance and is now off. With its
+   * records unreadable the sweep goes on: the orchestrator checks the same
+   * against the thread's own records before any resume starts a turn.
+   */
+  const detourRefused = (
+    thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
+    rule: { readonly providerLimitUseApiCredits?: boolean | undefined },
+  ) =>
+    Effect.gen(function* () {
+      if (rule.providerLimitUseApiCredits === true) return false;
+      const runId = thread.latestRunId;
+      if (runId === null) return false;
+      const known = (yield* Ref.get(detourRuns)).get(runId);
+      if (known !== undefined) return known;
+      const read = yield* Effect.exit(
+        Effect.suspend(() => projections.getThreadProjection(thread.id)),
+      );
+      if (Exit.isFailure(read)) return false;
+      const onDetour = apiCreditDetourResumeRefused(thread, read.value.runs ?? [], rule);
+      yield* Ref.update(
+        detourRuns,
+        (previous) => new Map([...[...previous].slice(-255), [runId, onDetour]]),
+      );
+      return onDetour;
+    });
   // Ids the orchestrator already refused. Each is fixed for one stop, so
   // sending it again would only repeat the refusal on every tick.
   const refused = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -410,6 +445,8 @@ export const makeSweep = Effect.gen(function* () {
           return;
         // This is an auto-arm default. Existing explicit per-thread recovery remains authoritative.
         const rule = resolveProjectSettings(preferences, shell.projectId).settings;
+        // A detour onto API credits the rule no longer allows is the way back's to end.
+        if (yield* detourRefused(thread, rule)) return;
         const autoResume =
           autoResumeByDefault(project.value.workspaceSettings?.autoResume, preferences) ||
           waitRuleArmsResume(thread, rule, nowMs);
@@ -457,6 +494,9 @@ export const makeSweep = Effect.gen(function* () {
                     ) || waitRuleArmsResume(current, currentRule, armAt),
                     armAt,
                     currentSettings.snoozeLimitedThreads,
+                    false,
+                    null,
+                    yield* detourRefused(current, currentRule),
                   );
                   if (freshArm?.type !== "thread.metadata.update") return;
                   // A thread moved off the stopped run's instance is refused
@@ -574,6 +614,7 @@ export const makeSweep = Effect.gen(function* () {
                     current.providerInstanceId === thread.providerInstanceId
                     ? subscriptionChangeMs
                     : null,
+                  yield* detourRefused(current, currentRule),
                 );
                 // The observed stop may have changed during the probe. Any new
                 // policy arm uses the same settings/commit ordering as above.

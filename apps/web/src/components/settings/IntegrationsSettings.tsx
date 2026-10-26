@@ -847,6 +847,7 @@ export function DeviceIntegrationControls({
           </>
         }
       />
+      <MaxBootedDevicesSetting disabled={!canConfigure || projectScope || !environmentId} />
       {environmentId ? (
         <DeviceHostUpdates
           state={{ ...state, hosts: state.hosts.filter((host) => host.kind === "local") }}
@@ -855,6 +856,55 @@ export function DeviceIntegrationControls({
       ) : null}
       <DeviceHostsSettings environmentId={environmentId} />
     </>
+  );
+}
+
+const MAX_BOOTED_DEVICE_CHOICES = [1, 2, 3, 4, 6, 8] as const;
+
+function MaxBootedDevicesSetting({ disabled }: { readonly disabled: boolean }) {
+  const limit = useScopedSettings().maxBootedDevices;
+  const updateSettings = useUpdateScopedSettings();
+  const label = (value: number | null) => (value === null ? "No limit" : `${value} at once`);
+
+  return (
+    <SettingsRow
+      {...searchableSetting("max-booted-devices")}
+      serverScoped
+      settingKeys={["maxBootedDevices"]}
+      description="Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count."
+      resetAction={
+        !disabled && limit !== null ? (
+          <SettingResetButton
+            label="simulator limit"
+            onClick={() => updateSettings({ maxBootedDevices: null })}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          disabled={disabled}
+          value={limit === null ? "none" : String(limit)}
+          onValueChange={(value) => {
+            const next = MAX_BOOTED_DEVICE_CHOICES.find((choice) => String(choice) === value);
+            updateSettings({ maxBootedDevices: next ?? null });
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Simulator limit">
+            <SelectValue>{label(limit)}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="none">
+              {label(null)}
+            </SelectItem>
+            {MAX_BOOTED_DEVICE_CHOICES.map((choice) => (
+              <SelectItem hideIndicator key={choice} value={String(choice)}>
+                {label(choice)}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
   );
 }
 

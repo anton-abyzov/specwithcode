@@ -47,7 +47,8 @@ async function choose(page, name) {
 async function measure(article) {
   return article.evaluate((node) => {
     const fold = node.querySelector("[data-worker-message]");
-    const toggle = node.querySelector('button[aria-label^="Show full message"]');
+    const toggle = node.querySelector('button[aria-label*="Show full message"]');
+    const relay = node.querySelector("[data-relayed-message]");
     const spill = [node, ...node.querySelectorAll("*")].filter(
       (element) =>
         element.scrollWidth > element.clientWidth + 1 &&
@@ -59,6 +60,10 @@ async function measure(article) {
       workerMessage: fold?.getAttribute("data-worker-message") ?? null,
       toggle: toggle?.getAttribute("aria-label") ?? null,
       sentBy: node.innerText.includes("Sent by"),
+      relayed: relay?.getAttribute("data-relayed-message") ?? null,
+      header: relay?.querySelector("h3")?.innerText ?? null,
+      view: relay?.querySelector("[data-slot=inline-button]")?.innerText ?? null,
+      bubble: getComputedStyle(node).backgroundColor !== "rgba(0, 0, 0, 0)",
       spill,
       page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     };
@@ -113,7 +118,12 @@ try {
         }
         results.push(result);
         if (measureOnly) continue;
-        NodeAssert.ok(result.sentBy, `${label}: Sent by stays`);
+        // A worker's message is a quiet relayed note, not a bubble, that links to its thread.
+        NodeAssert.equal(result.relayed, "thread", `${label}: relayed note`);
+        NodeAssert.match(result.header, /^Message from /, label);
+        NodeAssert.equal(result.view, "View thread", label);
+        NodeAssert.equal(result.bubble, false, `${label}: no bubble`);
+        NodeAssert.equal(result.sentBy, false, `${label}: no Sent by line`);
         NodeAssert.equal(result.copied, true, `${label}: exact copy`);
         NodeAssert.equal(result.page, 0, `${label}: no sideways scroll`);
         NodeAssert.equal(result.spill, 0, `${label}: nothing spills out of the message`);
@@ -123,7 +133,11 @@ try {
           continue;
         }
         NodeAssert.equal(result.workerMessage, "folded", `${label}: folded`);
-        NodeAssert.match(result.toggle, /^Show full message, [\d,]+ more characters$/, label);
+        NodeAssert.match(
+          result.toggle,
+          /^Message from .+\. Show full message, [\d,]+ more characters$/,
+          label,
+        );
         NodeAssert.ok(result.text.includes("Exactspec /Users/fixture/Projects/atlas/"), label);
         NodeAssert.ok(!result.text.includes("no space left on device"), `${label}: lead only`);
         NodeAssert.equal(

@@ -68,10 +68,12 @@ try {
       await launch.scrollIntoViewIfNeeded();
       await launch.screenshot({ path: NodePath.join(output, `launch-folded-${label}.png`) });
 
-      const denseToggle = dense.getByRole("button", { name: /^Show full message, / });
+      // The "Message from …" header is the message's one fold control.
+      const denseToggle = dense.locator("[data-relayed-message] h3 button");
       const result = {
         label,
         sentBy: await dense.getByText("Sent by").count(),
+        viewThread: await dense.getByRole("button", { name: "View thread" }).count(),
         denseName: await denseToggle.getAttribute("aria-label"),
         denseExpanded: await denseToggle.getAttribute("aria-expanded"),
         denseFoldedText: await dense.innerText(),
@@ -85,14 +87,14 @@ try {
       // Keyboard: Enter opens, the whole original shows, Space folds it again.
       await denseToggle.focus();
       await page.keyboard.press("Enter");
-      const denseOpenToggle = dense.getByRole("button", { name: "Show less" });
+      const denseOpenToggle = denseToggle;
       result.openExpanded = await denseOpenToggle.getAttribute("aria-expanded");
       result.denseOpenText = await dense.innerText();
       result.denseOpenHeight = Math.round((await dense.boundingBox()).height);
       await dense.screenshot({ path: NodePath.join(output, `dense-open-${label}.png`) });
       // Selecting the opened body selects the original words.
       result.selection = await dense.evaluate((article) => {
-        const body = article.querySelector("[data-worker-message] > div");
+        const body = article.querySelector("[data-relayed-message-body]");
         const range = document.createRange();
         range.selectNodeContents(body);
         const selection = window.getSelection();
@@ -110,9 +112,7 @@ try {
       result.copied = await page.evaluate(() => navigator.clipboard.readText());
       await denseOpenToggle.focus();
       await page.keyboard.press("Space");
-      result.refolded = await dense
-        .getByRole("button", { name: /^Show full message, / })
-        .getAttribute("aria-expanded");
+      result.refolded = await denseToggle.getAttribute("aria-expanded");
       result.focusAfterFold = await page.evaluate(() =>
         document.activeElement?.getAttribute("aria-expanded"),
       );
@@ -126,9 +126,13 @@ try {
       });
       results.push(result);
 
-      NodeAssert.equal(result.sentBy, 1, `${label}: Sent by stays`);
+      NodeAssert.equal(result.sentBy, 0, `${label}: a quiet header replaces Sent by`);
+      NodeAssert.equal(result.viewThread, 1, `${label}: links back to its thread`);
       NodeAssert.equal(result.denseExpanded, "false", `${label}: folded by default`);
-      NodeAssert.match(result.denseName, /^Show full message, [\d,]+ more characters$/);
+      NodeAssert.match(
+        result.denseName,
+        /^Message from .+\. Show full message, [\d,]+ more characters$/,
+      );
       NodeAssert.ok(
         result.denseFoldedText.includes(
           "Need exactEXISTINGbackend/canonical ownerbinding, no newworker.",

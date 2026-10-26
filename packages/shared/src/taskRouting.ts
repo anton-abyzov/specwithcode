@@ -425,7 +425,8 @@ function decisionBilling(detail: TaskRoutingModelBilling) {
 /**
  * How a provider's turns on `model` are paid for. A model served through a
  * paid router is `paid-router`, one on a keyed API `api`; one on the user's
- * own machine is `local` unless the sign-in itself bills per token. A sign-in this does not
+ * own machine is `local` and one its provider reports as flat-rate
+ * `subscription`, unless the sign-in itself bills per token. A sign-in this does not
  * recognise is unknown, and Auto treats unknown like per-token: it never
  * assumes a turn is free of charge.
  */
@@ -443,6 +444,9 @@ export function billingOf(
   )
     return "api";
   if (model?.billing === "local") return "local";
+  // A model its provider reports as flat-rate (Pi or OpenCode on OpenCode Go)
+  // is a subscription whatever the harness's own sign-in type says.
+  if (model?.billing === "subscription") return "subscription";
   if (type !== undefined && SUBSCRIPTION_AUTH.has(type)) return "subscription";
   if (PLAN_NAMED_DRIVERS.has(provider.driver) && type !== "status-check-failed")
     return "subscription";

@@ -31,8 +31,8 @@ import { ProjectLibraryProblem } from "./ProjectLibrary.ts";
 
 export const INCREMENTS_DIR = ".specweave/increments";
 export const THREAD_REPORTS_DIR = ".specweave/reports/threads";
-/** `0973-budget`, and past 9999 `10001-export`. */
-const INCREMENT_FOLDER = /^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+/** `0973-budget`, past 9999 `10001-export`, and SpecWeave's lettered `0657E-followup`. */
+const INCREMENT_FOLDER = /^\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
 const INCREMENT_NUMBER = /^\d{4,}$/;
 /** Increment `reports/` folders listed at once while looking for a thread's reports. */
 const REPORT_FOLDER_CONCURRENCY = 16;
@@ -124,7 +124,8 @@ function matchIncrement(
   candidates: ReadonlyArray<ReportIncrementCandidate>,
 ): string | null {
   const byNumber = (number: string) => {
-    const matches = folders.filter((folder) => folder.startsWith(`${number}-`));
+    const prefix = `${number.toLowerCase()}-`;
+    const matches = folders.filter((folder) => folder.toLowerCase().startsWith(prefix));
     // A number shared by two folders is ambiguous; never guess between them.
     return matches.length === 1 ? matches[0]! : null;
   };
@@ -143,7 +144,7 @@ function matchIncrement(
       .toSorted((left, right) => right.length - left.length)[0];
     if (extended !== undefined) return extended;
     if (candidate.fromText) continue;
-    const leading = /^\d{4,}/.exec(value)?.[0];
+    const leading = /^\d{4,}[a-z]?(?=-)/.exec(value)?.[0];
     const numbered = leading === undefined ? null : byNumber(leading);
     if (numbered !== null) return numbered;
   }

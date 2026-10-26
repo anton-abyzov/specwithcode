@@ -10,6 +10,7 @@ struct DrawerView: View {
   @State private var showAllProjects = false
   @State private var showAllRecents = false
   @State private var showAutomated = false
+  @State private var showArchived = false
   @State private var settingUpAide = false
 
   private static let collapsedProjectCount = 6
@@ -126,10 +127,11 @@ struct DrawerView: View {
   @ViewBuilder private var projectsSection: some View {
     let projects = model.pinnedProjects + model.otherProjects
     let automated = model.automatedProjects
-    if !projects.isEmpty || !automated.isEmpty {
+    let archived = model.archivedProjects
+    if !projects.isEmpty || !automated.isEmpty || !archived.isEmpty {
       DrawerSectionLabel("Projects")
       let visible = showAllProjects ? projects : Array(projects.prefix(Self.collapsedProjectCount))
-      let shared = Self.sharedTitles(projects + automated)
+      let shared = Self.sharedTitles(projects + automated + archived)
       ForEach(visible) { project in projectRow(project, shared: shared) }
       if projects.count > Self.collapsedProjectCount {
         foldButton(showAllProjects ? "Show less" : "Show all \(projects.count)", open: showAllProjects) {
@@ -144,6 +146,15 @@ struct DrawerView: View {
         }
         if open {
           ForEach(automated) { project in projectRow(project, shared: shared) }
+        }
+      }
+      if !archived.isEmpty {
+        let open = showArchived || archived.contains { isSelected(.project($0.ref)) }
+        foldButton(open ? "Hide archived" : "Archived (\(archived.count))", open: open) {
+          showArchived = !open
+        }
+        if open {
+          ForEach(archived) { project in projectRow(project, shared: shared) }
         }
       }
     }

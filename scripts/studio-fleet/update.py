@@ -797,16 +797,20 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                          'reads': (before['rows'], carried, before.get('databaseCapture'))},
             'before': {'position': position, 'since': before['rows'],
                        'reads': (before['rows'], None, before.get('databaseCapture'))}}
+    delta_misses = []  # Why each re-read since the last exact read went to a full read.
     def delta_since(since_key, since):
         """(position, reads): the -wal position, taken before this re-read, and the re-read of only
         what committed since the last exact read, or None when a full read must decide."""
         position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
+        why = {}
         try:
-            reads = read_delta.reread(own / 'userdata', base[since_key], since)
-        except (OSError, sqlite3.Error):  # The full read meets the same fault and decides.
-            reads = None
+            reads = read_delta.reread(own / 'userdata', base[since_key], since, why=why)
+        except (OSError, sqlite3.Error) as error:  # The full read meets the same fault and decides.
+            reads, why = None, {'reason': 'read-failed', 'error': type(error).__name__}
         if reads is not None:
             lap('deltaRead')
+        else:
+            delta_misses.append({'against': since_key, **why})
         return position, reads
     restart_started_at = heartbeat_window_start(
         read_opened_at, datetime.datetime.now(datetime.timezone.utc).isoformat(), original_auth)
@@ -961,6 +965,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'diskIoPolicy': install_progress.disk_io_policy()}
     if prune_error:
         progress['stateBackupPruneError'] = prune_error
+    progress['readDeltaMisses'] = delta_misses  # The same list: later receipts carry later misses.
     progress['timings'] = timings  # The phases done when each receipt below is written.
     output.write_text(json.dumps(progress, indent=2) + '\n')
     restart_requested = False
@@ -1014,6 +1019,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             else:
                 mark = watermark.take()
                 position, reads = delta_since('before', before['rows'])
+                if reads is None:
+                    # A full read takes about as long as the before-read did: refuse now, with the
+                    # old service running, when one could not finish within the budget anyway.
+                    budget_left(timings.get('beforeRead', 0) / 1000)
                 if reads is not None:
                     current_rows, current_carried, current_database = reads
                 elif 'databaseCapture' in before:
@@ -1241,7 +1250,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             # Names only: which protected tables gained which empty columns.
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
-        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings', 'diskIoPolicy')
+        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings', 'diskIoPolicy', 'readDeltaMisses')
                        if key in progress})
         if after_carried is not None:
             # Counts only: how many log rows the services appended after the prestate.

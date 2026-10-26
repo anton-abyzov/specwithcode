@@ -55,7 +55,7 @@ export interface ThreadPlanCompact extends PlanProgressSummary {
 
 /** `0996` for `0996-connect-launches`: what a chip or card header has room for. */
 export function incrementNumber(incrementId: string): string {
-  return incrementId.replace(/^(\d+)-.*/u, "$1");
+  return incrementId.replace(/^(\d+[A-Za-z]?)-.*/u, "$1");
 }
 
 const TASK_STATE: Record<ThreadIncrementTaskStatus, PlanStepState> = {

@@ -165,6 +165,7 @@ export const effectiveGrant = (record: WorkGrantPolicyRecord): EffectiveWorkGran
   record.legacy
     ? {
         ...unscopedGrant(EnvironmentId.make(record.coordinatorEnvironmentId)),
+        legacy: true,
         revoked: record.revokedAt !== null,
       }
     : {

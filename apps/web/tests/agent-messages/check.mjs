@@ -67,7 +67,9 @@ async function reveal(page, id) {
 
 async function measure(page, row) {
   return row.evaluate((node) => {
-    const bubble = node.querySelector(".bg-message");
+    // A relayed note on this build; the bubble on a build from before it.
+    const relay = node.querySelector("[data-relayed-message]");
+    const bubble = relay ?? node.querySelector(".bg-message");
     const fold = node.querySelector("[data-worker-message]");
     const clamp = node.querySelector("[data-user-message-collapsible]");
     const spill = [bubble, ...bubble.querySelectorAll("*")].filter(
@@ -76,7 +78,7 @@ async function measure(page, row) {
         getComputedStyle(element).overflowX === "visible",
     ).length;
     const toggle = [...node.querySelectorAll("button")].find((button) =>
-      /^Show (full message|more)/.test(button.getAttribute("aria-label") ?? button.innerText),
+      /Show (full message|more)/.test(button.getAttribute("aria-label") ?? button.innerText),
     );
     return {
       height: Math.round(bubble.getBoundingClientRect().height),
@@ -86,6 +88,13 @@ async function measure(page, row) {
       clamped: clamp?.getAttribute("data-user-message-collapsed") ?? null,
       toggle: toggle ? (toggle.getAttribute("aria-label") ?? toggle.innerText) : null,
       sentBy: node.innerText.includes("Sent by another agent"),
+      relayed: relay?.getAttribute("data-relayed-message") ?? null,
+      header: relay?.querySelector("h3")?.innerText ?? null,
+      view:
+        relay?.querySelector("[data-relayed-message-footer] [data-slot=inline-button]")
+          ?.innerText ?? null,
+      time: relay?.querySelector("time")?.innerText ?? null,
+      background: getComputedStyle(bubble).backgroundColor,
       spill,
       page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     };
@@ -126,7 +135,7 @@ try {
           result.copied =
             (await page.evaluate(() => navigator.clipboard.readText())) === texts.enospc;
         }
-        const open = row.getByRole("button", { name: /^Show full message/ });
+        const open = row.getByRole("button", { name: /Show full message/ });
         if (detail !== "verbose" && (await open.count()) > 0) {
           await open.click();
           await page.waitForTimeout(200);
@@ -140,7 +149,17 @@ try {
         await context.close();
 
         if (measureOnly) continue;
-        NodeAssert.ok(result.sentBy, `${label}: Sent by another agent stays`);
+        // Each relayed message is a quiet note naming its sender, with a link back and a time.
+        NodeAssert.equal(result.relayed, "thread", `${label}: from another thread`);
+        NodeAssert.equal(result.header, "Message from another thread", label);
+        NodeAssert.equal(result.view, "View thread", label);
+        NodeAssert.ok(result.time, `${label}: time`);
+        NodeAssert.equal(result.background, "rgba(0, 0, 0, 0)", `${label}: no bubble`);
+        NodeAssert.equal(result.handover.relayed, "coordinator", label);
+        NodeAssert.equal(result.handover.header, "Message from coordinator", label);
+        NodeAssert.equal(result.handover.view, "View coordinator", label);
+        NodeAssert.equal(result.merge.relayed, "agent", label);
+        NodeAssert.equal(result.merge.view, null, `${label}: no thread to link`);
         NodeAssert.equal(result.clamped, null, `${label}: not the person's clamp`);
         NodeAssert.equal(result.copied, true, `${label}: exact copy`);
         NodeAssert.equal(result.page, 0, `${label}: no sideways scroll`);
@@ -153,7 +172,11 @@ try {
           continue;
         }
         NodeAssert.equal(result.workerMessage, "folded", `${label}: folded`);
-        NodeAssert.match(result.toggle, /^Show full message, [\d,]+ more characters$/, label);
+        NodeAssert.match(
+          result.toggle,
+          /^Message from another thread\. Show full message, [\d,]+ more characters$/,
+          label,
+        );
         NodeAssert.ok(result.text.includes("Exactspec /Users/fixture/Projects/atlas/"), label);
         NodeAssert.ok(!result.text.includes("no space left on device"), `${label}: lead only`);
         NodeAssert.ok(result.openWhole, `${label}: Show full message opens the original`);
@@ -168,6 +191,32 @@ try {
         NodeAssert.ok(result.merge.text.includes("Merged #509 and #186."), label);
       }
     }
+  }
+  // `?new`: the "New" divider sits above the first message since the last visit.
+  for (const theme of ["light", "dark"]) {
+    const context = await browser.newContext({
+      viewport: VIEWS[0].viewport,
+      colorScheme: theme,
+      reducedMotion: "reduce",
+    });
+    const page = await context.newPage();
+    page.on("pageerror", (error) => errors.push(`new-${theme}: ${error.message}`));
+    await page.route("**/*", (route) =>
+      route.request().url().startsWith(origin) ? route.continue() : route.abort(),
+    );
+    await page.goto(`${origin}/?theme=${theme}&detail=normal&new`);
+    await page.locator("main").waitFor();
+    const row = page.locator('[data-message-id="reminder"]');
+    await row.waitFor();
+    await page.waitForTimeout(300);
+    const dividers = await page.locator("[data-new-messages-divider]").count();
+    const above = await row.locator("[data-new-messages-divider]").count();
+    results.push({ label: `new-${theme}`, dividers, above });
+    await page.screenshot({ path: NodePath.join(output, `thread-new-${theme}-1280.png`) });
+    await context.close();
+    if (measureOnly) continue;
+    NodeAssert.equal(dividers, 1, `new-${theme}: one divider`);
+    NodeAssert.equal(above, 1, `new-${theme}: above the coordinator's reminder`);
   }
   // Concise is never taller than Normal, and the three messages together are shorter.
   if (!measureOnly) {
@@ -191,14 +240,17 @@ try {
 }
 console.log(
   JSON.stringify(
-    results.map(({ label, height, openHeight, workerMessage, clamped, copied, merge }) => ({
-      label,
-      height,
-      openHeight,
-      workerMessage,
-      clamped,
-      copied,
-      merge: merge.workerMessage ?? merge.clamped ?? "whole",
-    })),
+    results.map(
+      ({ label, height, openHeight, workerMessage, clamped, copied, merge, dividers }) => ({
+        label,
+        height,
+        openHeight,
+        workerMessage,
+        clamped,
+        copied,
+        merge: merge ? (merge.workerMessage ?? merge.clamped ?? "whole") : undefined,
+        dividers,
+      }),
+    ),
   ),
 );

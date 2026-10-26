@@ -26,6 +26,18 @@ describe("shell block detection", () => {
     expect(resolveCodeFenceLanguage("text", "git add . && \\\n  git commit -m x")).toBe("bash");
   });
 
+  it("keeps a list of file paths as text, so it renders as files", () => {
+    const list =
+      "/Users/me/Downloads/cws/specwithcode-browser-1.0.0.zip\n/Users/me/Downloads/cws/icon-128.png\n";
+    expect(looksLikeShellCommand(list)).toBe(false);
+    expect(resolveCodeFenceLanguage("text", list)).toBe("text");
+    expect(resolveCodeFenceLanguage("text", "~/Downloads/cws/SUBMISSION.md")).toBe("text");
+    // Programs and scripts, alone or with arguments, still run.
+    expect(resolveCodeFenceLanguage("text", "./scripts/release.sh")).toBe("bash");
+    expect(resolveCodeFenceLanguage("text", "/usr/local/bin/tool")).toBe("bash");
+    expect(resolveCodeFenceLanguage("text", "/opt/app/report.png --open")).toBe("bash");
+  });
+
   it("keeps prose, output and other languages as they are", () => {
     expect(looksLikeShellCommand("This is a sentence, not a command.")).toBe(false);
     expect(looksLikeShellCommand("total 8\ndrwxr-xr-x  2 me staff  64 Oct 17 .")).toBe(false);

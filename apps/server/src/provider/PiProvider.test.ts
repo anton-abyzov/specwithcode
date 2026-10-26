@@ -364,5 +364,72 @@ describe("PiProvider", () => {
       const unflagged = { ...pi, models: [...piModelsFromSettings([], discovered)] };
       assert.deepEqual(fallback(unflagged), { instanceId: pi.instanceId, model: "default" });
     });
+
+    it("is never the any-ready fallback when Pi cannot tell a Claude login from an API key", () => {
+      const nowMs = Date.parse("2026-10-22T12:00:00.000Z");
+      const checkedAt = "2026-10-22T11:59:00.000Z";
+      // A priced Claude model on Pi's `anthropic` provider: a Max login or an API key.
+      const anthropic = parseDiscoveredModels(
+        {
+          models: [
+            {
+              id: "claude-opus-4-5",
+              name: "Claude Opus 4.5",
+              baseUrl: "https://api.anthropic.com",
+              provider: "anthropic",
+              cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+              contextWindow: 200000,
+              maxTokens: 64000,
+            },
+          ],
+        },
+        "medium",
+      );
+      const [model] = anthropic;
+      assert.equal(model?.billing, "unknown");
+      const pi: ServerProvider = {
+        instanceId: ProviderInstanceId.make("pi"),
+        driver: ProviderDriverKind.make("pi"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated", type: "pi" },
+        checkedAt,
+        version: null,
+        models: [...anthropic],
+        slashCommands: [],
+        skills: [],
+      };
+      const claude: ServerProvider = {
+        ...pi,
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        auth: { status: "authenticated", type: "max" },
+        models: [
+          { slug: "claude-opus-4-5", name: "Opus 4.5", isCustom: false, capabilities: null },
+        ],
+        usageLimits: {
+          checkedAt,
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 100 }],
+        },
+      };
+      const fallback = (rule: {
+        readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId>;
+      }) =>
+        resolveProviderFallback({
+          providers: [claude, pi],
+          currentInstanceId: claude.instanceId,
+          currentModel: "claude-opus-4-5",
+          rule: { providerLimitFallbackModelSelection: null, defaultModelSelection: null, ...rule },
+          nowMs,
+          anyReady: true,
+        });
+      assert.isNull(fallback({}));
+      // Naming Pi in the provider order is the person's choice, and still reaches it.
+      assert.deepEqual(fallback({ defaultModelProviders: [pi.instanceId] }), {
+        instanceId: pi.instanceId,
+        model: model!.slug,
+      });
+    });
   });
 });

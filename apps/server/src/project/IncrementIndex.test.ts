@@ -9,6 +9,7 @@ import {
   incrementExists,
   listProjectIncrements,
   queryProjectIncrements,
+  resolveIncrementRef,
 } from "./ThreadIncrementProgress.ts";
 
 const COUNT = 3_000;
@@ -93,6 +94,37 @@ describe("queryProjectIncrements", () => {
     expect(await incrementExists(root, null, "0001-feature-1")).toBe(true);
     expect(await incrementExists(root, null, "0001-missing")).toBe(false);
     expect(await incrementExists(root, null, "../../etc")).toBe(false);
+  });
+
+  it("lists SpecWeave's lettered increments, like 0657E, beside the plain one", async () => {
+    const lettered = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "studio-increment-lettered-"),
+    );
+    for (const [id, status] of [
+      ["0657-dark-theme", "completed"],
+      ["0657E-dark-theme-followup", "completed"],
+      ["0713B-production-rollout", "abandoned"],
+    ] as const) {
+      await NodeFSP.mkdir(NodePath.join(lettered, ".specweave/increments", id), {
+        recursive: true,
+      });
+      await NodeFSP.writeFile(
+        NodePath.join(lettered, ".specweave/increments", id, "metadata.json"),
+        JSON.stringify({ status }),
+      );
+    }
+    const all = await queryProjectIncrements(lettered, null);
+    expect(all.total).toBe(3);
+    expect(all.statusCounts).toEqual({ completed: 2, abandoned: 1 });
+    expect(all.increments.map((entry) => entry.incrementId).sort()).toEqual([
+      "0657-dark-theme",
+      "0657E-dark-theme-followup",
+      "0713B-production-rollout",
+    ]);
+    expect(await incrementExists(lettered, null, "0713B-production-rollout")).toBe(true);
+    const ref = await resolveIncrementRef(lettered, null, "0657");
+    expect(ref).toMatchObject({ kind: "closed", incrementId: "0657-dark-theme" });
+    await NodeFSP.rm(lettered, { recursive: true, force: true });
   });
 
   it("answers empty for a project with no increments", async () => {

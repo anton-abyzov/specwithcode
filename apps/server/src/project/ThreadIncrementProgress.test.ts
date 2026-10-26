@@ -362,6 +362,27 @@ describe("readThreadIncrementProgress", () => {
     ).toEqual(["0931-other", "0930-studio-plan-card"]);
   });
 
+  it("binds an inc/ branch to SpecWeave's lettered increment, not its plain sibling", async () => {
+    const root = await temp("studio-plan-lettered-");
+    await increment(root, "0657-dark-theme", "");
+    await increment(root, "0657E-dark-theme-followup", "");
+    const home = await temp("studio-plan-home-");
+    const [bound] = await readThreadIncrementProgress(
+      root,
+      [
+        {
+          threadId: "t1",
+          title: "x",
+          branch: "inc/0657E-dark-theme-followup",
+          worktreePath: null,
+          home,
+        },
+      ],
+      NOW,
+    );
+    expect(bound).toMatchObject({ incrementId: "0657E-dark-theme-followup", binding: "branch" });
+  });
+
   it("skips an ancestor .specweave without a config and stops at the nearest config", async () => {
     const umbrella = await temp("studio-plan-umbrella-");
     await increment(umbrella, "0930-studio-plan-card", "");

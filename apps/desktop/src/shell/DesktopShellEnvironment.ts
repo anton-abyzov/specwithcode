@@ -1,10 +1,13 @@
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -64,6 +67,11 @@ export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
     readonly installIntoProcess: Effect.Effect<void>;
+    /**
+     * Waits for the background login-shell refresh that installIntoProcess
+     * starts when it applied cached values; immediate in every other case.
+     */
+    readonly awaitInstalled: Effect.Effect<void>;
   }
 >()("@specweave-studio/desktop/shell/DesktopShellEnvironment") {}
 
@@ -265,6 +273,8 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
+  /** The child's whole environment; the process's own when absent. */
+  readonly env?: NodeJS.ProcessEnv;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = yield* spawner
@@ -276,6 +286,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
         stderr: "pipe",
         killSignal: "SIGTERM",
         forceKillAfter: PROCESS_TERMINATE_GRACE,
+        ...(input.env === undefined ? {} : { env: input.env, extendEnv: false }),
       }),
     )
     .pipe(
@@ -311,6 +322,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
 const readLoginShellEnvironment = (
   shell: string,
   names: ReadonlyArray<string>,
+  env?: NodeJS.ProcessEnv,
 ): Effect.Effect<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> =>
   names.length === 0
     ? Effect.succeed({})
@@ -319,6 +331,7 @@ const readLoginShellEnvironment = (
         command: shell,
         args: ["-ilc", capturePosixEnvironmentCommand(names)],
         timeout: LOGIN_SHELL_TIMEOUT,
+        ...(env === undefined ? {} : { env }),
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
 const readLaunchctlPath = runCommandOutput({
@@ -395,29 +408,36 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   },
 );
 
-const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosixEnvironment")(
+interface LoginShellProbe {
+  readonly shellEnvironment: EnvironmentPatch;
+  /** The shell whose login probe returned PATH; none when every candidate failed. */
+  readonly loginShell: Option.Option<string>;
+}
+
+const probeLoginShells = Effect.fn("desktop.shellEnvironment.probeLoginShells")(function* (
+  config: ShellEnvironmentConfig,
+  shellEnv?: NodeJS.ProcessEnv,
+): Effect.fn.Return<LoginShellProbe, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const shellEnvironment: EnvironmentPatch = {};
+
+  for (const shell of listLoginShellCandidates(config)) {
+    Object.assign(
+      shellEnvironment,
+      yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES, shellEnv),
+    );
+    if (shellEnvironment.PATH) return { shellEnvironment, loginShell: Option.some(shell) };
+  }
+
+  return { shellEnvironment, loginShell: Option.none() };
+});
+
+const applyPosixEnvironment = Effect.fn("desktop.shellEnvironment.applyPosixEnvironment")(
   function* (
     config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<
-    void,
-    never,
-    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
-  > {
+    shellEnvironment: EnvironmentPatch,
+    launchctlPath: Option.Option<string>,
+  ): Effect.fn.Return<void, never, FileSystem.FileSystem> {
     const fileSystem = yield* FileSystem.FileSystem;
-    const shellEnvironment: EnvironmentPatch = {};
-
-    for (const shell of listLoginShellCandidates(config)) {
-      Object.assign(
-        shellEnvironment,
-        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
-      );
-      if (shellEnvironment.PATH) break;
-    }
-
-    const launchctlPath =
-      config.platform === "darwin" && !shellEnvironment.PATH
-        ? yield* readLaunchctlPath
-        : Option.none<string>();
     const mergedPath = mergePaths(config.platform, [
       trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
       readEnvPath(config.env),
@@ -500,6 +520,161 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   },
 );
 
+const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosixEnvironment")(
+  function* (
+    config: ShellEnvironmentConfig,
+  ): Effect.fn.Return<
+    LoginShellProbe,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+  > {
+    const probe = yield* probeLoginShells(config);
+    const launchctlPath =
+      config.platform === "darwin" && !probe.shellEnvironment.PATH
+        ? yield* readLaunchctlPath
+        : Option.none<string>();
+    yield* applyPosixEnvironment(config, probe.shellEnvironment, launchctlPath);
+    return probe;
+  },
+);
+
+// The macOS login-shell probe takes 1.6-2.6s on a typical setup (6s when it
+// times out), and it used to hold up everything else at boot. The values from
+// the last successful probe are saved here: the next boot applies them at once
+// and probes again in the background. Linux keeps the blocking probe, since
+// its display and session variables change from one login to the next.
+const SHELL_ENVIRONMENT_CACHE_FILE = "shell-environment.json";
+
+const ShellEnvironmentCache = Schema.Struct({
+  version: Schema.Literal(1),
+  shell: Schema.String,
+  environment: Schema.Record(Schema.String, Schema.String),
+});
+const decodeShellEnvironmentCache = Schema.decodeUnknownOption(
+  Schema.fromJsonString(ShellEnvironmentCache),
+);
+
+const pickLoginShellNames = (
+  environment: Readonly<Record<string, string | undefined>>,
+): EnvironmentPatch => {
+  const picked: EnvironmentPatch = {};
+  for (const name of LOGIN_SHELL_ENV_NAMES) {
+    const value = environment[name];
+    if (value !== undefined && value.length > 0) {
+      picked[name] = value;
+    }
+  }
+  return picked;
+};
+
+const readShellEnvironmentCache = (
+  fileSystem: FileSystem.FileSystem,
+  cachePath: string,
+  config: ShellEnvironmentConfig,
+): Effect.Effect<Option.Option<EnvironmentPatch>> =>
+  fileSystem.readFileString(cachePath).pipe(
+    Effect.map((text) =>
+      decodeShellEnvironmentCache(text).pipe(
+        // A cache from a shell this launch would not probe describes another setup.
+        Option.filter((cache) => listLoginShellCandidates(config).includes(cache.shell)),
+        Option.map((cache) => pickLoginShellNames(cache.environment)),
+        Option.filter((environment) => Option.isSome(trimNonEmpty(environment.PATH))),
+      ),
+    ),
+    Effect.orElseSucceed(() => Option.none<EnvironmentPatch>()),
+  );
+
+const writeShellEnvironmentCache = (
+  fileSystem: FileSystem.FileSystem,
+  cachePath: string,
+  probe: LoginShellProbe,
+): Effect.Effect<void> => {
+  if (Option.isNone(probe.loginShell)) return Effect.void;
+  const document = {
+    version: 1,
+    shell: probe.loginShell.value,
+    environment: pickLoginShellNames(probe.shellEnvironment),
+  };
+  const tempPath = `${cachePath}.${process.pid}.tmp`;
+  return fileSystem
+    .writeFileString(tempPath, `${JSON.stringify(document)}\n`, { mode: 0o600 })
+    .pipe(
+      Effect.andThen(fileSystem.rename(tempPath, cachePath)),
+      Effect.catch((error) =>
+        Effect.logWarning("desktop shell environment cache not saved").pipe(
+          Effect.annotateLogs({ component: "desktop-shell-environment", error }),
+          Effect.andThen(fileSystem.remove(tempPath).pipe(Effect.ignore)),
+        ),
+      ),
+    );
+};
+
+const snapshotLoginShellNames = (env: NodeJS.ProcessEnv): Record<string, string | undefined> =>
+  Object.fromEntries(LOGIN_SHELL_ENV_NAMES.map((name) => [name, env[name]]));
+
+const replaceAppliedEnvironment = (
+  env: NodeJS.ProcessEnv,
+  applied: Readonly<Record<string, string | undefined>>,
+  next: NodeJS.ProcessEnv,
+) => {
+  for (const name of LOGIN_SHELL_ENV_NAMES) {
+    // Something else set this variable after the cached values went in: keep it.
+    if (env[name] !== applied[name]) continue;
+    const value = next[name];
+    if (value === undefined) {
+      delete env[name];
+    } else {
+      env[name] = value;
+    }
+  }
+};
+
+const installDarwinEnvironment = Effect.fn("desktop.shellEnvironment.installDarwinEnvironment")(
+  function* (
+    config: ShellEnvironmentConfig,
+    cachePath: string,
+    refreshScope: Scope.Scope,
+  ): Effect.fn.Return<
+    Option.Option<Deferred.Deferred<void>>,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+  > {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cached = yield* readShellEnvironmentCache(fileSystem, cachePath, config);
+    if (Option.isNone(cached)) {
+      // First run, or no usable cache: probe before anything starts, as always.
+      const probe = yield* installPosixEnvironment(config);
+      yield* writeShellEnvironmentCache(fileSystem, cachePath, probe);
+      return Option.none();
+    }
+
+    const launchEnvironment = { ...config.env };
+    yield* applyPosixEnvironment(config, cached.value, Option.none());
+    const applied = snapshotLoginShellNames(config.env);
+
+    // The refresh probes and recomputes from the launch environment, so values
+    // that went stale since the last probe (a PATH entry the shell dropped, a
+    // new login's SSH_AUTH_SOCK) leave the process too: a shell started from
+    // the patched environment would inherit the cached values back. A failed
+    // probe keeps the last good values instead of the launchctl fallback.
+    const refresh = Effect.gen(function* () {
+      const probe = yield* probeLoginShells(config, launchEnvironment);
+      if (Option.isNone(probe.loginShell)) return;
+      const next = { ...launchEnvironment };
+      yield* applyPosixEnvironment({ ...config, env: next }, probe.shellEnvironment, Option.none());
+      replaceAppliedEnvironment(config.env, applied, next);
+      yield* writeShellEnvironmentCache(fileSystem, cachePath, probe);
+    }).pipe(Effect.withSpan("desktop.shellEnvironment.refresh"));
+
+    const refreshed = yield* Deferred.make<void>();
+    yield* Effect.forkIn(
+      refresh.pipe(Effect.ensuring(Deferred.succeed(refreshed, undefined))),
+      refreshScope,
+    );
+    return Option.some(refreshed);
+  },
+);
+
 const installShellEnvironment = (
   config: ShellEnvironmentConfig,
 ): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> => {
@@ -507,7 +682,7 @@ const installShellEnvironment = (
     return installWindowsEnvironment(config);
   }
   if (config.platform === "darwin" || config.platform === "linux") {
-    return installPosixEnvironment(config);
+    return Effect.asVoid(installPosixEnvironment(config));
   }
   return Effect.void;
 };
@@ -517,18 +692,47 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
-    installShellEnvironment({
-      env: process.env,
-      platform: environment.platform,
-      userShell: Option.none(),
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
-    );
+  const refreshScope = yield* Effect.scope;
+  const pendingRefresh = yield* Ref.make(Option.none<Deferred.Deferred<void>>());
+  // An environment without a state directory (as in tests) keeps no cache.
+  const cachePath =
+    environment.platform === "darwin"
+      ? Option.fromNullishOr(environment.stateDir).pipe(
+          Option.map((stateDir) => `${stateDir}/${SHELL_ENVIRONMENT_CACHE_FILE}`),
+        )
+      : Option.none<string>();
+  const config: ShellEnvironmentConfig = {
+    env: process.env,
+    platform: environment.platform,
+    userShell: Option.none(),
+  };
+  const install = Option.match(cachePath, {
+    onNone: () => installShellEnvironment(config),
+    onSome: (path) =>
+      installDarwinEnvironment(config, path, refreshScope).pipe(
+        // On the installIntoProcess span, the one a launch trace is read by.
+        Effect.tap((refresh) => Effect.annotateCurrentSpan({ cached: Option.isSome(refresh) })),
+        Effect.flatMap((refresh) => Ref.set(pendingRefresh, refresh)),
+      ),
+  });
+  const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] = install.pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
+  );
+  const awaitInstalled: DesktopShellEnvironment["Service"]["awaitInstalled"] = Ref.get(
+    pendingRefresh,
+  ).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (refreshed) => Deferred.await(refreshed),
+      }),
+    ),
+    Effect.withSpan("desktop.shellEnvironment.awaitInstalled"),
+  );
 
-  return DesktopShellEnvironment.of({ installIntoProcess });
+  return DesktopShellEnvironment.of({ installIntoProcess, awaitInstalled });
 });
 
 export const layer = Layer.effect(DesktopShellEnvironment, make);

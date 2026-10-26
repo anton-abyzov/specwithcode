@@ -41,6 +41,16 @@ export interface WorkGrantContext {
   readonly coordinatorLabel: string;
 }
 
+/**
+ * Who is calling, as far as a grant cares: the credential's scope, and the
+ * calling thread when there is one (its own record, or its root's, names the
+ * machine whose work started it).
+ */
+export interface GrantCaller {
+  readonly scope: Pick<Caller["scope"], "client">;
+  readonly caller: Parameters<WorkGrants.WorkGrantsShape["originOf"]>[0] | undefined;
+}
+
 const storageFailure = () =>
   new OrchestratorMcpFailure({
     code: "orchestration_error",
@@ -54,7 +64,7 @@ const labelsOf = RemoteWorkers.RemoteWorkers.pipe(Effect.flatMap((remote) => rem
  * or for a thread that another machine's work started (or its subagents and
  * forks), the grant of the machine that started it.
  */
-export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: Caller) {
+export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: GrantCaller) {
   const grants = yield* WorkGrants.WorkGrants;
   if (!grants.enabled) return undefined;
   const labels = yield* labelsOf;
@@ -82,7 +92,7 @@ export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: Call
   } satisfies WorkGrantContext;
 });
 
-const refuseRevoked = (work: WorkGrantContext) =>
+export const refuseRevoked = (work: WorkGrantContext) =>
   work.grant.revoked
     ? Effect.fail(
         new OrchestratorMcpFailure({
@@ -91,6 +101,26 @@ const refuseRevoked = (work: WorkGrantContext) =>
         }),
       )
     : Effect.void;
+
+/**
+ * The project as this machine knows it, read without adding a requirement so
+ * every tool can call it. Undefined when the server cannot say, which the
+ * checks below treat as outside the grant.
+ */
+const findProject = Effect.fn("mcp.workGrant.findProject")(function* (projectId: ProjectId) {
+  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+  if (Option.isNone(projects)) return undefined;
+  return yield* projects.value.getById(projectId).pipe(
+    Effect.map(Option.getOrUndefined),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+const unreachable = (work: WorkGrantContext, what: "project" | "thread") =>
+  new OrchestratorMcpFailure({
+    code: "outside_grant_scope",
+    message: `This machine does not let ${work.coordinatorLabel} reach that ${what}.`,
+  });
 
 /**
  * Admits a launch here and says what origin the new thread records: the
@@ -164,39 +194,40 @@ export const assertThreadInGrant = Effect.fn("mcp.assertThreadInGrant")(function
 ) {
   if (work === undefined) return;
   yield* refuseRevoked(work);
-  const projects = yield* ProjectService.ProjectService;
-  const project = yield* projects.getById(thread.projectId).pipe(
-    Effect.map(Option.getOrUndefined),
-    Effect.orElseSucceed(() => undefined),
-  );
-  if (project === undefined)
-    return yield* new OrchestratorMcpFailure({
-      code: "outside_grant_scope",
-      message: `This machine does not let ${work.coordinatorLabel} reach that thread.`,
-    });
+  const project = yield* findProject(thread.projectId);
+  if (project === undefined) return yield* unreachable(work, "thread");
   yield* assertProjectInGrant(work, project);
 });
 
 /**
- * With a coordinator on each machine of a linked project, a thread is steered
- * only by the coordinator that owns it: this machine's, or the one whose work
- * started it here. Another machine's work may still read every thread the
- * grant covers. A copy that runs no coordinator of its own (it relinquished
- * it at link time) keeps taking work from the project's coordinator.
+ * Another machine's work steers only the threads it started here (and their
+ * subagents and forks). Steering this machine's own work would run it, and
+ * whatever it then does, outside the grant: it records no origin, so routines,
+ * sign-in limits and revocation would never reach it. Another machine's work
+ * may still read every thread the grant covers. In a linked project whose copy
+ * here runs no coordinator of its own (it relinquished it at link time), the
+ * project's coordinator keeps steering its threads. A legacy grant is held
+ * only to the linked-project rule it had before grants were scoped.
  */
 export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(function* (
   work: WorkGrantContext | undefined,
   thread: Pick<OrchestrationV2ThreadShell, "id" | "projectId" | "lineage">,
 ) {
   if (work === undefined) return;
-  const projects = yield* ProjectService.ProjectService;
-  const project = yield* projects.getById(thread.projectId).pipe(
-    Effect.map(Option.getOrUndefined),
-    Effect.orElseSucceed(() => undefined),
-  );
-  const settings = project?.workspaceSettings;
-  if (project === undefined || (settings?.logicalProject?.members.length ?? 0) < 2) return;
-  if (settings?.coordinatorBinding !== undefined && settings.coordinatorBinding.state !== "active")
+  yield* refuseRevoked(work);
+  const project = yield* findProject(thread.projectId);
+  // A thread whose project this machine cannot read is not one the grant may change.
+  if (project === undefined) return yield* unreachable(work, "thread");
+  const settings = project.workspaceSettings;
+  const linked = (settings?.logicalProject?.members.length ?? 0) >= 2;
+  // A legacy grant (the owner's own machines, from before grants) keeps
+  // steering this machine's threads outside linked projects, as it always did.
+  if (work.grant.legacy === true && !linked) return;
+  if (
+    linked &&
+    settings?.coordinatorBinding !== undefined &&
+    settings.coordinatorBinding.state !== "active"
+  )
     return;
   const owner = isProjectCoordinatorThreadId(thread.id, project)
     ? undefined
@@ -207,9 +238,20 @@ export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(functi
   if (owner?.coordinatorEnvironmentId === work.grant.coordinatorEnvironmentId) return;
   return yield* new OrchestratorMcpFailure({
     code: "outside_grant_scope",
-    message: `This thread belongs to this machine's own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. Ask this machine's coordinator, or migrate the thread first.`,
+    message: linked
+      ? `This thread belongs to this machine's own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. Ask this machine's coordinator, or migrate the thread first.`
+      : `This thread is this machine's own work in "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. ${work.coordinatorLabel}'s work steers only the threads it started here.`,
   });
 });
+
+/**
+ * Sending to a thread runs it on its own sign-in, which must be one the grant
+ * allows, as when that work started it.
+ */
+export const assertThreadSignInInGrant = (
+  work: WorkGrantContext | undefined,
+  thread: Pick<OrchestrationV2ThreadShell, "providerInstanceId">,
+) => assertAccountInGrant(work, thread.providerInstanceId);
 
 /**
  * Refuses a personal assistant's project to a caller acting under another
@@ -217,20 +259,13 @@ export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(functi
  * assistant's threads, queue, requests, memory or plan.
  */
 export const refuseMachinePrivate = Effect.fn("mcp.refuseMachinePrivate")(function* (
-  context: Caller,
+  context: GrantCaller,
   projectId: ProjectId,
 ) {
   const work = yield* workGrantOf(context);
   if (work === undefined) return;
-  // Read without adding a requirement, so every tool can call this; a server
-  // that cannot say what the project is refuses it.
-  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
-  const project = Option.isNone(projects)
-    ? undefined
-    : yield* projects.value.getById(projectId).pipe(
-        Effect.map(Option.getOrUndefined),
-        Effect.orElseSucceed(() => undefined),
-      );
+  // A server that cannot say what the project is refuses it.
+  const project = yield* findProject(projectId);
   if (project === undefined || isPersonalAssistantProject(project))
     return yield* new OrchestratorMcpFailure({
       code: "outside_grant_scope",
@@ -271,3 +306,81 @@ export const recordLaunchOrigin = (work: WorkGrantContext | undefined, threadId:
             .pipe(Effect.mapError(storageFailure)),
         ),
       );
+
+/**
+ * The checks every tool applies to a caller acting under another machine's
+ * work grant. Each one does nothing for a caller without a grant (this
+ * machine's own user, an ordinary paired client), and refuses whatever it
+ * cannot resolve once a grant applies: a revoked grant, a project or thread
+ * this machine cannot read, or one the grant does not cover.
+ */
+
+/** Reading a project: the grant must cover it. Returns the grant, if any. */
+export const assertProjectReadable = Effect.fn("mcp.assertProjectReadable")(function* (
+  context: GrantCaller,
+  projectId: ProjectId,
+) {
+  const work = yield* workGrantOf(context);
+  if (work === undefined) return undefined;
+  yield* refuseRevoked(work);
+  const project = yield* findProject(projectId);
+  if (project === undefined) return yield* unreachable(work, "project");
+  yield* assertProjectInGrant(work, project);
+  return work;
+});
+
+/** Whether the grant covers a project, for filtering what a caller lists. */
+export const projectReachable = (work: WorkGrantContext | undefined, projectId: ProjectId) =>
+  work === undefined
+    ? Effect.succeed(true)
+    : work.grant.revoked
+      ? Effect.succeed(false)
+      : findProject(projectId).pipe(
+          Effect.map(
+            (project) =>
+              project !== undefined &&
+              projectInGrant(work.grant.projects, work.grant.coordinatorEnvironmentId, project),
+          ),
+        );
+
+/** Reading a thread: the grant must cover its project. */
+export const assertThreadReadable = Effect.fn("mcp.assertThreadReadable")(function* (
+  context: GrantCaller,
+  thread: Pick<OrchestrationV2ThreadShell, "projectId">,
+) {
+  const work = yield* workGrantOf(context);
+  yield* assertThreadInGrant(work, thread);
+  return work;
+});
+
+/**
+ * Changing a thread, the caller's own included: the grant must cover its
+ * project, and in a project with a coordinator on each machine the thread must
+ * be one the grant's own coordinator owns.
+ */
+export const assertThreadChangeable = Effect.fn("mcp.assertThreadChangeable")(function* (
+  context: GrantCaller,
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "projectId" | "lineage">,
+) {
+  const work = yield* workGrantOf(context);
+  yield* assertThreadInGrant(work, thread);
+  yield* assertThreadWritable(work, thread);
+  return work;
+});
+
+/**
+ * Routines are refused to another machine's work until a routine records the
+ * grant it was made under: a routine runs later as this machine's own work,
+ * outside the grant's projects, sign-ins and revocation. A legacy grant (the
+ * owner's own machines, from before grants) keeps managing routines as it did.
+ */
+export const refuseGrantRoutineChange = Effect.fn("mcp.refuseGrantRoutineChange")(function* (
+  context: GrantCaller,
+) {
+  const work = yield* workGrantOf(context);
+  if (work === undefined || work.grant.legacy === true) return;
+  return yield* new OrchestratorMcpFailure({
+    code: "outside_grant_scope",
+    message: `This machine does not let ${work.coordinatorLabel}'s work create, change, delete or run its scheduled routines. Ask the user here to set up the routine, or schedule it on ${work.coordinatorLabel}.`,
+  });
+});

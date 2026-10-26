@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import * as DateTime from "effect/DateTime";
+
 import {
   formatDuration,
   deriveActiveWorkStartedAt,
   deriveSubagentElapsedMs,
+  thoughtLabel,
 } from "./orchestrationTiming.ts";
 
 describe("formatDuration", () => {
@@ -159,5 +162,32 @@ describe("deriveSubagentElapsedMs", () => {
     expect(
       deriveSubagentElapsedMs({ status: "running", startedAt: null, completedAt: null }, now),
     ).toBeNull();
+  });
+});
+
+describe("thoughtLabel", () => {
+  const at = (iso: string) => DateTime.makeUnsafe(iso);
+  const span = (ms: number) => ({
+    startedAt: at("2026-10-25T12:00:00.000Z"),
+    completedAt: DateTime.add(at("2026-10-25T12:00:00.000Z"), { milliseconds: ms }),
+  });
+
+  it.each([
+    [12_400, "Thought for 12s"],
+    [1_000, "Thought for 1s"],
+    [59_400, "Thought for 59s"],
+    [65_000, "Thought for 1m 5s"],
+    [3_661_000, "Thought for 1h 1m 1s"],
+  ])("labels a %d ms thought %s", (ms, expected) => {
+    expect(thoughtLabel(span(ms))).toBe(expected);
+  });
+
+  it("keeps Thought when the item has no measurable span", () => {
+    expect(thoughtLabel(undefined)).toBe("Thought");
+    expect(thoughtLabel(span(0))).toBe("Thought");
+    expect(thoughtLabel(span(400))).toBe("Thought");
+    expect(thoughtLabel({ startedAt: at("2026-10-25T12:00:00.000Z"), completedAt: null })).toBe(
+      "Thought",
+    );
   });
 });

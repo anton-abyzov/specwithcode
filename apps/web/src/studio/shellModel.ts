@@ -126,6 +126,10 @@ export function modelLabel(
   instanceId: string,
   slug: string,
 ): ModelLabel {
+  // The draft placeholder (NO_PROVIDER_MODEL_SELECTION in providerInstances.ts, not
+  // imported so this module stays free of the provider runtime) names no harness.
+  if (entry === null && instanceId === "studio_no_provider")
+    return { provider: "", model: "Choose a model", full: "Choose a model" };
   const brand = providerBrand(entry, instanceId);
   const provider = HARNESS_BY_BRAND[brand] ?? brand;
   const catalogued = entry?.models?.find((model) => model.slug === slug)?.name?.trim();

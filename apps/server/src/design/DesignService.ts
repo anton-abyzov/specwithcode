@@ -99,6 +99,13 @@ export interface DesignCaller {
   readonly audience: DesignAudience;
   /** The only owner this caller may touch; every owner on this machine when absent. */
   readonly scope?: DesignOwnerInput | undefined;
+  /**
+   * The owners this caller may reach at all, decided on the owner this
+   * machine resolves (a linked project's checkout here, never the id a
+   * caller sent). Another machine's work under its grant has one; every
+   * owner is reachable when absent.
+   */
+  readonly admits?: ((owner: DesignOwnerInput) => Effect.Effect<boolean>) | undefined;
 }
 
 export const ownerCaller: DesignCaller = { actor: { kind: "user" }, audience: "owner" };
@@ -500,6 +507,9 @@ const make = Effect.gen(function* () {
       if (caller.scope !== undefined && caller.scope.kind !== "playground") {
         return yield* forbidden("This thread can only use its own project's designs.");
       }
+      if (caller.admits !== undefined && !(yield* caller.admits({ kind: "playground" }))) {
+        return yield* forbidden("This machine's Playground is not shared with this caller.");
+      }
       return {
         owner: { kind: "playground", environmentId: here },
         label: PLAYGROUND_LABEL,
@@ -541,6 +551,12 @@ const make = Effect.gen(function* () {
           ? "This Scratch thread can only use Playground designs."
           : "This thread can only use its own project's designs.",
       );
+    }
+    if (
+      caller.admits !== undefined &&
+      !(yield* caller.admits({ kind: "project", projectId: row.projectId }))
+    ) {
+      return yield* forbidden("This machine does not share that project with this caller.");
     }
     return {
       owner: { kind: "project", environmentId: here, projectId: row.projectId },
@@ -688,6 +704,10 @@ const make = Effect.gen(function* () {
           ? "This Scratch thread can only use Playground designs."
           : "This thread can only use its own project's designs.",
       );
+    }
+    // Naming an owner the caller may not reach is refused, not listed as empty.
+    if (named !== undefined && caller.admits !== undefined && !(yield* caller.admits(named))) {
+      return yield* forbidden("This machine does not share that owner with this caller.");
     }
     const wantPlayground = filter.kind === "all" || filter.kind === "playground";
     const wantProjects = filter.kind === "all" || filter.kind === "projects";

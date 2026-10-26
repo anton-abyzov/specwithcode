@@ -57,9 +57,10 @@ const check = (
   current: ReturnType<typeof linked>,
   threadId: string,
   origins: Record<string, EnvironmentId> = {},
+  work: WorkGrantContext = fromM4,
 ) =>
   Effect.exit(
-    assertThreadWritable(fromM4, {
+    assertThreadWritable(work, {
       id: ThreadId.make(threadId),
       projectId: project,
       lineage: { rootThreadId: ThreadId.make(threadId), parentThreadId: null },
@@ -115,19 +116,67 @@ describe("assertThreadWritable", () => {
       }),
   );
 
-  it.effect(
-    "keeps the single-coordinator rules where this copy runs no coordinator or is not linked",
-    () =>
-      Effect.gen(function* () {
-        const relinquished = linked({
-          epoch: 0,
-          state: "transferred",
-          operationId: "link-op",
-        });
-        expect(Exit.isSuccess(yield* check(relinquished, "started-on-minis"))).toBe(true);
-        expect(Exit.isSuccess(yield* check(linked(undefined, 1), "started-on-minis"))).toBe(true);
-        const unlinked = projectFixture(project, { title: "EasyChamp" });
-        expect(Exit.isSuccess(yield* check(unlinked, "started-on-minis"))).toBe(true);
-      }),
+  it.effect("keeps taking the project coordinator's work where this copy runs no coordinator", () =>
+    Effect.gen(function* () {
+      const relinquished = linked({
+        epoch: 0,
+        state: "transferred",
+        operationId: "link-op",
+      });
+      expect(Exit.isSuccess(yield* check(relinquished, "started-on-minis"))).toBe(true);
+    }),
+  );
+
+  // Review round 3: steering this machine's own work in a project that is not
+  // linked would run it outside the grant's routines, sign-ins and revocation.
+  it.effect("steers only its own work's threads in a project that is not linked", () =>
+    Effect.gen(function* () {
+      for (const current of [
+        linked(undefined, 1),
+        projectFixture(project, { title: "EasyChamp" }),
+      ]) {
+        const local = refusal(yield* check(current, "started-on-minis"));
+        expect(local).toContain("may read it but not send to");
+        refusal(yield* check(current, `project-coordinator:${project}`));
+        refusal(yield* check(current, "from-m1", { "from-m1": EnvironmentId.make("env-m1") }));
+        expect(
+          Exit.isSuccess(yield* check(current, "worker-from-m4", { "worker-from-m4": M4 })),
+        ).toBe(true);
+      }
+    }),
+  );
+
+  // Review round 4: the owner's own machines, kept as legacy grants on update,
+  // keep steering this machine's threads as they did before grants existed.
+  it.effect("lets a legacy grant steer this machine's threads outside linked projects", () =>
+    Effect.gen(function* () {
+      const legacy: WorkGrantContext = {
+        ...fromM4,
+        grant: { coordinatorEnvironmentId: M4, legacy: true } as WorkGrantContext["grant"],
+      };
+      const unlinked = projectFixture(project, { title: "EasyChamp" });
+      for (const current of [linked(undefined, 1), unlinked]) {
+        for (const threadId of ["started-on-minis", `project-coordinator:${project}`, "from-m1"])
+          expect(
+            Exit.isSuccess(
+              yield* check(current, threadId, { "from-m1": EnvironmentId.make("env-m1") }, legacy),
+            ),
+          ).toBe(true);
+      }
+      // In a linked project the other coordinator's threads stay its own, as before.
+      const active = linked({ epoch: 3, state: "active", operationId: "start-op" });
+      refusal(yield* check(active, "started-on-minis", {}, legacy));
+      expect(
+        Exit.isSuccess(yield* check(active, "worker-from-m4", { "worker-from-m4": M4 }, legacy)),
+      ).toBe(true);
+      // A revoked legacy grant steers nothing.
+      const revoked: WorkGrantContext = {
+        ...legacy,
+        grant: { ...legacy.grant, revoked: true },
+      };
+      expect(JSON.stringify(yield* check(unlinked, "started-on-minis", {}, revoked))).toContain(
+        "machine_not_authorized",
+      );
+    }),
   );
 });

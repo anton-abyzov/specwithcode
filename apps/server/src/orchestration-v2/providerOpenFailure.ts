@@ -211,3 +211,20 @@ export function apiCreditOrigin(
   }
   return null;
 }
+
+/**
+ * Whether usage-limit recovery must leave a stopped thread where it is
+ * instead of resuming it: the API-credit rule moved it from its
+ * subscription to an API-key instance (`apiCreditOrigin`), and the project's
+ * rule no longer allows API credits. Resuming there would spend the key
+ * without the person's consent, so the thread waits for the way back
+ * (`apiCreditReturnCommand`) instead. A thread a person put on an API
+ * instance has no origin and resumes as before.
+ */
+export function apiCreditDetourResumeRefused(
+  thread: Parameters<typeof apiCreditOrigin>[0],
+  runs: Parameters<typeof apiCreditOrigin>[1],
+  rule: { readonly providerLimitUseApiCredits?: boolean | undefined },
+): boolean {
+  return rule.providerLimitUseApiCredits !== true && apiCreditOrigin(thread, runs) !== null;
+}

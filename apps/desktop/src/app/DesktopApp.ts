@@ -271,6 +271,10 @@ const bootstrap = Effect.gen(function* () {
     }
   }
 
+  // The backend inherits this process's environment, and its agents look up
+  // their CLIs on PATH: wait for the login-shell refresh before starting it.
+  yield* (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitInstalled;
+
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const primaryBackend = yield* pool.primary;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
@@ -354,6 +358,8 @@ const startup = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
+  // On macOS this applies the last probe's values and refreshes them in the
+  // background; bootstrap awaits the refresh before it spawns a backend.
   yield* shellEnvironment.installIntoProcess;
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;

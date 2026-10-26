@@ -46,6 +46,12 @@ export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(
   ),
 );
 
+export const MAX_BOOTED_DEVICES_LIMIT = 16;
+export const MaxBootedDevices = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: MAX_BOOTED_DEVICES_LIMIT }),
+);
+export type MaxBootedDevices = typeof MaxBootedDevices.Type;
+
 /** Simulator udid or adb serial (an AVD name while it is not running). */
 export const DeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 export type DeviceId = typeof DeviceId.Type;
@@ -402,7 +408,7 @@ export class DeviceNotFoundError extends Schema.TaggedError<DeviceNotFoundError>
 export class DeviceBootError extends Schema.TaggedError<DeviceBootError>()("DeviceBootError", {
   hostId: DeviceHostId,
   deviceId: DeviceId,
-  reason: Schema.Literals(["disk_space", "timeout", "launch_failed"]),
+  reason: Schema.Literals(["disk_space", "timeout", "launch_failed", "limit_reached"]),
   diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   cause: Schema.Defect(),
 }) {
@@ -412,6 +418,8 @@ export class DeviceBootError extends Schema.TaggedError<DeviceBootError>()("Devi
       timeout: "The device did not become ready in time.",
       launch_failed:
         "The simulator or emulator could not start. Check its configuration on the environment server.",
+      limit_reached:
+        "Its host already runs as many simulators and emulators as Settings → Integrations → Devices allows. Shut one down or raise the limit.",
     }[this.reason];
     const summary = `Device ${this.deviceId} failed to boot: ${explanation}`;
     return this.diagnostics ? `${summary}\n\n${this.diagnostics}` : summary;

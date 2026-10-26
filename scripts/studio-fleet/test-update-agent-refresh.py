@@ -570,7 +570,15 @@ class BuildsRecordTheirAgent(unittest.TestCase):
 
     def test_the_runtime_and_desktop_builds_write_the_record_beside_the_agent(self):
         bundle = (HERE / 'bundle.mjs').read_text()
-        written = bundle.index("writeFileSync(join(updater, 'agent-release.json'), JSON.stringify({ schemaVersion: 1, version }) + '\\n');")
+        # Formatting may wrap the call or choose either quote style; the record's
+        # path, JSON schema/version and inclusion before hashing are the contract.
+        record = re.search(
+            r"writeFileSync\(\s*join\(updater,\s*(['\"])agent-release\.json\1\),\s*"
+            r"JSON\.stringify\(\{\s*schemaVersion:\s*1,\s*version\s*\}\)\s*\+\s*(['\"])\\n\2,?\s*\);",
+            bundle,
+        )
+        self.assertIsNotNone(record, 'the runtime build must write its versioned agent record')
+        written = record.start()
         self.assertLess(bundle.index('cpSync(source, join(updater, file));'), written)
         self.assertLess(written, bundle.index('indexTree(output);'))  # In the archive's hashed inventory.
         desktop = (HERE.parent / 'build-desktop-artifact.ts').read_text()

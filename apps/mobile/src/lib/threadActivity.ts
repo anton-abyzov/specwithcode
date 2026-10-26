@@ -56,7 +56,7 @@ import {
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@specweave-studio/shared/toolActivity";
-import { formatDuration } from "@specweave-studio/shared/orchestrationTiming";
+import { formatDuration, thoughtLabel } from "@specweave-studio/shared/orchestrationTiming";
 import type { HtmlRenderReference } from "@specweave-studio/shared/htmlRender";
 import {
   compactDynamicToolOutput,
@@ -240,7 +240,9 @@ function compactWorkEntryText(value: string): string {
 /** Expanded work rows keep their detail while compact rows show a stable one-line label. */
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
-    return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+    return entry.toolLifecycleStatus === "inProgress"
+      ? "Thinking"
+      : thoughtLabel(entry.structuredPayload);
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -839,8 +841,9 @@ function toFeedActivity(
 function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
   if (activity.workEntry.itemType === "reasoning")
     return expanded
-      ? "Thought"
-      : compactWorkEntryText(activity.workEntry.detail ?? "") || "Thought";
+      ? thoughtLabel(activity.workEntry.structuredPayload)
+      : compactWorkEntryText(activity.workEntry.detail ?? "") ||
+          thoughtLabel(activity.workEntry.structuredPayload);
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
@@ -1481,7 +1484,7 @@ function appendToolGroupRows(
     ? expanded && latestActivity.workEntry.itemType === "reasoning"
       ? latestActivity.lifecycleStatus === "inProgress"
         ? "Thinking"
-        : "Thought"
+        : thoughtLabel(latestActivity.workEntry.structuredPayload)
       : liveToolActivitySummary(latestActivity, live)
     : singleActivity !== null &&
         singleActivity.toolLike &&
@@ -1565,7 +1568,7 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   if (activity.workEntry.itemType === "reasoning") {
     return (
       activity.workEntry.detail?.trim().replace(/\s+/g, " ") ||
-      (status === "inProgress" ? "Thinking" : "Thought")
+      (status === "inProgress" ? "Thinking" : thoughtLabel(activity.workEntry.structuredPayload))
     );
   }
   const presentation = resolveWorkEntryToolPresentation({

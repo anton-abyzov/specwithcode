@@ -13,7 +13,7 @@ export function fallbackOptionStatusLabel(option: FallbackOption): string {
     case "ready":
       return "Can take a limited thread";
     case "unverified":
-      return "Signed in, usage not read yet";
+      return "Signed in, no recent usage reading";
     case "current":
       return "This thread's model";
     case "excluded":
@@ -41,8 +41,11 @@ export function fallbackOptionStatusLabel(option: FallbackOption): string {
 export function fallbackOptionAccessLabel(option: FallbackOption): string {
   switch (option.access) {
     case "usage-read":
-      return option.usedPercent === null
-        ? "Plan usage reported"
+      if (option.usedPercent === null)
+        return option.status === "unverified" ? "Plan usage not read" : "Plan usage reported";
+      // An old reading is not current room: say it is the last one.
+      return option.status === "unverified"
+        ? `Last read ${Math.round(option.usedPercent)}% used`
         : `Plan usage ${Math.round(option.usedPercent)}% used`;
     case "no-usage-reported":
       return "Signed in; provider reports no usage";

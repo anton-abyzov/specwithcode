@@ -259,6 +259,8 @@ public enum ShellSummaries {
     var summary = primary.summary
     summary.members = members
     summary.isPinned = copies.contains { $0.summary.isPinned }
+    // Scratch and deleted records were excluded before grouping.
+    summary.archived = copies.allSatisfy { $0.summary.archived }
     // Automated only when no machine holds it as the person's own.
     summary.isAutomated = copies.allSatisfy { $0.summary.isAutomated }
     summary.workingCount = copies.reduce(0) { $0 + $1.summary.workingCount }

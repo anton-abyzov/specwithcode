@@ -1,4 +1,4 @@
-import { SshDeviceHostConfigs } from "./device.ts";
+import { MaxBootedDevices, SshDeviceHostConfigs } from "./device.ts";
 import { ExternalBrowserTarget } from "./externalBrowser.ts";
 import {
   AuthSettingsWriteScope,
@@ -1713,6 +1713,13 @@ export const ServerSettings = Schema.Struct({
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Whether the server-local Device panel setup flow has been completed. */
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Most simulators and emulators SpecWithCode keeps booted at once on each
+   * device host, so a small Mac does not run out of memory; `null` is no limit.
+   */
+  maxBootedDevices: Schema.NullOr(MaxBootedDevices).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   deviceHosts: SshDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
@@ -2210,6 +2217,7 @@ export const ServerSettingsPatch = Schema.Struct({
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
+  maxBootedDevices: Schema.optionalKey(Schema.NullOr(MaxBootedDevices)),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 
 import {
   checkDatabaseFiles,
+  checkMachineLoad,
   checkRendererMemory,
   formatDoctorReport,
   makeSessionDoctor,
@@ -116,4 +117,19 @@ it("reports the memory of windows that sampled recently, with their growth", () 
   assert.strictEqual(check.level, "warn");
   assert.strictEqual(check.title, "Window memory: largest window 1.8 GiB");
   assert.deepStrictEqual(check.details, ["1.8 GiB after 2.0 h, 640 MiB/h growth"]);
+});
+
+it("warns that timings are inflated when the machine is overloaded", () => {
+  assert.strictEqual(checkMachineLoad({ fiveMinute: 6.2, cpuCount: 16 }).level, "ok");
+  assert.strictEqual(checkMachineLoad({ fiveMinute: 16, cpuCount: 16 }).level, "ok");
+  const busy = checkMachineLoad({ fiveMinute: 664.7, cpuCount: 16 });
+  assert.strictEqual(busy.level, "warn");
+  assert.strictEqual(busy.title, "Machine load: 664.7 on 16 cores");
+  assert.match(busy.details[0]!, /Run doctor again once it is quiet/);
+});
+
+it("says load is not reported where the OS has none", () => {
+  const check = checkMachineLoad({ fiveMinute: undefined, cpuCount: 8 });
+  assert.strictEqual(check.level, "ok");
+  assert.strictEqual(check.title, "Machine load: not reported on this system");
 });

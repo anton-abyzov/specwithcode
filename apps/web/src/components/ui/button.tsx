@@ -108,6 +108,8 @@ const inlineButtonVariants = cva(
       tone: {
         default: "text-foreground",
         muted: "text-muted-foreground hover:text-foreground",
+        /** A quiet link to where something came from, such as "View coordinator". */
+        link: "font-normal text-info-foreground",
         destructive: "text-destructive-foreground hover:text-destructive-foreground",
         /** Opens a menu from inside a sentence; the dotted underline marks it as a choice. */
         picker:

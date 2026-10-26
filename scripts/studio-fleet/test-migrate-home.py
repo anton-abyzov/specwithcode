@@ -202,6 +202,58 @@ class MigrateHomeTest(unittest.TestCase):
         self.assertEqual(migrate_home.Migration(self.home, services=False, out=self.lines.append,
                                                 minimum_version=(1, 0, 35)).run()['phase'], 'verified')
 
+    def test_a_receipt_without_a_service_does_not_block_the_move(self):
+        stage = self.home / '.specweave-studio/stage'
+        stage.mkdir()
+        (stage / 'installation.json').write_text(json.dumps({'identity': 'stage', 'studioHome': str(stage)}))
+        receipt = self.home / '.specweave-studio/m4/installation.json'
+        value = json.loads(receipt.read_text()); value['version'] = '1.0.35'
+        receipt.write_text(json.dumps(value))
+        (self.home / '.local/share/specweave-studio/updater/studio_paths.py').write_text('')
+        journal = migrate_home.Migration(self.home, services=False, out=self.lines.append,
+                                         minimum_version=(1, 0, 35)).run()
+        self.assertEqual(journal['phase'], 'verified')
+        self.assertTrue((self.home / '.specwithcode/stage/installation.json').is_file())
+
+    def test_an_unreadable_receipt_refuses_before_anything_stops(self):
+        receipt = self.home / '.specweave-studio/m4/installation.json'
+        value = json.loads(receipt.read_text()); value['version'] = '1.0.35'
+        receipt.write_text(json.dumps(value))
+        (self.home / '.local/share/specweave-studio/updater/studio_paths.py').write_text('')
+        for text in ('', '{"identity": "stage"'):
+            stage = self.home / '.specweave-studio/stage'
+            stage.mkdir(exist_ok=True)
+            (stage / 'installation.json').write_text(text)
+            with self.assertRaises(migrate_home.MigrationError):
+                migrate_home.Migration(self.home, services=False, out=self.lines.append,
+                                       minimum_version=(1, 0, 35)).run()
+            self.assertFalse((self.home / '.specweave-studio').is_symlink())
+            self.assertFalse(os.path.lexists(str(self.home / '.specwithcode-migration.json')))
+
+    def test_an_old_receipt_with_a_cli_is_still_refused(self):
+        stage = self.home / '.specweave-studio/stage'
+        stage.mkdir()
+        (stage / 'installation.json').write_text(json.dumps(
+            {'identity': 'stage', 'version': '1.0.10', 'cliWrapper': str(self.home / '.local/bin/x')}))
+        receipt = self.home / '.specweave-studio/m4/installation.json'
+        value = json.loads(receipt.read_text()); value['version'] = '1.0.35'
+        receipt.write_text(json.dumps(value))
+        (self.home / '.local/share/specweave-studio/updater/studio_paths.py').write_text('')
+        with self.assertRaises(migrate_home.MigrationError):
+            migrate_home.Migration(self.home, services=False, out=self.lines.append,
+                                   minimum_version=(1, 0, 35)).run()
+        self.assertFalse((self.home / '.specweave-studio').is_symlink())
+
+    def test_an_unversioned_service_is_still_refused(self):
+        receipt = self.home / '.specweave-studio/m4/installation.json'
+        value = json.loads(receipt.read_text()); value.pop('version', None)
+        receipt.write_text(json.dumps(value))
+        (self.home / '.local/share/specweave-studio/updater/studio_paths.py').write_text('')
+        with self.assertRaises(migrate_home.MigrationError):
+            migrate_home.Migration(self.home, services=False, out=self.lines.append,
+                                   minimum_version=(1, 0, 35)).run()
+        self.assertFalse((self.home / '.specweave-studio').is_symlink())
+
     def test_nothing_to_move_on_a_fresh_machine(self):
         with tempfile.TemporaryDirectory() as root:
             journal = migrate_home.Migration(pathlib.Path(root).resolve(), services=False, out=self.lines.append).run()

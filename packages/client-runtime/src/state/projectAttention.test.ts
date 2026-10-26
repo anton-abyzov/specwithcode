@@ -36,6 +36,51 @@ const child = (id: string, parent: string, props: Partial<EnvironmentThreadShell
   });
 const active = { runtime: { status: "running" } as EnvironmentThreadShell["runtime"] };
 describe("project conversation aggregation", () => {
+  it("counts a report asking for feedback once, with or without a native request", () => {
+    const root = thread("root", { reportedBlocker: "Upload the signing key or skip signing?" });
+    const actions = classifyProjectActions(observeProjectThread(root));
+    expect(actions).toMatchObject([{ threadId: "root", reason: "input" }]);
+    expect(
+      classifyProjectActions(observeProjectThread({ ...root, hasPendingUserInput: true })),
+    ).toHaveLength(1);
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [root], threads: [root] }),
+    ).toMatchObject({ count: 1, working: 0, complete: true });
+  });
+  it("folds report feedback from a child into its visible parent", () => {
+    const root = thread("root");
+    const result = aggregateProjectAttention({
+      members: [member],
+      roots: [root],
+      threads: [root, child("child", "root", { reportedBlocker: "Which option should I use?" })],
+    });
+    expect(result.count).toBe(1);
+    expect(result.roots[0]?.actions).toMatchObject([{ threadId: "child", reason: "input" }]);
+  });
+  it("clears report attention when resumed, resolved, archived, deleted or removed", () => {
+    const root = thread("root", { reportedBlocker: "Approve the release?" });
+    for (const overrides of [
+      active,
+      { settledOverride: "settled" as const },
+      { archivedAt: root.updatedAt },
+      { deletedAt: root.updatedAt },
+      { reportedBlocker: null },
+      { reportedBlocker: "  " },
+    ]) {
+      expect(classifyProjectActions(observeProjectThread({ ...root, ...overrides }))).toEqual([]);
+    }
+  });
+  it("keeps cached report feedback stale until the host reconnects", () => {
+    const root = thread("root", { reportedBlocker: "Choose a signing account?" });
+    const aggregate = (freshness: AttentionMember["freshness"]) =>
+      aggregateProjectAttention({
+        members: [{ ...member, freshness }],
+        roots: [root],
+        threads: [root],
+      });
+    expect(aggregate("offline")).toMatchObject({ count: 0, staleCount: 1, complete: false });
+    expect(aggregate("live")).toMatchObject({ count: 1, staleCount: 0, complete: true });
+  });
   it("reproduces 3 direct plus 2 descendant-active roots as 5 working and zero actions", () => {
     const roots = [
       thread("a", active),

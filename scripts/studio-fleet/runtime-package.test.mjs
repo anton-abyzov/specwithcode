@@ -10,6 +10,7 @@ test("runtime bundle package registers both command names on the one entry", () 
   const pkg = runtimePackage("0.2.7");
   assert.equal(pkg.name, "specweave-studio");
   assert.equal(pkg.version, "0.2.7");
+  assert.equal(pkg.license, "UNLICENSED");
   assert.deepEqual(pkg.bin, { "specweave-studio": "./bin.mjs", specwithcode: "./bin.mjs" });
   verifyRuntimeBins(pkg);
 });
@@ -34,7 +35,7 @@ test("runtime and desktop package the complete executable managed helper graph",
   assert.deepEqual(shipped.toSorted(), [...required].toSorted());
   const bundle = readFileSync(new URL("./bundle.mjs", import.meta.url), "utf8");
   assert.match(bundle, /import \{ MAC_SERVICE_UPDATER_FILES \} from/);
-  assert.match(bundle, /join\(output, 'studio-updater'\)/);
+  assert.match(bundle, /join\(output, ['"]studio-updater['"]\)/);
   assert.match(bundle, /for \(const file of MAC_SERVICE_UPDATER_FILES\)/);
   assert.ok(
     bundle.indexOf("cpSync(source, join(updater, file))") < bundle.indexOf("indexTree(output);"),

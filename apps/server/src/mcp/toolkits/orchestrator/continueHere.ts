@@ -14,6 +14,7 @@ import * as HandoffMode from "../../../handoff/HandoffMode.ts";
 import { isLeaseStale } from "../../../handoff/handoffState.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { loadCaller, unavailable } from "../../threadAccess.ts";
+import { workGrantOf } from "../../workGrantAccess.ts";
 import { assertMayMigrate, handoffFailure } from "./migrate.ts";
 
 const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
@@ -80,6 +81,15 @@ export const continueHere = (input: OrchestratorMcpThreadContinueHereInput) =>
   Effect.gen(function* () {
     const { context, caller } = yield* callerProject("studio_thread_continue_here");
     yield* assertMayMigrate(context, caller);
+    // The continued thread would be this machine's own work, outside the
+    // grant's projects, sign-ins and revocation, so another machine's work
+    // leaves continuing handoffs to this machine's own coordinator.
+    const work = yield* workGrantOf(context);
+    if (work !== undefined)
+      return yield* failure(
+        "outside_grant_scope",
+        `This machine does not let ${work.coordinatorLabel}'s work continue handed-off threads here. Ask this machine's coordinator to continue it.`,
+      );
     const handoff = yield* HandoffMode.HandoffMode;
     const snapshot = yield* handoff.snapshot.pipe(Effect.mapError(handoffFailure));
     const candidates = snapshot.incoming.filter(

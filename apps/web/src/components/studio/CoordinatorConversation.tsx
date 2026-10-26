@@ -16,7 +16,7 @@ import {
 } from "../../studio/projectCoordinatorMessageDisplay";
 import { ProjectWorkspaceAttachments } from "./ProjectWorkspaceAttachments";
 import { ProjectMessageBody } from "./ProjectMessageBody";
-import { WorkerMessageBody } from "./WorkerMessageBody";
+import { RelayedMessage } from "./RelayedMessage";
 import { RoutineRunCard } from "./RoutineRunCard";
 import { CoordinatorDecisionRow } from "./CoordinatorQuestionCard";
 import {
@@ -333,11 +333,11 @@ export function CoordinatorConversation({
   );
   // A follow-up the coordinator only passed back to its own worker is left out with its reply.
   const hidden = useMemo(() => {
-    const returned = returnedFollowUpIds(messages, project, linkWorkers);
+    const returned = returnedFollowUpIds(messages, project, linkWorkers, turnItems ?? []);
     return returned.size === 0
       ? view.hiddenMessageIds
       : new Set([...view.hiddenMessageIds, ...returned]);
-  }, [messages, project, linkWorkers, view]);
+  }, [messages, project, linkWorkers, turnItems, view]);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   // Separators, "Worked for" lines and action rows follow the messages that show.
   const turns = useMemo(
@@ -820,14 +820,22 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
     );
   const author = projectMessageAuthor(message);
   const runId = message.runId;
+  // A worker's message reads as a quiet relayed note, not a bubble, so the
+  // person's own messages stay primary. A routine run and a long report keep their cards.
+  const relay =
+    author === "Message from a worker" &&
+    routine === null &&
+    !message.streaming &&
+    !message.id.startsWith("async-answer:") &&
+    !(isReport && shouldCollapseReport(text));
   return (
     <>
       {separator}
       <article
-        className={`project-message project-message-${routine !== null ? "routine" : message.role}`}
+        className={`project-message project-message-${routine !== null ? "routine" : relay ? "relay" : message.role}`}
         data-follow-anchor={message.id}
       >
-        <h3>{author}</h3>
+        {relay ? null : <h3>{author}</h3>}
         {turn?.workedFor ? (
           // The turn's tool calls live on the coordinator's page, like a folded turn.
           <button
@@ -844,7 +852,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
             {executionLabel}
           </p>
         ) : null}
-        {author === "Message from a worker" && message.senderThreadId && (
+        {author === "Message from a worker" && !relay && message.senderThreadId && (
           <MessageThreadLink
             threadId={message.senderThreadId}
             prefix="Sent by"
@@ -930,16 +938,26 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
               renderThreadLink={renderThreadLink}
             />
           </ReportArtifact>
-        ) : author === "Message from a worker" &&
-          !message.streaming &&
-          !message.id.startsWith("async-answer:") ? (
-          <WorkerMessageBody
+        ) : relay ? (
+          <RelayedMessage
+            label={
+              senderTitle?.trim() ? `Message from ${senderTitle.trim()}` : "Message from a thread"
+            }
+            source="thread"
+            view={
+              message.senderThreadId
+                ? { label: "View thread", onOpen: () => onOpenThread(message.senderThreadId!) }
+                : null
+            }
+            createdAt={viewerIso(message.createdAt) ?? undefined}
+            timestampFormat={timestampFormat}
             original={message.text}
             text={text}
             detail={timelineDetail}
             renderMarkdown={(part) => (
               <ChatMarkdown
                 text={part}
+                className="text-muted-foreground"
                 cwd={workspaceRoot}
                 threadRef={threadRef}
                 isStreaming={false}

@@ -112,7 +112,7 @@ specwithcode fleet invite --coordinator '<main-machine-environment-id>'  # publi
 On your main machine, paste the line into Settings > Connections > Add a machine, or run
 \`specwithcode fleet add <line>\`. \`specweave-studio\` is the same command under its earlier name.
 
-MIT licensed. See LICENSE and UPSTREAM.md for the retained upstream notice.
+No new project-wide license is granted. See LICENSE and UPSTREAM.md for required third-party terms; prior grants remain applicable.
 `;
 }
 
@@ -152,7 +152,7 @@ export function build({ archive, sha256, outputDir }) {
     name: NPM_PACKAGE_NAME,
     version: release.version,
     description: "SpecWithCode server and CLI: spec-driven coding agents across your machines.",
-    license: "MIT",
+    license: "UNLICENSED",
     type: "module",
     homepage: "https://github.com/anton-abyzov/specwithcode",
     repository: { type: "git", url: "git+https://github.com/anton-abyzov/specwithcode.git" },

@@ -539,6 +539,44 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
+  itOnLinuxHost("retries on the public npm registry when the default registry refuses", () => {
+    const agent = makeAgent({
+      npx: { package: "@example/acp@1.2.3", args: ["--stdio"] },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-private-feed-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment: NodeJS.ProcessEnv = {
+        ...toolchain.environment,
+        FAKE_NPM_DEFAULT_REGISTRY_REFUSES: "1",
+      };
+      delete environment.npm_config_registry;
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", environment);
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(npmCommands.match(/^install --global /gmu)).toHaveLength(2);
+      expect(npmCommands).toContain("registry=default\n");
+      expect(npmCommands).toContain("registry=https://registry.npmjs.org/\n");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   itOnLinuxHost("uses its managed prefix despite a system-owned npm prefix", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {

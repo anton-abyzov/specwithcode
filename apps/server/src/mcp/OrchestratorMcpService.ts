@@ -1,9 +1,10 @@
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
+import { isPaidModel } from "@specweave-studio/shared/modelBilling";
 import {
   CommandId,
+  type OrchestrationV2ThreadShell,
   isProjectCoordinatorThreadId,
   type RunId,
-  isPaidModelBilling,
   isProviderAvailable,
   MessageId,
   type ModelSelection,
@@ -126,6 +127,17 @@ import {
 } from "./McpInvocationContext.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import {
+  assertAccountInGrant,
+  assertProjectReadable,
+  assertThreadSignInInGrant,
+  assertThreadWritable,
+  projectReachable,
+  recordLaunchOrigin,
+  refuseGrantRoutineChange,
+  refuseRevoked,
+  workGrantOf,
+} from "./workGrantAccess.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -1286,6 +1298,24 @@ const make = Effect.gen(function* () {
       );
     });
 
+  /**
+   * Another machine's work under its grant: routines are refused to it, and a
+   * bulk call reaches only a project the grant covers and, in it, only the
+   * threads the grant's own coordinator owns. A caller without a grant passes.
+   */
+  const refuseGrantRoutines = (
+    scope: McpInvocationScope,
+    parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+  ) => refuseGrantRoutineChange({ scope, caller: parent?.thread });
+  const grantForProject = (
+    scope: McpInvocationScope,
+    parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+    projectId: ProjectId,
+  ) =>
+    assertProjectReadable({ scope, caller: parent?.thread }, projectId).pipe(
+      Effect.provideService(ProjectService.ProjectService, projects),
+    );
+
   /** Scheduled work outside the caller's project needs a live run and a writable boundary. */
   const assertLiveCallerForOtherProject = (
     scope: McpInvocationScope,
@@ -1954,10 +1984,16 @@ const make = Effect.gen(function* () {
         readonly runtimeMode: RuntimeMode;
         readonly interactionMode: ProviderInteractionMode;
       };
+      /**
+       * Another machine's work never gets a routine's webhook URL: a request
+       * to it runs the routine as this machine's own work, outside the grant.
+       */
+      readonly underGrant?: boolean;
     },
     task: ScheduledTask,
   ) =>
     Effect.gen(function* () {
+      if (caller.underGrant === true) return scheduledTaskSummary(task, false);
       const live =
         caller.parent === undefined
           ? scope.client?.access !== "read-only"
@@ -2015,6 +2051,7 @@ const make = Effect.gen(function* () {
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
+        yield* refuseGrantRoutines(scope, parent);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const project = yield* requireProject(projectId);
@@ -2090,6 +2127,8 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = input.projectId ?? parent?.thread.projectId;
+        // Another machine's work lists only routines in projects its grant covers.
+        const work = yield* workGrantOf({ scope, caller: parent?.thread });
         const { tasks } = yield* scheduledTasks
           .list()
           .pipe(
@@ -2097,16 +2136,28 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not list scheduled tasks: ${error.message}`),
             ),
           );
+        const listed = yield* Effect.filter(
+          tasks.filter((task) => projectId === undefined || task.projectId === projectId),
+          (task) =>
+            projectReachable(work, task.projectId).pipe(
+              Effect.provideService(ProjectService.ProjectService, projects),
+            ),
+        );
         return {
-          tasks: yield* Effect.forEach(
-            tasks.filter((task) => projectId === undefined || task.projectId === projectId),
-            (task) => summarizeScheduledTask(scope, { parent, limits }, task),
+          tasks: yield* Effect.forEach(listed, (task) =>
+            summarizeScheduledTask(
+              scope,
+              // A legacy grant (the owner's own machines) keeps webhook URLs as before.
+              { parent, limits, underGrant: work !== undefined && work.grant.legacy !== true },
+              task,
+            ),
           ),
         };
       }),
     updateScheduledTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
+        yield* refuseGrantRoutines(scope, parent);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* assertCheckAllowed(input.check, [limits, existing]);
@@ -2175,6 +2226,7 @@ const make = Effect.gen(function* () {
     deleteScheduledTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
+        yield* refuseGrantRoutines(scope, parent);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
@@ -2415,7 +2467,10 @@ const make = Effect.gen(function* () {
                   ...(model.capabilities?.optionDescriptors === undefined
                     ? {}
                     : { options: model.capabilities.optionDescriptors }),
-                  ...(isPaidModelBilling(model.billing) ? { paid: true } : {}),
+                  // The instance's own sign-in counts too: a Claude CLI on API
+                  // credits or Gemini/Vertex bills every model per token, and a
+                  // remote machine never offers such a model as a limit handoff.
+                  ...(isPaidModel(provider, model.slug) ? { paid: true } : {}),
                 })) ?? [],
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
@@ -2480,6 +2535,11 @@ const make = Effect.gen(function* () {
           launch,
           delegationTarget !== input.target,
           target,
+        );
+        // Whatever picked the model, a grant's work runs only on the sign-ins it allows.
+        yield* assertAccountInGrant(
+          yield* workGrantOf({ scope, caller: parent.thread }),
+          target.modelSelection.instanceId,
         );
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
         const interactionMode = yield* resolveInteractionMode(
@@ -2767,6 +2827,9 @@ const make = Effect.gen(function* () {
         const providers = yield* loadProviders;
         const hostDefault = defaultWorkerModelSelection(providers);
         const key = yield* requestKey(input.clientRequestId);
+        // Threads that another machine's work starts here stay under its grant.
+        const work = yield* workGrantOf({ scope, caller: parent.thread });
+        if (work !== undefined) yield* refuseRevoked(work);
         // Every entry's increment resolves before any thread exists: a bad ref creates none.
         const increments = yield* Effect.forEach(input.threads, (request) =>
           launchIncrementFor(project, parent.thread, {
@@ -2823,6 +2886,8 @@ const make = Effect.gen(function* () {
                 delegationTarget !== request.target,
                 target,
               );
+              // Whatever picked the model, a grant's work runs only on the sign-ins it allows.
+              yield* assertAccountInGrant(work, target.modelSelection.instanceId);
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
                 request.runtimeMode,
@@ -2847,6 +2912,11 @@ const make = Effect.gen(function* () {
                 const seeded = increment.increment;
                 yield* Effect.promise(() => writeLaunchBinding(threadId, seeded));
               }
+              // The new thread is top-level, so its own record must carry the
+              // grant's origin before it can run: otherwise it, and everything
+              // it starts, would be this machine's own work and revoking the
+              // grant would never interrupt it.
+              yield* recordLaunchOrigin(work, threadId);
               yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -3234,6 +3304,12 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+        const work = yield* grantForProject(scope, parent, projectId);
+        // Each thread must also be one the grant's coordinator may change.
+        const ownedByGrant = (shell: OrchestrationV2ThreadShell) =>
+          assertThreadWritable(work, shell).pipe(
+            Effect.provideService(ProjectService.ProjectService, projects),
+          );
         const shells = yield* threadManagement
           .listProjectThreads({ projectId, includeSubagents: false })
           .pipe(Effect.mapError(threadManagementFailure));
@@ -3252,6 +3328,7 @@ const make = Effect.gen(function* () {
             operation: "threads-stop-all",
           });
           const outcome = yield* withinCallerModes(limits, shell).pipe(
+            Effect.andThen(ownedByGrant(shell)),
             Effect.andThen(
               threadManagement.dispatch({
                 type: "thread.stop",
@@ -3286,6 +3363,14 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+        const work = yield* grantForProject(scope, parent, projectId);
+        // Each thread must also be one the grant's coordinator may change.
+        // Continuing runs each thread on its own sign-in, which the grant must allow.
+        const ownedByGrant = (shell: OrchestrationV2ThreadShell) =>
+          assertThreadWritable(work, shell).pipe(
+            Effect.andThen(assertThreadSignInInGrant(work, shell)),
+            Effect.provideService(ProjectService.ProjectService, projects),
+          );
         // An agent must not keep driving workers after the user paused or archived the project.
         const project = yield* projects
           .getById(projectId)
@@ -3315,6 +3400,7 @@ const make = Effect.gen(function* () {
           // One continuation per interrupted run, however often the call is retried.
           const requestKey = `${shell.id}:${runId}`;
           const outcome = yield* withinCallerModes(limits, shell).pipe(
+            Effect.andThen(ownedByGrant(shell)),
             Effect.andThen(
               threadManagement.dispatch({
                 type: "message.dispatch",

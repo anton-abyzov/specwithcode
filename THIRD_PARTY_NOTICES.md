@@ -1,3 +1,11 @@
+# Third-party notices
+
+SpecWithCode is an independently maintained product. No new project-wide license is granted for original SpecWithCode material. Previously distributed material retains the rights granted with those versions. Third-party code and assets retain their own licenses; these notices do not extend those licenses to unrelated original material.
+
+## Inherited code
+
+The retained portions of T3 Code, pinned in UPSTREAM.md, carry the following original notice verbatim. This attribution describes source provenance, not product affiliation or endorsement.
+
 MIT License
 
 Copyright (c) 2026 T3 Tools Inc.

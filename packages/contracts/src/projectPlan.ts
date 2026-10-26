@@ -45,7 +45,7 @@ export const ProjectPlanAuthority = Schema.Union([
     kind: Schema.Literal("specweave"),
     root: text(4_096),
     incrementId: Schema.String.check(
-      Schema.isPattern(/^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/),
+      Schema.isPattern(/^\d{4,}[A-Za-z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/),
       Schema.isMaxLength(160),
     ),
   }),

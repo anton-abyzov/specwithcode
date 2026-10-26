@@ -20,7 +20,10 @@ import {
   type OrchestrationV2TurnItem,
 } from "@specweave-studio/contracts";
 import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
-import { summarizeToolGroup } from "@specweave-studio/client-runtime/work-log/presentation";
+import {
+  summarizeToolGroup,
+  type WorkLogPresentationEntry,
+} from "@specweave-studio/client-runtime/work-log/presentation";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -2206,6 +2209,20 @@ it("uses a compact reasoning preview and a short expanded heading", () => {
   expect(workEntryRowLabel(entry)).toBe("Check **ordering**. Then run the test.");
   expect(workEntryRowLabel(entry, true)).toBe("Thinking");
   expect(workEntryRowLabel({ ...entry, toolLifecycleStatus: "completed" }, true)).toBe("Thought");
+  expect(
+    workEntryRowLabel(
+      {
+        ...entry,
+        toolLifecycleStatus: "completed",
+        structuredPayload: {
+          type: "reasoning",
+          startedAt: DateTime.makeUnsafe("2026-10-25T12:00:00.000Z"),
+          completedAt: DateTime.makeUnsafe("2026-10-25T12:01:05.000Z"),
+        } as unknown as NonNullable<WorkLogPresentationEntry["structuredPayload"]>,
+      },
+      true,
+    ),
+  ).toBe("Thought for 1m 5s");
 });
 
 it("keeps search output in expanded details rather than the compact label", () => {

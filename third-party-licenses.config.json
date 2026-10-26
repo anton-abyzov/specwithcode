@@ -1,6 +1,12 @@
 {
   "customNotices": [
     {
+      "bundles": ["server", "web", "desktop", "mobile"],
+      "license": "MIT",
+      "name": "Inherited application code",
+      "noticeFile": "THIRD_PARTY_NOTICES.md"
+    },
+    {
       "bundles": ["assets", "desktop", "web"],
       "license": "CC0-1.0",
       "name": "Notification Sound 1 by deadrobotmusic",

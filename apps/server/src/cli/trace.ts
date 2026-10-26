@@ -5,6 +5,8 @@
  *
  * `specweave-studio doctor` reads the same files to explain a slow send.
  */
+import * as NodeOS from "node:os";
+
 import { PositiveInt } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -21,6 +23,7 @@ import { Command, Flag } from "effect/cli";
 import * as ServerConfig from "../config.ts";
 import {
   checkDatabaseFiles,
+  checkMachineLoad,
   checkRendererMemory,
   formatDoctorReport,
   makeSessionDoctor,
@@ -225,7 +228,7 @@ export const doctorCommand = Command.make("doctor", {
   ),
 }).pipe(
   Command.withDescription(
-    "Check why sending a message is slow: send latency, slow database reads, database and window memory.",
+    "Check why sending a message is slow: machine load, send latency, slow database reads, database and window memory.",
   ),
   Command.withHandler(
     Effect.fn("cli.doctor")(function* (flags) {
@@ -263,6 +266,12 @@ export const doctorCommand = Command.make("doctor", {
         .readFileString(path.join(paths.logsDir, "renderer-history.ndjson"))
         .pipe(Effect.orElseSucceed(() => ""));
       report.checks.push(checkRendererMemory(rendererLines.split("\n"), nowMs));
+      report.checks.unshift(
+        checkMachineLoad({
+          fiveMinute: process.platform === "win32" ? undefined : NodeOS.loadavg()[1],
+          cpuCount: NodeOS.availableParallelism(),
+        }),
+      );
       yield* Console.log(formatDoctorReport(report));
       if (report.checks.some((check) => check.level === "fail")) process.exitCode = 1;
     }),

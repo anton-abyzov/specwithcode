@@ -714,7 +714,7 @@ public final class FixtureEngine: AppEngine {
     var row = row
     switch row.kind {
     case let .assistant(markdown, true): row.kind = .assistant(markdown: markdown, streaming: false)
-    case let .reasoning(text, true): row.kind = .reasoning(text: text, streaming: false)
+    case let .reasoning(text, true, seconds): row.kind = .reasoning(text: text, streaming: false, seconds: seconds)
     case let .tool(title, detail, symbol, .running): row.kind = .tool(title: title, detail: detail, symbol: symbol, status: .failed)
     default: break
     }
@@ -886,7 +886,7 @@ private enum FixtureSample {
 
   static let releaseTranscript: [TranscriptRow.Kind] = [
     .user(text: "Prepare the 3.1 release. Run the full checks, update the changelog and publish to the next tag when everything passes."),
-    .reasoning(text: "The release script lives in scripts/release. Run the checks first, then bump the version and build the changelog from merged pull requests.", streaming: false),
+    .reasoning(text: "The release script lives in scripts/release. Run the checks first, then bump the version and build the changelog from merged pull requests.", streaming: false, seconds: 14),
     .plan(steps: [
       TodoStep(id: "r1", text: "Run the full test suite", status: .completed),
       TodoStep(id: "r2", text: "Update CHANGELOG.md", status: .completed),

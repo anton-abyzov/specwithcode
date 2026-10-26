@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>com.specweave.studio</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>LicenseRef-proprietary</project_license>
   <name>SpecWithCode</name>
   <summary>Desktop GUI for coding agents</summary>
   <developer id="com.specweave">
@@ -10,7 +10,7 @@
   </developer>
   <description>
     <p>
-      SpecWithCode is an open-source desktop app for coding agents. Work with your
+      SpecWithCode is a desktop app for coding agents. Work with your
       existing agent subscriptions, review code changes, and run commands in
       your projects.
     </p>

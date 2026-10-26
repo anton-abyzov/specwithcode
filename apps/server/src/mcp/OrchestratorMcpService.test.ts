@@ -1063,6 +1063,72 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect("flags every model of an instance billed per token as paid", () =>
+    Effect.gen(function* () {
+      const claudeApi = ProviderInstanceId.make("claude-api");
+      const claudeMax = ProviderInstanceId.make("claudeAgent");
+      const gemini = ProviderInstanceId.make("acpRegistry_gemini");
+      const providers: ReadonlyArray<ServerProvider> = [
+        providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "gpt-5.4",
+        }),
+        // A Claude CLI on Anthropic API credits reports no per-model billing.
+        {
+          ...providerSnapshot({
+            instanceId: claudeApi,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: "claude-opus-5-5",
+          }),
+          auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+        },
+        {
+          ...providerSnapshot({
+            instanceId: claudeMax,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: "claude-opus-5-5",
+          }),
+          auth: { status: "authenticated", type: "max" },
+        },
+        {
+          ...providerSnapshot({
+            instanceId: gemini,
+            driver: ProviderDriverKind.make("acpRegistry"),
+            model: "gemini-3-pro",
+          }),
+          auth: { status: "authenticated", type: "vertex-ai" },
+        },
+      ];
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+        }),
+        providerRegistryLayer(providers),
+        adapterRegistryLayer(providers.map((provider) => provider.instanceId)),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const capabilities = yield* service.capabilities(scope);
+        const paid = (instanceId: ProviderInstanceId) =>
+          capabilities.providers
+            .find((provider) => provider.providerInstanceId === instanceId)
+            ?.models.map((model) => model.paid === true);
+        // A remote machine builds its handoff `paidModels` from this flag.
+        assert.deepEqual(paid(claudeApi), [true]);
+        assert.deepEqual(paid(gemini), [true]);
+        assert.deepEqual(paid(claudeMax), [false]);
+        assert.deepEqual(paid(codexInstanceId), [false]);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect.each(["explicit", "project default"] as const)(
     "delegates to a different provider with %s selection",
     (selection) =>

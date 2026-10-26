@@ -816,6 +816,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["simulator emulator ios android install start"],
   },
   {
+    id: "max-booted-devices",
+    title: "Simulator limit",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["maximum booted simulators emulators memory mac mini at once concurrent"],
+  },
+  {
     id: "device-platform-support",
     title: "Simulator support",
     to: "/settings/integrations",

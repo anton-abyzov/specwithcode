@@ -155,6 +155,26 @@ import SWCWire
     #expect(automated == ["check", "proof", "flagged"])
   }
 
+  @Test func archiveStateUsesEveryRealMemberIncludingCachedCopies() throws {
+    let logical = LogicalProject(id: "logical:archive", title: "Linked", coordinatorId: "coordinator:archive", members: [])
+    var first = try TestData.project(id: "first", title: "Linked", root: "/work/first")
+    first.workspaceSettings?.logicalProject = logical
+    first.workspaceSettings?.archived = true
+    var second = try TestData.project(id: "second", title: "Linked", root: "/work/second")
+    second.workspaceSettings?.logicalProject = logical
+    var cached = machine("b", threads: [], projects: [second])
+    cached.online = false
+    let mixed = ShellSummaries.build([machine("a", threads: [], projects: [first]), cached])
+    #expect(mixed.projects.count == 1)
+    #expect(mixed.projects[0].archived == false)
+    #expect(mixed.projects[0].members.count == 2)
+    second.workspaceSettings?.archived = true
+    cached.snapshot = ShellSnapshot(projects: [second])
+    let archived = ShellSummaries.build([cached, machine("a", threads: [], projects: [first])])
+    #expect(archived.projects.count == 1)
+    #expect(archived.projects[0].archived)
+  }
+
   @Test func linkedProjectIsAutomatedOnlyWhenEveryCopyIs() throws {
     let logical = LogicalProject(id: "logical:1", title: "EasyChamp", coordinatorId: "coordinator:logical:1", members: [])
     var mine = try TestData.project(id: "mine", title: "EasyChamp", root: "/Users/x/Projects/sw-easychamp")
@@ -215,7 +235,10 @@ import SWCWire
 
   @Test func duplicatesFixtureListsEachProjectOnce() {
     let titles = FixtureDuplicates.output(now: Date()).projects.map(\.title)
-    #expect(titles.sorted() == ["EasyChamp", "Notes", "SpecWeave"])
+    #expect(titles.sorted() == ["Active check", "Archived check", "EasyChamp", "Notes", "SpecWeave"])
+    let projects = FixtureDuplicates.output(now: Date()).projects
+    #expect(projects.filter { $0.isAutomated && !$0.archived }.map(\.title) == ["Active check"])
+    #expect(projects.filter(\.archived).map(\.title) == ["Archived check"])
   }
 
   @Test func sameFolderTwiceOnOneMachineIsOneRow() throws {

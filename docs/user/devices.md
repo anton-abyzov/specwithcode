@@ -22,6 +22,13 @@ Choose **Float device over chat** in the toolbar to keep watching and tapping th
 device in a small window while the right panel shows something else; drag the
 window by its handle, resize it from any edge, and use **Open in right panel**
 to bring it back.
+To keep a small Mac from running out of memory, set **Simulator limit** in
+**Settings → Integrations → Devices**. It caps how many simulators and
+emulators may run at once on each device host, the server's own machine and
+every SSH host alike. Starting another one, from the panel or an agent's
+device tools, fails with a message naming the running devices until you shut
+one down. Physical devices do not count, and simulators started outside
+SpecWithCode are counted but not stopped.
 Turn off the device hub in **Settings → Integrations → Devices** to stop the
 helper processes; simulators and emulators keep running until you power them
 off.

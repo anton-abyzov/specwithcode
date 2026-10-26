@@ -70,6 +70,8 @@ export const claudeSweepHarness = (input: {
   };
   /** The instance the stopped run ran on, as the thread's records give it. */
   runInstance?: ProviderInstanceId;
+  /** Earlier runs in the thread's records, such as the run a detour continued. */
+  runs?: ReadonlyArray<Partial<OrchestrationV2ThreadProjection["runs"][number]>>;
   /** Commands the orchestrator rejects; a rejected id is rejected again on replay. */
   refuses?: (command: OrchestrationV2ServerCommand) => boolean;
   /**
@@ -155,6 +157,7 @@ export const claudeSweepHarness = (input: {
               nodes: [],
               ...input.pending?.records,
               runs: [
+                ...(input.runs ?? []),
                 ...(input.pending?.records.runs ?? []),
                 ...(input.runInstance && state.current.latestRunId
                   ? [{ id: state.current.latestRunId, providerInstanceId: input.runInstance }]

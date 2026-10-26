@@ -1,6 +1,13 @@
 # SpecWithCode
 
-SpecWithCode is an independent private workbench for native coding agents. SpecWeave owns portable intent, task claims and handoffs; the app owns environment-local sessions and control. MIT provenance remains in LICENSE and UPSTREAM.md.
+SpecWithCode is an independent private workbench for native coding agents. SpecWeave owns portable intent, task claims and handoffs; the app owns environment-local sessions and control. Required third-party notices remain in THIRD_PARTY_NOTICES.md and source provenance in UPSTREAM.md.
+
+## Product identity and licensing
+
+- Present SpecWithCode as an independent product. Lead with its own settings, provider orchestration, portable specs, handoffs and machine workflows. Do not market it as an upstream product or as a fork, or imply upstream affiliation or endorsement.
+- Answer provenance questions accurately. Preserve inherited copyright and permission notices in THIRD_PARTY_NOTICES.md and distributed artifacts; product positioning never authorizes removing required attribution.
+- Do not add a blanket MIT badge, project-wide license grant or upstream contributor showcase. Original SpecWithCode material has no new project-wide license grant; prior grants and third-party licenses remain applicable. Settings must still expose required open-source notices.
+- Keep private development history, PRs, active worktrees and handoffs intact. Publish sanitized snapshots through scripts/public-mirror/publish.mjs. A standalone repository does not require an orphan reset or force-push; verify contributors and fork metadata before proposing one.
 
 ## Naming
 
