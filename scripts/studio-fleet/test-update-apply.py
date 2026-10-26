@@ -36,6 +36,43 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   proof.assert_called_once()
   self.assertTrue(any(call.kwargs.get('reads') is not None for call in read.call_args_list))
   self.assertEqual(json.loads(self.output.read_text())['phase'],'verified')
+ def kept_releases(self,decide,**options):
+  """The laps and the clears of kept lines that held any, in order, through an apply whose page proof is `decide`."""
+  events=[];clear=update.after_proof.kept_lines.Kept.clear;original=update._snapshot
+  def snapshot(*args,**kwargs):  # The decided proof's read stands in for the full read, as on a real restart.
+   if kwargs.get('reads') is not None:
+    rows,auth,carried,capture=kwargs['reads']
+    return {**self.snapshot('m4'),'rows':rows,'databaseCapture':capture},auth,carried
+   events.append('fullRead');return original(*args,**kwargs)
+  def cleared(kept):
+   if kept.tables:events.append('clear')
+   return clear(kept)
+  def lapped(original):
+   def lap(writer,ended,timings):
+    events.append(ended);return original(writer,ended,timings)
+   return lap
+  def holding(state,held,kept,*args):
+   # The harness's before read keeps nothing; the proof had lines in hand.
+   kept.tables['orchestration_events']={'typed':{'lines':['kept'],'marks':[],'sha256':'','count':1}}
+   return decide(state,held,kept,*args)
+  with patch.object(update.after_proof,'decide',side_effect=holding),patch.object(update,'_snapshot',side_effect=snapshot),patch.object(update.after_proof.kept_lines.Kept,'clear',cleared),\
+       patch.object(install_progress.ProgressWriter,'lap',lapped(install_progress.ProgressWriter.lap)),\
+       patch.object(install_progress.Unwritten,'lap',lapped(install_progress.Unwritten.lap)):
+   self.execute(**options)
+  self.assertEqual(json.loads(self.output.read_text())['phase'],'verified')
+  return events
+ def test_a_decided_page_proof_lets_its_kept_lines_go_after_readiness(self):
+  # Freeing M4's 27 GB of kept lines took 7 to 9 s of the readiness lap (1.0.90).
+  self.use_waiting_state()
+  events=self.kept_releases(lambda *args:update._read_state(self.own/'userdata',True,self.before['rows'],True),allow_project_migrations=True)
+  self.assertNotIn('fullRead',events[events.index('readinessCheap'):])
+  self.assertEqual(events[events.index('clear')-1:events.index('clear')+2],['readiness','clear','keptRelease'])
+ def test_a_refused_page_proof_lets_its_kept_lines_go_before_the_full_read(self):
+  self.use_waiting_state()
+  # The real decide lets go at once; this one leaves them to the full read update.py takes next.
+  events=self.kept_releases(lambda *args:None)
+  after=events[events.index('readinessCheap'):]
+  self.assertEqual(after[:3],['readinessCheap','clear','readiness'])  # Let go before the full read, inside readiness.
  def use_held_admission(self):
   self.use_captured_waiting_state()
   now=datetime.datetime.now(datetime.timezone.utc);request=now.isoformat()

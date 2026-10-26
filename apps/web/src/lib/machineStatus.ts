@@ -117,41 +117,57 @@ export function machineUnavailableTitle(
 }
 
 /**
- * The one-line status word on a saved machine's row in Settings > Connections:
- * "Reconnecting: <reason>" rather than the long sentence, since the full text is
- * one hover away. This machine reads "Catching up" while its server is busy.
+ * The short status on a saved machine's row in Settings > Connections. The
+ * reason ("why it failed, what to do") is returned apart so the row can show it
+ * on its own wrapped line instead of cutting it off. This machine reads
+ * "Catching up" while its server is busy.
  */
 export function savedMachineStatus(
   connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
   enabled: boolean,
   isThisMachine = false,
-): { readonly text: string; readonly tone: "muted" | "error" } {
-  if (!enabled && connection.phase !== "unsupported") return { text: "Off", tone: "muted" };
+): {
+  readonly text: string;
+  readonly tone: "muted" | "error";
+  readonly reason: string | null;
+  readonly retryable: boolean;
+} {
+  const quiet = { reason: null, retryable: false } as const;
+  if (!enabled && connection.phase !== "unsupported")
+    return { text: "Off", tone: "muted", ...quiet };
   if (isThisMachine && isThisMachineCatchingUp(connection.phase))
-    return { text: "Catching up", tone: "muted" };
+    return { text: "Catching up", tone: "muted", ...quiet };
+  const reason = connection.error ?? null;
   switch (connection.phase) {
     case "connected":
-      return { text: "Connected", tone: "muted" };
+      return { text: "Connected", tone: "muted", ...quiet };
     case "connecting":
-      return { text: "Connecting", tone: "muted" };
+      return { text: "Connecting", tone: "muted", ...quiet };
     case "reconnecting":
       return {
-        text: connection.error ? `Can't reach: ${connection.error}` : "Reconnecting",
+        text: reason ? "Can't reach" : "Reconnecting",
         tone: "error",
+        reason,
+        retryable: true,
       };
     // Not a failure: the machine is fine, this build just cannot talk to it.
     case "unsupported":
-      return { text: "Client not supported", tone: "muted" };
+      return { text: "Client not supported", tone: "muted", reason, retryable: false };
     case "error":
-      return {
-        text: connection.error ? `Connection failed: ${connection.error}` : "Connection failed",
-        tone: "error",
-      };
+      return { text: "Connection failed", tone: "error", reason, retryable: true };
     case "offline":
-      return { text: "Offline", tone: "muted" };
+      return { text: "Offline", tone: "muted", ...quiet };
     case "available":
-      return { text: "Not connected", tone: "muted" };
+      return { text: "Not connected", tone: "muted", ...quiet };
   }
+}
+
+/**
+ * The machine refused this device's approval, so it has to be paired again
+ * from a new pairing code; retrying the same credential cannot fix that.
+ */
+export function reasonNeedsPairing(reason: string | null): boolean {
+  return reason !== null && /approve this device again|new pairing code/i.test(reason);
 }
 
 /**

@@ -47,6 +47,23 @@ class ReleaseVerified(unittest.TestCase):
    started=time.monotonic();second=release_check.release_verified(self.release);elapsed=time.monotonic()-started
   self.assertEqual(len(calls),FILES);self.assertEqual(first,second)
   self.assertLess(elapsed,0.5)
+ def test_a_cached_verify_resolves_only_the_links(self):
+  # Readiness after a restart makes one service check; a resolve() per file made it 2.3 s on M4's 7,800-file release.
+  release_check.release_verified(self.release)
+  resolved=[];real=pathlib.Path.resolve
+  def counting(path,*args,**kwargs):
+   resolved.append(path.name);return real(path,*args,**kwargs)
+  with mock.patch.object(pathlib.Path,'resolve',counting):release_check.release_verified(self.release)
+  self.assertEqual(resolved,['first'])
+ def test_a_file_reached_through_a_linked_folder_is_refused(self):
+  outside=self.root/'outside';outside.mkdir();data=b'outside';(outside/'x.js').write_bytes(data)
+  release=self.root/'linked';release.mkdir();os.symlink(str(outside),release/'lib')
+  files=[{'path':'lib','type':'symlink','target':str(outside)},
+         {'path':'lib/x.js','type':'file','sha256':hashlib.sha256(data).hexdigest()}]
+  (release/'studio-manifest.json').write_text(json.dumps({'product':'SpecWeave Studio','version':'0.1.0','sourceCommit':'fixture','files':files[1:]}))
+  self.assertRaises(AssertionError,release_check.release_verified,release)
+  (release/'studio-manifest.json').write_text(json.dumps({'product':'SpecWeave Studio','version':'0.1.0','sourceCommit':'fixture','files':files}))
+  self.assertRaises(AssertionError,release_check.release_verified,release)
  def test_a_byte_rewritten_at_the_same_size_and_mtime_is_hashed_again_and_refused(self):
   release_check.release_verified(self.release)
   path=self.release/'chunk-07.bin';info=os.stat(path)

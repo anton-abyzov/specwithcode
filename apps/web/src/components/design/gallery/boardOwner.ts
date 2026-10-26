@@ -110,6 +110,49 @@ export function problemsInScope<P extends OwnerProblem>(
   }
 }
 
+/**
+ * Whether a problem shows outside its project's own board. Archived and automated
+ * projects are not the person's working projects, so the gallery and the Projects view
+ * never mention them; their own board still does.
+ */
+export function problemShownBeyondItsBoard(
+  problem: OwnerProblem,
+  projects: readonly {
+    readonly id: ProjectId;
+    readonly title: string;
+    readonly unavailable?: string | undefined;
+  }[],
+): boolean {
+  const project = projects.find((candidate) => problemIsAbout(problem, candidate));
+  return (
+    project === undefined ||
+    project.unavailable === undefined ||
+    project.unavailable === FOLDER_MISSING
+  );
+}
+
+/**
+ * The design-system problems Settings > Design systems lists below its lost folders.
+ * Settings is the only place these show, so only an archived or automated project's
+ * missing folder is left out; its other problems stay.
+ */
+export function otherSystemProblems<P extends OwnerProblem>(
+  problems: readonly P[],
+  owners: readonly {
+    readonly id: ProjectId;
+    readonly title: string;
+    readonly unavailable?: string | undefined;
+  }[],
+  lostFolders: readonly { readonly id: ProjectId; readonly title: string }[],
+): P[] {
+  return problems.filter(
+    (problem) =>
+      missingFolderOf(problem.detail) === null ||
+      (problemShownBeyondItsBoard(problem, owners) &&
+        !lostFolders.some((lost) => problemIsAbout(problem, lost))),
+  );
+}
+
 /** Why a board makes nothing new: its project is archived, automated or has lost its folder. */
 export function creationOffReason(project: GalleryProject | null): string | null {
   if (project === null || project.unavailable === undefined) return null;

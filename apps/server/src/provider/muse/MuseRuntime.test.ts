@@ -183,8 +183,21 @@ describe("Muse native MSP runtime", () => {
       }),
     );
   });
-  it("names a protocol mismatch instead of asking to install Muse", async () => {
+  it("connects to a newer Muse whose schema fingerprint moved within the same envelope", async () => {
     const input = await fixture({ MUSE_TEST_FINGERPRINT: `sha256:${"0".repeat(64)}` });
+    const { host, client } = await connectMuse(input.settings, input.environment, input.cwd);
+    try {
+      expect(host.fingerprintWarning?.kind).toBe("schemaFingerprintMismatch");
+      expect(host.initializeResult.serverInfo.version).toBe("1.0.0");
+    } finally {
+      await client.close();
+    }
+  });
+  it("names a protocol mismatch instead of asking to install Muse", async () => {
+    const input = await fixture({
+      MUSE_TEST_FINGERPRINT: `sha256:${"0".repeat(64)}`,
+      MUSE_TEST_SCHEMA_VERSION: "2",
+    });
     const failure = await connectMuse(input.settings, input.environment, input.cwd).then(
       () => undefined,
       (error: unknown) => error,

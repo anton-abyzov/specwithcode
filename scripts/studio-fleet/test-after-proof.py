@@ -442,7 +442,8 @@ class Equal(unittest.TestCase):
         self.assertEqual(reads[1], full[1])
         before = {'rows': flow.before, 'capture': flow.reference['reads'][2]}
         self.assertEqual(receipt_fields(before, reads), receipt_fields(before, full))
-        self.assertEqual(flow.kept.tables, {})  # Let go once the proof ran.
+        self.assertTrue(flow.kept.tables)  # A decided proof leaves its lines for update.py to let go after readiness.
+        flow.kept.clear()
         self.assertEqual(record['keptIn'], 'memory' if self.MEMORY else 'disk')
         return record
 
@@ -705,6 +706,7 @@ class Refuses(unittest.TestCase):
         reads, record, _ = flow.decide()
         self.assertIsNone(reads)
         self.assertEqual(record['mode'], 'full')
+        self.assertEqual(flow.kept.tables, {})  # Let go at once: the full read that follows needs the memory.
         if reason is not None:
             self.assertEqual(record['reason'], reason, record)
         return record
@@ -1294,10 +1296,12 @@ def measure(clone_folder):
         progress, laps = {}, []
         reads, proof_seconds = _timed(after_proof.decide, live_folder, held, kept, reference, before[0], False, progress, laps.append)
         print('page proof: %.2f s, %s' % (proof_seconds, json.dumps(progress['afterProof'])), flush=True)
+        _, release_seconds = _timed(kept.clear)  # update.py's keptRelease, after readiness; before the full read's make_room.
+        print('kept lines let go: %.2f s' % release_seconds, flush=True)
         full, full_seconds = _timed(update_read._read_state, live_folder, False, before[0], True)
         print('full read of the copy: %.2f s' % full_seconds, flush=True)
         same = reads is not None and all(json.dumps(reads[index]) == json.dumps(full[index]) for index in (0, 2, 3))
-        print(json.dumps({'beforeReadSeconds': before_seconds, 'pageProofSeconds': proof_seconds, 'fullReadSeconds': full_seconds,
+        print(json.dumps({'beforeReadSeconds': before_seconds, 'pageProofSeconds': proof_seconds, 'keptReleaseSeconds': release_seconds, 'fullReadSeconds': full_seconds,
                           'afterProof': progress['afterProof'], 'equalToFullRead': same,
                           'appendedLogRows': full[2]['appendedRows'] if full[2] else None}, indent=2))
         return 0 if same and proof_seconds < 10 else 1

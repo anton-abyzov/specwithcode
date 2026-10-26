@@ -29,7 +29,7 @@ HEARTBEAT_SECONDS = 5
 # A phase that does not run on this install (a skipped re-read) is simply passed over.
 PHASES = ('beforeRead', 'backupSpace', 'verifyAndStage', 'prestateCheck', 'swapPointers', 'gateSettle',
           'checkBeforeRestart', 'stop', 'finalCheck', 'serviceStop', 'backupClone', 'restart',
-          'readinessCheap', 'readiness', 'guardedComparison', 'cleanup')
+          'readinessCheap', 'readiness', 'keptRelease', 'guardedComparison', 'cleanup')
 # Not one of PHASES' steps: entered from whichever phase failed, until the failure receipt is final.
 ROLLBACK = 'rollback'
 RESULTS = {'verified', 'refused', 'rolled-back', 'held', 'failed'}

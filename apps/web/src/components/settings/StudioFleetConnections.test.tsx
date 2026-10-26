@@ -239,7 +239,10 @@ describe("private machine roster", () => {
         [m1]: {
           text: "Connection failed",
           connected: false,
-          detail: "Approve this device again in SpecWithCode.",
+          lastSeen: null,
+          reason: "Approve this device again in SpecWithCode.",
+          retryable: false,
+          tone: "error",
         },
       },
     });
@@ -257,26 +260,42 @@ describe("private machine roster", () => {
       savedEnvironmentIds: [m1],
       machineStatuses: {
         [m1]: {
-          text: "Can't reach. Retrying automatically",
+          text: "Connection failed",
           connected: false,
-          detail: "last seen 2h ago",
+          lastSeen: "last seen 2h ago",
+          reason:
+            "Approve this device again in SpecWithCode. Create a new pairing code on the receiving machine and sign in again.",
+          retryable: true,
+          tone: "error",
         },
       },
     });
     expect(
-      visitElements(
-        tree,
-        (element) => element.props.children === "Can't reach. Retrying automatically",
+      visitElements(tree, (element) => element.props.children === "Connection failed"),
+    ).not.toBeNull();
+    expect(
+      visitElements(tree, (element) =>
+        [element.props.children]
+          .flat()
+          .some((child) => typeof child === "string" && child.includes("last seen 2h ago")),
       ),
     ).not.toBeNull();
+    // The reason and next step sit on their own wrapped line, not in the cut-off meta line.
+    const reason = visitElements(
+      tree,
+      (element) =>
+        typeof element.props.reason === "string" &&
+        element.props.reason.startsWith("Approve this device again"),
+    );
+    expect(reason?.props.retryable).toBe(true);
     expect(
       visitElements(
         tree,
         (element) =>
           typeof element.props.children === "string" &&
-          element.props.children.includes("last seen 2h ago"),
+          element.props.children.includes("Approve this device again"),
       ),
-    ).not.toBeNull();
+    ).toBeNull();
     // A machine this browser has not saved still says whether its route answers.
     expect(
       visitElements(render(), (element) => element.props.children === "Reachable"),

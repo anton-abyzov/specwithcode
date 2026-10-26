@@ -49,6 +49,7 @@ import {
   missingFolderText,
   problemIsAbout,
   problemKey,
+  problemShownBeyondItsBoard,
   problemsInScope,
   type OwnerProblem,
 } from "./boardOwner";
@@ -177,10 +178,13 @@ export function DesignGalleryView(props: DesignGalleryViewProps) {
       : null;
   // An archived, automated or folder-less project keeps its board but makes nothing new.
   const offReason = creationOffReason(scopedProject);
-  const problems = problemsInScope(props.problems, scope, label).filter(
-    // The board's own missing folder is said once, in the line that turns creation off.
-    (problem) =>
-      offReason === null || scopedProject === null || !problemIsAbout(problem, scopedProject),
+  const problems = problemsInScope(props.problems, scope, label).filter((problem) =>
+    scope.kind === "project"
+      ? // The board's own missing folder is said once, in the line that turns creation off.
+        scopedProject?.missingFolder === undefined ||
+        !problemIsAbout(problem, scopedProject) ||
+        missingFolderOf(problem.detail) === null
+      : problemShownBeyondItsBoard(problem, props.projects),
   );
   const missingFolderIds = new Set(
     props.projects.filter((project) => project.missingFolder !== undefined).map((p) => p.id),

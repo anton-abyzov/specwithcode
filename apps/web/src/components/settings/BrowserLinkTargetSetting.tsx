@@ -71,7 +71,9 @@ export function BrowserLinkTargetSetting({ disabled }: { readonly disabled: bool
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate">{option.label}</span>
                   {option.detail ? (
-                    <span className="truncate text-xs text-muted-foreground">{option.detail}</span>
+                    <span className="text-xs break-words text-muted-foreground">
+                      {option.detail}
+                    </span>
                   ) : null}
                 </span>
               </SelectItem>

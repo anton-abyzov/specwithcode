@@ -65,7 +65,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     case "initialize":
       result = {
         serverInfo: { name: "muse-fixture", version: "1.0.0" },
-        schema: { version: "1", fingerprint: process.env.MUSE_TEST_FINGERPRINT },
+        schema: {
+          version: process.env.MUSE_TEST_SCHEMA_VERSION ?? "1",
+          fingerprint: process.env.MUSE_TEST_FINGERPRINT,
+        },
         sessionDurability: process.env.MUSE_TEST_RESUME ? "durable" : "ephemeral",
         experimentalApi: false,
         grantedCapabilities: [],
