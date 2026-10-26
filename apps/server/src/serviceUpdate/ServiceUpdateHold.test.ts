@@ -303,6 +303,23 @@ it.effect("wakes waiters on release and on expiry", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("counts the holds that end in this process", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdAt(missingStatePath);
+    assert.equal(yield* hold.releaseCount, 0);
+    yield* hold.acquire();
+    yield* hold.release("cancelled");
+    assert.equal(yield* hold.releaseCount, 1);
+    // Nothing held: a release that ends nothing does not count.
+    assert.isFalse(yield* hold.release("again"));
+    assert.equal(yield* hold.releaseCount, 1);
+    yield* hold.acquire({ ttlMs: 10_000 });
+    yield* TestClock.adjust("10 seconds");
+    assert.isFalse(yield* hold.isHeld);
+    assert.equal(yield* hold.releaseCount, 2);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.live("releases itself once the update agent handled this request", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

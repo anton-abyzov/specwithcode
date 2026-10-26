@@ -51,8 +51,14 @@ const keybindings = [
     },
   },
 ];
+// The attention members the sidebar derives with its own Atom.make: no machine
+// reports any here, so every project's waiting count is zero.
+const isDerivedAtom = (atom: unknown) =>
+  typeof atom === "object" &&
+  atom !== null &&
+  typeof (atom as { read?: unknown }).read === "function";
 export const useAtomValue = (atom: unknown) =>
-  atom === primaryServerKeybindingsAtom ? keybindings : null;
+  atom === primaryServerKeybindingsAtom ? keybindings : isDerivedAtom(atom) ? [] : null;
 
 // @tanstack/react-router
 export function Link({
@@ -130,6 +136,13 @@ export const useAtomCommand =
 // state/session, state/threads, state/use-orchestration-command: a rename is
 // stored on the simulated shell, the way the server's projection would.
 export const readEnvironmentScope = () => true;
+// The fleet helpers the sidebar reaches read no session here.
+const noSession = () => ({ name: "no-session" });
+export const environmentSession = {
+  sessionStateAtom: noSession,
+  preparedConnectionValueAtom: noSession,
+};
+export const readPreparedConnection = () => null;
 export const threadEnvironment = { updateMetadata: {} };
 export const useOrchestrationCommand =
   () =>

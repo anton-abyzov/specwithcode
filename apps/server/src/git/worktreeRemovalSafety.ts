@@ -14,13 +14,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
-
-const decodeThread = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ worktreePath: Schema.NullOr(Schema.String) })),
-);
-const decodeSession = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ cwd: Schema.String })),
-);
+import { canonicalPath, listWorktreeBindings, worktreeOwnersOf } from "./worktreeOwnership.ts";
 
 /** Internal compensation only. This context is never part of the wire request. */
 export interface WorktreeRemovalContext {
@@ -40,22 +34,11 @@ class PendingThreadCleanup extends Schema.TaggedError<PendingThreadCleanup>()(
 export const makeWorktreeRemovalGuard = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const sql = yield* SqlClient.SqlClient;
+  const services = yield* Effect.context<FileSystem.FileSystem | Path.Path | SqlClient.SqlClient>();
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitVcsDriver.GitVcsDriver;
 
-  const canonical = (value: string) =>
-    Effect.gen(function* () {
-      const resolved = path.resolve(value);
-      return (yield* fs.exists(resolved)) ? yield* fs.realPath(resolved) : resolved;
-    });
-  const contains = (root: string, candidate: string) => {
-    const relative = path.relative(root, candidate);
-    return (
-      relative === "" ||
-      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-    );
-  };
+  const canonical = (value: string) => canonicalPath(value).pipe(Effect.provideContext(services));
 
   return (
     input: VcsRemoveWorktreeInput,
@@ -106,83 +89,47 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
             return yield* reject(
               "Terminal ownership could not be verified. The worktree was kept.",
             );
-          const projects = yield* sql<{ workspace_root: string }>`
-          SELECT workspace_root FROM projection_projects WHERE deleted_at IS NULL
-        `;
-          for (const project of projects) {
-            if (contains(worktreePath, yield* canonical(project.workspace_root)))
-              return yield* reject(
-                "A registered project uses this worktree. Remove that project reference first.",
-              );
-          }
-          // No archived filter: archived and idle threads still own their checkout.
-          // Deleted threads retain it until their durable cleanup effects have settled.
-          const threads = yield* sql<{
-            thread_id: string;
-            payload_json: string;
-            deleted_at: string | null;
-            cleanup_failed: number;
-          }>`
-          SELECT t.thread_id, t.payload_json, t.deleted_at, EXISTS (
-            SELECT 1 FROM orchestration_v2_effect_outbox failed
-            WHERE failed.thread_id = t.thread_id
-              AND failed.status NOT IN ('pending', 'running', 'succeeded', 'cancelled')
-          ) AS cleanup_failed FROM orchestration_v2_projection_threads t
-          WHERE t.deleted_at IS NULL OR EXISTS (
-            SELECT 1 FROM orchestration_v2_effect_outbox e
-            WHERE e.thread_id = t.thread_id AND e.status NOT IN ('succeeded', 'cancelled')
-          )
-        `;
+          const owners = yield* listWorktreeBindings.pipe(
+            Effect.flatMap((bindings) =>
+              worktreeOwnersOf(bindings, worktreePath, {
+                match: "within",
+                terminals: liveTerminals.values(),
+              }),
+            ),
+            Effect.provideContext(services),
+          );
+          if (owners.projects.length > 0)
+            return yield* reject(
+              "A registered project uses this worktree. Remove that project reference first.",
+            );
           const pendingThreadIds = new Set<string>();
-          for (const row of threads) {
-            const thread = yield* decodeThread(row.payload_json);
-            if (
-              thread.worktreePath !== null &&
-              contains(worktreePath, yield* canonical(thread.worktreePath))
+          for (const thread of owners.threads) {
+            if (thread.deleted) {
+              if (thread.cleanupFailed)
+                return yield* reject(
+                  "Thread cleanup failed or has an unknown state. The worktree was kept.",
+                );
+              pendingThreadIds.add(thread.threadId);
+            } else if (
+              !(
+                context?.cancelledSetup?.threadId === thread.threadId &&
+                (yield* context.cancelledSetup.verify())
+              )
             ) {
-              if (row.deleted_at !== null) {
-                if (row.cleanup_failed !== 0)
-                  return yield* reject(
-                    "Thread cleanup failed or has an unknown state. The worktree was kept.",
-                  );
-                pendingThreadIds.add(row.thread_id);
-              } else if (
-                !(
-                  context?.cancelledSetup?.threadId === row.thread_id &&
-                  (yield* context.cancelledSetup.verify())
-                )
-              ) {
-                return yield* reject("Another thread uses this worktree. Its files were kept.");
-              }
+              return yield* reject("Another thread uses this worktree. Its files were kept.");
             }
           }
-          const sessions = yield* sql<{ thread_id: string | null; payload_json: string }>`
-          SELECT thread_id, payload_json FROM orchestration_v2_projection_provider_sessions WHERE status != 'stopped'
-        `;
-          for (const row of sessions) {
-            if (
-              contains(
-                worktreePath,
-                yield* canonical((yield* decodeSession(row.payload_json)).cwd),
-              ) &&
-              (row.thread_id === null || !pendingThreadIds.has(row.thread_id))
-            )
+          for (const session of owners.sessions) {
+            if (session.threadId === null || !pendingThreadIds.has(session.threadId))
               return yield* reject(
                 "A retained agent session uses this worktree. Stop that session before removing it.",
               );
           }
-          for (const terminal of liveTerminals.values()) {
-            if (terminal.status !== "starting" && terminal.status !== "running") continue;
-            if (
-              contains(worktreePath, yield* canonical(terminal.cwd)) ||
-              (terminal.worktreePath !== null &&
-                contains(worktreePath, yield* canonical(terminal.worktreePath)))
-            ) {
-              if (pendingThreadIds.has(terminal.threadId)) continue;
-              return yield* reject(
-                "A terminal uses this worktree. Close it before removing the worktree.",
-              );
-            }
+          for (const terminal of owners.terminals) {
+            if (pendingThreadIds.has(terminal.threadId)) continue;
+            return yield* reject(
+              "A terminal uses this worktree. Close it before removing the worktree.",
+            );
           }
           if (pendingThreadIds.size > 0) return yield* new PendingThreadCleanup();
         });

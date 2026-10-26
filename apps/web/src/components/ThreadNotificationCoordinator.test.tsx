@@ -35,6 +35,7 @@ const state = vi.hoisted(() => ({
   turnError: false,
   limited: false,
   subagent: false,
+  level: undefined as string | undefined,
   creationSource: "web" as "web" | "provider" | "mcp",
   createdBy: "user" as "user" | "agent",
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
@@ -145,6 +146,13 @@ vi.mock("./settings/useSettingsProjectGroups", () => ({
   useSettingsProjectGroups: () => state.groups,
 }));
 vi.mock("../state/entities", () => ({
+  useProjects: () => [
+    {
+      environmentId: "env-1",
+      id: "project-1",
+      workspaceSettings: state.level === undefined ? undefined : { notifications: state.level },
+    },
+  ],
   readThreadShell: ({ environmentId, threadId }: { environmentId: string; threadId: string }) =>
     environmentId === "env-1" && threadId === "thread-1"
       ? { ...mockThreadShell(), environmentId }
@@ -237,6 +245,7 @@ beforeEach(() => {
     turnError: false,
     limited: false,
     subagent: false,
+    level: undefined,
     creationSource: "web",
     createdBy: "user",
     background: [],
@@ -279,15 +288,62 @@ describe("thread notifications", () => {
     },
   );
 
-  it("notifies when a delegated worker finishes", async () => {
+  it("notifies when a delegated worker finishes in a project set to all new messages", async () => {
     state.subagent = true;
     state.creationSource = "mcp";
     state.mode = "notifications-and-sound";
+    state.level = "all";
     await render();
     await complete();
     expect(state.add).toHaveBeenCalledTimes(1);
     expect(state.add.mock.calls[0]?.[0]?.title).toBe("Thread completed");
     expect(state.add.mock.calls[0]?.[0]?.description).toBe("Fix the login form");
+  });
+
+  it("by default keeps a delegated worker's news quiet but alerts when it needs the person", async () => {
+    state.subagent = true;
+    state.creationSource = "mcp";
+    state.mode = "notifications-and-sound";
+    await render();
+    await complete();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.add).not.toHaveBeenCalled();
+    state.approval = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add.mock.calls[0]?.[0]?.title).toBe("Approval needed");
+  });
+
+  it("alerts on a main thread's completion only from the coordinator level up", async () => {
+    for (const [level, alerts] of [
+      ["coordinator", 1],
+      ["requests", 0],
+      ["none", 0],
+    ] as const) {
+      vi.clearAllMocks();
+      __resetNotificationHistoryForTests();
+      state.level = level;
+      state.completedAt = null;
+      state.runId = `run-${level}`;
+      await render();
+      await complete();
+      expect(state.add, level).toHaveBeenCalledTimes(alerts);
+    }
+  });
+
+  it("silences even requests in a project set to nothing, and alerts again once changed", async () => {
+    state.level = "none";
+    state.mode = "notifications-and-sound";
+    await render();
+    state.input = true;
+    await render();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.add).not.toHaveBeenCalled();
+    state.level = "requests";
+    state.requestId = "request-2";
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add.mock.calls[0]?.[0]?.title).toBe("Input needed");
   });
 
   it("alerts once with system alerts off and opens the completed thread", async () => {

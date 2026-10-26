@@ -274,6 +274,10 @@ export const ScheduledTaskCheck = Schema.Struct({
       description: "How long the command may run, in milliseconds; defaults to 60000.",
     }),
   ),
+  stopAfterPass: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "One-shot watch: turn the routine off after the first run whose check passes and whose prompt is posted, and remove it a week later. Use for a PR merging or a release finishing.",
+  }),
 }).annotate({ description: "Run a shell check first and wake the agent only when it passes." });
 export type ScheduledTaskCheck = typeof ScheduledTaskCheck.Type;
 

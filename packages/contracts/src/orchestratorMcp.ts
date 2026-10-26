@@ -1044,7 +1044,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   }),
   check: Schema.optional(ScheduledTaskCheck).annotate({
     description:
-      "Make this a command routine: run the shell command on each trigger and wake the agent with the prompt (and the command's output) only when it exits 0. Quiet runs use no AI provider. Prefer this for watches such as disk space, a URL's status or a file's existence.",
+      "Make this a command routine: run the shell command on each trigger and wake the agent with the prompt (and the command's output) only when it exits 0. Quiet runs use no AI provider. Prefer this for watches such as disk space, a URL's status or a file's existence. For a one-shot watch (a PR merging, a release finishing) set stopAfterPass so the routine turns itself off when the check passes.",
   }),
   modelSelection: Schema.optional(ModelSelection).annotate({
     description:

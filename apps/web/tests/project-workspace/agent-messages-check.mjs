@@ -31,12 +31,14 @@ const VIEWS = [
 const errors = [];
 const results = [];
 
+const LEVEL_NAMES = { Concise: "Results only", Normal: "Folded steps", Verbose: "Everything" };
+
 async function choose(page, name) {
   await page.locator("[data-timeline-detail]").click();
   // The coordinator's own level, not the default for every thread.
   await page
-    .getByLabel("This thread")
-    .getByRole("menuitemradio", { name: new RegExp(`^${name}`) })
+    .getByLabel("Show in this thread")
+    .getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[name]}`) })
     .click();
   await page.waitForFunction(
     (level) => document.querySelector("[data-timeline-detail]")?.dataset.timelineDetail === level,

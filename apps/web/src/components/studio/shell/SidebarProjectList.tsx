@@ -32,6 +32,8 @@ import {
   ArchiveIcon,
   ArrowDownIcon,
   ArrowUpIcon,
+  BellIcon,
+  BellOffIcon,
   BotIcon,
   BotOffIcon,
   MoreHorizontalIcon,
@@ -55,7 +57,26 @@ import {
 import { isMacPlatform } from "~/lib/utils";
 import { createSidebarListMotion } from "../../Sidebar.motion";
 import { ProjectFavicon } from "../../ProjectFavicon";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "../../ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuSeparator,
+  MenuShortcut,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../../ui/menu";
+import {
+  PROJECT_NOTIFICATION_LEVEL_COPY,
+  PROJECT_NOTIFICATION_LEVELS,
+  projectShowsWaitingCount,
+  type ProjectNotificationLevel,
+} from "@specweave-studio/shared/projectNotifications";
 import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
@@ -107,6 +128,8 @@ export interface ProjectRowState {
   designsProjectId?: ProjectId | undefined;
   /** True for a project a check or agent made for itself; see projectOrigin. */
   automated?: boolean | undefined;
+  /** The project's notification level; absent where the row has no Notifications item. */
+  notifications?: ProjectNotificationLevel | undefined;
 }
 
 /** Renames a project in place: `check` validates a draft, `commit` saves it or says why not. */
@@ -141,6 +164,9 @@ export function SidebarProjectList(props: {
   onPin: (projectKey: string) => void;
   onArchive: (group: SidebarProjectSnapshot, archived: boolean) => void;
   onOriginChange?: ((group: SidebarProjectSnapshot, origin: ProjectOrigin) => void) | undefined;
+  onNotificationsChange?:
+    | ((group: SidebarProjectSnapshot, level: ProjectNotificationLevel) => void)
+    | undefined;
 }) {
   const { visible, listedKeys } = props;
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -304,6 +330,12 @@ export function SidebarProjectList(props: {
       {...(props.onOriginChange
         ? { onOriginChange: (origin: ProjectOrigin) => props.onOriginChange?.(group, origin) }
         : {})}
+      {...(props.onNotificationsChange
+        ? {
+            onNotificationsChange: (level: ProjectNotificationLevel) =>
+              props.onNotificationsChange?.(group, level),
+          }
+        : {})}
       onStep={(direction) => step(group.projectKey, direction)}
       canStep={(direction) => props.canStep(group.projectKey, direction)}
     />
@@ -429,6 +461,10 @@ export function ProjectRow(props: {
   onOriginChange?: ((origin: ProjectOrigin) => void) | undefined;
   /** True for a project a check or agent made for itself; see projectOrigin. */
   automated?: boolean | undefined;
+  /** The project's notification level; see projectNotifications. */
+  notifications?: ProjectNotificationLevel | undefined;
+  /** Saves a new level; absent where the row has no Notifications item. */
+  onNotificationsChange?: ((level: ProjectNotificationLevel) => void) | undefined;
   /** Rows of the main list can be dragged; archived rows keep no order. */
   sortable?: boolean;
   onKeyDown?: (event: KeyboardEvent) => void;
@@ -440,8 +476,11 @@ export function ProjectRow(props: {
 }) {
   const { group, archived, pinned, designsProjectId } = props;
   const navigate = useNavigate();
-  // An archived project never asks for attention from the sidebar.
-  const waiting = archived ? 0 : props.waiting;
+  // An archived project never asks for attention from the sidebar, nor does one
+  // whose notifications the person turned off.
+  const muted = props.notifications !== undefined && !projectShowsWaitingCount(props.notifications);
+  const quiet = archived || muted;
+  const waiting = quiet ? 0 : props.waiting;
   const [renaming, setRenaming] = useState<RenameState | null>(null);
   // Losing the right to rename mid-edit ends the edit; it does not come back later.
   if (renaming !== null && !props.rename) setRenaming(null);
@@ -542,13 +581,16 @@ export function ProjectRow(props: {
                 {props.hint}
               </span>
             ) : null}
+            {muted && !archived ? (
+              <BellOffIcon className="sws-side-row-pin" aria-label="Notifications off" role="img" />
+            ) : null}
             {pinned ? (
               <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" />
             ) : null}
             {/* A fixed slot, so a count never shifts the name or hint, and the row
               menu takes its place on hover. */}
             <span className="sws-side-row-end">
-              {waiting > 0 || (!archived && props.attentionComplete === false) ? (
+              {waiting > 0 || (!quiet && props.attentionComplete === false) ? (
                 <span
                   className="sws-count sws-count-waiting"
                   title={props.attentionLabel ?? `${waiting} waiting on you`}
@@ -639,6 +681,15 @@ export function ProjectRow(props: {
               <MenuSeparator />
             </>
           ) : null}
+          {props.onNotificationsChange && props.notifications ? (
+            <>
+              <ProjectNotificationsMenu
+                level={props.notifications}
+                onChange={props.onNotificationsChange}
+              />
+              <MenuSeparator />
+            </>
+          ) : null}
           {props.onOriginChange ? (
             <MenuItem
               onClick={() => props.onOriginChange?.(props.automated ? "user" : "automated")}
@@ -654,6 +705,49 @@ export function ProjectRow(props: {
         </MenuPopup>
       </Menu>
     </li>
+  );
+}
+
+/**
+ * The row menu's Notifications item: the current level beside it, and a
+ * submenu that picks another, each with what it lets through.
+ */
+function ProjectNotificationsMenu(props: {
+  level: ProjectNotificationLevel;
+  onChange: (level: ProjectNotificationLevel) => void;
+}) {
+  return (
+    <MenuSub>
+      <MenuSubTrigger>
+        {props.level === "none" ? <BellOffIcon aria-hidden /> : <BellIcon aria-hidden />}
+        <span className="flex-1">Notifications</span>
+        <span className="text-muted-foreground text-xs">
+          {PROJECT_NOTIFICATION_LEVEL_COPY[props.level].short}
+        </span>
+      </MenuSubTrigger>
+      <MenuSubPopup className="w-64">
+        <MenuRadioGroup
+          value={props.level}
+          onValueChange={(value) => {
+            if (value !== props.level) props.onChange(value as ProjectNotificationLevel);
+          }}
+        >
+          {PROJECT_NOTIFICATION_LEVELS.map((level) => (
+            <MenuRadioItem key={level} value={level} closeOnClick>
+              <span className="flex items-start gap-3 py-0.5">
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span>{PROJECT_NOTIFICATION_LEVEL_COPY[level].label}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {PROJECT_NOTIFICATION_LEVEL_COPY[level].description}
+                  </span>
+                </span>
+                <MenuRadioItemIndicator className="mt-0.5" />
+              </span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuSubPopup>
+    </MenuSub>
   );
 }
 

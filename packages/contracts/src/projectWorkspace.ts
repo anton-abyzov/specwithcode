@@ -57,6 +57,14 @@ export const ProjectWorkerMachine = Schema.Struct({
 });
 export type ProjectWorkerMachine = typeof ProjectWorkerMachine.Type;
 
+/**
+ * How much of a project reaches the person as alerts (sound, desktop
+ * notification, phone push) and whether its row shows a waiting count. See
+ * `@specweave-studio/shared/projectNotifications`.
+ */
+export const ProjectNotificationLevel = Schema.Literals(["all", "coordinator", "requests", "none"]);
+export type ProjectNotificationLevel = typeof ProjectNotificationLevel.Type;
+
 export const ProjectWorkspaceSettings = Schema.Struct({
   /** Server-managed identity and transfer fence; absent on legacy independent projects. */
   logicalProject: Schema.optional(LogicalProject),
@@ -87,6 +95,12 @@ export const ProjectWorkspaceSettings = Schema.Struct({
    * version adds reads as absent instead of failing the whole project.
    */
   origin: Schema.optionalKey(Schema.String),
+  /**
+   * The person's notification level for this project. Absent: the default,
+   * "coordinator". A string on the wire, so a value a newer version adds reads
+   * as absent instead of failing the whole project.
+   */
+  notifications: Schema.optionalKey(Schema.String),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {
@@ -113,6 +127,7 @@ export const ProjectWorkspacePatch = Schema.Struct({
   autoResume: Schema.optional(Schema.Boolean),
   workerMachine: Schema.optional(Schema.NullOr(ProjectWorkerMachine)),
   origin: Schema.optional(ProjectOrigin),
+  notifications: Schema.optional(ProjectNotificationLevel),
 });
 export type ProjectWorkspacePatch = typeof ProjectWorkspacePatch.Type;
 export const ProjectWorkspaceReadInput = Schema.Struct({ projectId: ProjectId });

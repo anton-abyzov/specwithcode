@@ -449,7 +449,9 @@ public final class FixtureEngine: AppEngine {
       return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
     }
     if let aide = model.aide { model.aide = refreshed(aide) }
-    let all = model.threadsByProject.values.flatMap { $0 }
+    // A merged row lists the same threads under each of its members.
+    var seen = Set<ThreadRef>()
+    let all = model.threadsByProject.values.flatMap { $0 }.filter { seen.insert($0.ref).inserted }
     model.recentThreads = Array(all.sorted {
       if $0.isPinned != $1.isPinned { return $0.isPinned }
       return $0.updatedAt > $1.updatedAt

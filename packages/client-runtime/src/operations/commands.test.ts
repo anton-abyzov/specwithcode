@@ -217,6 +217,29 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("never sends a folder through project.update", () =>
+    Effect.gen(function* () {
+      const projects: ProjectMutation[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects });
+      const projectId = ProjectId.make("project-1");
+      // An old caller that still passes a folder: the server refuses a move by update,
+      // so the client sends only the other fields. changeProjectFolder moves it.
+      const stale = { projectId, title: "Renamed", workspaceRoot: "/workspace/elsewhere" };
+      yield* updateProject(stale).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(projects).toEqual([
+        {
+          type: "project.update",
+          commandId: "00000000-0000-4000-8000-000000000000",
+          projectId,
+          title: "Renamed",
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("preserves caller command ids for idempotent V2 commands", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
@@ -960,50 +983,101 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("carries only this human send's credit binding through launch and direct dispatch", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const launches: OrchestrationV2ThreadLaunchInput[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], launches });
-      const manualCodexCreditIntent = {
-        type: "human-submit-existing-credits" as const,
-        instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol",
-        expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
-        observedAt: "2026-10-09T07:00:00Z",
-      };
-      const send = {
-        threadId: v2ThreadId,
-        message: { messageId: MessageId.make("credit-input"), role: "user" as const, text: "Read marker.txt", attachments: [] },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
-        runtimeMode: "full-access" as const, interactionMode: "default" as const,
-        dispatchMode: "start" as const,
-      };
-      yield* startThreadTurn({ ...send, commandId: CommandId.make("credit-direct"), manualCodexCreditIntent })
-        .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      yield* startThreadTurn({ ...send, commandId: CommandId.make("ordinary-direct") })
-        .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      expect(commands[0]).toMatchObject({ type: "message.dispatch", manualCodexCreditIntent });
-      expect(commands[1]).not.toHaveProperty("manualCodexCreditIntent");
-      yield* startThreadTurn({ ...send, commandId: CommandId.make("credit-launch"), manualCodexCreditIntent,
-        bootstrap: { createThread: { projectId: ProjectId.make("project-1"), title: "Marker",
-          modelSelection: send.modelSelection, runtimeMode: send.runtimeMode, interactionMode: send.interactionMode,
-          branch: null, worktreePath: null, createdAt: "2026-10-09T07:00:00Z" } },
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      expect(launches[0]?.initialMessage?.manualCodexCreditIntent).toEqual(manualCodexCreditIntent);
-      const legacy = yield* makeSupervisor({ commands, projects: [], launches, advertiseServerResolvedCommandContext: false });
-      for (const dispatchMode of ["queue", "steer", "restart"] as const) {
-        for (const bootstrap of [undefined, { createThread: { projectId: ProjectId.make("project-1"), title: "Marker",
-          modelSelection: send.modelSelection, runtimeMode: send.runtimeMode, interactionMode: send.interactionMode,
-          branch: null, worktreePath: null, createdAt: "2026-10-09T07:00:00Z" } }]) {
-          const before = { commands: commands.length, launches: launches.length };
-          const result = yield* startThreadTurn({ ...send, commandId: CommandId.make(`invalid:${dispatchMode}`),
-            manualCodexCreditIntent, dispatchMode, ...(bootstrap === undefined ? {} : { bootstrap }) })
-            .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, legacy), Effect.flip);
-          expect(result._tag).toBe("OrchestrationDispatchCommandError");
-          expect({ commands: commands.length, launches: launches.length }).toEqual(before);
+  it.effect(
+    "carries only this human send's credit binding through launch and direct dispatch",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const launches: OrchestrationV2ThreadLaunchInput[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [], launches });
+        const manualCodexCreditIntent = {
+          type: "human-submit-existing-credits" as const,
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6.1-sol",
+          expectedQuotaPoolId: `codex:sha256:${"a".repeat(64)}`,
+          observedAt: "2026-10-09T07:00:00Z",
+        };
+        const send = {
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make("credit-input"),
+            role: "user" as const,
+            text: "Read marker.txt",
+            attachments: [],
+          },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          dispatchMode: "start" as const,
+        };
+        yield* startThreadTurn({
+          ...send,
+          commandId: CommandId.make("credit-direct"),
+          manualCodexCreditIntent,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        yield* startThreadTurn({ ...send, commandId: CommandId.make("ordinary-direct") }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        );
+        expect(commands[0]).toMatchObject({ type: "message.dispatch", manualCodexCreditIntent });
+        expect(commands[1]).not.toHaveProperty("manualCodexCreditIntent");
+        yield* startThreadTurn({
+          ...send,
+          commandId: CommandId.make("credit-launch"),
+          manualCodexCreditIntent,
+          bootstrap: {
+            createThread: {
+              projectId: ProjectId.make("project-1"),
+              title: "Marker",
+              modelSelection: send.modelSelection,
+              runtimeMode: send.runtimeMode,
+              interactionMode: send.interactionMode,
+              branch: null,
+              worktreePath: null,
+              createdAt: "2026-10-09T07:00:00Z",
+            },
+          },
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        expect(launches[0]?.initialMessage?.manualCodexCreditIntent).toEqual(
+          manualCodexCreditIntent,
+        );
+        const legacy = yield* makeSupervisor({
+          commands,
+          projects: [],
+          launches,
+          advertiseServerResolvedCommandContext: false,
+        });
+        for (const dispatchMode of ["queue", "steer", "restart"] as const) {
+          for (const bootstrap of [
+            undefined,
+            {
+              createThread: {
+                projectId: ProjectId.make("project-1"),
+                title: "Marker",
+                modelSelection: send.modelSelection,
+                runtimeMode: send.runtimeMode,
+                interactionMode: send.interactionMode,
+                branch: null,
+                worktreePath: null,
+                createdAt: "2026-10-09T07:00:00Z",
+              },
+            },
+          ]) {
+            const before = { commands: commands.length, launches: launches.length };
+            const result = yield* startThreadTurn({
+              ...send,
+              commandId: CommandId.make(`invalid:${dispatchMode}`),
+              manualCodexCreditIntent,
+              dispatchMode,
+              ...(bootstrap === undefined ? {} : { bootstrap }),
+            }).pipe(
+              Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, legacy),
+              Effect.flip,
+            );
+            expect(result._tag).toBe("OrchestrationDispatchCommandError");
+            expect({ commands: commands.length, launches: launches.length }).toEqual(before);
+          }
         }
-      }
-    }).pipe(Effect.provide(layerTestCrypto)),
+      }).pipe(Effect.provide(layerTestCrypto)),
   );
 
   it.effect("dispatches an explicit idle start without fetching the full projection", () =>

@@ -35,6 +35,10 @@ interface World {
   readonly deletes: Array<ProjectService.ProjectDeleteInput>;
   readonly folderChanges: Array<{ workspaceRoot: string; confirmDifferentRepository?: boolean }>;
   failFolderChange: boolean;
+  /** Fields the folder check reports on top of `folderCheck`. */
+  checkOverride: Partial<ProjectFolderCheck>;
+  /** What the folder change reports it did. */
+  changeCounts: { readonly reboundWorktrees: number; readonly keptInPlace: number };
   /** Another thread in the project is running: the service denies non-additive folder edits. */
   otherThreadActive: boolean;
 }
@@ -53,6 +57,8 @@ function newWorld(): World {
     deletes: [],
     folderChanges: [],
     failFolderChange: false,
+    checkOverride: {},
+    changeCounts: { reboundWorktrees: 0, keptInPlace: 0 },
     otherThreadActive: false,
   };
 }
@@ -119,7 +125,8 @@ const layerFor = (world: World) =>
           },
         }),
         Layer.mock(ProjectFolderService)({
-          check: (input) => Effect.succeed(folderCheck(input.workspaceRoot)),
+          check: (input) =>
+            Effect.succeed({ ...folderCheck(input.workspaceRoot), ...world.checkOverride }),
           change: (input) => {
             world.folderChanges.push({
               workspaceRoot: input.workspaceRoot,
@@ -143,8 +150,7 @@ const layerFor = (world: World) =>
             return Effect.succeed({
               project,
               previousRoot: "/p/stub",
-              reboundWorktrees: 0,
-              keptInPlace: 0,
+              ...world.changeCounts,
               relocatedSessions: 0,
             });
           },
@@ -242,12 +248,101 @@ it.effect("an approved folder change re-points the project and tells the agent",
       { workspaceRoot: "/p", confirmDifferentRepository: true },
     ]);
     expect(lastAnswer(world)).toBe(
-      'Approve. Changed the folder of "easychamp" from /p/stub to /p. Threads run there from their next turn.',
+      'Approve. Changed the folder of "easychamp" from /p/stub to /p. Threads that run in the project folder use /p from their next turn.',
     );
     expect(yield* auditRow(requestId)).toMatchObject({
       status: "approved",
       action: "change_folder",
     });
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("a folder change card and outcome say which threads stay in the old folder", () => {
+  const world = newWorld();
+  world.checkOverride = {
+    sameRepository: true,
+    currentRepository: "github.com/easychamp/site",
+    targetRepository: "github.com/easychamp/site",
+    keptInPlaceCount: 3,
+    nestedProjects: [
+      {
+        id: otherProjectId,
+        title: "Old site",
+        workspaceRoot: "/p/old",
+        relation: "inside",
+        deleted: false,
+      },
+      {
+        id: ProjectId.make("gone"),
+        title: "Gone",
+        workspaceRoot: "/p/gone",
+        relation: "inside",
+        deleted: true,
+      },
+    ],
+  };
+  world.changeCounts = { reboundWorktrees: 0, keptInPlace: 3 };
+  return Effect.gen(function* () {
+    const { requestId } = yield* request({
+      projectId,
+      action: "change_folder",
+      workspaceRoot: "/p",
+      reason: "Move up to the umbrella.",
+    });
+    const question = card(world).questions[0]?.question ?? "";
+    expect(question.split("\n\n")[2]).toBe(
+      '3 threads will keep running in /p/stub, which stays a checkout of its own repository. The coordinator and new threads will use /p. Threads on their own checkouts will keep them. Memory and history stay with the project. Other projects sit inside or around /p: "Old site" (/p/old). They keep their own folders and threads. Deleted projects used folders there: "Gone" (/p/gone). Their threads, memory and routines do not come back.',
+    );
+    expect(question).not.toContain("run in the new folder");
+
+    yield* answer(requestId, "Approve");
+    expect(lastAnswer(world)).toBe(
+      'Approve. Changed the folder of "easychamp" from /p/stub to /p. 3 threads keep running in /p/stub, which stays a checkout of its own repository. The coordinator and new threads use /p.',
+    );
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("a folder change card counts threads rebound to the same checkout", () => {
+  const world = newWorld();
+  world.checkOverride = { reboundWorktreeCount: 2 };
+  world.changeCounts = { reboundWorktrees: 1, keptInPlace: 0 };
+  return Effect.gen(function* () {
+    const { requestId } = yield* request({
+      projectId,
+      action: "change_folder",
+      workspaceRoot: "/p",
+      reason: "Wrong folder.",
+    });
+    expect(card(world).questions[0]?.question).toContain(
+      "Threads that run in the project folder will use /p from their next turn. 2 threads on a checkout inside /p/stub will use the same checkout inside /p. Memory and history stay with the project.\n\n",
+    );
+    yield* answer(requestId, "Approve");
+    expect(lastAnswer(world)).toBe(
+      'Approve. Changed the folder of "easychamp" from /p/stub to /p. Threads that run in the project folder use /p from their next turn. 1 thread on a checkout inside /p/stub now uses the same checkout inside /p.',
+    );
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("a folder the check refuses outright shows no card", () => {
+  const world = newWorld();
+  world.checkOverride = {
+    refusal: {
+      reason: "folder_protected",
+      detail: "/Users/me is the home folder. Choose a project folder inside it instead.",
+    },
+  };
+  return Effect.gen(function* () {
+    const refused = yield* request({
+      projectId,
+      action: "change_folder",
+      workspaceRoot: "/Users/me",
+      reason: "Everything lives here.",
+    }).pipe(Effect.flip);
+    expect(refused.message).toBe(
+      "/Users/me is the home folder. Choose a project folder inside it instead.",
+    );
+    expect(world.dispatched).toEqual([]);
+    expect(world.folderChanges).toEqual([]);
   }).pipe(Effect.provide(layerFor(world)));
 });
 

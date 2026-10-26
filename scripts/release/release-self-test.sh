@@ -328,6 +328,14 @@ check 'after the fix: failures first, signed build again, server on --changed <g
 stub_set RELEASE_STUB_OUTPUT=public-local-tag=v1.2.0
 BEFORE="$(lines)"
 finish_ok() {
+  # Pruned: 1.0.9 merged, 1.0.5 public. Kept: 1.0.8 locked, 1.0.7 not made here (no release.json),
+  # 1.0.6 neither merged nor public (waiting for --resume).
+  local v
+  for v in 1.0.9 1.0.8 1.0.7 1.0.6 1.0.5; do mkdir -p "$STAGING/$v/markers"; done
+  mkdir -p "$STAGING/1.0.8/lock" "$STAGING/notes"
+  for v in 1.0.9 1.0.8 1.0.6 1.0.5; do printf '{}\n' > "$STAGING/$v/release.json"; done
+  : > "$STAGING/1.0.9/markers/merge" && : > "$STAGING/1.0.8/markers/merge" && : > "$STAGING/1.0.7/markers/merge"
+  : > "$STAGING/1.0.5/markers/publish-public"
   run 0 1.2.0 --resume || return 1
   has 'SpecWithCode 1.2.0 is released.' && has 'Stage timings for 1.2.0, compared with 1.1.0' || return 1
   [ "$(stages_after "$BEFORE")" = "publish-private publish-public fleet-m4 desktop fleet-workers merge " ] || return 1
@@ -342,6 +350,13 @@ finish_ok() {
     [ "$(cat "$STAGE/published.sha")" = "$SHA_B" ]
 }
 check 'publish private, then public, then M4, the desktop app, M1 and M3, and merge' finish_ok
+# The finished run above had older staging folders beside it (made before it ran).
+staging_pruned() {
+  grep -qF "$(printf 'merge\tstaging-prune\trm -rf %s/1.0.9' "$STAGING")" "$STUB_LOG" &&
+    grep -qF "$(printf 'merge\tstaging-prune\trm -rf %s/1.0.5' "$STAGING")" "$STUB_LOG" &&
+    ! grep -F 'staging-prune' "$STUB_LOG" | grep -qE '/(1\.0\.[678]|1\.1\.0|1\.2\.0|notes)$'
+}
+check 'a finished release removes merged or public staging folders older than the previous one, never a locked, resumable or foreign one' staging_pruned
 uploads_ok() {
   awk -F '\t' '$2 == "upload-private"' "$STUB_LOG" | grep -q 'SpecWithCode-1.2.0-arm64.dmg' &&
     ! awk -F '\t' '$2 == "upload-private"' "$STUB_LOG" | grep -q '/SpecWithCode-arm64.dmg' &&
@@ -1105,6 +1120,19 @@ timing_ok() {
     grep -E '^build ' "$LAST_OUT" | grep -q '1 flake: fleet'
 }
 check 'timing compare flags a stage over 25% and 10s slower, not a small one' timing_ok
+
+# merge_release_pr runs as a plain call, so set -e stops the merge stage at a failed command.
+MF="$WORK/merge-fail"
+make_machine "$MF"
+use_machine "$MF" 1.5.0
+stub_set RELEASE_STUB_FAIL=merge:pr-create
+merge_failure_ok() {
+  run 1 1.5.0 --ci || return 1
+  lacks 'SpecWithCode 1.5.0 is released.' && [ ! -f "$STAGE/markers/merge" ] &&
+    ! awk -F '\t' '$2 == "pr-merge"' "$STUB_LOG" | grep -q .
+}
+check 'a failed pull request stops the merge stage before it merges' merge_failure_ok
+stub_set RELEASE_STUB_FAIL=
 
 tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }
 check 'release_tools.py unit tests' tools_ok

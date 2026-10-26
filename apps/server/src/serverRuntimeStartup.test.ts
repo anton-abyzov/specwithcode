@@ -5,11 +5,13 @@ import {
   ProjectId,
   ProviderInstanceId,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { refreshProjectUpstreams } from "./workspace/automaticPullSafety.ts";
@@ -305,5 +307,75 @@ it.effect("startup refresh reads enabled upstreams without pulling any checkout"
     ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
     assert.deepStrictEqual(refreshed.toSorted(), ["/dirty", "/inherited"]);
     assert.deepStrictEqual(pulled, []);
+  }),
+);
+
+it.effect("tries a pass that keeps failing further apart each time", () =>
+  Effect.gen(function* () {
+    const tried = yield* Ref.make<ReadonlyArray<number>>([]);
+    const fiber = yield* ServerRuntimeStartup.resumeAfterHoldReleases({
+      releaseCount: Effect.succeed(1),
+      updateUnderway: Effect.succeed(false),
+      installRequestOpen: Effect.succeed(false),
+      exclusive: (effect) => effect,
+      resumeAfterUpdate: Clock.currentTimeMillis.pipe(
+        Effect.flatMap((at) => Ref.update(tried, (times) => [...times, at / 1_000])),
+        Effect.andThen(Effect.fail("projection read failed")),
+      ),
+      pollMs: 1_000,
+    }).pipe(Effect.forkChild);
+    for (let look = 0; look < 10; look += 1) yield* TestClock.adjust("1 second");
+    yield* Fiber.interrupt(fiber);
+    // Each try waits twice as many looks as the one before.
+    assert.deepEqual(yield* Ref.get(tried), [0, 1, 3, 7]);
+  }),
+);
+
+it.effect("continues update-stopped turns after a hold ends, once the update is over", () =>
+  Effect.gen(function* () {
+    const releases = yield* Ref.make(0);
+    const underway = yield* Ref.make(false);
+    const requestOpen = yield* Ref.make(false);
+    const resumed = yield* Ref.make(0);
+    const fiber = yield* ServerRuntimeStartup.resumeAfterHoldReleases({
+      releaseCount: Ref.get(releases),
+      updateUnderway: Ref.get(underway),
+      installRequestOpen: Ref.get(requestOpen),
+      exclusive: (effect) => effect,
+      resumeAfterUpdate: Ref.updateAndGet(resumed, (count) => count + 1).pipe(
+        // A failed pass must not end the loop.
+        Effect.flatMap((count) =>
+          count === 1 ? Effect.fail("projection read failed") : Effect.void,
+        ),
+      ),
+      pollMs: 1_000,
+    }).pipe(Effect.forkChild);
+    const tick = TestClock.adjust("1 second");
+    yield* tick;
+    // No hold has ended: nothing to continue.
+    assert.equal(yield* Ref.get(resumed), 0);
+    // A hold ended while the same update's install request still waits.
+    yield* Ref.set(releases, 1);
+    yield* Ref.set(requestOpen, true);
+    yield* tick;
+    assert.equal(yield* Ref.get(resumed), 0);
+    yield* Ref.set(requestOpen, false);
+    yield* Ref.set(underway, true);
+    yield* tick;
+    assert.equal(yield* Ref.get(resumed), 0);
+    yield* Ref.set(underway, false);
+    yield* tick;
+    assert.equal(yield* Ref.get(resumed), 1);
+    // The pass failed, so the next look runs it again; then it is done.
+    yield* tick;
+    assert.equal(yield* Ref.get(resumed), 2);
+    yield* tick;
+    assert.equal(yield* Ref.get(resumed), 2);
+    // Two holds that ended between looks need one pass.
+    yield* Ref.set(releases, 3);
+    yield* tick;
+    yield* tick;
+    assert.equal(yield* Ref.get(resumed), 3);
+    yield* Fiber.interrupt(fiber);
   }),
 );

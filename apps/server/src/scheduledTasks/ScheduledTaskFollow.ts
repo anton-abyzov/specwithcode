@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import { markFinishedOneShot } from "./ScheduledTaskExpiry.ts";
 import {
   dispatchedOccurrences,
   followOccurrence,
@@ -40,7 +41,7 @@ export const followDispatchedOccurrences = Effect.fn(
       (outcome.type !== "lost" && outcome.workStarted) ||
       (outcome.type === "failed" && outcome.settled)
     )
-      changed ||= yield* retireFiredOnce(task, nowIso);
+      if (yield* retireFiredOnce(task, nowIso)) changed = true;
     const save = (next: ScheduledOccurrence) =>
       saveOccurrence(task, next, occurrence.dispatchedAt ?? nowIso);
     const lost = (reason: string, runId = occurrence.runId) =>
@@ -86,6 +87,7 @@ export const followDispatchedOccurrences = Effect.fn(
         changed ||= restored.length > 0;
       }
       yield* save({ ...occurrence, state: "succeeded", runId: outcome.runId });
+      if (yield* markFinishedOneShot(latest, nowIso)) changed = true;
       continue;
     }
     const reported = occurrence.runId === outcome.runId && occurrence.reason === outcome.message;

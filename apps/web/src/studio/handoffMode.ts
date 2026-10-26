@@ -11,6 +11,7 @@ import {
   type HandoffIncomingReplica,
   type HandoffModeSnapshot,
   type HandoffThreadState,
+  type ProjectId,
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { useCallback, useSyncExternalStore } from "react";
@@ -205,14 +206,24 @@ export function setThreadHandoffMode(
   return runHandoffMode(handoffMode.setThreadMode, { environmentId, input: { threadId, mode } });
 }
 
-/** The menu's view of a thread's handoff mode, or undefined when the server has none. */
+/**
+ * The menu's view of a thread's handoff mode, or undefined when the server has none.
+ * A thread with no record yet inherits like the server's effectiveHandoffMode:
+ * its project's setting, else the machine default.
+ */
 export function threadHandoffMenuState(
   snapshot: HandoffModeSnapshot | null,
   threadId: ThreadId,
+  projectId: ProjectId,
 ): { mode: "inherit" | "on" | "off"; effective: "on" | "off"; continued: boolean } | undefined {
   if (!snapshot) return undefined;
   const state = threadHandoffState(snapshot, threadId);
-  if (!state) return { mode: "inherit", effective: snapshot.config.defaultMode, continued: false };
+  if (!state)
+    return {
+      mode: "inherit",
+      effective: snapshot.projectModes[projectId] ?? snapshot.config.defaultMode,
+      continued: false,
+    };
   return {
     mode: state.mode,
     effective: state.effectiveMode,

@@ -43,6 +43,7 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
+    ...(state.quiet === true ? { quiet: true } : {}),
   };
 }
 

@@ -13,6 +13,13 @@
  * SpecWeave planning root plan cards would read. When that root changes, the
  * change is refused until the user confirms it; changing back restores the
  * old reading, since links and increments are never rewritten here.
+ *
+ * Some folders are refused outright (ProjectFolderCheck.refusal): a file, a
+ * protected folder, a folder whose Git identity could not be read (keeping
+ * threads in place depends on it) and a folder the project's approved folders
+ * clash with. The change binds kept threads before it moves the root and undoes
+ * those binds if anything after them fails, so a refused change leaves every
+ * thread where it was.
  */
 import {
   CommandId,
@@ -22,7 +29,7 @@ import {
   type ProjectFolderCheck,
   type ProjectId,
   type RuntimeRequestId,
-  type ThreadId,
+  ThreadId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -33,6 +40,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -42,6 +50,10 @@ import {
 } from "../provider/Drivers/ClaudeTranscriptTransfer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { planningImpact, readFolderLayout } from "./FolderLayout.ts";
+import {
+  exposesProtectedRealPath,
+  normalizeProjectEnvironment,
+} from "./ProjectEnvironmentPaths.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -86,7 +98,53 @@ export class ProjectFolderService extends Context.Service<
 function relativeWithin(path: Path.Path, root: string, candidate: string): string | null {
   const relative = path.relative(root, candidate);
   if (relative === "") return "";
-  return relative.startsWith("..") || path.isAbsolute(relative) ? null : relative;
+  // `..cache` is a child named like that, not a step up.
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+    ? null
+    : relative;
+}
+
+/** `child` is below `parent`, not `parent` itself. */
+function strictlyInside(path: Path.Path, parent: string, child: string): boolean {
+  const relative = relativeWithin(path, parent, child);
+  return relative !== null && relative !== "";
+}
+
+const PENDING_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/**
+ * True while a thread holds work the folder must not move under: what
+ * ProjectService.threadHasActiveWork counts, plus a queued or waiting run and
+ * messages held in its queue. The run that asked for this change through
+ * `approvalRequestId` waits on the change itself, so its status does not count.
+ * Local on purpose: deleting and archiving keep the narrower rule.
+ */
+export function threadBlocksFolderChange(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus" | "heldQueuedCount"
+  >,
+  approvalRequestId?: RuntimeRequestId,
+): boolean {
+  if (ProjectService.threadHasActiveWork(thread, approvalRequestId)) return true;
+  if ((thread.heldQueuedCount ?? 0) > 0) return true;
+  const asking =
+    approvalRequestId !== undefined && thread.pendingRuntimeRequest?.id === approvalRequestId;
+  if (asking) return thread.status === "queued";
+  return (
+    (thread.status !== undefined && PENDING_RUN_STATUSES.has(thread.status)) ||
+    (thread.activityRunStatus ?? null) !== null
+  );
+}
+
+function titles(shells: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "title">>): string {
+  return shells.map((thread) => `"${thread.title || "Untitled thread"}"`).join(", ");
 }
 
 function plural(count: number, noun: string): string {
@@ -120,6 +178,8 @@ export function folderChangeRefusal(
   confirmDifferentRepository: boolean,
   confirmPlanningImpact = false,
 ): Pick<ProjectService.ProjectFolderChangeError, "reason" | "detail"> | null {
+  if (check.refusal !== undefined)
+    return { reason: check.refusal.reason, detail: check.refusal.detail };
   if (!check.targetExists)
     return {
       reason: "folder_missing",
@@ -135,7 +195,7 @@ export function folderChangeRefusal(
   if (check.activeThreads.length > 0)
     return {
       reason: "active_work",
-      detail: `Stop the running work first: ${check.activeThreads.map((thread) => `"${thread.title}"`).join(", ")}. The folder can change once nothing is queued, running or waiting for an answer.`,
+      detail: `Stop the running work first: ${titles(check.activeThreads)}. The folder can change once nothing is queued, running or waiting for an answer.`,
     };
   if (!check.sameRepository && !confirmDifferentRepository)
     return {
@@ -162,6 +222,17 @@ export const make = Effect.gen(function* () {
   const sessions = yield* Effect.serviceOption(ProviderSessionManager.ProviderSessionManagerV2);
   const adapters = yield* Effect.serviceOption(ProviderAdapterRegistry.ProviderAdapterRegistryV2);
   const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+  // Lists every project, deleted ones too, for the nested-project report. The
+  // server provides the store from outside like SQLite; without it, one is made
+  // on that client, and without either the report is left out.
+  const providedStore = yield* Effect.serviceOption(ProjectStore.ProjectStoreV2);
+  const store = Option.isSome(providedStore)
+    ? providedStore
+    : Option.isSome(sql)
+      ? Option.some(
+          yield* ProjectStore.make.pipe(Effect.provideService(SqlClient.SqlClient, sql.value)),
+        )
+      : Option.none<ProjectStore.ProjectStoreV2["Service"]>();
 
   const checkFailure = (message: string) => new ProjectFolderCheckError({ message });
 
@@ -171,11 +242,93 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
+  /**
+   * The folder's repository key, or null when it has no repository or no remote.
+   * `error` is set when git failed to answer, which is not the same as no remote:
+   * keeping threads in place depends on the answer.
+   */
   const repositoryOf = (folder: string) =>
-    identities.resolve(folder, { refresh: true }).pipe(
-      Effect.map((identity) => identity?.canonicalKey ?? null),
-      Effect.orElseSucceed(() => null),
-    );
+    Effect.gen(function* () {
+      if (!(yield* isDirectory(folder))) return { key: null, error: null };
+      const strict = identities.resolveStrict;
+      if (strict === undefined)
+        return {
+          key: (yield* identities.resolve(folder, { refresh: true }))?.canonicalKey ?? null,
+          error: null,
+        };
+      return yield* strict(folder).pipe(
+        Effect.map((identity) => ({ key: identity?.canonicalKey ?? null, error: null })),
+        Effect.catch((error) => Effect.succeed({ key: null, error: error.detail })),
+      );
+    }) as Effect.Effect<{ readonly key: string | null; readonly error: string | null }>;
+
+  /**
+   * Why the project's approved folders and repositories would be invalid with
+   * `root` as the main folder, by the validation ProjectService.update runs on a
+   * folder change; null when they are valid or there are none.
+   */
+  const environmentProblem = (project: Project, root: string, realRoot: string) =>
+    Effect.gen(function* () {
+      const environment = project.workspaceSettings?.environment;
+      if (
+        environment === undefined ||
+        (environment.additionalFolders.length === 0 && environment.repositories.length === 0)
+      )
+        return null;
+      const valid = yield* normalizeProjectEnvironment(project.id, realRoot, environment).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (valid) return null;
+      for (const folder of environment.additionalFolders) {
+        const real = yield* fs.realPath(folder).pipe(Effect.orElseSucceed(() => folder));
+        if (real === realRoot)
+          return `${root} is already one of the project's approved extra folders. Remove it from the approved folders first, then choose it again.`;
+      }
+      return `The project's approved folders and repositories do not all work with ${root} as the main folder. Check them in project settings, then choose the folder again.`;
+    });
+
+  /** Other projects, deleted ones too, whose folders sit inside `roots` or hold them. */
+  const nestedProjectsOf = (projectId: ProjectId, roots: ReadonlyArray<string>) =>
+    Option.isNone(store)
+      ? Effect.succeed(null)
+      : store.value.list({ includeDeleted: true }).pipe(
+          Effect.map((rows) =>
+            rows.flatMap((row) => {
+              if (row.projectId === projectId) return [];
+              // An active owner of the folder itself is the conflicting project; a
+              // deleted one is listed, since its history does not come back.
+              const relation =
+                row.deletedAt !== null &&
+                roots.some((root) => relativeWithin(path, root, row.workspaceRoot) === "")
+                  ? ("same" as const)
+                  : roots.some((root) => strictlyInside(path, root, row.workspaceRoot))
+                    ? ("inside" as const)
+                    : roots.some((root) => strictlyInside(path, row.workspaceRoot, root))
+                      ? ("contains" as const)
+                      : null;
+              return relation === null
+                ? []
+                : [
+                    {
+                      id: row.projectId,
+                      title: row.title,
+                      workspaceRoot: row.workspaceRoot,
+                      relation,
+                      deleted: row.deletedAt !== null,
+                    },
+                  ];
+            }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("project.folder.nested-projects-unreadable", {
+              projectId,
+              cause,
+            }).pipe(Effect.as(null)),
+          ),
+        );
 
   /**
    * Manual increment links of threads that read the project's planning root
@@ -254,16 +407,20 @@ export const make = Effect.gen(function* () {
       ? Effect.succeed(false)
       : isDirectory(currentRoot);
 
-  /** Threads that run in the project folder itself, except the project's coordinator. */
+  /**
+   * Threads that run in the project folder itself, except the project's
+   * coordinator. A project that never bound one still has the default
+   * coordinator id ProjectCoordinatorService starts it under.
+   */
   const rootThreads = (
     shells: ReadonlyArray<OrchestrationV2ThreadShell>,
-    project: Pick<Project, "workspaceSettings">,
-  ) =>
-    shells.filter(
-      (thread) =>
-        thread.worktreePath === null &&
-        thread.id !== project.workspaceSettings?.coordinatorThreadId,
-    );
+    project: Pick<Project, "id" | "workspaceSettings">,
+  ) => {
+    const coordinator =
+      project.workspaceSettings?.coordinatorThreadId ??
+      ThreadId.make(`project-coordinator:${project.id}`);
+    return shells.filter((thread) => thread.worktreePath === null && thread.id !== coordinator);
+  };
 
   /** Layout and planning impact; both are on-demand reads of the two folders only. */
   const folderDetails = (
@@ -298,45 +455,86 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
+      // `exists` is true only for a directory. A file at the path is not a folder
+      // the project can use: it reads as missing, and `refusal` says it is a file.
       const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.workspaceRoot).pipe(
-        Effect.map((root) => ({ root, exists: true })),
+        Effect.map((root) => ({ root, exists: true, file: false })),
         Effect.catchTags({
           WorkspaceRootNotExistsError: (error) =>
-            Effect.succeed({ root: error.normalizedWorkspaceRoot, exists: false }),
+            Effect.succeed({ root: error.normalizedWorkspaceRoot, exists: false, file: false }),
           WorkspaceRootNotDirectoryError: (error) =>
-            Effect.succeed({ root: error.normalizedWorkspaceRoot, exists: false }),
+            Effect.succeed({ root: error.normalizedWorkspaceRoot, exists: false, file: true }),
         }),
         Effect.mapError(() => checkFailure(`${input.workspaceRoot} could not be read.`)),
       );
       const currentRoot = project.workspaceRoot;
       const realPath = (folder: string) =>
         fs.realPath(folder).pipe(Effect.orElseSucceed(() => folder));
+      const realTarget = normalized.exists ? yield* realPath(normalized.root) : normalized.root;
       const unchanged =
         normalized.root === currentRoot ||
-        (normalized.exists &&
-          (yield* realPath(normalized.root)) === (yield* realPath(currentRoot)));
+        (normalized.exists && realTarget === (yield* realPath(currentRoot)));
+      let refusal: ProjectFolderCheck["refusal"] = normalized.file
+        ? {
+            reason: "folder_not_directory",
+            detail: `${normalized.root} is a file, not a folder. Choose the folder that holds the project.`,
+          }
+        : normalized.exists && !unchanged && (yield* exposesProtectedRealPath(realTarget, path))
+          ? {
+              reason: "folder_protected",
+              detail: `${normalized.root} is a protected folder: the home folder, the filesystem root, or a folder that holds them or holds credentials or app data. Choose the project's own folder.`,
+            }
+          : undefined;
+      // Only a folder the project may use is read further.
+      const usable = normalized.exists && refusal === undefined;
       const shells = yield* projectThreads(project.id);
-      const owner = unchanged
-        ? Option.none<Project>()
-        : yield* projects
-            .getByWorkspaceRoot(normalized.root)
-            .pipe(Effect.orElseSucceed(() => Option.none<Project>()));
+      const owner =
+        unchanged || !usable
+          ? Option.none<Project>()
+          : yield* projects
+              .getByWorkspaceRoot(normalized.root)
+              .pipe(Effect.orElseSucceed(() => Option.none<Project>()));
       const conflictingProject =
         Option.isSome(owner) && owner.value.id !== project.id ? owner.value : null;
       const conflictThreads =
         conflictingProject === null ? 0 : (yield* projectThreads(conflictingProject.id)).length;
-      const [currentRepository, targetRepository] = yield* Effect.all([
+      const [current, target] = yield* Effect.all([
         repositoryOf(currentRoot),
-        normalized.exists ? repositoryOf(normalized.root) : Effect.succeed(null),
+        usable ? repositoryOf(normalized.root) : Effect.succeed({ key: null, error: null }),
       ]);
+      const currentRepository = current.key;
+      const targetRepository = target.key;
+      if (refusal === undefined && !unchanged) {
+        const unreadable =
+          current.error !== null
+            ? { folder: currentRoot, error: current.error }
+            : target.error !== null
+              ? { folder: normalized.root, error: target.error }
+              : null;
+        if (unreadable !== null)
+          refusal = {
+            reason: "repository_unreadable",
+            detail: `Git could not read the repository of ${unreadable.folder} (${unreadable.error}), so the app cannot tell which threads should stay there. Fix the repository or try again.`,
+          };
+      }
+      if (refusal === undefined && usable && !unchanged) {
+        const problem = yield* environmentProblem(project, normalized.root, realTarget);
+        if (problem !== null) refusal = { reason: "environment_invalid", detail: problem };
+      }
+      const proceeds = usable && refusal === undefined;
       const keep =
-        normalized.exists &&
+        proceeds &&
         !unchanged &&
         (yield* keepsThreadsInPlace(currentRoot, currentRepository, targetRepository));
       const rebound =
-        normalized.exists && !keep
-          ? yield* reboundWorktrees(shells, currentRoot, normalized.root)
-          : [];
+        proceeds && !keep ? yield* reboundWorktrees(shells, currentRoot, normalized.root) : [];
+      const nestedProjects =
+        normalized.exists && refusal?.reason !== "folder_protected" && !unchanged
+          ? yield* nestedProjectsOf(
+              project.id,
+              realTarget === normalized.root ? [normalized.root] : [normalized.root, realTarget],
+            )
+          : null;
       return {
         projectId: project.id,
         currentRoot,
@@ -357,14 +555,18 @@ export const make = Effect.gen(function* () {
                 archived: conflictingProject.workspaceSettings?.archived ?? false,
               },
         activeThreads: shells
-          .filter((thread) => ProjectService.threadHasActiveWork(thread, input.approvalRequestId))
+          .filter((thread) => threadBlocksFolderChange(thread, input.approvalRequestId))
           .map((thread) => ({ id: thread.id, title: thread.title || "Untitled thread" })),
         threadCount: shells.length,
         reboundWorktreeCount: rebound.length,
         keptInPlaceCount: keep ? rootThreads(shells, project).length : 0,
         specweaveWorkspace:
-          normalized.exists && (yield* isDirectory(path.join(normalized.root, ".specweave"))),
-        ...(yield* folderDetails(project.id, currentRoot, normalized, unchanged, shells)),
+          usable && (yield* isDirectory(path.join(normalized.root, ".specweave"))),
+        ...(refusal === undefined ? {} : { refusal }),
+        ...(nestedProjects === null ? {} : { nestedProjects }),
+        ...(usable
+          ? yield* folderDetails(project.id, currentRoot, normalized, unchanged, shells)
+          : {}),
       } satisfies ProjectFolderCheck;
     },
   );
@@ -462,11 +664,36 @@ export const make = Effect.gen(function* () {
       checked.targetRepository,
     );
     const kept = keep && current !== null ? rootThreads(shells, current) : [];
+    const keptIds = new Set<string>(kept.map((thread) => thread.id));
     const rebound = keep ? [] : yield* reboundWorktrees(shells, previousRoot, checked.targetRoot);
     // Bind them before the root moves, so none of them starts a turn in the new
-    // folder. Any failure stops here: the project keeps its folder, and a thread
-    // already bound still runs exactly where it did.
-    for (const thread of kept)
+    // folder. Any failure after a bind undoes the binds made so far: the project
+    // keeps its folder, and every thread runs exactly where it did.
+    const bound: Array<OrchestrationV2ThreadShell> = [];
+    const undoKeeps = Effect.suspend(() =>
+      Effect.forEach(
+        [...bound],
+        (thread) =>
+          threads
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${input.commandId}:unkeep:${thread.id}`),
+              threadId: thread.id,
+              worktreePath: null,
+              expectedWorktreePath: previousRoot,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("project.folder.keep-undo-failed", {
+                  threadId: thread.id,
+                  cause,
+                }),
+              ),
+            ),
+        { discard: true },
+      ),
+    );
+    for (const thread of kept) {
       yield* threads
         .dispatch({
           type: "thread.metadata.update",
@@ -476,20 +703,67 @@ export const make = Effect.gen(function* () {
           expectedWorktreePath: null,
         })
         .pipe(
+          Effect.onError(() => undoKeeps),
           Effect.mapError(() =>
             checkFailure(
               `"${thread.title || "Untitled thread"}" could not stay in ${previousRoot}, so the folder did not change. Try again.`,
             ),
           ),
         );
-    const project = yield* projects.update({
-      commandId: input.commandId,
-      projectId: input.projectId,
-      workspaceRoot: checked.targetRoot,
-      ...(input.approvalRequestId === undefined
-        ? {}
-        : { approvalRequestId: input.approvalRequestId }),
-    });
+      bound.push(thread);
+    }
+    // The check ran before the binds: a thread created or started since then
+    // would move with the root or have it moved from under its work.
+    const latest = yield* projectThreads(input.projectId).pipe(Effect.onError(() => undoKeeps));
+    const busy = latest.filter((thread) =>
+      threadBlocksFolderChange(thread, input.approvalRequestId),
+    );
+    const appeared =
+      keep && current !== null
+        ? rootThreads(latest, current).filter((thread) => !keptIds.has(thread.id))
+        : [];
+    if (busy.length > 0 || appeared.length > 0) {
+      yield* undoKeeps;
+      return yield* new ProjectService.ProjectFolderChangeError({
+        projectId: input.projectId,
+        reason: "changed_meanwhile",
+        detail:
+          busy.length > 0
+            ? `${titles(busy)} started work while the folder was changing, so the folder did not change. Try again once nothing is queued, running or waiting for an answer.`
+            : `${titles(appeared)} ${appeared.length === 1 ? "was" : "were"} created while the folder was changing, so the folder did not change. Check the folder again to include ${appeared.length === 1 ? "it" : "them"}.`,
+      });
+    }
+    const project = yield* projects
+      .update({
+        commandId: input.commandId,
+        projectId: input.projectId,
+        workspaceRoot: checked.targetRoot,
+        ...(input.approvalRequestId === undefined
+          ? {}
+          : { approvalRequestId: input.approvalRequestId }),
+      })
+      .pipe(
+        // The update can fail or be interrupted after its commit landed (a read
+        // after the commit). Undo only while the project still has its old root,
+        // so kept threads never lose their binding to a folder that did move.
+        Effect.onError(() =>
+          projects.getById(input.projectId).pipe(
+            Effect.map(Option.getOrNull),
+            Effect.orElseSucceed(() => null),
+            Effect.flatMap((latestProject) =>
+              latestProject !== null && latestProject.workspaceRoot === previousRoot
+                ? undoKeeps
+                : Effect.logWarning("project.folder.keep-undo-skipped", {
+                    projectId: input.projectId,
+                    root: latestProject?.workspaceRoot ?? null,
+                  }),
+            ),
+          ),
+        ),
+      );
+    // A thread whose rebind failed still runs in its old checkout: its session
+    // stays where it is.
+    const reboundIds = new Map<string, string>();
     for (const move of rebound)
       yield* threads
         .dispatch({
@@ -500,6 +774,9 @@ export const make = Effect.gen(function* () {
           expectedWorktreePath: move.from,
         })
         .pipe(
+          Effect.map(() => {
+            reboundIds.set(move.threadId, move.to);
+          }),
           Effect.catchCause((cause) =>
             Effect.logWarning("project.folder.worktree-rebind-failed", {
               threadId: move.threadId,
@@ -507,8 +784,6 @@ export const make = Effect.gen(function* () {
             }),
           ),
         );
-    const reboundIds = new Map(rebound.map((move) => [move.threadId, move.to]));
-    const keptIds = new Set<string>(kept.map((thread) => thread.id));
     const relocatedSessions = yield* relocateSessions(
       shells.flatMap((thread) => {
         if (keptIds.has(thread.id)) return [];
@@ -522,14 +797,15 @@ export const make = Effect.gen(function* () {
       projectId: input.projectId,
       from: previousRoot,
       to: project.workspaceRoot,
-      reboundWorktrees: rebound.length,
+      reboundWorktrees: reboundIds.size,
+      failedRebinds: rebound.length - reboundIds.size,
       keptInPlace: kept.length,
       relocatedSessions,
     });
     return {
       project,
       previousRoot,
-      reboundWorktrees: rebound.length,
+      reboundWorktrees: reboundIds.size,
       keptInPlace: kept.length,
       relocatedSessions,
     };

@@ -39,11 +39,7 @@ process.env.PLAYWRIGHT_HTML_OPEN = "never";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const output = resolve(
-  process.argv[2] ??
-    join(
-      homedir(),
-      "Projects/github/studio-research-notes/design-workspace-2026-10-20/design-systems/live",
-    ),
+  process.argv[2] ?? join(homedir(), ".specwithcode/m4/evidence/design-systems/live"),
 );
 mkdirSync(output, { recursive: true });
 rmSync(join(output, "failure.png"), { force: true });

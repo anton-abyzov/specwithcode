@@ -110,6 +110,8 @@ export const harness = (
       /** Posts that never return, as when the app quits mid-post; counted as they start. */
       hangSends: false,
       hungSends: 0,
+      /** How a command routine's check exits. */
+      checkExit: 0,
     };
     const threadRow = (threadId: string, instanceId: string) =>
       sql`INSERT OR IGNORE INTO orchestration_v2_projection_threads ${sql.insert({
@@ -175,7 +177,19 @@ export const harness = (
                 }),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
-      Layer.mock(ProcessRunner.ProcessRunner)({}),
+      Layer.mock(ProcessRunner.ProcessRunner)({
+        run: () =>
+          Effect.sync(() => ({
+            stdout: "synthetic check",
+            stderr: "",
+            code: state.checkExit as never,
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          })),
+      }),
       Layer.mock(ProjectCoordinator.ProjectCoordinatorService)({
         start: () =>
           Effect.sync(() => {

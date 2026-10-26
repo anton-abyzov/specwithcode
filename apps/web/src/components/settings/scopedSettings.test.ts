@@ -328,7 +328,7 @@ describe("scoped settings writes", () => {
             rules: {
               worktreeAfterDays: 30,
               worktreeOnDelete: true,
-              worktreeOnMerge: false,
+              worktreeOnMerge: true,
               worktreeUnchanged: false,
             },
           },

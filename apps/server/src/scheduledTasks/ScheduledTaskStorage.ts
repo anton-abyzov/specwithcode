@@ -164,6 +164,12 @@ const ScheduledTaskRunPolicy = Schema.Struct({
    * changes, so each arming fires under its own key (see scheduledFireKey).
    */
   onceGeneration: Schema.optional(Schema.Int),
+  /**
+   * When the run of a one-shot the host turned off succeeded: a one-time
+   * task, or a stopAfterPass watch. Turning it back on or saving it clears
+   * this; see ScheduledTaskExpiry.
+   */
+  finishedAt: Schema.optional(Schema.String),
 });
 const decodeRunPolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskRunPolicy));
 const decodeRunPolicyJson = (json: string | null) =>

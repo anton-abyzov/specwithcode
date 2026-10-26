@@ -449,6 +449,7 @@ function ProjectDetail({
       if (checkProjectAccess(members, "Failed to remove project")) return;
 
       const draftStore = useComposerDraftStore.getState();
+      let removed = 0;
       for (const member of members) {
         if (checkProjectAccess([member], "Failed to remove project")) return;
         const memberThreads = projectThreads.filter(
@@ -467,9 +468,16 @@ function ProjectDetail({
           () => undefined,
         );
         if (result._tag === "Failure") {
-          reportFailure(`Failed to remove "${member.title}"`, result);
+          // The server limits how many projects go per minute, so say how far it got.
+          reportFailure(
+            removed === 0
+              ? `Failed to remove "${member.title}"`
+              : `Removed ${removed} of ${members.length}. Failed to remove "${member.title}"`,
+            result,
+          );
           return;
         }
+        removed += 1;
         const projectRef = scopeProjectRef(member.environmentId, member.id);
         releaseProjectDraftUploads(
           projectRef,

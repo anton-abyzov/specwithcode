@@ -174,10 +174,14 @@ public struct ProjectMember: Identifiable, Hashable, Sendable {
   /// can move here. A copy that is only the same folder is listed in the
   /// same row but is not linked.
   public var isLinked: Bool
+  /// The copy's folder on its machine, normalized; tells apart several
+  /// checkouts of one repository on the same machine.
+  public var folder: String?
 
-  public init(ref: ProjectRef, machineLabel: String, machineOnline: Bool, lastSeenAt: Date? = nil, isCoordinator: Bool = false, isLinked: Bool = true) {
+  public init(ref: ProjectRef, machineLabel: String, machineOnline: Bool, lastSeenAt: Date? = nil, isCoordinator: Bool = false, isLinked: Bool = true, folder: String? = nil) {
     self.ref = ref
     self.isLinked = isLinked
+    self.folder = folder
     self.machineLabel = machineLabel
     self.machineOnline = machineOnline
     self.lastSeenAt = lastSeenAt

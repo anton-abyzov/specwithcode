@@ -334,6 +334,18 @@ public struct RepositoryIdentity: Codable, Hashable, Sendable {
     public var remoteUrl: String
   }
 
+  /// The checkout's own `origin` remote, sent when it names a different
+  /// repository than `canonicalKey` (which follows `upstream`), as for a fork.
+  public struct Origin: Codable, Hashable, Sendable {
+    public var canonicalKey: String
+    public var displayName: String?
+
+    public init(canonicalKey: String, displayName: String? = nil) {
+      self.canonicalKey = canonicalKey
+      self.displayName = displayName
+    }
+  }
+
   public var canonicalKey: String
   public var locator: Locator?
   public var webUrl: String?
@@ -342,6 +354,16 @@ public struct RepositoryIdentity: Codable, Hashable, Sendable {
   public var provider: String?
   public var owner: String?
   public var name: String?
+  public var origin: Origin?
+
+  /// The key clients group checkouts by, as `repositoryGroupingKeyOf` in contracts:
+  /// the checkout's own remote, so a fork stays apart from the repository it forked.
+  public var groupingKey: String { origin?.canonicalKey ?? canonicalKey }
+
+  /// The repository's label, matching `groupingKey` (`repositoryGroupingDisplayNameOf`).
+  public var groupingDisplayName: String? {
+    origin.map { $0.displayName ?? $0.canonicalKey } ?? displayName
+  }
 
   public init(canonicalKey: String, displayName: String? = nil, owner: String? = nil, name: String? = nil, webUrl: String? = nil) {
     self.canonicalKey = canonicalKey

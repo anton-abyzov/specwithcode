@@ -174,16 +174,28 @@ public enum ShellSummaries {
 
   // MARK: - One row per project
 
-  /// The keys that show two project records are the same project: an explicit
-  /// logical project, or the exact same folder on the same machine.
-  /// Separate checkouts or worktrees of the same repository never merge
-  /// solely because remotes match. Names never decide.
+  /// The keys that show two project records are the same project, as the
+  /// desktop sidebar's default "repository" grouping (`deriveLogicalProjectKey`)
+  /// decides: a linked project's id, otherwise its repository grouping key,
+  /// otherwise its folder on its machine. The same folder registered twice also
+  /// matches. Names never decide. Only the row merges: every record stays a
+  /// member the switcher can open. Unlike the desktop, a check's copies group
+  /// apart from the person's own (see `sameProjectGroups`), and the desktop's
+  /// per-device grouping setting is not visible to the phone.
   static func sameProjectKeys(_ project: ProjectShell, environmentId: String) -> [String] {
     var keys: [String] = []
-    if let logical = project.workspaceSettings?.logicalProject { keys.append("logical:\(logical.id)") }
-    let root = ProjectPinning.normalizePath(project.workspaceRoot)
-    if !root.isEmpty { keys.append("folder:\(environmentId):\(root)") }
+    if let logical = project.workspaceSettings?.logicalProject {
+      keys.append("logical:\(logical.id)")
+    } else if let repository = project.repositoryIdentity?.groupingKey, !repository.isEmpty {
+      keys.append("repo:\(repository)")
+    }
+    if let folder = folderKey(project, environmentId: environmentId) { keys.append(folder) }
     return keys
+  }
+
+  static func folderKey(_ project: ProjectShell, environmentId: String) -> String? {
+    let root = ProjectPinning.normalizePath(project.workspaceRoot)
+    return root.isEmpty ? nil : "folder:\(environmentId):\(root)"
   }
 
   /// Groups records of the same project, from one machine or several, so the
@@ -200,10 +212,20 @@ public enum ShellSummaries {
       }
       return index
     }
+    // A second registration of a linked copy's folder joins the linked row
+    // only; it does not also pull in the repository's unlinked checkouts, as
+    // the desktop keeps linked projects apart from repository groups.
+    let linkedFolders = Set(copies.compactMap { copy in
+      copy.project.workspaceSettings?.logicalProject == nil ? nil : folderKey(copy.project, environmentId: copy.summary.ref.environmentId)
+    })
     var owner: [String: Int] = [:]
     for (index, copy) in copies.enumerated() {
       let side = copy.summary.isAutomated ? "automated" : "user"
-      for key in sameProjectKeys(copy.project, environmentId: copy.summary.ref.environmentId) {
+      var keys = sameProjectKeys(copy.project, environmentId: copy.summary.ref.environmentId)
+      if let folder = folderKey(copy.project, environmentId: copy.summary.ref.environmentId), linkedFolders.contains(folder) {
+        keys.removeAll { $0.hasPrefix("repo:") }
+      }
+      for key in keys {
         // Linked copies are one project whoever made them; a shared
         // folder merges only copies on the same side.
         let scoped = key.hasPrefix("logical:") ? key : "\(side)|\(key)"
@@ -248,24 +270,55 @@ public enum ShellSummaries {
     let coordinator = activeCoordinator(linkedCopies)
     // Without an active coordinator, the reachable linked copy worked in most
     // recently; an unlinked same-folder copy leads only a row with no linked copies.
+    // An archived copy leads only when every copy is archived, as the desktop
+    // hides a group only then.
+    let live = copies.filter { !$0.summary.archived }
+    let candidates = (linkedCopies.isEmpty ? copies : linkedCopies).filter { live.isEmpty || !$0.summary.archived }
     let latest = { (copy: LinkedCopy) in copy.threads.map(\.updatedAt).max() ?? .distantPast }
-    let online = (linkedCopies.isEmpty ? copies : linkedCopies).filter { $0.summary.machineOnline }
+    let online = candidates.filter { $0.summary.machineOnline }
     let busiest = online.max { latest($0) < latest($1) }
-    let primary = coordinator ?? busiest ?? linkedCopies.first ?? copies[0]
+    let primary = coordinator ?? busiest ?? candidates.first ?? live.first ?? copies[0]
     let members = ([primary] + copies.filter { $0.summary.ref != primary.summary.ref }).map { copy in
-      ProjectMember(ref: copy.summary.ref, machineLabel: copy.summary.machineLabel, machineOnline: copy.summary.machineOnline, lastSeenAt: copy.lastSeenAt, isCoordinator: copy.summary.ref == coordinator?.summary.ref, isLinked: logicalId != nil && copy.project.workspaceSettings?.logicalProject?.id == logicalId)
+      ProjectMember(ref: copy.summary.ref, machineLabel: copy.summary.machineLabel, machineOnline: copy.summary.machineOnline, lastSeenAt: copy.lastSeenAt, isCoordinator: copy.summary.ref == coordinator?.summary.ref, isLinked: logicalId != nil && copy.project.workspaceSettings?.logicalProject?.id == logicalId, folder: ProjectPinning.normalizePath(copy.project.workspaceRoot))
     }
     let threads = sortThreads(copies.flatMap(\.threads))
     var summary = primary.summary
+    summary.title = groupLabel(copies, primary: primary, logicalId: logicalId)
     summary.members = members
     summary.isPinned = copies.contains { $0.summary.isPinned }
-    // Scratch and deleted records were excluded before grouping.
-    summary.archived = copies.allSatisfy { $0.summary.archived }
+    summary.archived = live.isEmpty
     // Automated only when no machine holds it as the person's own.
     summary.isAutomated = copies.allSatisfy { $0.summary.isAutomated }
     summary.workingCount = copies.reduce(0) { $0 + $1.summary.workingCount }
     summary.hasUnread = copies.contains { $0.summary.hasUnread }
     return (summary, threads)
+  }
+
+  /// The row's name, as the desktop's `deriveProjectGroupLabel`: a linked
+  /// project's title; else the one title every copy shares; else the one
+  /// title someone typed; else the repository's name; else the leading copy's.
+  static func groupLabel(_ copies: [LinkedCopy], primary: LinkedCopy, logicalId: String?) -> String {
+    func unique(_ values: [String?]) -> [String] {
+      var seen = Set<String>()
+      return values.compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+    if let logicalId, let title = copies.lazy.compactMap({ $0.project.workspaceSettings?.logicalProject }).first(where: { $0.id == logicalId })?.title, !title.isEmpty {
+      return title
+    }
+    let titles = unique(copies.map(\.project.title))
+    let displayNames = unique(copies.map { $0.project.repositoryIdentity?.groupingDisplayName })
+    let repositoryNames = unique(copies.map { $0.project.repositoryIdentity?.name })
+    let automatic = Set(displayNames + repositoryNames)
+    if titles.count == 1, !automatic.contains(titles[0]) { return titles[0] }
+    let custom = unique(copies.map { copy in
+      let title = copy.project.title.trimmingCharacters(in: .whitespaces)
+      let folder = ProjectPinning.normalizePath(copy.project.workspaceRoot).split(separator: "/").last.map(String.init) ?? "project"
+      return automatic.contains(title) || title == folder ? nil : title
+    })
+    if custom.count == 1 { return custom[0] }
+    if displayNames.count == 1 { return displayNames[0] }
+    if repositoryNames.count == 1 { return repositoryNames[0] }
+    return primary.project.title
   }
 
   static func activeCoordinator(_ copies: [LinkedCopy]) -> LinkedCopy? {
@@ -416,6 +469,7 @@ public enum ProjectPinning {
     if let identity = project.repositoryIdentity {
       let canonical = identity.canonicalKey
       keys.append(canonical)
+      if identity.groupingKey != canonical { keys.append(identity.groupingKey) }
       if let rootPath = identity.rootPath.map(normalizePath), !rootPath.isEmpty, !root.isEmpty {
         let separator = rootPath.contains("\\") ? "\\" : "/"
         if root != rootPath, root.hasPrefix(rootPath + separator) {

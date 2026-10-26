@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProviderTurnId,
   type RunId,
+  SERVICE_UPDATE_STOP_REASON,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -28,8 +30,10 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import { resumeAfterHoldReleases } from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Cleanup from "../serviceUpdate/ServiceUpdateCleanup.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as ClosedQuestions from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import * as ReopenQuestions from "../serviceUpdate/ServiceUpdateReopenQuestions.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -329,6 +333,44 @@ const interruptRun = (
 // (TestClock replaces Clock here, so the wall clock is read from performance.)
 const recentTime = Math.floor(performance.timeOrigin + performance.now()) - 60_000;
 
+/**
+ * An update's drain on a running thread: it cancels the queued message, then
+ * interrupts the turn. With `personStop`, the person presses Stop after it.
+ */
+const drainedThread = (name: string, personStop: boolean) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = yield* startedThread(name);
+    const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+    const queuedId = yield* queueMessage(name, threadId, "Behind the turn.");
+    yield* orchestrator.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make(`${name}:cancel`),
+      threadId,
+      runId: queuedId,
+      cause: "service_update",
+    });
+    yield* interruptRun(name, threadId, first, "service_update");
+    if (personStop)
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make(`${name}:person-stop`),
+        threadId,
+      });
+    return { threadId, queuedId };
+  });
+
+/** The requeue effects recovery wrote for a thread. */
+const requeueEffects = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly effect_id: string }>`
+      SELECT effect_id FROM orchestration_v2_effect_outbox
+      WHERE thread_id = ${threadId} AND effect_id LIKE 'effect:update-requeue:%'
+    `;
+    return rows.map((row) => row.effect_id);
+  });
+
 const continueAll = Effect.gen(function* () {
   const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -475,6 +517,92 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
         (yield* orchestrator.getThreadProjection(stoppedThread)).runs.map((run) => run.status),
         ["interrupted"],
       );
+    }),
+  );
+
+  // A hold that ends while the service keeps running (Cancel update, its time
+  // limit, an agent pass that installed nothing) has no restart behind it, so
+  // startup never continued the turns its drain stopped.
+  it.effect("continues a turn an update stopped when its hold ends without a restart", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const hold = yield* ServiceUpdateHold.makeWithOptions({
+        agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json",
+      }).pipe(Effect.provide(NodeServices.layer));
+      yield* resumeAfterHoldReleases({
+        releaseCount: hold.releaseCount,
+        updateUnderway: hold.isHeld,
+        installRequestOpen: Effect.succeed(false),
+        exclusive: (effect) => effect,
+        resumeAfterUpdate: recovery.resumeAfterUpdate,
+        pollMs: 1_000,
+      }).pipe(Effect.forkScoped);
+      yield* hold.acquire({ reason: "install" });
+      const stopped = yield* interruptedThread("hold-cancel", "service_update");
+      const userStop = yield* interruptedThread("hold-cancel-user", "user");
+      const effectOf = (runId: RunId) => outbox.get(`effect:restart-continuation:${runId}`);
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.withLive(Effect.sleep("100 millis"));
+      // Still held: nothing continues yet.
+      assert.isTrue(Option.isNone(yield* effectOf(stopped.runId)));
+      yield* hold.release("cancelled");
+      yield* TestClock.adjust("1 second");
+      // The forked pass reads SQLite; wait in real time for it to write.
+      let written = yield* effectOf(stopped.runId);
+      for (let look = 0; Option.isNone(written) && look < 100; look += 1) {
+        yield* TestClock.withLive(Effect.sleep("10 millis"));
+        written = yield* effectOf(stopped.runId);
+      }
+      assert.isTrue(Option.isSome(written));
+      assert.equal(Option.getOrThrow(written).status, "pending");
+      assert.deepEqual(Option.getOrThrow(written).request, {
+        type: "provider-runtime.continue",
+        sourceRunId: stopped.runId,
+      });
+      assert.isTrue(Option.isNone(yield* effectOf(userStop.runId)));
+      yield* continueRestartedRun({ threadId: stopped.threadId, sourceRunId: stopped.runId });
+      const after = yield* orchestrator.getThreadProjection(stopped.threadId);
+      assert.lengthOf(
+        after.messages.filter(
+          (message) => message.id === `message:update-continuation:${stopped.runId}`,
+        ),
+        1,
+      );
+      assert.equal(after.runs[1]!.restartContinuationOfRunId, stopped.runId);
+    }).pipe(Effect.scoped),
+  );
+
+  // The next update's drain cancels a continuation a hold release wrote before
+  // it ran. The turn is still stopped for an update, so the next pass (or the
+  // restart) continues it; a continuation cancelled by anyone else stays.
+  it.effect("continues again a turn whose continuation an update's drain cancelled", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const drained = yield* interruptedThread("drain-cancelled", "service_update");
+      const other = yield* interruptedThread("other-cancelled", "service_update");
+      yield* recovery.resumeAfterUpdate;
+      yield* outbox.cancelUnsettled({
+        threadId: drained.threadId,
+        effectTypes: ["provider-runtime.continue"],
+        reason: SERVICE_UPDATE_STOP_REASON,
+      });
+      yield* outbox.cancelUnsettled({
+        threadId: other.threadId,
+        effectTypes: ["provider-runtime.continue"],
+        reason: "Stopped by the user",
+      });
+      yield* recovery.resumeAfterUpdate;
+      const status = (runId: RunId) =>
+        Effect.map(outbox.get(`effect:restart-continuation:${runId}`), (effect) =>
+          Option.map(effect, (row) => [row.status, row.attemptCount] as const),
+        );
+      assert.deepEqual(yield* status(drained.runId), Option.some(["pending", 0] as const));
+      assert.deepEqual(yield* status(other.runId), Option.some(["cancelled", 0] as const));
     }),
   );
 
@@ -631,6 +759,182 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
       );
       assert.notEqual(after.runs[3]!.status, "queued");
     }),
+  );
+
+  // The drain cancels the queued message and interrupts the turn; a person's
+  // Stop then makes that interrupt theirs (#753). Their Stop is final, so
+  // neither a restart nor a hold that ends sends the message again.
+  it.effect("never requeues a drained message on a thread a person stopped, after a restart", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const name = "drained-then-stopped";
+      const { threadId } = yield* drainedThread(name, true);
+      yield* continueAll;
+      assert.deepEqual(yield* requeueEffects(threadId), []);
+      // Even a resume-queue effect written before the Stop sends nothing.
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:requeue`, releaseHeld: true });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        after.messages.filter((message) => message.id.startsWith("message:update-requeue:")),
+        [],
+      );
+      assert.lengthOf(after.runs, 2);
+    }),
+  );
+
+  // The Stop settles the drained message for good: a newer turn the person
+  // ran since does not bring it back at the next restart or hold end.
+  it.effect("never requeues a drained message after the person's Stop and a newer turn", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const name = "drained-stopped-then-later";
+      const { threadId, queuedId } = yield* drainedThread(name, true);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${name}:later`),
+        threadId,
+        messageId: MessageId.make(`${name}:later`),
+        text: "Do something else.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const later = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.userMessageId === `${name}:later`,
+      )!;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make(`${name}:later-done`),
+        events: [
+          {
+            id: EventId.make(`${name}:later-done`),
+            type: "run.updated",
+            threadId,
+            runId: later.id,
+            occurredAt: now,
+            payload: { ...later, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+      yield* continueAll;
+      assert.deepEqual(yield* requeueEffects(threadId), []);
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:requeue`, releaseHeld: true });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        after.messages.filter((message) => message.id.startsWith("message:update-requeue:")),
+        [],
+      );
+      const drained = after.runs.find((run) => run.id === queuedId)!;
+      assert.deepEqual([drained.status, drained.cancelledForUpdate], ["cancelled", undefined]);
+    }),
+  );
+
+  // A message the person queues after their Stop, while the stopped turn still
+  // runs, is theirs: the drain cancels it, and the restart queues it again once.
+  it.effect("requeues a message queued after the person's Stop, once and in order", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const name = "queued-after-stop";
+      const threadId = yield* startedThread(name);
+      const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+      const providerTurn = yield* markRunning(name, threadId, first);
+      // The person's Stop reaches the turn; its provider has not ended it yet.
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${name}:person-stop`),
+        threadId,
+        runId: first,
+        holdQueue: true,
+      });
+      const queuedId = yield* queueMessage(name, threadId, "After my Stop.");
+      // The update's drain: the queued message, then the turn.
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make(`${name}:cancel`),
+        threadId,
+        runId: queuedId,
+        cause: "service_update",
+      });
+      const running = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === first,
+      )!;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make(`${name}:interrupted`),
+        events: [
+          {
+            id: EventId.make(`${name}:run-interrupted`),
+            type: "run.updated",
+            threadId,
+            runId: first,
+            occurredAt: now,
+            payload: { ...running, status: "interrupted", completedAt: now },
+          },
+          {
+            id: EventId.make(`${name}:turn-interrupted`),
+            type: "provider-turn.updated",
+            threadId,
+            runId: first,
+            occurredAt: now,
+            payload: { ...providerTurn, status: "interrupted", completedAt: now },
+          },
+        ],
+      });
+      yield* continueAll;
+      assert.lengthOf(yield* requeueEffects(threadId), 1);
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:1`, releaseHeld: false });
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:2`, releaseHeld: false });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const textOf = (messageId: string) =>
+        after.messages.find((message) => message.id === messageId)?.text;
+      assert.deepEqual(
+        after.runs.map((run) => [run.status, textOf(run.userMessageId)]),
+        [
+          ["interrupted", "Start work."],
+          ["cancelled", "After my Stop."],
+          [after.runs[2]!.status, "After my Stop."],
+        ],
+      );
+      assert.equal(after.runs[2]!.userMessageId, `message:update-requeue:${queuedId}`);
+    }),
+  );
+
+  it.effect("never requeues a drained message on a thread a person stopped, after a hold", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const hold = yield* ServiceUpdateHold.makeWithOptions({
+        agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json",
+      }).pipe(Effect.provide(NodeServices.layer));
+      yield* resumeAfterHoldReleases({
+        releaseCount: hold.releaseCount,
+        updateUnderway: hold.isHeld,
+        installRequestOpen: Effect.succeed(false),
+        exclusive: (effect) => effect,
+        resumeAfterUpdate: recovery.resumeAfterUpdate,
+        pollMs: 1_000,
+      }).pipe(Effect.forkScoped);
+      yield* hold.acquire({ reason: "install" });
+      const stopped = yield* drainedThread("hold-drained-stopped", true);
+      // The same drain with no Stop after it: its message is queued again.
+      const updateOnly = yield* drainedThread("hold-drained-update", false);
+      yield* hold.release("cancelled");
+      yield* TestClock.adjust("1 second");
+      // The forked pass reads SQLite; wait in real time for it to write.
+      let written = yield* requeueEffects(updateOnly.threadId);
+      for (let look = 0; written.length === 0 && look < 100; look += 1) {
+        yield* TestClock.withLive(Effect.sleep("10 millis"));
+        written = yield* requeueEffects(updateOnly.threadId);
+      }
+      assert.lengthOf(written, 1);
+      assert.deepEqual(yield* requeueEffects(stopped.threadId), []);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("holds the queue for the person when they stop the turn", () =>

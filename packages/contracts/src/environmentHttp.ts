@@ -102,7 +102,13 @@ import {
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
 } from "./orchestrationV2.ts";
-import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
+import {
+  Project,
+  ProjectFolderCheck,
+  ProjectFolderCheckInput,
+  ProjectMutation,
+  ProjectSnapshot,
+} from "./project.ts";
 import {
   PullRequestDiffInput,
   PullRequestDiffResult,
@@ -142,6 +148,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "project_settings_conflict",
   "project_confirmation_required",
   "project_active_work",
+  "project_delete_rate_limited",
   "project_environment_active",
   "project_environment_invalid",
   "project_folder_change_refused",
@@ -190,6 +197,11 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
   {
     code: Schema.Literal("invalid_request"),
     reason: EnvironmentRequestInvalidReason,
+    /**
+     * The server's own words for this refusal, when the reason alone cannot say
+     * what to do (why a project folder change was refused). Older servers omit it.
+     */
+    detail: Schema.optionalKey(Schema.String),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 400 },
@@ -199,6 +211,7 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
   }
 
   override get message(): string {
+    if (this.detail !== undefined && this.detail.length > 0) return this.detail;
     switch (this.reason) {
       case "project_settings_conflict":
         return "Project settings changed elsewhere. Reload before saving.";
@@ -210,6 +223,8 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
         return "Use existing approved folders and credential-free HTTPS or SSH repository URLs.";
       case "project_active_work":
         return "Finish or stop active project work before deleting the project.";
+      case "project_delete_rate_limited":
+        return "Too many projects were deleted in the last minute. Wait a minute, then delete the rest.";
       case "project_folder_missing":
         return "The project folder does not exist. Choose an existing folder or create it before importing.";
       case "project_folder_change_refused":
@@ -791,6 +806,15 @@ class EnvironmentProjectsHttpApi extends HttpApiGroup.make("projects")
       headers: OptionalBearerHeaders,
       payload: ProjectMutation,
       success: Project,
+      error: EnvironmentProjectMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /** What a project.folder.change would do, checked without changing anything (`project move --check`). */
+    HttpApiEndpoint.post("folderCheck", "/api/projects/folder-check", {
+      headers: OptionalBearerHeaders,
+      payload: ProjectFolderCheckInput,
+      success: ProjectFolderCheck,
       error: EnvironmentProjectMutationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}

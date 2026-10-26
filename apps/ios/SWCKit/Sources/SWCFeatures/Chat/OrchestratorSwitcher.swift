@@ -22,9 +22,9 @@ struct OrchestratorSwitcher: View {
               if member.ref != current { router.open(.project(member.ref)) }
             } label: {
               if member.ref == current {
-                Label(Self.title(member), systemImage: "checkmark")
+                Label(Self.title(member, among: members), systemImage: "checkmark")
               } else {
-                Text(Self.title(member))
+                Text(Self.title(member, among: members))
               }
               Text(Self.detail(member))
             }
@@ -54,9 +54,10 @@ struct OrchestratorSwitcher: View {
     }
   }
 
-  /// One entry per machine: same-folder copies on one machine would otherwise
-  /// list that machine twice. Each machine is represented by the viewed copy,
-  /// else its coordinator copy, else a linked copy, else its first copy.
+  /// One entry per folder on each machine: same-folder copies on one machine
+  /// would otherwise list that machine twice, while separate checkouts of the
+  /// repository each stay openable. Each entry is the viewed copy, else the
+  /// coordinator copy, else a linked copy, else the first copy.
   static func choices(_ members: [ProjectMember], current: ProjectRef) -> [ProjectMember] {
     func rank(_ member: ProjectMember) -> Int {
       if member.ref == current { return 0 }
@@ -66,18 +67,23 @@ struct OrchestratorSwitcher: View {
     var best: [String: ProjectMember] = [:]
     var order: [String] = []
     for member in members {
-      let machine = member.ref.environmentId
-      if let kept = best[machine] {
-        if rank(member) < rank(kept) { best[machine] = member }
+      let place = "\(member.ref.environmentId)\n\(member.folder ?? "")"
+      if let kept = best[place] {
+        if rank(member) < rank(kept) { best[place] = member }
       } else {
-        best[machine] = member
-        order.append(machine)
+        best[place] = member
+        order.append(place)
       }
     }
     return order.compactMap { best[$0] }
   }
 
-  static func title(_ member: ProjectMember) -> String { member.machineLabel }
+  /// The machine, and the folder's name when the machine holds several checkouts.
+  static func title(_ member: ProjectMember, among choices: [ProjectMember]) -> String {
+    let sameMachine = choices.filter { $0.ref.environmentId == member.ref.environmentId }
+    guard sameMachine.count > 1, let folder = member.folder?.split(separator: "/").last else { return member.machineLabel }
+    return "\(member.machineLabel) · \(folder)"
+  }
 
   /// "Coordinator", "Offline · last seen 2:05 PM", or "Online".
   static func detail(_ member: ProjectMember, now: Date = .now) -> String {

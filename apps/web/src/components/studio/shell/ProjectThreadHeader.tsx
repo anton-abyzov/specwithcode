@@ -110,6 +110,13 @@ export function ProjectThreadHeader(props: {
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
   );
+  const headerProject = useMemo(
+    () =>
+      thread.projectId
+        ? { environmentId: thread.environmentId, projectId: thread.projectId }
+        : null,
+    [thread.environmentId, thread.projectId],
+  );
   const [renaming, setRenaming] = useState<string | null>(null);
   const titleLocked = isCoordinatorNamedThread(thread);
   const canRename = props.canChange && !titleLocked;
@@ -254,7 +261,11 @@ export function ProjectThreadHeader(props: {
         </span>
       ) : null}
       <ThreadArtifactsMenu threadRef={threadRef} cwd={thread.worktreePath ?? props.projectCwd} />
-      <TimelineDetailMenu appearance="project" threadKey={scopedThreadKey(threadRef)} />
+      <TimelineDetailMenu
+        appearance="project"
+        threadKey={scopedThreadKey(threadRef)}
+        project={headerProject}
+      />
       <span ref={setToolsSlot} className="sws-thread-head-tools" />
       <Tip label={`${resolveLabel} thread`}>
         <button

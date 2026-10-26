@@ -527,6 +527,10 @@
       "types": "./src/projectOrigin.ts",
       "import": "./src/projectOrigin.ts"
     },
+    "./projectNotifications": {
+      "types": "./src/projectNotifications.ts",
+      "import": "./src/projectNotifications.ts"
+    },
     "./threadModelIdentity": {
       "types": "./src/threadModelIdentity.ts",
       "import": "./src/threadModelIdentity.ts"

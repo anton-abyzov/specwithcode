@@ -60,13 +60,21 @@ export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
   readonly check?: HandoffPreflightCheck | undefined;
   /** No answer came back: the destination may or may not have acted. */
   readonly uncertain: boolean;
+  /**
+   * The call failed on this machine before it reached the destination (no such
+   * machine, no credential, identity check failed). Nothing changed there for
+   * this call, but it is no refusal from the destination either, so it never
+   * settles an earlier takeover that is still in doubt.
+   */
+  readonly local?: boolean | undefined;
 }> {}
 
-const unreachable = (label: string, uncertain: boolean) =>
+const unreachable = (label: string, uncertain: boolean, local = false) =>
   new HandoffPeerError({
     code: "unreachable",
     message: `${label} did not answer.`,
     uncertain,
+    ...(local ? { local } : {}),
   });
 
 export interface HandoffPeerTarget {
@@ -147,6 +155,7 @@ export const make = Effect.gen(function* () {
                 code: "invalid",
                 message: "That machine is not one of your private machines.",
                 uncertain: false,
+                local: true,
               }),
             )
           : Effect.succeed(found);
@@ -162,10 +171,16 @@ export const make = Effect.gen(function* () {
               message: `${target.label}: this machine has no work grant there (${error.message})`,
               check: "grant",
               uncertain: false,
+              local: true,
             })
           : error.reason === "unknown_machine"
-            ? new HandoffPeerError({ code: "invalid", message: error.message, uncertain: false })
-            : unreachable(target.label, false),
+            ? new HandoffPeerError({
+                code: "invalid",
+                message: error.message,
+                uncertain: false,
+                local: true,
+              })
+            : unreachable(target.label, false, true),
       ),
     );
 
@@ -187,8 +202,9 @@ export const make = Effect.gen(function* () {
                 code: "invalid",
                 message: `${target.label} answered as a different machine.`,
                 uncertain: false,
+                local: true,
               })
-            : unreachable(target.label, false),
+            : unreachable(target.label, false, true),
       });
       yield* Ref.update(identities, (current) =>
         new Map(current).set(target.id, { url: target.url, checkedAt: now }),
@@ -282,6 +298,7 @@ export const make = Effect.gen(function* () {
             code: "too_large",
             message: cause instanceof Error ? cause.message : "The checkpoint is too large.",
             uncertain: false,
+            local: true,
           }),
       }).pipe(
         Effect.flatMap((frame) =>

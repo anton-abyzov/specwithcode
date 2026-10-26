@@ -1109,6 +1109,8 @@ const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
     grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
     opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
   },
+  // Always written, so a user's choice survives a change of its default.
+  storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, worktreeOnMerge: undefined },
 };
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {

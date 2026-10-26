@@ -63,6 +63,12 @@ import {
   type StuckFire,
   stuckOnceFire,
 } from "./ScheduledTaskOccurrence.ts";
+import {
+  deleteExpiredRoutine,
+  FINISHED_ROUTINE_RETENTION_MS,
+  FINISHED_ROUTINE_SWEEP_EVERY_MS,
+  selectExpiredRoutineIds,
+} from "./ScheduledTaskExpiry.ts";
 import { followDispatchedOccurrences } from "./ScheduledTaskFollow.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
@@ -470,7 +476,7 @@ export const layer = Layer.effect(
       readonly startedAtIso: string;
       /** False for a deferred occurrence: nothing ran. */
       readonly countRun: boolean;
-      /** A one-time task whose run is over without one to start. */
+      /** A one-time task whose run is over without one to start, or a met watch. */
       readonly disable: boolean;
     }) =>
       sql`
@@ -1002,13 +1008,22 @@ export const layer = Layer.effect(
               : once.gaveUp
                 ? `${failure} ${ONCE_TURNED_OFF}`
                 : (providerSkip ?? failure);
+        // A one-shot watch is over once its check passed and its prompt went
+        // out: it turns itself off, so the woken agent need not.
+        const watchMet =
+          scheduleSource.check?.stopAfterPass === true &&
+          checked?._tag === "Success" &&
+          checked.value.passed &&
+          runSucceeded &&
+          dispatchedTo !== null;
         const completed: ScheduledTask = {
           ...scheduleSource,
-          enabled: scheduleSource.enabled && !once.disable,
+          enabled: scheduleSource.enabled && !once.disable && !watchMet,
           updatedAt: iso(completedAt),
           lastRunAt: startedAtIso,
-          nextRunAt:
-            waitUntilMs !== null
+          nextRunAt: watchMet
+            ? null
+            : waitUntilMs !== null
               ? deferredUntil
               : nextRunAfter(scheduleSource, completedAt, once.fired),
           lastRunStatus,
@@ -1054,7 +1069,7 @@ export const layer = Layer.effect(
             error: lastRunError,
             startedAtIso,
             countRun: deferral === null,
-            disable: once.disable,
+            disable: once.disable || watchMet,
           });
           yield* notifyChanged;
         }
@@ -1118,9 +1133,44 @@ export const layer = Layer.effect(
       Effect.catch((cause) => Effect.logWarning("Could not follow scheduled task runs", { cause })),
     );
 
+    // Finished one-shots (a one-time task or a stopAfterPass watch whose run
+    // succeeded, see markFinishedOneShot) leave the list a week later. Never
+    // while an update is held or gated: it compares these rows.
+    const lastExpirySweepMs = yield* Ref.make(Number.NEGATIVE_INFINITY);
+    const expireFinishedRoutines = (now: DateTime.DateTime) =>
+      Effect.gen(function* () {
+        // Checked before refuse, which records a refusal while held.
+        if (yield* updateHold.isHeld) return;
+        const gated = yield* updateHold.refuse("scheduled-task.expire").pipe(
+          Effect.as(false),
+          Effect.orElseSucceed(() => true),
+        );
+        if (gated) return;
+        const nowMs = DateTime.toEpochMillis(now);
+        const due = yield* Ref.modify(lastExpirySweepMs, (last) =>
+          nowMs - last >= FINISHED_ROUTINE_SWEEP_EVERY_MS ? [true, nowMs] : [false, last],
+        );
+        if (!due) return;
+        const cutoffIso = iso(DateTime.makeUnsafe(nowMs - FINISHED_ROUTINE_RETENTION_MS));
+        const removed = yield* selectExpiredRoutineIds(cutoffIso).pipe(
+          Effect.flatMap((ids) =>
+            Effect.filter(ids, (id) => deleteExpiredRoutine(id, cutoffIso), { concurrency: 1 }),
+          ),
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
+        if (removed.length === 0) return;
+        yield* Effect.logInfo("Removed finished one-shot routines", { taskIds: removed });
+        yield* notifyChanged;
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not remove finished one-shot routines", { cause }),
+        ),
+      );
+
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
       yield* followDispatchedRuns;
       const now = yield* localNow;
+      yield* expireFinishedRoutines(now);
       const tasks = yield* listDueTasks(now).pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
@@ -1365,16 +1415,20 @@ export const layer = Layer.effect(
         const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
         // A one-time task is armed anew, so it fires under a new key.
         const rearm = existing.schedule.type === "once" ? 1 : 0;
+        const armedPolicy = sql`CASE WHEN ${rearm} = 1
+          THEN json_set(COALESCE(run_policy_json, '{}'), '$.onceGeneration',
+            COALESCE(json_extract(run_policy_json, '$.onceGeneration'), 0) + 1)
+          ELSE run_policy_json END`;
         // RETURNING so a task deleted between the load and this UPDATE is a
         // visible not-found error, not a false success.
         const updated = yield* sql<{ task_id: string }>`
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
               next_run_at = ${next},
-              run_policy_json = CASE WHEN ${rearm} = 1
-                THEN json_set(COALESCE(run_policy_json, '{}'), '$.onceGeneration',
-                  COALESCE(json_extract(run_policy_json, '$.onceGeneration'), 0) + 1)
-                ELSE run_policy_json END,
+              -- Turned back on, a finished one-shot is no longer up for removal.
+              run_policy_json = CASE WHEN ${input.enabled ? 1 : 0} = 1
+                THEN json_remove(${armedPolicy}, '$.finishedAt')
+                ELSE ${armedPolicy} END,
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
           RETURNING task_id

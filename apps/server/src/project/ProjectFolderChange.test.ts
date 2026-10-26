@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - The protected-folder case needs the real home folder.
 import { expect, it } from "@effect/vitest";
+import * as NodeOs from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -19,6 +21,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -64,6 +67,18 @@ interface Scenario {
   readonly claudeHome: string;
   /** Every thread command fails, as when the orchestrator is unavailable. */
   failDispatch: boolean;
+  /** Fails only the matching thread commands; the rest succeed. */
+  failCommand: ((command: OrchestrationV2Command) => boolean) | null;
+  /** Runs after each successful thread command, e.g. to start work meanwhile. */
+  afterDispatch: ((command: OrchestrationV2Command) => void) | null;
+  /** projects.update fails, as when its own checks refuse the change. */
+  failUpdate: boolean;
+  /** projects.update commits the new root, then fails reading it back. */
+  failUpdateAfterCommit: boolean;
+  /** Folders whose git identity cannot be read (git fails, not "no remote"). */
+  readonly unreadable: Set<string>;
+  /** Soft-deleted projects, listed only with includeDeleted. */
+  readonly deletedProjects: Array<Project>;
 }
 
 /** A temp tree like ~/Projects/sw-easychamp with the managed stub inside it. */
@@ -90,6 +105,12 @@ const makeScenario = Effect.gen(function* () {
     claudeSessions: new Map(),
     claudeHome,
     failDispatch: false,
+    failCommand: null,
+    afterDispatch: null,
+    failUpdate: false,
+    failUpdateAfterCommit: false,
+    unreadable: new Set(),
+    deletedProjects: [],
   };
   return { scenario, parent, stub };
 });
@@ -108,12 +129,27 @@ const layerFor = (scenario: Scenario) =>
               ),
             ),
           update: (input) => {
+            if (scenario.failUpdate)
+              return Effect.fail(
+                new ProjectService.ProjectRequestDeniedError({
+                  projectId: input.projectId,
+                  reason: "environment_active",
+                }),
+              );
             scenario.updates.push(input);
             const project = {
               ...scenario.projects.get(input.projectId)!,
               ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
             };
             scenario.projects.set(input.projectId, project);
+            if (scenario.failUpdateAfterCommit)
+              return Effect.fail(
+                new ProjectService.ProjectOperationError({
+                  operation: "read-project",
+                  projectId: input.projectId,
+                  cause: new Error("read failed"),
+                }),
+              );
             return Effect.succeed(project);
           },
         }),
@@ -123,8 +159,13 @@ const layerFor = (scenario: Scenario) =>
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           dispatch: (command) => {
-            if (scenario.failDispatch) return Effect.fail({ _tag: "DispatchFailed" } as never);
+            if (
+              scenario.failDispatch ||
+              scenario.failCommand?.(command as OrchestrationV2Command) === true
+            )
+              return Effect.fail({ _tag: "DispatchFailed" } as never);
             scenario.dispatched.push(command as OrchestrationV2Command);
+            scenario.afterDispatch?.(command as OrchestrationV2Command);
             return Effect.succeed({ sequence: scenario.dispatched.length, storedEvents: [] });
           },
           getThreadRecords: (threadId) => {
@@ -150,9 +191,41 @@ const layerFor = (scenario: Scenario) =>
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: (folder) =>
             Effect.succeed(
-              scenario.repositories.has(folder)
+              scenario.repositories.has(folder) && !scenario.unreadable.has(folder)
                 ? ({ canonicalKey: scenario.repositories.get(folder)! } as never)
                 : null,
+            ),
+          resolveStrict: (folder) =>
+            scenario.unreadable.has(folder)
+              ? Effect.fail(
+                  new RepositoryIdentityResolver.RepositoryIdentityReadError({
+                    cwd: folder,
+                    detail: "fatal: detected dubious ownership in repository",
+                  }),
+                )
+              : Effect.succeed(
+                  scenario.repositories.has(folder)
+                    ? ({ canonicalKey: scenario.repositories.get(folder)! } as never)
+                    : null,
+                ),
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          list: (options) =>
+            Effect.succeed(
+              [
+                ...[...scenario.projects.values()].map((project) => ({ project, deleted: false })),
+                ...(options?.includeDeleted === true
+                  ? scenario.deletedProjects.map((project) => ({ project, deleted: true }))
+                  : []),
+              ].map(
+                ({ project, deleted }) =>
+                  ({
+                    projectId: project.id,
+                    title: project.title,
+                    workspaceRoot: project.workspaceRoot,
+                    deletedAt: deleted ? "2026-10-20T00:00:00.000Z" : null,
+                  }) as never,
+              ),
             ),
         }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
@@ -630,6 +703,465 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         );
         expect(changed.project.workspaceRoot).toBe(stub);
         expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("refuses a file at the path and says it is not a folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { scenario } = yield* makeScenario;
+        const file = `${scenario.root}/notes.txt`;
+        yield* fs.writeFileString(file, "notes");
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: file }),
+        );
+        // A file is not a folder the project can use: it reads as missing.
+        expect(check).toMatchObject({
+          targetExists: false,
+          refusal: { reason: "folder_not_directory" },
+        });
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: file,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "folder_not_directory" });
+        expect(refused.message).toContain("is a file, not a folder");
+        expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("refuses the home folder as a protected folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario } = yield* makeScenario;
+        const home = NodeOs.homedir();
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: home }),
+        );
+        expect(check).toMatchObject({
+          targetExists: true,
+          refusal: { reason: "folder_protected" },
+        });
+        // Nothing inside a protected folder is read.
+        expect(check.layout).toBeUndefined();
+        expect(check.nestedProjects).toBeUndefined();
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: home,
+            confirmDifferentRepository: true,
+            confirmPlanningImpact: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "folder_protected" });
+        expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("refuses when git fails to read either folder instead of reading it as no remote", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* makeScenario;
+        // Like the umbrella move: the stub is its own repository, so its threads would stay.
+        scenario.repositories.set(stub, "github.com/anton-abyzov/specweave");
+        scenario.unreadable.add(stub);
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(check).toMatchObject({
+          refusal: { reason: "repository_unreadable" },
+          keptInPlaceCount: 0,
+        });
+        expect(check.refusal?.detail).toContain(`repository of ${stub}`);
+        expect(check.refusal?.detail).toContain("dubious ownership");
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "repository_unreadable" });
+        expect(scenario.dispatched).toEqual([]);
+        expect(scenario.updates).toHaveLength(0);
+
+        scenario.unreadable.clear();
+        scenario.unreadable.add(parent);
+        const target = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(target.refusal?.detail).toContain(`repository of ${parent}`);
+      }),
+    ),
+  );
+
+  it.effect("refuses a folder the project already approves as an extra folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* makeScenario;
+        scenario.projects.set(
+          projectId,
+          projectFixture(projectId, {
+            title: "easychamp",
+            workspaceRoot: stub,
+            workspaceSettings: {
+              environment: { additionalFolders: [parent], repositories: [] },
+            } as unknown as Project["workspaceSettings"],
+          }),
+        );
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(check.refusal).toEqual({
+          reason: "environment_invalid",
+          detail: `${parent} is already one of the project's approved extra folders. Remove it from the approved folders first, then choose it again.`,
+        });
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "environment_invalid" });
+        expect(scenario.dispatched).toEqual([]);
+        expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("lists projects inside the new folder or holding it, deleted ones too", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const api = ProjectId.make("api");
+        const umbrella = ProjectId.make("old-umbrella");
+        scenario.projects.set(
+          api,
+          projectFixture(api, { title: "api", workspaceRoot: `${parent}/repositories/api` }),
+        );
+        // A sibling that only shares the name's prefix is not inside.
+        scenario.projects.set(
+          ProjectId.make("sibling"),
+          projectFixture(ProjectId.make("sibling"), {
+            title: "sibling",
+            workspaceRoot: `${parent}-archive`,
+          }),
+        );
+        scenario.deletedProjects.push(
+          projectFixture(umbrella, { title: "old umbrella", workspaceRoot: scenario.root }),
+        );
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(check.nestedProjects).toEqual([
+          {
+            id: api,
+            title: "api",
+            workspaceRoot: `${parent}/repositories/api`,
+            relation: "inside",
+            deleted: false,
+          },
+          {
+            id: umbrella,
+            title: "old umbrella",
+            workspaceRoot: scenario.root,
+            relation: "contains",
+            deleted: true,
+          },
+        ]);
+      }),
+    ),
+  );
+
+  /** The umbrella move: specweave's own checkout keeps its threads when the project moves up. */
+  const keepScenario = Effect.gen(function* () {
+    const made = yield* makeScenario;
+    const { scenario, parent, stub } = made;
+    scenario.repositories.set(stub, "github.com/anton-abyzov/specweave");
+    scenario.repositories.set(parent, "github.com/anton-abyzov/specweave-umb");
+    scenario.projects.set(
+      projectId,
+      projectFixture(projectId, {
+        title: "specweave",
+        workspaceRoot: stub,
+        workspaceSettings: {
+          coordinatorThreadId: ThreadId.make("coordinator"),
+        } as Project["workspaceSettings"],
+      }),
+    );
+    return made;
+  });
+  const keepCommand = (id: string, stub: string) => ({
+    type: "thread.metadata.update",
+    commandId: CommandId.make(`${commandId}:keep:${id}`),
+    threadId: ThreadId.make(id),
+    worktreePath: stub,
+    expectedWorktreePath: null,
+  });
+  const undoCommand = (id: string, stub: string) => ({
+    type: "thread.metadata.update",
+    commandId: CommandId.make(`${commandId}:unkeep:${id}`),
+    threadId: ThreadId.make(id),
+    worktreePath: null,
+    expectedWorktreePath: stub,
+  });
+
+  it.effect("undoes the kept threads when the project update fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* keepScenario;
+        scenario.threads.push(shell("second"));
+        scenario.failUpdate = true;
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ _tag: "ProjectRequestDeniedError" });
+        expect(scenario.dispatched).toEqual([
+          keepCommand("worker", stub),
+          keepCommand("second", stub),
+          undoCommand("worker", stub),
+          undoCommand("second", stub),
+        ]);
+        expect(scenario.projects.get(projectId)?.workspaceRoot).toBe(stub);
+      }),
+    ),
+  );
+
+  it.effect("keeps the kept threads bound when the update committed before failing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* keepScenario;
+        scenario.failUpdateAfterCommit = true;
+        yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        // The root moved, so undoing would send the worker into the new folder.
+        expect(scenario.projects.get(projectId)?.workspaceRoot).toBe(parent);
+        expect(scenario.dispatched).toEqual([keepCommand("worker", stub)]);
+      }),
+    ),
+  );
+
+  it.effect("lists a deleted project that used exactly the new folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const gone = ProjectId.make("gone");
+        scenario.deletedProjects.push(
+          projectFixture(gone, { title: "gone", workspaceRoot: parent }),
+        );
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(check.conflictingProject).toBeNull();
+        expect(check.nestedProjects).toEqual([
+          { id: gone, title: "gone", workspaceRoot: parent, relation: "same", deleted: true },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("undoes the binds made so far when a later thread cannot stay", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* keepScenario;
+        scenario.threads.push(shell("second"), shell("third"));
+        scenario.failCommand = (command) =>
+          command.type === "thread.metadata.update" &&
+          command.commandId === CommandId.make(`${commandId}:keep:second`);
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused.message).toContain(`"second" could not stay in ${stub}`);
+        expect(scenario.dispatched).toEqual([
+          keepCommand("worker", stub),
+          undoCommand("worker", stub),
+        ]);
+        expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("refuses when a thread appears or starts work while the folder changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* keepScenario;
+        let added = false;
+        scenario.afterDispatch = () => {
+          if (added) return;
+          added = true;
+          scenario.threads.push(shell("newcomer", { title: "Newcomer" }));
+        };
+        const appeared = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(appeared).toMatchObject({ reason: "changed_meanwhile" });
+        expect(appeared.message).toContain('"Newcomer" was created while the folder was changing');
+        expect(scenario.dispatched).toEqual([
+          keepCommand("worker", stub),
+          undoCommand("worker", stub),
+        ]);
+        expect(scenario.updates).toHaveLength(0);
+
+        scenario.threads.pop();
+        scenario.dispatched.length = 0;
+        let started = false;
+        scenario.afterDispatch = () => {
+          if (started) return;
+          started = true;
+          scenario.threads[1] = shell("worker", { title: "Worker", status: "queued" });
+        };
+        const busy = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(busy).toMatchObject({ reason: "changed_meanwhile" });
+        expect(busy.message).toContain('"Worker" started work while the folder was changing');
+        expect(scenario.dispatched).toEqual([
+          keepCommand("worker", stub),
+          undoCommand("worker", stub),
+        ]);
+        expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("never pins the default coordinator of a project that has not bound one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent, stub } = yield* keepScenario;
+        scenario.projects.set(
+          projectId,
+          projectFixture(projectId, { title: "specweave", workspaceRoot: stub }),
+        );
+        scenario.threads.splice(0, 1, shell(`project-coordinator:${projectId}`));
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(check.keptInPlaceCount).toBe(1);
+        const changed = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        );
+        expect(changed.keptInPlace).toBe(1);
+        expect(scenario.dispatched).toEqual([keepCommand("worker", stub)]);
+      }),
+    ),
+  );
+
+  it.effect("counts queued runs, held messages and waiting runs as active work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const approvalRequestId = RuntimeRequestId.make("project-action:card");
+        scenario.threads.splice(
+          0,
+          scenario.threads.length,
+          shell("queued", { status: "queued" }),
+          shell("held", { status: "completed", heldQueuedCount: 2 }),
+          shell("waiting", { status: "waiting" }),
+          shell("idle", { status: "completed" }),
+          // The thread that asked waits on this change itself.
+          shell("asking", {
+            status: "waiting",
+            activityRunStatus: "waiting",
+            pendingRuntimeRequest: {
+              id: approvalRequestId,
+              kind: "user_input",
+              createdAt: "2026-10-15T00:00:00Z",
+            } as unknown as OrchestrationV2ThreadShell["pendingRuntimeRequest"],
+          }),
+        );
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent, approvalRequestId }),
+        );
+        expect(check.activeThreads.map((thread) => thread.id)).toEqual([
+          "queued",
+          "held",
+          "waiting",
+        ]);
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+            approvalRequestId,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "active_work" });
+        expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("leaves the session of a thread whose checkout could not be rebound", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { scenario, parent, stub } = yield* makeScenario;
+        const boundOld = `${stub}/.worktrees/fix`;
+        yield* fs.makeDirectory(boundOld, { recursive: true });
+        yield* fs.makeDirectory(`${parent}/.worktrees/fix`, { recursive: true });
+        scenario.threads.push(shell("bound", { worktreePath: boundOld }));
+        scenario.claudeSessions.set(ThreadId.make("bound"), {
+          sessionId: "4f1c2a9e-7b3d-4e2f-8a61-0c9d8e7f6a5b",
+          cwd: boundOld,
+        });
+        scenario.failCommand = (command) =>
+          command.type === "thread.metadata.update" && command.threadId === ThreadId.make("bound");
+        const changed = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        );
+        expect(changed.project.workspaceRoot).toBe(parent);
+        expect(changed.reboundWorktrees).toBe(0);
+        // Its agent keeps running in the checkout it is still bound to.
+        expect(scenario.released).not.toContain("session-bound");
       }),
     ),
   );

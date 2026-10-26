@@ -45,6 +45,13 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["rename title favicon emoji"],
   },
   {
+    id: "project-folder",
+    title: "Project folder",
+    tab: "general",
+    anchors: ["Project folder"],
+    searchTerms: ["move path workspace root"],
+  },
+  {
     id: "project-goal",
     title: "Goal",
     tab: "general",
@@ -94,20 +101,6 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["host remote fleet"],
   },
   {
-    id: "project-overrides",
-    title: "Overrides",
-    tab: "general",
-    anchors: ["Overrides"],
-    searchTerms: ["inherited defaults"],
-  },
-  {
-    id: "project-folder",
-    title: "Project folder",
-    tab: "general",
-    anchors: ["Project folder"],
-    searchTerms: ["move path workspace root"],
-  },
-  {
     id: "project-pause",
     title: "Pause or resume",
     tab: "general",
@@ -120,6 +113,13 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     tab: "general",
     anchors: ["Archive project", "Unarchive project"],
     searchTerms: ["hide unarchive"],
+  },
+  {
+    id: "project-overrides",
+    title: "Overrides",
+    tab: "general",
+    anchors: ["Overrides"],
+    searchTerms: ["inherited defaults"],
   },
   {
     id: "project-delete",

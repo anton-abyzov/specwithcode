@@ -51,8 +51,10 @@ it.layer(NodeServices.layer)("settingsFileEvents", (it) => {
             ),
             Effect.forkScoped,
           );
-          yield* fs.remove(link);
-          yield* fs.symlink(second, link);
+          // Repoint atomically, as editors and sync tools do. Removing the link
+          // first lets the poll read it missing, which is a separate change.
+          yield* fs.symlink(second, `${link}.next`);
+          yield* fs.rename(`${link}.next`, link);
           yield* Deferred.await(changed).pipe(Effect.timeout("15 seconds"));
           assert.include(watched, path.dirname(second));
           const attached = watched.length;

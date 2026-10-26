@@ -34,11 +34,13 @@ import {
 import { defaultProjectModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -117,7 +119,21 @@ export interface ProjectDeleteInput {
   readonly confirmationTitle?: string;
   /** Internal: the approval card that asked for this deletion; see ProjectUpdateInput. */
   readonly approvalRequestId?: RuntimeRequestId;
+  /**
+   * Internal: "server" for the app's own cleanup, such as the temporary project
+   * sweep. Any other delete is someone's request and counts toward the delete
+   * burst limit. Never copied from a client payload.
+   */
+  readonly initiator?: "client" | "server";
 }
+
+/**
+ * Deletes someone asks for that are accepted per rolling window. Deleting a
+ * project also deletes its memory, routines, connections and plans, so a client
+ * sending many deletes at once (15 in 9 seconds on 2026-10-17) is refused.
+ */
+export const PROJECT_DELETE_BURST_LIMIT = 5;
+export const PROJECT_DELETE_BURST_WINDOW_MS = 60_000;
 
 /** True while a thread holds work a project change must not pull the folder from under. */
 export function threadHasActiveWork(
@@ -196,6 +212,14 @@ export class ProjectFolderChangeError extends Schema.TaggedError<ProjectFolderCh
       "repository_mismatch",
       "active_work",
       "planning_impact",
+      "folder_not_directory",
+      "folder_protected",
+      "repository_unreadable",
+      "environment_invalid",
+      /** The project's threads changed while the folder was changing; check again. */
+      "changed_meanwhile",
+      /** project.update cannot move the folder; project.folder.change does it safely. */
+      "use_folder_change",
     ]),
     detail: Schema.String,
   },
@@ -218,6 +242,7 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
       "name_taken",
       "assistant_exists",
       "kind_fixed",
+      "too_many_deletes",
     ]),
   },
 ) {
@@ -237,6 +262,8 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
         return "This machine already has its personal assistant. Open it instead of creating another.";
       case "kind_fixed":
         return "A project's kind is set when it is created and cannot be changed.";
+      case "too_many_deletes":
+        return "Too many projects were deleted in the last minute. Wait a minute, then delete the rest.";
     }
   }
 }
@@ -345,6 +372,9 @@ export const make = Effect.gen(function* () {
   // also hold that root, so two projects cannot both claim it.
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
+  // When recent client deletes were accepted, in epoch millis. Kept in memory: a
+  // restart forgets them, which only ever allows more deletes, never fewer.
+  const recentClientDeletes = yield* Ref.make<ReadonlyArray<number>>([]);
 
   const toProject = (
     row: ProjectStore.ProjectRow,
@@ -937,43 +967,95 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Take one slot of the client delete burst limit, or refuse. Deletes for
+   * different projects run in parallel, so the check and the claim are one update.
+   */
+  const reserveClientDelete = Effect.fn("ProjectService.reserveClientDelete")(function* (
+    projectId: ProjectId,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const reserved = yield* Ref.modify(recentClientDeletes, (times) => {
+      const recent = times.filter((at) => now - at < PROJECT_DELETE_BURST_WINDOW_MS);
+      return recent.length >= PROJECT_DELETE_BURST_LIMIT
+        ? [false, recent]
+        : [true, [...recent, now]];
+    });
+    if (!reserved) {
+      yield* Effect.logWarning("Refused a project delete: too many in the last minute", {
+        projectId,
+        limit: PROJECT_DELETE_BURST_LIMIT,
+      });
+      return yield* new ProjectRequestDeniedError({ projectId, reason: "too_many_deletes" });
+    }
+    return now;
+  });
+
+  /** Give back a slot whose delete failed, so a retry is not counted twice. */
+  const releaseClientDelete = (at: number) =>
+    Ref.update(recentClientDeletes, (times) => {
+      const index = times.indexOf(at);
+      return index === -1 ? times : [...times.slice(0, index), ...times.slice(index + 1)];
+    });
+
   const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
     function* (input) {
       const { projectId } = input;
+      const initiator = input.initiator ?? "client";
       // A deleted row still reaches commit, so a retried command id replays its
       // receipt and any other command id is rejected as not found.
       const existing = yield* readRow(projectId, { includeDeleted: true });
       if (Option.isNone(existing)) {
         return yield* new ProjectNotFoundError({ projectId });
       }
-
-      if (existing.value.deletedAt === null) {
-        if (input.force && input.confirmationTitle !== existing.value.title) {
-          return yield* new ProjectRequestDeniedError({
-            projectId,
-            reason: "confirmation_required",
-          });
-        }
-        const active = yield* threadProjections
-          .getShellSnapshot()
-          .pipe(
-            Effect.mapError(
-              (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
-            ),
-          );
-        if (
-          [...active.threads, ...active.archivedThreads].some(
-            (thread) =>
-              thread.projectId === projectId &&
-              threadHasActiveWork(thread, input.approvalRequestId),
-          )
-        ) {
-          return yield* new ProjectRequestDeniedError({ projectId, reason: "active_work" });
-        }
-        yield* deleteChildThreads(input);
+      const project = existing.value;
+      if (project.deletedAt !== null) {
+        yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+        yield* projectEnrichment.invalidate([project.workspaceRoot]);
+        return yield* readCommitted(projectId);
       }
-      yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
-      yield* projectEnrichment.invalidate([existing.value.workspaceRoot]);
+
+      if (input.force && input.confirmationTitle !== project.title) {
+        return yield* new ProjectRequestDeniedError({
+          projectId,
+          reason: "confirmation_required",
+        });
+      }
+      const active = yield* threadProjections
+        .getShellSnapshot()
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
+          ),
+        );
+      const projectThreads = [...active.threads, ...active.archivedThreads].filter(
+        (thread) => thread.projectId === projectId,
+      );
+      if (projectThreads.some((thread) => threadHasActiveWork(thread, input.approvalRequestId))) {
+        return yield* new ProjectRequestDeniedError({ projectId, reason: "active_work" });
+      }
+      const slot = initiator === "client" ? yield* reserveClientDelete(projectId) : undefined;
+      const remove = Effect.gen(function* () {
+        yield* deleteChildThreads(input);
+        yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+      });
+      yield* slot === undefined
+        ? remove
+        : remove.pipe(Effect.onError(() => releaseClientDelete(slot)));
+      // Deletion cannot be undone; this line is how the next incident shows who and what.
+      yield* Effect.logInfo("project.deleted", {
+        projectId,
+        title: project.title,
+        workspaceRoot: project.workspaceRoot,
+        threadCount: projectThreads.length,
+        commandId: input.commandId,
+        initiator,
+        force: input.force === true,
+        ...(input.approvalRequestId === undefined
+          ? {}
+          : { approvalRequestId: input.approvalRequestId }),
+      });
+      yield* projectEnrichment.invalidate([project.workspaceRoot]);
       return yield* readCommitted(projectId);
     },
   );

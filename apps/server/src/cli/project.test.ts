@@ -10,11 +10,13 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentInternalError,
+  EnvironmentRequestInvalidError,
   EventId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2AppThread,
-  type ProjectId,
+  type ProjectFolderCheck,
+  ProjectId,
 } from "@specweave-studio/contracts";
 import * as NetService from "@specweave-studio/shared/Net";
 import * as DateTime from "effect/DateTime";
@@ -39,8 +41,11 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import * as StudioProjectFileLoader from "../project/StudioProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import {
+  formatFolderCheck,
   ProjectLiveServerDeclaredResponseError,
   ProjectLiveServerRequestError,
+  ProjectMoveRefusedError,
+  ProjectRemoveConfirmationError,
   projectCommandErrorFromLiveServerRequest,
 } from "./project.ts";
 
@@ -121,6 +126,21 @@ it("maps declared server failures into structural project command errors", () =>
   assert.strictEqual(error.cause, cause);
 });
 
+it("keeps the server's reason when it refuses a folder change", () => {
+  const error = projectCommandErrorFromLiveServerRequest(
+    new EnvironmentRequestInvalidError({
+      code: "invalid_request",
+      reason: "project_folder_change_refused",
+      traceId: "trace-9",
+      detail: "Stop the running work first.",
+    }),
+  );
+  assert.strictEqual(
+    error.message,
+    "Stop the running work first. (invalid_request, trace trace-9)",
+  );
+});
+
 it("preserves unexpected server failures without deriving the message from them", () => {
   const cause = new Error("credential abc123 was rejected");
 
@@ -147,7 +167,43 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
     assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
 
-    yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
+    // A script that names only the project removes nothing.
+    const unconfirmed = yield* runCli([
+      "project",
+      "remove",
+      added?.id ?? "",
+      "--base-dir",
+      baseDir,
+    ]).pipe(Effect.flip);
+    assert.instanceOf(unconfirmed, ProjectRemoveConfirmationError);
+    assert.strictEqual(
+      unconfirmed.message,
+      'Nothing was removed. Removing a project deletes its threads, memory, plans and routines. Confirm with --confirm "Beta".',
+    );
+    const mistyped = yield* runCli([
+      "project",
+      "remove",
+      added?.id ?? "",
+      "--confirm",
+      "Alpha",
+      "--base-dir",
+      baseDir,
+    ]).pipe(Effect.flip);
+    assert.strictEqual(
+      mistyped.message,
+      'Nothing was removed: "Alpha" is not the project\'s title. Confirm with --confirm "Beta".',
+    );
+    assert.equal((yield* readProjects(baseDir)).projects.length, 1);
+
+    yield* runCli([
+      "project",
+      "remove",
+      added?.id ?? "",
+      "--confirm",
+      "Beta",
+      "--base-dir",
+      baseDir,
+    ]);
     assert.deepEqual((yield* readProjects(baseDir)).projects, []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -307,6 +363,8 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
         "project",
         "remove",
         missing ? workspaceRoot : project.id,
+        "--confirm",
+        project.title,
         "--base-dir",
         baseDir,
       ]).pipe(
@@ -357,6 +415,8 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
           "remove",
           workspace === "missing" ? workspaceRoot : project.id,
           "--force",
+          "--confirm",
+          project.title,
           "--base-dir",
           baseDir,
         ]);
@@ -392,6 +452,8 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
           "project",
           "remove",
           identifier === "id" ? project.id : workspaceRoot,
+          "--confirm",
+          project.title,
           "--base-dir",
           baseDir,
         ]);
@@ -469,7 +531,15 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
       const aliasProject = added.find((entry) => entry.workspaceRoot === aliasPath);
       assert.isDefined(aliasProject);
       assert.notEqual(aliasProject?.id, project.id);
-      yield* runCli(["project", "remove", `${aliasPath}${NodePath.sep}.`, "--base-dir", baseDir]);
+      yield* runCli([
+        "project",
+        "remove",
+        `${aliasPath}${NodePath.sep}.`,
+        "--confirm",
+        aliasProject!.title,
+        "--base-dir",
+        baseDir,
+      ]);
       assert.deepEqual(
         (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
         [project.id],
@@ -478,3 +548,92 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
     }),
   );
 });
+
+const checkFixture: ProjectFolderCheck = {
+  projectId: ProjectId.make("project:move"),
+  currentRoot: "/work/site",
+  targetRoot: "/work",
+  unchanged: false,
+  targetExists: true,
+  currentRepository: "github.com/acme/site",
+  targetRepository: "github.com/acme/umbrella",
+  sameRepository: false,
+  conflictingProject: null,
+  activeThreads: [],
+  threadCount: 5,
+  reboundWorktreeCount: 0,
+  keptInPlaceCount: 3,
+  specweaveWorkspace: true,
+  layout: {
+    kind: "umbrella",
+    rootIsRepository: true,
+    repositories: ["site", "api"],
+    repositoryCount: 2,
+    truncated: false,
+  },
+  nestedProjects: [
+    {
+      id: ProjectId.make("project:api"),
+      title: "API",
+      workspaceRoot: "/work/api",
+      relation: "inside",
+      deleted: false,
+    },
+  ],
+};
+
+it("prints a folder check without changing anything", () => {
+  const project = { id: checkFixture.projectId, title: "Site" };
+  assert.strictEqual(
+    formatFolderCheck(project, checkFixture),
+    [
+      "Folder check for project project:move (Site). Nothing changed.",
+      "  Current folder: /work/site",
+      "  New folder: /work",
+      "  Repository: different: the current folder is github.com/acme/site, the new one is github.com/acme/umbrella",
+      "  Threads: 5, 3 kept in place, 0 rebound to the new folder",
+      "    3 threads will keep running in /work/site, which stays a checkout of its own repository. The coordinator and new threads will use /work. Threads on their own checkouts will keep them.",
+      "  Layout: umbrella, 2 repositories (site, api)",
+      "  Planning: unchanged",
+      '  Other projects: Other projects sit inside or around /work: "API" (/work/api). They keep their own folders and threads.',
+      "  Result: Needs --confirm-different-repository. /work is a checkout of github.com/acme/umbrella, and the current folder is a checkout of github.com/acme/site. Confirm that this is the right folder to use it.",
+    ].join("\n"),
+  );
+  // With the repository confirmed, nothing else stands in the way.
+  assert.include(
+    formatFolderCheck(project, checkFixture, { differentRepository: true, planningImpact: false }),
+    "  Result: Ready to move.",
+  );
+  assert.include(
+    formatFolderCheck(project, {
+      ...checkFixture,
+      refusal: { reason: "folder_protected", detail: "/work is a protected folder." },
+    }),
+    "  Result: Refused: /work is a protected folder.",
+  );
+});
+
+it.effect("move and its check need the running app and change nothing offline", () =>
+  Effect.gen(function* () {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-v2-project-cli-"));
+    const workspaceRoot = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "studio-v2-project-workspace-"),
+    );
+    const target = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-v2-project-target-"));
+    yield* runCli(["project", "add", workspaceRoot, "--title", "Site", "--base-dir", baseDir]);
+    for (const extra of [[], ["--check"]]) {
+      const refused = yield* runCli([
+        "project",
+        "move",
+        workspaceRoot,
+        target,
+        ...extra,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.instanceOf(refused, ProjectMoveRefusedError);
+      assert.include(refused.message, "Start the app first");
+    }
+    assert.equal((yield* readProjects(baseDir)).projects[0]?.workspaceRoot, workspaceRoot);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

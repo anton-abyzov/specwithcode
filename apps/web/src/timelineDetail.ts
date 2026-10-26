@@ -22,9 +22,9 @@ export const TIMELINE_DETAIL_LEVELS: ReadonlyArray<TimelineDetail> = [
 ];
 
 export const TIMELINE_DETAIL_LABELS: Record<TimelineDetail, string> = {
-  concise: "Concise",
-  normal: "Normal",
-  verbose: "Verbose",
+  concise: "Results only",
+  normal: "Folded steps",
+  verbose: "Everything",
 };
 
 export const TIMELINE_DETAIL_DESCRIPTIONS: Record<TimelineDetail, string> = {
@@ -49,7 +49,7 @@ export function setTimelineDetail(detail: TimelineDetail, options: { announce?: 
   if (options.announce) {
     toastManager.add({
       id: "timeline-detail-cycle",
-      title: `Timeline detail: ${TIMELINE_DETAIL_LABELS[detail]}`,
+      title: `Show: ${TIMELINE_DETAIL_LABELS[detail]}`,
       timeout: 1500,
     });
   }

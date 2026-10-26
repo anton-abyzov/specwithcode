@@ -53,21 +53,22 @@ async function shown(page, text) {
   return (await page.getByText(text, { exact: false }).filter({ visible: true }).count()) > 0;
 }
 
+const LEVEL_NAMES = { concise: "Results only", normal: "Folded steps", verbose: "Everything" };
+
 async function expectLevel(page, label, level) {
   const main = page.locator("main");
   await page.waitForFunction(
     (value) => document.querySelector("main")?.dataset.detail === value,
     level,
   );
-  const name = { concise: "Concise", normal: "Normal", verbose: "Verbose" }[level];
+  const name = LEVEL_NAMES[level];
   const trigger = page.locator("[data-timeline-detail]");
-  NodeAssert.equal(await trigger.getAttribute("aria-label"), `Timeline detail: ${name}`, label);
+  NodeAssert.ok((await trigger.getAttribute("aria-label"))?.endsWith(`Show: ${name}`), label);
   NodeAssert.equal(await trigger.getAttribute("data-timeline-detail"), level, label);
   NodeAssert.equal(await main.getAttribute("data-detail"), level, label);
-  // Away from Normal the thread header's trigger names the level.
+  // Without a project the trigger names what the timeline shows.
   const levelName = trigger.locator("[data-timeline-detail-label]");
-  if (level === "normal") NodeAssert.equal(await levelName.count(), 0, `${label}: level named`);
-  else NodeAssert.equal(await levelName.innerText(), name, `${label}: level not named`);
+  NodeAssert.equal(await levelName.innerText(), name, `${label}: level not named`);
   await inHeaderCorner(page, label);
   // Let the list settle after the rows change.
   await page.waitForTimeout(400);
@@ -96,9 +97,13 @@ async function noOverflow(page, label) {
   );
 }
 
-async function chooseFromMenu(page, name) {
+async function chooseFromMenu(page, level) {
   await page.locator("[data-timeline-detail]").click();
-  await page.getByRole("menuitemradio", { name: new RegExp(`^${name}`) }).click();
+  // The default group, the menu's last radio of that name.
+  await page
+    .getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[level]}`) })
+    .last()
+    .click();
 }
 
 try {
@@ -138,7 +143,7 @@ try {
       row.levels.normal = shot("normal");
 
       // Verbose from the menu: every turn, tool call, output and thought is open.
-      await chooseFromMenu(page, "Verbose");
+      await chooseFromMenu(page, "verbose");
       label = `${width}-${theme}-verbose`;
       await expectLevel(page, label, "verbose");
       NodeAssert.equal(await shown(page, LIVE_NOTE), true, `${label}: live note`);
@@ -159,10 +164,10 @@ try {
 
       // Concise from the shortcut (Verbose wraps to Concise), announced by a toast.
       await page.locator("main").click({ position: { x: 5, y: 60 } });
-      await page.keyboard.press("Meta+Alt+KeyO");
+      await page.keyboard.press("ControlOrMeta+Alt+KeyO");
       label = `${width}-${theme}-concise`;
       await expectLevel(page, label, "concise");
-      await page.getByText("Timeline detail: Concise", { exact: true }).waitFor();
+      await page.getByText("Show: Results only", { exact: true }).waitFor();
       NodeAssert.equal(await shown(page, LIVE_LATEST), true, `${label}: latest live message`);
       NodeAssert.equal(await shown(page, LIVE_NOTE), false, `${label}: earlier live message shown`);
       NodeAssert.equal(await shown(page, LIVE_THOUGHT), false, `${label}: live thought shown`);
@@ -186,7 +191,7 @@ try {
       row.persistsAcrossReload = true;
 
       // Another press wraps back to Normal.
-      await page.keyboard.press("Meta+Alt+KeyO");
+      await page.keyboard.press("ControlOrMeta+Alt+KeyO");
       await expectLevel(page, `${width}-${theme}-cycle`, "normal");
       row.cyclesBackToNormal = true;
       receipt.push(row);

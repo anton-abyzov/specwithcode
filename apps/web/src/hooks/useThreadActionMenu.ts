@@ -202,7 +202,7 @@ export function useThreadActionMenu(input: {
           // A personal assistant's threads stay on their machine: no handoff items.
           handoff: isPersonalAssistantProject(menuProject)
             ? undefined
-            : threadHandoffMenuState(handoffSnapshot, thread.id),
+            : threadHandoffMenuState(handoffSnapshot, thread.id, thread.projectId),
           supports,
           snoozePresets,
         });

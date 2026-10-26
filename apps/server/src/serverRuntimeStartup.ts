@@ -9,6 +9,8 @@ import {
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
+import * as Option from "effect/Option";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -32,6 +34,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as ServiceUpdateClosedQuestions from "./serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import * as ServiceUpdateHold from "./serviceUpdate/ServiceUpdateHold.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
@@ -329,6 +332,72 @@ export const startEffectWorkerWithRelay = Effect.fn(
   );
 });
 
+/** How often `resumeAfterHoldReleases` looks for a hold that ended. */
+export const HOLD_RELEASE_POLL_MS = 10_000;
+
+/**
+ * A hold that ends while this process keeps running (Cancel update, its time
+ * limit, an agent pass that installed nothing, a drain cut off) is followed by
+ * no restart, so startup never continues the turns its drain stopped. After a
+ * hold ends, once the update is over (not held or gated, no drain under way,
+ * and no install request still waiting: between two drains of one update the
+ * hold can lapse while the request waits), continue them the way a restart
+ * would. The pass runs under `exclusive`, which a drain waits for. Continuations
+ * are keyed by run, so a turn is continued once; one a later drain cancels is
+ * continued again by the next pass or restart.
+ */
+export function resumeAfterHoldReleases<E, R>(input: {
+  readonly releaseCount: Effect.Effect<number>;
+  /** Held, gated or draining. */
+  readonly updateUnderway: Effect.Effect<boolean>;
+  readonly installRequestOpen: Effect.Effect<boolean>;
+  readonly exclusive: <A, E2, R2>(effect: Effect.Effect<A, E2, R2>) => Effect.Effect<A, E2, R2>;
+  readonly resumeAfterUpdate: Effect.Effect<void, E, R>;
+  readonly pollMs?: number;
+}): Effect.Effect<never, never, R> {
+  const pollMs = input.pollMs ?? HOLD_RELEASE_POLL_MS;
+  let handled = 0;
+  // Failed passes in a row, and the looks to skip before the next try: a
+  // failure that persists is tried again further apart, up to about 32 looks.
+  let failures = 0;
+  let skip = 0;
+  const pass = Effect.gen(function* () {
+    if (skip > 0) {
+      skip -= 1;
+      return;
+    }
+    const count = yield* input.releaseCount;
+    if (count === handled) return;
+    if ((yield* input.updateUnderway) || (yield* input.installRequestOpen)) return;
+    yield* input.exclusive(
+      Effect.gen(function* () {
+        // A drain that started while this waited for the pass slot.
+        if (yield* input.updateUnderway) return;
+        yield* Effect.logInfo("Resuming threads after an update hold ended without a restart", {
+          releases: count,
+        });
+        yield* input.resumeAfterUpdate;
+        // Counted only once it worked: a failed pass runs again on a later look.
+        handled = count;
+        failures = 0;
+      }),
+    );
+  });
+  return pass.pipe(
+    Effect.catchCause((cause) => {
+      if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
+      failures += 1;
+      skip = Math.min(2 ** (failures - 1), 32) - 1;
+      return Effect.logWarning("Resuming threads after an update hold ended failed", {
+        cause,
+        failures,
+      });
+    }),
+    Effect.andThen(Effect.sleep(Duration.millis(pollMs))),
+    Effect.forever,
+  );
+}
+
 export function runOrderedV2StartupPhases<
   Import,
   Recovery,
@@ -406,6 +475,10 @@ const make = (options?: StartupOptions) =>
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     const updateHold = yield* ServiceUpdateHold.optional;
+    const holdService = yield* Effect.serviceOption(ServiceUpdateHold.ServiceUpdateHold);
+    const closedQuestions = yield* Effect.serviceOption(
+      ServiceUpdateClosedQuestions.ServiceUpdateClosedQuestions,
+    );
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
@@ -554,6 +627,19 @@ const make = (options?: StartupOptions) =>
         ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
       });
       yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+      if (Option.isSome(holdService)) {
+        const store = closedQuestions;
+        yield* resumeAfterHoldReleases({
+          releaseCount: holdService.value.releaseCount,
+          updateUnderway: Effect.gen(function* () {
+            if (yield* holdService.value.isHeld) return true;
+            return Option.isSome(store) ? yield* store.value.isDraining : false;
+          }),
+          installRequestOpen: holdService.value.installRequestOpen,
+          exclusive: (effect) => (Option.isSome(store) ? store.value.reopening(effect) : effect),
+          resumeAfterUpdate: providerRuntimeRecovery.resumeAfterUpdate,
+        }).pipe(Effect.forkScoped);
+      }
       // Runs after activation: the status check fetches every enabled project's
       // remote, and awaiting it here held command readiness for that long.
       yield* runStartupPhase(

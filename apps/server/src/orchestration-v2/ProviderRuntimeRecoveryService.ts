@@ -2,6 +2,9 @@ import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   CommandId,
+  SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
+  SERVICE_UPDATE_STOP_REASON,
+  SERVICE_UPDATE_VERIFYING_MESSAGE,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
@@ -668,6 +671,16 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
   );
 
+  const stoppedByUpdate = (effect: {
+    readonly status: string;
+    readonly lastError: string | null;
+  }) =>
+    effect.status === "cancelled"
+      ? effect.lastError === SERVICE_UPDATE_STOP_REASON
+      : effect.lastError !== null &&
+        (effect.lastError.includes(SERVICE_UPDATE_IN_PROGRESS_MESSAGE) ||
+          effect.lastError.includes(SERVICE_UPDATE_VERIFYING_MESSAGE));
+
   // Runs the server stopped to install an update are already `interrupted`
   // when it shuts down, so reconcile never sees them. Once it is back, each
   // one whose project continues threads after restarts gets the same
@@ -697,18 +710,24 @@ export const make = Effect.gen(function* () {
         );
         if (run?.status !== "interrupted") return;
         const commandId = CommandId.make(`command:update-continue:${run.id}`);
+        const effectId = `effect:restart-continuation:${run.id}`;
         yield* eventSink.writeWithEffects({
           commandId,
           events: [],
           effects: [
             {
-              id: `effect:restart-continuation:${run.id}`,
+              id: effectId,
               commandId,
               threadId,
               request: { type: "provider-runtime.continue", sourceRunId: run.id },
             },
           ],
         });
+        // Written earlier, when a hold ended without a restart, then cancelled by
+        // the next update's drain or refused while it held the service: the turn
+        // is still stopped for an update, so it gets the continuation again. A
+        // continuation cancelled for any other reason (a person's Stop) stays.
+        yield* outbox.rearm({ effectId, shouldRearm: stoppedByUpdate });
       }).pipe(
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),

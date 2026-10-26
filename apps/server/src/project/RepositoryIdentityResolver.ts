@@ -9,6 +9,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -36,6 +37,16 @@ export interface RepositoryIdentityResolverOptions {
   readonly cwdExists?: (cwd: string) => Effect.Effect<boolean>;
 }
 
+/** Git could not say which repository a folder belongs to: it failed or timed out. */
+export class RepositoryIdentityReadError extends Schema.TaggedError<RepositoryIdentityReadError>()(
+  "RepositoryIdentityReadError",
+  { cwd: Schema.String, detail: Schema.String },
+) {
+  override get message(): string {
+    return `Git could not read the repository of ${this.cwd}: ${this.detail}`;
+  }
+}
+
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
   {
@@ -43,6 +54,16 @@ export class RepositoryIdentityResolver extends Context.Service<
       cwd: string,
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<RepositoryIdentity | null>;
+    /**
+     * A fresh read that tells a git failure from a folder without a repository.
+     * `null` means git answered: the folder is in no repository, its repository
+     * has no remote, or git is not installed. A failed or timed-out git command
+     * fails instead, where `resolve` would answer `null`. Uncached. Optional so
+     * test doubles of `resolve` alone still type-check.
+     */
+    readonly resolveStrict?: (
+      cwd: string,
+    ) => Effect.Effect<RepositoryIdentity | null, RepositoryIdentityReadError>;
   }
 >()("specweave-studio/project/RepositoryIdentityResolver") {}
 
@@ -169,6 +190,76 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     : null;
 });
 
+/** The spawn failed because git is not installed (or not on PATH). */
+function isCommandNotFound(error: ProcessRunner.ProcessRunError): boolean {
+  if (error._tag !== "ProcessSpawnError") return false;
+  let cause: unknown = error.cause;
+  for (let depth = 0; depth < 4 && typeof cause === "object" && cause !== null; depth++) {
+    if ("code" in cause && cause.code === "ENOENT") return true;
+    if ("reason" in cause && cause.reason === "NotFound") return true;
+    cause = "cause" in cause ? cause.cause : undefined;
+  }
+  return false;
+}
+
+/** stderr's first line, or the exit code when git printed nothing. */
+function gitFailureDetail(output: ProcessRunner.ProcessRunOutput): string {
+  if (output.timedOut) return "git timed out";
+  const line = output.stderr
+    .split("\n")
+    .map((text) => text.trim())
+    .find((text) => text.length > 0);
+  return line ?? `git exited with code ${output.code ?? "unknown"}`;
+}
+
+const resolveRepositoryIdentityStrict = Effect.fn("RepositoryIdentityResolver.resolveStrict")(
+  function* (
+    cwd: string,
+  ): Effect.fn.Return<
+    RepositoryIdentity | null,
+    RepositoryIdentityReadError,
+    ProcessRunner.ProcessRunner
+  > {
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    const fail = (detail: string) => new RepositoryIdentityReadError({ cwd, detail });
+    const git = (args: ReadonlyArray<string>) =>
+      processRunner
+        .run({
+          command: "git",
+          args,
+          // English messages, so "not a git repository" reads the same in every locale.
+          env: { LC_ALL: "C" },
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(
+          Effect.map((output) => ({ output, missing: false as const })),
+          Effect.catch((error) =>
+            isCommandNotFound(error)
+              ? Effect.succeed({ output: null, missing: true as const })
+              : Effect.fail(fail(error.message)),
+          ),
+        );
+    const topLevel = yield* git(["-C", cwd, "rev-parse", "--show-toplevel"]);
+    if (topLevel.missing) return null;
+    const top = topLevel.output;
+    if (top.timedOut || top.code !== 0) {
+      if (!top.timedOut && /not a git repository/i.test(top.stderr)) return null;
+      return yield* fail(gitFailureDetail(top));
+    }
+    const root = top.stdout.trim();
+    if (root.length === 0) return null;
+    const remoteResult = yield* git(["-C", root, "remote", "-v"]);
+    if (remoteResult.missing) return null;
+    const remote = remoteResult.output;
+    if (remote.timedOut || remote.code !== 0) return yield* fail(gitFailureDetail(remote));
+    const remotes = parseRemoteFetchUrls(remote.stdout);
+    const primary = pickPrimaryRemote(remotes);
+    return primary
+      ? buildRepositoryIdentity({ ...primary, originUrl: remotes.get("origin"), rootPath: root })
+      : null;
+  },
+);
+
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
@@ -225,7 +316,25 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     },
   );
 
-  return RepositoryIdentityResolver.of({ resolve });
+  const resolveStrict: NonNullable<RepositoryIdentityResolver["Service"]["resolveStrict"]> = (
+    cwd,
+  ) =>
+    (cwdExists === undefined ? Effect.succeed(true) : cwdExists(cwd)).pipe(
+      Effect.flatMap((exists) =>
+        exists
+          ? resolveRepositoryIdentityStrict(cwd).pipe(
+              Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+              Effect.flatMap((identity) =>
+                identity === null
+                  ? Effect.succeed(null)
+                  : refine(identity).pipe(Effect.orElseSucceed(() => identity)),
+              ),
+            )
+          : Effect.succeed(null),
+      ),
+    );
+
+  return RepositoryIdentityResolver.of({ resolve, resolveStrict });
 });
 
 export const layer = Layer.effect(RepositoryIdentityResolver, make()).pipe(

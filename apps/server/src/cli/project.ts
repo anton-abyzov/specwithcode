@@ -3,6 +3,8 @@ import {
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
+  type ProjectFolderCheck,
+  type ProjectFolderCheckInput,
   type ProjectMutation,
   type ProjectSnapshot,
   ProjectId,
@@ -17,7 +19,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import type * as Terminal from "effect/Terminal";
+import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
@@ -29,6 +32,8 @@ import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { folderThreadsText, nestedProjectsText } from "../project/ProjectActionRequests.ts";
+import { folderChangeRefusal, planningImpactText } from "../project/ProjectFolderChange.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as StudioProjectFileLoader from "../project/StudioProjectFileLoader.ts";
@@ -69,11 +74,15 @@ export class ProjectLiveServerDeclaredResponseError extends Schema.TaggedError<P
     operation: Schema.Literal("callLiveServer"),
     code: Schema.String,
     traceId: Schema.String,
+    /** The server's own words for a refusal, such as why a folder change was refused. */
+    detail: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Server request failed (${this.code}, trace ${this.traceId}).`;
+    return this.detail === undefined
+      ? `Server request failed (${this.code}, trace ${this.traceId}).`
+      : `${this.detail} (${this.code}, trace ${this.traceId})`;
   }
 }
 
@@ -154,6 +163,33 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
   }
 }
 
+export class ProjectRemoveConfirmationError extends Schema.TaggedError<ProjectRemoveConfirmationError>()(
+  "ProjectRemoveConfirmationError",
+  {
+    operation: Schema.Literal("removeProject"),
+    title: Schema.String,
+    typed: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return this.typed === undefined
+      ? `Nothing was removed. Removing a project deletes its threads, memory, plans and routines. Confirm with --confirm "${this.title}".`
+      : `Nothing was removed: "${this.typed}" is not the project's title. Confirm with --confirm "${this.title}".`;
+  }
+}
+
+export class ProjectMoveRefusedError extends Schema.TaggedError<ProjectMoveRefusedError>()(
+  "ProjectMoveRefusedError",
+  {
+    operation: Schema.Literal("moveProject"),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -163,15 +199,19 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ProjectRemoveConfirmationError,
+  ProjectMoveRefusedError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
 export function projectCommandErrorFromLiveServerRequest(cause: unknown): ProjectCommandError {
   if (isEnvironmentHttpCommonError(cause)) {
+    const detail = "detail" in cause && typeof cause.detail === "string" ? cause.detail : "";
     return new ProjectLiveServerDeclaredResponseError({
       operation: "callLiveServer",
       code: cause.code,
       traceId: cause.traceId,
+      ...(detail.length > 0 ? { detail } : {}),
       cause,
     });
   }
@@ -211,6 +251,8 @@ const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
 );
 
 const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
+/** Checking and changing a folder read Git remotes and walk the new folder, so they get longer. */
+const PROJECT_CLI_FOLDER_TIMEOUT = Duration.seconds(30);
 const withProjectCliSessionToken = <A, E, R>(
   environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
   run: (token: string) => Effect.Effect<A, E, R>,
@@ -335,7 +377,25 @@ const dispatchLiveOrchestrationCommand = (
       payload: command,
     } as Parameters<typeof client.projects.mutate>[0]);
   }).pipe(
-    withProjectCliLiveServerTimeout,
+    command.type === "project.folder.change"
+      ? Effect.timeout(PROJECT_CLI_FOLDER_TIMEOUT)
+      : withProjectCliLiveServerTimeout,
+    Effect.mapError(projectCommandErrorFromLiveServerRequest),
+  );
+
+const checkLiveProjectFolder = (
+  origin: string,
+  bearerToken: string,
+  payload: ProjectFolderCheckInput,
+) =>
+  Effect.gen(function* () {
+    const client = yield* makeLiveServerClient(origin);
+    return yield* client.projects.folderCheck({
+      headers: { authorization: `Bearer ${bearerToken}` },
+      payload,
+    });
+  }).pipe(
+    Effect.timeout(PROJECT_CLI_FOLDER_TIMEOUT),
     Effect.mapError(projectCommandErrorFromLiveServerRequest),
   );
 
@@ -384,6 +444,10 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       command: ProjectCliDispatchCommand,
     ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
     readonly mode: ProjectCommandExecutionMode;
+    /** The running app's folder check; absent offline, where folders cannot change. */
+    readonly checkFolder?: (
+      input: ProjectFolderCheckInput,
+    ) => Effect.Effect<ProjectFolderCheck, Error, HttpClient.HttpClient>;
   }) => Effect.Effect<
     string,
     Error,
@@ -391,6 +455,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
     | FileSystem.FileSystem
     | HttpClient.HttpClient
     | Path.Path
+    | Terminal.Terminal
     | WorkspacePaths.WorkspacePaths
   >,
 ) {
@@ -411,6 +476,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
             dispatch: (command) =>
               dispatchLiveOrchestrationCommand(liveMode.value.origin, token, command),
             mode: "live",
+            checkFolder: (input) => checkLiveProjectFolder(liveMode.value.origin, token, input),
           });
           yield* Console.log(output);
         }),
@@ -490,6 +556,19 @@ const projectAddCommand = Command.make("add", {
   ),
 );
 
+/** Asks a terminal for the project's title; a script, or a person who quits, gets none. */
+const askProjectTitle = (title: string) =>
+  process.stdin.isTTY && process.stdout.isTTY
+    ? Prompt.run(
+        Prompt.String({
+          message: `Removing "${title}" deletes its memory, plans and routines. Type its title to confirm:`,
+        }),
+      ).pipe(
+        Effect.map((typed) => Option.some(typed.trim())),
+        Effect.catchTags({ QuitError: () => Effect.succeedNone }),
+      )
+    : Effect.succeedNone;
+
 const projectRemoveCommand = Command.make("remove", {
   ...projectLocationFlags,
   project: Argument.String("project").pipe(
@@ -499,8 +578,16 @@ const projectRemoveCommand = Command.make("remove", {
     Flag.withDescription("Delete the project and all of its threads."),
     Flag.withDefault(false),
   ),
+  confirm: Flag.String("confirm").pipe(
+    Flag.withDescription(
+      "The project's exact title, to confirm the deletion. A terminal asks for it when this is left out.",
+    ),
+    Flag.optional,
+  ),
 }).pipe(
-  Command.withDescription("Remove a project."),
+  Command.withDescription(
+    "Remove a project and its memory, plans and routines; --force also deletes its threads. Folders and Git branches stay. Needs --confirm with the project's exact title.",
+  ),
   Command.withHandler((flags) =>
     runProjectMutation(
       flags,
@@ -517,14 +604,23 @@ const projectRemoveCommand = Command.make("remove", {
           snapshot,
           identifier: flags.project,
         });
+        // A delete names the project it destroys, typed by the person: an id or path
+        // in a script is not that confirmation.
+        const typed = Option.getOrUndefined(
+          Option.isSome(flags.confirm) ? flags.confirm : yield* askProjectTitle(project.title),
+        );
+        if (typed !== project.title)
+          return yield* new ProjectRemoveConfirmationError({
+            operation: "removeProject",
+            title: project.title,
+            ...(typed === undefined ? {} : { typed }),
+          });
         yield* dispatch({
           type: "project.delete",
           commandId: CommandId.make(yield* projectCommandUuid),
           projectId: project.id,
           force: flags.force,
-          // A forced delete must name the project it destroys. The CLI resolved the
-          // target from an id or path the user typed, so --force supplies the title.
-          ...(flags.force ? { confirmationTitle: project.title } : {}),
+          confirmationTitle: typed,
         });
         return `Removed project ${project.id} (${project.title}).`;
       }),
@@ -573,10 +669,79 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+/** What `project move --check` prints: the folder check, with nothing changed. */
+export function formatFolderCheck(
+  project: { readonly id: ProjectId; readonly title: string },
+  check: ProjectFolderCheck,
+  confirmed: {
+    readonly differentRepository: boolean;
+    readonly planningImpact: boolean;
+  } = { differentRepository: false, planningImpact: false },
+): string {
+  const repository = check.sameRepository
+    ? `same (${check.targetRepository ?? "no Git remote"})`
+    : `different: the current folder ${check.currentRepository === null ? "has no Git remote" : `is ${check.currentRepository}`}, the new one ${check.targetRepository === null ? "has none" : `is ${check.targetRepository}`}`;
+  const layout = check.layout;
+  const planning = planningImpactText(check);
+  const nested = nestedProjectsText(check);
+  const refusal = folderChangeRefusal(
+    check,
+    confirmed.differentRepository,
+    confirmed.planningImpact,
+  );
+  const verdict = check.unchanged
+    ? "The project already uses this folder."
+    : check.refusal !== undefined
+      ? `Refused: ${check.refusal.detail}`
+      : refusal === null
+        ? "Ready to move."
+        : refusal.reason === "repository_mismatch"
+          ? `Needs --confirm-different-repository. ${refusal.detail}`
+          : refusal.reason === "planning_impact"
+            ? `Needs --confirm-planning-impact. ${refusal.detail}`
+            : `Refused: ${refusal.detail}`;
+  return [
+    `Folder check for project ${project.id} (${project.title}). Nothing changed.`,
+    `  Current folder: ${check.currentRoot}`,
+    `  New folder: ${check.targetRoot}${check.targetExists ? "" : check.refusal?.reason === "folder_not_directory" ? " (not a folder)" : " (does not exist)"}`,
+    `  Repository: ${repository}`,
+    `  Threads: ${check.threadCount}, ${check.keptInPlaceCount} kept in place, ${check.reboundWorktreeCount} rebound to the new folder`,
+    ...(check.unchanged
+      ? []
+      : [
+          `    ${folderThreadsText({
+            from: check.currentRoot,
+            to: check.targetRoot,
+            keptInPlace: check.keptInPlaceCount,
+            reboundWorktrees: check.reboundWorktreeCount,
+            threadCount: check.threadCount,
+            done: false,
+          })}`,
+        ]),
+    ...(check.activeThreads.length === 0
+      ? []
+      : [`  Running: ${check.activeThreads.map((thread) => `"${thread.title}"`).join(", ")}`]),
+    ...(layout === undefined
+      ? []
+      : [
+          `  Layout: ${layout.kind}, ${layout.repositoryCount} ${layout.repositoryCount === 1 ? "repository" : "repositories"}${layout.repositories.length === 0 ? "" : ` (${layout.repositories.slice(0, 5).join(", ")}${layout.repositories.length > 5 ? ", ..." : ""})`}${layout.truncated ? ", walk stopped early" : ""}`,
+        ]),
+    `  Planning: ${planning ?? "unchanged"}`,
+    ...(nested === null ? [] : [`  Other projects: ${nested}`]),
+    ...(check.conflictingProject === null
+      ? []
+      : [`  Owned by: "${check.conflictingProject.title}" (${check.conflictingProject.id})`]),
+    `  Result: ${verdict}`,
+  ].join("\n");
+}
+
 /**
- * Moves a project to another folder. Its threads, memory and history stay with
- * it and run in the new folder from their next turn. Needs SpecWithCode running,
- * which checks the folder, refuses while work is running and rebinds threads.
+ * Moves a project to another folder, after the running app checks it. Threads
+ * in the project folder follow it from their next turn, and threads on a
+ * checkout inside it move to the same checkout in the new folder. When the old
+ * folder stays a checkout of another repository (moving up to an umbrella),
+ * those threads keep running there instead and only the coordinator and new
+ * threads use the new folder. Memory and history stay with the project.
  */
 const projectMoveCommand = Command.make("move", {
   ...projectLocationFlags,
@@ -596,9 +761,13 @@ const projectMoveCommand = Command.make("move", {
     ),
     Flag.withDefault(false),
   ),
+  check: Flag.Boolean("check").pipe(
+    Flag.withDescription("Show what the move would do without changing anything."),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription(
-    "Move a project to another folder, keeping its threads, memory and history.",
+    "Move a project to another folder. Threads in the project folder follow it, unless the old folder stays a checkout of another repository: then they keep running there and only the coordinator and new threads use the new folder. Memory and history stay with the project. Needs the app running; --check shows what would happen.",
   ),
   Command.withHandler((flags) =>
     runProjectMutation(
@@ -606,15 +775,55 @@ const projectMoveCommand = Command.make("move", {
       Effect.fn("projectMoveMutation")(function* ({
         snapshot,
         dispatch,
+        checkFolder,
       }: {
         readonly snapshot: ProjectSnapshot;
         readonly dispatch: (
           command: ProjectCliDispatchCommand,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+        readonly checkFolder?: (
+          input: ProjectFolderCheckInput,
+        ) => Effect.Effect<ProjectFolderCheck, Error, HttpClient.HttpClient>;
       }) {
         const project = yield* findActiveProjectTarget({ snapshot, identifier: flags.project });
         const path = yield* Path.Path;
         const workspaceRoot = path.resolve(flags.workspaceRoot);
+        if (checkFolder === undefined)
+          return yield* new ProjectMoveRefusedError({
+            operation: "moveProject",
+            detail:
+              "Nothing changed. Start the app first: it checks the folder, keeps running work safe and moves the threads.",
+          });
+        const check = yield* checkFolder({ projectId: project.id, workspaceRoot });
+        if (flags.check)
+          return formatFolderCheck(project, check, {
+            differentRepository: flags.confirmDifferentRepository,
+            planningImpact: flags.confirmPlanningImpact,
+          });
+        if (check.unchanged)
+          return `Project ${project.id} (${project.title}) already uses ${check.targetRoot}.`;
+        // The server refuses the same way, but its answer does not carry the reason.
+        if (check.refusal !== undefined)
+          return yield* new ProjectMoveRefusedError({
+            operation: "moveProject",
+            detail: `Nothing changed: ${check.refusal.detail}`,
+          });
+        const refusal = folderChangeRefusal(
+          check,
+          flags.confirmDifferentRepository,
+          flags.confirmPlanningImpact,
+        );
+        if (refusal !== null)
+          return yield* new ProjectMoveRefusedError({
+            operation: "moveProject",
+            detail: `Nothing changed: ${refusal.detail}${
+              refusal.reason === "repository_mismatch"
+                ? " Pass --confirm-different-repository to use it."
+                : refusal.reason === "planning_impact"
+                  ? " Pass --confirm-planning-impact to accept it."
+                  : ""
+            }`,
+          });
         yield* dispatch({
           type: "project.folder.change",
           commandId: CommandId.make(yield* projectCommandUuid),
@@ -623,7 +832,16 @@ const projectMoveCommand = Command.make("move", {
           ...(flags.confirmDifferentRepository ? { confirmDifferentRepository: true } : {}),
           ...(flags.confirmPlanningImpact ? { confirmPlanningImpact: true } : {}),
         });
-        return `Moved project ${project.id} (${project.title}) from ${project.workspaceRoot} to ${workspaceRoot}.`;
+        // The change answers with the project only; the check just before counted the threads.
+        return `Moved project ${project.id} (${project.title}) from ${check.currentRoot} to ${check.targetRoot}. ${folderThreadsText(
+          {
+            from: check.currentRoot,
+            to: check.targetRoot,
+            keptInPlace: check.keptInPlaceCount,
+            reboundWorktrees: check.reboundWorktreeCount,
+            done: true,
+          },
+        )}`;
       }),
     ),
   ),

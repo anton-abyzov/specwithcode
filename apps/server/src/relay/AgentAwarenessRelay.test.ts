@@ -8,6 +8,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
+  type Project,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -939,4 +940,44 @@ describe("startup catch-up", { concurrent: false }, () => {
       assert.equal(catchUp.shellSnapshotReads, 1);
     }).pipe(Effect.scoped),
   );
+});
+
+describe("applyProjectNotificationLevel", () => {
+  const state = (phase: RelayAgentActivityState["phase"]) =>
+    ({
+      environmentId: "env",
+      threadId: "thread",
+      projectTitle: "Project",
+      threadTitle: "Thread",
+      phase,
+      headline: "Headline",
+      modelTitle: "Model",
+      updatedAt: "2026-10-26T00:00:00.000Z",
+      deepLink: "/threads/env/thread",
+    }) as RelayAgentActivityState;
+  const project = (notifications?: string) => ({
+    workspaceSettings:
+      notifications === undefined ? undefined : ({ notifications } as Project["workspaceSettings"]),
+  });
+
+  it("marks only what the project's level keeps off the phone", () => {
+    const quiet = (phase: RelayAgentActivityState["phase"], notifications?: string) =>
+      AgentAwarenessRelay.applyProjectNotificationLevel(state(phase), project(notifications))
+        ?.quiet === true;
+    // Every published thread is a main thread, so the default and "all" alert on everything.
+    assert.isFalse(quiet("completed"));
+    assert.isFalse(quiet("failed", "all"));
+    assert.isFalse(quiet("waiting_for_approval", "requests"));
+    assert.isFalse(quiet("waiting_for_input", "requests"));
+    assert.isTrue(quiet("completed", "requests"));
+    assert.isTrue(quiet("waiting_for_input", "none"));
+    assert.isNull(AgentAwarenessRelay.applyProjectNotificationLevel(null, project("none")));
+  });
+
+  it("leaves a state that may alert byte for byte as before", () => {
+    assert.deepStrictEqual(
+      AgentAwarenessRelay.applyProjectNotificationLevel(state("completed"), project()),
+      state("completed"),
+    );
+  });
 });

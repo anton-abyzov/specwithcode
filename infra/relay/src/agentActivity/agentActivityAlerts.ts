@@ -34,6 +34,11 @@ function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
 
+/** A row its project's notification level keeps off the phone's alerts. */
+function isQuiet(row: { readonly quiet?: boolean | undefined }): boolean {
+  return row.quiet === true;
+}
+
 export function alertAllowedForPhase(
   preferences: RelayAgentAwarenessPreferences | null,
   phase: string,
@@ -63,6 +68,7 @@ export function attentionTransitionRows(input: TransitionInput) {
     (row) =>
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
+      !isQuiet(row) &&
       alertAllowedForPhase(input.preferences, row.phase),
   );
 }
@@ -98,6 +104,7 @@ export function terminalTransitionRows(
     input.includeUnobserved,
   ).filter((row) => {
     return (
+      !isQuiet(row) &&
       alertAllowedForPhase(input.preferences, row.phase) &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)
     );
@@ -133,18 +140,20 @@ export function alertForTerminalAggregate(input: {
   readonly preferences: RelayAgentAwarenessPreferences | null;
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
-  if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
+  if (!row || (row.phase !== "completed" && row.phase !== "failed") || isQuiet(row)) return null;
   return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
 }
 
 export function shouldAlertForActivity(input: {
   readonly phase: RelayAgentActivityAggregateRow["phase"];
   readonly updatedAt: string;
+  readonly quiet?: boolean | undefined;
   readonly preferences: RelayAgentAwarenessPreferences | null;
   readonly nowMs: number;
 }): boolean {
   return (
     input.preferences?.notificationsEnabled === true &&
+    !isQuiet(input) &&
     alertAllowedForPhase(input.preferences, input.phase) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||
       isFreshTerminalNotification(input.updatedAt, input.nowMs))

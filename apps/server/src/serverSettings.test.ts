@@ -723,6 +723,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("writes the merged worktree cleanup choice even when it matches the default", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const readCleanup = Effect.map(
+          fileSystem.readFileString(serverConfig.settingsPath),
+          (raw) => (JSON.parse(raw) as { storageCleanup?: Record<string, unknown> }).storageCleanup,
+        );
+
+        // Raw JSON, before decoding fills defaults: a choice must not depend on them.
+        yield* serverSettings.updateSettings({ storageCleanup: { worktreeOnMerge: false } });
+        assert.deepStrictEqual(yield* readCleanup, { worktreeOnMerge: false });
+        yield* serverSettings.updateSettings({ storageCleanup: { worktreeOnMerge: true } });
+        assert.deepStrictEqual(yield* readCleanup, { worktreeOnMerge: true });
+      }),
+    ).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("preserves model when switching providers via textGenerationModelSelection", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -1524,6 +1544,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             serverPassword: "secret-password",
           },
         },
+        storageCleanup: { worktreeOnMerge: true },
         backgroundActivity: {
           schemaVersion: 1,
           profile: "custom",

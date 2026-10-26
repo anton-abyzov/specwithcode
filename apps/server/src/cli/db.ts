@@ -44,7 +44,7 @@ const resolveHome = Effect.fn("cli.db.resolve_home")(function* (baseDir: Option.
 });
 
 /** The database of `--base-dir`, else of STUDIO_HOME, else of the default home. */
-const resolveDatabasePath = Effect.fn("cli.db.resolve_path")(function* (
+export const resolveDatabasePath = Effect.fn("cli.db.resolve_path")(function* (
   baseDir: Option.Option<string>,
 ) {
   return (yield* resolveHome(baseDir)).paths.dbPath;

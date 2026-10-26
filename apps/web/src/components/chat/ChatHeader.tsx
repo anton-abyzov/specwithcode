@@ -98,6 +98,14 @@ export const ChatHeader = memo(function ChatHeader({
   );
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const providerEntries = useProviderEntries(activeThreadEnvironmentId);
+  const activeThreadProjectId = activeThreadShell?.projectId;
+  const headerProject = useMemo(
+    () =>
+      activeThreadProjectId
+        ? { environmentId: activeThreadEnvironmentId, projectId: activeThreadProjectId }
+        : null,
+    [activeThreadEnvironmentId, activeThreadProjectId],
+  );
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
@@ -374,12 +382,17 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      <RoutingDecisionChip routing={activeThreadShell?.routing} entries={providerEntries} projectId={activeThreadShell?.projectId} environmentId={activeThreadRef.environmentId} />
+      <RoutingDecisionChip
+        routing={activeThreadShell?.routing}
+        entries={providerEntries}
+        projectId={activeThreadShell?.projectId}
+        environmentId={activeThreadRef.environmentId}
+      />
       <ThreadArtifactsMenu
         threadRef={activeThreadRef}
         cwd={artifactsCwd ?? activeProjectCwd ?? undefined}
       />
-      <TimelineDetailMenu threadKey={scopedThreadKey(activeThreadRef)} />
+      <TimelineDetailMenu threadKey={scopedThreadKey(activeThreadRef)} project={headerProject} />
     </div>
   );
 });

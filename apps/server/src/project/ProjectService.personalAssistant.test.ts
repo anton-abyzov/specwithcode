@@ -91,7 +91,11 @@ it.effect("refuses a second assistant from any create path, archived or not", ()
     assert.equal(code.workspaceSettings?.kind ?? "code", "code");
 
     // Once the assistant is deleted the machine may have a new one.
-    yield* service.delete({ commandId: CommandId.make("assistant:delete"), projectId: first.id });
+    yield* service.delete({
+      commandId: CommandId.make("assistant:delete"),
+      projectId: first.id,
+      confirmationTitle: first.title,
+    });
     const next = yield* createAssistant(service, "aide-new");
     assert.equal(next.workspaceSettings?.kind, "personal");
   }).pipe(Effect.provide(layerTest)),

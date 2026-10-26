@@ -134,7 +134,7 @@ describe("an open thread's header", () => {
     expect([...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual([
       "Back to project threads",
       "2 subagents",
-      "Timeline detail: Normal",
+      "Show: Folded steps",
       "Resolve thread",
       "Thread actions",
       "Expand panel",

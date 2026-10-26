@@ -24,7 +24,7 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => null,
 }));
 vi.mock("./settings/useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => [] }));
-vi.mock("../state/entities", () => ({ readThreadShell: () => null }));
+vi.mock("../state/entities", () => ({ readThreadShell: () => null, useProjects: () => [] }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
 vi.mock("../state/environments", () => ({

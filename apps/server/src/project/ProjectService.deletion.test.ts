@@ -468,7 +468,11 @@ it.effect("deletes a project without force once its imported threads were delete
       const service = yield* ProjectService.make;
       yield* importer.reconcileShells;
       const early = yield* service
-        .delete({ commandId: CommandId.make("command:emptied:early"), projectId })
+        .delete({
+          commandId: CommandId.make("command:emptied:early"),
+          projectId,
+          confirmationTitle: "Deletion test",
+        })
         .pipe(Effect.flip);
       assert.equal(early._tag, "ProjectNotEmptyError");
 
@@ -510,6 +514,7 @@ it.effect("deletes a project without force once its imported threads were delete
       const deleted = yield* service.delete({
         commandId: CommandId.make("command:emptied:project-delete"),
         projectId,
+        confirmationTitle: "Deletion test",
       });
       assert.isNotNull(deleted.deletedAt);
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));

@@ -18,11 +18,21 @@ import { effectiveHandoffMode, type HandoffDocument } from "./handoffState.ts";
 export interface HandoffTurnGateShape {
   /** Null when a turn may start; otherwise the reason it may not. Never fails. */
   readonly check: (threadId: ThreadId) => Effect.Effect<string | null>;
+  /**
+   * The handoff note and transcript an idle continuation carries into its first
+   * turn, or null. Never fails. Absent means none (test gates).
+   */
+  readonly pendingSeed?: (threadId: ThreadId) => Effect.Effect<string | null>;
 }
 
 export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
   "specweave-studio/handoff/HandoffTurnGate",
-  { defaultValue: () => ({ check: () => Effect.succeed(null) }) },
+  {
+    defaultValue: () => ({
+      check: () => Effect.succeed(null),
+      pendingSeed: () => Effect.succeed(null),
+    }),
+  },
 ) {}
 
 /** Why a turn may not start on this machine, or null. Pure, for tests. */
@@ -72,6 +82,15 @@ export const layer = Layer.effect(
             Effect.logWarning("Handoff mode could not read its lease state", { cause }).pipe(
               Effect.as(null),
             ),
+          ),
+        ),
+      pendingSeed: (threadId: ThreadId) =>
+        store.read.pipe(
+          Effect.map((document) => document.threads[threadId]?.pendingSeed ?? null),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Handoff mode could not read a continuation's seed", {
+              cause,
+            }).pipe(Effect.as(null)),
           ),
         ),
     };

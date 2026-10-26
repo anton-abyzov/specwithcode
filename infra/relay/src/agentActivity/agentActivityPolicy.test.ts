@@ -3,6 +3,7 @@ import { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import type { RelayAgentActivityState } from "@specweave-studio/contracts/relay";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
+  alertForTerminalAggregate,
   attentionTransitionRows,
   terminalTransitionRows,
   shouldAlertForActivity,
@@ -101,5 +102,41 @@ describe("shared agent activity policy", () => {
       }),
     ).toBe(false);
     expect(shouldAlertForActivity({ ...input, nowMs: 180_000 })).toBe(false);
+  });
+
+  it("keeps a quiet project's rows off alerts but in the aggregate", () => {
+    const previousAggregate = aggregate([state]);
+    const waiting = { ...state, phase: "waiting_for_input" as const };
+    expect(
+      attentionTransitionRows({
+        previousAggregate,
+        nextAggregate: aggregate([waiting]),
+        preferences,
+      }),
+    ).toHaveLength(1);
+    const quietWaiting = aggregate([{ ...waiting, quiet: true }]);
+    expect(quietWaiting.activities).toMatchObject([{ threadId: state.threadId, quiet: true }]);
+    expect(
+      attentionTransitionRows({ previousAggregate, nextAggregate: quietWaiting, preferences }),
+    ).toEqual([]);
+
+    const done = { ...state, phase: "completed" as const };
+    const finished = (terminal: RelayAgentActivityState) =>
+      makeAggregateState({ activeStates: [], terminalState: terminal, nowMs: 0 })!;
+    const terminal = (next: RelayAgentActivityState) =>
+      terminalTransitionRows({
+        previousAggregate,
+        nextAggregate: finished(next),
+        preferences,
+        nowMs: 0,
+      });
+    expect(terminal(done)).toHaveLength(1);
+    expect(terminal({ ...done, quiet: true })).toEqual([]);
+    expect(alertForTerminalAggregate({ aggregate: finished(done), preferences })).not.toBeNull();
+    expect(
+      alertForTerminalAggregate({ aggregate: finished({ ...done, quiet: true }), preferences }),
+    ).toBeNull();
+    expect(shouldAlertForActivity({ ...done, preferences, nowMs: 0 })).toBe(true);
+    expect(shouldAlertForActivity({ ...done, quiet: true, preferences, nowMs: 0 })).toBe(false);
   });
 });
