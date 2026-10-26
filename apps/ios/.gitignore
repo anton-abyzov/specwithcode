@@ -4,3 +4,4 @@ DerivedData/
 .swiftpm/
 SWCKit/.build/
 App/Info.plist
+App/Generated/

@@ -132,7 +132,8 @@ struct CommandEncodeTests {
   }
 
   @Test func methodNames() {
-    #expect(RpcMethod.allCases.count == 17)
+    #expect(RpcMethod.allCases.count == 18)
+    #expect(RpcMethod.subscribeDeviceState.rawValue == "subscribeDeviceState" && RpcMethod.subscribeDeviceState.isStream)
     #expect(RpcMethod.subscribeShell.rawValue == "orchestration.subscribeShell")
     #expect(RpcMethod.projectsMutate.rawValue == "projects.mutate")
     #expect(RpcMethod.createNewProject.rawValue == "projects.createNew")

@@ -1,5 +1,6 @@
 // Headless fixture: the production FallbackOptionsPanel over synthetic providers
-// that mirror the M4 (Claude limited, Codex, Grok, two Copilot instances, Gemini on Vertex).
+// that mirror the M4 (a Claude plan with twelve models, Codex, Grok, two Copilot instances,
+// Gemini on Vertex).
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -71,10 +72,19 @@ function provider(
 }
 
 const providers = [
-  provider("claudeAgent", "claudeAgent", "Claude", 100, [
+  provider("claudeAgent", "claudeAgent", "Claude", 49, [
     ["claude-opus-5-5", "Claude Opus 5.5"],
     ["claude-fable-5-1", "Claude Fable 5.1"],
     ["claude-sonnet-5-5", "Claude Sonnet 5.5"],
+    ["claude-haiku-5-5", "Claude Haiku 5.5"],
+    ["claude-fable-5", "Claude Fable 5"],
+    ["claude-opus-5", "Claude Opus 5"],
+    ["claude-opus-4-8", "Claude Opus 4.8"],
+    ["claude-opus-4-7", "Claude Opus 4.7"],
+    ["claude-opus-4-6", "Claude Opus 4.6"],
+    ["claude-opus-4-5", "Claude Opus 4.5"],
+    ["claude-sonnet-5", "Claude Sonnet 5"],
+    ["claude-haiku-4-5", "Claude Haiku 4.5"],
   ]),
   provider("copilot-0889", "acpRegistry", "GitHub Copilot", null, [], {
     models: [
@@ -112,13 +122,11 @@ const providers = [
 function Fixture() {
   const [excluded, setExcluded] = useState<ReadonlyArray<ExcludedFallbackModel>>(
     params.get("state") === "edited"
-      ? [{ model: "grok-4.7" }, { model: "gpt-6-luna" }, { model: "claude-sonnet-5-5" }]
+      ? [{ model: "grok-4.7" }, { model: "gpt-6-luna" }, { model: "claude-opus-4-5" }]
       : [],
   );
   const groups = describeFallbackOptions({
     providers,
-    currentInstanceId: ProviderInstanceId.make("claudeAgent"),
-    currentModel: "claude-opus-5-5",
     rule: {
       providerLimitFallbackModelSelection: null,
       providerLimitFallbackModels: [
@@ -129,7 +137,6 @@ function Fixture() {
     },
     nowMs: now,
     belowPercent: 95,
-    limitedInstanceIds: new Set(["claudeAgent"]),
   });
   return (
     <main className="mx-auto max-w-3xl bg-background p-4 text-foreground">

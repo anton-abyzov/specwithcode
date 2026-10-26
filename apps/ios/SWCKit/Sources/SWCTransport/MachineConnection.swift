@@ -256,6 +256,23 @@ public actor MachineConnection {
     halt(.needsRepair, error: .needsRepair)
   }
 
+  /// A fresh ticket for the device hub, bought on the route in use with that
+  /// route's own credential: DPoP for Connect, the bearer token otherwise.
+  /// Returns the route's origin with it, since the hub lives on the same origin.
+  public func deviceHubTicket() async throws -> (origin: URL, ticket: String) {
+    guard status.state == .connected, let route = status.route else { throw TransportError.unreachable("Offline") }
+    let ticket: WebSocketTicket
+    if route.issuer == ConnectAuthorizer.issuer {
+      guard let authorizer else { throw TransportError.needsRepair }
+      let (credential, key) = try await authorizer.credential(for: environmentId, at: route, refresh: false)
+      ticket = try await http.dpopWebsocketTicket(token: credential.token, key: key, at: route.httpBase)
+    } else {
+      guard let credential = try credentials.credential(for: route, of: environmentId) else { throw TransportError.needsRepair }
+      ticket = try await http.websocketTicket(token: credential.token, at: route.httpBase)
+    }
+    return (route.httpBase, ticket.ticket)
+  }
+
   // MARK: - Supervisor
 
   private func restart() {

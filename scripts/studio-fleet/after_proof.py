@@ -101,9 +101,9 @@ class Refused(Exception):
     """The page proof cannot decide; its text is the receipt's reason."""
 
 
-def keeping(database):
+def keeping(database, reserve=0):
     """kept_lines.keeping for update.py's read before the restart: every log's lines are kept."""
-    return kept_lines.keeping(database, LOG_TABLES)
+    return kept_lines.keeping(database, LOG_TABLES, reserve)
 
 
 # The old service's log, from right before the final check to the stop.
@@ -351,10 +351,14 @@ def release(marked):
         reader.release()
 
 
-def abandon(held):
-    """update.py's failure path: the mark's reader and the reference image go. Never raises."""
+def abandon(held, kept=None):
+    """update.py's failure path: the mark's reader, the reference image and the kept lines go, the
+    lines before the rollback's own full read. Never raises."""
     release(held)
     discard(held)
+    if kept is not None:
+        with contextlib.suppress(Exception):
+            kept.let_go('failed')
 
 
 def discard(held):
@@ -648,11 +652,13 @@ def decide(state, held, kept, reference, since, include_auth, progress, lap):
         if not isinstance(held, dict) or 'clone' not in held:
             record['reason'] = held.get('reason', 'no-clone') if isinstance(held, dict) else 'no-clone'
             return None
-        if kept is None or not kept.complete:
+        if kept is None or not kept.complete or kept.reason is not None:
             record['reason'] = (kept.reason if kept is not None else None) or 'lines-not-kept'
+            record.update(kept.measured if kept is not None else {})
             return None
         try:
             reads, record = prove(state, held, kept, reference, since, include_auth)
+            record['keptIn'] = kept.place
         except Refused as refusal:
             reads, record = None, {'mode': 'full', 'reason': str(refusal)}
         except Exception as error:  # Anything else the proof meets: the full read decides.

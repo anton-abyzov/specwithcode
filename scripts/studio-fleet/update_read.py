@@ -64,6 +64,8 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
     With the capture, its one scan of each table also serves the guarded hashes, the auth
     invariant, the projection cursors and the carried log prefixes (_read_tables). A database
     with a virtual table is read protected rows first, then the idle check, then the rest."""
+    if kept_lines.active() is None:  # Lines an earlier read kept in memory make room for this one first.
+        kept_lines.make_room()
     db = live_database.connect(state / 'statev2.sqlite')
     try:
         db.execute('BEGIN')

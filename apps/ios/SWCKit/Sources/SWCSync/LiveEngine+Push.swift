@@ -72,10 +72,12 @@ extension LiveEngine {
       pushToken: token,
       preferences: .init(notificationsEnabled: true)
     )
+    // Claimed before the request, so a second call while it is in flight doesn't send it again.
+    connect.registeredPush = key
     do {
       try await connect.relay.registerDevice(registration)
-      connect.registeredPush = key
     } catch {
+      if connect.registeredPush == key { connect.registeredPush = nil }
       Self.log.error("Notification registration failed: \(String(describing: error), privacy: .public)")
     }
   }

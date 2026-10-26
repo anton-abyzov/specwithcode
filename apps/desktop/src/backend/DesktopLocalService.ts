@@ -68,6 +68,12 @@ const UNRESPONSIVE_GRACE_INTERVAL_MS = 1_000;
 // app waits while the install runs (the marker's own age bounds that), and
 // never longer than this in all, measured in time rather than probes.
 const INSTALL_WAIT_LIMIT_MS = SERVICE_INSTALL_LIMIT_MS;
+// An installed service whose process launchd runs answers once it has opened its
+// store, and a release that rebuilds a large store can take minutes (1.0.89 took
+// 8.5). Its home holds the person's projects, so the app waits this long for it
+// instead of opening its own, empty home in its place.
+export const SERVICE_START_WAIT_LIMIT_MINUTES = 20;
+const SERVICE_START_WAIT_LIMIT_MS = SERVICE_START_WAIT_LIMIT_MINUTES * 60_000;
 const PAIR_TIMEOUT_MS = 30_000;
 // Under this much free space (1 GB, the server's critical line) the service
 // stalls on its own writes, which is the likely reason it does not answer.
@@ -97,6 +103,15 @@ export type LocalServiceDiscovery =
   | { readonly _tag: "none" }
   | { readonly _tag: "running"; readonly service: AttachedLocalService }
   | {
+      /**
+       * An installed service owns the person's projects but has not answered
+       * within the start wait; the app must not open its own empty home instead.
+       */
+      readonly _tag: "service-not-started";
+      readonly baseDir: string;
+      readonly stateDir: string;
+    }
+  | {
       readonly _tag: "unresponsive";
       readonly runtime: RunningServerRuntimeState;
       readonly stateDir: string;
@@ -106,6 +121,45 @@ export type LocalServiceDiscovery =
 
 /** Reads free bytes on the disk holding `path`; none when it cannot tell. */
 export type FreeDiskBytesReader = (path: string) => Effect.Effect<Option.Option<number>>;
+
+/**
+ * What launchd reports for an installed service's job: `running` while its
+ * process is up (a release rebuilding a large store is up but silent), `stopped`
+ * while loaded without a process (a crash loop between throttled restarts),
+ * `absent` when launchd has no such job.
+ */
+export type LaunchdJobState = "running" | "stopped" | "absent" | "unknown";
+export type LaunchdJobStateReader = (target: string) => Effect.Effect<LaunchdJobState>;
+
+/** Reads the job's `state = …` line from `launchctl print` output. */
+export function parseLaunchdJobState(output: string): LaunchdJobState {
+  const state = /^\s*state = (.+?)\s*$/m.exec(output)?.[1];
+  if (state === undefined) return "unknown";
+  return state === "running" ? "running" : "stopped";
+}
+
+/** How discovery asks launchd (macOS only) about an installed service's job; tests replace it. */
+export const LaunchdJob = Context.Reference<LaunchdJobStateReader>(
+  "@specweave-studio/desktop/backend/DesktopLocalService/LaunchdJob",
+  {
+    defaultValue: () => (target) =>
+      Effect.callback<LaunchdJobState>((resume) => {
+        NodeChildProcess.execFile(
+          "/bin/launchctl",
+          ["print", target],
+          { encoding: "utf8", timeout: 5_000, maxBuffer: 1024 * 1024 },
+          (error, stdout) => {
+            if (error) {
+              // 113: launchd has no such job (the service was removed or never loaded).
+              resume(Effect.succeed(error.code === 113 ? "absent" : "unknown"));
+              return;
+            }
+            resume(Effect.succeed(parseLaunchdJobState(stdout)));
+          },
+        );
+      }),
+  },
+);
 
 /** How discovery reads free disk space; tests replace it. */
 export const FreeDiskBytes = Context.Reference<FreeDiskBytesReader>(
@@ -128,11 +182,14 @@ interface StudioHomeCandidate {
   readonly stateDir: string;
   /** An installed launchd service that may still be starting. */
   readonly serviceInstalled: boolean;
+  readonly launchdTarget?: string;
 }
 
 export interface DiscoverOptions {
   /** Runs once when discovery starts waiting for a service update to finish. */
   readonly onInstallWait?: Effect.Effect<void>;
+  /** Runs once when discovery starts waiting for an installed service to start. */
+  readonly onServiceStartWait?: Effect.Effect<void>;
 }
 
 export class DesktopLocalServicePairingError extends Schema.TaggedError<DesktopLocalServicePairingError>()(
@@ -304,6 +361,7 @@ const runPair = (command: ServiceCliCommand, pairArgs: ReadonlyArray<string>) =>
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const readFreeDiskBytes = yield* FreeDiskBytes;
+  const readLaunchdJob = yield* LaunchdJob;
   const httpClient = yield* HttpClient.HttpClient;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const attachedRef = yield* Ref.make(Option.none<AttachedLocalService>());
@@ -382,6 +440,9 @@ export const make = Effect.gen(function* () {
           baseDir: installation.studioHome,
           stateDir: installation.stateDir,
           serviceInstalled: installation.serviceInstalled,
+          ...(installation.launchdTarget === undefined
+            ? {}
+            : { launchdTarget: installation.launchdTarget }),
         });
       }
     }
@@ -400,14 +461,27 @@ export const make = Effect.gen(function* () {
       let unresponsive: { runtime: RunningServerRuntimeState; stateDir: string } | null = null;
       let installWaitStartedAt: number | null = null;
       let installWaitOver = false;
+      let startWaitStartedAt: number | null = null;
+      // The installed service launchd runs but which has not answered yet.
+      let starting: {
+        candidate: StudioHomeCandidate;
+        runtime: RunningServerRuntimeState | null;
+      } | null = null;
       for (let attempt = 0; attempt < UNRESPONSIVE_GRACE_ATTEMPTS; attempt += 1) {
         let waiting = false;
         unresponsive = null;
+        const silentServices: Array<{
+          candidate: StudioHomeCandidate;
+          runtime: RunningServerRuntimeState | null;
+        }> = [];
         for (const candidate of candidates) {
           const runtime = yield* readRuntime(candidate.stateDir);
           if (runtime === null || runtime.pid === process.pid || !isProcessAlive(runtime.pid)) {
             // launchd restarts a KeepAlive service shortly after it stops.
-            if (candidate.serviceInstalled) waiting = true;
+            if (candidate.serviceInstalled) {
+              waiting = true;
+              silentServices.push({ candidate, runtime: null });
+            }
             continue;
           }
           const descriptor = yield* probeDescriptor(runtime.origin);
@@ -432,6 +506,7 @@ export const make = Effect.gen(function* () {
           }
           waiting = true;
           unresponsive ??= { runtime, stateDir: candidate.stateDir };
+          if (candidate.serviceInstalled) silentServices.push({ candidate, runtime });
         }
         if (!waiting) return { _tag: "none" } as const;
         // A server started now would take the port the updated service needs.
@@ -460,11 +535,53 @@ export const make = Effect.gen(function* () {
             });
           }
         }
+        // An installed service in another home holds the person's projects. While
+        // launchd runs its process it is still starting (a release that rebuilds a
+        // large store can take minutes), so a server started on the app's own, empty
+        // home would show no projects at all. A job loaded but not running is a
+        // crash loop between restarts: that keeps the usual grace.
+        starting = null;
+        for (const silent of silentServices) {
+          const target = silent.candidate.launchdTarget;
+          if (silent.candidate.stateDir === environment.stateDir || target === undefined) continue;
+          if (environment.platform === "darwin" && (yield* readLaunchdJob(target)) === "running") {
+            starting = silent;
+            break;
+          }
+        }
+        // An update install has its own wait and limit; the start wait begins once it ends.
+        if (installing !== undefined && !installWaitOver) startWaitStartedAt = null;
+        else if (starting !== null) {
+          if (startWaitStartedAt === null) {
+            startWaitStartedAt = now;
+            yield* logInfo("waiting for the installed Studio service to start", {
+              baseDir: starting.candidate.baseDir,
+            });
+            if (options?.onServiceStartWait !== undefined) yield* options.onServiceStartWait;
+          }
+          // Not counted until the limit: the full grace still follows it.
+          if (now - startWaitStartedAt < SERVICE_START_WAIT_LIMIT_MS) attempt = -1;
+        }
         yield* Effect.sleep(UNRESPONSIVE_GRACE_INTERVAL_MS);
       }
-      // Only a live owner of the app's own home blocks startup; an installed
-      // service elsewhere that never answered leaves this home free.
-      if (unresponsive === null || unresponsive.stateDir !== environment.stateDir) {
+      if (starting !== null) {
+        // launchd still runs it, so its home is still the person's store:
+        // report it rather than open an empty one in its place.
+        yield* logWarning("the installed Studio service did not start in time", {
+          baseDir: starting.candidate.baseDir,
+          ...(starting.runtime === null ? {} : { pid: starting.runtime.pid }),
+        });
+        if (starting.runtime === null || !isProcessAlive(starting.runtime.pid)) {
+          return {
+            _tag: "service-not-started",
+            baseDir: starting.candidate.baseDir,
+            stateDir: starting.candidate.stateDir,
+          } as const;
+        }
+        unresponsive = { runtime: starting.runtime, stateDir: starting.candidate.stateDir };
+      } else if (unresponsive === null || unresponsive.stateDir !== environment.stateDir) {
+        // Only a live owner of the app's own home blocks startup; an installed
+        // service elsewhere whose job launchd no longer runs leaves this home free.
         if (unresponsive !== null) {
           yield* logWarning(
             "an installed Studio service does not answer; starting a local server",

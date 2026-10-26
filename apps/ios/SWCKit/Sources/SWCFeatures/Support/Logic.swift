@@ -144,11 +144,13 @@ nonisolated enum LaunchRoute: String, Sendable, CaseIterable {
   /// The first project's orchestrator on a machine other than its
   /// coordinator's, as picked in the switcher.
   case orchestrator
+  /// The first open device's thread with the device viewer over it.
+  case device
 }
 
 /// Options read from launch arguments:
 /// `-SWCFixture [default|empty|running|fleet|m4-blip|minis-blip]`, `-SWCAppearance light|dark|system`,
-/// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search|coordinator|orchestrator`.
+/// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search|coordinator|orchestrator|device`.
 nonisolated struct LaunchOptions: Equatable, Sendable {
   var fixture: FixtureScenario?
   var appearance: AppearancePreference?

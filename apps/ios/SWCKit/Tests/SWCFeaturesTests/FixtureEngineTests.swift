@@ -315,3 +315,23 @@ struct FixtureEngineTests {
     #expect(model.machine("env-travel-laptop")?.status == .offline)
   }
 }
+
+@MainActor
+@Suite("Fixture devices")
+struct FixtureDevicesTests {
+  @Test func devicesScenarioOpensDevicesInThreads() async throws {
+    let engine = FixtureEngine(scenario: .devices)
+    let model = AppModel(engine: engine)
+    let release = ThreadRef(environmentId: "env-studio-mac", threadId: "t-release")
+    #expect(model.deviceSessions(for: release).map(\.name) == ["iPhone 17 Pro", "Pixel 9"])
+    #expect(model.devices["env-build-box"]?.support.message == MachineDevices.disabledMessage)
+    let access = try await engine.deviceHubAccess(machineId: "env-studio-mac", hostId: "local")
+    #expect(access.query["hostId"] == "local")
+    await #expect(throws: SyncError.self) { try await engine.deviceHubAccess(machineId: "env-travel-laptop", hostId: "local") }
+  }
+
+  @Test func otherScenariosOpenNoDevices() {
+    let model = AppModel(engine: FixtureEngine(scenario: .default))
+    #expect(model.devices.isEmpty)
+  }
+}

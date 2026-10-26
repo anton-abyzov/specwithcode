@@ -94,6 +94,7 @@ require_sim() {
 build() {
   local udid=$1
   mkdir -p "$OUT"
+  node Tools/generate-device-stream.mjs
   xcodegen generate >/dev/null
   echo "Building for testing on $SIM_NAME ($udid); log: $OUT/build.log" >&2
   if ! xcb -project SpecWithCode.xcodeproj -scheme SpecWithCode \

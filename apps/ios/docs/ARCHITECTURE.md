@@ -33,8 +33,9 @@ apps/ios/
                               Connect: ConnectConfig, Dpop, RelayClient, ConnectAuthorizer
     Sources/SWCSync/          AppModel (UI contract), LiveEngine, reducers, FixtureEngine
     Sources/Weave/            tokens, fonts, reusable components
-    Sources/SWCFeatures/      screens: drawer, chat, overview, settings, pairing
-  Tools/                      fixture capture, screenshot scripts
+    Sources/SWCFeatures/      screens: drawer, chat, overview, settings, pairing, device viewer
+  App/Generated/              device-stream.js, bundled by `make project` (not committed)
+  Tools/                      fixture capture, screenshot scripts, device stream bundler
 ```
 
 Dependency direction: `SWCWire <- SWCTransport <- SWCSync <- SWCFeatures`; `Weave` depends on
@@ -130,6 +131,23 @@ and every Connect screen is hidden. The app target supplies a `ConnectAccount` b
 - Sends mint a UUID `commandId` (and `messageId`) and reuse them on retry; the server dedupes.
 - Unread = `latestRunCompletedAt > lastVisitedAt` (null `lastVisitedAt` counts as read).
 - Working = run status `preparing|queued|starting|running|waiting` or a pending runtime request.
+
+## Devices
+
+- `subscribeDeviceState` (`{}`, scope `orchestration:read`) streams `DeviceServiceState`: hosts,
+  open simulator and emulator sessions, and `hubPath`. `MachineDevices` groups sessions by
+  `[hostId, deviceId]` (the Expo key) and merges their thread ids. An authorization error means the
+  pairing lacks the scope; any other error before the first state means the server has no device
+  support. Both show as a message, not a failure.
+- Entry points: the thread toolbar (a picker when several devices belong to the thread) and the
+  machine's Devices card. `LaunchRoute.device` opens the first one for screenshots.
+- The viewer is a full-screen `WKWebView` that loads `App/Generated/device-stream.js`, the same
+  transport the Expo app embeds (`apps/mobile/src/features/devices/device-stream.browser.ts`),
+  with `baseURL` `file:///`. Each attempt mints a fresh ticket (`POST /api/auth/websocket-ticket`,
+  bearer or DPoP) and connects to `<origin><hubPath>?wsTicket=…&hostId=…`. The page posts
+  `unauthorized`, `retry`, `input` and `status` through the `stream` message handler; the first
+  two mint a new ticket and reload. It stops on dismiss and in the background, allows landscape
+  while open, and returns to portrait on close.
 
 ## Lifecycle
 

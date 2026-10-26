@@ -20,6 +20,7 @@ copy, checks the proof equals that full read and deletes the copy. The given clo
 """
 import contextlib
 import datetime
+import errno
 import json
 import os
 import pathlib
@@ -418,11 +419,13 @@ def receipt_fields(before, reads):
 
 class Equal(unittest.TestCase):
     """Whenever the proof decides, it is the full read of the same moment."""
+    MEMORY = 0  # Kept lines on disk; EqualInMemory keeps them in memory.
 
     def setUp(self):
-        patcher = patch.object(kept_lines, 'available_memory', return_value=1 << 50)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for name, value in (('available_disk', 1 << 50), ('available_memory', self.MEMORY)):
+            patcher = patch.object(kept_lines, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def assert_same(self, flow, expect_mode='pages'):
         reads, record, laps = flow.decide()
@@ -440,6 +443,7 @@ class Equal(unittest.TestCase):
         before = {'rows': flow.before, 'capture': flow.reference['reads'][2]}
         self.assertEqual(receipt_fields(before, reads), receipt_fields(before, full))
         self.assertEqual(flow.kept.tables, {})  # Let go once the proof ran.
+        self.assertEqual(record['keptIn'], 'memory' if self.MEMORY else 'disk')
         return record
 
     def test_startup_writes_decide_by_pages_and_equal_the_full_read(self):
@@ -655,9 +659,15 @@ class Equal(unittest.TestCase):
             self.assert_same(flow)
 
 
+class EqualInMemory(Equal):
+    """Equal with the kept lines in memory, the first place they go."""
+    MEMORY = 1 << 50
+
+
 @unittest.skipUnless(node_with_sqlite(), 'needs Node 22 with node:sqlite (STUDIO_TEST_NODE)')
 class NodeService(unittest.TestCase):
     """The old service on node:sqlite with its own pragmas, as on M4 for 1.0.85."""
+    MEMORY = 0
 
     setUp, assert_same = Equal.setUp, Equal.assert_same
 
@@ -683,11 +693,13 @@ class NodeService(unittest.TestCase):
 
 class Refuses(unittest.TestCase):
     """Every case the proof cannot show leaves the decision to the full read."""
+    MEMORY = 0
 
     def setUp(self):
-        patcher = patch.object(kept_lines, 'available_memory', return_value=1 << 50)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for name, value in (('available_disk', 1 << 50), ('available_memory', self.MEMORY)):
+            patcher = patch.object(kept_lines, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def refused(self, flow, reason=None):
         reads, record, _ = flow.decide()
@@ -863,12 +875,14 @@ class Refuses(unittest.TestCase):
         self.refused(flow, 'not-a-clone')
         self.assertEqual(after_proof.stopped(None, flow.root, 'clone'), {'reason': 'no-log'})
 
-    def test_lines_not_kept_below_the_memory_floor(self):
-        with patch.object(kept_lines, 'available_memory', return_value=1 << 20):
+    def test_lines_not_kept_below_the_disk_floor(self):
+        with patch.object(kept_lines, 'available_disk', return_value=1 << 20):
             flow = Update(self)
         flow.around_restart()
         reads, record, laps = flow.decide()
-        self.assertEqual((reads, record, laps), (None, {'mode': 'full', 'reason': 'memory'}, []))
+        self.assertEqual((reads, laps), (None, []))
+        self.assertEqual((record['mode'], record['reason'], record['availableBytes']), ('full', 'disk', 1 << 20))
+        self.assertGreater(record['floorBytes'], kept_lines.DISK_FLOOR_MARGIN)
 
     def test_an_index_rebuilt_without_its_table(self):
         flow = Update(self)
@@ -919,7 +933,7 @@ class KeptLines(unittest.TestCase):
             state = pathlib.Path(folder) / 'userdata'
             build(state)
             expected = update_read._read_state(state, False, None, True)
-            with patch.object(kept_lines, 'available_memory', return_value=1 << 50), patch.object(kept_lines, 'KEEP_BYTES', 0):
+            with patch.object(kept_lines, 'available_disk', return_value=1 << 50), patch.object(kept_lines, 'KEEP_BYTES', 0):
                 with after_proof.keeping(state / 'statev2.sqlite') as kept:
                     keeping = update_read._read_state(state, True, expected[0], True)
                 plain = update_read._read_state(state, True, expected[0], True)
@@ -931,15 +945,301 @@ class KeptLines(unittest.TestCase):
                 self.assertEqual(entry['legacy']['sha256'], plain[3]['legacy'][table]['sha256'])
             self.assertIsNone(kept_lines.active())
 
-    def test_the_memory_floor(self):
+    def test_the_disk_floor(self):
         with tempfile.NamedTemporaryFile() as handle:
             handle.write(b'x' * 4096)
             handle.flush()
-            with patch.object(kept_lines, 'available_memory', return_value=kept_lines.memory_floor(4096) - 1):
-                self.assertEqual(kept_lines.start(handle.name).reason, 'memory')
-            with patch.object(kept_lines, 'available_memory', return_value=kept_lines.memory_floor(4096)):
-                self.assertTrue(kept_lines.start(handle.name).enabled)
-        self.assertGreater(kept_lines.available_memory() or 1, 0)
+            with patch.object(kept_lines, 'available_disk', return_value=kept_lines.disk_floor(4096) - 1), \
+                    patch.object(kept_lines, 'available_memory', return_value=7), patch.object(kept_lines, 'headroom', return_value=8):
+                kept = kept_lines.start(handle.name)
+                self.assertEqual((kept.reason, kept.measured), ('disk', {'availableBytes': kept_lines.disk_floor(4096) - 1,
+                                                                         'floorBytes': kept_lines.disk_floor(4096),
+                                                                         'availableMemoryBytes': 7, 'headroomBytes': 8}))
+            with patch.object(kept_lines, 'available_disk', return_value=kept_lines.disk_floor(4096)), \
+                    patch.object(kept_lines, 'available_memory', return_value=0):
+                kept = kept_lines.start(handle.name)
+                self.assertTrue(kept.enabled)
+                folder = pathlib.Path(kept.folder)
+                self.assertTrue(folder.is_dir())
+                kept.clear()
+                self.assertFalse(folder.exists())
+        self.assertGreater(kept_lines.available_disk(tempfile.gettempdir()) or 1, 0)
+
+    def test_lines_written_to_disk_hash_and_merge_as_the_list(self):
+        rng = random.Random(12)
+        with tempfile.TemporaryDirectory(prefix='studio-kept-disk-') as folder:
+            for size in (0, 1, 2, 6, 7, 8, 40, 300):
+                lines = sorted(rng.choice(['a', 'b', 'bb', 'é' * rng.randrange(1, 4), '', 'x\ny']) + str(rng.randrange(50))
+                               for _ in range(size))
+                sha256, marks, stored = kept_lines.marked_digest(lines, every=7, folder=folder)
+                self.assertEqual(sha256, continuity.joined_digest(lines))
+                self.assertEqual(list(stored[:]), lines)
+                self.assertEqual(len(stored), len(lines))
+                kept = {'lines': stored, 'marks': marks, 'sha256': sha256}
+                for _ in range(30):
+                    removed = rng.sample(lines, rng.randrange(0, min(len(lines), 6) + 1))
+                    added = [rng.choice(['a', 'b', 'zz', '', 'é']) + str(rng.randrange(60)) for _ in range(rng.randrange(0, 6))]
+                    rest = list(lines)
+                    for line in removed:
+                        rest.remove(line)
+                    expected = sorted(rest + added)
+                    self.assertEqual(kept_lines.merged_digest(kept, removed, added, every=7),
+                                     {'count': len(expected), 'sha256': continuity.joined_digest(expected)})
+                if lines:
+                    self.assertIsNone(kept_lines.merged_digest(kept, ['missing-line'], []))
+                    path = stored.path
+                    stored.close()
+                    self.assertFalse(os.path.exists(path))
+
+    def test_empty_lines_on_disk_merge_as_the_list(self):
+        # Review of #795: a run of one empty line lost its separator, and a lone [''] could not be mapped.
+        with tempfile.TemporaryDirectory(prefix='studio-kept-empty-') as folder:
+            for lines, removed, added in ((['', '', '\x00'], ['', '\x00'], ['zz']), ([''], [''], ['a']), ([''], [], ['a'])):
+                sha256, marks, stored = kept_lines.marked_digest(lines, every=4, folder=folder)
+                rest = list(lines)
+                for line in removed:
+                    rest.remove(line)
+                expected = sorted(rest + added)
+                self.assertEqual(kept_lines.merged_digest({'lines': stored, 'marks': marks, 'sha256': sha256}, removed, added, every=4),
+                                 {'count': len(expected), 'sha256': continuity.joined_digest(expected)})
+
+    def test_a_write_that_fails_lets_the_read_go_on_and_the_proof_fall_back(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-full-') as folder:
+            state = pathlib.Path(folder) / 'userdata'
+            build(state)
+            expected = update_read._read_state(state, False, None, True)
+            with patch.object(kept_lines, 'available_disk', return_value=1 << 50), patch.object(kept_lines, 'KEEP_BYTES', 0), \
+                    patch.object(kept_lines, 'available_memory', return_value=0), \
+                    patch.object(kept_lines.FileLines, '__init__', side_effect=OSError(28, 'No space left on device')):
+                with after_proof.keeping(state / 'statev2.sqlite') as kept:
+                    keeping = update_read._read_state(state, True, expected[0], True)
+            plain = update_read._read_state(state, True, expected[0], True)
+            self.assertEqual(json.dumps(keeping, default=str), json.dumps(plain, default=str))
+            self.assertEqual((kept.reason, kept.tables), ('disk-full', {}))
+            self.assertFalse(pathlib.Path(kept.folder).exists())
+            progress = {}
+            self.assertIsNone(after_proof.decide(state, {'clone': 'x'}, kept, None, None, False, progress, lambda phase: None))
+            self.assertEqual(progress['afterProof'], {'mode': 'full', 'reason': 'disk-full'})
+
+    def test_the_floor_counts_what_the_backup_still_needs(self):
+        with tempfile.NamedTemporaryFile() as handle:
+            handle.write(b'x' * 4096)
+            handle.flush()
+            with patch.object(kept_lines, 'available_disk', return_value=kept_lines.disk_floor(4096)), \
+                    patch.object(kept_lines, 'available_memory', return_value=0):
+                kept = kept_lines.start(handle.name, reserve=1)
+            self.assertEqual((kept.reason, kept.measured['floorBytes']), ('disk', kept_lines.disk_floor(4096) + 1))
+
+    def test_empty_lines_on_disk_hash_and_merge_as_the_list(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-empty-') as folder:
+            for lines in ([''], ['', ''], ['', 'a'], ['', '', 'b', 'b'], ['a', ''] [::-1], [''] * 9):
+                sha256, marks, stored = kept_lines.marked_digest(lines, every=4, folder=folder)
+                self.assertEqual((sha256, list(stored[:]), len(stored)), (continuity.joined_digest(lines), lines, len(lines)))
+                kept = {'lines': stored, 'marks': marks, 'sha256': sha256}
+                for removed, added in (([''], []), ([], ['']), ([], ['', 'c']), ([lines[-1]], ['', ''])):
+                    rest = list(lines)
+                    for line in removed:
+                        rest.remove(line)
+                    expected = sorted(rest + added)
+                    self.assertEqual(kept_lines.merged_digest(kept, removed, added, every=4),
+                                     {'count': len(expected), 'sha256': continuity.joined_digest(expected)})
+
+    def test_a_file_never_passes_the_disk_margin(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-limit-') as folder:
+            lines = ['x' * 100] * 50
+            with self.assertRaises(OSError) as raised:
+                kept_lines.marked_digest(lines, every=7, folder=folder, limit=1000)
+            self.assertEqual(raised.exception.errno, errno.ENOSPC)
+            self.assertLessEqual(max(os.path.getsize(path) for path in pathlib.Path(folder).iterdir()), 1000)
+            self.assertEqual(kept_lines.marked_digest(lines, every=7, folder=folder, limit=50 * 101)[0], continuity.joined_digest(lines))
+            # A Kept stops at the margin plus the backup's reserve, lets go and removes its folder.
+            free = kept_lines.DISK_FLOOR_MARGIN + 7 + 2000
+            with patch.object(kept_lines, 'available_disk', return_value=free):
+                kept = kept_lines.Kept(True, None, ('t',), folder=kept_lines._scratch(folder), reserve=7)
+                kept.keeper('t', 'typed')(['y' * 10] * 100)
+                self.assertIsNone(kept.reason)
+                scratch = pathlib.Path(kept.folder)
+                kept.keeper('t', 'typed')(['y' * 10] * 300)
+            self.assertEqual((kept.reason, kept.tables, scratch.exists()), ('disk-full', {}, False))
+
+    def test_lines_held_in_memory_make_room_before_another_full_read(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-') as folder:
+            state = pathlib.Path(folder) / 'userdata'
+            build(state)
+            plain = update_read._read_state(state, True, None, True)
+            proof, kept = self.keeping_read(state, [1 << 50])
+            self.assertEqual((kept.place, kept.reason), ('memory', None))
+            self.assertGreater(kept.resident, 0)
+            with patch.object(kept_lines, 'available_memory', return_value=1 << 50):  # Room for another read: kept as is.
+                self.assertEqual(json.dumps(update_read._read_state(state, True, None, True), default=str), json.dumps(plain, default=str))
+            self.assertEqual(kept.place, 'memory')
+            with patch.object(kept_lines, 'available_memory', return_value=0):
+                again = update_read._read_state(state, True, None, True)
+            self.assertEqual(json.dumps(again, default=str), json.dumps(plain, default=str))
+            self.assertEqual((kept.place, kept.reason, kept.resident), ('disk', None, 0))
+            for table, entry in kept.tables.items():
+                self.assertEqual(entry['typed']['sha256'], plain[3]['summary']['tables'][table]['sha256'])
+                for record in entry.values():
+                    self.assertFalse(isinstance(record['lines'], list) and record['count'] > 1)
+                    self.assertEqual(continuity.joined_digest(list(record['lines'][:])), record['sha256'])
+            kept.clear()
+            kept = kept_lines.Kept(True, None, ('t',))  # Without a disk fallback the lines go.
+            with patch.object(kept_lines, 'memory_room', return_value=True):
+                kept.keeper('t', 'typed')(['a'])
+            with patch.object(kept_lines, 'memory_room', return_value=False):
+                kept_lines.make_room()
+            self.assertEqual((kept.reason, kept.tables), ('memory', {}))
+
+    def test_the_floor_counts_the_log(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-wal-') as folder:
+            database = pathlib.Path(folder) / 'statev2.sqlite'
+            database.write_bytes(b'x' * 4096)
+            (pathlib.Path(folder) / 'statev2.sqlite-wal').write_bytes(b'w' * 1000)
+            with patch.object(kept_lines, 'available_disk', return_value=0), patch.object(kept_lines, 'available_memory', return_value=0):
+                self.assertEqual(kept_lines.start(database).measured['floorBytes'], kept_lines.disk_floor(5096))
+
+    def test_a_dead_helpers_scratch_folder_is_removed_and_a_live_ones_kept(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-stale-') as parent:
+            dead = pathlib.Path(parent) / ('%s%d-old' % (kept_lines.SCRATCH_PREFIX, 999999))
+            live = pathlib.Path(parent) / ('%s%d-new' % (kept_lines.SCRATCH_PREFIX, os.getppid()))
+            other = pathlib.Path(parent) / 'receipts'
+            for folder in (dead, live, other):
+                folder.mkdir()
+            with patch.object(kept_lines, '_running', side_effect=lambda pid: pid != 999999):
+                kept_lines.remove_stale(parent)
+            self.assertEqual((dead.exists(), live.exists(), other.exists()), (False, True, True))
+
+
+    def keeping_read(self, state, memory, disk=1 << 50):
+        """(proof, kept) of a read that keeps every table's lines, `memory` the available_memory
+        readings in order (the last one repeats)."""
+        readings = list(memory)
+        patches = [patch.object(kept_lines, 'available_memory', side_effect=lambda: readings.pop(0) if len(readings) > 1 else readings[0]),
+                   patch.object(kept_lines, 'available_disk', return_value=disk), patch.object(kept_lines, 'KEEP_BYTES', 0),
+                   patch.object(kept_lines, 'physical_memory', return_value=None)]
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            with after_proof.keeping(state / 'statev2.sqlite') as kept:
+                proof = update_read._read_state(state, True, None, True)
+        return proof, kept
+
+    def test_lines_stay_in_memory_while_there_is_headroom(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-') as folder:
+            state = pathlib.Path(folder) / 'userdata'
+            build(state)
+            plain = update_read._read_state(state, True, None, True)
+            proof, kept = self.keeping_read(state, [1 << 50])
+            self.assertEqual(json.dumps(proof, default=str), json.dumps(plain, default=str))
+            self.assertEqual((kept.enabled, kept.place, kept.folder), (True, 'memory', None))
+            self.assertTrue(kept.tables)
+            for entry in kept.tables.values():
+                self.assertTrue(all(isinstance(record['lines'], list) for record in entry.values()))
+            kept.clear()
+
+    def test_lines_move_to_disk_when_memory_runs_short_and_hash_the_same(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-') as folder:
+            state = pathlib.Path(folder) / 'userdata'
+            build(state)
+            plain = update_read._read_state(state, True, None, True)
+            proof, kept = self.keeping_read(state, [1 << 50] * 3 + [0])  # The start and two tables, then none.
+            self.assertEqual(json.dumps(proof, default=str), json.dumps(plain, default=str))
+            self.assertEqual((kept.enabled, kept.place), (True, 'disk'))
+            self.assertEqual(set(kept.tables), set(plain[3]['summary']['tables']))
+            for table, entry in kept.tables.items():
+                for encoding, record in entry.items():
+                    self.assertTrue(record['lines'] == [] if record['count'] == 0 else isinstance(record['lines'], kept_lines.FileLines))
+                    self.assertEqual(record['sha256'], continuity.joined_digest(list(record['lines'][:])))
+                self.assertEqual(entry['typed']['sha256'], plain[3]['summary']['tables'][table]['sha256'])
+                self.assertEqual(entry['legacy']['sha256'], plain[3]['legacy'][table]['sha256'])
+            scratch = pathlib.Path(kept.folder)
+            self.assertTrue(scratch.is_dir())
+            kept.clear()
+            self.assertFalse(scratch.exists())
+
+    def test_the_typed_lines_need_room_for_the_legacy_lines_built_next(self):
+        asked = []
+        real = kept_lines.memory_room
+        kept = kept_lines.Kept(True, None, ('t',))
+        with patch.object(kept_lines, 'memory_room', side_effect=lambda need=0: asked.append(need) or True):
+            kept.keeper('t', 'typed')(['ab', 'cde'])
+            kept.keeper('t', 'legacy')(['ab', 'cde'])
+        self.assertEqual(asked, [5, 0])
+        with patch.object(kept_lines, 'available_memory', return_value=(9 << 30) + 4), \
+                patch.object(kept_lines, 'physical_memory', return_value=None):
+            self.assertTrue(real(4))
+            self.assertFalse(real(5 << 30))
+
+    def test_without_room_in_memory_or_on_disk_nothing_is_kept_and_the_proof_reads_in_full(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-') as folder:
+            state = pathlib.Path(folder) / 'userdata'
+            build(state)
+            plain = update_read._read_state(state, True, None, True)
+            proof, kept = self.keeping_read(state, [1 << 50] * 2 + [0], disk=0)
+            self.assertEqual(json.dumps(proof, default=str), json.dumps(plain, default=str))
+            self.assertEqual((kept.reason, kept.tables, kept.folder), ('memory', {}, None))
+            progress, laps = {}, []
+            with patch.object(after_proof, 'discard'):
+                self.assertIsNone(after_proof.decide(state, {'clone': 'unused'}, kept, None, None, False, progress, laps.append))
+            self.assertEqual((progress['afterProof'], laps), ({'mode': 'full', 'reason': 'memory'}, []))
+
+    def test_a_full_disk_while_moving_lines_out_of_memory_keeps_nothing(self):
+        with tempfile.TemporaryDirectory(prefix='studio-kept-') as folder:
+            state = pathlib.Path(folder) / 'userdata'
+            build(state)
+            plain = update_read._read_state(state, True, None, True)
+            with patch.object(kept_lines.FileLines, '__init__', side_effect=OSError(28, 'No space left on device')):
+                proof, kept = self.keeping_read(state, [1 << 50] * 3 + [0])
+            self.assertEqual(json.dumps(proof, default=str), json.dumps(plain, default=str))
+            self.assertEqual((kept.reason, kept.tables), ('disk-full', {}))
+            self.assertFalse(pathlib.Path(kept.folder).exists())
+
+    def test_a_failed_update_lets_the_lines_go_before_its_rollback_read(self):
+        with patch.object(kept_lines, 'memory_room', return_value=True):
+            kept = kept_lines.Kept(True, None, ('t',))
+            kept.keeper('t', 'typed')(['a'])
+        self.assertTrue(kept.tables)
+        after_proof.abandon({}, kept)
+        self.assertEqual((kept.reason, kept.tables), ('failed', {}))
+        with tempfile.TemporaryDirectory(prefix='studio-kept-') as parent:  # On disk: the scratch folder goes too.
+            with patch.object(kept_lines, 'available_disk', return_value=1 << 50):
+                kept = kept_lines.Kept(True, None, ('t',), folder=kept_lines._scratch(parent))
+                kept.keeper('t', 'typed')(['a', 'b'])
+            folder = pathlib.Path(kept.folder)
+            self.assertTrue(any(folder.iterdir()))
+            after_proof.abandon({}, kept)
+            self.assertFalse(folder.exists())
+        after_proof.abandon({})  # Without kept lines, as before.
+        source = (pathlib.Path(__file__).parent / 'update.py').read_text()
+        handler = source[source.index('    except BaseException as error:'):]
+        self.assertLess(handler.index('after_proof.abandon(held, kept)'), handler.index('snapshot('))
+        # The keeping read is told what the backup still needs on disk after it.
+        self.assertIn("after_proof.keeping(own / 'userdata' / 'statev2.sqlite', backup_space_needed(", source)
+
+    def test_the_first_place_lines_go(self):
+        with tempfile.NamedTemporaryFile() as handle:
+            handle.write(b'x' * 4096)
+            handle.flush()
+            with patch.object(kept_lines, 'available_memory', return_value=1 << 50), \
+                    patch.object(kept_lines, 'available_disk', return_value=1 << 50):
+                kept = kept_lines.start(handle.name)
+                self.assertEqual((kept.place, kept.spill is not None), ('memory', True))
+            with patch.object(kept_lines, 'available_memory', return_value=1 << 50), \
+                    patch.object(kept_lines, 'available_disk', return_value=0):
+                kept = kept_lines.start(handle.name)
+                self.assertEqual((kept.enabled, kept.place, kept.spill), (True, 'memory', None))
+            with patch.object(kept_lines, 'available_memory', return_value=None), \
+                    patch.object(kept_lines, 'available_disk', return_value=1 << 50):
+                kept = kept_lines.start(handle.name)
+                self.assertEqual((kept.enabled, kept.place), (True, 'disk'))
+                kept.clear()
+        with patch.object(kept_lines, 'physical_memory', return_value=128 << 30):
+            self.assertEqual(kept_lines.headroom(), 16 << 30)
+        with patch.object(kept_lines, 'physical_memory', return_value=None):
+            self.assertEqual(kept_lines.headroom(), kept_lines.HEADROOM_BYTES)
+        if sys.platform in ('darwin', 'linux'):
+            self.assertGreater(kept_lines.available_memory(), 0)
+            self.assertGreater(kept_lines.physical_memory(), kept_lines.available_memory() // 2)
 
 
 # --measure: the proof on a clone of M4's database.

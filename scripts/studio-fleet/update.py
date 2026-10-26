@@ -64,7 +64,7 @@ from update_compare import (rows_carried_forward, same_guarded_rows, database_al
                             auth_since, guarded_row_counts, settings_preserved)
 from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REFUSAL, _utc, assert_held,
                             restart_old_release, native_work_counts, _name, descendant_names, gate_settle)
-from state_backup import (_clonefile, clone_file, BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_space, backup_state,
+from state_backup import (_clonefile, clone_file, BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_space, backup_space_needed, backup_state,
                           clone_state, discard_unused_backup, write_private as _write_private)
 from service_handles import (LSOF_ATTEMPTS, LSOF_TIMEOUT_SECONDS, DATABASE_FILES, DETACHED_DATABASE, LOCKS_LOST, listeners,
                              open_inodes, assert_database_attached, assert_database_locked)
@@ -779,7 +779,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     if held_snapshot:
         assert_held(_service(identity), expected.get('installRequestedAt'))
     position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
-    with after_proof.keeping(own / 'userdata' / 'statev2.sqlite') as kept:  # Its lines, for the proof after the restart.
+    # Its lines, for the proof after the restart, kept on disk only while the backup's space is left.
+    with after_proof.keeping(own / 'userdata' / 'statev2.sqlite', backup_space_needed(own, home, _clonefile())[0]) as kept:
         before, original_auth, carried = snapshot_since(identity, None if held_snapshot else expected['rows'], capture_auth)
     if held_snapshot:
         service = _service(identity)
@@ -1015,6 +1016,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             if reusable is not None and watermark.unchanged(reusable[0]):
                 # The prestate re-read: the same `since`, nothing committed after it. It is checked
                 # against `before` below like a fresh read.
+                lap('prestateReuse')
                 mark, position, (current_rows, current_carried, current_database) = reusable
             else:
                 mark = watermark.take()
@@ -1280,7 +1282,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         print(json.dumps({'identity': identity, 'result': 'updated', 'archiveSha256': archive_sha, 'servicePid': after['servicePid'], 'report': str(output)}))
     except BaseException as error:
         lap('untilFailure')  # The phase that failed, up to the failure.
-        after_proof.abandon(held)  # The reader and the reference image, whichever exist by now.
+        after_proof.abandon(held, kept)  # The reader, the reference image and the kept lines, whichever exist.
         progress_file.rollback()
         if restart_requested and not service_started:
             # launchd refused the job or did not answer: the new release may run only if it is loaded.

@@ -22,6 +22,7 @@ cat > "$FIXTURE/bin/stub" <<'STUB'
 #!/bin/bash
 set -eu
 case "${0##*/}" in
+  node) exit 0 ;;
   xcodegen) step=generate; status=${MOCK_GENERATE_EXIT:-0} ;;
   xcodebuild) step=build; status=${MOCK_BUILD_EXIT:-0} ;;
   xcrun)
@@ -41,7 +42,7 @@ fi
 exit "$status"
 STUB
 /bin/chmod +x "$FIXTURE/bin/stub"
-for tool in xcodegen xcodebuild xcrun; do
+for tool in node xcodegen xcodebuild xcrun; do
   /bin/ln -s stub "$FIXTURE/bin/$tool"
 done
 

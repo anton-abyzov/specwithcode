@@ -162,11 +162,14 @@ interface Scenario {
   readonly port?: LimitHandoffPortShape;
   /** Runs against the service before the sweeps. */
   readonly before?: (handoff: MachineLimitHandoffShape) => Effect.Effect<void>;
+  /** A person's Stop shows from this read of the thread's Stop requests on. */
+  readonly stopFromRead?: number;
 }
 
 function run(scenario: Scenario, sweeps = 1) {
   const requests: LimitHandoffRequest[] = [];
   const dispatched: OrchestrationV2ServerCommand[] = [];
+  let stopReads = 0;
   const settings: ServerSettings = {
     ...DEFAULT_SERVER_SETTINGS,
     providerLimitAction: "switch",
@@ -207,8 +210,19 @@ function run(scenario: Scenario, sweeps = 1) {
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getShellSnapshot: () => Effect.succeed({ threads: [thread] } as never),
       getThreadShell: () => Effect.succeed(thread as never),
-      getThreadRecords: (threadId) =>
-        Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+      getThreadRecords: (threadId, _fields, filter) =>
+        filter?.turnItemTypes?.includes("run_interrupt_request")
+          ? Effect.sync(() => {
+              stopReads += 1;
+              const stopped = stopReads >= (scenario.stopFromRead ?? Infinity);
+              return {
+                thread,
+                turnItems: stopped
+                  ? [{ type: "run_interrupt_request", runId: thread.latestRunId, message: "Stop" }]
+                  : [],
+              } as never;
+            })
+          : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       dispatch: (command) =>
@@ -395,6 +409,41 @@ describe("limit handoff in the fallback sweep", () => {
       expect(result.shown?.waiting).toBe(
         "Minis hasn't confirmed the handoff yet; the thread stays here until it answers.",
       );
+    }),
+  );
+
+  itEffect.effect("a person's Stop after a refused move holds the next machine", () =>
+    Effect.gen(function* () {
+      const refused = {
+        type: "refused" as const,
+        code: "secrets_missing",
+        message: "secrets missing: STRIPE_KEY",
+        retryable: false,
+      };
+      // Read 1 is the sweep's check, read 2 admits Minis, read 3 would admit M3.
+      const result = yield* run(
+        {
+          localSpent: true,
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          answers: { [minis]: refused },
+          stopFromRead: 3,
+        },
+        2,
+      );
+      expect(result.requests.map((request) => request.destinationEnvironmentId)).toEqual([minis]);
+      expect(result.dispatched).toEqual([]);
+      expect(result.held).toBe(false);
+    }),
+  );
+
+  itEffect.effect("a person's Stop during the fleet probe moves nothing", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { localSpent: true, machines: [machine(minis, "Minis")], stopFromRead: 2 },
+        2,
+      );
+      expect(result.requests).toEqual([]);
+      expect(result.dispatched).toEqual([]);
     }),
   );
 

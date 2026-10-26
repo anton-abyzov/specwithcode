@@ -156,6 +156,9 @@ export class DesktopWindow extends Context.Service<
     // the app waits for it instead of starting its own server, and must not sit
     // there with no window. Dismissed the same way.
     readonly showServiceUpdateSplash: Effect.Effect<void>;
+    // The same splash while the installed service starts (a large store can take
+    // minutes): the app waits for its projects instead of opening an empty home.
+    readonly showServiceStartSplash: Effect.Effect<void>;
     // Marks the primary backend as ready so `createMainIfBackendReady` and the
     // macOS "activate without windows" path may open the real main window. The
     // renderer now always loads the local client URL (getDesktopUrl) and connects
@@ -237,6 +240,7 @@ function windowBoundsEqual(
 
 const CONNECTING_TO_WSL_LABEL = "Connecting to WSL…";
 const WAITING_FOR_SERVICE_UPDATE_LABEL = "Waiting for the SpecWithCode service update…";
+const WAITING_FOR_SERVICE_START_LABEL = "Waiting for the SpecWithCode service to start…";
 
 // A self-contained splash, shown immediately in wsl-only mode while the WSL
 // backend (which serves the renderer) cold-boots, or while the installed
@@ -1297,6 +1301,7 @@ export const make = Effect.gen(function* () {
   );
   const showConnectingSplash = showSplash(CONNECTING_TO_WSL_LABEL);
   const showServiceUpdateSplash = showSplash(WAITING_FOR_SERVICE_UPDATE_LABEL);
+  const showServiceStartSplash = showSplash(WAITING_FOR_SERVICE_START_LABEL);
 
   // The app window the user is in: the focused one when it is the main window
   // or a project window, otherwise the main window. Helper windows (preview
@@ -1382,6 +1387,7 @@ export const make = Effect.gen(function* () {
     openProjectWindow,
     showConnectingSplash,
     showServiceUpdateSplash,
+    showServiceStartSplash,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });

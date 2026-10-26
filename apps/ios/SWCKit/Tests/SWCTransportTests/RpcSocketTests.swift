@@ -180,7 +180,11 @@ import Testing
   @Test func pongsKeepTheSocketOpen() async throws {
     let connection = ScriptedConnection(responder: ScriptedConnection.pongs)
     let socket = await makeSocket(connection, .init(pingInterval: .milliseconds(25), maxMissedPongs: 3))
-    try await Task.sleep(for: .milliseconds(400))
+    // Waits for the pings rather than a fixed time, so a busy machine can't starve the ping task.
+    let deadline = ContinuousClock.now + .seconds(10)
+    while connection.sentFrames(tag: "Ping").count < 4, await !socket.isClosed, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(25))
+    }
     #expect(await socket.isClosed == false)
     #expect(connection.sentFrames(tag: "Ping").count >= 4)
     #expect(connection.sentFrames(tag: "Ping").first == .object(["_tag": .string("Ping")]))

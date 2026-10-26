@@ -1,3 +1,4 @@
+import SWCFeatures
 import SWCSync
 import UIKit
 import UserNotifications
@@ -32,4 +33,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
   }
 
   func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: any Error) {}
+
+  /// Portrait, except while the device viewer is up.
+  func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+    DeviceViewerOrientation.allowsLandscape ? .allButUpsideDown : .portrait
+  }
 }

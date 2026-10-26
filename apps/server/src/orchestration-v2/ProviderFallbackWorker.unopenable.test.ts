@@ -739,6 +739,19 @@ const failureItem = (failed: Run, failure: Record<string, unknown>) =>
     failure: { retryable: null, ...failure },
   }) as unknown as OrchestrationV2TurnItem;
 
+/** The Stop request a person's Stop records on the run. */
+const personStop = (stopped: Run) =>
+  ({
+    type: "run_interrupt_request",
+    id: `${stopped.id}-stop`,
+    status: "completed",
+    runId: stopped.id,
+    nodeId: stopped.rootNodeId,
+    ordinal: 2,
+    updatedAt: stopped.completedAt,
+    message: "Interrupt requested",
+  }) as unknown as OrchestrationV2TurnItem;
+
 describe("a session that would not open for any other reason", () => {
   itEffect.effect(
     "does not move a thread on one failure of its own provider, but on a repeat",
@@ -946,6 +959,40 @@ describe("the way back after a fallback turn failed", () => {
     ).toMatchObject({ type: "thread.model-selection.set", commandId: "limit-return:t1:r2" });
   });
 
+  itEffect.effect("sends no way back for a thread a person stopped, until they continue it", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness(settings);
+      const moved = run({
+        id: "r2",
+        ordinal: 2,
+        instanceId: codexId,
+        model: "gpt-6",
+        message: `${LIMIT_FALLBACK_MESSAGE_PREFIX}t1:r1`,
+        status: "failed",
+        completedAt: stoppedAt + 45_000,
+      });
+      state.threads = [
+        shell({ instanceId: codexId, model: "gpt-6", latest: moved, errorClass: "provider_error" }),
+      ];
+      state.runs.set("t1", [r1, moved]);
+      const failure = failureItem(moved, {
+        class: "provider_error",
+        code: "stream_closed",
+        message: "Closed.",
+      });
+      state.turnItems.set("t1", [failure, personStop(moved)]);
+      yield* TestClock.adjust("6 hours");
+      state.providers = [roomAt(stoppedAt + 6 * 60 * 60_000), codexAt(30)];
+      yield* sweep();
+      expect(state.attempted).toEqual([]);
+      // Without the Stop (the person continued it), the way back goes out.
+      state.turnItems.set("t1", [failure]);
+      yield* TestClock.adjust("31 seconds");
+      yield* sweep();
+      expect(ids(state.dispatched)).toEqual([["limit-return:t1:r2", claudeId]]);
+    }),
+  );
+
   itEffect.effect("is not held back by a queue that waits for a person", () =>
     Effect.gen(function* () {
       for (const queueHeld of [true, false]) {
@@ -1028,6 +1075,36 @@ describe("a provider that could not open, once it can", () => {
         yield* TestClock.adjust("31 seconds");
         yield* sweep();
         expect(state.dispatched).toHaveLength(1);
+      }
+    }),
+  );
+
+  itEffect.effect("runs nothing again for a thread a person stopped, under any rule", () =>
+    Effect.gen(function* () {
+      for (const action of ["ask", "switch"] as const) {
+        const { state, sweep } = yield* harness(
+          { ...settings, providerLimitAction: action },
+          (entry) =>
+            entry.instanceId === copilotId ? { ...entry, status: "error" as const } : entry,
+        );
+        state.providers = [claudeAt(100), copilotCheckedAt(stoppedAt - 10 * 60_000), codexAt(100)];
+        const failed = ownRun("r2", 2, stoppedAt + 20_000);
+        state.threads = [onCopilot(failed)];
+        state.runs.set("t1", [failed]);
+        state.turnItems.set("t1", [unopenableError(failed), personStop(failed)]);
+        yield* sweep();
+        // Copilot can open now, but the person stopped the thread.
+        state.providers = state.providers.map((entry) =>
+          entry.instanceId === copilotId ? copilotCheckedAt(stoppedAt + 60_000) : entry,
+        );
+        yield* TestClock.adjust("31 seconds");
+        yield* sweep();
+        expect(state.attempted).toEqual([]);
+        // Without the Stop, the failed turn runs again.
+        state.turnItems.set("t1", [unopenableError(failed)]);
+        yield* TestClock.adjust("31 seconds");
+        yield* sweep();
+        expect(ids(state.dispatched)).toEqual([["provider-retry:t1:r2", copilotId]]);
       }
     }),
   );

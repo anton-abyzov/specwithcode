@@ -60,6 +60,8 @@ final class AppRouter {
   var pendingLaunchRoute: LaunchRoute?
   /// The chat whose composer takes focus when it appears.
   var pendingComposerFocus: ChatTarget?
+  /// A device viewer a launch argument opens over its thread.
+  var pendingDeviceViewer: DeviceViewerRoute?
 
   /// Shows a chat at the root of the main stack and closes the drawer.
   func open(_ target: ChatTarget) {
@@ -132,6 +134,14 @@ final class AppRouter {
         isDrawerOpen = true
         isDrawerSearching = route == .search
       }
+    case .device:
+      guard !model.isLoading else { return false }
+      guard let (machineId, devices) = model.devices.first(where: { !$0.value.sessions.isEmpty }) else { return !model.devices.isEmpty }
+      let session = devices.sessions[0]
+      if let threadId = session.threadIds.first {
+        main.path = [.chat(.thread(ThreadRef(environmentId: machineId, threadId: threadId)))]
+      }
+      pendingDeviceViewer = DeviceViewerRoute(machineId: machineId, key: session.id)
     case .overview, .projectSettings, .thread, .coordinator, .orchestrator:
       guard !model.isLoading else { return false }
       let first = model.projects.first { !$0.archived && !$0.isAutomated }

@@ -36,11 +36,13 @@ public enum RpcMethod: String, Sendable, CaseIterable {
   case createNewProject = "projects.createNew"
   /// `EmptyInput` -> `EnsureScratchResult`.
   case ensureScratch = "projects.ensureScratch"
+  /// `EmptyInput` -> stream of `DeviceServiceState`.
+  case subscribeDeviceState = "subscribeDeviceState"
 
   /// True for methods that answer with a stream of chunks.
   public var isStream: Bool {
     switch self {
-    case .subscribeServerConfig, .subscribeShell, .subscribeThread: true
+    case .subscribeServerConfig, .subscribeShell, .subscribeThread, .subscribeDeviceState: true
     default: false
     }
   }

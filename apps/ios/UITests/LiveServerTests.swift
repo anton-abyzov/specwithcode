@@ -7,6 +7,8 @@ import XCTest
 ///       -only-testing:SpecWithCodeUITests/LiveServerTests
 ///
 /// The server needs a code project "Live Demo" with a thread "Fix the login form".
+/// `testWatchLiveDevice` runs only with `SWC_LIVE_DEVICE=1` and needs a simulator
+/// open on the server (`device.open`) for any thread.
 /// `testReconnectKeepsPairing` runs only with `SWC_LIVE_RECONNECT=1`; the caller
 /// stops the server when the log shows "LIVE wait offline" and starts it again
 /// when it shows "LIVE wait online".
@@ -225,6 +227,94 @@ final class LiveServerTests: XCTestCase {
       XCTAssertFalse(app.buttons["Pair a machine"].exists, "Asked to pair again")
       sleep(2)
       capture("reconnect-thread-online")
+    }
+  }
+
+  func testWatchLiveDevice() throws {
+    let env = ProcessInfo.processInfo.environment
+    guard let link = env["SWC_LIVE_LINK"], !link.isEmpty, env["SWC_LIVE_DEVICE"] == "1" else {
+      throw XCTSkip("Set SWC_LIVE_LINK and SWC_LIVE_DEVICE=1 with a simulator open on the server.")
+    }
+    app.launch()
+
+    step("Pair from the welcome screen") {
+      let pair = app.buttons["Pair a machine"]
+      XCTAssertTrue(pair.waitForExistence(timeout: 20), "Welcome screen did not appear")
+      pair.tap()
+      let field = app.textFields["Pairing link"]
+      XCTAssertTrue(field.waitForExistence(timeout: 5))
+      field.tap()
+      field.typeText(link)
+      app.buttons["Connect"].tap()
+      XCTAssertTrue(field.waitForNonExistence(timeout: 30), "Pairing did not finish: \(errorText())")
+    }
+
+    step("The machine lists its open device") {
+      openDrawer()
+      let row = machineRow()
+      XCTAssertTrue(row.waitForExistence(timeout: 10), "No machine row")
+      XCTAssertTrue(waitForLabel(row, contains: "Online", timeout: 30), "Machine not online: \(row.label)")
+      row.tap()
+      let device = app.buttons.matching(identifier: "machine.device").firstMatch
+      XCTAssertTrue(device.waitForExistence(timeout: 30), "No open device on the machine: \(errorText())")
+      sleep(1)
+      capture("machine-devices")
+      device.tap()
+    }
+
+    step("The viewer streams the device") {
+      XCTAssertTrue(app.buttons["device.close"].waitForExistence(timeout: 10), "Viewer did not open")
+      capture("viewer-connecting")
+      let connecting = app.staticTexts["Connecting to device…"]
+      let failed = app.buttons["device.reconnect"]
+      let deadline = Date().addingTimeInterval(60)
+      while connecting.exists || !app.buttons["device.home"].isEnabled, !failed.exists, Date() < deadline { usleep(250_000) }
+      XCTAssertFalse(failed.exists, "Stream failed: \(errorText())")
+      XCTAssertFalse(connecting.exists, "Stream did not start")
+      XCTAssertTrue(app.buttons["device.home"].isEnabled, "Device input did not connect")
+      sleep(2)
+      capture("viewer-streaming")
+    }
+
+    step("The bar hides itself once the device streams") {
+      let show = app.buttons["device.showControls"]
+      XCTAssertTrue(show.waitForExistence(timeout: 10), "Controls did not hide")
+      capture("viewer-controls-hidden")
+    }
+
+    step("Touches and Home reach the device") {
+      // Settings sits at the end of the second icon row on a fresh simulator's home screen.
+      app.coordinate(withNormalizedOffset: CGVector(dx: 0.845, dy: 0.49)).tap()
+      sleep(3)
+      capture("viewer-after-tap")
+      app.buttons["device.showControls"].tap()
+      XCTAssertTrue(app.buttons["device.home"].waitForExistence(timeout: 5))
+      app.buttons["device.home"].tap()
+      sleep(3)
+      capture("viewer-after-home")
+    }
+
+    step("The menu reaches the device") {
+      let more = app.buttons["device.more"]
+      XCTAssertTrue(more.waitForExistence(timeout: 5))
+      more.tap()
+      XCTAssertTrue(app.buttons["Rotate"].waitForExistence(timeout: 5), "No Rotate in the menu")
+      capture("viewer-menu")
+      app.buttons["Rotate"].tap()
+      sleep(3)
+      capture("viewer-rotated")
+      more.tap()
+      XCTAssertTrue(app.buttons["Rotate"].waitForExistence(timeout: 5))
+      app.buttons["Rotate"].tap()
+      sleep(2)
+    }
+
+    step("Closing returns to the machine") {
+      if !app.buttons["device.close"].exists { app.buttons["device.showControls"].tap() }
+      app.buttons["device.close"].tap()
+      XCTAssertTrue(app.buttons["device.close"].waitForNonExistence(timeout: 5), "Viewer did not close")
+      XCTAssertTrue(app.buttons.matching(identifier: "machine.device").firstMatch.waitForExistence(timeout: 5))
+      capture("viewer-closed")
     }
   }
 
