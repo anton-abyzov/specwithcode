@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { FetchHttpClient, type HttpClient } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
@@ -22,15 +23,33 @@ import {
 import * as ServerConfig from "../config.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import {
+  bearerHeaders,
+  type LiveServiceAccess,
+  liveServiceAccess,
+  livePairingTtl,
+  liveServiceClient,
+  liveServiceRefusal,
+  liveServiceRequestError,
+  pairingGrantScopes,
+} from "./liveService.ts";
+import {
   authLocationFlags,
   type CliAuthLocationFlags,
   DurationFromString,
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = <A, E>(
+/**
+ * Runs a command against this home's auth store. While a service runs from the
+ * home, `live` runs instead: it calls that service over HTTP with the
+ * credential the service published for this machine's CLI, and the live
+ * database is not opened (cli/liveService.ts). Otherwise `offline` opens the
+ * store directly, which itself refuses if a service has started meanwhile.
+ */
+const runWithEnvironmentAuth = <A, E, A2, E2>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  offline: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  live: (access: LiveServiceAccess) => Effect.Effect<A2, E2, HttpClient.HttpClient>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -38,10 +57,14 @@ const runWithEnvironmentAuth = <A, E>(
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
     const config = yield* resolveCliAuthConfig(flags, logLevel);
+    const access = yield* liveServiceAccess(config);
+    if (Option.isSome(access)) {
+      return yield* live(access.value).pipe(Effect.provide(FetchHttpClient.layer));
+    }
     const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
     return yield* Effect.gen(function* () {
       const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      return yield* run(environmentAuth);
+      return yield* offline(environmentAuth);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
@@ -51,6 +74,20 @@ const runWithEnvironmentAuth = <A, E>(
       ),
     );
   });
+
+/** One call to the running service's auth API with the local CLI credential. */
+const callLive = <A, E>(
+  access: LiveServiceAccess,
+  what: string,
+  call: (
+    client: Effect.Success<ReturnType<typeof liveServiceClient>>,
+    headers: ReturnType<typeof bearerHeaders>,
+  ) => Effect.Effect<A, E>,
+) =>
+  Effect.gen(function* () {
+    const client = yield* liveServiceClient(access.state.origin);
+    return yield* call(client, bearerHeaders(access.token));
+  }).pipe(Effect.mapError(liveServiceRequestError(access.state.origin, what)));
 
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
@@ -123,6 +160,33 @@ const pairingCreateCommand = Command.make("create", {
           });
           yield* Console.log(output);
         }),
+      (access) =>
+        Effect.gen(function* () {
+          const ttl = yield* livePairingTtl(flags.ttl);
+          const scopes = yield* pairingGrantScopes(flags.scopes);
+          const issued = yield* callLive(access, "issue a pairing token", (client, headers) =>
+            client.auth.pairingCredential({
+              headers,
+              payload: {
+                scopes,
+                ...ttl,
+                ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+                ...(Option.isSome(flags.coordinator)
+                  ? { coordinatorEnvironmentId: EnvironmentId.make(flags.coordinator.value) }
+                  : {}),
+              },
+            }),
+          );
+          yield* Console.log(
+            formatIssuedPairingCredential(
+              { ...issued, scopes: flags.scopes },
+              {
+                json: flags.json,
+                ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
+              },
+            ),
+          );
+        }),
       {
         quietLogs: flags.json,
       },
@@ -145,6 +209,21 @@ const pairingListCommand = Command.make("list", {
           });
           yield* Console.log(formatPairingCredentialList(pairingLinks, { json: flags.json }));
         }),
+      (access) =>
+        Effect.gen(function* () {
+          const pairingLinks = yield* callLive(access, "list pairing tokens", (client, headers) =>
+            client.auth.pairingLinks({ headers }),
+          );
+          yield* Console.log(
+            formatPairingCredentialList(
+              pairingLinks.filter(
+                (link) =>
+                  link.subject !== EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+              ),
+              { json: flags.json },
+            ),
+          );
+        }),
       {
         quietLogs: flags.json,
       },
@@ -158,15 +237,31 @@ const pairingRevokeCommand = Command.make("revoke", {
 }).pipe(
   Command.withDescription("Revoke an active client pairing token."),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(flags, (environmentAuth) =>
-      Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokePairingLink(flags.id);
-        yield* Console.log(
-          revoked
-            ? `Revoked pairing credential ${flags.id}.\n`
-            : `No active pairing credential found for ${flags.id}.\n`,
-        );
-      }),
+    runWithEnvironmentAuth(
+      flags,
+      (environmentAuth) =>
+        Effect.gen(function* () {
+          const revoked = yield* environmentAuth.revokePairingLink(flags.id);
+          yield* Console.log(
+            revoked
+              ? `Revoked pairing credential ${flags.id}.\n`
+              : `No active pairing credential found for ${flags.id}.\n`,
+          );
+        }),
+      (access) =>
+        Effect.gen(function* () {
+          const { revoked } = yield* callLive(
+            access,
+            "revoke the pairing token",
+            (client, headers) =>
+              client.auth.revokePairingLink({ headers, payload: { id: flags.id } }),
+          );
+          yield* Console.log(
+            revoked
+              ? `Revoked pairing credential ${flags.id}.\n`
+              : `No active pairing credential found for ${flags.id}.\n`,
+          );
+        }),
     ),
   ),
 );
@@ -204,6 +299,14 @@ const sessionIssueCommand = Command.make("issue", {
             }),
           );
         }),
+      (access) =>
+        Effect.fail(
+          liveServiceRefusal(
+            access.state,
+            "Issuing a bearer access token",
+            "Pair the device instead (`pair`, or Settings > Connections), or stop SpecWithCode and run this again.",
+          ),
+        ),
       {
         quietLogs: flags.json || flags.tokenOnly,
       },
@@ -224,6 +327,13 @@ const sessionListCommand = Command.make("list", {
           const sessions = yield* environmentAuth.listSessions();
           yield* Console.log(formatSessionList(sessions, { json: flags.json }));
         }),
+      (access) =>
+        Effect.gen(function* () {
+          const sessions = yield* callLive(access, "list sessions", (client, headers) =>
+            client.auth.clients({ headers }),
+          );
+          yield* Console.log(formatSessionList(sessions, { json: flags.json }));
+        }),
       {
         quietLogs: flags.json,
       },
@@ -240,15 +350,28 @@ const sessionRevokeCommand = Command.make("revoke", {
 }).pipe(
   Command.withDescription("Revoke an active session."),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(flags, (environmentAuth) =>
-      Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
-        yield* Console.log(
-          revoked
-            ? `Revoked session ${flags.sessionId}.\n`
-            : `No active session found for ${flags.sessionId}.\n`,
-        );
-      }),
+    runWithEnvironmentAuth(
+      flags,
+      (environmentAuth) =>
+        Effect.gen(function* () {
+          const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+          yield* Console.log(
+            revoked
+              ? `Revoked session ${flags.sessionId}.\n`
+              : `No active session found for ${flags.sessionId}.\n`,
+          );
+        }),
+      (access) =>
+        Effect.gen(function* () {
+          const { revoked } = yield* callLive(access, "revoke the session", (client, headers) =>
+            client.auth.revokeClient({ headers, payload: { sessionId: flags.sessionId } }),
+          );
+          yield* Console.log(
+            revoked
+              ? `Revoked session ${flags.sessionId}.\n`
+              : `No active session found for ${flags.sessionId}.\n`,
+          );
+        }),
     ),
   ),
 );

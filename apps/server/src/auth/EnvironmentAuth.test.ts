@@ -5,6 +5,7 @@ import {
   AuthStandardClientScopes,
 } from "@specweave-studio/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -351,6 +352,20 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(verified.sessionId.length).toBeGreaterThan(0);
       expect(verified.scopes).toEqual(AuthStandardClientScopes);
       expect(verified.subject).toBe("one-time-token");
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("issues pairing credentials for the requested lifetime", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+
+      const standard = yield* serverAuth.issuePairingCredential();
+      const longer = yield* serverAuth.issuePairingCredential({ ttlSeconds: 1800 });
+
+      const lifetime = (expiresAt: DateTime.Utc) => DateTime.toEpochMillis(expiresAt) - now;
+      expect(lifetime(standard.expiresAt)).toBe(5 * 60_000);
+      expect(lifetime(longer.expiresAt)).toBe(30 * 60_000);
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 

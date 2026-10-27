@@ -28,6 +28,40 @@ const folder = {
 };
 
 describe("ThreadMetaRow", () => {
+  it("names the machine first, even with nothing else to show", () => {
+    const html = renderToStaticMarkup(
+      <ThreadMetaRow
+        machine={{
+          kind: "laptop",
+          label: "linuxbox",
+          tip: "Runs on linuxbox (Linux). Its commands, files and terminal are on that machine.",
+          warning: "Can't reach",
+        }}
+        origin={null}
+        folder={folder}
+        run={null}
+        pullRequests={[]}
+        onOpenPullRequest={() => {}}
+      />,
+    );
+    const chips = [...html.matchAll(/data-thread-meta="([a-z-]+)"/g)].map((match) => match[1]);
+    expect(chips).toEqual(["machine", "folder"]);
+    expect(html).toContain("linuxbox");
+    expect(html).toContain("Can&#x27;t reach");
+    expect(
+      renderToStaticMarkup(
+        <ThreadMetaRow
+          machine={{ kind: "server", label: "VPS", tip: "Runs on VPS.", warning: null }}
+          origin={null}
+          folder={null}
+          run={null}
+          pullRequests={[]}
+          onOpenPullRequest={() => {}}
+        />,
+      ),
+    ).toContain('data-thread-meta="machine"');
+  });
+
   it("paints opaque chips so timeline rows never show through", () => {
     const html = renderToStaticMarkup(
       <ThreadMetaRow

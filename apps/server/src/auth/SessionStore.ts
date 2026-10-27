@@ -460,6 +460,14 @@ export class SessionStore extends Context.Service<
       readonly replaceActiveForSubjectAndMethod?: boolean;
       /** Replace only this session, of the same method, in the issuance transaction. */
       readonly replaceSessionId?: AuthSessionId;
+      /**
+       * Keep the session in this process only: no `auth_sessions` row is
+       * written, it is never listed or published, nothing revokes it, and its
+       * token stops verifying when this process exits. For the credential the
+       * service publishes for this machine's CLI (LocalCliCredential.ts), so
+       * a service start changes no auth row.
+       */
+      readonly inMemory?: boolean;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly renewWorkerGrant: (
       input: AuthWorkerGrantRenewalRequest,
@@ -591,6 +599,14 @@ export const make = Effect.gen(function* () {
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   const credentialChangesLock = yield* Semaphore.make(1);
+  // Sessions issued with `inMemory`: they live and die with this process.
+  const inMemorySessions = new Map<AuthSessionId, AuthSessions.AuthSessionRecord>();
+  const getSessionRow = (input: { readonly sessionId: AuthSessionId }) => {
+    const kept = inMemorySessions.get(input.sessionId);
+    return kept === undefined
+      ? authSessions.getById(input)
+      : Effect.succeedSome<AuthSessions.AuthSessionRecord>(kept);
+  };
   const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -702,7 +718,7 @@ export const make = Effect.gen(function* () {
       return [wasDisconnected, next] as const;
     }).pipe(
       Effect.flatMap((wasDisconnected) =>
-        wasDisconnected
+        wasDisconnected && !inMemorySessions.has(sessionId)
           ? DateTime.now.pipe(
               Effect.flatMap((lastConnectedAt) =>
                 authSessions.setLastConnectedAt({
@@ -733,7 +749,8 @@ export const make = Effect.gen(function* () {
     sessionId,
     client,
   ) =>
-    client.surface === undefined && client.appVersion === undefined
+    (client.surface === undefined && client.appVersion === undefined) ||
+    inMemorySessions.has(sessionId)
       ? Effect.void
       : authSessions
           .setClientConnection({
@@ -842,6 +859,22 @@ export const make = Effect.gen(function* () {
         issuedAt,
         expiresAt,
       } satisfies AuthSessions.CreateAuthSessionInput;
+      if (input?.inMemory) {
+        inMemorySessions.set(sessionId, {
+          ...sessionRecord,
+          lastConnectedAt: null,
+          revokedAt: null,
+        });
+        return {
+          sessionId,
+          token: `${encodedPayload}.${signature}`,
+          method: claims.method,
+          client,
+          expiresAt,
+          scopes: claims.scopes,
+          ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        } satisfies IssuedSession;
+      }
       const replacedSessionIds = yield* (
         input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
           ? authSessions.createReplacingActive({
@@ -963,13 +996,11 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const row = yield* authSessions
-        .getById({ sessionId: claims.sid })
-        .pipe(
-          Effect.mapError(
-            (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),
-          ),
-        );
+      const row = yield* getSessionRow({ sessionId: claims.sid }).pipe(
+        Effect.mapError(
+          (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),
+        ),
+      );
       if (Option.isNone(row)) {
         return yield* new UnknownSessionTokenError({ sessionId: claims.sid });
       }
@@ -1185,13 +1216,11 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const row = yield* authSessions
-      .getById({ sessionId: claims.sid })
-      .pipe(
-        Effect.mapError(
-          (cause) => new WebSocketTokenVerificationError({ sessionId: claims.sid, cause }),
-        ),
-      );
+    const row = yield* getSessionRow({ sessionId: claims.sid }).pipe(
+      Effect.mapError(
+        (cause) => new WebSocketTokenVerificationError({ sessionId: claims.sid, cause }),
+      ),
+    );
     if (Option.isNone(row)) {
       return yield* new UnknownWebSocketSessionError({ sessionId: claims.sid });
     }
@@ -1258,7 +1287,7 @@ export const make = Effect.gen(function* () {
       // Subscribe before reading the row, so a revoke that commits after the
       // read still reaches this watch.
       const changes = yield* PubSub.subscribe(changesPubSub);
-      const isActive = authSessions.getById({ sessionId: session.sessionId }).pipe(
+      const isActive = getSessionRow({ sessionId: session.sessionId }).pipe(
         Effect.map((row) => Option.isSome(row) && row.value.revokedAt === null),
         // An unreadable row is not proof of revocation; keep watching.
         Effect.catchCause((cause) =>

@@ -785,6 +785,7 @@ import {
   useSetThreadIncrementLink,
 } from "./chat/LinkIncrementDialog";
 import { ThreadMetaRow, type ThreadOrigin } from "./chat/ThreadMetaRow";
+import { useThreadMachine } from "./chat/threadMachine";
 import { isNestedSubagentThread } from "../studio/threadSubagents";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
 import {
@@ -4927,6 +4928,8 @@ function useChatViewState(props: ChatViewProps) {
       openThreadPath,
     ],
   );
+  // Every sent chat names its machine; a draft picks one in DraftMachinePicker instead.
+  const threadMachine = useThreadMachine(isServerThread ? environmentId : null);
   const threadPullRequests = activeThreadShell?.pullRequests ?? [];
   const manualCompactionProviderAvailable = useMemo(
     () =>
@@ -5498,6 +5501,7 @@ function useChatViewState(props: ChatViewProps) {
     timelineActiveHost,
     timelineThreadError,
     timelineWorkingFolder,
+    threadMachine,
     timestampFormat,
     transcriptOnly,
     turnDiffSummaries,
@@ -9902,6 +9906,7 @@ export default function ChatView(props: ChatViewProps) {
     timelineActiveHost,
     timelineThreadError,
     timelineWorkingFolder,
+    threadMachine,
     timestampFormat,
     transcriptOnly,
     turnDiffSummaries,
@@ -15237,11 +15242,13 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadBlocker !== null ||
               threadPullRequests.length > 0 ||
               threadOrigin !== null ||
+              threadMachine !== null ||
               timelineWorkingFolder !== null ? (
                 <ThreadProgressDock>
                   <ThreadHeaderLine>
                     <ThreadMetaRow
                       key={`meta:${activeThread.id}`}
+                      machine={threadMachine}
                       origin={threadOrigin}
                       folder={timelineWorkingFolder}
                       run={activeThreadShell?.latestRun ?? null}
@@ -15566,6 +15573,11 @@ export default function ChatView(props: ChatViewProps) {
                               draftId={draftId}
                               activeThreadId={activeThreadId}
                               activeThreadEnvironmentId={activeThread?.environmentId}
+                              machine={
+                                showComposerContextStrip && showComposerEnvironmentIndicator
+                                  ? null
+                                  : threadMachine
+                              }
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
                               promptHistoryMessages={timelineMessages}

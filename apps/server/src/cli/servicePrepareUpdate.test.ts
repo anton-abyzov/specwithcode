@@ -8,7 +8,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
-  AuthEnvironmentMaintainScope,
+  AuthAdministrativeScopes,
   type AuthEnvironmentScope,
   ServerPrepareServiceUpdateError,
   type ServerPrepareServiceUpdateInput,
@@ -18,7 +18,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as NetService from "@specweave-studio/shared/Net";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -33,22 +33,24 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as TestConsole from "effect/testing/TestConsole";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as LocalCliCredential from "../auth/LocalCliCredential.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import { RPC_REQUIRED_SCOPES } from "../auth/RpcAuthorization.ts";
 import { cli } from "../binCli.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { resolveCliAuthConfig } from "./config.ts";
+import { LiveServiceCredentialError } from "./liveService.ts";
 import {
   formatPrepareResult,
   prepareInputFromFlags,
-  SESSION_LABEL,
   ServicePrepareUpdateCallError,
   ServicePrepareUpdateNotRunningError,
-  SESSION_TTL,
   serviceWebSocketUrl,
 } from "./servicePrepareUpdate.ts";
 
@@ -100,11 +102,49 @@ const startService = (
   answer: (
     input: ServerPrepareServiceUpdateInput,
   ) => Effect.Effect<ServerPrepareServiceUpdateResult, ServerPrepareServiceUpdateError>,
+  options?: { readonly publishCliCredential?: boolean },
 ) =>
   Effect.gen(function* () {
     const seen: Seen = { urls: [], scopes: [], payloads: [] };
     const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
-    const layerAuth = EnvironmentAuth.layerRuntime.pipe(Layer.provide(ServerConfig.layer(config)));
+    // The service's own auth store, with the credential it publishes for the CLI at start.
+    const layerAuth = (
+      options?.publishCliCredential === false
+        ? EnvironmentAuth.layerRuntime
+        : LocalCliCredential.layer.pipe(Layer.provideMerge(EnvironmentAuth.layerRuntime))
+    ).pipe(Layer.provide(ServerConfig.layer(config)));
+    // `/api/auth/websocket-ticket` as auth/http.ts answers it: a bearer session in, a ticket out.
+    const ticketRoute = HttpRouter.add(
+      "POST",
+      "/api/auth/websocket-ticket",
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const bearer = (request.headers.authorization ?? "").replace(/^Bearer /, "");
+        const sessions = yield* SessionStore.SessionStore;
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const session = yield* sessions.verify(bearer);
+        const ticket = yield* auth.issueWebSocketTicket({ sessionId: session.sessionId });
+        return yield* HttpServerResponse.json({
+          ticket: ticket.ticket,
+          expiresAt: ticket.expiresAt.toJSON(),
+        });
+      }).pipe(Effect.orElseSucceed(() => HttpServerResponse.text("denied", { status: 401 }))),
+    );
+    // The environment descriptor, which the CLI checks before it sends its token.
+    const descriptorRoute = HttpRouter.add(
+      "GET",
+      "/.well-known/studio/environment",
+      Effect.gen(function* () {
+        const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+        return yield* HttpServerResponse.json({
+          environmentId: yield* identity.getEnvironmentId,
+          label: "prepare-update-test",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.1",
+          capabilities: { repositoryIdentity: true },
+        });
+      }).pipe(Effect.orElseSucceed(() => HttpServerResponse.text("failed", { status: 500 }))),
+    );
     const handlers = PrepareGroup.toLayerHandler(WS_METHODS.serverPrepareServiceUpdate, (input) => {
       seen.payloads.push(input);
       return answer(input);
@@ -133,7 +173,10 @@ const startService = (
     );
     const scope = yield* Scope.make();
     const context = yield* Layer.buildWithScope(
-      HttpRouter.serve(route, { disableListenLog: true, disableLogger: true }).pipe(
+      HttpRouter.serve(Layer.mergeAll(route, ticketRoute, descriptorRoute), {
+        disableListenLog: true,
+        disableLogger: true,
+      }).pipe(
         Layer.provideMerge(layerAuth),
         Layer.provideMerge(
           NodeHttpServer.layer(() => NodeHttp.createServer(), { port: 0, host: "127.0.0.1" }),
@@ -143,12 +186,15 @@ const startService = (
     );
     const address = Context.get(context, HttpServer.HttpServer).address;
     const port = NetAddress.isInetAddress(address) ? address.port : 0;
+    const state = yield* makePersistedServerRuntimeState({
+      config: { host: "127.0.0.1", devUrl: undefined },
+      port,
+    });
     yield* persistServerRuntimeState({
       path: config.serverRuntimeStatePath,
-      state: yield* makePersistedServerRuntimeState({
-        config: { host: "127.0.0.1", devUrl: undefined },
-        port,
-      }),
+      // A real start time: the CLI checks this process started before it was recorded,
+      // and the test clock would record 1970.
+      state: { ...state, startedAt: DateTime.formatIso(DateTime.nowUnsafe()) },
     });
     const sql = Context.get(context, SqlClient.SqlClient);
     return {
@@ -232,11 +278,26 @@ describe("service prepare-update input", () => {
 
 describe("specweave-studio service prepare-update", () => {
   it.effect(
-    "holds the running service over its socket with a short-lived maintain session",
+    "holds the running service over its socket with the CLI credential it published, writing no row",
     () =>
       Effect.gen(function* () {
         const baseDir = temporaryHome();
         const service = yield* startService(baseDir, () => Effect.succeed(heldResult));
+        // The service issued its CLI session in memory: a start writes no auth row
+        // (update.py's post-restart proof requires the same session identities).
+        const beforeHold = yield* service.guardedSessionRows;
+        assert.lengthOf(beforeHold, 0);
+        assert.isTrue(
+          NodeFS.existsSync(
+            NodePath.join(
+              baseDir,
+              "userdata",
+              "secrets",
+              `${LocalCliCredential.LOCAL_CLI_CREDENTIAL_SECRET}.bin`,
+            ),
+          ),
+        );
+
         const output = yield* runCli([
           "service",
           "prepare-update",
@@ -252,39 +313,45 @@ describe("specweave-studio service prepare-update", () => {
         assert.deepStrictEqual(service.seen.payloads, [
           { stopWork: true, hold: true, reason: "install" },
         ]);
-        // Only the scope the RPC needs, through a ticket on the protocol the service speaks.
-        assert.deepStrictEqual(service.seen.scopes, [[AuthEnvironmentMaintainScope]]);
+        // Through a ticket for the CLI session, on the protocol the service speaks.
+        assert.deepStrictEqual(service.seen.scopes, [AuthAdministrativeScopes]);
         assert.isTrue((service.seen.urls[0]?.searchParams.get("wsTicket") ?? "").length > 0);
         assert.equal(service.seen.urls[0]?.searchParams.get("orchestrationProtocol"), "2");
         // The two parameters that make ws.ts record client metadata in the session row.
         assert.isNull(service.seen.urls[0]?.searchParams.get("clientSurface"));
         assert.isNull(service.seen.urls[0]?.searchParams.get("clientAppVersion"));
 
-        // One row, written before the call and never again: not revoked, it lapses.
-        const afterHold = yield* service.guardedSessionRows;
-        assert.equal(afterHold.length, 1);
-        const row = afterHold[0] ?? {};
-        assert.equal(row.client_label, SESSION_LABEL);
-        assert.isNull(row.revoked_at);
-        assert.isNull(row.client_surface);
-        assert.isNull(row.client_app_version);
-        assert.equal(
-          Date.parse(String(row.expires_at)) - Date.parse(String(row.issued_at)),
-          Duration.toMillis(SESSION_TTL),
-        );
-        assert.isAtMost(Duration.toMillis(SESSION_TTL), Duration.toMillis(Duration.minutes(5)));
-
         yield* runCli(["service", "prepare-update", "--base-dir", baseDir, "--release-hold"]);
         assert.deepStrictEqual(service.seen.payloads[1], { stopWork: false, releaseHold: true });
-        // After the first socket closed and a second call connected, the first row is
-        // unchanged in every guarded cell; the release left its own row unrevoked too.
-        const afterRelease = yield* service.guardedSessionRows;
-        assert.equal(afterRelease.length, 2);
-        assert.deepStrictEqual(
-          afterRelease.find((entry) => entry.session_id === row.session_id),
-          row,
-        );
-        assert.isTrue(afterRelease.every((entry) => entry.revoked_at === null));
+        // The CLI wrote nothing: the one row is unchanged in every guarded cell
+        // (update.py's prestate compares them between snapshot and apply).
+        assert.deepStrictEqual(yield* service.guardedSessionRows, beforeHold);
+        yield* service.stop;
+      }).pipe(Effect.provide(layerCliRuntime)),
+    60_000,
+  );
+
+  it.effect(
+    "says the running service published no CLI credential instead of opening its database",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = temporaryHome();
+        const service = yield* startService(baseDir, () => Effect.succeed(heldResult), {
+          publishCliCredential: false,
+        });
+        const before = yield* service.guardedSessionRows;
+        const error = yield* runCli([
+          "service",
+          "prepare-update",
+          "--base-dir",
+          baseDir,
+          "--stop-work",
+          "--json",
+        ]).pipe(Effect.flip);
+        assert.instanceOf(error, LiveServiceCredentialError);
+        assert.include(error.message, "has not published a credential for this CLI");
+        assert.deepStrictEqual(service.seen.payloads, []);
+        assert.deepStrictEqual(yield* service.guardedSessionRows, before);
         yield* service.stop;
       }).pipe(Effect.provide(layerCliRuntime)),
     60_000,

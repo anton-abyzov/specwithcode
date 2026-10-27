@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -120,5 +121,42 @@ it.layer(NodeServices.layer)("studio-sqlite-state", (it) => {
         ).pipe(Effect.flip);
         assert.equal(aliasError._tag, "SqliteStateSharedHomeMutationError");
       }),
+  );
+
+  it.effect("refuses exec on a home a service runs from and leaves its database unchanged", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-sqlite-state-live-" });
+      yield* createFixtureDatabase(baseDir);
+      // The parent process is alive and started before this record.
+      yield* fs.writeFileString(
+        path.join(baseDir, "userdata", "server-runtime.json"),
+        JSON.stringify({
+          version: 1,
+          pid: process.ppid,
+          host: "127.0.0.1",
+          port: 8_319,
+          origin: "http://127.0.0.1:8319",
+          // A real time: the test clock would record 1970.
+          startedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+        }),
+      );
+
+      const error = yield* runSqliteState(
+        { operation: "exec", baseDir, sql: "DELETE FROM fixtures" },
+        { sharedHome: path.join(baseDir, "elsewhere") },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "LiveDatabaseOwnedError");
+      // A query still reads it, through the read-only opener.
+      const result = yield* runSqliteState({
+        operation: "query",
+        baseDir,
+        sql: "SELECT COUNT(*) AS count FROM fixtures",
+      });
+      if (result.operation === "query") assert.deepStrictEqual(result.rows, [{ count: 1 }]);
+      const names = yield* fs.readDirectory(path.join(baseDir, "userdata"));
+      assert.isFalse(names.some((name) => name.includes(".backup-")));
+    }),
   );
 });

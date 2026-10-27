@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import { registerLiveDatabase } from "./liveDatabaseGuard.ts";
+import { layerServiceDatabaseOwner, refuseWhileServiceRuns } from "./liveServiceOwner.ts";
 import { activeReclaim, staleLockHint } from "./reclaimLock.ts";
 import * as ServerConfig from "../config.ts";
 
@@ -199,4 +200,29 @@ export const layerConfig = Layer.unwrap(
     yield* initializeV2Database(dbPath);
     return layerFromPath(dbPath);
   }),
+);
+
+/**
+ * `layerConfig` for code that is not the service: the CLI. It refuses with
+ * `LiveDatabaseOwnedError` while a running service owns the database, because
+ * a read-write connection from another process deletes `-wal` and `-shm` when
+ * it closes once the service has lost its locks (liveServiceOwner.ts). The
+ * service itself uses `layerConfig`.
+ */
+export const layerConfigOutsideService = Layer.unwrap(
+  Effect.gen(function* () {
+    const { dbPath, serverRuntimeStatePath } = yield* ServerConfig.ServerConfig;
+    yield* refuseWhileServiceRuns({ dbPath, serverRuntimeStatePath });
+    return layerConfig;
+  }),
+);
+
+/**
+ * `layerConfig` for the service: `database-owner.json` is written before the
+ * database opens and removed after it closes, and a second service on the
+ * same home is refused before it opens it (liveServiceOwner.ts). The CLI uses
+ * `layerConfigOutsideService`.
+ */
+export const layerConfigForService = layerConfig.pipe(
+  Layer.provideMerge(layerServiceDatabaseOwner),
 );

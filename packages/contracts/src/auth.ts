@@ -5,6 +5,7 @@ import {
   AuthSessionId,
   EnvironmentId,
   ForwardCompatibleArray,
+  PositiveInt,
   ClientSurface,
   ClientWebDeployment,
   TrimmedNonEmptyString,
@@ -475,11 +476,17 @@ export const AuthRevokeClientSessionInput = Schema.Struct({
 });
 export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.Type;
 
+export const AUTH_PAIRING_CREDENTIAL_MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
+
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   /** An access manager explicitly approves this machine, independently of its label. */
   coordinatorEnvironmentId: Schema.optionalKey(EnvironmentId),
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
+  /** Token lifetime; the service's one-time default (five minutes) when left out. At most 30 days. */
+  ttlSeconds: Schema.optionalKey(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(AUTH_PAIRING_CREDENTIAL_MAX_TTL_SECONDS)),
+  ),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 

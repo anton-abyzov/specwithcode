@@ -1,6 +1,6 @@
 /**
- * One compact line above the plan card: where the thread came from when that
- * is not the default, the worktree it works in, how long its current turn has
+ * One compact line above the plan card: the machine the thread runs on, where
+ * the thread came from when that is not the default, the worktree it works in, how long its current turn has
  * run and the pull requests it opened or linked, as small chips.
  *
  * In a project only the coordinator starts threads, so a worker needs no
@@ -17,9 +17,11 @@ import { memo, useState, type ComponentType, type ReactNode } from "react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { nowMinuteMs, useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
+import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { ThreadMachine } from "./threadMachine";
 
 const VISIBLE_PULL_REQUESTS = 3;
 
@@ -169,13 +171,18 @@ function RunDurationChip({
         className={cn("shrink-0 tabular-nums", waiting && "font-medium text-warning-foreground")}
         data-run-state={waiting ? "waiting" : running ? "running" : "done"}
       >
-        {waiting ? `Waiting on you ${duration}` : running ? `Running ${duration}` : `Ran ${duration}`}
+        {waiting
+          ? `Waiting on you ${duration}`
+          : running
+            ? `Running ${duration}`
+            : `Ran ${duration}`}
       </span>
     </MetaChip>
   );
 }
 
 export const ThreadMetaRow = memo(function ThreadMetaRow({
+  machine = null,
   origin,
   folder,
   run,
@@ -183,6 +190,8 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
   pullRequests,
   onOpenPullRequest,
 }: {
+  /** Where the thread runs; every turn of it runs there. */
+  machine?: ThreadMachine | null;
   origin: ThreadOrigin | null;
   folder: {
     readonly label: string;
@@ -203,7 +212,13 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
   });
   const startedRun =
     run !== null && run.startedAt !== null ? { ...run, startedAt: run.startedAt } : null;
-  if (origin === null && folder === null && startedRun === null && pullRequests.length === 0) {
+  if (
+    machine === null &&
+    origin === null &&
+    folder === null &&
+    startedRun === null &&
+    pullRequests.length === 0
+  ) {
     return null;
   }
   const ordered = orderPullRequestPills(pullRequests);
@@ -216,6 +231,21 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
       className="pointer-events-auto flex min-w-0 flex-wrap items-center gap-1.5"
       data-thread-meta-row
     >
+      {machine ? (
+        <MetaChip
+          meta="machine"
+          icon={environmentMachineIcon(machine.kind)}
+          {...(machine.warning ? { iconClassName: "text-warning-foreground" } : {})}
+          tip={machine.tip}
+        >
+          <span className="min-w-0 max-w-36 truncate text-foreground/80 sm:max-w-56">
+            {machine.label}
+          </span>
+          {machine.warning ? (
+            <span className="shrink-0 font-medium text-warning-foreground">{machine.warning}</span>
+          ) : null}
+        </MetaChip>
+      ) : null}
       {origin ? (
         <MetaChip
           meta="subagent"
