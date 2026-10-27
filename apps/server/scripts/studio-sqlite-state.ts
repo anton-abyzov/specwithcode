@@ -20,6 +20,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Argument, Command, Flag } from "effect/cli";
 
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
+import { liveDatabaseReadOnlyUri } from "../src/persistence/liveDatabaseSnapshot.ts";
+import { refuseWhileServiceRuns } from "../src/persistence/liveServiceOwner.ts";
 
 export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;
@@ -209,6 +211,13 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
     if (canonicalSharedHomes.includes(canonicalBaseDir)) {
       return yield* new SqliteStateSharedHomeMutationError();
     }
+    // Any home a service runs from, the live identity home included: `exec`
+    // writes through a read-write connection, which deletes `-wal` and `-shm`
+    // under a service that lost its locks (docs/operations/live-database.md).
+    yield* refuseWhileServiceRuns({
+      dbPath: databasePath,
+      serverRuntimeStatePath: path.join(baseDir, "userdata", "server-runtime.json"),
+    });
   }
 
   const program = Effect.gen(function* () {
@@ -242,10 +251,12 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
 
   return yield* program.pipe(
     Effect.provide(
-      NodeSqliteClient.layer({
-        filename: databasePath,
-        readonly: input.operation === "query",
-      }),
+      NodeSqliteClient.layer(
+        input.operation === "query"
+          ? // The live database may be in use: open it so `-shm` and `-wal` cannot change.
+            { filename: liveDatabaseReadOnlyUri(databasePath), readonly: true }
+          : { filename: databasePath, readonly: false },
+      ),
     ),
     Effect.mapError(
       (cause) =>

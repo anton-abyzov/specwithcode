@@ -165,6 +165,7 @@ import {
   RELAY_URL_SECRET,
 } from "./cloud/config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as LocalCliCredential from "./auth/LocalCliCredential.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
@@ -248,7 +249,7 @@ const layerPtyAdapter = NodePtyAdapter.layer;
 
 const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
-  Layer.provideMerge(SqlitePersistence.layerConfig),
+  Layer.provideMerge(SqlitePersistence.layerConfigForService),
 );
 
 // One guard for file reads, writes, search and review diffs, following the
@@ -323,7 +324,9 @@ const layerHttpServer = Layer.unwrap(
 
 const layerPlatformServices = NodeServices.layer;
 
-const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
+const layerPersistence = Layer.empty.pipe(
+  Layer.provideMerge(SqlitePersistence.layerConfigForService),
+);
 
 const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
 
@@ -489,7 +492,10 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
 
 const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
 
-const layerAuth = EnvironmentAuth.layer.pipe(
+// The local CLI reaches this service with the credential it publishes, never
+// through the database (auth/LocalCliCredential.ts).
+const layerAuth = LocalCliCredential.layer.pipe(
+  Layer.provideMerge(EnvironmentAuth.layer),
   Layer.provideMerge(layerPersistence),
   Layer.provide(layerServerEnvironment),
   Layer.provide(ServerSecretStore.layer),

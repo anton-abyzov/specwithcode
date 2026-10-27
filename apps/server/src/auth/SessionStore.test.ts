@@ -805,4 +805,77 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
     }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
   );
+
+  it.effect(
+    "keeps an in-memory session out of the database, the sessions list and revoke-others",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const sql = yield* SqlClient.SqlClient;
+        const other = yield* sessions.issue({ method: "bearer-access-token" });
+        const issued = yield* sessions.issue({
+          subject: "local-cli-credential",
+          method: "bearer-access-token",
+          scopes: AuthStandardClientScopes,
+          client: { label: "SpecWithCode CLI on this machine", deviceType: "bot" },
+          inMemory: true,
+        });
+        const rows = yield* sql<{
+          readonly session_id: string;
+        }>`SELECT session_id FROM auth_sessions`;
+        expect(rows.map((row) => row.session_id)).toEqual([other.sessionId]);
+
+        const verified = yield* sessions.verify(issued.token);
+        expect(verified.sessionId).toBe(issued.sessionId);
+        expect(verified.subject).toBe("local-cli-credential");
+        const ticket = yield* sessions.issueWebSocketToken(issued.sessionId);
+        expect((yield* sessions.verifyWebSocketToken(ticket.token)).sessionId).toBe(
+          issued.sessionId,
+        );
+        expect((yield* sessions.listActive()).map((session) => session.sessionId)).toEqual([
+          other.sessionId,
+        ]);
+
+        // A socket it opens stays open, and records nothing in the database.
+        yield* sessions.markConnected(issued.sessionId);
+        yield* sessions.recordClientConnection(issued.sessionId, { surface: "desktop" });
+        const ended = yield* sessions.watchEnd({ sessionId: issued.sessionId });
+        const watch = { ended: false };
+        yield* ended.pipe(
+          Effect.tap(() => Effect.sync(() => (watch.ended = true))),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        // Past several 30-second rechecks of the session.
+        yield* TestClock.adjust(Duration.minutes(2));
+        expect(watch.ended).toBe(false);
+
+        // "Sign out other devices" from another session does not reach it.
+        yield* sessions.revokeAllExcept(other.sessionId);
+        expect((yield* sessions.verify(issued.token)).sessionId).toBe(issued.sessionId);
+        expect(yield* sessions.revoke(issued.sessionId)).toBe(false);
+        expect((yield* sessions.verify(issued.token)).sessionId).toBe(issued.sessionId);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory, TestClock.layer()),
+        ),
+      ),
+  );
+
+  it.effect("stops verifying an in-memory session once the issuing store is gone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-in-memory-session-" });
+      const issued = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        return yield* sessions.issue({ method: "bearer-access-token", inMemory: true });
+      }).pipe(Effect.provide(yield* makeDiskSessionStoreLayer(baseDir)));
+      // The next process signs with the same key but never saw the session.
+      const error = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        return yield* sessions.verify(issued.token).pipe(Effect.flip);
+      }).pipe(Effect.provide(yield* makeDiskSessionStoreLayer(baseDir)));
+      expect(error._tag).toBe("UnknownSessionTokenError");
+    }),
+  );
 });

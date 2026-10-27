@@ -76,6 +76,7 @@ const openRunningServer = Effect.fn("cli.openRunningServer")(function* (
     const config = yield* makePairServerConfig({ target, logLevel: "Warn" });
     const issued = yield* mintPairingLink({
       config,
+      target,
       scopes: AuthStandardClientScopes,
       ttl: Option.some(Duration.minutes(5)),
       label: Option.some("specwithcode (opened from the terminal)"),

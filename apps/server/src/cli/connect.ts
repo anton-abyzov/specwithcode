@@ -1,5 +1,4 @@
 import {
-  AuthRelayWriteScope,
   EnvironmentHttpApi,
   type RelayClientInstallProgressEvent,
   type RelayClientInstallProgressStage,
@@ -24,7 +23,6 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BootService from "../cloud/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
@@ -41,8 +39,8 @@ import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { bearerHeaders, liveServiceAccess } from "./liveService.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
 import * as CliService from "./service.ts";
@@ -257,43 +255,31 @@ export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_clie
   },
 );
 
-const withCloudCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  run: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.acquireUseRelease(
-    environmentAuth.issueSession({
-      scopes: [AuthRelayWriteScope],
-      subject: "cloud-cli",
-      label: "specweave-studio connect cli",
-    }),
-    (issued) => run(issued.token),
-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-  );
-
 type LiveCloudActionResult =
   | { readonly status: "not-running" }
   | { readonly status: "succeeded" }
   | { readonly status: "failed"; readonly cause: Cause.Cause<unknown> };
 
+/**
+ * Asks the running service to unlink, with the credential it published for
+ * this machine's CLI (cli/liveService.ts). The live database is never opened.
+ */
 const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-  if (Option.isNone(runtimeState)) {
+  const access = yield* Effect.exit(liveServiceAccess(config));
+  if (Exit.isFailure(access)) {
+    return { status: "failed", cause: access.cause } satisfies LiveCloudActionResult;
+  }
+  if (Option.isNone(access.value)) {
     return { status: "not-running" } satisfies LiveCloudActionResult;
   }
-
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const { state, token } = access.value.value;
   const result = yield* Effect.exit(
-    withCloudCliSessionToken(environmentAuth, (token) =>
-      HttpApiClient.make(EnvironmentHttpApi, {
-        baseUrl: runtimeState.value.origin,
-      }).pipe(
-        Effect.flatMap((client) =>
-          client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
-        ),
-        Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
-      ),
+    HttpApiClient.make(EnvironmentHttpApi, {
+      baseUrl: state.origin,
+    }).pipe(
+      Effect.flatMap((client) => client.connect.unlink({ headers: bearerHeaders(token) })),
+      Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
     ),
   );
   return Exit.isSuccess(result)
@@ -416,7 +402,6 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
     | ServerSecretStore.ServerSecretStore
     | CliTokenManager.CloudCliTokenManager
     | RelayClient.RelayClient
-    | EnvironmentAuth.EnvironmentAuth
     | BootService.BootService
     | Crypto.Crypto
     | FileSystem.FileSystem
@@ -439,7 +424,8 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
       Layer.provide(ExternalLauncher.layer),
     ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
-    EnvironmentAuth.layerRuntime,
+    // Files only. Connect never opens the live database (runLiveCloudUnlink).
+    ServerEnvironment.layerIdentity,
     CliService.layer(config),
     RelayTracing.layerHeadlessRelayClient,
   ).pipe(

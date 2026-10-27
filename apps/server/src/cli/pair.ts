@@ -24,21 +24,18 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
-  isProcessAlive,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { recordedProcess } from "../persistence/processIdentity.ts";
 import {
   buildPairingUrl,
   isLoopbackHost,
@@ -48,6 +45,15 @@ import {
 import { probeEnvironmentDescriptor, publishOnTailscale } from "../tailscalePublish.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import {
+  bearerHeaders,
+  livePairingTtl,
+  liveServiceClient,
+  liveServiceRequestError,
+  type LiveServiceConfig,
+  liveServiceEndpoint,
+  pairingGrantScopes,
+} from "./liveService.ts";
 
 export {
   DevServerNotProxiableError,
@@ -154,10 +160,10 @@ export const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function*
       if (Option.isNone(state)) {
         continue;
       }
-      // The pid check guards against a dead server's state file whose port
-      // was since reused by a different server: pairing would then mint a
-      // token in the old database while the QR code points at the new server.
-      if (!isProcessAlive(state.value.pid)) {
+      // The pid and start-time check guards against a dead server's state
+      // file whose pid or port was since reused by another process; the CLI
+      // credential then goes only to the confirmed service (mintPairingLink).
+      if ((yield* recordedProcess(state.value.pid, state.value.startedAt)) !== "running") {
         continue;
       }
       const probed = yield* probeEnvironmentDescriptor(state.value.origin);
@@ -177,7 +183,7 @@ export const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function*
 
 /**
  * Server config pointed at the discovered server's state directory, so the
- * minted token lands in the database the running server reads from. Built by
+ * CLI credential is read from the home of the server that answered. Built by
  * hand rather than through `resolveServerConfig` to keep the dev-vs-userdata
  * choice pinned to where the runtime state was actually found, independent of
  * ambient environment variables.
@@ -246,28 +252,33 @@ export const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairi
   },
 );
 
+/**
+ * Mints the pairing token through the running service, with the credential it
+ * published for this machine's CLI: `POST /api/auth/pairing-token`, the call
+ * Settings > Connections makes. The live database is never opened here.
+ * `--ttl` is passed through; left out, the service's tokens last five minutes.
+ */
 export const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
-  readonly config: ServerConfig.ServerConfig["Service"];
+  readonly config: LiveServiceConfig;
+  readonly target: Pick<DiscoveredPairTarget, "state">;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly ttl: Option.Option<Duration.Duration>;
   readonly label: Option.Option<string>;
 }) {
+  const ttl = yield* livePairingTtl(input.ttl);
+  const scopes = yield* pairingGrantScopes(input.scopes);
+  const { origin, token } = yield* liveServiceEndpoint(input.config, input.target.state);
   return yield* Effect.gen(function* () {
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    return yield* environmentAuth.createPairingLink({
-      scopes: input.scopes,
-      subject: "one-time-token",
-      label: Option.getOrElse(input.label, () => "specweave-studio pair"),
-      ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
+    const client = yield* liveServiceClient(origin);
+    return yield* client.auth.pairingCredential({
+      headers: bearerHeaders(token),
+      payload: {
+        scopes,
+        ...ttl,
+        label: Option.getOrElse(input.label, () => "specweave-studio pair"),
+      },
     });
-  }).pipe(
-    Effect.provide(
-      EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(input.config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
-      ),
-    ),
-  );
+  }).pipe(Effect.mapError(liveServiceRequestError(origin, "issue a pairing token")));
 });
 
 const ttlFlag = Flag.String("ttl").pipe(
@@ -348,6 +359,7 @@ export const pairCommand = Command.make("pair", {
       const config = yield* makePairServerConfig({ target, logLevel });
       const issued = yield* mintPairingLink({
         config,
+        target,
         scopes: flags.scopes,
         ttl: flags.ttl,
         label: flags.label,

@@ -9,6 +9,7 @@ import { AuthStandardClientScopes } from "@specweave-studio/contracts";
 import * as NetService from "@specweave-studio/shared/Net";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -25,6 +26,8 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { localServiceOrigin } from "./liveService.ts";
+import { processStartedAtMs, recordedProcess } from "../persistence/processIdentity.ts";
 import {
   DevServerNotProxiableError,
   resolveDirectPairingBaseUrl,
@@ -120,14 +123,86 @@ const testDescriptor = {
   capabilities: { repositoryIdentity: true },
 };
 
-const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A, E, R>) =>
-  Effect.acquireUseRelease(
+/** The token a running service publishes for the local CLI (auth/LocalCliCredential.ts). */
+const CLI_TOKEN = "pair-test-cli-token";
+
+interface FakePairingLink {
+  readonly id: string;
+  readonly subject: string;
+  readonly label?: string;
+  readonly scopes: ReadonlyArray<string>;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  /** What the CLI asked for; left out means the service's five-minute default. */
+  readonly ttlSeconds?: number;
+}
+
+/**
+ * A running service as `pair` sees it: the environment descriptor, and the
+ * auth routes it mints and lists pairing tokens through, which accept only
+ * the published CLI token. `pair` never opens the service's database.
+ */
+const withDescriptorServer = <A, E, R>(
+  run: (
+    origin: string,
+    links: Array<FakePairingLink>,
+    seen: { bearers: number },
+  ) => Effect.Effect<A, E, R>,
+) => {
+  const links: Array<FakePairingLink> = [];
+  const seen = { bearers: 0 };
+  return Effect.acquireUseRelease(
     Effect.callback<NodeHttp.Server>((resume) => {
       const server = NodeHttp.createServer((request, response) => {
+        if (request.headers.authorization !== undefined) seen.bearers += 1;
+        const json = (status: number, body: unknown) => {
+          response.writeHead(status, { "content-type": "application/json" });
+          response.end(JSON.stringify(body));
+        };
         if (request.url === "/.well-known/studio/environment") {
-          response.writeHead(200, { "content-type": "application/json" });
-          response.end(JSON.stringify(testDescriptor));
+          json(200, testDescriptor);
           return;
+        }
+        if (request.url?.startsWith("/api/auth/")) {
+          if (request.headers.authorization !== `Bearer ${CLI_TOKEN}`) {
+            json(401, { _tag: "EnvironmentAuthInvalidError", message: "unauthorized" });
+            return;
+          }
+          if (request.method === "GET" && request.url === "/api/auth/pairing-links") {
+            json(200, links);
+            return;
+          }
+          if (request.method === "POST" && request.url === "/api/auth/pairing-token") {
+            let body = "";
+            request.on("data", (chunk: Buffer) => (body += chunk.toString("utf8")));
+            request.on("end", () => {
+              const payload = JSON.parse(body) as {
+                readonly label?: string;
+                readonly scopes?: ReadonlyArray<string>;
+                readonly ttlSeconds?: number;
+              };
+              const createdAt = DateTime.nowUnsafe();
+              const link: FakePairingLink = {
+                id: `pairing-${String(links.length + 1)}`,
+                subject: "one-time-token",
+                ...(payload.label === undefined ? {} : { label: payload.label }),
+                scopes: payload.scopes ?? AuthStandardClientScopes,
+                createdAt: DateTime.formatIso(createdAt),
+                expiresAt: DateTime.formatIso(
+                  DateTime.add(createdAt, { seconds: payload.ttlSeconds ?? 300 }),
+                ),
+                ...(payload.ttlSeconds === undefined ? {} : { ttlSeconds: payload.ttlSeconds }),
+              };
+              links.push(link);
+              json(200, {
+                id: link.id,
+                credential: `PAIRTKN${"ABCDEFGHJK"[links.length % 10] ?? "Z"}`,
+                ...(link.label === undefined ? {} : { label: link.label }),
+                expiresAt: link.expiresAt,
+              });
+            });
+            return;
+          }
         }
         response.writeHead(404);
         response.end();
@@ -139,10 +214,46 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
       if (address === null || typeof address === "string") {
         return Effect.die(new Error("Expected a TCP address"));
       }
-      return run(`http://127.0.0.1:${String(address.port)}`);
+      return run(`http://127.0.0.1:${String(address.port)}`, links, seen);
     },
     (server) => Effect.sync(() => server.close()),
   );
+};
+
+/**
+ * What a running service leaves in its state folder: `server-runtime.json`
+ * naming this live process (with a real start time, which the test clock
+ * would otherwise put in 1970) and the CLI credential beside it.
+ */
+const publishLiveService = (input: {
+  readonly statePath: string;
+  readonly port: number;
+  readonly config?: Parameters<typeof makePersistedServerRuntimeState>[0]["config"];
+  readonly credential?: boolean;
+  /** The environment id the home recorded; the CLI sends its token only to that service. */
+  readonly environmentId?: string;
+}) =>
+  Effect.gen(function* () {
+    NodeFS.mkdirSync(NodePath.dirname(input.statePath), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(NodePath.dirname(input.statePath), "environment-id"),
+      `${input.environmentId ?? testDescriptor.environmentId}\n`,
+    );
+    const state = yield* makePersistedServerRuntimeState({
+      config: input.config ?? { host: "127.0.0.1", devUrl: undefined },
+      port: input.port,
+    });
+    yield* persistServerRuntimeState({
+      path: input.statePath,
+      state: { ...state, startedAt: DateTime.formatIso(DateTime.nowUnsafe()) },
+    });
+    if (input.credential === false) return;
+    const secretsDir = NodePath.join(NodePath.dirname(input.statePath), "secrets");
+    NodeFS.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+    NodeFS.writeFileSync(NodePath.join(secretsDir, "local-cli-credential.bin"), CLI_TOKEN, {
+      mode: 0o600,
+    });
+  });
 
 describe("specweave-studio pair", () => {
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
@@ -151,13 +262,7 @@ describe("specweave-studio pair", () => {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-test-"));
         const port = Number(new URL(origin).port);
         const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
-        yield* persistServerRuntimeState({
-          path: statePath,
-          state: yield* makePersistedServerRuntimeState({
-            config: { host: "127.0.0.1", devUrl: undefined },
-            port,
-          }),
-        });
+        yield* publishLiveService({ statePath, port });
 
         const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
 
@@ -170,7 +275,7 @@ describe("specweave-studio pair", () => {
         const token = /#token=([A-Z2-9]+)/.exec(output)?.[1];
         assert.isString(token);
 
-        // The token must be in the same store the running server reads.
+        // The running service minted it; `auth pairing list` asks the same service.
         const listed = yield* captureStdout(
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
         );
@@ -181,6 +286,8 @@ describe("specweave-studio pair", () => {
         assert.equal(credentials.length, 1);
         assert.equal(credentials[0]?.label, "specweave-studio pair");
         assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
+        // Nothing opened the service's database: there is none in this home.
+        assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "statev2.sqlite")));
       }),
     ).pipe(
       Effect.provide(NodeServices.layer),
@@ -206,12 +313,9 @@ describe("specweave-studio pair", () => {
         const baseDir = NodeFS.mkdtempSync(
           NodePath.join(NodeOS.tmpdir(), "studio-pair-scopes-test-"),
         );
-        yield* persistServerRuntimeState({
-          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-          state: yield* makePersistedServerRuntimeState({
-            config: { host: "127.0.0.1", devUrl: undefined },
-            port: Number(new URL(origin).port),
-          }),
+        yield* publishLiveService({
+          statePath: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          port: Number(new URL(origin).port),
         });
 
         yield* captureStdout(
@@ -245,12 +349,9 @@ describe("specweave-studio pair", () => {
         const baseDir = NodeFS.mkdtempSync(
           NodePath.join(NodeOS.tmpdir(), "studio-pair-json-test-"),
         );
-        yield* persistServerRuntimeState({
-          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-          state: yield* makePersistedServerRuntimeState({
-            config: { host: "127.0.0.1", devUrl: undefined },
-            port: Number(new URL(origin).port),
-          }),
+        yield* publishLiveService({
+          statePath: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          port: Number(new URL(origin).port),
         });
 
         const output = yield* captureStdout(
@@ -272,12 +373,10 @@ describe("specweave-studio pair", () => {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-dev-test-"));
         const port = Number(new URL(origin).port);
         const statePath = NodePath.join(baseDir, "dev", "server-runtime.json");
-        yield* persistServerRuntimeState({
-          path: statePath,
-          state: yield* makePersistedServerRuntimeState({
-            config: { host: undefined, devUrl: new URL("http://localhost:5733") },
-            port,
-          }),
+        yield* publishLiveService({
+          statePath,
+          port,
+          config: { host: undefined, devUrl: new URL("http://localhost:5733") },
         });
 
         const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
@@ -285,6 +384,136 @@ describe("specweave-studio pair", () => {
         assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "creates a 30-minute pairing link through the running service, as the installed-app check does",
+    () =>
+      withDescriptorServer((origin, links) =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "studio-auth-pairing-ttl-test-"),
+          );
+          yield* publishLiveService({
+            statePath: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            port: Number(new URL(origin).port),
+          });
+
+          const output = yield* captureStdout(
+            runCli([
+              "auth",
+              "pairing",
+              "create",
+              "--base-dir",
+              baseDir,
+              "--ttl",
+              "30m",
+              "--label",
+              "e2e",
+              "--base-url",
+              origin,
+              "--json",
+            ]),
+          );
+
+          const issued = JSON.parse(output) as { readonly pairUrl?: string };
+          assert.isTrue(issued.pairUrl?.startsWith(origin));
+          assert.lengthOf(links, 1);
+          assert.equal(links[0]?.ttlSeconds, 1800);
+          assert.equal(links[0]?.label, "e2e");
+          assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "statev2.sqlite")));
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("passes --ttl to the running service and refuses one beyond 30 days", () =>
+    withDescriptorServer((origin, links) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-ttl-test-"));
+        yield* publishLiveService({
+          statePath: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          port: Number(new URL(origin).port),
+        });
+
+        // The desktop asks for two minutes; scripts ask for longer.
+        yield* captureStdout(runCli(["pair", "--base-dir", baseDir, "--ttl", "2m", "--json"]));
+        yield* captureStdout(runCli(["pair", "--base-dir", baseDir, "--ttl", "1h", "--json"]));
+        yield* captureStdout(runCli(["pair", "--base-dir", baseDir, "--json"]));
+        assert.deepStrictEqual(
+          links.map((link) => link.ttlSeconds),
+          [120, 3600, undefined],
+        );
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir, "--ttl", "31 days"]).pipe(Effect.flip),
+        );
+        assert.include(String(error), "outside what the running SpecWithCode issues");
+        assert.lengthOf(links, 3);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("says the running service published no CLI credential, opening no database", () =>
+    withDescriptorServer((origin, links) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "studio-pair-nocred-test-"),
+        );
+        yield* publishLiveService({
+          statePath: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          port: Number(new URL(origin).port),
+          credential: false,
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+        );
+        assert.include(String(error), "has not published a credential for this CLI");
+        assert.lengthOf(links, 0);
+        assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "statev2.sqlite")));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "creates auth pairing tokens through the running service and refuses session issue",
+    () =>
+      withDescriptorServer((origin, links) =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "studio-auth-live-test-"),
+          );
+          yield* publishLiveService({
+            statePath: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            port: Number(new URL(origin).port),
+          });
+
+          const created = yield* captureStdout(
+            runCli([
+              "auth",
+              "pairing",
+              "create",
+              "--base-dir",
+              baseDir,
+              "--json",
+              "--scope",
+              "orchestration:read",
+            ]),
+          );
+          assert.deepEqual(
+            (JSON.parse(created) as { readonly scopes: ReadonlyArray<string> }).scopes,
+            ["orchestration:read"],
+          );
+          assert.lengthOf(links, 1);
+
+          const error = yield* provideCliTestLayers(
+            runCli(["auth", "session", "issue", "--base-dir", baseDir]).pipe(Effect.flip),
+          );
+          assert.include(String(error), "SpecWithCode is running");
+          assert.include(String(error), "Pair the device instead");
+          assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "statev2.sqlite")));
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -338,6 +567,64 @@ describe("specweave-studio pair", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("ignores runtime state whose pid now belongs to a later process", () =>
+    withDescriptorServer((origin, _links, seen) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "studio-pair-reuse-test-"),
+        );
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        yield* publishLiveService({ statePath, port: Number(new URL(origin).port) });
+        // The recorded pid is alive (this process) but started after the record:
+        // a crash left the file and the pid was reused.
+        const state = yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: Number(new URL(origin).port),
+        });
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: { ...state, startedAt: "2000-01-01T00:00:00.000Z" },
+        });
+        // Where start times cannot be read (Windows), a live pid still counts.
+        if ((yield* processStartedAtMs(process.pid)) === null) {
+          assert.equal(yield* recordedProcess(process.pid, "2000-01-01T00:00:00.000Z"), "running");
+          return;
+        }
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+        );
+        const rendered = String(
+          typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+        );
+        assert.include(rendered, "No running SpecWithCode server found.");
+        assert.equal(seen.bearers, 0);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("sends the CLI credential only to this home's own service", () =>
+    withDescriptorServer((origin, links, seen) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-impostor-"));
+        // Another server answers on the recorded port with its own environment id.
+        yield* publishLiveService({
+          statePath: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          port: Number(new URL(origin).port),
+          environmentId: "this-home-environment",
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+        );
+        assert.include(String(error), "not this home's this-home-environment");
+        assert.include(String(error), "the CLI credential was not sent");
+        assert.equal(seen.bearers, 0);
+        assert.lengthOf(links, 0);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("ignores stale runtime state pointing at a dead server", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-pair-stale-test-"));
@@ -361,6 +648,33 @@ describe("specweave-studio pair", () => {
       );
       assert.include(rendered, "No running SpecWithCode server found.");
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("localServiceOrigin", () => {
+  const state = { pid: 1, port: 8_319 } as const;
+  it.effect("calls a wildcard or loopback service on its loopback address", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* localServiceOrigin(state), "http://127.0.0.1:8319");
+      assert.equal(
+        yield* localServiceOrigin({ ...state, host: "0.0.0.0" }),
+        "http://127.0.0.1:8319",
+      );
+      assert.equal(yield* localServiceOrigin({ ...state, host: "::" }), "http://127.0.0.1:8319");
+      assert.equal(
+        yield* localServiceOrigin({ ...state, host: "127.0.0.1" }),
+        "http://127.0.0.1:8319",
+      );
+      assert.equal(yield* localServiceOrigin({ ...state, host: "::1" }), "http://[::1]:8319");
+    }),
+  );
+  it.effect("refuses to send the credential to a non-loopback name or address", () =>
+    Effect.gen(function* () {
+      for (const host of ["m4.local", "100.64.0.7", "m4.tailnet.ts.net"]) {
+        const error = yield* localServiceOrigin({ ...state, host }).pipe(Effect.flip);
+        assert.include(error.message, `listens on ${host}, not on a loopback address`);
+      }
+    }),
   );
 });
 

@@ -547,6 +547,8 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly label?: string;
+      /** No row: lives in this process only (SessionStore `issue` `inMemory`). */
+      readonly inMemory?: boolean;
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
@@ -1106,6 +1108,7 @@ export const make = Effect.gen(function* () {
     readonly principal?: AuthPrincipal;
     readonly principalGeneration?: number | undefined;
     readonly label?: string;
+    readonly ttl?: Duration.Duration;
     readonly purpose?: "startup";
   }) =>
     createPairingLink({
@@ -1113,6 +1116,7 @@ export const make = Effect.gen(function* () {
       subject: input.subject,
       ...principalApproval(input),
       ...(input.label ? { label: input.label } : {}),
+      ...(input.ttl ? { ttl: input.ttl } : {}),
       ...(input.purpose ? { purpose: input.purpose } : {}),
     }).pipe(
       Effect.map(
@@ -1188,6 +1192,7 @@ export const make = Effect.gen(function* () {
           deviceType: "bot",
         },
         ...(input?.ttl ? { ttl: input.ttl } : {}),
+        ...(input?.inMemory ? { inMemory: true } : {}),
       })
       .pipe(
         Effect.map(
@@ -1241,6 +1246,7 @@ export const make = Effect.gen(function* () {
           }
         : {}),
       ...(input?.label ? { label: input.label } : {}),
+      ...(input?.ttlSeconds ? { ttl: Duration.seconds(input.ttlSeconds) } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 
   const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
@@ -1491,8 +1497,17 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );
 
-const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerConfig);
+const layerStorage = Layer.mergeAll(
+  ServerSecretStore.layer,
+  SqlitePersistence.layerConfigOutsideService,
+);
 
+/**
+ * The auth store for the CLI, opened directly. It refuses while a service runs
+ * from the same home (Sqlite.layerConfigOutsideService); a command that needs
+ * the running service calls it with the local CLI credential instead
+ * (LocalCliCredential.ts, cli/liveService.ts). The service uses `layer`.
+ */
 export const layerRuntime = layer.pipe(
   Layer.provideMerge(layerStorage),
   Layer.provideMerge(ServerEnvironment.layerIdentity),

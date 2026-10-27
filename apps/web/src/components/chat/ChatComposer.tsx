@@ -305,6 +305,8 @@ import {
   ComposerSelectControl,
 } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
+import { ThreadMachineComposerChip } from "./ThreadMachineComposerChip";
+import type { ThreadMachine } from "./threadMachine";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import {
   matchesPullRequestQuery,
@@ -1570,6 +1572,8 @@ export interface ChatComposerProps {
   // Thread context
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
+  /** The machine a sent chat runs on, or null when another control already names it. */
+  machine?: ThreadMachine | null | undefined;
   activeThread: Thread | undefined;
   /** The routed server thread's shell, present before its detail loads. */
   activeThreadShell: ThreadShell | null;
@@ -1766,6 +1770,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onMultipleModelSelectionsChange: setMultipleModelSelections,
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
+    machine = null,
     activeThread,
     promptHistoryMessages,
     isServerThread,
@@ -5848,6 +5853,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const composerControls = (
     <ModelChipFitContext value={modelChipFit}>
+      {machine && !showProviderUnavailable ? (
+        <ThreadMachineComposerChip
+          machine={machine}
+          size={composerControlsCollapsed ? "xs" : "sm"}
+        />
+      ) : null}
       {projectRouting?.coordinatorModelControls ?? nativeComposerControls}
     </ModelChipFitContext>
   );

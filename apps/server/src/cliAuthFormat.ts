@@ -1,4 +1,8 @@
-import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@specweave-studio/contracts";
+import type {
+  AuthClientMetadata,
+  AuthClientSession,
+  AuthPairingLink,
+} from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { IssuedBearerSession, IssuedPairingLink } from "./auth/EnvironmentAuth.ts";
@@ -25,7 +29,7 @@ function toIsoString(value: DateTime.DateTime | DateTime.Utc): string {
 }
 
 export function formatIssuedPairingCredential(
-  credential: IssuedPairingLink,
+  credential: Pick<IssuedPairingLink, "id" | "credential" | "label" | "scopes" | "expiresAt">,
   options?: {
     readonly json?: boolean;
     readonly baseUrl?: string;
@@ -154,7 +158,7 @@ export function formatSessionList(
       sessions.map((session) => ({
         sessionId: session.sessionId,
         method: session.method,
-        scopes: session.scopes,
+        scopes: session.permissions ?? session.scopes,
         subject: session.subject,
         client: session.client,
         connected: session.connected,
@@ -176,7 +180,7 @@ export function formatSessionList(
       .map((session) =>
         [
           `${session.sessionId}${session.connected ? " connected" : ""}`,
-          `  scopes: ${session.scopes.join(" ")}`,
+          `  scopes: ${(session.permissions ?? session.scopes).join(" ")}`,
           `  method: ${session.method}`,
           `  subject: ${session.subject}`,
           `  client: ${formatClientMetadata(session.client)}`,

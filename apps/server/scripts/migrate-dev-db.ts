@@ -46,6 +46,7 @@ import { Command, Flag } from "effect/cli";
 
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
+import { liveDatabaseReadOnlyUri } from "../src/persistence/liveDatabaseSnapshot.ts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -481,7 +482,11 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       const sql = yield* SqlClient.SqlClient;
       yield* sql`VACUUM INTO ${snapshotPath}`;
     }).pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: sourcePath, readonly: true })),
+      // The source is usually a live home: open it so `-shm` and `-wal` cannot change
+      // under its running service (persistence/liveDatabaseSnapshot.ts).
+      Effect.provide(
+        NodeSqliteClient.layer({ filename: liveDatabaseReadOnlyUri(sourcePath), readonly: true }),
+      ),
       wrapPhase("snapshot", sourcePath),
     );
 

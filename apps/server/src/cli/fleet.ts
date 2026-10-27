@@ -15,15 +15,13 @@ import { EnvironmentId, PortSchema } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { secretsSentTo } from "../fleet/folderTransfer/secretsReport.ts";
@@ -39,8 +37,16 @@ import {
 } from "../studioFleetJoin.ts";
 import { invokedCliName } from "./cliName.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
-import { fleetInviteLabel, issueFleetInvitation } from "../studioFleetInvite.ts";
-import { discoverPairTarget, makePairServerConfig } from "./pair.ts";
+import { fleetInviteLabel } from "../studioFleetInvite.ts";
+import {
+  bearerHeaders,
+  liveServiceClient,
+  liveServiceRequestError,
+  type LiveServiceConfig,
+  liveServiceEndpoint,
+  LiveServiceUnsupportedError,
+} from "./liveService.ts";
+import { type DiscoveredPairTarget, discoverPairTarget, makePairServerConfig } from "./pair.ts";
 
 /** The name the user typed, so printed commands can be pasted as they are. */
 const cliName = () => invokedCliName({ env: process.env.STUDIO_CLI_NAME, argv1: process.argv[1] });
@@ -80,6 +86,47 @@ const resolveFleetBaseDir = (explicit: Option.Option<string>) =>
     }),
   );
 
+/**
+ * Makes the invitation in the running service, as Settings > Connections >
+ * Invite this machine does (`POST /api/studio/fleet/invite`), with the
+ * credential the service published for this machine's CLI. The live database
+ * is never opened here: the management session is issued by the service.
+ */
+export const inviteThroughRunningService = Effect.fn("cli.fleet.invite")(function* (input: {
+  readonly config: LiveServiceConfig;
+  readonly target: Pick<DiscoveredPairTarget, "state">;
+  readonly coordinatorEnvironmentId: EnvironmentId;
+  readonly label: string | undefined;
+  readonly ttl: Duration.Duration | undefined;
+  readonly servePort: number;
+}) {
+  if (input.servePort !== DEFAULT_TAILSCALE_SERVE_PORT) {
+    return yield* new LiveServiceUnsupportedError({
+      reason: `The running SpecWithCode publishes invitations on the Tailscale HTTPS port it was started with; --tailscale-serve-port ${input.servePort} cannot be chosen here. Start it with that port (serve --tailscale-serve-port), or leave the option out.`,
+    });
+  }
+  // The service issues invitations in whole days; a TTL that is not one is refused, not rounded.
+  const millis = input.ttl === undefined ? undefined : Duration.toMillis(input.ttl);
+  const days = millis === undefined ? undefined : millis / 86_400_000;
+  if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
+    return yield* new LiveServiceUnsupportedError({
+      reason: `--ttl must be a whole number of days from 1 to 365; it was ${Duration.format(input.ttl ?? Duration.zero)}.`,
+    });
+  }
+  const { origin, token } = yield* liveServiceEndpoint(input.config, input.target.state);
+  return yield* Effect.gen(function* () {
+    const client = yield* liveServiceClient(origin);
+    return yield* client.studioFleet.inviteFleetMachine({
+      headers: bearerHeaders(token),
+      payload: {
+        coordinatorEnvironmentId: input.coordinatorEnvironmentId,
+        ...(input.label === undefined ? {} : { label: input.label.slice(0, 80) }),
+        ...(days === undefined ? {} : { days }),
+      },
+    });
+  }).pipe(Effect.mapError(liveServiceRequestError(origin, "make the invitation")));
+});
+
 const labelFlag = Flag.String("label").pipe(
   Flag.withDescription("Name shown for this machine on the primary. Defaults to its own name."),
   Flag.optional,
@@ -113,22 +160,14 @@ const inviteCommand = Command.make("invite", {
       const logLevel = Option.getOrElse(yield* GlobalFlag.LogLevel, () => "Warn" as const);
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
       const config = yield* makePairServerConfig({ target, logLevel });
-      const { invitation, notes } = yield* issueFleetInvitation({
-        environmentId: target.descriptor.environmentId,
+      const invitation = yield* inviteThroughRunningService({
+        config,
+        target,
         coordinatorEnvironmentId: flags.coordinator,
-        ownLabel: target.descriptor.label,
-        state: target.state,
-        servePort: flags.tailscaleServePort,
         label: Option.getOrUndefined(flags.label),
         ttl: Option.getOrUndefined(flags.ttl),
-      }).pipe(
-        Effect.provide(
-          EnvironmentAuth.layerRuntime.pipe(
-            Layer.provide(ServerConfig.layer(config)),
-            Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-          ),
-        ),
-      );
+        servePort: flags.tailscaleServePort,
+      });
       const { code, url } = invitation;
       const label = fleetInviteLabel(Option.getOrUndefined(flags.label), target.descriptor.label);
       yield* Console.log(
@@ -144,7 +183,6 @@ const inviteCommand = Command.make("invite", {
           code,
           "",
           `It works until ${invitation.expiresAt}. Treat it like a password: it lets the primary pair with this machine. Revoke it with \`${cliName()} auth session revoke ${invitation.sessionId}\`.`,
-          ...notes.flatMap((note) => ["", `Note: ${note}`]),
           "",
         ].join("\n"),
       );

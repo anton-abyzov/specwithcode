@@ -1,5 +1,4 @@
 import {
-  AuthAdministrativeScopes,
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
@@ -24,8 +23,6 @@ import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
@@ -37,13 +34,9 @@ import { folderChangeRefusal, planningImpactText } from "../project/ProjectFolde
 import * as ProjectService from "../project/ProjectService.ts";
 import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as StudioProjectFileLoader from "../project/StudioProjectFileLoader.ts";
-import {
-  clearPersistedServerRuntimeState,
-  readPersistedServerRuntimeState,
-} from "../serverRuntimeState.ts";
-import { PROJECT_CLI_SESSION_LABEL } from "../project/TemporaryProjects.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { type LiveServiceAccess, liveServiceAccess } from "./liveService.ts";
 
 type ProjectMutationTarget = {
   readonly id: ProjectId;
@@ -247,25 +240,14 @@ const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
     ),
   ),
   Layer.provideMerge(WorkspacePaths.layer),
-  Layer.provideMerge(SqlitePersistence.layerConfig),
+  // Offline only; refuses if a service has started since (liveServiceOwner.ts).
+  Layer.provideMerge(SqlitePersistence.layerConfigOutsideService),
 );
 
-const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
+/** No offline fallback once a service runs, so a busy one gets time to answer. */
+const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(10);
 /** Checking and changing a folder read Git remotes and walk the new folder, so they get longer. */
 const PROJECT_CLI_FOLDER_TIMEOUT = Duration.seconds(30);
-const withProjectCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  run: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.acquireUseRelease(
-    environmentAuth.issueSession({
-      scopes: AuthAdministrativeScopes,
-      label: PROJECT_CLI_SESSION_LABEL,
-    }),
-    (issued) => run(issued.token),
-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-  );
-
 const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.timeout(PROJECT_CLI_LIVE_SERVER_TIMEOUT));
 
@@ -404,35 +386,18 @@ const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   return yield* projects.snapshot;
 });
 
+/**
+ * The running service to send the command to, with the credential it published
+ * for this machine's CLI, or none when no service runs from the home. A
+ * service that runs but does not answer fails the command: it never falls
+ * back to writing the live database directly (docs/operations/live-database.md).
+ */
 const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
-  function* (
-    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-    config: ServerConfig.ServerConfig["Service"],
-  ) {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return Option.none<{ readonly origin: string }>();
-    }
-
-    const attempt = withProjectCliSessionToken(environmentAuth, (token) =>
-      fetchLiveOrchestrationSnapshot(runtimeState.value.origin, token).pipe(
-        Effect.as({
-          origin: runtimeState.value.origin,
-        }),
-      ),
-    );
-
-    const attempted = yield* Effect.result(attempt);
-    if (attempted._tag === "Success") {
-      return Option.some(attempted.success);
-    }
-
-    yield* Effect.logDebug("Failed to connect to the persisted project CLI server.", {
-      origin: runtimeState.value.origin,
-      cause: attempted.failure,
-    });
-    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    return Option.none<{ readonly origin: string }>();
+  function* (config: ServerConfig.ServerConfig["Service"]) {
+    // A runtime file whose process is gone is left alone: `runningService`
+    // already ignores it, and removing it could race a service that has just
+    // started and written its own.
+    return yield* liveServiceAccess(config);
   },
 );
 
@@ -464,23 +429,19 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   const minimumLogLevel = config.logLevel;
 
   return yield* Effect.gen(function* () {
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const liveMode = yield* tryResolveLiveProjectExecutionMode(environmentAuth, config);
+    const liveMode = yield* tryResolveLiveProjectExecutionMode(config);
 
     if (Option.isSome(liveMode)) {
-      return yield* withProjectCliSessionToken(environmentAuth, (token) =>
-        Effect.gen(function* () {
-          const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
-          const output = yield* run({
-            snapshot,
-            dispatch: (command) =>
-              dispatchLiveOrchestrationCommand(liveMode.value.origin, token, command),
-            mode: "live",
-            checkFolder: (input) => checkLiveProjectFolder(liveMode.value.origin, token, input),
-          });
-          yield* Console.log(output);
-        }),
-      );
+      const { state, token } = liveMode.value;
+      const snapshot = yield* fetchLiveOrchestrationSnapshot(state.origin, token);
+      const output = yield* run({
+        snapshot,
+        dispatch: (command) => dispatchLiveOrchestrationCommand(state.origin, token, command),
+        mode: "live",
+        checkFolder: (input) => checkLiveProjectFolder(state.origin, token, input),
+      });
+      yield* Console.log(output);
+      return;
     }
 
     const layerOfflineRuntime = layerProjectCliRuntime.pipe(
@@ -500,7 +461,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
     }).pipe(Effect.provide(layerOfflineRuntime));
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.layerRuntime, WorkspacePaths.layer).pipe(
+      WorkspacePaths.layer.pipe(
         Layer.provideMerge(FetchHttpClient.layer),
         Layer.provide(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),

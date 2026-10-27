@@ -5,36 +5,27 @@
  * It makes the very call Update now makes, `server.prepareServiceUpdate` over the
  * running service's WebSocket, so the service's own ServiceUpdatePreparation
  * stops the work and holds itself; nothing here drains or holds by other means.
- * The credential is minted the way `project` does it against a live server: a
- * session issued in this home's auth store, here with only `environment:maintain`
- * (the scope the RPC needs) and five minutes to live, and a WebSocket ticket
- * signed for it. Run it with the service's own CLI (`cliWrapper` in its
- * installation.json), so the build that writes the auth store is the one that
- * owns it.
+ * It authenticates with the credential the running service published for this
+ * machine's CLI (auth/LocalCliCredential.ts): a WebSocket ticket from
+ * `/api/auth/websocket-ticket`, then the socket. It never opens the live
+ * database. Until 1085 it inserted a five-minute session row through a
+ * read-write connection of its own, and such a connection deletes `-wal` and
+ * `-shm` when it closes under a service that has lost its SQLite locks
+ * (docs/operations/live-database.md).
  *
- * That session row is the only database write this command makes, and nothing
- * writes it again: it is not revoked, it lapses after its five minutes. The
- * update helper (scripts/studio-fleet/update.py) hashes the auth_sessions rows
- * when its agent takes the prestate snapshot, and again right before it
- * applies; its auth invariant leaves out only `last_connected_at`, the
- * heartbeat a connect writes (and `client_app_version` once #466 lands), while
- * `client_surface` stays guarded, so any other change in between fails the
- * install with "Guarded prestate changed: rows". A revoke (`revoked_at`) after
- * the call could land in that window as soon as the drain has made the service
- * quiet. Nothing in the server writes the row later either: no sweeper deletes
- * or revokes expired sessions, the ticket is only signed and checked, the
- * connect sets only `last_connected_at`, and the URL carries neither
+ * The update helper (scripts/studio-fleet/update.py) hashes the auth_sessions
+ * rows when its agent takes the prestate snapshot and again right before it
+ * applies; its auth invariant leaves out only `last_connected_at`, the heartbeat
+ * a connect writes. This command now writes no row at all: the local CLI
+ * session is issued when the service starts, and the URL carries neither
  * `clientSurface` nor `clientAppVersion`, the only parameters that make a
- * connect write other cells. The insert itself comes before the forced install
- * request: the caller (fleet_rollout.py) takes this hold first and writes that
- * request only after it (until the agent offers the release, it asks the agent
- * only to check), so the snapshot that request's apply is checked against
- * already has the row.
+ * connect write other cells. Run it with the service's own CLI (`cliWrapper` in
+ * its installation.json), so the build that reads the credential is the one
+ * that published it.
  *
  * @module servicePrepareUpdate
  */
 import {
-  AuthEnvironmentMaintainScope,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
   type ServerPrepareServiceUpdateInput,
@@ -49,27 +40,22 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as References from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 import { RpcClient } from "effect/rpc";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
+import { FetchHttpClient } from "effect/http";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerConfig from "../config.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { liveServiceEndpoint, liveWebSocketTicket, runningService } from "./liveService.ts";
 
 /** Longer than the drain's own 70 s deadline plus its settle look (ServiceUpdatePreparation). */
 export const STOP_WORK_TIMEOUT = Duration.seconds(150);
 /** A report or a release changes no work; the desktop allows 5 s. */
 export const QUICK_CALL_TIMEOUT = Duration.seconds(20);
 const SOCKET_OPEN_TIMEOUT = Duration.seconds(10);
-/** The session lapses instead of being revoked (see the module comment), so it stays short. */
-export const SESSION_TTL = Duration.minutes(5);
-export const SESSION_LABEL = "specweave-studio service prepare-update";
 
 export class ServicePrepareUpdateUsageError extends Schema.TaggedError<ServicePrepareUpdateUsageError>()(
   "ServicePrepareUpdateUsageError",
@@ -231,36 +217,22 @@ const runPrepareUpdate = Effect.fn("cli.service.prepareUpdate")(function* (
   const result = yield* Effect.gen(function* () {
     const payload = yield* prepareInputFromFlags(flags);
     const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
-    // Read before the auth store opens, so a home no service runs from is left as it is.
-    const runtime = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtime)) {
+    // Files only: a home no service runs from is left as it is.
+    const running = yield* runningService(config);
+    if (Option.isNone(running)) {
       return yield* new ServicePrepareUpdateNotRunningError({ baseDir: config.baseDir });
     }
-    const origin = runtime.value.origin;
-    return yield* Effect.gen(function* () {
-      const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      // Left to lapse, never revoked: see the module comment on prestate hashing.
-      const issued = yield* environmentAuth.issueSession({
-        scopes: [AuthEnvironmentMaintainScope],
-        ttl: SESSION_TTL,
-        label: SESSION_LABEL,
-      });
-      const ticket = yield* environmentAuth.issueWebSocketTicket({ sessionId: issued.sessionId });
-      return yield* callPrepareServiceUpdate({
-        url: serviceWebSocketUrl(origin, ticket.ticket),
-        payload,
-        timeout: payload.stopWork ? STOP_WORK_TIMEOUT : QUICK_CALL_TIMEOUT,
-      });
-    }).pipe(
-      Effect.provide(
-        EnvironmentAuth.layerRuntime.pipe(
-          Layer.provide(ServerConfig.layer(config)),
-          Layer.provide(
-            Layer.succeed(References.MinimumLogLevel, flags.json ? "Error" : config.logLevel),
-          ),
-        ),
-      ),
+    const { origin, token } = yield* liveServiceEndpoint(config, running.value).pipe(
+      Effect.provide(FetchHttpClient.layer),
     );
+    const ticket = yield* liveWebSocketTicket({ state: { ...running.value, origin }, token }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+    );
+    return yield* callPrepareServiceUpdate({
+      url: serviceWebSocketUrl(origin, ticket),
+      payload,
+      timeout: payload.stopWork ? STOP_WORK_TIMEOUT : QUICK_CALL_TIMEOUT,
+    });
   }).pipe(
     // A script reads the last stdout line; the failure still sets the exit code.
     Effect.tapError((error) =>
