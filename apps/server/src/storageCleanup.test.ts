@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@specweave-studio/contracts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -121,6 +122,14 @@ describe("V2 storage cleanup eligibility", () => {
     expect(
       storageCleanupActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) }),
     ).toBe(DateTime.toEpochMillis(runTime));
+  });
+
+  it("has no activity time when no reading is known, so it is never old", () => {
+    const thread = {
+      ...candidate(),
+      createdAt: undefined,
+    } as unknown as OrchestrationV2ThreadShell;
+    expect(storageCleanupActivityAt(thread)).toBeNull();
   });
 
   function candidateWithStatus(status: OrchestrationV2ThreadShell["status"]) {
@@ -415,6 +424,43 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
         expect((yield* f.run(f.repo, ["rev-parse", "--verify", "agent-finished"])).exitCode).toBe(
           0,
         );
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "reads idle time past a dangling symlink or missing reflog, and keeps an unreadable folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        // A tracked link to a file outside the checkout, like a shared config.
+        yield* f.fs.symlink("../shared/config.json", f.path.join(f.repo, "config.json"));
+        yield* f.run(f.repo, ["add", "config.json"]);
+        yield* f.run(f.repo, ["commit", "-m", "shared config"]);
+        yield* f.run(f.repo, ["push", "origin", "main"]);
+        const dangling = yield* f.addWorktree("agent-dangling");
+        const noReflog = yield* f.addWorktree("agent-no-reflog");
+        const unreadable = yield* f.addWorktree("agent-unreadable");
+        // utimes follows symlinks, so the links are put back after aging.
+        const worktrees = [dangling, noReflog, unreadable];
+        for (const worktree of worktrees) yield* f.fs.remove(f.path.join(worktree, "config.json"));
+        yield* age(f, worktrees);
+        const old = ((yield* Clock.currentTimeMillis) - 2 * DAY_MS) / 1000;
+        for (const worktree of worktrees) {
+          yield* f.fs.symlink("../shared/config.json", f.path.join(worktree, "config.json"));
+          yield* f.fs.utimes(worktree, old, old);
+        }
+        const noReflogGitDir = (yield* f.run(noReflog, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ])).stdout.trim();
+        yield* f.fs.remove(f.path.join(noReflogGitDir, "logs", "HEAD"));
+        yield* f.fs.chmod(unreadable, 0o000);
+        yield* f.sweep.pipe(Effect.ensuring(f.fs.chmod(unreadable, 0o755).pipe(Effect.ignore)));
+        // Windows ignores these mode bits, so the folder there is readable and idle.
+        const expected =
+          process.platform === "win32" ? [dangling, noReflog, unreadable] : [dangling, noReflog];
+        expect([...f.removed].sort()).toEqual(expected.sort());
+        if (process.platform !== "win32") expect(yield* f.fs.exists(unreadable)).toBe(true);
       }).pipe(Effect.provide(cleanupLayer)),
   );
 

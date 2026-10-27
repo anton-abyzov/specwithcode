@@ -40,11 +40,36 @@ Never open `userdata/statev2.sqlite` yourself to answer this, not even read-only
 
 ## What the app removes on its own
 
-**Settings → Storage → Worktrees** has four rules, all off by default:
+**Settings → Storage → Worktrees** has four rules. **Delete merged worktrees** is on by default; the other three are off:
 
 - **Delete worktrees with deleted threads** removes a folder once its last thread is deleted and that thread's cleanup has finished.
 - **Delete inactive worktrees**, **Delete merged worktrees** and **Delete unchanged worktrees** remove the folders of resolved and archived threads. Folders of open threads are always kept, also when their pull request merged or they have been idle for a long time.
 
+Every age these rules use fails closed: a time the app cannot read (an unreadable file, a missing or invalid timestamp) never counts as old, so the folder stays.
+
 Before removing a folder the app also checks that no other thread shares it, no project lives in it, no agent session or terminal uses it, it has no local changes and no ignored files other than `node_modules`. It checks the open-thread rule again right before removal. It keeps the branch and the thread's recorded folder, so a reopened thread can get its checkout back from that branch.
 
 Removing a worktree by hand from inside the app (deleting a thread and choosing to delete its worktree) refuses any folder that another thread still records, archived or not.
+
+## The scratch folder
+
+`<baseDir>/scratch` (for example `~/.specwithcode/m4/scratch`) is the Scratch project, shown as "No project". Each chat there has a folder of its own, named `YYYY-MM-DD-<words>-<id>`, holding whatever the chat made. Those folders cannot be recreated: nothing else has a copy. Agents also leave probes and run logs beside them. Never clear this folder by age or by script; on 2026-10-27 a script that removed every folder idle for a day took 147 of them, chats included.
+
+Use `scratch prune` instead:
+
+```sh
+specweave-studio scratch prune                                        # dry run, 14 days
+specweave-studio scratch prune --older-than 30d --json                # dry run, one JSON line per folder
+specweave-studio scratch prune --apply --archive-to /Volumes/Archive/scratch
+```
+
+It looks only at the direct children of `<baseDir>/scratch` and keeps a folder when any of these holds:
+
+- a project, any thread (open, settled, archived, or deleted at any time), or a live agent session records a folder that is it, inside it, or around it. The Scratch project's own root and projects around the scratch folder do not count, since they would hold every folder;
+- it is a file or a symlink, not a folder;
+- its age is unknown: a file in it could not be read, or it holds more than 20,000 entries;
+- anything in it, at any depth, changed within `--older-than` (default `14d`, at least `7d`; also `2w` or `336h`). "Changed" is the newer of a file's mtime and ctime, so a folder restored with `tar x`, `rsync -a`, `cp -p` or a move back from the archive counts as new: those keep old mtimes, but ctime records when the file arrived.
+
+Without `--apply` it changes nothing and prints each folder with what it would do and why. `--apply` moves the folders it would remove into `--archive-to` (copying across volumes); it deletes them only with `--delete` instead, and refuses `--apply` with neither. Right before acting it reads the database again, and right before each move it reads the folder's age again; it skips a folder that something now uses or that changed. A thread bound to an old folder in the moment between that read and the move is not seen. An archive folder is never replaced, even an empty one. If a copy across volumes finishes but the source cannot be fully removed, the folder is reported as `partial`: the archive holds a full copy and the rest of the source stays. Each action is printed; with `--json`, one line per folder (`kind: "folder"`, `name`, `path`, `action`, `reason`, `newest`, and `result` after `--apply`) and a `kind: "summary"` line.
+
+It reads the database read-only, like `worktree owners`, and refuses to run (exit 2, nothing removed) when `<baseDir>/userdata/statev2.sqlite` is missing or cannot be read. It exits 1 when a folder could not be moved or deleted, or when the run stopped after it had acted on a folder, and 0 otherwise. `--archive-to` inside the scratch folder is refused before anything is created.

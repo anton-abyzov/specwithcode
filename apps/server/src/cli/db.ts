@@ -37,7 +37,9 @@ const failure = (cause: unknown) =>
   new CliDatabaseError({ reason: cause instanceof Error ? cause.message : String(cause) });
 
 /** The home of `--base-dir`, else of STUDIO_HOME, else the default home, with its paths. */
-const resolveHome = Effect.fn("cli.db.resolve_home")(function* (baseDir: Option.Option<string>) {
+export const resolveHome = Effect.fn("cli.db.resolve_home")(function* (
+  baseDir: Option.Option<string>,
+) {
   const envHome = yield* Config.String("STUDIO_HOME").pipe(Config.option);
   const home = yield* resolveBaseDir(Option.getOrUndefined(Option.orElse(baseDir, () => envHome)));
   return { home, paths: yield* ServerConfig.deriveServerPaths(home, undefined) };

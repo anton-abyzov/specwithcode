@@ -22,6 +22,9 @@ export class SourceClientError extends Error {
   }
 }
 
+/** The source's files changed after the saved scan; the scan itself is intact. */
+export class StaleScanError extends SourceClientError {}
+
 /**
  * The destination reaches the source only over the source's private HTTPS name
  * on the tailnet (`*.ts.net`) or its SpecWithCode Connect address, by the same
@@ -229,7 +232,7 @@ export class SourceClient {
       );
     const result = await this.json<{ current: boolean }>(response);
     if (result.current !== true)
-      throw new SourceClientError(
+      throw new StaleScanError(
         "refused",
         409,
         "The source changed or this saved scan has no freshness evidence. Refresh the scan and review a new comparison before copying.",

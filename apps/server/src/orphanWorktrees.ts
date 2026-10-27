@@ -37,7 +37,13 @@ export function orphanWorktreeRemovable(
   facts: OrphanWorktreeFacts,
   idleMs: number = ORPHAN_WORKTREE_IDLE_MS,
 ): boolean {
-  if (facts.hasWorkingTreeChanges || !facts.onlyDependencyIgnores || facts.idleMs < idleMs)
+  // An unknown idle time (NaN) is never idle enough.
+  if (
+    facts.hasWorkingTreeChanges ||
+    !facts.onlyDependencyIgnores ||
+    !Number.isFinite(facts.idleMs) ||
+    facts.idleMs < idleMs
+  )
     return false;
   if (facts.branch === null) return facts.unpushedCommits === 0;
   if (facts.pullRequestState === "merged")

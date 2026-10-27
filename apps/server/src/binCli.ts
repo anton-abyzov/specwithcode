@@ -34,6 +34,7 @@ import { themeCommand } from "./cli/theme.ts";
 import { doctorCommand, traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { worktreeCommand } from "./cli/worktree.ts";
+import { scratchCommand } from "./cli/scratch.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -106,6 +107,7 @@ export const makeCli = <const Name extends StudioCliName = "specweave-studio">({
       triageCommand,
       dbCommand,
       worktreeCommand,
+      scratchCommand,
       provisionCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
