@@ -18,12 +18,14 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
+import { elapsedMs, newestFinite, olderThan } from "./failClosedAge.ts";
 import * as GitManager from "./git/GitManager.ts";
 import { worktreeHasNoAdditionalChanges } from "./git/worktreeIntegration.ts";
 import {
@@ -108,16 +110,19 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
   );
 }
 
-/** PR metadata refreshes must not reset the inactivity clock. */
-export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
-  return Math.max(
-    ...[
+/**
+ * PR metadata refreshes must not reset the inactivity clock. Null when no
+ * reading is known, which never counts as inactive.
+ */
+export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number | null {
+  return newestFinite(
+    [
       thread.createdAt,
       thread.latestUserMessageAt,
       thread.latestRunRequestedAt,
       thread.latestRunStartedAt,
       thread.latestRunCompletedAt,
-    ].flatMap((value) => (value == null ? [] : [DateTime.toEpochMillis(value)])),
+    ].map((value) => (value == null ? null : DateTime.toEpochMillis(value))),
   );
 }
 
@@ -338,7 +343,7 @@ export const make = Effect.gen(function* () {
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
-          storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
+          olderThan(storageCleanupActivityAt(thread), settings.worktreeAfterDays * DAY_MS, now);
         let eligible = deleted || old;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
@@ -560,25 +565,36 @@ export const make = Effect.gen(function* () {
 
   // Newest of the folder, its top-level entries (dependencies aside) and its
   // HEAD and reflog: a checkout, commit or new file all count as activity.
+  // Null when the folder or its HEAD can't be read, so an unreadable folder is
+  // never idle. A missing reflog or top-level entry has no reading: stat follows
+  // symlinks, so a dangling `.env -> ../shared/.env` reads as NotFound.
   const lastActivityAt = Effect.fn("StorageCleanup.lastActivityAt")(function* (
     worktreePath: string,
     gitDir: string,
   ) {
+    const names = yield* fs.readDirectory(worktreePath).pipe(Effect.option);
+    if (Option.isNone(names)) return null;
+    const head = path.join(gitDir, "HEAD");
+    const reflog = path.join(gitDir, "logs", "HEAD");
     const targets = [
       worktreePath,
-      path.join(gitDir, "HEAD"),
-      path.join(gitDir, "logs", "HEAD"),
-      ...(yield* fs.readDirectory(worktreePath))
+      head,
+      reflog,
+      ...names.value
         .filter((name) => name !== "node_modules" && name !== ".git")
         .map((name) => path.join(worktreePath, name)),
     ];
-    let newest = 0;
+    let newest: number | null = null;
     for (const target of targets) {
-      const modified = yield* fs.stat(target).pipe(
-        Effect.map((stat) => Option.getOrNull(stat.mtime)?.getTime() ?? 0),
-        Effect.orElseSucceed(() => 0),
-      );
-      newest = Math.max(newest, modified);
+      const stat = yield* fs.stat(target).pipe(Effect.result);
+      if (Result.isFailure(stat)) {
+        const required = target === worktreePath || target === head;
+        if (!required && stat.failure.reason._tag === "NotFound") continue;
+        return null;
+      }
+      const modified = Option.getOrNull(stat.success.mtime)?.getTime() ?? null;
+      if (modified === null || !Number.isFinite(modified)) return null;
+      newest = newest === null ? modified : Math.max(newest, modified);
     }
     return newest;
   });
@@ -676,7 +692,8 @@ export const make = Effect.gen(function* () {
     for (const { worktreePath, gitDir } of candidates) {
       yield* Effect.gen(function* () {
         if (yield* orphanOwned(worktreePath)) return;
-        if (now - (yield* lastActivityAt(worktreePath, gitDir)) < ORPHAN_WORKTREE_IDLE_MS) return;
+        if (!olderThan(yield* lastActivityAt(worktreePath, gitDir), ORPHAN_WORKTREE_IDLE_MS, now))
+          return;
         const status = yield* git.statusDetailsLocal(worktreePath);
         if (!status.isRepo || status.hasWorkingTreeChanges) return;
         if (!(yield* untrackedNone(worktreePath))) return;
@@ -755,6 +772,8 @@ export const make = Effect.gen(function* () {
               base.commitSha,
             ));
         }
+        const idleMs = elapsedMs(yield* lastActivityAt(worktreePath, gitDir), now);
+        if (idleMs === null) return;
         if (
           !orphanWorktreeRemovable({
             branch: status.branch,
@@ -763,7 +782,7 @@ export const make = Effect.gen(function* () {
             unpushedCommits,
             pullRequestState: pullRequest?.state ?? null,
             integratedInDefault,
-            idleMs: now - (yield* lastActivityAt(worktreePath, gitDir)),
+            idleMs,
           })
         )
           return;

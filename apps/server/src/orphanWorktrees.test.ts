@@ -42,6 +42,8 @@ describe("orphan worktree removal", () => {
     expect(orphanWorktreeRemovable({ ...finished, pullRequestState: null })).toBe(false);
     expect(orphanWorktreeRemovable({ ...finished, hasWorkingTreeChanges: true })).toBe(false);
     expect(orphanWorktreeRemovable({ ...finished, onlyDependencyIgnores: false })).toBe(false);
+    expect(orphanWorktreeRemovable({ ...finished, idleMs: Number.NaN })).toBe(false);
+    expect(orphanWorktreeRemovable({ ...finished, idleMs: Infinity })).toBe(false);
     expect(orphanWorktreeRemovable({ ...finished, idleMs: ORPHAN_WORKTREE_IDLE_MS - 1 })).toBe(
       false,
     );

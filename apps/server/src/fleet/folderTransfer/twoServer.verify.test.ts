@@ -500,11 +500,44 @@ describe("folder copy between two isolated sides", () => {
   }, 120_000);
 });
 
-it("refuses changed source or destination before transfer and preserves preview choices", async () => {
+it("copies a changing source into an empty folder from the reviewed scan", async () => {
+  const operation = await offer();
+  const folder = NodePath.join(base, "live-source-target");
+  const copies = new DestinationCopies(NodePath.join(base, "live-source-state"), fast);
+  await copies.start(startInput(operation.operationId, operation.token, folder));
+  await settle(copies, operation.operationId, ["previewed", "failed"]);
+  const added = NodePath.join(fixture.root, "new-after-preview.txt");
+  write(added, "later source work");
+  try {
+    const approved = await copies.approve(operation.operationId);
+    expect(approved.warnings.some((warning) => warning.includes("changed after its scan"))).toBe(
+      true,
+    );
+    const done = await settle(copies, operation.operationId, ["applied", "failed"]);
+    expect(done.state).toBe("applied");
+    expect(NodeFS.existsSync(NodePath.join(folder, "README.md"))).toBe(true);
+    expect(NodeFS.existsSync(NodePath.join(folder, "new-after-preview.txt"))).toBe(false);
+  } finally {
+    NodeFS.unlinkSync(added);
+  }
+});
+
+it("refuses changed source or destination before transfer when the target has work", async () => {
   const operation = await offer();
   const folder = NodePath.join(base, "freshness-target");
+  write(NodePath.join(folder, "README.md"), "destination first conflict");
   const copies = new DestinationCopies(NodePath.join(base, "freshness-state"), fast);
   await copies.start(startInput(operation.operationId, operation.token, folder));
+  await settle(copies, operation.operationId, ["previewed", "failed"]);
+  const plan = (await copies.readPlan(operation.operationId))!;
+  await copies.decide(operation.operationId, {
+    decisions: Object.fromEntries(
+      plan.rows.flatMap((row) => [
+        [row.id, "take-theirs" as const],
+        [folderCopyAllConflictsKey(row.id), "take-theirs" as const],
+      ]),
+    ),
+  });
   await settle(copies, operation.operationId, ["previewed", "failed"]);
   const before = await copies.read(operation.operationId);
   const added = NodePath.join(fixture.root, "new-after-preview.txt");
@@ -512,7 +545,9 @@ it("refuses changed source or destination before transfer and preserves preview 
   await expect(copies.approve(operation.operationId)).rejects.toThrow(/source changed/);
   expect((await copies.read(operation.operationId))?.state).toBe("previewed");
   expect((await copies.read(operation.operationId))?.decisions).toEqual(before?.decisions);
-  expect(NodeFS.existsSync(NodePath.join(folder, "README.md"))).toBe(false);
+  expect(NodeFS.readFileSync(NodePath.join(folder, "README.md"), "utf8")).toBe(
+    "destination first conflict",
+  );
   NodeFS.unlinkSync(added);
   write(NodePath.join(folder, "README.md"), "new destination work");
   await expect(copies.approve(operation.operationId)).rejects.toThrow(/destination changed/);

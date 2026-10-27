@@ -21,8 +21,9 @@ import {
   type Plan,
 } from "./reconcile.ts";
 import { validProjectRelativePath } from "../folderCopyScope.ts";
+import { olderThan } from "../../failClosedAge.ts";
 import { isSafeRelativePath } from "./paths.ts";
-import { SourceClient, SourceClientError } from "./sourceClient.ts";
+import { SourceClient, SourceClientError, StaleScanError } from "./sourceClient.ts";
 import { previewUndo, undoApply, type UndoPreview, type UndoResult } from "./undo.ts";
 import { type ReceivedSecret, removeReceivedSecrets, writeSecretFile } from "./secrets.ts";
 
@@ -509,7 +510,19 @@ export class DestinationCopies {
     if (!plan || !planReady(plan))
       throw new CopyError("refused", "Some rows still need a decision.");
     // Revalidation is read-only and keeps the resumable job and all existing choices.
-    await this.client(record).validateScan();
+    // A live source (logs, ledgers, Git objects) changes every few seconds, so it
+    // never matches its scan exactly. When nothing is here yet, no change there can
+    // overwrite work here: the copy goes ahead from the reviewed scan, and the
+    // transfer re-reads files that change. Anything already here keeps the refusal.
+    const sourceMoved = await this.client(record)
+      .validateScan()
+      .then(
+        () => false,
+        (error: unknown) => {
+          if (error instanceof StaleScanError && nothingHere(plan)) return true;
+          throw error;
+        },
+      );
     const manifest = await readManifestFile(this.paths(operationId).manifest);
     const currentPlan = await this.plan(record, manifest, new AbortController().signal);
     const assertSamePreview = async () => {
@@ -550,6 +563,7 @@ export class DestinationCopies {
         ...record,
         state: "approved",
         disk: { needed, free },
+        ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
         updatedAt: this.now(),
       };
@@ -731,7 +745,8 @@ export class DestinationCopies {
       if (record.backupsDiscardedAt !== undefined || this.running.has(record.operationId)) continue;
       if (record.state !== "applied" && record.state !== "undone" && record.state !== "failed")
         continue;
-      if (now.getTime() - Date.parse(record.updatedAt) < retention) continue;
+      // An unreadable updatedAt is never old enough: the backups stay.
+      if (!olderThan(Date.parse(record.updatedAt), retention, now.getTime())) continue;
       await discardApplyBackups(this.paths(record.operationId).backups);
       await this.update(record.operationId, { backupsDiscardedAt: now.toISOString() });
       discarded.push(record.operationId);
@@ -1245,6 +1260,21 @@ function canUndo(record: DestinationRecord) {
     record.state === "applied" ||
     (record.state === "failed" &&
       (record.failedStep === "applying" || record.failedStep === "applied"))
+  );
+}
+
+const SOURCE_MOVED =
+  "The source changed after its scan. This copy carries the scanned files and history; files that change during the copy are read again.";
+
+/** Every row is left out or new with nothing here: no source change could overwrite work here. */
+function nothingHere(plan: Plan): boolean {
+  return plan.rows.every(
+    (row) =>
+      row.status === "skipped" ||
+      (row.status === "new" &&
+        row.bytesPresent === 0 &&
+        row.conflicts.length === 0 &&
+        !row.replacing),
   );
 }
 

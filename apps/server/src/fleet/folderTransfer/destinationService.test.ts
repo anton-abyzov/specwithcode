@@ -272,6 +272,12 @@ describe("Apply backups", () => {
     expect(await copies.discardExpiredBackups()).toEqual([]);
     expect((await copies.undoPreview(operationId)).items.length).toBeGreaterThan(0);
     now = new Date("2026-11-04T12:00:01.000Z");
+    // An unreadable updatedAt never counts as old enough, however late it is.
+    const recordFile = NodePath.join(state, "folder-copies", operationId, "operation.json");
+    const saved = NodeFS.readFileSync(recordFile, "utf8");
+    NodeFS.writeFileSync(recordFile, JSON.stringify({ ...JSON.parse(saved), updatedAt: "" }));
+    expect(await copies.discardExpiredBackups()).toEqual([]);
+    NodeFS.writeFileSync(recordFile, saved);
     expect(await copies.discardExpiredBackups()).toEqual([operationId]);
     const record = await copies.read(operationId);
     expect(record?.state).toBe("applied");
