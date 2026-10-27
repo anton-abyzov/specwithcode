@@ -56,9 +56,10 @@ const invitation: StudioFleetInviteResult = {
   expiresAt: "2027-10-18T00:00:00.000Z",
   sessionId: AuthSessionId.make("synthetic-invite-session"),
 };
+let connectAware = true;
 const render = () => {
   hooks.beginRender();
-  return useFleetInvite(m4);
+  return useFleetInvite(m4, connectAware);
 };
 const panel = (
   controller: ReturnType<typeof useFleetInvite>,
@@ -92,6 +93,7 @@ const line = (tree: unknown) =>
   ) as { props: { value: string } } | null;
 
 beforeEach(() => {
+  connectAware = true;
   hooks.reset();
   runtime.invite.mockReset();
   render().setCoordinatorEnvironmentId("approved-primary");
@@ -109,6 +111,7 @@ describe("inviting this machine to another one", () => {
     expect(runtime.invite).toHaveBeenCalledWith(m4, {
       label: "  Studio Mac ",
       coordinatorEnvironmentId: "approved-primary",
+      via: "auto",
     });
     await vi.waitFor(() => expect(render().invitation).toEqual(invitation));
 
@@ -128,18 +131,58 @@ describe("inviting this machine to another one", () => {
     expect(line(panel(closed))).toBeNull();
   });
 
+  it("leaves `via` out for a server that reports no Connect status (older servers reject it)", async () => {
+    connectAware = false;
+    runtime.invite.mockResolvedValue(invitation);
+    await render().create();
+    expect(runtime.invite).toHaveBeenCalledExactlyOnceWith(m4, {
+      label: "",
+      coordinatorEnvironmentId: "approved-primary",
+    });
+  });
+
   it("revokes the line through the session it names and stops showing it", async () => {
     runtime.invite.mockResolvedValue(invitation);
     runtime.revoke.mockResolvedValue(undefined);
     await render().create();
     button(panel(render()), "Revoke this line")!.props.onClick();
-    await vi.waitFor(() =>
-      expect(runtime.revoke).toHaveBeenCalledExactlyOnceWith("synthetic-invite-session"),
-    );
+    await vi.waitFor(() => expect(runtime.revoke).toHaveBeenCalledExactlyOnceWith(invitation));
     await vi.waitFor(() => expect(render().revoked).toBe(true));
     const after = panel(render());
     expect(line(after)).toBeNull();
     expect(text(after)).toContain("no longer works");
+  });
+
+  it("shows both addresses of a SpecWithCode Connect line and that it works once", async () => {
+    const connectLine: StudioFleetInviteResult = {
+      code: "swc-machine-synthetic-v2",
+      url: "https://m4.tailnet.ts.net",
+      connectUrl: "https://prod-0123456789abcdef.spec-weave.com",
+      label: "Mac M4",
+      expiresAt: "2027-10-18T00:00:00.000Z",
+      pairingId: "synthetic-pairing",
+      redeemBy: "2026-10-19T00:00:00.000Z",
+    };
+    runtime.invite.mockResolvedValue(connectLine);
+    runtime.revoke.mockResolvedValue(undefined);
+    await render().create();
+    const shown = text(panel(render()));
+    expect(shown).toContain("m4.tailnet.ts.net over Tailscale");
+    expect(shown).toContain("prod-0123456789abcdef.spec-weave.com over SpecWithCode Connect");
+    expect(shown).toContain("within an hour");
+    // Revoked by its one-time credential, since it holds no session.
+    button(panel(render()), "Revoke this line")!.props.onClick();
+    await vi.waitFor(() => expect(runtime.revoke).toHaveBeenCalledExactlyOnceWith(connectLine));
+  });
+
+  it.each([
+    ["connect_not_linked", "SpecWithCode Connect is not linked"],
+    ["connect_unreachable", "SpecWithCode Connect is not answering"],
+  ] as const)("names the Connect problem %s", async (reason, title) => {
+    runtime.invite.mockRejectedValue(new FleetInviteFailure(reason, "Fixture advice."));
+    await render().create();
+    const alert = visitElements(panel(render()), (element) => element.props.role === "alert");
+    expect(text(alert)).toContain(title);
   });
 
   it.each([
@@ -267,6 +310,21 @@ describe("Tailscale on this machine before the line", () => {
       onCopyCommand: vi.fn(),
     });
     expect(button(denied, "Manage access required")?.props.disabled).toBe(true);
+  });
+
+  it("says the line uses SpecWithCode Connect when Tailscale is off and Connect is linked", () => {
+    const tree = TailscaleReadinessNotice({
+      readiness: readiness(
+        tailscale({
+          state: "signed_out",
+          backendState: "Stopped",
+          connect: { linked: true, origin: "https://prod-0123456789abcdef.spec-weave.com" },
+        }),
+      ),
+      canManage: true,
+      onCopyCommand: vi.fn(),
+    });
+    expect(text(tree)).toBe("Tailscale is off here, so the line uses SpecWithCode Connect.");
   });
 
   it("shows nothing once Tailscale is ready", () => {

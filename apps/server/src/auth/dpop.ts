@@ -15,7 +15,7 @@ import {
   ServerAuthDpopReplayStateRecordError,
   ServerAuthInvalidCredentialError,
   type ServerAuthInternalError,
-} from "./EnvironmentAuth.ts";
+} from "./EnvironmentAuthErrors.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 /** Secret store name prefix of DPoP replay markers. The server prunes expired ones. */

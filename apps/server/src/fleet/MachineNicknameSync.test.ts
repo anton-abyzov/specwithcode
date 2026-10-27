@@ -4,6 +4,7 @@ import {
   AuthSessionId,
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
+  EnvironmentId,
   type MachineNicknames,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -30,7 +31,7 @@ const loadSettings = () =>
   );
 
 /** One SpecWithCode server: its settings and its real nickname route behind a web handler. */
-async function server(url: string) {
+async function server(url: string, environmentId: string) {
   const settings = await loadSettings();
   // Route handlers resolve services per request, so they must stay in the built context.
   const routes = MachineNicknameSync.routeLayer.pipe(
@@ -58,7 +59,7 @@ async function server(url: string) {
       settings.updateSettings({ machineNicknames: { [environmentId]: { name, updatedAt } } }),
     );
   const nicknames = () => Effect.runPromise(store.read);
-  return { url, handler, dispose, store, rename, nicknames };
+  return { url, environmentId, handler, dispose, store, rename, nicknames };
 }
 
 type Server = Awaited<ReturnType<typeof server>>;
@@ -70,6 +71,16 @@ function network(servers: ReadonlyArray<Server>) {
     const href = String(input);
     const target = servers.find((candidate) => href.startsWith(candidate.url));
     if (!target || offline.has(target.url)) throw new TypeError("fetch failed");
+    // Each server answers as itself before any token is sent to it.
+    if (new URL(href).pathname === "/.well-known/studio/environment")
+      return Response.json({
+        environmentId: target.environmentId,
+        label: target.environmentId,
+        platform: { os: "darwin", arch: "arm64" },
+        serverVersion: "0.1.0-test",
+        orchestrationProtocolVersion: 2,
+        capabilities: { repositoryIdentity: true },
+      });
     return target.handler(new Request(href, init));
   }) as typeof globalThis.fetch;
   return { fetcher, offline };
@@ -84,7 +95,14 @@ const sync = (
   Effect.runPromise(
     MachineNicknameSync.syncMachineNicknames({
       fetcher,
-      peers: [{ id: "peer", url: to.url, managementToken: token }],
+      peers: [
+        {
+          id: "peer",
+          url: to.url,
+          environmentId: EnvironmentId.make(to.environmentId),
+          managementToken: token,
+        },
+      ],
       store: from.store,
     }),
   );
@@ -94,8 +112,8 @@ const names = (map: MachineNicknames) =>
 
 describe("machine nickname sync", () => {
   it("a rename on one server reaches a paired server", async () => {
-    const m4 = await server("http://m4.test");
-    const mini = await server("http://mini.test");
+    const m4 = await server("https://m4.fixture.ts.net", M4);
+    const mini = await server("https://mini.fixture.ts.net", MINI);
     try {
       const { fetcher } = network([m4, mini]);
       await m4.rename(MINI, "Mini 1", "2026-10-20T21:00:00.000Z");
@@ -109,8 +127,8 @@ describe("machine nickname sync", () => {
   });
 
   it("the paired server's renames come back on the same exchange, so one-way pairing converges", async () => {
-    const m4 = await server("http://m4.test");
-    const mini = await server("http://mini.test");
+    const m4 = await server("https://m4.fixture.ts.net", M4);
+    const mini = await server("https://mini.fixture.ts.net", MINI);
     try {
       const { fetcher } = network([m4, mini]);
       await mini.rename(M4, "Desk", "2026-10-20T21:00:00.000Z");
@@ -126,8 +144,8 @@ describe("machine nickname sync", () => {
   });
 
   it("a rename made while the peer is offline applies when it reconnects", async () => {
-    const m4 = await server("http://m4.test");
-    const mini = await server("http://mini.test");
+    const m4 = await server("https://m4.fixture.ts.net", M4);
+    const mini = await server("https://mini.fixture.ts.net", MINI);
     try {
       const { fetcher, offline } = network([m4, mini]);
       offline.add(mini.url);
@@ -145,8 +163,8 @@ describe("machine nickname sync", () => {
   });
 
   it("conflicting renames resolve to the last writer on both servers", async () => {
-    const m4 = await server("http://m4.test");
-    const mini = await server("http://mini.test");
+    const m4 = await server("https://m4.fixture.ts.net", M4);
+    const mini = await server("https://mini.fixture.ts.net", MINI);
     try {
       const { fetcher, offline } = network([m4, mini]);
       offline.add(mini.url);
@@ -167,7 +185,7 @@ describe("machine nickname sync", () => {
   });
 
   it("refuses callers without settings write and malformed maps", async () => {
-    const mini = await server("http://mini.test");
+    const mini = await server("https://mini.fixture.ts.net", MINI);
     try {
       const post = (authorization: string | undefined, body: unknown) =>
         mini.handler(

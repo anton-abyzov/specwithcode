@@ -8,6 +8,7 @@ import {
   EnvironmentHttpForbiddenError,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpInternalServerError,
+  type EnvironmentAuthInvalidError,
   StudioFleetInviteError,
 } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
@@ -23,12 +24,24 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requireEnvironmentScope } from "./auth/http.ts";
+import {
+  failEnvironmentAuthInvalid,
+  failEnvironmentRateLimited,
+  requireEnvironmentScope,
+} from "./auth/http.ts";
+import {
+  arrivedOverConnect,
+  gateRequest,
+  recordRequestFailure,
+} from "./auth/CredentialFailureLimiter.ts";
+import { requestRemoteAddress } from "./auth/utils.ts";
 import * as Config from "./config.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { readConnectOrigin } from "./cloud/config.ts";
 import {
   makePersistedServerRuntimeState,
   type PersistedServerRuntimeState,
@@ -46,6 +59,7 @@ import {
   fleetInviteProblem,
   fleetTailscaleSignInProblem,
   FLEET_INVITE_SCOPES,
+  FLEET_INVITE_SESSION_LABEL,
   issueFleetInvitation,
   readFleetTailscaleStatus,
   startFleetTailscaleSignIn,
@@ -83,7 +97,10 @@ const attempt = <A>(run: () => Promise<A>) =>
         : // The user can act on these: a new invitation from that machine fixes both.
           failure.kind === "unknown-machine" ||
             failure.kind === "invitation-limited" ||
-            failure.kind === "reapproval-required"
+            failure.kind === "reapproval-required" ||
+            failure.kind === "connect-unbound" ||
+            failure.kind === "connect-key-missing" ||
+            failure.kind === "connect-browser-unsupported"
           ? new EnvironmentHttpBadRequestError({ message: failure.message })
           : new EnvironmentHttpInternalServerError({ message: failure.message });
     },
@@ -172,9 +189,18 @@ export const layer = HttpApiBuilder.group(
     const threadManagement = yield* ThreadManagement.ThreadManagementService;
     const projectService = yield* ProjectService.ProjectService;
     const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
-    const fleetFetch = yield* FleetTargets.FleetTargets.pipe(
-      Effect.map((targets) => targets.fetch),
-    );
+    const fleetTargets = yield* FleetTargets.FleetTargets;
+    const fleetFetch = fleetTargets.fetch;
+    // One proof key and address book for every fleet call this group makes.
+    const fleetLink = FleetTargets.linkOf(fleetTargets);
+    const secretStore = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
+    /** This machine's validated SpecWithCode Connect origin, or null when not linked. */
+    const connectOrigin: Effect.Effect<string | null> = Option.isSome(secretStore)
+      ? readConnectOrigin.pipe(
+          Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore.value),
+          Effect.provideService(ServerEnvironment.ServerEnvironment, serverEnvironment),
+        )
+      : Effect.succeed(null);
     /**
      * A change to who may run work here, made only by this machine's access
      * manager from this app, answering with the grant as the screen shows it.
@@ -236,7 +262,8 @@ export const layer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
             yield* noStore;
             const snapshot = yield* Effect.tryPromise({
-              try: async () => discoverFleet(await readFleetConfig(config.baseDir), config.host),
+              try: async () =>
+                discoverFleet(await readFleetConfig(config.baseDir), config.host, fleetLink),
               catch: () =>
                 new EnvironmentHttpInternalServerError({
                   message: new FleetError("config").message,
@@ -256,12 +283,15 @@ export const layer = HttpApiBuilder.group(
             yield* noStore;
             // Adding a machine stores a credential for it, like allowing workers there.
             yield* requireGrantManager;
+            const localEnvironmentId = yield* serverEnvironment.getEnvironmentId;
             return yield* Effect.tryPromise({
               try: () =>
                 addFleetMachine({
                   baseDir: config.baseDir,
                   code: payload.invitation,
                   label: payload.label?.trim() || undefined,
+                  link: fleetLink,
+                  localEnvironmentId,
                 }),
               catch: (error) => {
                 const kind =
@@ -307,6 +337,9 @@ export const layer = HttpApiBuilder.group(
                 : DEFAULT_TAILSCALE_SERVE_PORT,
               label: payload.label,
               ...(payload.days !== undefined ? { ttl: Duration.days(payload.days) } : {}),
+              via: payload.via,
+              readConnectOrigin: connectOrigin,
+              fetch: fleetFetch,
             }).pipe(
               Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -322,15 +355,96 @@ export const layer = HttpApiBuilder.group(
             return issued.invitation;
           }),
         )
+        // Another machine spends this machine's v2 invitation line: its
+        // one-time credential buys a management token bound to the DPoP key
+        // that signed the request. Principal, scopes and lifetime come only
+        // from the line this machine's owner made.
+        .handle("redeemFleetInvitation", ({ payload, request }) =>
+          Effect.gen(function* () {
+            // The answer holds a management credential: never cached, never logged.
+            yield* noStore;
+            yield* gateRequest(request).pipe(Effect.catch(failEnvironmentRateLimited));
+            const refused = (error: EnvironmentAuth.ServerAuthCredentialError) =>
+              recordRequestFailure(request).pipe(
+                Effect.andThen(
+                  failEnvironmentAuthInvalid(
+                    "invalid_credential",
+                    EnvironmentAuth.serverAuthDpopFailureReason(error),
+                  ),
+                ),
+              );
+            const internal = () =>
+              new EnvironmentHttpInternalServerError({
+                message: "Could not redeem the invitation on this machine. Try again.",
+              });
+            const failed = (
+              error:
+                | EnvironmentAuth.ServerAuthInvalidCredentialError
+                | EnvironmentAuth.ServerAuthInternalError,
+            ): Effect.Effect<
+              never,
+              EnvironmentAuthInvalidError | EnvironmentHttpInternalServerError
+            > =>
+              error._tag === "ServerAuthInvalidCredentialError"
+                ? refused(error)
+                : Effect.fail(internal());
+            const thumbprint = yield* environmentAuth
+              .verifyRequestProof(request)
+              .pipe(Effect.catch(failed));
+            const redeemed = yield* environmentAuth
+              .consumeFleetRedemption(payload.credential)
+              .pipe(Effect.catch(failed));
+            const forwarded = arrivedOverConnect(request)
+              ? request.headers["cf-connecting-ip"]?.trim()
+              : requestRemoteAddress(request);
+            const redeemedFrom =
+              forwarded !== undefined && forwarded.length > 0 && forwarded.length <= 64
+                ? forwarded
+                : undefined;
+            // Checked after the credential is spent, so a mismatched line is gone either way.
+            if (redeemed.principal.environmentId !== payload.coordinatorEnvironmentId)
+              return yield* new EnvironmentHttpBadRequestError({
+                message:
+                  "This invitation was made for a different main machine. Make a new line for this one.",
+              });
+            const issued = yield* environmentAuth
+              .issueSession({
+                subject: EnvironmentAuth.FLEET_INVITATION_SUBJECT,
+                principal: redeemed.principal,
+                principalGeneration: redeemed.principalGeneration,
+                scopes: redeemed.scopes,
+                label: redeemed.label ?? FLEET_INVITE_SESSION_LABEL,
+                ttl: Duration.days(redeemed.days),
+                proofKeyThumbprint: thumbprint,
+                ...(redeemedFrom === undefined ? {} : { ipAddress: redeemedFrom }),
+              })
+              .pipe(Effect.mapError(internal));
+            // A leaked line can be redeemed by someone else's key: leave a
+            // trace the owner can match against the client list.
+            yield* Effect.logInfo("Redeemed a fleet invitation for a main machine.", {
+              coordinatorEnvironmentId: redeemed.principal.environmentId,
+              sessionId: issued.sessionId,
+              overConnect: arrivedOverConnect(request),
+              ...(redeemedFrom === undefined ? {} : { from: redeemedFrom }),
+            });
+            return {
+              managementToken: issued.token,
+              sessionId: issued.sessionId,
+              expiresAt: DateTime.formatIso(issued.expiresAt),
+            };
+          }),
+        )
         .handle("fleetTailscale", () =>
           Effect.gen(function* () {
             // Read-only, but only an access manager can act on it.
             yield* requireEnvironmentScope(AuthAccessWriteScope);
             yield* noStore;
-            return yield* readFleetTailscaleStatus().pipe(
+            const status = yield* readFleetTailscaleStatus().pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(FileSystem.FileSystem, fileSystem),
             );
+            const origin = yield* connectOrigin;
+            return { ...status, connect: { linked: origin !== null, origin } };
           }),
         )
         .handle("signInFleetTailscale", () =>
@@ -383,7 +497,7 @@ export const layer = HttpApiBuilder.group(
                 removeFleetMachineEverywhere({
                   baseDir: config.baseDir,
                   machine: payload.id,
-                  fetcher: fleetFetch,
+                  fetcher: fleetLink,
                   // The grant store here revokes its sessions there and forgets the grant.
                   revokeWorkerAccess: (target) =>
                     Effect.runPromise(
@@ -408,7 +522,7 @@ export const layer = HttpApiBuilder.group(
                     Effect.runPromise(serverEnvironment.getEnvironmentId).then((hubEnvironmentId) =>
                       PhoneLinks.unlinkPhonesFrom({
                         stateDir: config.stateDir,
-                        fetcher: fleetFetch,
+                        fetcher: fleetLink,
                         target,
                         hubEnvironmentId,
                       }),
@@ -504,7 +618,7 @@ export const layer = HttpApiBuilder.group(
                 message: "Pairing requires an authorized same-origin request.",
               });
             return yield* attempt(async () =>
-              connectFleet(fleetConfig, payload.id, principal.scopes),
+              connectFleet(fleetConfig, payload.id, principal.scopes, fleetLink),
             );
           }),
         )
@@ -533,7 +647,7 @@ export const layer = HttpApiBuilder.group(
             return yield* Effect.promise(() =>
               PhoneLinks.buildPhoneRoster({
                 config: fleetConfig,
-                fetcher: fleetFetch,
+                fetcher: fleetLink,
                 hub: { environmentId: hub.environmentId, label: hub.label },
                 phone: {
                   sessionId: principal.sessionId,

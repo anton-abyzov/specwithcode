@@ -5,7 +5,7 @@ import {
   FolderCopyStatus,
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
-import { copyStatus, folderCopyError, sourceStatus } from "./FolderCopyHandoff.ts";
+import { copyStatus, folderCopyError, sourceAddresses, sourceStatus } from "./FolderCopyHandoff.ts";
 import { CopyError, type DestinationRecord } from "./folderTransfer/destinationService.ts";
 import { emptyTotals } from "./folderTransfer/manifest.ts";
 import { planReconcile } from "./folderTransfer/reconcile.ts";
@@ -40,6 +40,27 @@ const record: DestinationRecord = {
   createdAt: "2026-10-19T00:00:00.000Z",
   updatedAt: "2026-10-19T00:00:00.000Z",
 };
+
+describe("folder copy source addresses", () => {
+  const tailnet = { kind: "tailnet", httpBaseUrl: "https://m4.tail1234.ts.net/" };
+  const connect = "https://prod-0123456789abcdef.spec-weave.com";
+  it("offers the tailnet first, the Connect address as the fallback, or Connect alone", () => {
+    expect(sourceAddresses({ endpoints: [tailnet], connectOrigin: null })).toEqual({
+      sourceUrl: tailnet.httpBaseUrl,
+    });
+    expect(sourceAddresses({ endpoints: [tailnet], connectOrigin: connect })).toEqual({
+      sourceUrl: tailnet.httpBaseUrl,
+      sourceConnectUrl: connect,
+    });
+    expect(
+      sourceAddresses({
+        endpoints: [{ kind: "tailnet", httpBaseUrl: "http://100.64.0.1:3773/" }],
+        connectOrigin: connect,
+      }),
+    ).toEqual({ sourceUrl: connect });
+    expect(sourceAddresses({ endpoints: [], connectOrigin: null })).toBeNull();
+  });
+});
 
 describe("FolderCopyHandoff", () => {
   it("never puts the transfer grant into a status and bounds its text", () => {

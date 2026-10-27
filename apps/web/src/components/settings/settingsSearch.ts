@@ -1081,7 +1081,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Add a machine",
     to: "/settings/connections",
     searchTerms: [
-      "fleet invite add machine worker tailscale another computer mac linux vps network",
+      "fleet invite add machine worker tailscale connect another computer mac linux vps network",
       "vps linux server rent hetzner",
     ],
   },
@@ -1090,7 +1090,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Invite this machine to another one",
     to: "/settings/connections",
     searchTerms: [
-      "fleet invite join main machine primary tailscale serve line swc-machine add this mac",
+      "fleet invite join main machine primary tailscale connect serve line swc-machine add this mac",
     ],
   },
   {

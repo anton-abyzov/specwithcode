@@ -384,13 +384,15 @@ export function SnapShotSetupDialog({
         </WizardPanel>
         <WizardFooter>
           {step !== "access" ? (
-            <Button variant="ghost" disabled={busy} onClick={() => changeStep("access")}>
+            <Button variant="outline" disabled={busy} onClick={() => changeStep("access")}>
               Back
             </Button>
           ) : null}
-          <Button variant="ghost" disabled={busy} onClick={() => void onClose(false)}>
-            {wasEnabled ? "Close" : "Finish later"}
-          </Button>
+          {wasEnabled ? null : (
+            <Button variant="outline" disabled={busy} onClick={() => void onClose(false)}>
+              Finish later
+            </Button>
+          )}
           {step === "access" ? (
             helperBackend && !accessReady && helper?.status !== "ready" ? (
               <Button

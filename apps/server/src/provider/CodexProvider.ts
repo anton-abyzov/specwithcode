@@ -476,12 +476,19 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
 });
 
 /** Reduce supported effective config to a boolean; never return config or credentials. */
-export function codexNativeRouteVerified(config: CodexSchema.V2ConfigReadResponse["config"]): boolean {
+export function codexNativeRouteVerified(
+  config: CodexSchema.V2ConfigReadResponse["config"],
+): boolean {
   if (config.model_provider != null && config.model_provider !== "openai") return false;
   if (config.forced_login_method != null && config.forced_login_method !== "chatgpt") return false;
   // Official config/read also reports this default when no endpoint was overridden.
   // Exact strings avoid URL normalization hiding userinfo, ports or path segments.
-  if (config.chatgpt_base_url != null && config.chatgpt_base_url !== "https://chatgpt.com/backend-api" && config.chatgpt_base_url !== "https://chatgpt.com/backend-api/") return false;
+  if (
+    config.chatgpt_base_url != null &&
+    config.chatgpt_base_url !== "https://chatgpt.com/backend-api" &&
+    config.chatgpt_base_url !== "https://chatgpt.com/backend-api/"
+  )
+    return false;
   if (config.openai_base_url != null) return false;
   const providers = config.model_providers;
   if (providers == null) return true;
@@ -490,40 +497,63 @@ export function codexNativeRouteVerified(config: CodexSchema.V2ConfigReadRespons
   if (openai == null) return true;
   if (!Predicate.isReadonlyObject(openai)) return false;
   // A custom OpenAI endpoint/auth route is an API lane even with ChatGPT auth.
-  return openai.base_url == null && openai.websocket_base_url == null && openai.env_key == null && openai.http_headers == null && openai.env_http_headers == null && openai.experimental_bearer_token == null;
+  return (
+    openai.base_url == null &&
+    openai.websocket_base_url == null &&
+    openai.env_key == null &&
+    openai.http_headers == null &&
+    openai.env_http_headers == null &&
+    openai.experimental_bearer_token == null
+  );
 }
 
 /** Admission failures carry only a category, never config, endpoints or credentials. */
-export class CodexNativeRouteCheckError extends Schema.TaggedError<CodexNativeRouteCheckError>()("CodexNativeRouteCheckError", {
-  reason: Schema.Literals(["timeout", "unavailable"]),
-}) {}
+export class CodexNativeRouteCheckError extends Schema.TaggedError<CodexNativeRouteCheckError>()(
+  "CodexNativeRouteCheckError",
+  {
+    reason: Schema.Literals(["timeout", "unavailable"]),
+  },
+) {}
 const NATIVE_ROUTE_ADMISSION_TIMEOUT = "60 seconds";
 
-const nativeRouteWithinAdmissionBudget = <R>(effect: Effect.Effect<boolean, CodexNativeRouteCheckError, R>) =>
+const nativeRouteWithinAdmissionBudget = <R>(
+  effect: Effect.Effect<boolean, CodexNativeRouteCheckError, R>,
+) =>
   effect.pipe(
     Effect.timeoutOption(NATIVE_ROUTE_ADMISSION_TIMEOUT),
-    Effect.flatMap((result) => Option.isSome(result)
-      ? Effect.succeed(result.value)
-      : Effect.fail(new CodexNativeRouteCheckError({ reason: "timeout" }))),
+    Effect.flatMap((result) =>
+      Option.isSome(result)
+        ? Effect.succeed(result.value)
+        : Effect.fail(new CodexNativeRouteCheckError({ reason: "timeout" })),
+    ),
   );
 
 /** Explicit cwd resolves project layers; a global observation cannot admit another project. */
-export const readCodexNativeRoute = (client: {
-  readonly request: (method: "config/read", params: CodexSchema.V2ConfigReadParams) =>
-    Effect.Effect<CodexSchema.V2ConfigReadResponse, CodexErrors.CodexAppServerError>;
-}, cwd: string) =>
-  nativeRouteWithinAdmissionBudget(client.request("config/read", { cwd, includeLayers: false }).pipe(
-    Effect.map((response) => codexNativeRouteVerified(response.config)),
-    Effect.mapError(() => new CodexNativeRouteCheckError({ reason: "unavailable" })),
-  ));
+export const readCodexNativeRoute = (
+  client: {
+    readonly request: (
+      method: "config/read",
+      params: CodexSchema.V2ConfigReadParams,
+    ) => Effect.Effect<CodexSchema.V2ConfigReadResponse, CodexErrors.CodexAppServerError>;
+  },
+  cwd: string,
+) =>
+  nativeRouteWithinAdmissionBudget(
+    client.request("config/read", { cwd, includeLayers: false }).pipe(
+      Effect.map((response) => codexNativeRouteVerified(response.config)),
+      Effect.mapError(() => new CodexNativeRouteCheckError({ reason: "unavailable" })),
+    ),
+  );
 
 export const probeCodexNativeRoute = (input: Parameters<typeof withCodexAppServerClient>[0]) =>
-  nativeRouteWithinAdmissionBudget(Effect.gen(function* () {
-    const { client } = yield* withCodexAppServerClient(input).pipe(
-      Effect.mapError(() => new CodexNativeRouteCheckError({ reason: "unavailable" })),
-    );
-    return yield* readCodexNativeRoute(client, input.cwd);
-  })).pipe(Effect.scoped);
+  nativeRouteWithinAdmissionBudget(
+    Effect.gen(function* () {
+      const { client } = yield* withCodexAppServerClient(input).pipe(
+        Effect.mapError(() => new CodexNativeRouteCheckError({ reason: "unavailable" })),
+      );
+      return yield* readCodexNativeRoute(client, input.cwd);
+    }),
+  ).pipe(Effect.scoped);
 
 /** Optional catalogs must not erase a fresh account result when discovery stalls. */
 export const readCodexProviderMetadata = Effect.fn("readCodexProviderMetadata")(function* (
@@ -555,15 +585,21 @@ export const readCodexProviderMetadata = Effect.fn("readCodexProviderMetadata")(
               ...(response.accountId === undefined ? {} : { accountId: response.accountId }),
               rateLimitsByLimitId: response.rateLimitsByLimitId,
               resetCredits: response.rateLimitResetCredits,
-              ...(response.ordinaryUsageAllowed === undefined ? {} : { ordinaryUsageAllowed: response.ordinaryUsageAllowed }),
+              ...(response.ordinaryUsageAllowed === undefined
+                ? {}
+                : { ordinaryUsageAllowed: response.ordinaryUsageAllowed }),
             })),
             Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
-            Effect.map(Option.getOrElse((): CodexRateLimitsProbe => ({
-              failure: "Codex did not answer the usage request.",
-            }))),
-            Effect.catch((error) => Effect.succeed<CodexRateLimitsProbe>({
-              failure: codexRateLimitsFailureMessage(error),
-            })),
+            Effect.map(
+              Option.getOrElse((): CodexRateLimitsProbe => ({
+                failure: "Codex did not answer the usage request.",
+              })),
+            ),
+            Effect.catch((error) =>
+              Effect.succeed<CodexRateLimitsProbe>({
+                failure: codexRateLimitsFailureMessage(error),
+              }),
+            ),
           ),
       // Background discovery stays cheap; an explicit start verifies independently.
       readCodexNativeRoute(client, input.cwd).pipe(
@@ -600,7 +636,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     const accountResponse = yield* client.request("account/read", { refreshToken: false });
     return { client, initialize, accountResponse };
   }).pipe(Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)));
-  if (Option.isNone(proof)) return yield* new CodexErrors.CodexAppServerRequestError({ code: -32000, errorMessage: "Timed out while checking native Codex account status" });
+  if (Option.isNone(proof))
+    return yield* new CodexErrors.CodexAppServerRequestError({
+      code: -32000,
+      errorMessage: "Timed out while checking native Codex account status",
+    });
   const { client, initialize, accountResponse } = proof.value;
 
   // Extract the version string after the first '/' in userAgent, up to the next space or the end
@@ -686,6 +726,25 @@ const makePendingCodexProvider = (
       },
     });
   });
+
+/**
+ * Codex models carry no billing of their own; the account that was just read
+ * decides it. A ChatGPT sign-in runs on the plan, an API key or Bedrock is
+ * billed per token. Without an account read the models stay unreported.
+ */
+export function withAccountBilling(
+  models: ReadonlyArray<ServerProviderModel>,
+  accountType: string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  const billing =
+    accountType === "chatgpt"
+      ? ("subscription" as const)
+      : accountType === "apiKey" || accountType === "amazonBedrock"
+        ? ("api" as const)
+        : undefined;
+  if (!billing) return models;
+  return models.map((model) => (model.isCustom || model.billing ? model : { ...model, billing }));
+}
 
 function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]): {
   readonly status: Exclude<ServerProviderState, "disabled">;
@@ -833,10 +892,14 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           })
         : codexRateLimitsToLimits({
             snapshot: snapshot.rateLimits.snapshot,
-            ...(snapshot.rateLimits.accountId === undefined ? {} : { accountId: snapshot.rateLimits.accountId }),
+            ...(snapshot.rateLimits.accountId === undefined
+              ? {}
+              : { accountId: snapshot.rateLimits.accountId }),
             rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
             resetCredits: snapshot.rateLimits.resetCredits,
-            ...(snapshot.rateLimits.ordinaryUsageAllowed === undefined ? {} : { ordinaryUsageAllowed: snapshot.rateLimits.ordinaryUsageAllowed }),
+            ...(snapshot.rateLimits.ordinaryUsageAllowed === undefined
+              ? {}
+              : { ordinaryUsageAllowed: snapshot.rateLimits.ordinaryUsageAllowed }),
             checkedAt,
           });
 
@@ -844,7 +907,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
-    models: modelCatalogCache?.resolve(snapshot, Date.parse(checkedAt)) ?? snapshot.models,
+    models: withAccountBilling(
+      modelCatalogCache?.resolve(snapshot, Date.parse(checkedAt)) ?? snapshot.models,
+      accountStatus.auth.type,
+    ),
     skills: snapshot.skills,
     slashCommands: [
       COMPACT_SLASH_COMMAND,
@@ -865,7 +931,15 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
-      ...(managedAuth ? {} : { usageLimits: { ...usageLimits, nativeRouteVerified: snapshot.nativeRouteVerified === true, nativeRouteObservedAt: checkedAt } }),
+      ...(managedAuth
+        ? {}
+        : {
+            usageLimits: {
+              ...usageLimits,
+              nativeRouteVerified: snapshot.nativeRouteVerified === true,
+              nativeRouteObservedAt: checkedAt,
+            },
+          }),
     },
   });
 });

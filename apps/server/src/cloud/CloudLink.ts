@@ -84,6 +84,7 @@ import {
 import * as CliTokenManager from "./CliTokenManager.ts";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+  CLOUD_ENDPOINT_PUBLIC_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
@@ -91,7 +92,9 @@ import {
   decodeRuntimeConfig,
   encodeConfirmedOriginJson,
   encodeEndpointRuntimeConfigJson,
+  endpointMatchesLink,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
+  persistConnectOrigin,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   readRelayConnection,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -818,6 +821,7 @@ const make = Effect.gen(function* () {
       }
       yield* endpointRuntime.applyConfig(null);
       yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
+      yield* secrets.remove(CLOUD_ENDPOINT_PUBLIC_ORIGIN);
 
       yield* secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
       yield* secrets.set(
@@ -834,6 +838,19 @@ const make = Effect.gen(function* () {
       if (payload.endpointRuntime) {
         const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(endpointRuntimeJson));
+        // A web or mobile client relays the endpoint it was given; keep it only
+        // when its hostname hash names this very link.
+        if (
+          payload.endpointRuntime.providerKind === "cloudflare_tunnel" &&
+          payload.endpoint?.providerKind === "cloudflare_tunnel" &&
+          endpointMatchesLink(
+            payload.endpoint.httpBaseUrl,
+            payload.cloudUserId,
+            yield* environment.getEnvironmentId,
+          )
+        ) {
+          yield* persistConnectOrigin(payload.endpoint.httpBaseUrl, "client").pipe(withSecrets);
+        }
       } else {
         yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
       }
@@ -945,6 +962,9 @@ const make = Effect.gen(function* () {
           confirmedOrigin: parsedOrigin.origin,
         },
       );
+      if (link.endpointRuntime?.providerKind === "cloudflare_tunnel") {
+        yield* persistConnectOrigin(link.endpoint.httpBaseUrl, "link").pipe(withSecrets);
+      }
       // Callers decide on managed tunnel recovery from the mode this link
       // actually used, not from a value read before the relay round trip.
       return mode;
@@ -1159,6 +1179,7 @@ const make = Effect.gen(function* () {
         }
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(encoded));
         yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
+        yield* persistConnectOrigin(recovered.endpoint.httpBaseUrl, "recovery").pipe(withSecrets);
         return true;
       }),
     );
@@ -1357,10 +1378,11 @@ const make = Effect.gen(function* () {
               secrets.remove(CLOUD_MINT_PUBLIC_KEY),
               secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
               secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
+              secrets.remove(CLOUD_ENDPOINT_PUBLIC_ORIGIN),
               secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
               secrets.remove(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
             ],
-            { concurrency: 9 },
+            { concurrency: 10 },
           );
           yield* setCliDesiredCloudLink(false).pipe(withSecrets);
           return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;

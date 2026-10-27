@@ -17,6 +17,8 @@ import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { HarnessDescription } from "./HarnessDescription";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
+import { turnOnOutcome } from "~/providerQuickSetup";
+import { machineLabelFor, TurnedOnRow, turnOnStepLabel } from "./ModelPickerTurnedOnRow";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
   modelPickerLegacySectionKey,
@@ -661,8 +663,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       : [];
 
   const elsewhereSetup = props.quickSetup;
-  const otherMachineProviders =
-    elsewhereSetup && !isSearching && props.lockedProvider === null ? elsewhereSetup.elsewhere : [];
+  const showElsewhere =
+    elsewhereSetup !== undefined && !isSearching && props.lockedProvider === null;
+  // A turned-on provider keeps its row while it runs, failed, or is on here;
+  // one turned off again goes back to "On your other machines" only.
+  const turnedOnProviders = showElsewhere
+    ? (elsewhereSetup.turnedOn ?? []).filter(
+        ({ provider, instanceId }) =>
+          elsewhereSetup.pending.has(provider.identity) ||
+          elsewhereSetup.errors.has(provider.identity) ||
+          entryByInstanceId.get(instanceId)?.enabled === true,
+      )
+    : [];
+  const otherMachineProviders = showElsewhere
+    ? elsewhereSetup.elsewhere.filter(
+        (provider) =>
+          !turnedOnProviders.some((item) => item.provider.identity === provider.identity),
+      )
+    : [];
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
@@ -1341,14 +1359,43 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             ) : (
               <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
             )}
-            {elsewhereSetup && otherMachineProviders.length > 0 ? (
+            {elsewhereSetup &&
+            (otherMachineProviders.length > 0 || turnedOnProviders.length > 0) ? (
               <div
-                className="max-h-40 shrink-0 overflow-y-auto border-t border-border/70 p-2"
+                className="max-h-48 shrink-0 overflow-y-auto border-t border-border/70 p-2"
                 data-model-picker-elsewhere="true"
               >
-                <p className="px-1 pb-1 text-2xs font-medium text-muted-foreground">
-                  On your other machines
-                </p>
+                {turnedOnProviders.length > 0 ? (
+                  <>
+                    <p className="px-1 pb-1 text-2xs font-medium text-muted-foreground">
+                      Turned on {machineLabelFor(elsewhereSetup)}
+                    </p>
+                    {turnedOnProviders.map(({ provider, instanceId }) => (
+                      <TurnedOnRow
+                        key={provider.identity}
+                        provider={provider}
+                        quickSetup={elsewhereSetup}
+                        outcome={turnOnOutcome(
+                          entryByInstanceId.get(instanceId)?.snapshot,
+                          elsewhereSetup.machineLabel ?? "this machine",
+                        )}
+                        onOpenSetup={
+                          props.onOpenProviderSetup
+                            ? () => {
+                                props.onRequestClose?.();
+                                props.onOpenProviderSetup?.(instanceId);
+                              }
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </>
+                ) : null}
+                {otherMachineProviders.length > 0 ? (
+                  <p className="px-1 pb-1 text-2xs font-medium text-muted-foreground">
+                    On your other machines
+                  </p>
+                ) : null}
                 {otherMachineProviders.map((provider) => {
                   const quickSetup = elsewhereSetup;
                   const enabling = quickSetup.pending.has(provider.identity);
@@ -1364,7 +1411,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           className="size-4 shrink-0"
                           iconClassName="size-4"
                         />
-                        <span className="min-w-0 flex-1 truncate">
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={`Ready on ${provider.machineLabels.join(", ")}. Turn on here installs it ${machineLabelFor(quickSetup)} if needed; sign-ins are not copied.`}
+                        >
                           {provider.displayName}
                           <span className="text-muted-foreground">
                             {" "}
@@ -1376,7 +1426,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           disabled={enabling || !quickSetup.canManage}
                           onClick={() => quickSetup.enableHere(provider)}
                         >
-                          {enabling ? "Turning on…" : "Turn on here"}
+                          {enabling
+                            ? turnOnStepLabel(quickSetup.steps?.get(provider.identity))
+                            : enableError
+                              ? "Retry"
+                              : "Turn on here"}
                         </InlineButton>
                       </div>
                       {enableError ? (

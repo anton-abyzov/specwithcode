@@ -108,8 +108,10 @@ Symbolic links stay links, file modes are kept, and linked worktrees keep their
 branch when their main repository is also copied. A link that points outside
 the project folder is shown in the preview.
 
-The destination pulls the files over your machines' private Tailscale addresses,
-so for now copying a folder to another machine needs Tailscale on both. The source
+The destination pulls the files from the source's private Tailscale address
+first, and falls back to its SpecWithCode Connect address, so either route is
+enough. It uses the Connect address only after it answers as the source
+machine. The source
 only answers requests that carry a grant for this one copy, and the grant ends
 when the copy ends. Every file is checked against the source's checksum before it
 is used.

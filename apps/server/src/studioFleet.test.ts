@@ -50,6 +50,135 @@ const fetcher = (id = "environment-m1") =>
         })
       : Response.json(descriptor(id)),
   );
+describe("SpecWithCode Connect addresses", () => {
+  const connect = "https://prod-0123456789abcdef.spec-weave.com";
+  const withMachine = (fields: Record<string, unknown>) => {
+    const raw = source();
+    Object.assign(raw.machines[0]!, fields);
+    return raw;
+  };
+  it("parses an old file exactly as before", () => {
+    expect(parseFleetConfig(source())).toEqual({
+      version: 1,
+      machines: [
+        {
+          id: "m1",
+          label: "Mac M1",
+          environmentId: "environment-m1",
+          url: "https://fixture.tailnet.ts.net:8443",
+          managementToken: "synthetic-private-management-token",
+          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        },
+      ],
+    });
+  });
+  it("accepts a Connect url alone or a Connect connectUrl beside a tailnet url", () => {
+    expect(parseFleetConfig(withMachine({ url: `${connect}/` })).machines[0]).toMatchObject({
+      url: connect,
+    });
+    const both = parseFleetConfig(withMachine({ connectUrl: connect })).machines[0]!;
+    expect(both.url).toBe("https://fixture.tailnet.ts.net:8443");
+    expect(both.connectUrl).toBe(connect);
+  });
+  it("refuses a lookalike, a connectUrl beside a Connect url, and a tailnet connectUrl", () => {
+    for (const fields of [
+      { url: "https://relay.spec-weave.com" },
+      { url: "https://prod-0123456789abcdef.spec-weave.com.evil.com" },
+      { url: "https://a.prod-0123456789abcdef.spec-weave.com" },
+      { url: `${connect}:8443` },
+      { connectUrl: "https://relay.spec-weave.com" },
+      { connectUrl: "https://other.tailnet.ts.net" },
+      { connectUrl: `${connect}/path` },
+      { connectUrl: 42 },
+      { url: connect, connectUrl: "https://prod-fedcba9876543210.spec-weave.com" },
+    ])
+      expect(() => parseFleetConfig(withMachine(fields)), JSON.stringify(fields)).toThrow(
+        "securely",
+      );
+  });
+  it("keeps every address unique across machines and skips a bad connectUrl on read", () => {
+    const second = (fields: Record<string, unknown>) => ({
+      id: "m2",
+      label: "Mac M2",
+      environmentId: "environment-m2",
+      url: "https://m2.tailnet.ts.net",
+      scopes: [AuthOrchestrationReadScope],
+      ...fields,
+    });
+    const first = withMachine({ connectUrl: connect }).machines[0]!;
+    for (const fields of [{ url: connect, connectUrl: undefined }, { connectUrl: connect }])
+      expect(() => parseFleetConfig({ version: 1, machines: [first, second(fields)] })).toThrow(
+        "securely",
+      );
+    const tolerant = parseFleetConfig(
+      {
+        version: 1,
+        machines: [first, second({ connectUrl: "https://relay.spec-weave.com" })],
+      },
+      { tolerant: true },
+    );
+    expect(tolerant.machines.map((m) => m.id)).toEqual(["m1"]);
+    expect(tolerant.invalidEntries).toEqual([
+      { index: 1, label: "Mac M2", reason: expect.stringContaining("connectUrl") },
+    ]);
+  });
+  it("lists the Connect address with the machine", async () => {
+    const snapshot = await discoverFleet(
+      parseFleetConfig(withMachine({ connectUrl: connect })),
+      "127.0.0.1",
+      fetcher(),
+    );
+    expect(snapshot.machines[0]).toMatchObject({
+      connectUrl: connect,
+      status: "reachable",
+      transport: "tailnet",
+      managementBinding: "bearer",
+    });
+  });
+  it("says which address answered and whether the saved token is bound", async () => {
+    const bound = `${Buffer.from(JSON.stringify({ sid: "s", jkt: "thumb" })).toString("base64url")}.sig`;
+    const connectOnly = vi.fn<typeof fetch>(async (url) =>
+      String(url).startsWith(connect)
+        ? Response.json(descriptor("environment-m1"))
+        : Promise.reject(new TypeError("tailnet down")),
+    );
+    const snapshot = await discoverFleet(
+      parseFleetConfig(withMachine({ connectUrl: connect, managementToken: bound })),
+      "127.0.0.1",
+      connectOnly,
+    );
+    expect(snapshot.machines[0]).toMatchObject({
+      status: "reachable",
+      transport: "connect",
+      managementBinding: "proof",
+      machineName: "Fixture Mac",
+    });
+    const offline = await discoverFleet(
+      parseFleetConfig(withMachine({ connectUrl: connect })),
+      "127.0.0.1",
+      vi.fn<typeof fetch>(async () => Promise.reject(new TypeError("offline"))),
+    );
+    expect(offline.machines[0]?.status).toBe("unreachable");
+    expect(offline.machines[0]?.transport).toBeUndefined();
+  });
+  it("never sends a bearer token to a Connect address when pairing", async () => {
+    const connectOnly = vi.fn<typeof fetch>(async (url) =>
+      String(url).startsWith(connect)
+        ? Response.json(descriptor("environment-m1"))
+        : Promise.reject(new TypeError("tailnet down")),
+    );
+    await expect(
+      connectFleet(
+        parseFleetConfig(withMachine({ connectUrl: connect })),
+        "m1",
+        new Set([AuthAccessWriteScope, AuthOrchestrationReadScope]),
+        connectOnly,
+      ),
+    ).rejects.toThrow("only through SpecWithCode Connect");
+    for (const [, init] of connectOnly.mock.calls)
+      expect(new Headers(init?.headers).get("authorization")).toBeNull();
+  });
+});
 describe("private fleet boundary", () => {
   it("rejects arbitrary destinations, ambiguous IDs, credentials in URLs and extra config keys", () => {
     for (const url of [

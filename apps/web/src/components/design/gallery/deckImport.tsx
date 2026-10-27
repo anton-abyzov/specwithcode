@@ -111,9 +111,6 @@ export function NotImportedDialog({
           </ul>
         </DialogPanel>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>
-            Close
-          </Button>
           <Button type="button" onClick={onOpenDeck} data-testid="deck-not-imported-open">
             Open slides
           </Button>

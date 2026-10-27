@@ -522,6 +522,13 @@ export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   scopes_supported: Schema.Array(AuthEnvironmentScope),
   bearer_methods_supported: Schema.Array(Schema.Literal("header")),
   resource_name: Schema.String,
+  /**
+   * RFC 9449: this resource accepts DPoP-bound tokens signed with these
+   * algorithms. Older servers omit it and issue bearer tokens only.
+   */
+  dpop_signing_alg_values_supported: Schema.optionalKey(Schema.Array(Schema.Literal("ES256"))),
+  /** False: bearer tokens stay accepted where they were before. */
+  dpop_bound_access_tokens_required: Schema.optionalKey(Schema.Boolean),
 });
 export type AuthMcpProtectedResourceMetadata = typeof AuthMcpProtectedResourceMetadata.Type;
 
@@ -537,6 +544,8 @@ export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
   token_endpoint_auth_methods_supported: Schema.Array(Schema.Literal("none")),
   scopes_supported: Schema.Array(AuthEnvironmentScope),
   authorization_response_iss_parameter_supported: Schema.Boolean,
+  /** RFC 9449: a token request with a `DPoP` proof gets a token bound to that key. */
+  dpop_signing_alg_values_supported: Schema.optionalKey(Schema.Array(Schema.Literal("ES256"))),
 });
 export type AuthMcpAuthorizationServerMetadata = typeof AuthMcpAuthorizationServerMetadata.Type;
 
@@ -661,7 +670,8 @@ export type AuthMcpTokenRequest = typeof AuthMcpTokenRequest.Type;
 
 export const AuthMcpTokenResult = Schema.Struct({
   access_token: Schema.String,
-  token_type: Schema.Literal("Bearer"),
+  // "DPoP" when the token request carried a proof: the token works only with it.
+  token_type: Schema.Literals(["Bearer", "DPoP"]),
   expires_in: Schema.Number,
   scope: Schema.String,
 });

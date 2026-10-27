@@ -89,6 +89,7 @@ import * as BrowserExtension from "../browserExtension/BrowserExtension.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ComputerUseBroker from "../computerUse/ComputerUseBroker.ts";
 import * as ComputerHandlers from "./toolkits/computer/handlers.ts";
+import { gateRequest, recordRequestFailure } from "../auth/CredentialFailureLimiter.ts";
 import {
   ComputerScreenshotTool,
   ComputerScreenshotToolkit,
@@ -145,12 +146,34 @@ const unauthorized = (input: {
   );
 };
 
+/** Too many failed credentials from this client: refused before any lookup. */
+const tooManyRequests = (retryAfterSeconds: number) =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      error: "rate_limited",
+      message: `Too many failed sign-in attempts from this client. Try again in ${String(retryAfterSeconds)} seconds.`,
+    },
+    {
+      status: 429,
+      headers: { "cache-control": "no-store", "retry-after": String(retryAfterSeconds) },
+    },
+  );
+
 /**
  * Resolves a bearer token that is not a provider-session token: an OAuth
  * client signed in from outside Studio. Undefined when the token is not one.
  */
 export class McpDeviceReapprovalRequired extends Schema.TaggedError<McpDeviceReapprovalRequired>()(
   "McpDeviceReapprovalRequired",
+  {},
+) {}
+
+/**
+ * A presented grant this server signed that has expired or been revoked: a
+ * stale client, not a guess, so it never counts toward the failure limit.
+ */
+export class McpCredentialStale extends Schema.TaggedError<McpCredentialStale>()(
+  "McpCredentialStale",
   {},
 ) {}
 
@@ -161,7 +184,7 @@ export class McpClientAuthenticator extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       McpInvocationContext.McpInvocationScope | undefined,
-      McpDeviceReapprovalRequired
+      McpDeviceReapprovalRequired | McpCredentialStale
     >;
   }
 >()("specweave-studio/mcp/McpHttpServer/McpClientAuthenticator") {}
@@ -205,17 +228,23 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       authorization?.startsWith("Bearer ") === true
         ? authorization.slice("Bearer ".length).trim()
         : "";
-    const invocation =
-      (yield* registry.resolve(token)) ??
-      (Option.isSome(clients) && token.length > 0
-        ? yield* clients.value
-            .authenticate(request)
-            .pipe(
-              Effect.catchTag("McpDeviceReapprovalRequired", () =>
-                Effect.succeed("reapproval" as const),
-              ),
-            )
+    // A proof-bound grant (another machine reaching this one over
+    // SpecWithCode Connect). Never a provider token, so only OAuth clients
+    // can answer it; the authenticator checks the proof.
+    const dpopToken =
+      authorization?.startsWith("DPoP ") === true ? authorization.slice("DPoP ".length).trim() : "";
+    const presented = token.length > 0 || dpopToken.length > 0;
+    const resolved =
+      (dpopToken.length === 0 ? yield* registry.resolve(token) : undefined) ??
+      (Option.isSome(clients) && presented
+        ? yield* clients.value.authenticate(request).pipe(
+            Effect.catchTag("McpDeviceReapprovalRequired", () =>
+              Effect.succeed("reapproval" as const),
+            ),
+            Effect.catchTag("McpCredentialStale", () => Effect.succeed("stale" as const)),
+          )
         : undefined);
+    const invocation = resolved === "stale" ? undefined : resolved;
     if (invocation === "reapproval")
       return unauthorized({
         request,
@@ -223,17 +252,29 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: true,
         reapprovalRequired: true,
       });
+    // A genuine credential is never held back, so clients sharing an egress
+    // address cannot lock another machine's MCP calls out; only a presented
+    // credential that fails as a guess is gated and counted.
+    if (!invocation && presented && resolved !== "stale") {
+      const blocked = yield* gateRequest(request).pipe(
+        Effect.as(undefined),
+        Effect.catch((error) => Effect.succeed(error)),
+      );
+      if (blocked !== undefined) return tooManyRequests(blocked.retryAfterSeconds);
+      yield* recordRequestFailure(request);
+    }
     if (!invocation) {
       // Without this the only symptom of a dead credential is the agent
       // quietly losing the whole `studio-code` toolkit for the rest of its
       // session, with nothing on the server to explain why.
       yield* Effect.logWarning("rejected MCP request with an unusable credential", {
-        reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+        reason: presented ? "unknown_or_expired_token" : "missing_bearer_token",
       });
       return unauthorized({
         request,
-        presentedToken: token.length > 0,
-        offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
+        presentedToken: presented,
+        offerOAuth:
+          Option.isSome(clients) && (dpopToken.length > 0 || !looksLikeProviderToken(token)),
       });
     }
     return yield* httpEffect.pipe(

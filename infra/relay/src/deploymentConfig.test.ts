@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import {
+  isManagedEndpointHostname as isFleetManagedEndpointHostname,
+  managedEndpointHashFor,
+} from "@specweave-studio/shared/managedEndpoint";
 
 import {
   managedEndpointBaseDomainForZone,
@@ -90,6 +94,29 @@ describe("managed endpoint names", () => {
     expect(managedEndpointTunnelNamePrefix("dev_alice")).toBe(
       "studiorelay-managedendpoint-dev-alice-",
     );
+  });
+
+  it("produces hostnames the server-side fleet origin check accepts", () => {
+    const hash = "abcdef0123456789abcdef0123456789";
+    expect(
+      isFleetManagedEndpointHostname(
+        managedEndpointHostname("prod", "spec-weave.com", hash),
+        "spec-weave.com",
+      ),
+    ).toBe(true);
+    expect(
+      isFleetManagedEndpointHostname(
+        managedEndpointHostname("dev_" + "x".repeat(100), "spec-weave.com", hash),
+        "spec-weave.com",
+      ),
+    ).toBe(true);
+    expect(
+      isFleetManagedEndpointHostname(
+        relayPublicDomainForStage("prod", "spec-weave.com"),
+        "spec-weave.com",
+      ),
+    ).toBe(false);
+    expect(managedEndpointHashFor("prod", "user_1", "env_1")).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it("keeps the DNS label within the provider limit for long stage names", () => {

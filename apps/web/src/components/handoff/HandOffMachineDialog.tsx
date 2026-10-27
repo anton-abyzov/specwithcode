@@ -226,44 +226,38 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
               </div>
             )}
           </DialogPanel>
-          <DialogFooter>
-            {props.run ? (
-              <Button type="button" onClick={props.onCancel}>
-                Done
+          {props.run ? null : (
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={props.submitting}
+                onClick={props.onCancel}
+              >
+                Cancel
               </Button>
-            ) : (
-              <>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={props.submitting}
-                  onClick={props.onCancel}
-                >
-                  Cancel
+              {props.onRecheck && !props.checking && movable < props.selected.size ? (
+                <Button type="button" variant="outline" onClick={props.onRecheck}>
+                  Check again
                 </Button>
-                {props.onRecheck && !props.checking && movable < props.selected.size ? (
-                  <Button type="button" variant="outline" onClick={props.onRecheck}>
-                    Check again
-                  </Button>
-                ) : null}
-                <Button
-                  type="submit"
-                  disabled={
-                    props.submitting ||
-                    props.checking ||
-                    props.destinationId === null ||
-                    movable === 0
-                  }
-                >
-                  {props.submitting
-                    ? "Handing off…"
-                    : movable === 1
-                      ? `Hand off 1 thread`
-                      : `Hand off ${movable} threads`}
-                </Button>
-              </>
-            )}
-          </DialogFooter>
+              ) : null}
+              <Button
+                type="submit"
+                disabled={
+                  props.submitting ||
+                  props.checking ||
+                  props.destinationId === null ||
+                  movable === 0
+                }
+              >
+                {props.submitting
+                  ? "Handing off…"
+                  : movable === 1
+                    ? `Hand off 1 thread`
+                    : `Hand off ${movable} threads`}
+              </Button>
+            </DialogFooter>
+          )}
         </form>
       </DialogPopup>
     </Dialog>

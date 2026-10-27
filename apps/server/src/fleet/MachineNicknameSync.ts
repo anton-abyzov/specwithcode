@@ -22,6 +22,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { type FleetFetch, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
 import * as FleetTargets from "./FleetTargets.ts";
+import { type FleetLink, fleetRequest, toFleetLink } from "./fleetTransport.ts";
 
 /** Paired servers swap their whole nickname map here and both keep the newest entries. */
 export const MACHINE_NICKNAMES_PATH = "/api/studio/machine-nicknames";
@@ -30,28 +31,28 @@ const EXCHANGE_INTERVAL = Duration.minutes(1);
 
 const decodeNicknames = Schema.decodeUnknownOption(MachineNicknames);
 
-export type NicknamePeer = Pick<FleetTarget, "id" | "url"> & { readonly managementToken: string };
+export type NicknamePeer = Pick<FleetTarget, "id" | "url" | "connectUrl" | "environmentId"> & {
+  readonly managementToken: string;
+};
 
 /**
  * Sends this server's map to one peer, which merges it and answers with its
  * own merged map. Null when the peer is offline or refuses, so the next
  * exchange retries and a rename made meanwhile still lands on reconnect.
+ * The token goes only to an address that answers as that peer, and a plain
+ * bearer only over the tailnet.
  */
 export async function exchangeMachineNicknames(
-  fetcher: FleetFetch,
+  fetcher: FleetLink | FleetFetch,
   peer: NicknamePeer,
   local: MachineNicknamesType,
 ): Promise<MachineNicknamesType | null> {
   try {
-    const response = await fetcher(`${peer.url}${MACHINE_NICKNAMES_PATH}`, {
+    const { response } = await fleetRequest(fetcher, peer, MACHINE_NICKNAMES_PATH, {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${peer.managementToken}`,
-        "content-type": "application/json",
-      },
+      token: peer.managementToken,
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ nicknames: local }),
-      redirect: "error",
-      signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
@@ -72,17 +73,16 @@ export interface NicknameStore {
 
 /** One round with every peer that has a management token. Returns the peers reached. */
 export const syncMachineNicknames = (input: {
-  readonly fetcher: FleetFetch;
+  readonly fetcher: FleetLink | FleetFetch;
   readonly peers: ReadonlyArray<NicknamePeer>;
   readonly store: NicknameStore;
 }): Effect.Effect<ReadonlyArray<string>> =>
   Effect.gen(function* () {
     const reached: Array<string> = [];
+    const link = toFleetLink(input.fetcher);
     for (const peer of input.peers) {
       const local = yield* input.store.read;
-      const reply = yield* Effect.promise(() =>
-        exchangeMachineNicknames(input.fetcher, peer, local),
-      );
+      const reply = yield* Effect.promise(() => exchangeMachineNicknames(link, peer, local));
       if (reply === null) continue;
       reached.push(peer.id);
       yield* input.store.merge(reply);
@@ -95,7 +95,15 @@ export const peersFrom = (
 ): ReadonlyArray<NicknamePeer> =>
   (machines ?? []).flatMap((machine) =>
     machine.managementToken
-      ? [{ id: machine.id, url: machine.url, managementToken: machine.managementToken }]
+      ? [
+          {
+            id: machine.id,
+            url: machine.url,
+            ...(machine.connectUrl === undefined ? {} : { connectUrl: machine.connectUrl }),
+            environmentId: machine.environmentId,
+            managementToken: machine.managementToken,
+          },
+        ]
       : [],
   );
 
@@ -166,7 +174,11 @@ export const layer = Layer.effectDiscard(
     const store = settingsStore(settings);
     const round = targets.load.pipe(
       Effect.flatMap((config) =>
-        syncMachineNicknames({ fetcher: targets.fetch, peers: peersFrom(config?.machines), store }),
+        syncMachineNicknames({
+          fetcher: FleetTargets.linkOf(targets),
+          peers: peersFrom(config?.machines),
+          store,
+        }),
       ),
       Effect.catchCause(() => Effect.void),
     );

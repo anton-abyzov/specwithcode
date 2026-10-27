@@ -30,6 +30,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { countsAsCredentialGuess } from "./CredentialFailureLimiter.ts";
 import { coordinatorOfWorkerLabel } from "../fleet/workGrantPolicy.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -92,6 +93,10 @@ export const protectedResourceMetadata = (
   scopes_supported: MCP_OAUTH_SCOPES,
   bearer_methods_supported: ["header"],
   resource_name: "SpecWithCode",
+  // Another machine's fleet coordinator asks for a key-bound grant when it
+  // reaches this one over SpecWithCode Connect. Bearer grants still work.
+  dpop_signing_alg_values_supported: ["ES256"],
+  dpop_bound_access_tokens_required: false,
 });
 
 export const authorizationServerMetadata = (
@@ -107,6 +112,7 @@ export const authorizationServerMetadata = (
   token_endpoint_auth_methods_supported: ["none"],
   scopes_supported: MCP_OAUTH_SCOPES,
   authorization_response_iss_parameter_supported: true,
+  dpop_signing_alg_values_supported: ["ES256"],
 });
 
 /** A redirect URI an MCP client may register: loopback http, or any https. */
@@ -247,6 +253,8 @@ export class McpOAuth extends Context.Service<
       readonly request: HttpServerRequest.HttpServerRequest;
       readonly urls: McpOAuthUrls;
       readonly token: AuthMcpTokenRequest;
+      /** The verified DPoP key of the token request, when it carried a proof. */
+      readonly proofKeyThumbprint?: string | undefined;
     }) => Effect.Effect<AuthMcpTokenResult, AuthMcpTokenError>;
   }
 >()("specweave-studio/auth/McpOAuth") {}
@@ -539,7 +547,12 @@ const make = Effect.gen(function* () {
       iss: authorization.issuer,
     });
 
-  const exchangeCode: McpOAuth["Service"]["exchangeCode"] = ({ request, urls, token }) =>
+  const exchangeCode: McpOAuth["Service"]["exchangeCode"] = ({
+    request,
+    urls,
+    token,
+    proofKeyThumbprint,
+  }) =>
     Effect.gen(function* () {
       const fail = (error: AuthMcpTokenError["error"], description: string) =>
         new AuthMcpTokenError({ error, error_description: description });
@@ -585,6 +598,7 @@ const make = Effect.gen(function* () {
           label: pending.clientName,
           access: pending.access,
           client: deriveAuthClientMetadata({ request }),
+          ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
         })
         .pipe(
           Effect.catch((cause) =>
@@ -597,7 +611,7 @@ const make = Effect.gen(function* () {
         );
       return {
         access_token: issued.token,
-        token_type: "Bearer",
+        token_type: issued.tokenType,
         expires_in: Math.max(0, Math.floor((issued.expiresAt.epochMilliseconds - now) / 1000)),
         scope: encodeOAuthScope(EnvironmentAuth.mcpClientScopes(pending.access)),
       };
@@ -666,14 +680,26 @@ export const layerMcpClientAuthenticator = Layer.effect(
               })),
             ),
           ),
-          Effect.catch((error) =>
-            EnvironmentAuth.isServerAuthCredentialError(error) &&
-            EnvironmentAuth.serverAuthCredentialReason(error) === "device_reapproval_required"
-              ? Effect.fail(new McpHttpServer.McpDeviceReapprovalRequired({}))
-              : (EnvironmentAuth.isServerAuthCredentialError(error)
-                  ? Effect.void
-                  : Effect.logWarning("MCP client authentication failed.", { cause: error })
-                ).pipe(Effect.as(undefined)),
+          Effect.catch(
+            (
+              error,
+            ): Effect.Effect<
+              undefined,
+              McpHttpServer.McpDeviceReapprovalRequired | McpHttpServer.McpCredentialStale
+            > => {
+              if (!EnvironmentAuth.isServerAuthCredentialError(error))
+                return Effect.logWarning("MCP client authentication failed.", {
+                  cause: error,
+                }).pipe(Effect.as(undefined));
+              if (
+                EnvironmentAuth.serverAuthCredentialReason(error) === "device_reapproval_required"
+              )
+                return Effect.fail(new McpHttpServer.McpDeviceReapprovalRequired({}));
+              // Expired or revoked, but genuine: not a guess at a credential.
+              if (!countsAsCredentialGuess(error))
+                return Effect.fail(new McpHttpServer.McpCredentialStale({}));
+              return Effect.succeed(undefined);
+            },
           ),
         ),
     });

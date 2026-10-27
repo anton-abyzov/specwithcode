@@ -6,6 +6,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
+import { verifyDpopProof } from "@specweave-studio/shared/dpop";
 
 /** What a fake tool answers: a structured result, or a declared failure's message. */
 export type FakeToolAnswer =
@@ -21,6 +22,7 @@ interface RecordedRequest {
   readonly url: string;
   readonly method: string;
   readonly authorization: string | null;
+  readonly dpop: string | null;
   readonly origin: string | null;
   readonly redirect: RequestInit["redirect"];
 }
@@ -33,6 +35,10 @@ interface RecordedRequest {
  */
 export function fakeStudioMcp(input: {
   readonly origin: string;
+  /** More addresses the machine answers on (its SpecWithCode Connect address). */
+  readonly alsoAnswersOn?: ReadonlyArray<string>;
+  /** Addresses that throw like a network that is down. */
+  readonly offline?: ReadonlySet<string>;
   readonly environmentId: string;
   readonly tokens: Iterable<string>;
   readonly tools: Record<string, FakeToolHandler>;
@@ -108,10 +114,15 @@ export function fakeStudioMcp(input: {
       url: url.toString(),
       method: init?.method ?? "GET",
       authorization: headers.get("authorization"),
+      dpop: headers.get("dpop"),
       origin: headers.get("origin"),
       redirect: init?.redirect,
     });
-    if (url.origin !== input.origin) throw new TypeError("fetch failed");
+    if (
+      (url.origin !== input.origin && !input.alsoAnswersOn?.includes(url.origin)) ||
+      input.offline?.has(url.origin)
+    )
+      throw new TypeError("fetch failed");
     if (url.pathname === "/.well-known/studio/environment")
       return Response.json({
         environmentId,
@@ -121,8 +132,20 @@ export function fakeStudioMcp(input: {
         capabilities: { repositoryIdentity: true },
       });
     if (url.pathname !== "/mcp") return new Response("not found", { status: 404 });
-    const bearer = headers.get("authorization")?.replace(/^Bearer /u, "") ?? "";
-    if (!tokens.has(bearer)) return new Response("unauthorized", { status: 401 });
+    const [scheme, token = ""] = (headers.get("authorization") ?? "").split(" ");
+    // A DPoP token needs a valid proof for this method, URL and token, like the real server.
+    const proven =
+      scheme === "Bearer" ||
+      (scheme === "DPoP" &&
+        verifyDpopProof({
+          proof: headers.get("dpop"),
+          method: init?.method ?? "GET",
+          url: url.toString(),
+          // @effect-diagnostics-next-line globalDate:off -- DPoP proofs carry wall-clock seconds.
+          nowEpochSeconds: Math.floor(Date.now() / 1000),
+          expectedAccessToken: token,
+        }).ok);
+    if (!proven || !tokens.has(token)) return new Response("unauthorized", { status: 401 });
     return handleMcp(new Request(url, { ...init, headers }));
   }) as typeof fetch;
 

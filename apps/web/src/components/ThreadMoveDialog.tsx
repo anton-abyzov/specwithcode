@@ -317,7 +317,7 @@ function ThreadMoveDialog({ threadRef }: { readonly threadRef: ScopedThreadRef }
             </div>
           </DialogPanel>
           <DialogFooter>
-            <Button type="button" variant="ghost" disabled={submitting} onClick={() => finish()}>
+            <Button type="button" variant="outline" disabled={submitting} onClick={() => finish()}>
               Cancel
             </Button>
             <Button type="submit" disabled={submitting || target === null}>

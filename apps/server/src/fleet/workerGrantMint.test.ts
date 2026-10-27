@@ -1,8 +1,21 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a real fleet key file for the link.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import { AuthOrchestrationReadScope } from "@specweave-studio/contracts";
 
+import { join } from "../nodePath.ts";
 import type { FleetTarget } from "../studioFleet.ts";
-import { fakeMachine, ORIGIN, target } from "./fleetMachine.testkit.ts";
+import { revokeWorkerAccessByLabel } from "../studioFleetJoin.ts";
+import {
+  CONNECT_ORIGIN,
+  fakeMachine,
+  ORIGIN,
+  studioToken,
+  target,
+} from "./fleetMachine.testkit.ts";
+import { loadOrCreateFleetProofKey, tokenProofThumbprint } from "./fleetProofKey.ts";
+import { makeFleetLink } from "./fleetTransport.ts";
 import {
   mintWorkerGrant,
   renewWorkerGrant,
@@ -277,5 +290,182 @@ describe("worker grant minting", () => {
     expect(sessionIdOfToken("opaque-token")).toBeUndefined();
     expect(sessionIdOfToken(`${claims}.signature.extra`)).toBeUndefined();
     expect(sessionIdOfToken("bm90IGpzb24.signature")).toBeUndefined();
+  });
+});
+
+describe("worker grants over SpecWithCode Connect", () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      dirs.splice(0).map((dir) => NodeFSP.rm(dir, { recursive: true, force: true })),
+    );
+  });
+  /** This machine's fleet key, a management token bound to it, and a link that signs with it. */
+  const coordinator = async (machine: ReturnType<typeof fakeMachine>) => {
+    const fetcher = machine.fetcher;
+    const baseDir = await NodeFSP.mkdtemp(join(NodeOS.tmpdir(), "studio-grant-connect-"));
+    dirs.push(baseDir);
+    const key = await loadOrCreateFleetProofKey(baseDir);
+    const managementToken = studioToken({ sid: "management", jkt: key.thumbprint });
+    machine.acceptManagementToken(managementToken);
+    return {
+      key,
+      managementToken,
+      link: makeFleetLink({ fetch: fetcher, baseDir }),
+      target: { ...target, connectUrl: CONNECT_ORIGIN, managementToken } satisfies FleetTarget,
+    };
+  };
+  const offlineTailnet = (extra: Parameters<typeof fakeMachine>[0] = {}) =>
+    fakeMachine({ origins: [ORIGIN, CONNECT_ORIGIN], offline: new Set([ORIGIN]), ...extra });
+
+  it("mints a key-bound grant on the Connect address when the tailnet is down", async () => {
+    const machine = offlineTailnet({ dpop: true });
+    const { key, link, target: bound, managementToken } = await coordinator(machine);
+    machine.calls.length = 0;
+    const grant = await mintWorkerGrant({
+      link,
+      target: { ...bound, managementToken },
+      access: "auto",
+      clientName: workerClientName("env-m4"),
+    });
+    expect(grant.origin).toBe(CONNECT_ORIGIN);
+    expect(grant.resource).toBe(`${CONNECT_ORIGIN}/mcp`);
+    expect(tokenProofThumbprint(grant.accessToken)).toBe(key.thumbprint);
+    const sent = machine.calls.filter((call) => call.url.startsWith(CONNECT_ORIGIN));
+    // Identity first, then only proof-carrying credentials; never a bearer over Connect.
+    expect(new URL(sent[0]!.url).pathname).toBe("/.well-known/studio/environment");
+    expect(sent.some((call) => call.authorization?.startsWith("Bearer ") === true)).toBe(false);
+    const management = sent.filter((call) => call.authorization !== null);
+    expect(management.map((call) => new URL(call.url).pathname)).toEqual([
+      "/api/auth/pairing-token",
+    ]);
+    expect(management[0]!.authorization).toBe(`DPoP ${managementToken}`);
+    expect(management[0]!.dpop).toMatch(/^ey/);
+    const tokenCall = sent.find((call) => call.url.endsWith("/oauth/mcp/token"));
+    expect(tokenCall?.dpop).toMatch(/^ey/);
+  });
+
+  it("revokes this machine's grants there on remove, with a key-bound management token", async () => {
+    const machine = offlineTailnet({ dpop: true });
+    const { link, target: bound, managementToken } = await coordinator(machine);
+    expect(await revokeWorkerAccessByLabel(link, bound, "env-m4")).toBe("revoked");
+    expect(machine.revokedSessions.toSorted()).toEqual(["new", "old"]);
+    const revokes = machine.calls.filter((call) => call.url.endsWith("/api/auth/clients/revoke"));
+    expect(revokes.every((call) => call.authorization === `DPoP ${managementToken}`)).toBe(true);
+  });
+
+  it("binds the grant on the tailnet only for a machine that also has a Connect address", async () => {
+    const machine = fakeMachine({ dpop: true });
+    const { key, link } = await coordinator(machine);
+    const grant = await mintWorkerGrant({
+      link,
+      target: { ...target, connectUrl: CONNECT_ORIGIN },
+      access: "auto",
+      clientName: workerClientName("env-m4"),
+    });
+    expect(grant.origin).toBe(ORIGIN);
+    expect(tokenProofThumbprint(grant.accessToken)).toBe(key.thumbprint);
+    // The unbound management token is still a plain bearer on the tailnet.
+    expect(
+      machine.calls.find((call) => call.url.endsWith("/api/auth/pairing-token"))?.authorization,
+    ).toBe("Bearer management-secret");
+
+    // A tailnet-only machine keeps a bearer grant even though a key exists.
+    const tailnetOnly = fakeMachine({ dpop: true });
+    const { link: plain } = await coordinator(tailnetOnly);
+    const bearer = await mintWorkerGrant({
+      link: plain,
+      target,
+      access: "auto",
+      clientName: workerClientName("env-m4"),
+    });
+    expect(tokenProofThumbprint(bearer.accessToken)).toBeUndefined();
+    expect(
+      tailnetOnly.calls.find((call) => call.url.endsWith("/oauth/mcp/token"))?.dpop,
+    ).toBeNull();
+  });
+
+  it("refuses a machine without DPoP over Connect before any pairing code exists", async () => {
+    const machine = offlineTailnet();
+    const { link, target: bound } = await coordinator(machine);
+    expect(
+      await failureReason(
+        mintWorkerGrant({
+          link,
+          target: bound,
+          access: "auto",
+          clientName: workerClientName("env-m4"),
+        }),
+      ),
+    ).toBe("unsupported");
+    expect(machine.calls.some((call) => call.url.endsWith("/api/auth/pairing-token"))).toBe(false);
+  });
+
+  it("never takes an unbound management token to the Connect address", async () => {
+    const machine = offlineTailnet({ dpop: true });
+    const { link } = await coordinator(machine);
+    expect(
+      await failureReason(
+        mintWorkerGrant({
+          link,
+          target: { ...target, connectUrl: CONNECT_ORIGIN },
+          access: "auto",
+          clientName: workerClientName("env-m4"),
+        }),
+      ),
+    ).toBe("pairing_unavailable");
+    // Connect is only asked who it is, never sent the token.
+    expect(
+      machine.calls
+        .filter((call) => call.url.startsWith(CONNECT_ORIGIN))
+        .map((call) => [new URL(call.url).pathname, call.authorization]),
+    ).toEqual([["/.well-known/studio/environment", null]]);
+  });
+
+  it("renews a bound grant over Connect and keeps its key", async () => {
+    const machine = offlineTailnet({ dpop: true });
+    const { key, link, target: bound, managementToken } = await coordinator(machine);
+    const grant = studioToken({ sid: "sid-1", jkt: key.thumbprint });
+    const renewed = await renewWorkerGrant({
+      link,
+      target: { ...bound, managementToken },
+      accessToken: grant,
+      coordinatorEnvironmentId: "env-m4",
+    });
+    expect(renewed.origin).toBe(CONNECT_ORIGIN);
+    expect(sessionIdOfToken(renewed.accessToken)).toBe("sid-1");
+    expect(tokenProofThumbprint(renewed.accessToken)).toBe(key.thumbprint);
+    const call = machine.calls.find((entry) => entry.url.endsWith("/worker-grants/renew"));
+    expect(call?.authorization).toBe(`DPoP ${managementToken}`);
+  });
+
+  it("does not send an unbound grant over Connect to renew it", async () => {
+    const machine = offlineTailnet({ dpop: true });
+    const { link, target: bound } = await coordinator(machine);
+    expect(
+      await failureReason(
+        renewWorkerGrant({
+          link,
+          target: bound,
+          accessToken: tokenFor("sid-1"),
+          coordinatorEnvironmentId: "env-m4",
+        }),
+      ),
+    ).toBe("unreachable");
+    expect(machine.calls.some((call) => call.url.endsWith("/worker-grants/renew"))).toBe(false);
+  });
+
+  it("revokes sessions over Connect with the bound management token", async () => {
+    const machine = offlineTailnet({ dpop: true });
+    const { link, target: bound } = await coordinator(machine);
+    expect(
+      await revokeWorkerSessions({
+        link,
+        target: bound,
+        clientName: workerClientName("env-m4"),
+        keepNewest: true,
+      }),
+    ).toEqual({ revoked: 1, complete: true, swept: true });
+    expect(machine.revokedSessions).toEqual(["old"]);
   });
 });

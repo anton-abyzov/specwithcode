@@ -341,7 +341,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
             </p>
           ) : null}
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>
+            <Button variant="outline" disabled={busy} onClick={() => setOpen(false)}>
               Cancel
             </Button>
             <Button disabled={!loaded || busy} onClick={() => void save()}>

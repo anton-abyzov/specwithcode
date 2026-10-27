@@ -49,6 +49,7 @@ const mockRuntime =
     childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
     mockAgentPath: string,
     reply: string,
+    env: Readonly<Record<string, string>> = {},
   ): AcpAdapterV2Flavor["makeRuntime"] =>
   (runtimeInput) =>
     Effect.gen(function* () {
@@ -59,7 +60,11 @@ const mockRuntime =
             command: process.execPath,
             args: [mockAgentPath],
             cwd: runtimeInput.cwd,
-            env: { STUDIO_ACP_SESSION_LIFECYCLE: "1", STUDIO_ACP_PROMPT_RESPONSE_TEXT: reply },
+            env: {
+              STUDIO_ACP_SESSION_LIFECYCLE: "1",
+              STUDIO_ACP_PROMPT_RESPONSE_TEXT: reply,
+              ...env,
+            },
           },
           authMethodId: "test",
         }).pipe(
@@ -74,7 +79,12 @@ const mockRuntime =
     });
 
 /** Runs one turn whose reply is `reply` and returns its terminal and its error items. */
-const runTurn = (name: string, reply: string, specweaveTool = "copilot") =>
+const runTurn = (
+  name: string,
+  reply: string,
+  specweaveTool = "copilot",
+  env: Readonly<Record<string, string>> = {},
+) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const instanceId = ProviderInstanceId.make(`acpRegistry_${name}`);
@@ -95,6 +105,7 @@ const runTurn = (name: string, reply: string, specweaveTool = "copilot") =>
           yield* ChildProcessSpawner.ChildProcessSpawner,
           yield* path.fromFileUrl(new URL("../../../scripts/acp-mock-agent.ts", import.meta.url)),
           reply,
+          env,
         ),
       },
     });
@@ -208,6 +219,49 @@ describe("AcpAdapterV2 limit replies", () => {
       );
       assert.equal(terminal.status, "completed");
       assert.isNull(terminal.failure);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("fails a turn that ran tools and then ended on Copilot's quota notice", () =>
+    Effect.gen(function* () {
+      const { terminal } = yield* runTurn("copilot-quota-worked", COPILOT_QUOTA_REPLY, "copilot", {
+        STUDIO_ACP_EMIT_TOOL_CALLS: "1",
+      });
+      assert.equal(terminal.status, "failed");
+      assert.equal(terminal.failure?.class, "usage_limit");
+      assert.equal(terminal.failure?.message, "Monthly quota used up on this provider.");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("completes a turn that ran tools and answered normally", () =>
+    Effect.gen(function* () {
+      const { terminal } = yield* runTurn("copilot-worked", "Done.", "copilot", {
+        STUDIO_ACP_EMIT_TOOL_CALLS: "1",
+      });
+      assert.equal(terminal.status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("fails a prompt Copilot rejects with its quota notice as a usage limit", () =>
+    Effect.gen(function* () {
+      const { terminal } = yield* runTurn("copilot-quota-error", "unused", "copilot", {
+        STUDIO_ACP_FAIL_PROMPT: "1",
+        STUDIO_ACP_FAIL_PROMPT_MESSAGE:
+          "You have exceeded your monthly quota (Request ID: E734:3158CA:51F2541)",
+      });
+      assert.equal(terminal.status, "failed");
+      assert.equal(terminal.failure?.class, "usage_limit");
+      assert.match(terminal.failure?.resetAt ?? "", /^\d{4}-\d{2}-01T00:00:00\.000Z$/);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps any other prompt error a provider error", () =>
+    Effect.gen(function* () {
+      const { terminal } = yield* runTurn("copilot-other-error", "unused", "copilot", {
+        STUDIO_ACP_FAIL_PROMPT: "1",
+      });
+      assert.equal(terminal.status, "failed");
+      assert.equal(terminal.failure?.class, "provider_error");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

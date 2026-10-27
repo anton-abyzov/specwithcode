@@ -81,6 +81,8 @@ export interface DestinationRecord {
   readonly version: 1;
   readonly operationId: string;
   readonly sourceUrl: string;
+  /** The source's SpecWithCode Connect address, used when `sourceUrl` does not answer. */
+  readonly sourceConnectUrl?: string;
   readonly token: string;
   readonly sourceEnvironmentId: string;
   readonly sourceProjectId: string;
@@ -122,6 +124,7 @@ export interface StartCopyInput {
   readonly projectRelativePath?: string;
   readonly operationId: string;
   readonly sourceUrl: string;
+  readonly sourceConnectUrl?: string;
   readonly token: string;
   readonly sourceEnvironmentId: string;
   readonly sourceProjectId: string;
@@ -288,6 +291,12 @@ export class DestinationCopies {
   ) {
     return new SourceClient({
       baseUrl: record.sourceUrl,
+      ...(record.sourceConnectUrl !== undefined
+        ? {
+            fallbackBaseUrl: record.sourceConnectUrl,
+            expectedEnvironmentId: record.sourceEnvironmentId,
+          }
+        : {}),
       operationId: record.operationId,
       token: record.token,
       ...(this.hooks.allowLoopback ? { allowLoopback: true } : {}),
@@ -336,6 +345,7 @@ export class DestinationCopies {
     if (existing) {
       if (
         existing.sourceUrl !== input.sourceUrl ||
+        existing.sourceConnectUrl !== input.sourceConnectUrl ||
         existing.targetFolder !== target ||
         existing.sourceEnvironmentId !== input.sourceEnvironmentId ||
         existing.sourceProjectId !== input.sourceProjectId ||
@@ -389,6 +399,7 @@ export class DestinationCopies {
       version: 1,
       operationId: input.operationId,
       sourceUrl: input.sourceUrl,
+      ...(input.sourceConnectUrl !== undefined ? { sourceConnectUrl: input.sourceConnectUrl } : {}),
       token: input.token,
       sourceEnvironmentId: input.sourceEnvironmentId,
       sourceProjectId: input.sourceProjectId,

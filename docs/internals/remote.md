@@ -7,10 +7,15 @@ not introduce another execution model. SpecWithCode Connect is the default route
 from anywhere; Tailscale is an optional direct route. See
 [remote access](../user/remote-access.md) for setup.
 
-Worker delegation is the exception today. A coordinator that invites a worker,
-starts or manages work on it, or copies a folder to it dials the worker's
-Tailscale (ts.net) address, so both machines need Tailscale for those features.
-They do not run over SpecWithCode Connect yet.
+Worker delegation uses the same routes. A coordinator that invites a worker,
+starts or manages work on it, hands off to it or copies a folder to it tries
+every address its fleet file lists for that worker, tailnet first, then its
+SpecWithCode Connect address ([fleetTransport.ts](../../apps/server/src/fleet/fleetTransport.ts)).
+Each address must answer `/.well-known/studio/environment` as that worker before
+anything is sent. Over Connect a token goes only as `DPoP <token>`, bound to the
+coordinator's fleet proof key with a fresh proof per request; an unbound bearer
+token goes only over the tailnet. Browser pairing through the fleet still needs
+the worker's tailnet address.
 
 ## Identity is independent of the route
 

@@ -24,9 +24,16 @@ import type {
 } from "@specweave-studio/contracts";
 
 import * as FleetTargets from "../fleet/FleetTargets.ts";
+import {
+  type FleetOrigin,
+  fleetAddresses,
+  fleetAuthorization,
+  fleetMachineKey,
+  reachFleetMachine,
+} from "../fleet/fleetTransport.ts";
 import * as FleetWorkerGrants from "../fleet/FleetWorkerGrants.ts";
 import { stringifyJson } from "../json.ts";
-import { checkIdentity, FleetError, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
+import { FleetError, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
 import {
   encodeFrame,
   HANDOFF_JSON_MAX_BYTES,
@@ -137,8 +144,12 @@ const toPeerTarget = (target: FleetTarget): HandoffPeerTarget => ({
 
 export const make = Effect.gen(function* () {
   const fleet = yield* FleetTargets.FleetTargets;
+  const link = FleetTargets.linkOf(fleet);
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
-  const identities = yield* Ref.make(new Map<string, { url: string; checkedAt: number }>());
+  /** Per machine: the address whose identity was checked, and when. */
+  const identities = yield* Ref.make(
+    new Map<string, { address: FleetOrigin; checkedAt: number }>(),
+  );
 
   const configured = fleet.load.pipe(
     Effect.map((config) => config?.machines ?? []),
@@ -184,18 +195,29 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const verifyIdentity = (target: FleetTarget) =>
+  /**
+   * The address to call: the one checked within the last few minutes while it
+   * is still configured, else the first that answers as the machine (tailnet
+   * first). The worker credential decides which addresses it may use: a
+   * bearer grant never goes to a Connect address.
+   */
+  const reachPeer = (target: FleetTarget, accessToken: string) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const cached = (yield* Ref.get(identities)).get(target.id);
       if (
         cached !== undefined &&
-        cached.url === target.url &&
-        now - cached.checkedAt < IDENTITY_TTL_MS
+        now - cached.checkedAt < IDENTITY_TTL_MS &&
+        fleetAddresses(target).some((address) => address.origin === cached.address.origin)
       )
-        return;
-      yield* Effect.tryPromise({
-        try: () => checkIdentity(fleet.fetch, target),
+        return cached.address;
+      const reached = yield* Effect.tryPromise({
+        try: () => {
+          // A stale check is read again, never refreshed from memory.
+          if (cached !== undefined)
+            link.book.forget(fleetMachineKey(target), cached.address.origin);
+          return reachFleetMachine(link, target, { token: accessToken });
+        },
         catch: (error) =>
           error instanceof FleetError && error.kind === "identity-mismatch"
             ? new HandoffPeerError({
@@ -204,12 +226,30 @@ export const make = Effect.gen(function* () {
                 uncertain: false,
                 local: true,
               })
-            : unreachable(target.label, false, true),
+            : error instanceof FleetError && error.kind === "connect-unbound"
+              ? new HandoffPeerError({
+                  code: "needs_grant",
+                  message: `${target.label} answers only through SpecWithCode Connect, and this machine's work grant there works only over Tailscale.`,
+                  check: "grant",
+                  uncertain: false,
+                  local: true,
+                })
+              : unreachable(target.label, false, true),
       });
+      const address: FleetOrigin = { origin: reached.origin, transport: reached.transport };
       yield* Ref.update(identities, (current) =>
-        new Map(current).set(target.id, { url: target.url, checkedAt: now }),
+        new Map(current).set(target.id, { address, checkedAt: now }),
       );
+      return address;
     });
+
+  /** The next call checks the machine's addresses again. */
+  const dropAddress = (target: FleetTarget, origin: string) =>
+    Ref.update(identities, (current) => {
+      const next = new Map(current);
+      next.delete(target.id);
+      return next;
+    }).pipe(Effect.andThen(Effect.sync(() => link.book.forget(fleetMachineKey(target), origin))));
 
   const post = <A>(
     environmentId: EnvironmentId,
@@ -221,21 +261,24 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const target = yield* findTarget(environmentId);
       const credential = yield* credentialFor(target);
-      yield* verifyIdentity(target);
+      const address = yield* reachPeer(target, credential.accessToken);
+      const url = `${address.origin}${HANDOFF_PEER_PREFIX}/${path}`;
+      const authorization = yield* Effect.tryPromise({
+        try: () => fleetAuthorization(link, address, "POST", url, credential.accessToken),
+        catch: () => unreachable(target.label, false, true),
+      });
+      // Sent once: a call that may have arrived is never repeated at another address.
       const answer = yield* Effect.tryPromise({
         try: (signal) =>
-          fleet.fetch(`${target.url}${HANDOFF_PEER_PREFIX}/${path}`, {
+          link.fetch(url, {
             method: "POST",
             redirect: "error",
-            headers: {
-              authorization: `Bearer ${credential.accessToken}`,
-              "content-type": contentType,
-            },
+            headers: { ...authorization, "content-type": contentType },
             body: body as Uint8Array<ArrayBuffer>,
             signal: AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS[path])]),
           }),
         catch: () => unreachable(target.label, true),
-      });
+      }).pipe(Effect.tapError(() => dropAddress(target, address.origin)));
       if (answer.status === 401) {
         yield* grants.reportRejected(target.id, credential.accessToken);
         return yield* new HandoffPeerError({

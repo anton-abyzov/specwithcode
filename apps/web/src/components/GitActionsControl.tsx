@@ -1020,46 +1020,42 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           </div>
         </WizardPanel>
 
-        <WizardFooter>
-          {publishWizardStep === 2 ? (
-            <Button onClick={() => handleOpenChange(false)}>Done</Button>
-          ) : (
-            <>
+        {publishWizardStep === 2 ? null : (
+          <WizardFooter>
+            <Button
+              variant="outline"
+              disabled={publishRepositoryAction.isPending}
+              onClick={() => {
+                if (publishWizardStep === 0) {
+                  handleOpenChange(false);
+                  return;
+                }
+                setPublishWizardStep((step) => Math.max(0, step - 1));
+              }}
+            >
+              {publishWizardStep === 0 ? "Cancel" : "Back"}
+            </Button>
+            {publishWizardStep < 1 ? (
               <Button
-                variant="outline"
-                disabled={publishRepositoryAction.isPending}
-                onClick={() => {
-                  if (publishWizardStep === 0) {
-                    handleOpenChange(false);
-                    return;
-                  }
-                  setPublishWizardStep((step) => Math.max(0, step - 1));
-                }}
+                disabled={!hasReadyPublishProvider || !selectedPublishProviderReadiness.ready}
+                onClick={() => setPublishWizardStep((step) => Math.min(1, step + 1))}
               >
-                {publishWizardStep === 0 ? "Cancel" : "Back"}
+                Next
               </Button>
-              {publishWizardStep < 1 ? (
-                <Button
-                  disabled={!hasReadyPublishProvider || !selectedPublishProviderReadiness.ready}
-                  onClick={() => setPublishWizardStep((step) => Math.min(1, step + 1))}
-                >
-                  Next
-                </Button>
-              ) : (
-                <Button disabled={!canSubmitPublishRepository} onClick={submitPublishRepository}>
-                  {publishRepositoryAction.isPending ? (
-                    <>
-                      <Spinner size="sm" aria-hidden />
-                      Publishing...
-                    </>
-                  ) : (
-                    "Publish"
-                  )}
-                </Button>
-              )}
-            </>
-          )}
-        </WizardFooter>
+            ) : (
+              <Button disabled={!canSubmitPublishRepository} onClick={submitPublishRepository}>
+                {publishRepositoryAction.isPending ? (
+                  <>
+                    <Spinner size="sm" aria-hidden />
+                    Publishing...
+                  </>
+                ) : (
+                  "Publish"
+                )}
+              </Button>
+            )}
+          </WizardFooter>
+        )}
       </WizardPopup>
     </Dialog>
   );

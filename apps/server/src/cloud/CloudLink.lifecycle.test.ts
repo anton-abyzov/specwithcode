@@ -1,4 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - a real Ed25519 public key for the relay's mint key.
+import * as NodeCrypto from "node:crypto";
+import { managedEndpointHashFor } from "@specweave-studio/shared/managedEndpoint";
+import * as ConfigProvider from "effect/ConfigProvider";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -28,15 +32,18 @@ import {
 } from "./serviceProtocol.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
-import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
+import { CLOUD_CLI_DESIRED_LINK_SECRET, clearPersistedCloudLink } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { RelayManagedEndpointRecoveryRegistrationRequest } from "@specweave-studio/contracts/relay";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+  CLOUD_ENDPOINT_PUBLIC_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   decodeConfirmedOrigin,
+  decodePublicOrigin,
   decodeRuntimeConfig,
+  readConnectOrigin,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
@@ -285,7 +292,11 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
-            getDescriptor: Effect.die("unused"),
+            // Signed into link proofs only; its fields are not checked here.
+            getDescriptor: Effect.succeed({
+              environmentId: EnvironmentId.make("env_123"),
+              label: "Test Mac",
+            } as never),
           }),
         ),
         Effect.provideService(
@@ -1155,6 +1166,276 @@ describe("releaseManagedTunnelOnShutdown", () => {
             },
           });
         },
+      }),
+    );
+  });
+
+  describe("SpecWithCode Connect origin", () => {
+    const ownHost = `prod-${managedEndpointHashFor("prod", "user-123", "env_123")}.spec-weave.com`;
+    const ownOrigin = `https://${ownHost}`;
+    const tunnelConfig = {
+      providerKind: "cloudflare_tunnel",
+      connectorToken: "token",
+      tunnelId: "tunnel",
+    } as const;
+    const endpointFor = (host: string) => ({
+      httpBaseUrl: `https://${host}/`,
+      wsBaseUrl: `wss://${host}/ws`,
+      providerKind: "cloudflare_tunnel" as const,
+    });
+    const mintPublicKey = () =>
+      NodeCrypto.generateKeyPairSync("ed25519")
+        .publicKey.export({ type: "spki", format: "pem" })
+        .toString();
+    const storedOrigin = (values: Map<string, Uint8Array>) => {
+      const bytes = values.get(CLOUD_ENDPOINT_PUBLIC_ORIGIN);
+      return bytes === undefined
+        ? null
+        : Option.getOrNull(decodePublicOrigin(new TextDecoder().decode(bytes)));
+    };
+    const relayEnv = Effect.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnv({ env: { STUDIO_RELAY_URL: "https://relay.spec-weave.com" } }),
+      ),
+    );
+
+    it.effect("a CLI link stores the managed endpoint the relay assigned", () => {
+      const { store, values } = makeMemorySecretStore([[CLOUD_CLI_DESIRED_LINK_SECRET, "managed"]]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      const cloudMintPublicKey = mintPublicKey();
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        expect(yield* link.reconcileDesiredLink("http://127.0.0.1:8319")).toBe("managed");
+        expect(requests.map((request) => request.url)).toEqual([
+          "https://relay.spec-weave.com/v1/client/environment-link-challenges",
+          "https://relay.spec-weave.com/v1/client/environment-links",
+        ]);
+        expect(storedOrigin(values)).toMatchObject({ origin: ownOrigin, source: "link" });
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          respond: () =>
+            requests.length === 1
+              ? Response.json({ challenge: "challenge", expiresAt: "2030-01-01T00:00:00Z" })
+              : Response.json({
+                  ok: true,
+                  cloudUserId: "user-123",
+                  environmentId: "env_123",
+                  endpoint: endpointFor(ownHost),
+                  endpointRuntime: tunnelConfig,
+                  relayIssuer: "https://relay.spec-weave.com",
+                  environmentCredential: "environment-credential",
+                  cloudMintPublicKey,
+                }),
+        }),
+        relayEnv,
+      );
+    });
+
+    it.effect("a publish-only CLI link stores no origin", () => {
+      const { store, values } = makeMemorySecretStore([
+        [CLOUD_CLI_DESIRED_LINK_SECRET, "publish_only"],
+        [
+          CLOUD_ENDPOINT_PUBLIC_ORIGIN,
+          JSON.stringify({ origin: ownOrigin, source: "link", recordedAt: "x" }),
+        ],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      const cloudMintPublicKey = mintPublicKey();
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        expect(yield* link.reconcileDesiredLink("http://127.0.0.1:8319")).toBe("publish_only");
+        expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          respond: () =>
+            requests.length === 1
+              ? Response.json({ challenge: "challenge", expiresAt: "2030-01-01T00:00:00Z" })
+              : Response.json({
+                  ok: true,
+                  cloudUserId: "user-123",
+                  environmentId: "env_123",
+                  endpoint: {
+                    httpBaseUrl: "http://127.0.0.1:8319/",
+                    wsBaseUrl: "ws://127.0.0.1:8319/ws",
+                    providerKind: "manual",
+                  },
+                  endpointRuntime: null,
+                  relayIssuer: "https://relay.spec-weave.com",
+                  environmentCredential: "environment-credential",
+                  cloudMintPublicKey,
+                }),
+        }),
+        relayEnv,
+      );
+    });
+
+    it.effect("tunnel recovery stores the recovered endpoint", () => {
+      const { store, values } = makeMemorySecretStore([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(tunnelConfig)],
+        [RELAY_URL_SECRET, "https://relay.spec-weave.com"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        expect(yield* link.recoverManagedTunnel("http://127.0.0.1:8319")).toBe(true);
+        expect(storedOrigin(values)).toMatchObject({ origin: ownOrigin, source: "recovery" });
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          respond: () =>
+            Response.json({
+              endpoint: endpointFor(ownHost),
+              endpointRuntime: { ...tunnelConfig, connectorToken: "new-token" },
+            }),
+        }),
+      );
+    });
+
+    const clientLink = (host: string) => ({
+      relayUrl: "https://relay.spec-weave.com",
+      relayIssuer: "https://relay.spec-weave.com",
+      cloudUserId: "user-123",
+      environmentCredential: "environment-credential",
+      cloudMintPublicKey: mintPublicKey(),
+      endpointRuntime: tunnelConfig,
+      endpoint: endpointFor(host),
+    });
+
+    it.effect("a client-relayed endpoint is kept only when its hash names this link", () => {
+      const { store, values } = makeMemorySecretStore();
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        yield* link.applyRelayConfig(clientLink(ownHost));
+        expect(storedOrigin(values)).toMatchObject({ origin: ownOrigin, source: "client" });
+
+        // Another link's hostname (other user) is dropped, and the old value with it.
+        const otherHost = `prod-${managedEndpointHashFor("prod", "user-999", "env_123")}.spec-weave.com`;
+        yield* link.applyRelayConfig(clientLink(otherHost));
+        expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
+
+        // A lookalike host is dropped too.
+        yield* link.applyRelayConfig(clientLink(`${ownHost}.evil.com`));
+        expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          respond: () => Response.json({ status: "ready" }),
+        }),
+      );
+    });
+
+    it.effect("unlink and clearing the CLI link remove it; a shutdown release keeps it", () => {
+      const origin = JSON.stringify({ origin: ownOrigin, source: "link", recordedAt: "x" });
+      const { store, values } = makeMemorySecretStore([
+        ...managedLinkSecrets,
+        [CLOUD_ENDPOINT_PUBLIC_ORIGIN, origin],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(true);
+        expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(true);
+
+        yield* link.unlink();
+        expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
+
+        values.set(CLOUD_ENDPOINT_PUBLIC_ORIGIN, new TextEncoder().encode(origin));
+        yield* clearPersistedCloudLink.pipe(
+          Effect.provideService(ServerSecretStore.ServerSecretStore, store),
+        );
+        expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    });
+
+    const readOrigin = (entries: Iterable<readonly [string, string]>) =>
+      readConnectOrigin.pipe(
+        Effect.provideService(
+          ServerSecretStore.ServerSecretStore,
+          makeMemorySecretStore(entries).store,
+        ),
+        Effect.provideService(
+          ServerEnvironment.ServerEnvironment,
+          ServerEnvironment.ServerEnvironment.of({
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
+            getDescriptor: Effect.die("unused"),
+          }),
+        ),
+      );
+    const managedLink = [
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(tunnelConfig)],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_URL_SECRET, "https://relay.spec-weave.com"],
+    ] as const;
+
+    it.effect("readConnectOrigin prefers the stored origin and derives it for prod", () =>
+      Effect.gen(function* () {
+        expect(yield* readOrigin(managedLink)).toBe(ownOrigin);
+        const stored = "https://prod-00000000000000aa.spec-weave.com";
+        expect(
+          yield* readOrigin([
+            ...managedLink,
+            [
+              CLOUD_ENDPOINT_PUBLIC_ORIGIN,
+              JSON.stringify({ origin: stored, source: "recovery", recordedAt: "x" }),
+            ],
+          ]),
+        ).toBe(stored);
+        // A stored value that is not a Connect origin falls back to the derived one.
+        expect(
+          yield* readOrigin([
+            ...managedLink,
+            [
+              CLOUD_ENDPOINT_PUBLIC_ORIGIN,
+              JSON.stringify({
+                origin: "https://relay.spec-weave.com",
+                source: "link",
+                recordedAt: "x",
+              }),
+            ],
+          ]),
+        ).toBe(ownOrigin);
+      }),
+    );
+
+    it.effect("readConnectOrigin is null when unlinked, publish-only or on a staging relay", () =>
+      Effect.gen(function* () {
+        expect(yield* readOrigin([])).toBeNull();
+        // Publish-only: linked, but no tunnel runtime.
+        expect(
+          yield* readOrigin([
+            [CLOUD_LINKED_USER_ID, "user-123"],
+            [RELAY_URL_SECRET, "https://relay.spec-weave.com"],
+            [
+              CLOUD_ENDPOINT_PUBLIC_ORIGIN,
+              JSON.stringify({ origin: ownOrigin, source: "link", recordedAt: "x" }),
+            ],
+          ]),
+        ).toBeNull();
+        expect(
+          yield* readOrigin([
+            [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(tunnelConfig)],
+            [CLOUD_LINKED_USER_ID, "user-123"],
+            [RELAY_URL_SECRET, "https://relay-staging.spec-weave.com"],
+          ]),
+        ).toBeNull();
       }),
     );
   });

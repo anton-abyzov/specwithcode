@@ -7,15 +7,24 @@ import {
   type AuthEnvironmentScope,
   EnvironmentId,
 } from "@specweave-studio/contracts";
+import { parseFleetOrigin } from "./fleet/fleetOrigin.ts";
+import { loadOrCreateFleetProofKey, tokenProofThumbprint } from "./fleet/fleetProofKey.ts";
+import {
+  type FleetLink,
+  fleetRequest,
+  makeFleetLink,
+  reachFleetMachine,
+  toFleetLink,
+} from "./fleet/fleetTransport.ts";
 import { join } from "./nodePath.ts";
 import {
   assertManagementTokenCanPair,
-  checkIdentity,
   FLEET_CONFIG_FILE,
   type FleetFetch,
   FleetError,
   type FleetTarget,
   parseFleetConfig,
+  readBoundedJson,
   readFleetConfigSource,
 } from "./studioFleet.ts";
 import {
@@ -25,22 +34,51 @@ import {
 } from "./fleet/workerGrantMint.ts";
 
 /**
- * A machine's invitation to join a fleet: its private Tailscale HTTPS address,
- * its pinned environment id and a management token that lets the primary
- * server mint short-lived pairings there. Made by `fleet invite` on that
+ * A machine's invitation to join a fleet, made by `fleet invite` on that
  * machine and pasted into `fleet add` (or Settings) on the primary.
+ *
+ * v1: its private Tailscale HTTPS address, its pinned environment id and a
+ * management token that lets the primary mint short-lived pairings there.
+ * Tailscale only: a bearer token never travels over a Connect address.
  */
-export interface FleetJoin {
+export interface FleetJoinV1 {
+  readonly v?: 1;
   readonly url: string;
   readonly environmentId: string;
   readonly label: string;
   readonly managementToken: string;
 }
 
+/**
+ * v2: the machine's addresses (a tailnet `url` with an optional Connect
+ * `connectUrl`, or a Connect `url` alone) and a one-time `redeem` credential
+ * the primary exchanges, with a proof of its fleet key, for a management token
+ * bound to that key. The line itself carries no bearer.
+ */
+export interface FleetJoinV2 {
+  readonly v: 2;
+  readonly url: string;
+  readonly connectUrl?: string;
+  readonly environmentId: string;
+  readonly label: string;
+  readonly redeem: string;
+}
+
+export type FleetJoin = FleetJoinV1 | FleetJoinV2;
+
+export const isFleetJoinV2 = (join: FleetJoin): join is FleetJoinV2 => join.v === 2;
+
 export const FLEET_JOIN_PREFIX = "swc-machine-";
 
 export class FleetJoinError extends Error {
-  readonly kind: "invalid-code" | "address-in-use" | "id-in-use" | "unknown-machine" | "write";
+  readonly kind:
+    | "invalid-code"
+    | "address-in-use"
+    | "id-in-use"
+    | "unknown-machine"
+    | "write"
+    | "invitation-used"
+    | "coordinator-unknown";
   constructor(kind: FleetJoinError["kind"]) {
     super(
       {
@@ -50,6 +88,10 @@ export class FleetJoinError extends Error {
         "id-in-use": "Another configured machine already uses this name.",
         "unknown-machine": "No configured machine has that name.",
         write: "The private machine list could not be saved.",
+        "invitation-used":
+          "This invitation was already used, has expired, or was made for a different main machine. On that machine choose Invite this machine again and add the new line here.",
+        "coordinator-unknown":
+          "Start SpecWithCode on this machine first: adding this machine needs its environment ID.",
       }[kind],
     );
     this.kind = kind;
@@ -60,8 +102,33 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 export function encodeFleetJoinCode(join: FleetJoin): string {
-  const body = JSON.stringify({ v: 1, ...join });
+  let body: string;
+  if (isFleetJoinV2(join)) {
+    body = JSON.stringify({
+      v: 2,
+      environmentId: join.environmentId,
+      label: join.label,
+      url: join.url,
+      ...(join.connectUrl === undefined ? {} : { connectUrl: join.connectUrl }),
+      redeem: join.redeem,
+    });
+  } else {
+    const { v: _v, ...rest } = join;
+    body = JSON.stringify({ v: 1, ...rest });
+  }
   return FLEET_JOIN_PREFIX + Buffer.from(body, "utf8").toString("base64url");
+}
+
+const exactKeys = (value: Record<string, unknown>, allowed: ReadonlyArray<string>) =>
+  Object.keys(value).every((key) => allowed.includes(key));
+
+/** The machine line a join names, checked by the fleet file's own rules. */
+function checkJoinMachine(machine: Record<string, unknown>): FleetTarget {
+  try {
+    return parseFleetConfig({ version: 1, machines: [{ id: "invite", ...machine }] }).machines[0]!;
+  } catch {
+    throw new FleetJoinError("invalid-code");
+  }
 }
 
 /** Accepts the code with surrounding whitespace or line breaks from a terminal copy. */
@@ -79,32 +146,57 @@ export function decodeFleetJoinCode(code: string): FleetJoin {
   }
   if (
     !isRecord(value) ||
-    value.v !== 1 ||
-    !Object.keys(value).every((key) =>
-      ["v", "url", "environmentId", "label", "managementToken"].includes(key),
-    ) ||
     typeof value.url !== "string" ||
     typeof value.environmentId !== "string" ||
-    typeof value.label !== "string" ||
-    typeof value.managementToken !== "string"
+    typeof value.label !== "string"
   )
     throw new FleetJoinError("invalid-code");
-  const join = {
-    url: value.url,
-    environmentId: value.environmentId,
-    label: value.label,
-    managementToken: value.managementToken,
-  };
-  // The same rules as the fleet file: private *.ts.net HTTPS only, no stray characters.
-  try {
-    const [parsed] = parseFleetConfig({
-      version: 1,
-      machines: [{ id: "invite", ...join }],
-    }).machines;
-    return { ...join, url: parsed!.url };
-  } catch {
-    throw new FleetJoinError("invalid-code");
+  if (value.v === 1) {
+    if (
+      !exactKeys(value, ["v", "url", "environmentId", "label", "managementToken"]) ||
+      typeof value.managementToken !== "string"
+    )
+      throw new FleetJoinError("invalid-code");
+    const join = {
+      url: value.url,
+      environmentId: value.environmentId,
+      label: value.label,
+      managementToken: value.managementToken,
+    };
+    // The same rules as the fleet file, and Tailscale only: a v1 line carries a
+    // bearer token, which is never sent over a Connect address.
+    const parsed = checkJoinMachine(join);
+    if (parseFleetOrigin(parsed.url)?.transport !== "tailnet")
+      throw new FleetJoinError("invalid-code");
+    return { ...join, url: parsed.url };
   }
+  if (value.v === 2) {
+    if (
+      !exactKeys(value, ["v", "url", "connectUrl", "environmentId", "label", "redeem"]) ||
+      (value.connectUrl !== undefined && typeof value.connectUrl !== "string") ||
+      typeof value.redeem !== "string" ||
+      value.redeem.length === 0 ||
+      value.redeem.length > 8192 ||
+      /\s/u.test(value.redeem)
+    )
+      throw new FleetJoinError("invalid-code");
+    // connectUrl only beside a tailnet url; a lone url may be either.
+    const parsed = checkJoinMachine({
+      url: value.url,
+      ...(value.connectUrl === undefined ? {} : { connectUrl: value.connectUrl }),
+      environmentId: value.environmentId,
+      label: value.label,
+    });
+    return {
+      v: 2,
+      url: parsed.url,
+      ...(parsed.connectUrl === undefined ? {} : { connectUrl: parsed.connectUrl }),
+      environmentId: value.environmentId,
+      label: value.label,
+      redeem: value.redeem,
+    };
+  }
+  throw new FleetJoinError("invalid-code");
 }
 
 /** A lowercase machine id from its label, unique among `taken`. */
@@ -164,6 +256,8 @@ export interface FleetAddResult {
   readonly change: "added" | "updated";
   /** The machine was configured before at another address. */
   readonly previousUrl?: string;
+  /** The machine's SpecWithCode Connect address, when the invitation carried one. */
+  readonly connectUrl?: string;
 }
 
 /**
@@ -177,26 +271,67 @@ export async function addFleetMachine(input: {
   readonly code: string;
   readonly id?: string | undefined;
   readonly label?: string | undefined;
+  /** How the machine is reached; a bare fetch works too. */
+  readonly link?: FleetLink | FleetFetch;
+  /** Older name for `link`. */
   readonly fetcher?: FleetFetch;
+  /** This machine's environment id; a v2 invitation is redeemed for it. */
+  readonly localEnvironmentId?: string | undefined;
 }): Promise<FleetAddResult> {
   const invite = decodeFleetJoinCode(input.code);
+  const fetcher = input.link ?? input.fetcher ?? fetch;
   const source = (await readFleetConfigSource(input.baseDir)) ?? { version: 1, machines: [] };
   parseFleetConfig(source);
   const document = source as Record<string, unknown> & {
     machines: Array<Record<string, unknown>>;
   };
-  const descriptor = await checkIdentity(input.fetcher ?? fetch, {
-    url: invite.url,
-    environmentId: EnvironmentId.make(invite.environmentId),
-  });
-  const label = (input.label ?? invite.label).trim() || descriptor.label;
+  const environmentId = EnvironmentId.make(invite.environmentId);
+  const connectUrl = isFleetJoinV2(invite) ? invite.connectUrl : undefined;
+  const origins = connectUrl === undefined ? [invite.url] : [invite.url, connectUrl];
   const index = document.machines.findIndex(
     (machine) => machine.environmentId === invite.environmentId,
   );
+  const originOf = (value: unknown) => {
+    try {
+      return typeof value === "string" ? new URL(value).origin : null;
+    } catch {
+      return null;
+    }
+  };
+  // File checks come before anything is sent: a v2 line is spent by redeeming it.
   const sameUrl = document.machines.findIndex(
-    (machine) => typeof machine.url === "string" && new URL(machine.url).origin === invite.url,
+    (machine) =>
+      origins.includes(originOf(machine.url) ?? "") ||
+      origins.includes(originOf(machine.connectUrl) ?? ""),
   );
   if (sameUrl !== -1 && sameUrl !== index) throw new FleetJoinError("address-in-use");
+  const taken = new Set(document.machines.map((machine) => String(machine.id)));
+  if (index === -1 && input.id !== undefined && taken.has(input.id))
+    throw new FleetJoinError("id-in-use");
+  if (isFleetJoinV2(invite) && !input.localEnvironmentId)
+    throw new FleetJoinError("coordinator-unknown");
+
+  const machine = {
+    url: invite.url,
+    ...(connectUrl === undefined ? {} : { connectUrl }),
+    environmentId,
+  };
+  // A v2 line redeems with this machine's fleet key, so the link must know it.
+  const link =
+    isFleetJoinV2(invite) && typeof fetcher === "function"
+      ? makeFleetLink({ fetch: fetcher, baseDir: input.baseDir })
+      : toFleetLink(fetcher);
+  const reached = await reachFleetMachine(link, machine);
+  const label = (input.label ?? invite.label).trim() || reached.machineName || invite.label;
+  const managementToken = isFleetJoinV2(invite)
+    ? await redeemFleetInvitation({
+        baseDir: input.baseDir,
+        link,
+        machine,
+        redeem: invite.redeem,
+        coordinatorEnvironmentId: input.localEnvironmentId!,
+      })
+    : invite.managementToken;
   // An invitation whose token cannot open sessions there would be saved as
   // "Added" yet never connect, so check it before writing anything.
   const wantedScopes = (
@@ -204,21 +339,19 @@ export async function addFleetMachine(input: {
       ? document.machines[index]!.scopes
       : AuthStandardClientScopes
   ) as ReadonlyArray<AuthEnvironmentScope>;
-  await assertManagementTokenCanPair(
-    input.fetcher ?? fetch,
-    { url: invite.url, managementToken: invite.managementToken },
-    wantedScopes,
-  );
+  await assertManagementTokenCanPair(link, { ...machine, managementToken }, wantedScopes);
 
   let result: FleetAddResult;
   const machines = [...document.machines];
   if (index !== -1) {
     const previous = machines[index]!;
     const previousUrl = new URL(String(previous.url)).origin;
+    const { connectUrl: _previousConnect, ...kept } = previous;
     const next: Record<string, unknown> = {
-      ...previous,
+      ...kept,
       url: invite.url,
-      managementToken: invite.managementToken,
+      ...(connectUrl === undefined ? {} : { connectUrl }),
+      managementToken,
       ...(input.label === undefined ? {} : { label }),
     };
     machines[index] = next;
@@ -226,26 +359,27 @@ export async function addFleetMachine(input: {
       id: String(next.id),
       label: String(next.label),
       url: invite.url,
-      environmentId: EnvironmentId.make(invite.environmentId),
+      ...(connectUrl === undefined ? {} : { connectUrl }),
+      environmentId,
       change: "updated",
       ...(previousUrl === invite.url ? {} : { previousUrl }),
     };
   } else {
-    const taken = new Set(document.machines.map((machine) => String(machine.id)));
-    if (input.id !== undefined && taken.has(input.id)) throw new FleetJoinError("id-in-use");
     const id = input.id ?? fleetMachineIdFor(label, taken);
     machines.push({
       id,
       label,
       environmentId: invite.environmentId,
       url: invite.url,
-      managementToken: invite.managementToken,
+      ...(connectUrl === undefined ? {} : { connectUrl }),
+      managementToken,
     });
     result = {
       id,
       label,
       url: invite.url,
-      environmentId: EnvironmentId.make(invite.environmentId),
+      ...(connectUrl === undefined ? {} : { connectUrl }),
+      environmentId,
       change: "added",
     };
   }
@@ -257,6 +391,62 @@ export async function addFleetMachine(input: {
   }
   await writeFleetConfigSource(input.baseDir, next);
   return result;
+}
+
+/**
+ * Spends a v2 line's one-time credential on the machine for a management
+ * token bound to this machine's fleet key, proving the key with the request.
+ * A token that comes back unbound, or bound to another key, is refused.
+ */
+async function redeemFleetInvitation(input: {
+  readonly baseDir: string;
+  readonly link: FleetLink;
+  readonly machine: Pick<FleetTarget, "url" | "connectUrl" | "environmentId">;
+  readonly redeem: string;
+  readonly coordinatorEnvironmentId: string;
+}): Promise<string> {
+  const key = await loadOrCreateFleetProofKey(input.baseDir).catch(() => {
+    throw new FleetError("connect-key-missing");
+  });
+  const address = await reachFleetMachine(input.link, input.machine);
+  const url = `${address.origin}/api/studio/fleet/invitation/redeem`;
+  let response: Response;
+  try {
+    response = await input.link.fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        dpop: await key.proof({ method: "POST", url }),
+      },
+      body: JSON.stringify({
+        credential: input.redeem,
+        coordinatorEnvironmentId: input.coordinatorEnvironmentId,
+      }),
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new FleetError("unreachable");
+  }
+  if (response.status === 401 || response.status === 400) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new FleetJoinError("invitation-used");
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new FleetError("unreachable");
+  }
+  const body = await readBoundedJson(response).catch(() => null);
+  const token = isRecord(body) ? body.managementToken : undefined;
+  if (
+    typeof token !== "string" ||
+    token.length === 0 ||
+    token.length > 8192 ||
+    /\s/u.test(token) ||
+    tokenProofThumbprint(token) !== key.thumbprint
+  )
+    throw new FleetError("pairing-unavailable");
+  return token;
 }
 
 /** Removes a configured machine by id or label. Workers allowed there stay until revoked there. */
@@ -309,18 +499,16 @@ const REVOKE_TIMEOUT_MS = 10_000;
  * endpoint keeps it (it lapses at expiry or is revoked there by hand).
  */
 export async function revokeManagementToken(
-  fetcher: FleetFetch,
-  target: Pick<FleetTarget, "url" | "environmentId" | "managementToken">,
+  fetcher: FleetLink | FleetFetch,
+  target: Pick<FleetTarget, "url" | "connectUrl" | "environmentId" | "managementToken">,
 ): Promise<{ readonly result: FleetRemoteRevoke; readonly sessionId: string | null }> {
   if (!target.managementToken) return { result: "none", sessionId: null };
   const sessionId = sessionIdOfToken(target.managementToken) ?? null;
   try {
-    await checkIdentity(fetcher, target);
-    const response = await fetcher(`${target.url}/api/auth/session/revoke`, {
+    const { response } = await fleetRequest(fetcher, target, "/api/auth/session/revoke", {
       method: "POST",
-      headers: { authorization: `Bearer ${target.managementToken}` },
-      redirect: "error",
-      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
+      token: target.managementToken,
+      timeoutMs: REVOKE_TIMEOUT_MS,
     });
     // 401: that machine no longer honors the token, which is the outcome wanted.
     if (response.status === 200 || response.status === 401) return { result: "revoked", sessionId };
@@ -339,7 +527,7 @@ export async function revokeManagementToken(
 export async function removeFleetMachineEverywhere(input: {
   readonly baseDir: string;
   readonly machine: string;
-  readonly fetcher: FleetFetch;
+  readonly fetcher: FleetLink | FleetFetch;
   readonly revokeWorkerAccess: (target: FleetTarget) => Promise<FleetRemoteRevoke>;
   /** Revokes the phone sessions this machine linked there; must not throw. */
   readonly unlinkPhones?: (target: FleetTarget) => Promise<void>;
@@ -371,18 +559,16 @@ export async function removeFleetMachineEverywhere(input: {
  * which has no running grant store; the server uses its own.
  */
 export async function revokeWorkerAccessByLabel(
-  fetcher: FleetFetch,
+  fetcher: FleetLink | FleetFetch,
   target: FleetTarget,
   localEnvironmentId: string | undefined,
 ): Promise<FleetRemoteRevoke> {
   if (!target.managementToken || localEnvironmentId === undefined) return "kept";
-  try {
-    await checkIdentity(fetcher, target);
-  } catch {
-    return "kept";
-  }
+  // The link carries this machine's proof key, so a bound token goes over
+  // any address as DPoP and an unbound one only over the tailnet
+  // (`fleetAuthorization`); an unreachable machine is reported as kept.
   const swept = await revokeWorkerSessions({
-    fetcher,
+    link: toFleetLink(fetcher),
     target,
     clientName: workerClientName(localEnvironmentId),
     keepNewest: false,

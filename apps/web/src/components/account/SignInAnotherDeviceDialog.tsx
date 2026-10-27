@@ -289,7 +289,6 @@ export function SignInAnotherDeviceDialog({
           <Button onClick={openConnections} variant="outline">
             Connections and devices
           </Button>
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

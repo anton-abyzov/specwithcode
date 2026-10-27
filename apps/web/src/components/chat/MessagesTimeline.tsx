@@ -34,6 +34,7 @@ import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } 
 import {
   formatActivityDuration,
   isQuiet,
+  liveActivityRunId,
   runLiveSignal,
   liveStepStartedAtMs,
   quietForMs,
@@ -1643,7 +1644,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     latestRun?.startedAt != null
       ? worktreeSetup
       : null;
-  const activityRunId = isWorking ? (runningRunId ?? latestRun?.runId ?? null) : null;
+  const activityRunId = liveActivityRunId({ isWorking, runningRunId, latestRun });
   const runSignal = useMemo(
     () => runLiveSignal(recoveryItems, activityRunId),
     [activityRunId, recoveryItems],

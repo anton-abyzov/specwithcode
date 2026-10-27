@@ -86,11 +86,13 @@ it("opens a named modal for native controls, without another conversation or mes
   expect(dialog.textContent).toContain("Coordinator requests");
   expect(dialog.textContent).not.toContain("Back to coordinator");
   expect(dialog.querySelector("textarea")).toBeNull();
-  expect(document.activeElement?.textContent).toBe("Close review");
+  expect(document.activeElement?.getAttribute("aria-label")).toBe("Close");
   await click("Answer native question");
   expect(native.answer).toHaveBeenCalledOnce();
   expect(routing.send).not.toHaveBeenCalled();
-  await click("Close review");
+  await act(async () =>
+    document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click(),
+  );
   expect(document.activeElement).toBe(trigger);
 });
 it("Escape dismisses review and restores the originating control", async () => {

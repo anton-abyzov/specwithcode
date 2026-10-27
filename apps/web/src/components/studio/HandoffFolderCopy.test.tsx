@@ -732,13 +732,19 @@ it("keeps live actions in the real dialog footer through measurement, preview, a
     "You can close this window; you'll get a notice when it's done.",
   );
   expect(document.body.textContent).toContain("Close keeps the copy going; Cancel copy stops it.");
-  expect(dialogButton("Close").disabled).toBe(false);
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
+      ?.disabled,
+  ).toBe(false);
   expect(document.querySelector('[data-slot="dialog-close"][aria-label="Close"]')).not.toBeNull();
   expect(names().filter((name) => name === "copyOffer")).toHaveLength(1);
   // One click: comparing starts as soon as measuring finishes.
   await act(async () => finishOffer());
   expect(dialogButton("Comparing folders…").disabled).toBe(true);
-  expect(dialogButton("Close").disabled).toBe(false);
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
+      ?.disabled,
+  ).toBe(false);
   expect(document.body.textContent).toContain("You can close this window.");
   await act(async () => finishPreview());
   // The secret-like .env keeps the secrets choice in front of the person.
@@ -751,8 +757,15 @@ it("keeps live actions in the real dialog footer through measurement, preview, a
     });
   await dialogClick("Copy to M3");
   expect(dialogButton("Copying files…").disabled).toBe(true);
-  expect(dialogButton("Close").disabled).toBe(false);
-  await dialogClick("Close");
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
+      ?.disabled,
+  ).toBe(false);
+  await act(async () =>
+    document
+      .querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')!
+      .click(),
+  );
   expect(onDialogClose).toHaveBeenCalledExactlyOnceWith(false);
   // Closing never cancels the copy.
   expect(names()).not.toContain("copyCancel");
@@ -1271,7 +1284,6 @@ it("keeps the dialog open only while coordinator context transfers", async () =>
   await dialogClick("Copy to M3");
   await dialogClick("Copy and transfer context to M3");
   expect(dialogButton("Transferring context…").disabled).toBe(true);
-  expect(dialogButton("Close").disabled).toBe(true);
   expect(document.querySelector('[data-slot="dialog-close"][aria-label="Close"]')).toBeNull();
   expect(document.body.textContent).not.toContain("You can close this window.");
   state.handlers.prepare = prepare;
@@ -1280,7 +1292,10 @@ it("keeps the dialog open only while coordinator context transfers", async () =>
   expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
     "The coordinator continues",
   );
-  expect(dialogButton("Close").disabled).toBe(false);
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
+      ?.disabled,
+  ).toBe(false);
 });
 
 it("keeps measuring when the dialog closes and resumes the same operation when reopened", async () => {

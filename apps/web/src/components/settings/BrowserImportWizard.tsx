@@ -10,7 +10,6 @@ import { cn, randomUUID } from "~/lib/utils";
 import { Button } from "../ui/button";
 import {
   Dialog,
-  DialogClose,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -166,16 +165,11 @@ export function BrowserImportWizard({
         ) : step.step === "checking" ? (
           <CheckingStep sourceName={source.name} check={step.check} />
         ) : step.step === "done" ? (
-          <DoneStep
-            {...step}
-            destinationEnvironmentName={destinationEnvironmentName}
-            onClose={onClose}
-          />
+          <DoneStep {...step} destinationEnvironmentName={destinationEnvironmentName} />
         ) : step.step === "blocked" ? (
           <BlockedStep
             source={source}
             reason={step.reason}
-            onClose={onClose}
             onRetry={isRetryableReason(step.reason) ? runImport : undefined}
           />
         ) : (
@@ -535,14 +529,12 @@ function DoneStep({
   skippedDomains,
   targetName,
   destinationEnvironmentName,
-  onClose,
 }: {
   readonly imported: number;
   readonly skipped: number;
   readonly skippedDomains: ReadonlyArray<string>;
   readonly targetName: string;
   readonly destinationEnvironmentName: string;
-  readonly onClose: () => void;
 }) {
   return (
     <>
@@ -570,11 +562,6 @@ function DoneStep({
           <p className="mt-1 text-sm text-foreground">{formatSkippedDomains(skippedDomains)}</p>
         </DialogPanel>
       ) : null}
-      <DialogFooter>
-        <DialogClose render={<Button />} onClick={onClose}>
-          Done
-        </DialogClose>
-      </DialogFooter>
     </>
   );
 }
@@ -582,12 +569,10 @@ function DoneStep({
 function BlockedStep({
   source,
   reason,
-  onClose,
   onRetry,
 }: {
   readonly source: BrowserImportSource;
   readonly reason: keyof typeof BROWSER_IMPORT_FAILURE_COPY;
-  readonly onClose: () => void;
   readonly onRetry: (() => void) | undefined;
 }) {
   return (
@@ -596,12 +581,11 @@ function BlockedStep({
         <DialogTitle>Couldn&rsquo;t import from {source.name}</DialogTitle>
         <DialogDescription>{BROWSER_IMPORT_FAILURE_COPY[reason]}</DialogDescription>
       </DialogHeader>
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>
-          Close
-        </Button>
-        {onRetry ? <Button onClick={onRetry}>Try again</Button> : null}
-      </DialogFooter>
+      {onRetry ? (
+        <DialogFooter>
+          <Button onClick={onRetry}>Try again</Button>
+        </DialogFooter>
+      ) : null}
     </>
   );
 }

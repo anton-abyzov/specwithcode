@@ -859,16 +859,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                   </div>
                 ) : null}
               </DialogPanel>
-              <DialogFooter variant="bare">
-                <Button variant="outline" onClick={() => setIsRevealDialogOpen(false)}>
-                  Done
-                </Button>
-                {canCopyToClipboard ? (
-                  <Button variant="outline" onClick={handleCopyCode}>
-                    Copy code
-                  </Button>
-                ) : null}
-              </DialogFooter>
+              {canCopyToClipboard ? (
+                <DialogFooter variant="bare">
+                  <Button onClick={handleCopyCode}>Copy code</Button>
+                </DialogFooter>
+              ) : null}
             </DialogPopup>
           </Dialog>
           <Button

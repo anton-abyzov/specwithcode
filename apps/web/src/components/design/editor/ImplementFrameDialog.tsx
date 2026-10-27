@@ -131,7 +131,7 @@ export function ImplementFrameDialog({
           </div>
         </DialogPanel>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button disabled={target === null || sending} onClick={() => void send()}>

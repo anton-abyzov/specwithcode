@@ -93,6 +93,10 @@ CHUNK_BYTES = 64 << 20
 FREE, SCHEMA = '(free)', '(schema)'
 TABLE_PAGES, INDEX_PAGES = (5, 13), (2, 10)
 READER_START_SECONDS, READER_STOP_SECONDS = 30, 10
+# Leaf and overflow pages adopt() may read to find the unchanged leaf that links to a changed overflow
+# page; 512 MiB of 4 KiB pages. A page it does not place in time refuses ('unowned-page').
+ORPHAN_SEARCH_PAGES = 1 << 17
+ORPHAN_NEAR_PAGES = 1 << 12  # How far either side of an orphan its leaf is looked for first.
 HOLD_SECONDS = 900  # A stop and clone that outlast it only cost the fast path: reader-lost, the full read decides.
 REFERENCE_PREFIX = '.page-proof-'
 
@@ -722,7 +726,7 @@ class _Proof:
         self.probes, self.db, self.clone_db, self.wal_fd, self.clone_fd, self.stop_fd = [], None, None, None, None, None
         self.cache, self.owners, self.overflow = {}, {'clone': {}, 'live': {}}, {'clone': set(), 'live': set()}
         self.leaves, self.ranges, self.kinds = {}, {}, {}
-        self.explained = self.leaves_verified = 0
+        self.explained = self.leaves_verified = self.adopted = 0
 
     def close(self):
         for connection in (self.db, self.clone_db):
@@ -743,6 +747,7 @@ class _Proof:
         self.compare_main()
         self.check_schema()
         self.walk()
+        self.adopt()
         touched = self.touched()
         reads = self.assemble(touched)
         if self.wal_fd is not None and os.pread(self.wal_fd, WAL_HEADER_BYTES, 0) != self.log_header:
@@ -751,6 +756,8 @@ class _Proof:
                   'mainPagesExplained': self.explained, 'touchedTables': sorted(touched),
                   'reusedTables': len(self.tables) - len(touched), 'leavesVerified': self.leaves_verified,
                   'gapPages': len(self.gap), 'referenceImage': bool(self.reference)}
+        if self.adopted:
+            record['overflowAdopted'] = self.adopted
         return reads, record
 
     # Pages of the two versions.
@@ -1018,6 +1025,41 @@ class _Proof:
         if seen != total:
             raise Refused('freelist')
 
+    def cell_links(self, page, offset, kind):
+        """(rowid or None, overflow page count, first overflow page or 0) of each cell of a b-tree
+        page other than a table interior page."""
+        cells = struct.unpack_from('>H', page, offset + 3)[0]
+        for pointer in struct.unpack_from('>%dH' % cells, page, offset + (12 if kind == 2 else 8)):
+            position = pointer + (4 if kind == 2 else 0)
+            payload, position = _varint(page, position)
+            rowid = None
+            if kind == 13:
+                rowid, position = _varint(page, position)
+                rowid = rowid - (1 << 64) if rowid >= 1 << 63 else rowid
+                limit = self.usable - 35
+            else:
+                limit = (self.usable - 12) * 64 // 255 - 23
+            if payload <= limit:
+                yield rowid, 0, 0
+                continue
+            least = (self.usable - 12) * 32 // 255 - 23
+            local = least + (payload - least) % (self.usable - 4)
+            if local > limit:
+                local = least
+            yield rowid, -(-(payload - local) // (self.usable - 4)), struct.unpack_from('>I', page, position + local)[0]
+
+    def chain(self, version, count, link):
+        """The `count` overflow pages from `link`, which must end the chain."""
+        pages = []
+        for _ in range(count):
+            if not link:
+                raise Refused('overflow-chain')
+            pages.append(link)
+            link = struct.unpack_from('>I', self.page(version, link), 0)[0]
+        if link:
+            raise Refused('overflow-chain')
+        return pages
+
     def cells(self, version, number, owner):
         """Overflow chains of a changed b-tree page's cells, claimed for its tree; a leaf's rowid range."""
         page = self.page(version, number)
@@ -1027,33 +1069,86 @@ class _Proof:
             raise Refused('tree-kind')
         if kind == 5:
             return
-        cells = struct.unpack_from('>H', page, offset + 3)[0]
         rowids = []
-        for pointer in struct.unpack_from('>%dH' % cells, page, offset + (12 if kind == 2 else 8)):
-            position = pointer + (4 if kind == 2 else 0)
-            payload, position = _varint(page, position)
-            if kind == 13:
-                rowid, position = _varint(page, position)
-                rowids.append(rowid - (1 << 64) if rowid >= 1 << 63 else rowid)
-                limit = self.usable - 35
-            else:
-                limit = (self.usable - 12) * 64 // 255 - 23
-            if payload <= limit:
-                continue
-            least = (self.usable - 12) * 32 // 255 - 23
-            local = least + (payload - least) % (self.usable - 4)
-            if local > limit:
-                local = least
-            link = struct.unpack_from('>I', page, position + local)[0]
-            for _ in range(-(-(payload - local) // (self.usable - 4))):
-                if not link:
-                    raise Refused('overflow-chain')
-                self.claim(version, link, owner, overflow=True)
-                link = struct.unpack_from('>I', self.page(version, link), 0)[0]
-            if link:
-                raise Refused('overflow-chain')
+        for rowid, count, link in self.cell_links(page, offset, kind):
+            if rowid is not None:
+                rowids.append(rowid)
+            for overflow in self.chain(version, count, link):
+                self.claim(version, overflow, owner, overflow=True)
         if rowids and number in self.changed:
             self.ranges.setdefault(owner, []).append((min(rowids), max(rowids)))
+
+    def adopt(self):
+        """Changed or gap pages no walked page claims. SQLite writes a row of the same size over the
+        old one in place (btreeOverwriteContent), so a row rewritten at its length changes only its
+        overflow pages, and its leaf is not among the changed pages: the new service settling a row at
+        startup does this (M4's 1.0.92 install refused 'unowned-page' and read in full for 120 s). Each such page is claimed for the tree whose unchanged leaf links to it,
+        and that row joins its table's compared rowid ranges, as a changed leaf's rows do."""
+        # The pages touched() would refuse: owned in neither version. One rewritten in place lies
+        # within the clone (its leaf points at the same chain in both versions); a page the file grew
+        # by is owned by a changed live leaf whenever it is used, so it is never searched for.
+        orphans = {number for number in self.paged if number != 1 and number <= self.clone_pages
+                   and not self.owners['clone'].get(number)
+                   and not (number in self.changed and self.owners['live'].get(number))}
+        if orphans:
+            self.find_owners('clone', orphans, self.paged)
+
+    def find_owners(self, version, orphans, walked):
+        """Reads unchanged leaves for cells whose overflow chain holds an orphan, within
+        ORPHAN_SEARCH_PAGES pages read: first the leaves nearest each orphan (a row and its overflow
+        pages are allocated together, and the rows a restart settles are recent), then every leaf of
+        the trees that own other changed pages, smallest first. Unplaced orphans stay unowned."""
+        budget, seen = [ORPHAN_SEARCH_PAGES], set()
+
+        def visit(number, owner):
+            if number in seen or number in walked:
+                return
+            seen.add(number)
+            budget[0] -= 1
+            page = self.page(version, number)
+            offset = 100 if number == 1 else 0
+            kind = page[offset]
+            if kind not in (10, 13) or kind not in self.kinds[owner]:
+                raise Refused('tree-kind')
+            for rowid, count, link in self.cell_links(page, offset, kind):
+                if not count or budget[0] <= 0:
+                    continue
+                budget[0] -= count
+                pages = self.chain(version, count, link)
+                if orphans.isdisjoint(pages):
+                    continue
+                for overflow in pages:
+                    self.claim(version, overflow, owner, overflow=True)
+                    if overflow in orphans:
+                        orphans.discard(overflow)
+                        self.adopted += 1
+                if rowid is not None:
+                    self.ranges.setdefault(owner, []).append((rowid, rowid))
+
+        # A log's rows never change in place (delta refuses 'old-log-row-changed'), so its leaves,
+        # most of the file on M4, are not searched: an orphan of a log stays unowned.
+        trees = [name for name, _, _, _ in self.trees if name != SCHEMA and self.tree_table[name] not in LOG_TABLES]
+        leaf_owner = {number: name for name in trees for number in self.leaves[version, name]}
+        if not leaf_owner:
+            return
+        near, lookups = sorted(orphans), 4 * ORPHAN_SEARCH_PAGES  # Page numbers looked up, bounded too.
+        for distance in range(min(ORPHAN_NEAR_PAGES, self.pages)):
+            for orphan in near:
+                if orphan not in orphans:
+                    continue
+                for number in (orphan - distance, orphan + distance):
+                    lookups -= 1
+                    owner = leaf_owner.get(number)
+                    if owner is not None:
+                        visit(number, owner)
+                if not orphans or budget[0] <= 0 or lookups <= 0:
+                    return
+        owning = set(self.owners[version].values())
+        for name in sorted((name for name in trees if name in owning), key=lambda name: len(self.leaves[version, name])):
+            for number in self.leaves[version, name]:
+                if not orphans or budget[0] <= 0:
+                    return
+                visit(number, name)
 
     def touched(self):
         """The tables a changed or gap page belongs to, after every refusal of step 2."""

@@ -159,6 +159,9 @@ export function fleetMachinesToAutoConnect(input: {
   return (input.snapshot?.machines ?? []).filter(
     (machine) =>
       machine.status === "reachable" &&
+      // Browser pairing needs the tailnet: the server refuses to hand this
+      // browser a code for a SpecWithCode Connect address.
+      machine.transport !== "connect" &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
       !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&
@@ -177,7 +180,7 @@ export function fleetMachinesAwaitingReach(input: {
 }): ReadonlyArray<StudioFleetMachine> {
   return (input.snapshot?.machines ?? []).filter(
     (machine) =>
-      machine.status === "unreachable" &&
+      (machine.status === "unreachable" || machine.transport === "connect") &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
       !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&

@@ -1211,6 +1211,47 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
+  // Version managers such as fnm put a per-shell symlink folder on PATH
+  // (/run/user/<uid>/fnm_multishells/<pid>_<ts>/bin), so the same npm resolves
+  // to a new path after every restart. Receipts key on the manager path, so key
+  // them on the real folder; it holds node too, so npm still runs from there.
+  const stableManagerPath = (managerPath: string) =>
+    fileSystem.realPath(path.dirname(managerPath)).pipe(
+      Effect.map((directory) => path.join(directory, path.basename(managerPath))),
+      Effect.orElseSucceed(() => managerPath),
+    );
+
+  // Receipts written before the key moved to the real folder name npm by the
+  // path PATH gave it. Carry a valid one over instead of reading it as
+  // unprepared, which would stop an installed agent from launching.
+  const migrateLegacyReceipt = (
+    agent: AcpRegistryAgent,
+    distribution: "npx" | "uvx",
+    packageSpec: string,
+    resolvedManagerPath: string,
+    managerPath: string,
+  ) =>
+    Effect.gen(function* () {
+      if (resolvedManagerPath === managerPath) return;
+      const current = yield* fileSystem.exists(
+        yield* packageReceiptPath(agent.id, distribution, managerPath),
+      );
+      if (current) return;
+      const legacy = yield* readPackageReceipt(
+        agent,
+        distribution,
+        packageSpec,
+        resolvedManagerPath,
+      ).pipe(
+        Effect.flatMap((found) =>
+          Option.isSome(found)
+            ? Effect.succeed(found)
+            : readRetainedPackageReceipt(agent, distribution, packageSpec, resolvedManagerPath),
+        ),
+      );
+      if (Option.isSome(legacy)) yield* writePackageReceipt({ ...legacy.value, managerPath });
+    }).pipe(Effect.ignore);
+
   const ensureGlobalPackage = Effect.fn("AcpRegistryCatalog.ensureGlobalPackage")(function* (
     agent: AcpRegistryAgent,
     distribution: "npx" | "uvx",
@@ -1219,17 +1260,19 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     allowInstall = true,
   ) {
     const managerName = packageManagerFor(distribution)!;
-    const managerPath = resolveExecutable(
+    const resolvedManagerPath = resolveExecutable(
       managerName,
       platform,
       requiresExplicitAcpPreparation(agent.id, packageSpec) ? hostEnvironment : environment,
     );
-    if (managerPath === undefined) {
+    if (resolvedManagerPath === undefined) {
       return yield* new AcpRegistryError({
         reason: "runner_unavailable",
         detail: `ACP Registry agent ${agent.id} requires '${managerName}', but it is not available on this environment's PATH.`,
       });
     }
+    const managerPath = yield* stableManagerPath(resolvedManagerPath);
+    yield* migrateLegacyReceipt(agent, distribution, packageSpec, resolvedManagerPath, managerPath);
     const receipt = yield* readPackageReceipt(agent, distribution, packageSpec, managerPath);
     if (Option.isSome(receipt) && distribution === "npx") return receipt.value;
     if (!allowInstall) {
@@ -1725,11 +1768,78 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       } satisfies AcpRegistrySearchResult;
     });
 
+  // A prepared package command lives in a versioned tools folder that only
+  // SpecWithCode terminals have on PATH. Link it into the user's own command
+  // folder so a system terminal or SSH session on this machine runs it by name
+  // too. A command the user put there themselves is never replaced.
+  const SHIM_MARKER = "@rem SpecWithCode managed command";
+  /** A link or shim this code made earlier, which it may update. */
+  const isManagedUserCommand = (commandPath: string) =>
+    platform === "win32"
+      ? fileSystem.readFileString(commandPath).pipe(
+          Effect.map((content) => content.startsWith(SHIM_MARKER)),
+          Effect.orElseSucceed(() => false),
+        )
+      : fileSystem.readLink(commandPath).pipe(
+          Effect.map((target) => target.startsWith(`${installsDirectory}${path.sep}`)),
+          Effect.orElseSucceed(() => false),
+        );
+  const exposeUserCommand = (executablePath: string) =>
+    Effect.gen(function* () {
+      const command = path.basename(executablePath);
+      // A command the machine already has elsewhere on PATH stays the one it runs.
+      const existing = resolveExecutable(command, platform, hostEnvironment);
+      if (
+        existing !== undefined &&
+        !existing.startsWith(`${installsDirectory}${path.sep}`) &&
+        !(yield* isManagedUserCommand(existing))
+      ) {
+        return;
+      }
+      if (platform === "win32") {
+        // On PATH for every Windows 10+ user without editing the environment.
+        const localAppData = hostEnvironment.LOCALAPPDATA;
+        if (!localAppData) return;
+        const directory = path.join(localAppData, "Microsoft", "WindowsApps");
+        if (!(yield* fileSystem.exists(directory))) return;
+        const shim = path.join(directory, `${command.replace(/\.(?:cmd|bat|exe)$/iu, "")}.cmd`);
+        const current = yield* fileSystem.readFileString(shim).pipe(Effect.option);
+        if (Option.isSome(current) && !current.value.startsWith(SHIM_MARKER)) return;
+        yield* fileSystem.writeFileString(
+          shim,
+          `${SHIM_MARKER}\r\n@call "${executablePath}" %*\r\n`,
+        );
+        return;
+      }
+      const home = hostEnvironment.HOME;
+      if (!home) return;
+      const directory = path.join(home, ".local", "bin");
+      const link = path.join(directory, command);
+      const current = yield* fileSystem.readLink(link).pipe(Effect.option);
+      if (Option.isSome(current)) {
+        if (current.value === executablePath) return;
+        if (!current.value.startsWith(`${installsDirectory}${path.sep}`)) return;
+        yield* fileSystem.remove(link);
+      } else if (yield* fileSystem.exists(link)) {
+        return;
+      }
+      yield* fileSystem.makeDirectory(directory, { recursive: true });
+      yield* fileSystem.symlink(executablePath, link);
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("could not expose the prepared ACP command to system terminals", {
+          executablePath,
+          cause,
+        }),
+      ),
+    );
+
   const prepare: AcpRegistryCatalog["Service"]["prepare"] = (input) =>
     Effect.gen(function* () {
       const registry = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");
+      let executablePath: string | undefined;
       if (distribution.kind === "binary") {
         // A PATH executable can be a different version with different ACP
         // capabilities. Only an explicit command override opts into that copy.
@@ -1739,15 +1849,30 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           ),
         );
       } else {
-        yield* installSemaphore.withPermits(1)(
+        const receipt = yield* installSemaphore.withPermits(1)(
           ensureGlobalPackage(agent, distribution.kind, distribution.packageName!, hostEnvironment),
         );
+        // Grok's npm wrapper can launch an unrelated global Grok; the managed
+        // native binary is what this install actually runs.
+        executablePath = receipt.packageSpec.startsWith("@xai-official/grok@")
+          ? yield* assertExecutableInRoot(
+              packageInstallRoot(agent, "npx"),
+              path.join(
+                packageInstallRoot(agent, "npx"),
+                ".grok-install",
+                "bin",
+                platform === "win32" ? "grok.exe" : "grok",
+              ),
+            ).pipe(Effect.orElseSucceed(() => receipt.executablePath))
+          : receipt.executablePath;
+        yield* exposeUserCommand(executablePath);
       }
       return {
         agentId: agent.id,
         version: agent.version,
         distribution: distribution.kind,
         prepared: true,
+        ...(executablePath ? { executablePath } : {}),
       } satisfies AcpRegistryPrepareResult;
     });
 
@@ -1857,13 +1982,26 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }
 
       const runner = packageManagerFor(distribution.kind)!;
-      const managerPath = resolveExecutable(
+      const resolvedManagerPath = resolveExecutable(
         runner,
         platform,
         requiresExplicitAcpPreparation(agent.id, distribution.packageName)
           ? hostEnvironment
           : (environment ?? hostEnvironment),
       );
+      const managerPath =
+        resolvedManagerPath === undefined
+          ? undefined
+          : yield* stableManagerPath(resolvedManagerPath);
+      if (resolvedManagerPath !== undefined && managerPath !== undefined) {
+        yield* migrateLegacyReceipt(
+          agent,
+          distribution.kind,
+          distribution.packageName!,
+          resolvedManagerPath,
+          managerPath,
+        );
+      }
       const available = managerPath !== undefined;
       if (managerPath && requiresExplicitAcpPreparation(agent.id, distribution.packageName)) {
         const receipt = yield* readPackageReceipt(

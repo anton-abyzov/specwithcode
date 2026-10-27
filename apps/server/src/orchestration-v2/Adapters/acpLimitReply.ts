@@ -48,14 +48,30 @@ export interface LimitReplyTurn {
 }
 
 /**
- * The usage limit failure for a turn whose whole reply is the agent's limit
+ * The usage limit failure for a turn whose reply ends on the agent's limit
  * notice; null for anything else. A provider stops on its quota in answer to
  * a prompt, so a continuation (its reply reports work an earlier turn
  * started) and a slash command (`/usage` describes the account) never count.
+ * A turn that did no work must reply with the notice alone. One that worked
+ * first (Copilot runs out of premium requests mid-turn) counts when its last
+ * segment is the notice alone: the limit stopped the work.
  */
 export function limitReplyTurnFailure(turn: LimitReplyTurn): OrchestrationV2ProviderFailure | null {
-  if (turn.didWork || turn.continuation || turn.messageText.trimStart().startsWith("/"))
-    return null;
+  if (turn.continuation || turn.messageText.trimStart().startsWith("/")) return null;
   const segments = turn.assistantText.map((text) => text.trim()).filter((text) => text.length > 0);
-  return usageLimitReplyFailure(segments.join("\n"), turn.nowMs ?? null);
+  const reply = turn.didWork ? (segments.at(-1) ?? "") : segments.join("\n");
+  return usageLimitReplyFailure(reply, turn.nowMs ?? null);
+}
+
+/**
+ * The usage limit failure for an agent's error (a JSON-RPC error on
+ * session/prompt) whose message is a limit notice, with or without an
+ * `Error:` prefix; null for any other error.
+ */
+export function usageLimitErrorFailure(
+  message: string,
+  nowMs: number | null = null,
+): OrchestrationV2ProviderFailure | null {
+  const text = message.trim();
+  return usageLimitReplyFailure(text, nowMs) ?? usageLimitReplyFailure(`Error: ${text}`, nowMs);
 }

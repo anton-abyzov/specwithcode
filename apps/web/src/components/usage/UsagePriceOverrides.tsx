@@ -609,7 +609,7 @@ export function UsagePriceOverrides({
           </span>
           <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto">
             {hasChanges ? (
-              <Button variant="ghost" disabled={pending} onClick={discard}>
+              <Button variant="outline" disabled={pending} onClick={discard}>
                 {failedDestinations.length > 0 ? "Discard pending changes" : "Discard changes"}
               </Button>
             ) : null}

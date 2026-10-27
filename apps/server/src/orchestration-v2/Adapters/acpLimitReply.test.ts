@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   isUsageLimitReply,
   limitReplyTurnFailure,
+  usageLimitErrorFailure,
   usageLimitReplyFailure,
 } from "./acpLimitReply.ts";
 
@@ -119,7 +120,6 @@ describe("usage limit replies", () => {
         assistantText: ["Error: rate limit exceeded"],
       }),
     );
-    assert.isNull(limitReplyTurnFailure({ ...turn, didWork: true }));
     // A slash command's reply describes the account.
     assert.isNull(limitReplyTurnFailure({ ...turn, messageText: "/usage" }));
     assert.isNull(limitReplyTurnFailure({ ...turn, assistantText: ["Checking.", "Done."] }));
@@ -129,5 +129,56 @@ describe("usage limit replies", () => {
         assistantText: ["Error: rate limit exceeded", "The GitHub API check failed."],
       }),
     );
+  });
+
+  it("reads a limit notice that ends a turn which worked first", () => {
+    // Copilot ran tools for a minute, then ran out of premium requests.
+    const worked = {
+      messageText: "YES, go with recommended",
+      continuation: false,
+      didWork: true,
+      assistantText: ["Rendering the reel now.", COPILOT_QUOTA_REPLY],
+    };
+    assert.strictEqual(limitReplyTurnFailure(worked)?.class, "usage_limit");
+    assert.strictEqual(
+      limitReplyTurnFailure({ ...worked, assistantText: [COPILOT_QUOTA_REPLY] })?.message,
+      "Monthly quota used up on this provider.",
+    );
+    // The notice is not the last word: the agent carried on after it.
+    assert.isNull(
+      limitReplyTurnFailure({
+        ...worked,
+        assistantText: [COPILOT_QUOTA_REPLY, "Retried on the free model; the reel is done."],
+      }),
+    );
+    // A worked turn ending on a third-party error report is an answer.
+    assert.isNull(
+      limitReplyTurnFailure({
+        ...worked,
+        assistantText: ["Ran the publish.", "Error: You have exceeded the GitHub API rate limit."],
+      }),
+    );
+    assert.isNull(limitReplyTurnFailure({ ...worked, assistantText: ["Done."] }));
+    assert.isNull(limitReplyTurnFailure({ ...worked, continuation: true }));
+  });
+
+  it("reads an agent error carrying a limit notice as a usage limit", () => {
+    const nowMs = Date.parse("2026-10-26T04:00:00Z");
+    for (const message of [
+      "You have exceeded your monthly quota (Request ID: E734:3158CA:51F2541:5B61298:6ADED60D)",
+      COPILOT_QUOTA_REPLY,
+    ]) {
+      const failure = usageLimitErrorFailure(message, nowMs);
+      assert.strictEqual(failure?.class, "usage_limit", message);
+      assert.strictEqual(failure?.resetAt, "2026-11-01T00:00:00.000Z", message);
+    }
+    assert.strictEqual(usageLimitErrorFailure("rate limit exceeded")?.class, "usage_limit");
+    for (const message of [
+      "Internal error",
+      "maximum context length exceeded",
+      "You have exceeded the GitHub API rate limit.",
+      "Request failed: socket hang up",
+    ])
+      assert.isNull(usageLimitErrorFailure(message), message);
   });
 });

@@ -14,6 +14,7 @@ import {
   type EnvironmentId,
   type ProviderInstanceConfig,
   type ProviderInstanceMutation,
+  type ServerProvider,
   type ServerSettings,
 } from "@specweave-studio/contracts";
 
@@ -23,6 +24,25 @@ import type { ProviderInstanceEntry } from "./providerInstances";
 export const FEATURED_ACP_AGENT_IDS = ["github-copilot-cli", "grok-build", "gemini"] as const;
 
 const ACP_REGISTRY = ProviderDriverKind.make("acpRegistry");
+
+/**
+ * The plain name a featured agent gets on a new machine. Another machine's
+ * label can name settings that are not copied, such as "Gemini CLI (Vertex AI)".
+ */
+const FEATURED_AGENT_NAMES: Readonly<Record<(typeof FEATURED_ACP_AGENT_IDS)[number], string>> = {
+  "github-copilot-cli": "GitHub Copilot",
+  "grok-build": "Grok",
+  gemini: "Gemini CLI",
+};
+
+/**
+ * Built-in drivers whose CLI SpecWithCode can install from a registry package
+ * when the machine does not have it. The package installs the same `grok`
+ * command the built-in driver runs.
+ */
+export const REGISTRY_INSTALLER_BY_DRIVER: Readonly<Record<string, string>> = {
+  grok: "grok-build",
+};
 
 function featuredAgentId(entry: ProviderInstanceEntry): string | null {
   if (entry.driverKind !== ACP_REGISTRY) return null;
@@ -164,7 +184,8 @@ export function planEnableHere(
     const instance: ProviderInstanceConfig = {
       driver: ACP_REGISTRY,
       enabled: true,
-      displayName: provider.displayName,
+      displayName:
+        FEATURED_AGENT_NAMES[agentId as keyof typeof FEATURED_AGENT_NAMES] ?? provider.displayName,
       config: { agentId, distribution: "auto" },
     };
     return {
@@ -192,5 +213,54 @@ export function planEnableHere(
     instance,
     mutation: { operation: "upsert", instanceId, instance },
     prepareAgentId: null,
+  };
+}
+
+/**
+ * The same instance, run from the command a registry package installed on
+ * this machine. Only a built-in driver with no binary path of its own gets one.
+ */
+export function withInstalledBinary(
+  instance: ProviderInstanceConfig,
+  executablePath: string,
+): ProviderInstanceConfig {
+  const config =
+    instance.config !== null && typeof instance.config === "object"
+      ? (instance.config as Record<string, unknown>)
+      : {};
+  return { ...instance, config: { ...config, binaryPath: executablePath } };
+}
+
+/** Where a provider stands after Turn on here, read from this machine's snapshot. */
+export type TurnOnOutcome =
+  | { readonly kind: "checking" }
+  | { readonly kind: "ready" }
+  | { readonly kind: "sign-in"; readonly step: string }
+  | { readonly kind: "not-installed"; readonly message: string }
+  | { readonly kind: "unavailable"; readonly message: string };
+
+export function turnOnOutcome(
+  snapshot: ServerProvider | undefined,
+  machineLabel: string,
+): TurnOnOutcome {
+  if (!snapshot || !snapshot.enabled) return { kind: "checking" };
+  const name = snapshot.displayName?.trim() || "This provider";
+  if (!snapshot.installed) {
+    return {
+      kind: "not-installed",
+      message: snapshot.message ?? `${name} is not installed on ${machineLabel}.`,
+    };
+  }
+  if (snapshot.auth.status === "unauthenticated") {
+    const method = snapshot.auth.label ? `"${snapshot.auth.label}"` : "its sign-in";
+    return {
+      kind: "sign-in",
+      step: `Sign in on ${machineLabel}: open ${name} setup and choose ${method}. Credentials stay on each machine.`,
+    };
+  }
+  if (snapshot.status === "ready" && snapshot.models.length > 0) return { kind: "ready" };
+  return {
+    kind: "unavailable",
+    message: snapshot.message ?? `${name} is not ready on ${machineLabel} yet.`,
   };
 }

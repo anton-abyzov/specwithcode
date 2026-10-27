@@ -207,6 +207,7 @@ export async function startCopy(
         sourceEnvironmentId: offer.sourceEnvironmentId,
         sourceProjectId: offer.sourceProjectId,
         sourceUrl: offer.sourceUrl,
+        ...(offer.sourceConnectUrl ? { sourceConnectUrl: offer.sourceConnectUrl } : {}),
         sourceMachine: offer.sourceMachine,
         token: offer.token,
         title: offer.title,

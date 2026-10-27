@@ -476,49 +476,42 @@ export function ProjectLinkDialog({
             </p>
           )}
         </DialogPanel>
-        <DialogFooter>
-          {complete ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
-          ) : (
-            <>
-              {sides && (
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => {
-                    setPreviews(null);
-                    setConsent(false);
-                    setError(null);
-                    setPhase("choose");
-                  }}
-                >
-                  Back
-                </Button>
-              )}
-              <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
-                Close
+        {!complete && (
+          <DialogFooter>
+            {sides && (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  setPreviews(null);
+                  setConsent(false);
+                  setError(null);
+                  setPhase("choose");
+                }}
+              >
+                Back
               </Button>
-              {sides ? (
-                <Button disabled={busy || !ready} onClick={() => void link()}>
-                  {phase === "linking"
-                    ? "Linking…"
-                    : resuming
-                      ? "Finish linking"
-                      : error
-                        ? "Retry link"
-                        : `Link, keep coordinator on ${sides.keptLabel}`}
-                </Button>
-              ) : (
-                <Button
-                  disabled={busy || !target || machineProblem !== null}
-                  onClick={() => void review()}
-                >
-                  {phase === "checking" ? "Checking…" : "Review link"}
-                </Button>
-              )}
-            </>
-          )}
-        </DialogFooter>
+            )}
+            {sides ? (
+              <Button disabled={busy || !ready} onClick={() => void link()}>
+                {phase === "linking"
+                  ? "Linking…"
+                  : resuming
+                    ? "Finish linking"
+                    : error
+                      ? "Retry link"
+                      : `Link, keep coordinator on ${sides.keptLabel}`}
+              </Button>
+            ) : (
+              <Button
+                disabled={busy || !target || machineProblem !== null}
+                onClick={() => void review()}
+              >
+                {phase === "checking" ? "Checking…" : "Review link"}
+              </Button>
+            )}
+          </DialogFooter>
+        )}
       </DialogPopup>
     </Dialog>
   );

@@ -1,10 +1,9 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { usePagePopup } from "./pagePopups";
-import { Button } from "~/components/ui/button";
+import { DialogCloseButton } from "~/components/ui/dialog-close-button";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
@@ -94,16 +93,7 @@ function DialogPopup({
           {...props}
         >
           {children}
-          {showCloseButton && (
-            <DialogPrimitive.Close
-              data-slot="dialog-close"
-              aria-label="Close"
-              className="absolute end-2 top-2"
-              render={<Button size="icon" variant="ghost" />}
-            >
-              <XIcon />
-            </DialogPrimitive.Close>
-          )}
+          {showCloseButton && <DialogCloseButton />}
         </DialogPrimitive.Popup>
       </DialogViewport>
     </DialogPortal>

@@ -178,6 +178,8 @@ export const FolderCopyOffer = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceProjectId: ProjectId,
   sourceUrl: bounded(2048),
+  /** The source's SpecWithCode Connect address, tried when `sourceUrl` does not answer. */
+  sourceConnectUrl: Schema.optional(bounded(2048)),
   sourceMachine: bounded(200),
   token: bounded(4096),
   title: bounded(1000),
@@ -239,6 +241,7 @@ export const FolderCopyStartInput = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceProjectId: ProjectId,
   sourceUrl: bounded(2048),
+  sourceConnectUrl: Schema.optional(bounded(2048)),
   sourceMachine: bounded(200),
   token: bounded(4096),
   title: bounded(1000),
@@ -437,7 +440,7 @@ export class FolderCopyError extends Schema.TaggedError<FolderCopyError>()("Fold
       busy: "Finish active work in this project before moving it.",
       invalid: "The copy request is invalid.",
       no_private_url:
-        "This machine has no private tailnet address yet. Turn on remote access for it in Settings > Connections, then try again.",
+        "This machine has no private tailnet address or SpecWithCode Connect address yet. Turn on remote access for it in Settings > Connections, then try again.",
       unreachable: "The source machine stopped answering. Check that both machines are online.",
       outdated_source:
         "The source machine runs an older SpecWithCode without folder copy. Update it first.",

@@ -1053,8 +1053,11 @@ export const make = Effect.gen(function* () {
     const issuedAt = DateTime.make(claims.iat);
     if (
       claims.sub !== "mcp-client" ||
-      claims.method !== "bearer-access-token" ||
-      claims.jkt !== undefined ||
+      // A bearer grant carries no proof key; a DPoP grant always does, and keeps it.
+      !(
+        (claims.method === "bearer-access-token" && claims.jkt === undefined) ||
+        (claims.method === "dpop-access-token" && claims.jkt !== undefined)
+      ) ||
       claims.rtc === undefined ||
       claims.scopes.length !== 2 ||
       !claims.scopes.includes(AuthOrchestrationReadScope) ||
@@ -1113,7 +1116,7 @@ export const make = Effect.gen(function* () {
       .renewWorker({
         sessionId: claims.sid,
         subject: "mcp-client",
-        method: "bearer-access-token",
+        method: claims.method,
         scopes: claims.scopes,
         principal: original.principal,
         issuedAt: DateTime.toUtc(issuedAt.value),

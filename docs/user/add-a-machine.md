@@ -10,10 +10,12 @@ your iPhone), you do not need this page or Tailscale. Turn on
 [SpecWithCode Connect](./remote-access.md#specwithcode-connect) on that machine
 instead.
 
-For now, letting a main machine start work on another one also needs Tailscale
-on both. The main machine reaches each worker by its private Tailscale name, so
-it does not matter which network each one is on, and one machine moving to
-another network does not cut the others off.
+SpecWithCode Connect is enough for a main machine to start work on another one.
+Tailscale is optional: when both machines have it, the main machine tries the
+worker's private Tailscale name first, which is often faster on the same
+network, and falls back to Connect. Either way it does not matter which network
+each machine is on, and one machine moving to another network does not cut the
+others off.
 
 Joining always takes the same three steps:
 
@@ -41,10 +43,18 @@ Pick the row that matches it:
 The app's version is under **Settings → About**. Installing SpecWithCode in the
 first place is covered in [Install SpecWithCode](./install.md).
 
-## Before you start: Tailscale on both machines
+## Before you start: Connect or Tailscale
 
-Starting work on another machine still goes over Tailscale, even when both
-machines use SpecWithCode Connect. Do this once, on the main machine and on
+Link [SpecWithCode Connect](./remote-access.md#specwithcode-connect) on the
+worker, or set up Tailscale on both machines, or both. With Connect alone the
+line carries the worker's Connect address and a one-time code the main machine
+redeems within an hour. A main machine on an older SpecWithCode cannot read
+that line: update it first, or make a Tailscale-only line with
+`specwithcode fleet invite --via tailscale`.
+
+### Optional: Tailscale on both machines
+
+Tailscale adds a direct private route. Do this once, on the main machine and on
 every worker.
 
 1. Install Tailscale from [tailscale.com/download](https://tailscale.com/download).
@@ -87,9 +97,11 @@ this machine**.
 
 Then:
 
-1. The app checks Tailscale on this machine and shows what is still missing. It
-   looks again every few seconds, so the message clears on its own once you fix
-   it:
+1. The app checks Tailscale on this machine. If SpecWithCode Connect is linked
+   here and Tailscale is not, it says **Tailscale is off here, so the line uses
+   SpecWithCode Connect.** and you can go on to step 2. Otherwise it shows what
+   is still missing. It looks again every few seconds, so the message clears on
+   its own once you fix it:
    - **Tailscale is not installed:** choose **Install Tailscale** to open
      Tailscale's download page. On a Mac with Homebrew it also shows
      `brew install --cask tailscale` to copy into Terminal. The app never
@@ -103,8 +115,10 @@ Then:
    - **MagicDNS is off:** turn it on in the Tailscale admin console under **DNS**.
 2. Optionally type a name under **Name on the main machine (optional)**. Left
    empty, the machine's own name is used.
-3. When **Tailscale is connected** shows, choose **Make the line**. The app
-   publishes itself on the machine's Tailscale name and shows the line.
+3. Choose **Make the line**. The app publishes itself on the machine's
+   Tailscale name when Tailscale is ready, adds its SpecWithCode Connect address
+   when Connect is linked, and shows the line with the addresses it carries. A
+   line with a Connect address works once, within an hour.
 4. Choose **Copy**, and paste it on your main machine
    ([below](#add-it-on-the-main-machine)).
 5. In the first-run flow, choose **I pasted it**; in Settings, choose **Done**.
@@ -130,7 +144,8 @@ ELECTRON_RUN_AS_NODE=1 STUDIO_CLI_NAME=specwithcode /Applications/SpecWithCode.a
 If you installed the app in your own `Applications` folder, put `~` in front of
 both `/Applications` paths.
 
-It publishes the app on the Mac's Tailscale name and prints a few lines: the
+It publishes the app on the Mac's Tailscale name (and names its SpecWithCode
+Connect address when Connect is linked) and prints a few lines: the
 address, a `fleet add` command, and the invitation line on its own (starting
 with `swc-machine-`), followed by the date it stops working and a command to
 revoke it. Copy the `swc-machine-…` line and paste it on your main machine
@@ -167,7 +182,9 @@ with `brew install node@22`.
    specwithcode fleet invite --coordinator '<main-machine-environment-id>' --label "MacBook Air"
    ```
 
-   It prints the same `swc-machine-…` line as above.
+   It prints the same `swc-machine-…` line as above. Add `--via connect` or
+   `--via tailscale` to pick one route; the default, `--via auto`, uses every
+   route that works here.
 
 To keep it running after you close Terminal or restart, run
 `specwithcode service install` (1.0.46 and later). The service pins a copy of
@@ -187,7 +204,8 @@ app's [built-in command](#desktop-app-1043) instead.
 ### With the one-line installer
 
 The installer sets up Tailscale, installs SpecWithCode and prints the line, in
-one go:
+one go. It always uses Tailscale; to join over SpecWithCode Connect alone, use
+the app or [npm](#with-npm) instead:
 
 ```bash
 curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join --coordinator '<main-machine-environment-id>'
@@ -236,7 +254,11 @@ at pinned versions, use [Provision a machine](./provision-a-machine.md) next:
    The main machine first checks that the address answers as that machine, then
    saves it.
 3. With **Connect automatically** on, your browser pairs with the worker within a
-   minute. Otherwise choose **Connect machine** on its card.
+   minute. Otherwise choose **Connect machine** on its card. Opening the worker
+   this way still needs its Tailscale address; a worker the main machine reaches
+   only through SpecWithCode Connect waits until Tailscale answers. Work you send
+   to it still goes through, and you can open it from your devices through its
+   own Connect link.
 4. Choose **Allow workers** on its card to let coordinators start work there.
 
 From a terminal on the main machine you can run the `fleet add` command the
@@ -258,8 +280,8 @@ two from **Settings > Project > Machines** so the coordinator finds that copy
 machine, whether this app can see it, its worker grants and its shared projects.
 
 **Keep SpecWithCode running on the worker.** Coordinators can only start work
-there while its app or server is running and Tailscale is connected on both
-machines. With the
+there while its app or server is running and the main machine reaches it over
+Tailscale or SpecWithCode Connect. With the
 desktop app, leave the app open. A [background
 service](./background-service.md) keeps it running across restarts.
 
@@ -271,6 +293,8 @@ To turn one off:
 - Right after making it in the app, choose **Revoke this line**.
 - Later, on the worker, open **Settings → Connections → Authorized clients** and
   revoke **Fleet management (fleet invite)**.
+- A line with a SpecWithCode Connect address that has not been used yet: run
+  the `auth pairing revoke …` command `fleet invite` printed.
 - From a terminal on the worker, run the `auth session revoke …` command
   `fleet invite --coordinator '<main-machine-environment-id>'` printed, or find the session with
   `specwithcode auth session list` and revoke it with

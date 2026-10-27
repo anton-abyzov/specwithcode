@@ -311,6 +311,10 @@ class Writer:
         self.process.stdout.close()
 
 
+# The status the new service settles at startup, the same length, so the row is written in place.
+SETTLE_BIG_NODE = """UPDATE orchestration_v2_projection_nodes SET payload_json=replace(payload_json, '"running"', '"stopped"') WHERE node_id='node-big-0'"""
+
+
 def encoded(value):
     return continuity.encoded(value)
 
@@ -319,7 +323,7 @@ class Update:
     """update.py's steps around the restart, on a fixture database."""
 
     def __init__(self, test, include_auth=False, since_expected=True, watermark=False, reader=True, pinned_commits=0,
-                 node=None, **shape):
+                 node=None, written=(), **shape):
         self.test, self.include_auth, self.reader = test, include_auth, reader
         folder = tempfile.TemporaryDirectory(prefix='studio-after-proof-')
         test.addCleanup(folder.cleanup)
@@ -330,6 +334,8 @@ class Update:
         self.old = Writer(self.database, node)
         test.addCleanup(self.old.close)
         self.old.heartbeat(moment='2026-10-22T13:59:00Z')  # A running service's log has frames in it.
+        if written:  # What the old service wrote before the read, as [(sql, parameters)].
+            self.old.commit(*written)
         if pinned_commits:
             # A long read (the read before the restart on a large database) keeps every checkpoint
             # from copying the commits made meanwhile: the log is past the autocheckpoint at the mark.
@@ -460,6 +466,32 @@ class Equal(unittest.TestCase):
         rows = flow.full()[2]
         self.assertEqual(rows['appendedRows']['orchestration_events'], 30)
         self.assertEqual(rows['appendedRows']['orchestration_command_receipts'], 10)
+
+    def big_nodes(self):
+        """Projection rows with overflow pages. The new service settling one at startup (a status of
+        the same length, M4's 1.0.92 install) writes it again in place: only an overflow page changes."""
+        return Update(self, written=[("INSERT INTO orchestration_v2_projection_nodes VALUES (?,?,?,NULL,?,'agent','running',?)",
+                                      ['node-big-%d' % index, THREADS[index % 4], 'run-' + THREADS[index % 4], 'node-0',
+                                       '{"text":"' + 'a' * 9000 + '","status":"running"}']) for index in range(2)])
+
+    def test_a_row_rewritten_at_its_length_decides_by_pages(self):
+        flow = self.big_nodes()
+        new = flow.around_restart(writes=False)
+        new.commit((SETTLE_BIG_NODE, []))
+        record = self.assert_same(flow)
+        self.assertGreaterEqual(record['overflowAdopted'], 1)
+        self.assertIn('orchestration_v2_projection_nodes', record['touchedTables'])
+
+    def test_a_kept_table_row_rewritten_at_its_length_is_compared_row_by_row(self):
+        with patch.object(kept_lines, 'KEEP_BYTES', 16 << 10):
+            flow = self.big_nodes()
+        self.assertIn('orchestration_v2_projection_nodes', flow.kept.tables)
+        new = flow.around_restart(writes=False)
+        new.commit((SETTLE_BIG_NODE, []),
+                   # Another row of the table changes length: its leaf changes too, and the search starts with that tree.
+                   ("UPDATE orchestration_v2_projection_nodes SET payload_json=payload_json || ' ' WHERE node_id='node-1'", []))
+        record = self.assert_same(flow)
+        self.assertGreaterEqual(record['overflowAdopted'], 1)
 
     def test_kept_projection_tables_are_compared_row_by_row(self):
         with patch.object(kept_lines, 'KEEP_BYTES', 64 << 10):
@@ -739,7 +771,15 @@ class Refuses(unittest.TestCase):
         db.close()
         new = flow.around_restart(writes=False)
         new.commit(('UPDATE orchestration_events SET payload_json=? WHERE sequence=?', [payload[:-3] + 'zz"' if not payload.endswith('zz"') else payload[:-3] + 'yy"', sequence]))
+        # Its overflow page is placed but a log's rows are not searched (find_owners): still refused.
         self.refused(flow, 'unowned-page')
+
+    def test_an_overflow_page_the_search_cannot_place_in_its_budget(self):
+        flow = Equal.big_nodes(self)
+        new = flow.around_restart(writes=False)
+        new.commit((SETTLE_BIG_NODE, []))
+        with patch.object(after_proof, 'ORPHAN_SEARCH_PAGES', 0):
+            self.refused(flow, 'unowned-page')
 
     def test_a_table_dropped_or_widened(self):
         for statement in ('DROP TABLE scheduled_tasks', 'ALTER TABLE scheduled_tasks ADD COLUMN note TEXT'):
@@ -1252,6 +1292,21 @@ def _timed(function, *arguments):
     return value, round(time.monotonic() - started, 2)
 
 
+def settled_in_place(db, table='orchestration_v2_projection_turn_items'):
+    """(sql, parameters) rewriting the newest `table` row whose longest text holds overflow pages at
+    its length, its last (ASCII) character changed; None without one. SQLite writes it in place."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+        return None
+    columns = [row[1] for row in db.execute('PRAGMA table_info(%s)' % table) if row[2].upper() == 'TEXT']
+    for column in columns:
+        row = db.execute("SELECT rowid FROM %s WHERE length(CAST(%s AS BLOB)) > 8192 AND unicode(substr(%s, -1)) BETWEEN 32 AND 126 "
+                         "ORDER BY rowid DESC LIMIT 1" % (table, column, column)).fetchone()
+        if row:
+            return ("UPDATE %s SET %s = substr(%s, 1, length(%s) - 1) || CASE substr(%s, -1) WHEN 'x' THEN 'y' ELSE 'x' END "
+                    "WHERE rowid = %d" % (table, column, column, column, column, row[0]), [])
+    return None
+
+
 def measure(clone_folder):
     clone_folder = pathlib.Path(clone_folder).expanduser().resolve()
     original = clone_folder / 'statev2.sqlite'
@@ -1275,12 +1330,22 @@ def measure(clone_folder):
         version = db.execute('SELECT max(stream_version) FROM orchestration_events WHERE aggregate_kind=? AND stream_id=?',
                              (kind, stream)).fetchone()[0]
         session = db.execute('SELECT session_id FROM auth_sessions ORDER BY session_id LIMIT 1').fetchone()[0]
+        settle = settled_in_place(db)
         db.close()
         # The agent's earlier snapshot only names where the logs ended, so the read below takes
         # the prefix path update.py's read before the restart takes.
         expected = {update_read.ACTIVITY_KEY: {'logRowids': logs, 'threadTables': [], 'threadSha256': {}, 'cursorSha256': {}}}
-        with after_proof.keeping(original) as kept:
-            before, before_seconds = _timed(update_read._read_state, clone_folder, False, expected, True)
+        # A stopped WAL database (an update's state backup) has no index; read-only opens need one,
+        # which a writable connection held through the read provides. It writes nothing.
+        index = None if os.path.exists(str(original) + '-shm') else sqlite3.connect(str(original))
+        try:
+            if index is not None:
+                index.execute('SELECT count(*) FROM sqlite_master').fetchall()
+            with after_proof.keeping(original) as kept:
+                before, before_seconds = _timed(update_read._read_state, clone_folder, False, expected, True)
+        finally:
+            if index is not None:
+                index.close()
         print('before read with kept lines: %.2f s, kept %s' % (before_seconds, sorted(kept.tables) or kept.reason), flush=True)
         reference = {'position': None, 'since': before[0], 'reads': (before[0], None, before[3])}
         writer = Writer(copy)
@@ -1293,6 +1358,9 @@ def measure(clone_folder):
                          "'accepted',NULL,'thread.activity.append')", ['measure-receipt-%d' % index, kind, stream, NOW])
                         for index in range(10)])
         writer.commit(('UPDATE auth_sessions SET last_connected_at=? WHERE session_id=?', [NOW, session]))
+        if settle:  # The newest projection row with overflow pages, settled at its length as on 1.0.92.
+            writer.commit(settle)
+            print('settled in place: %s' % settle[0], flush=True)
         progress, laps = {}, []
         reads, proof_seconds = _timed(after_proof.decide, live_folder, held, kept, reference, before[0], False, progress, laps.append)
         print('page proof: %.2f s, %s' % (proof_seconds, json.dumps(progress['afterProof'])), flush=True)

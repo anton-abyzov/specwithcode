@@ -21,11 +21,9 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { designSystemImport } from "~/studio/designSystemImport";
 
-import { Button } from "../../../ui/button";
 import {
   Dialog,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -176,11 +174,6 @@ export function SystemImportDialog({
         <DialogPanel>
           <ScanFromCode projects={projects} onScan={onScan} onPropose={onPropose} />
         </DialogPanel>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Close
-          </Button>
-        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );

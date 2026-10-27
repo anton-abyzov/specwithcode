@@ -1,9 +1,8 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { XIcon } from "lucide-react";
 import { useRef, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
-import { Button } from "./button";
+import { DialogCloseButton } from "./dialog-close-button";
 
 /**
  * A centered sheet over the whole dimmed app, sidebar included, like the native
@@ -99,13 +98,7 @@ export function AppSheet({
               <span aria-hidden className="text-sm font-medium">
                 {title}
               </span>
-              <DialogPrimitive.Close
-                aria-label={closeLabel}
-                title="Close (Esc)"
-                render={<Button size="icon" variant="ghost" />}
-              >
-                <XIcon />
-              </DialogPrimitive.Close>
+              <DialogCloseButton placement="inline" aria-label={closeLabel} />
             </div>
             <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
             {nav ? (
@@ -124,14 +117,11 @@ export function AppSheet({
                 )}
               >
                 <div className="flex min-w-0 flex-1 items-center gap-3">{header}</div>
-                <DialogPrimitive.Close
+                <DialogCloseButton
+                  placement="inline"
                   aria-label={closeLabel}
-                  title="Close (Esc)"
                   className="max-md:hidden"
-                  render={<Button size="icon" variant="ghost" />}
-                >
-                  <XIcon />
-                </DialogPrimitive.Close>
+                />
               </div>
               {children}
             </div>

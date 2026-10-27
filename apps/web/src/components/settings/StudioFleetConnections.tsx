@@ -431,9 +431,12 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
  * that other machine's host as if it were its own.
  */
 export function fleetMachineAddress(
-  machine: Pick<StudioFleetMachine, "id" | "url">,
+  machine: Pick<StudioFleetMachine, "id" | "url" | "connectUrl" | "transport">,
   machines: ReadonlyArray<Pick<StudioFleetMachine, "id" | "label" | "url">>,
 ): string {
+  // The address that answered: its SpecWithCode Connect one when that is it.
+  if (machine.transport === "connect" && machine.connectUrl)
+    return new URL(machine.connectUrl).host;
   const url = new URL(machine.url);
   const relay = url.port
     ? machines.find((other) => {
@@ -443,6 +446,29 @@ export function fleetMachineAddress(
       })
     : undefined;
   return relay ? `Through ${relay.label}, port ${url.port}` : url.host;
+}
+
+/** Which address answered the last check, in words. */
+export function fleetMachineTransport(
+  machine: Pick<StudioFleetMachine, "transport">,
+): string | null {
+  return machine.transport === "connect"
+    ? "via SpecWithCode Connect"
+    : machine.transport === "tailnet"
+      ? "via Tailscale"
+      : null;
+}
+
+/**
+ * A machine that answers only through SpecWithCode Connect while the token
+ * saved for it works only over Tailscale needs a new line from it.
+ */
+export function fleetMachineNeedsReinvite(
+  machine: Pick<StudioFleetMachine, "transport" | "managementBinding">,
+): string | null {
+  return machine.transport === "connect" && machine.managementBinding === "bearer"
+    ? "Invite this machine again to use SpecWithCode Connect."
+    : null;
 }
 
 export function StudioFleetRoster({
@@ -561,7 +587,9 @@ export function StudioFleetRoster({
               own?.lastSeen ?? null,
               current ? "This machine" : saved ? "Saved here" : null,
               fleetMachineAddress(machine, snapshot.machines),
+              fleetMachineTransport(machine),
             ].filter(Boolean);
+            const reinvite = fleetMachineNeedsReinvite(machine);
             return (
               <li
                 key={machine.id}
@@ -586,6 +614,9 @@ export function StudioFleetRoster({
                       <span className="text-foreground/80">{status}</span>
                       {meta.map((part) => ` · ${part}`).join("")}
                     </p>
+                    {reinvite ? (
+                      <p className="text-xs text-warning-foreground">{reinvite}</p>
+                    ) : null}
                     {own?.reason ? (
                       <ConnectionReason
                         environmentId={machine.environmentId}
@@ -743,8 +774,7 @@ export function StudioFleetRoster({
               <code className="font-mono">
                 {"specwithcode fleet invite --coordinator '<main-machine-environment-id>'"}
               </code>
-              ) and paste the line. For now, letting this machine start work on another one also
-              needs Tailscale on both.
+              ) and paste the line.
             </span>
             <span className="block text-xs text-muted-foreground">
               {
@@ -803,9 +833,8 @@ export function StudioFleetRoster({
             <span className="min-w-0">
               <span className="block text-sm">Add this machine to another one</span>
               <span className="block text-xs text-muted-foreground">
-                Make a line to paste on your main machine so it can start work here. For now, that
-                also needs Tailscale on both. Your app and phone can reach this machine through
-                SpecWithCode Connect without Tailscale.
+                Make a line to paste on your main machine. It works over Tailscale or SpecWithCode
+                Connect.
               </span>
             </span>
             <Button

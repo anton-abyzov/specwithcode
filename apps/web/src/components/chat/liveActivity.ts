@@ -42,6 +42,32 @@ export function runLiveSignal(
   return { lastActivityMs, phaseStartedMs: Math.min(phaseStartedMs, lastActivityMs) };
 }
 
+const ENDED_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+
+/**
+ * The run whose items say how live the Working row is: the running run, else
+ * the latest run while it has not ended. A send the host has not taken yet
+ * (it is restarting for an update) has no run, so the row reads nothing from
+ * the previous, finished turn: its last event was hours ago and would show as
+ * "No new events for 19h" on a message sent seconds ago.
+ */
+export function liveActivityRunId(input: {
+  readonly isWorking: boolean;
+  readonly runningRunId: string | null;
+  readonly latestRun: { readonly runId: string; readonly status: string } | null;
+}): string | null {
+  if (!input.isWorking) return null;
+  if (input.runningRunId !== null) return input.runningRunId;
+  const latest = input.latestRun;
+  return latest === null || ENDED_RUN_STATUSES.has(latest.status) ? null : latest.runId;
+}
+
 /** When the step the live row names began: the provider's own start time. */
 export function liveStepStartedAtMs(entry: WorkLogEntry): number | null {
   const startedAt = entry.structuredPayload?.startedAt;

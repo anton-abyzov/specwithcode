@@ -1,5 +1,6 @@
 import {
   AuthMcpApprovalError,
+  AuthMcpTokenError,
   type AuthMcpAuthorizationRequest,
   AuthMcpClientAccess,
   EnvironmentHttpApi,
@@ -11,6 +12,13 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import {
+  countsAsCredentialGuess,
+  gateRequest,
+  recordRequestFailure,
+} from "./CredentialFailureLimiter.ts";
+import { failEnvironmentRateLimited } from "./http.ts";
+
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
@@ -62,6 +70,7 @@ export const layer = HttpApiBuilder.group(
   "mcpOAuth",
   Effect.fnUntraced(function* (handlers) {
     const oauth = yield* McpOAuth.McpOAuth;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const protectedResource = () =>
       requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
 
@@ -142,16 +151,57 @@ export const layer = HttpApiBuilder.group(
             yield* noStore;
             const { decision } = payload;
             if (decision._tag === "deny") return { redirectTo: oauth.deny(resolved) };
+            // A pairing code typed here is a guessable one-time credential.
+            const byCode = decision._tag === "pairing-code";
+            if (byCode) yield* gateRequest(request).pipe(Effect.catch(failEnvironmentRateLimited));
             return yield* oauth.approve({ request, authorization: resolved, decision }).pipe(
+              Effect.tapError((error) =>
+                byCode && countsAsCredentialGuess(error)
+                  ? recordRequestFailure(request)
+                  : Effect.void,
+              ),
               Effect.map((redirectTo) => ({ redirectTo })),
               Effect.mapError((error) => new AuthMcpApprovalError({ message: error.message })),
             );
           }),
         )
-        .handle("token", ({ payload, request }) =>
+        .handle("token", ({ payload, request, headers }) =>
           Effect.gen(function* () {
             yield* noStore;
-            return yield* oauth.exchangeCode({ request, urls: yield* requestUrls, token: payload });
+            yield* gateRequest(request).pipe(Effect.catch(failEnvironmentRateLimited));
+            // A proof is checked before the code is looked at, so a bad proof
+            // leaves the code unspent; the token is then bound to its key.
+            const proofKeyThumbprint =
+              headers.dpop === undefined
+                ? undefined
+                : yield* environmentAuth.verifyRequestProof(request).pipe(
+                    Effect.catch((error) =>
+                      recordRequestFailure(request).pipe(
+                        Effect.andThen(
+                          Effect.fail(
+                            new AuthMcpTokenError({
+                              error: "invalid_request",
+                              error_description: EnvironmentAuth.isServerAuthCredentialError(error)
+                                ? "The DPoP proof is invalid."
+                                : "The DPoP proof could not be checked.",
+                            }),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+            return yield* oauth
+              .exchangeCode({
+                request,
+                urls: yield* requestUrls,
+                token: payload,
+                proofKeyThumbprint,
+              })
+              .pipe(
+                Effect.tapError((error) =>
+                  error.error === "invalid_grant" ? recordRequestFailure(request) : Effect.void,
+                ),
+              );
           }),
         )
     );

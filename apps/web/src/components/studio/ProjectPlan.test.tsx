@@ -60,11 +60,29 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { error: Error }) => result.error,
 }));
 vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }));
+let dialogOpenChange: ((open: boolean) => void) | undefined;
 vi.mock("../ui/dialog", () => ({
-  Dialog: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  Dialog: ({
+    children,
+    onOpenChange,
+  }: React.PropsWithChildren<{ onOpenChange?: (open: boolean) => void }>) => {
+    dialogOpenChange = onOpenChange;
+    return <>{children}</>;
+  },
   DialogPopup: ({ children }: React.PropsWithChildren) => <main>{children}</main>,
   DialogTitle: ({ children }: React.PropsWithChildren) => <h1>{children}</h1>,
   DialogDescription: ({ children }: React.PropsWithChildren) => <p>{children}</p>,
+}));
+// The real X is a Base UI Dialog.Close: it asks the Dialog to close through onOpenChange.
+vi.mock("../ui/dialog-close-button", () => ({
+  DialogCloseButton: ({ disabled, ...props }: React.ComponentProps<"button">) => (
+    <button
+      aria-label={props["aria-label"] ?? "Close"}
+      data-slot="dialog-close"
+      disabled={disabled}
+      onClick={() => dialogOpenChange?.(false)}
+    />
+  ),
 }));
 import { ProjectPlan, verificationRequestId } from "./ProjectPlan";
 let project = {
@@ -202,7 +220,11 @@ describe("project planning", () => {
     expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
       "My unsaved outcome",
     );
-    await click("Close");
+    const closeButton = container.querySelector<HTMLButtonElement>(
+      '[data-slot="dialog-close"][aria-label="Close project plan"]',
+    )!;
+    expect(closeButton).not.toBeNull();
+    await act(async () => closeButton.click());
     expect(state.close).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Discard this unsaved plan edit?");
   });

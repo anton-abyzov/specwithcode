@@ -97,6 +97,7 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.STUDIO_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.STUDIO_ACP_FAIL_PROMPT === "1";
+const failPromptMessage = process.env.STUDIO_ACP_FAIL_PROMPT_MESSAGE;
 const failSetConfigOption = process.env.STUDIO_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.STUDIO_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const omitModelConfigOption = process.env.STUDIO_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
@@ -1588,7 +1589,9 @@ const program = Effect.gen(function* () {
       }
 
       if (failPrompt) {
-        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+        return yield* AcpError.AcpRequestError.internalError(
+          failPromptMessage ?? "Mock prompt failure",
+        );
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
@@ -2234,7 +2237,7 @@ const program = Effect.gen(function* () {
           update: {
             sessionUpdate: "agent_message_chunk",
             messageId: "mock-agent-message",
-            content: { type: "text", text: "hello from mock" },
+            content: { type: "text", text: promptResponseText ?? "hello from mock" },
           },
         });
 

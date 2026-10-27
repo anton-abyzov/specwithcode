@@ -10,17 +10,18 @@ Tailscale is not required to connect machines. A machine can have several routes
 LAN address, SSH, Tailscale or a public URL. SpecWithCode Connect (**Settings → Connections → SpecWithCode Connect**,
 or `specwithcode connect link`) is the default way to reach a machine from anywhere. What each gives you:
 
-| Route                                                                  | Works off your home network | Notes                                                                                                                                            |
-| ---------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| SpecWithCode Connect                                                   | Yes                         | Encrypted Cloudflare tunnel to the desktop app, a browser or the phone. No Tailscale and no port forwarding. Each client still signs in          |
-| SSH port forward (fleet tunnels, or desktop **Add environment → SSH**) | Only if SSH is reachable    | Encrypted and pinned; today's workers use this over the LAN from the primary Mac                                                                 |
-| Plain LAN address                                                      | No                          | Needs the server bound beyond loopback; traffic is unencrypted http unless you add TLS. Avoid                                                    |
-| Tailscale Serve                                                        | Yes                         | Optional. Encrypted, private https on your tailnet, often faster on the same network. Still required today for worker delegation and folder copy |
-| Public URL                                                             | Yes                         | Exposes SpecWithCode to the internet behind pairing alone. Avoid                                                                                 |
+| Route                                                                  | Works off your home network | Notes                                                                                                                                   |
+| ---------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| SpecWithCode Connect                                                   | Yes                         | Encrypted Cloudflare tunnel to the desktop app, a browser or the phone. No Tailscale and no port forwarding. Each client still signs in |
+| SSH port forward (fleet tunnels, or desktop **Add environment → SSH**) | Only if SSH is reachable    | Encrypted and pinned; today's workers use this over the LAN from the primary Mac                                                        |
+| Plain LAN address                                                      | No                          | Needs the server bound beyond loopback; traffic is unencrypted http unless you add TLS. Avoid                                           |
+| Tailscale Serve                                                        | Yes                         | Optional. Encrypted, private https on your tailnet, often faster on the same network. Tried first for worker delegation and folder copy |
+| Public URL                                                             | Yes                         | Exposes SpecWithCode to the internet behind pairing alone. Avoid                                                                        |
 
 Recommendation: link each machine with SpecWithCode Connect to reach it from your other devices, including the phone.
-Add Tailscale when you want a direct private route. For now, letting a main machine start work on another machine,
-manage it or copy folders to it also needs Tailscale on both, because that uses the worker's tailnet (ts.net) address.
+Connect is also enough for a main machine to start work on another machine, manage it or copy folders to it. Over
+Connect it sends its token only bound to its own fleet key (DPoP), with a fresh proof per request; a plain bearer token
+never goes over Connect. Add Tailscale when you want a direct private route; the main machine tries it first.
 Another private network (plain WireGuard, ZeroTier) can replace Tailscale for direct routes with the same rules: bind
 SpecWithCode to loopback, forward into it, pair each origin.
 

@@ -4,11 +4,7 @@
  * machine accepts. `specweave-studio fleet invite` and Settings > Connections
  * both end here, so the two never disagree about what the line holds.
  */
-import {
-  EnvironmentId,
-  AuthAccessWriteScope,
-  AuthStandardClientScopes,
-} from "@specweave-studio/contracts";
+import { EnvironmentId } from "@specweave-studio/contracts";
 import type {
   StudioFleetInviteProblem,
   StudioFleetInviteResult,
@@ -23,10 +19,17 @@ import {
 } from "@specweave-studio/tailscale";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import {
+  FLEET_INVITE_SCOPES,
+  FLEET_REDEEM_WINDOW,
+  fleetRedeemSubject,
+} from "./fleet/fleetRedemption.ts";
+import { checkIdentity, type FleetFetch } from "./studioFleet.ts";
 import { encodeFleetJoinCode } from "./studioFleetJoin.ts";
 import type { PersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { publishOnTailscale, type TailscalePublishError } from "./tailscalePublish.ts";
@@ -34,12 +37,12 @@ import { publishOnTailscale, type TailscalePublishError } from "./tailscalePubli
 /** The label the owner sees in this machine's client list for the line's credential. */
 export const FLEET_INVITE_SESSION_LABEL = "Fleet management (fleet invite)";
 
-/**
- * What the line's token holds: pairing here can only hand out scopes the token
- * holds, so it carries every scope a connection from the primary may ask for,
- * plus access:write to mint those pairings.
- */
-export const FLEET_INVITE_SCOPES = [...AuthStandardClientScopes, AuthAccessWriteScope] as const;
+export {
+  FLEET_INVITE_SCOPES,
+  FLEET_REDEEM_WINDOW,
+  fleetRedeemSubject,
+  parseFleetRedeemSubject,
+} from "./fleet/fleetRedemption.ts";
 
 /** A year: the primary uses this token for every pairing on the machine, unattended. */
 export const DEFAULT_FLEET_INVITE_TTL = Duration.days(365);
@@ -64,10 +67,42 @@ export const issueFleetManagementSession = Effect.fnUntraced(function* (
   return issued;
 });
 
+/** Asked for SpecWithCode Connect (or anything that works), and this machine is not linked to it. */
+export class ConnectNotLinked extends Data.TaggedError("ConnectNotLinked")<{
+  /** Why Tailscale could not be used either, when it was tried. */
+  readonly tailscale?: TailscalePublishError;
+}> {}
+
+/** Linked to SpecWithCode Connect, and its address does not answer as this machine. */
+export class ConnectUnreachable extends Data.TaggedError("ConnectUnreachable")<{
+  readonly tailscale?: TailscalePublishError;
+}> {}
+
+export type FleetInviteFailure = TailscalePublishError | ConnectNotLinked | ConnectUnreachable;
+
+/** Which address an invitation carries: absent is the original Tailscale-only line. */
+export type FleetInviteVia = "auto" | "tailscale" | "connect";
+
+const daysOf = (ttl: Duration.Duration | undefined): number => {
+  const days = Math.ceil(Duration.toMillis(ttl ?? DEFAULT_FLEET_INVITE_TTL) / 86_400_000);
+  return Math.min(365, Math.max(1, days));
+};
+
 /**
- * Publishes this server on its Tailscale name, then issues the management
- * session the line carries. Publishing comes first so a failure leaves no
+ * Publishes this server where the other machine can reach it, then makes the
+ * line. Nothing is minted until an address is settled, so a failure leaves no
  * credential behind.
+ *
+ * - `via` absent or `tailscale`: Tailscale Serve, and a v1 line with a
+ *   management token (the original line, for older machines).
+ * - `connect`: this machine's SpecWithCode Connect address, after it answers
+ *   as this machine, and a v2 line.
+ * - `auto`: both when both work (v2, tailnet first), Tailscale alone (v1), or
+ *   Connect alone (v2).
+ *
+ * A v2 line carries no bearer: only a one-time credential, valid for
+ * `FLEET_REDEEM_WINDOW`, that the other machine redeems with a proof of its
+ * fleet key for a management token bound to that key.
  */
 export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
   readonly environmentId: string;
@@ -77,15 +112,109 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
   readonly servePort: number;
   readonly label?: string | undefined;
   readonly ttl?: Duration.Duration | undefined;
+  readonly via?: FleetInviteVia | undefined;
+  /** This machine's validated Connect origin, or null when it is not linked. */
+  readonly readConnectOrigin?: Effect.Effect<string | null> | undefined;
+  /** Used to check that the Connect address answers as this machine. */
+  readonly fetch?: FleetFetch | undefined;
 }) {
-  const served = yield* publishOnTailscale({
-    environmentId: input.environmentId,
-    state: input.state,
-    servePort: input.servePort,
-  });
-  const issued = yield* issueFleetManagementSession(input.coordinatorEnvironmentId, input.ttl);
-  const url = new URL(served.baseUrl).origin;
   const label = fleetInviteLabel(input.label, input.ownLabel) || "Machine";
+  if (input.via === undefined || input.via === "tailscale") {
+    const served = yield* publishOnTailscale({
+      environmentId: input.environmentId,
+      state: input.state,
+      servePort: input.servePort,
+    });
+    return yield* legacyInvitation(input, label, new URL(served.baseUrl).origin, served.notes);
+  }
+  // Tailscale first, but under `auto` its failure is only remembered.
+  let tailnet: { readonly origin: string; readonly notes: ReadonlyArray<string> } | null = null;
+  let tailscaleError: TailscalePublishError | undefined;
+  if (input.via === "auto") {
+    const published = yield* Effect.result(
+      publishOnTailscale({
+        environmentId: input.environmentId,
+        state: input.state,
+        servePort: input.servePort,
+      }),
+    );
+    if (published._tag === "Success")
+      tailnet = {
+        origin: new URL(published.success.baseUrl).origin,
+        notes: published.success.notes,
+      };
+    else tailscaleError = published.failure;
+  }
+  const connectOrigin = yield* input.readConnectOrigin ?? Effect.succeed(null);
+  let connect: string | null = null;
+  let connectProblem: "not_linked" | "unreachable" | null = null;
+  if (connectOrigin === null) connectProblem = "not_linked";
+  else {
+    const fetcher = input.fetch ?? globalThis.fetch;
+    const answered = yield* Effect.promise(() =>
+      checkIdentity(fetcher, {
+        url: connectOrigin,
+        environmentId: EnvironmentId.make(input.environmentId),
+      }).then(
+        () => true,
+        () => false,
+      ),
+    );
+    if (answered) connect = connectOrigin;
+    else connectProblem = "unreachable";
+  }
+  if (connect === null) {
+    if (tailnet !== null)
+      return yield* legacyInvitation(input, label, tailnet.origin, tailnet.notes);
+    const tailscale = tailscaleError === undefined ? {} : { tailscale: tailscaleError };
+    return yield* connectProblem === "unreachable"
+      ? Effect.fail(new ConnectUnreachable(tailscale))
+      : Effect.fail(new ConnectNotLinked(tailscale));
+  }
+  const primary = tailnet?.origin ?? connect;
+  const second = tailnet === null ? undefined : connect;
+  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const pairing = yield* environmentAuth.createPairingLink({
+    subject: fleetRedeemSubject(daysOf(input.ttl)),
+    principal: { kind: "coordinator", environmentId: input.coordinatorEnvironmentId },
+    scopes: [...FLEET_INVITE_SCOPES],
+    label: FLEET_INVITE_SESSION_LABEL,
+    ttl: FLEET_REDEEM_WINDOW,
+  });
+  const expiresAt = DateTime.add(pairing.createdAt, {
+    milliseconds: Duration.toMillis(input.ttl ?? DEFAULT_FLEET_INVITE_TTL),
+  });
+  const invitation: StudioFleetInviteResult = {
+    code: encodeFleetJoinCode({
+      v: 2,
+      url: primary,
+      ...(second === undefined ? {} : { connectUrl: second }),
+      environmentId: input.environmentId,
+      label,
+      redeem: pairing.credential,
+    }),
+    url: primary,
+    ...(second === undefined ? {} : { connectUrl: second }),
+    label,
+    expiresAt: DateTime.formatIso(expiresAt),
+    pairingId: pairing.id,
+    redeemBy: DateTime.formatIso(pairing.expiresAt),
+  };
+  return { invitation, notes: tailnet?.notes ?? [] };
+});
+
+/** The original line: a Tailscale address and a management token, minted only now. */
+const legacyInvitation = Effect.fnUntraced(function* (
+  input: {
+    readonly environmentId: string;
+    readonly coordinatorEnvironmentId: EnvironmentId;
+    readonly ttl?: Duration.Duration | undefined;
+  },
+  label: string,
+  url: string,
+  notes: ReadonlyArray<string>,
+) {
+  const issued = yield* issueFleetManagementSession(input.coordinatorEnvironmentId, input.ttl);
   const invitation: StudioFleetInviteResult = {
     code: encodeFleetJoinCode({
       url,
@@ -98,18 +227,33 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
     expiresAt: DateTime.formatIso(issued.expiresAt),
     sessionId: issued.sessionId,
   };
-  return { invitation, notes: served.notes };
+  return { invitation, notes };
 });
 
 /**
  * Plain words for a publish failure, saying what to do. The command-line
  * wording names flags; the app names its own settings instead.
  */
-export function fleetInviteProblem(error: TailscalePublishError): {
+export function fleetInviteProblem(error: FleetInviteFailure): {
   readonly reason: StudioFleetInviteProblem;
   readonly message: string;
 } {
   switch (error._tag) {
+    case "ConnectNotLinked":
+    case "ConnectUnreachable": {
+      const head =
+        error._tag === "ConnectNotLinked"
+          ? "This machine is not linked to SpecWithCode Connect. Link it in Settings > Connections > SpecWithCode Connect (or run `specwithcode connect` in a terminal), then try again."
+          : "This machine's SpecWithCode Connect address does not answer right now. Check that SpecWithCode Connect shows it as linked in Settings > Connections, then try again.";
+      const tailscale =
+        error.tailscale === undefined
+          ? ""
+          : ` Tailscale could not be used either: ${fleetInviteProblem(error.tailscale).message}`;
+      return {
+        reason: error._tag === "ConnectNotLinked" ? "connect_not_linked" : "connect_unreachable",
+        message: `${head}${tailscale}`,
+      };
+    }
     case "TailscaleUnavailableError": {
       const cause = error.cause as { readonly _tag?: unknown; readonly stderrDiagnostic?: unknown };
       if (cause?._tag === "TailscaleCommandSpawnError")

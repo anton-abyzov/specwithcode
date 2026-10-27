@@ -124,6 +124,21 @@ describe("private machine address", () => {
       "fixture.tailnet.ts.net",
     );
   });
+  it("shows the SpecWithCode Connect host when that is the address that answered", () => {
+    const viaConnect = {
+      id: "m2",
+      label: "Mac M2",
+      url: "https://m2.tailnet.ts.net",
+      connectUrl: "https://prod-0123456789abcdef.spec-weave.com",
+      transport: "connect" as const,
+    };
+    expect(fleetMachineAddress(viaConnect, [viaConnect])).toBe(
+      "prod-0123456789abcdef.spec-weave.com",
+    );
+    expect(fleetMachineAddress({ ...viaConnect, transport: "tailnet" }, [viaConnect])).toBe(
+      "m2.tailnet.ts.net",
+    );
+  });
   it("shows a machine's own host and port when no configured machine owns that name", () => {
     const own = { id: "m3", label: "Mac M3", url: "https://m3.tailnet.ts.net:8444" };
     expect(fleetMachineAddress(own, [...snapshot.machines, own])).toBe("m3.tailnet.ts.net:8444");
@@ -604,6 +619,39 @@ describe("inviting this machine from its own roster", () => {
     const action = inviteButton(render({ canManageWorkers: false, onInvite: vi.fn() }))!;
     expect(label(action)).toBe("Manage access required");
     expect(action.props.disabled).toBe(true);
+  });
+  it("says the line works over Tailscale or SpecWithCode Connect", () => {
+    const tree = label(render({ canManageWorkers: true, onInvite: vi.fn() }));
+    expect(tree).toContain("It works over Tailscale or SpecWithCode");
+    expect(tree).not.toContain("Both need Tailscale");
+  });
+  it("says which address reached a machine, and when a bearer-only line needs renewing", () => {
+    const viaConnect: StudioFleetSnapshot = {
+      ...snapshot,
+      machines: [
+        {
+          ...snapshot.machines[1]!,
+          url: "https://m1.tailnet.ts.net",
+          connectUrl: "https://prod-0123456789abcdef.spec-weave.com",
+          transport: "connect",
+          managementBinding: "bearer",
+        },
+      ],
+    };
+    const text = label(render({ snapshot: viaConnect }));
+    expect(text).toContain("via SpecWithCode Connect");
+    expect(text).toContain("Invite this machine again to use SpecWithCode Connect.");
+    const bound = label(
+      render({
+        snapshot: {
+          ...viaConnect,
+          machines: [{ ...viaConnect.machines[0]!, managementBinding: "proof" }],
+        },
+      }),
+    );
+    expect(bound).toContain("via SpecWithCode Connect");
+    expect(bound).not.toContain("Invite this machine again");
+    expect(label(render())).toContain("Reachable");
   });
   it("names the in-app invitation before the command in the Add a machine hint", () => {
     const hint = label(

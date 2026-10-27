@@ -159,11 +159,10 @@ describe("machine handoff dialog", () => {
     async (phase) => {
       await handoff({ phase, preview: phase === "transferring" ? preview : null, consent: true });
       expect(document.querySelector('[data-slot="dialog-close"]')).toBeNull();
-      expect(button("Close").disabled).toBe(true);
+      expect(() => button("Close")).toThrow();
       expect(radio("Mac Mini").getAttribute("aria-disabled")).toBe("true");
       const action = button(phase === "checking" ? "Checking…" : "Transferring…");
       expect(action.disabled).toBe(true);
-      await click(button("Close"));
       await click(action);
       await escape();
       expect(props.onOpenChange).not.toHaveBeenCalled();
@@ -184,15 +183,15 @@ describe("machine handoff dialog", () => {
     },
   );
 
-  it("allows footer close, corner close, and Escape again after checking finishes", async () => {
+  it("allows the corner close and Escape again after checking finishes", async () => {
     await handoff({ phase: "checking" });
     await escape();
     expect(props.onOpenChange).not.toHaveBeenCalled();
     await handoff({ phase: "choose" });
-    await click(button("Close"));
+    expect(document.querySelectorAll('[data-slot="dialog-footer"] button')).toHaveLength(1);
     await click(document.querySelector<HTMLElement>('[data-slot="dialog-close"]')!);
     await escape();
-    expect(props.onOpenChange).toHaveBeenCalledTimes(3);
+    expect(props.onOpenChange).toHaveBeenCalledTimes(2);
     expect(props.onOpenChange).toHaveBeenLastCalledWith(false);
   });
 
@@ -374,7 +373,7 @@ describe("handoff file method", () => {
     return element;
   };
 
-  it("shows the copy flow by default and only Close while the copy runs", async () => {
+  it("shows the copy flow by default and no close control while the copy runs", async () => {
     const onMethodChange = vi.fn();
     await handoff({
       method: "copy",
@@ -386,7 +385,7 @@ describe("handoff file method", () => {
     expect(document.querySelector('[data-testid="copy-flow"]')).not.toBeNull();
     expect(document.querySelector('[data-slot="handoff-machine"]')).toBeNull();
     expect(() => button("Review handoff")).toThrow();
-    expect(button("Close").disabled).toBe(true);
+    expect(() => button("Close")).toThrow();
     await escape();
     expect(props.onOpenChange).not.toHaveBeenCalled();
     await click(methodRadio("Use the folder as it is"));
@@ -404,19 +403,23 @@ describe("handoff file method", () => {
     });
     // Measuring and copying keep running on the machines: closing is allowed,
     // switching the file method is not.
-    expect(button("Close").disabled).toBe(false);
-    expect(document.querySelector('[data-slot="dialog-close"][aria-label="Close"]')).not.toBeNull();
+    // The corner X is the only close control.
+    expect(
+      document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
+        ?.disabled,
+    ).toBe(false);
     await click(methodRadio("Use the folder as it is"));
     expect(onMethodChange).not.toHaveBeenCalled();
     await escape();
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
     vi.mocked(props.onOpenChange).mockClear();
-    await click(button("Close"));
+    await click(
+      document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')!,
+    );
     expect(props.onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
     vi.mocked(props.onOpenChange).mockClear();
 
     await handoff({ copyLocked: true });
-    expect(button("Close").disabled).toBe(true);
     expect(document.querySelector('[data-slot="dialog-close"][aria-label="Close"]')).toBeNull();
     await escape();
     expect(props.onOpenChange).not.toHaveBeenCalled();

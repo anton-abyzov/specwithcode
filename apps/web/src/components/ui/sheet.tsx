@@ -1,11 +1,10 @@
 "use client";
 
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
-import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
 import { usePagePopup } from "./pagePopups";
-import { Button } from "~/components/ui/button";
+import { DialogCloseButton } from "~/components/ui/dialog-close-button";
 
 function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
   return <SheetPrimitive.Root {...usePagePopup(props)} />;
@@ -113,15 +112,7 @@ function SheetPopup({
           {...props}
         >
           {children}
-          {showCloseButton && (
-            <SheetPrimitive.Close
-              aria-label="Close"
-              className="absolute end-2 top-2"
-              render={<Button size="icon" variant="ghost" />}
-            >
-              <XIcon />
-            </SheetPrimitive.Close>
-          )}
+          {showCloseButton && <DialogCloseButton />}
         </SheetPrimitive.Popup>
       </SheetViewport>
     </SheetPortal>
@@ -144,7 +135,10 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
 function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
-      className={cn("font-semibold text-xl leading-none", className)}
+      className={cn(
+        "font-semibold text-xl leading-none in-[[data-slot=sheet-popup]:has(>[data-slot=dialog-close])]:pe-8",
+        className,
+      )}
       data-slot="sheet-title"
       {...props}
     />

@@ -53,11 +53,20 @@ export const StudioFleetWorkers = Schema.Struct({
 });
 export type StudioFleetWorkers = typeof StudioFleetWorkers.Type;
 
+/** How a coordinator reaches a machine: its Tailscale name or its SpecWithCode Connect address. */
+export const FleetTransport = Schema.Literals(["tailnet", "connect"]);
+export type FleetTransport = typeof FleetTransport.Type;
 export const StudioFleetMachine = Schema.Struct({
   id: StudioFleetMachineId,
   label: Schema.String,
   environmentId: EnvironmentId,
   url: Schema.String,
+  /** Second address over SpecWithCode Connect, beside a Tailscale `url`. Absent from older servers. */
+  connectUrl: Schema.optionalKey(Schema.String),
+  /** The address that answered the last check. Absent when unreachable and from older servers. */
+  transport: Schema.optionalKey(FleetTransport),
+  /** Whether the saved management token is a plain bearer or bound to this machine's fleet key. */
+  managementBinding: Schema.optionalKey(Schema.Literals(["bearer", "proof"])),
   status: Schema.Literals(["reachable", "unreachable", "identity-mismatch"]),
   pairingConfigured: Schema.Boolean,
   /** The machine's own name from its environment descriptor; absent when unreachable or on older servers. */
@@ -145,6 +154,8 @@ export const StudioFleetAddResult = Schema.Struct({
   id: StudioFleetMachineId,
   label: Schema.String,
   url: Schema.String,
+  /** The machine's SpecWithCode Connect address, when the invitation carried one. */
+  connectUrl: Schema.optionalKey(Schema.String),
   environmentId: EnvironmentId,
   /** updated: a configured machine got a new address or token. */
   change: Schema.Literals(["added", "updated"]),
@@ -163,21 +174,56 @@ export const StudioFleetInviteInput = exactStruct({
   label: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(80))),
   /** How long the other machine may use the invitation. Default 365. */
   days: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 365 }))),
+  /**
+   * Which address the line carries: Tailscale, SpecWithCode Connect, or
+   * whatever works here (`auto`, both when both do). Absent: the original
+   * Tailscale-only line with a management token, for older apps.
+   */
+  via: Schema.optionalKey(Schema.Literals(["auto", "tailscale", "connect"])),
 });
 export type StudioFleetInviteInput = typeof StudioFleetInviteInput.Type;
 
 /**
- * The invitation line holds a management credential: shown once, never
- * cached or logged. `sessionId` names that credential so it can be revoked.
+ * The invitation line holds a credential: shown once, never cached or logged.
+ * A Tailscale-only line holds a management token, named by `sessionId` so it
+ * can be revoked. A line with a SpecWithCode Connect address holds a one-time
+ * credential instead, named by `pairingId`, which the other machine must use
+ * by `redeemBy`; it then holds a token bound to its own key.
  */
 export const StudioFleetInviteResult = Schema.Struct({
   code: Schema.String,
   url: Schema.String,
   label: Schema.String,
   expiresAt: IsoDateTime,
-  sessionId: AuthSessionId,
+  sessionId: Schema.optionalKey(AuthSessionId),
+  /** The SpecWithCode Connect address the line carries beside a Tailscale `url`. */
+  connectUrl: Schema.optionalKey(Schema.String),
+  /** The one-time credential's pairing link, for revoking an unused line. */
+  pairingId: Schema.optionalKey(Schema.String),
+  /** When the one-time credential stops working if unused. */
+  redeemBy: Schema.optionalKey(IsoDateTime),
 });
 export type StudioFleetInviteResult = typeof StudioFleetInviteResult.Type;
+
+/**
+ * The other machine spends a v2 invitation's one-time `redeem` credential
+ * here, with a DPoP proof of the key it will hold the management token with.
+ * The token's principal, scopes and lifetime come from the invitation, never
+ * from this request.
+ */
+export const StudioFleetRedeemInput = exactStruct({
+  credential: StudioFleetPairingCode,
+  coordinatorEnvironmentId: EnvironmentId,
+});
+export type StudioFleetRedeemInput = typeof StudioFleetRedeemInput.Type;
+
+/** A management token bound to the redeeming machine's proof key. */
+export const StudioFleetRedeemResult = Schema.Struct({
+  managementToken: Schema.String,
+  sessionId: AuthSessionId,
+  expiresAt: IsoDateTime,
+});
+export type StudioFleetRedeemResult = typeof StudioFleetRedeemResult.Type;
 
 /** Why this server could not publish itself on its Tailscale name. */
 export const StudioFleetInviteProblem = Schema.Literals([
@@ -191,6 +237,10 @@ export const StudioFleetInviteProblem = Schema.Literals([
   "dev_server_not_proxiable",
   "tailscale_needs_admin",
   "tailscale_sign_in_failed",
+  /** Asked for SpecWithCode Connect, and this machine is not linked to it. */
+  "connect_not_linked",
+  /** Linked to SpecWithCode Connect, and its address does not answer as this machine. */
+  "connect_unreachable",
 ]);
 export type StudioFleetInviteProblem = typeof StudioFleetInviteProblem.Type;
 
@@ -215,6 +265,10 @@ export const StudioFleetTailscaleStatus = Schema.Struct({
   platform: Schema.String,
   /** Whether Homebrew is installed here, so `brew install --cask tailscale` would work. */
   homebrew: Schema.Boolean,
+  /** Whether an invitation can carry this machine's SpecWithCode Connect address instead. */
+  connect: Schema.optionalKey(
+    Schema.Struct({ linked: Schema.Boolean, origin: Schema.NullOr(Schema.String) }),
+  ),
 });
 export type StudioFleetTailscaleStatus = typeof StudioFleetTailscaleStatus.Type;
 

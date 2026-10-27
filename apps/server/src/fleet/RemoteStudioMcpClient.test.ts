@@ -11,8 +11,15 @@ const failureOnly = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   );
 import * as Layer from "effect/Layer";
 
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a real fleet key file for the link.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+
+import { nodePath as NodePath } from "../nodePath.ts";
 import { fakeStudioMcp } from "./fakeStudioMcp.testkit.ts";
-import { ORIGIN, target } from "./fleetMachine.testkit.ts";
+import { CONNECT_ORIGIN, ORIGIN, studioToken, target } from "./fleetMachine.testkit.ts";
+import { loadOrCreateFleetProofKey } from "./fleetProofKey.ts";
+import { makeFleetLink } from "./fleetTransport.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
@@ -199,4 +206,122 @@ describe("RemoteStudioMcpClient", () => {
       expect(["unreachable", "invalid_response"]).toContain(error.reason);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describe("RemoteStudioMcpClient over SpecWithCode Connect", () => {
+  it.effect("calls the Connect /mcp with DPoP on every request when the tailnet is down", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-mcp-connect-"));
+      const key = yield* Effect.promise(() => loadOrCreateFleetProofKey(baseDir));
+      const grant = studioToken({ sid: "grant", jkt: key.thumbprint });
+      const remote = fakeStudioMcp({
+        origin: ORIGIN,
+        alsoAnswersOn: [CONNECT_ORIGIN],
+        offline: new Set([ORIGIN]),
+        environmentId: "env-m1",
+        tokens: [grant],
+        tools: { studio_thread_read: () => ({ result: { thread: remoteThread } }) },
+      });
+      const machine = { ...target, connectUrl: CONNECT_ORIGIN };
+      const rejected: string[] = [];
+      const layer = RemoteStudioMcpClient.layer.pipe(
+        Layer.provide(
+          Layer.mock(FleetWorkerGrants.FleetWorkerGrants)({
+            credential: () =>
+              Effect.succeed({
+                target: machine,
+                accessToken: grant,
+                access: "auto" as const,
+                expiresAt: "2026-11-11T00:00:00.000Z",
+              }),
+            reportRejected: (_machineId, accessToken) =>
+              Effect.sync(() => {
+                rejected.push(accessToken);
+              }),
+            reportAccepted: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(FleetTargets.FleetTargets, {
+            load: Effect.succeed({ version: 1 as const, machines: [machine] }),
+            fetch: remote.fetcher,
+            link: makeFleetLink({ fetch: remote.fetcher, baseDir }),
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+        expect(yield* read(client)).toEqual({ thread: remoteThread });
+        expect(yield* read(client)).toEqual({ thread: remoteThread });
+        const mcp = remote.requests.filter((request) => request.url.endsWith("/mcp"));
+        expect(mcp.length).toBeGreaterThan(1);
+        expect(mcp.every((request) => request.url === `${CONNECT_ORIGIN}/mcp`)).toBe(true);
+        expect(mcp.every((request) => request.authorization === `DPoP ${grant}`)).toBe(true);
+        // A fresh proof per request: no two alike.
+        const proofs = mcp.map((request) => request.dpop);
+        expect(proofs.every((proof) => typeof proof === "string")).toBe(true);
+        expect(new Set(proofs).size).toBe(proofs.length);
+        expect(
+          remote.requests.some((request) => request.authorization?.startsWith("Bearer ")),
+        ).toBe(false);
+        // A revoked grant is still reported as rejected over Connect.
+        remote.revoke(grant);
+        yield* client.forget("m1");
+        const error = yield* failureOnly(read(client));
+        expect(error.reason).toBe("not_authorized");
+        expect(rejected).toEqual([grant]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+        ),
+      );
+    }),
+  );
+
+  it.effect("never takes a bearer grant to the Connect address", () =>
+    Effect.gen(function* () {
+      const remote = fakeStudioMcp({
+        origin: ORIGIN,
+        alsoAnswersOn: [CONNECT_ORIGIN],
+        offline: new Set([ORIGIN]),
+        environmentId: "env-m1",
+        tokens: ["token-1"],
+        tools: { studio_thread_read: () => ({ result: { thread: remoteThread } }) },
+      });
+      const machine = { ...target, connectUrl: CONNECT_ORIGIN };
+      const layer = RemoteStudioMcpClient.layer.pipe(
+        Layer.provide(
+          Layer.mock(FleetWorkerGrants.FleetWorkerGrants)({
+            credential: () =>
+              Effect.succeed({
+                target: machine,
+                accessToken: "token-1",
+                access: "auto" as const,
+                expiresAt: "2026-11-11T00:00:00.000Z",
+              }),
+            reportRejected: () => Effect.void,
+            reportAccepted: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(FleetTargets.FleetTargets, {
+            load: Effect.succeed({ version: 1 as const, machines: [machine] }),
+            fetch: remote.fetcher,
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+        const error = yield* failureOnly(read(client));
+        expect(error.reason).toBe("unreachable");
+        // Connect is only asked who it is, with no credential.
+        expect(
+          remote.requests
+            .filter((request) => request.url.startsWith(CONNECT_ORIGIN))
+            .map((request) => [request.url, request.authorization]),
+        ).toEqual([[`${CONNECT_ORIGIN}/.well-known/studio/environment`, null]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 });
