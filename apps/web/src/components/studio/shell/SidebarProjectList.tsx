@@ -89,6 +89,11 @@ import { isScratchMember, type ScratchRootLookup } from "../../../studio/project
 import { Tip } from "./Tip";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
 import type { ProjectNameCheck } from "../../../studio/projectRename";
+import {
+  copyActivityText,
+  useCopyActivity,
+  type CopyActivity,
+} from "../../../studio/folderCopyActivity";
 
 // Environments without matchMedia (tests, some embeds) get no motion at all.
 const canAnimate = () => typeof window !== "undefined" && typeof window.matchMedia === "function";
@@ -440,6 +445,27 @@ function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
 }
 
 /** One project in the Projects list, with its move, pin and archive actions. */
+/** A thin bar along the row's bottom edge: how far a background copy is, or a sweep. */
+function CopyProgressLine({ activity }: { readonly activity: CopyActivity }) {
+  return (
+    <span
+      className="sws-copy-progress"
+      data-waiting={activity.waiting || undefined}
+      data-indeterminate={(activity.fraction === null && !activity.waiting) || undefined}
+      aria-hidden
+    >
+      <span
+        className="sws-copy-progress-fill"
+        style={
+          activity.fraction === null
+            ? undefined
+            : { width: `${Math.round(activity.fraction * 100)}%` }
+        }
+      />
+    </span>
+  );
+}
+
 export function ProjectRow(props: {
   group: SidebarProjectSnapshot;
   displayedProject: SidebarProjectGroupMember | undefined;
@@ -514,6 +540,9 @@ export function ProjectRow(props: {
   const copies = copyRolesSummary(group.memberProjects, (member) =>
     nickname(member.environmentId, member.environmentLabel),
   );
+  // A folder copy to another machine running in the background: dimmed with its progress.
+  const copying = useCopyActivity(group.memberProjects);
+  const copyingText = copying ? copyActivityText(copying) : null;
   return (
     <li
       ref={setNodeRef}
@@ -531,6 +560,7 @@ export function ProjectRow(props: {
       data-pinned={pinned || undefined}
       data-dragging={props.dragging || undefined}
       data-renaming={(renaming !== null && props.rename !== undefined) || undefined}
+      data-copying={(copying !== null && !copying.waiting) || undefined}
     >
       {renaming !== null && props.rename ? (
         <SidebarNameEditor
@@ -550,7 +580,7 @@ export function ProjectRow(props: {
           label={
             personal
               ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-              : `${displayName} · ${project.workspaceRoot}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}`
+              : `${displayName} · ${project.workspaceRoot}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
           }
         >
           <Link
@@ -576,6 +606,7 @@ export function ProjectRow(props: {
             <ProjectFavicon project={project} className="size-[18px] shrink-0" />
             <span className="sws-side-row-label">{displayName}</span>
             {copies ? <span className="sr-only">, {copies}</span> : null}
+            {copyingText ? <span className="sr-only">, {copyingText}</span> : null}
             {props.hint ? (
               <span className="sws-side-row-hint sws-side-row-namesake" title={props.hint}>
                 {props.hint}
@@ -609,6 +640,7 @@ export function ProjectRow(props: {
                 />
               ) : null}
             </span>
+            {copying ? <CopyProgressLine activity={copying} /> : null}
           </Link>
         </Tip>
       )}

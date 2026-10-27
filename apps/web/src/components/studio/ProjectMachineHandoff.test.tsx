@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+import {
+  copyOpener,
+  currentCopyWatches,
+  resetCopyActivityForTests,
+} from "../../studio/folderCopyActivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -66,13 +71,6 @@ vi.mock("../../lib/utils", async (importOriginal) => ({
 }));
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (_id: string, label?: string | null) => label ?? "Machine",
-}));
-const watchers = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-vi.mock("./HandoffFolderCopyWatcher", () => ({
-  HandoffFolderCopyWatcher: (props: Record<string, unknown>) => {
-    watchers.push(props);
-    return null;
-  },
 }));
 vi.mock("./shell/Tip", () => ({ Tip: ({ children }: React.PropsWithChildren) => <>{children}</> }));
 vi.mock("./MachineHandoffDialog", async (importOriginal) => ({
@@ -885,8 +883,8 @@ it("resolves a full saved copy registration only by destination machine and exac
   expect(resolve(String(target.environmentId), `${target.workspaceRoot}-other`)).toBeNull();
 });
 
-it("lets a running folder copy close, keeps it, and watches it until the dialog reopens", async () => {
-  watchers.length = 0;
+it("lets a running folder copy close, keeps it, and watches it app wide until the dialog reopens", async () => {
+  resetCopyActivityForTests();
   state.environments = machineEnvironments;
   await mount();
   expect(props().method).toBe("copy");
@@ -899,20 +897,18 @@ it("lets a running folder copy close, keeps it, and watches it until the dialog 
   expect(props().copyLocked).toBe(false);
   const pointer = "specwithcode:folder-copy:m4:source";
   localStorage.setItem(pointer, JSON.stringify({ operationId: "op", environmentId: "m3" }));
-  expect(watchers).toHaveLength(0);
+  expect(currentCopyWatches().size).toBe(0);
   await act(async () => props().onOpenChange(false));
   expect(localStorage.getItem(pointer)).not.toBeNull();
-  expect(watchers.at(-1)).toMatchObject({
-    environmentId: "m4",
-    projectId: "source",
-    sourceLabel: "M4",
-  });
-  expect((watchers.at(-1)!.machineLabel as (id: string) => string)("m3")).toBe("M3");
-  const mounts = watchers.length;
-  await act(async () => container.querySelector("button")!.click());
+  const watch = currentCopyWatches().get("m4:source");
+  expect(watch).toMatchObject({ environmentId: "m4", projectId: "source", sourceLabel: "M4" });
+  expect(watch!.machineLabel("m3")).toBe("M3");
+  // A background toast's Open reopens this dialog while the project is on screen.
+  await act(async () => copyOpener("m4:source")!());
   expect(props().open).toBe(true);
   // Reopening keeps the copy method and hands the operation back to the dialog.
   expect(props().method).toBe("copy");
+  expect(currentCopyWatches().size).toBe(0);
   await act(async () => props().onOpenChange(false));
-  expect(watchers.length).toBeGreaterThan(mounts);
+  expect(currentCopyWatches().has("m4:source")).toBe(true);
 });

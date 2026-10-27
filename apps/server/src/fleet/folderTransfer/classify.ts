@@ -1,4 +1,7 @@
-import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
+import {
+  isSecretLikeProjectPath,
+  isUntrackedSecretConfigPath,
+} from "../../workspace/WorkspaceSensitivePaths.ts";
 
 /**
  * What a copied file is, which decides whether it moves by default:
@@ -85,7 +88,8 @@ export function classifyFile(input: {
 }): FileClass {
   if (input.insideGitData) return "repository";
   if (input.gitState === "tracked") return "tracked";
-  if (isSecretLikeProjectPath(input.relative)) return "secret";
+  if (isSecretLikeProjectPath(input.relative) || isUntrackedSecretConfigPath(input.relative))
+    return "secret";
   // Finder metadata is recreated locally and may only be hidden by the source
   // user's global ignore file, which deliberately does not move to another host.
   if (input.relative.split("/").at(-1) === ".DS_Store") return "rebuildable";

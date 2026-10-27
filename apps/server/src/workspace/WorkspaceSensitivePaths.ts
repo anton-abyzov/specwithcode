@@ -282,15 +282,63 @@ const PROJECT_KEY_FILE =
   /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|key|p12|pfx|p8|keystore|jks))$/i;
 
 /**
+ * Templates that ship next to real env files and hold placeholders, not values:
+ * `.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults`.
+ */
+const ENV_TEMPLATE_FILE =
+  /^\.env(?:\..+)?\.(?:example|sample|template|tmpl|dist|defaults)$|^\.env\.(?:example|sample|template|tmpl|dist|defaults)(?:\..+)?$/i;
+
+/**
+ * Per-stack config files that usually hold connection strings, API keys or
+ * signing passwords and are kept out of Git for that reason. Only files Git does
+ * not track reach this check in a folder copy: a tracked `appsettings.json` is
+ * already in the repository.
+ */
+const STACK_SECRET_FILE = new RegExp(
+  [
+    // .NET: environment and local overrides, user secrets, publish profiles.
+    String.raw`appsettings(?:\..+)?\.json`,
+    String.raw`secrets\.json`,
+    String.raw`connectionstrings\.config`,
+    String.raw`.+\.publishsettings`,
+    String.raw`.+\.pubxml\.user`,
+    // Java, Kotlin and Spring: profile overrides and signing properties.
+    String.raw`application-(?:local|dev|development|prod|production|secret|secrets)\.(?:properties|ya?ml)`,
+    String.raw`(?:keystore|key|signing|secrets?)\.properties`,
+    String.raw`local\.properties`,
+    // Cloudflare Workers, Rails, Streamlit, Terraform, Kubernetes, Google and Firebase.
+    String.raw`\.dev\.vars(?:\..+)?`,
+    String.raw`master\.key`,
+    String.raw`secrets\.(?:toml|ya?ml|env|ini|conf)`,
+    String.raw`.+\.tfvars(?:\.json)?`,
+    String.raw`terraform\.tfstate(?:\.backup)?`,
+    String.raw`kubeconfig(?:\..+)?`,
+    String.raw`(?:service[-_]?account|client[-_]?secret|credentials?)(?:[-_.].+)?\.json`,
+    // Generic secret stores and password files.
+    String.raw`\.secrets?`,
+    String.raw`.+\.secrets?`,
+    String.raw`\.htpasswd`,
+    String.raw`\.pgpass`,
+    String.raw`\.my\.cnf`,
+    String.raw`\.s3cfg`,
+    String.raw`\.boto`,
+  ]
+    .map((pattern) => `^(?:${pattern})$`)
+    .join("|"),
+  "i",
+);
+
+/**
  * True when a file inside a project folder looks like a credential: any `.env*`
- * file (`.env`, `.env.local`, `.envrc`, `.env-prod`), a private key, or a file the home lists above refuse (`.npmrc`, `.netrc`,
- * `.docker/config.json`, provider `auth.json` and the like) at any depth. A folder
- * copy leaves these out unless the person ticks them one by one.
+ * file (`.env`, `.env.local`, `.envrc`, `.env-prod`) except a template such as
+ * `.env.example`, a private key, or a file the home lists above refuse (`.npmrc`,
+ * `.netrc`, `.docker/config.json`, provider `auth.json` and the like) at any depth.
+ * A folder copy leaves these out unless the person ticks them one by one.
  */
 export function isSecretLikeProjectPath(relativePath: string): boolean {
   const parts = relativePath.split("/");
   const name = parts.at(-1) ?? "";
-  if (name.startsWith(".env")) return true;
+  if (name.startsWith(".env")) return !ENV_TEMPLATE_FILE.test(name);
   if (PROJECT_KEY_FILE.test(name) || PROVIDER_HOME_CREDENTIAL_FILES.has(name)) return true;
   const suffixMatches = (listed: string) =>
     relativePath === listed || relativePath.endsWith(`/${listed}`);
@@ -301,6 +349,17 @@ export function isSecretLikeProjectPath(relativePath: string): boolean {
       if (parts.slice(end - depth, end).join("/") === directory) return true;
     return false;
   });
+}
+
+/**
+ * True for a per-stack config file that usually holds secrets when Git does not
+ * track it: .NET `appsettings*.json` and `secrets.json`, Spring profile overrides,
+ * signing properties, Cloudflare `.dev.vars`, Rails `master.key`, Terraform
+ * variables and state, kubeconfig and service-account JSON. Callers apply it only
+ * to untracked or ignored files: a tracked `appsettings.json` is ordinary work.
+ */
+export function isUntrackedSecretConfigPath(relativePath: string): boolean {
+  return STACK_SECRET_FILE.test(relativePath.split("/").at(-1) ?? "");
 }
 
 /** A provider config file in its home that changes what the agent runs (hooks, MCP servers). */

@@ -32,7 +32,12 @@ import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDial
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
-import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
+import {
+  copyActivityKey,
+  registerCopyOpener,
+  unwatchCopy,
+  watchCopy,
+} from "../../studio/folderCopyActivity";
 import { copyDestinationKey, type HandoffFolderMethod } from "../../studio/folderCopy";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { isArchivedMember } from "../../studio/projectListVisibility";
@@ -116,7 +121,6 @@ export function ProjectMachineHandoff({
     copyRunning.current = value;
     setCopyBusyState(value);
   }, []);
-  const [copyWatch, setCopyWatch] = useState(0);
   // A synchronous gate catches double-clicks before React paints the disabled button.
   const running = useRef(false);
   // The operation this dialog prepared without publishing, until a transfer tries to publish it.
@@ -279,10 +283,32 @@ export function ProjectMachineHandoff({
     // Closing cancels an unpublished review, so the next opening starts from the choices.
     if (!value && phase !== "complete" && discardPreview() === "none") setError(null);
     // The folder copy keeps running on the machines; say when it is ready.
-    if (!value && open && copyRunning.current) setCopyWatch((count) => count + 1);
+    // The app-wide watcher follows it, whichever project is open next.
+    const activityKey = copyActivityKey(project.environmentId, project.id);
+    if (!value && open && copyRunning.current)
+      watchCopy({
+        environmentId: project.environmentId,
+        projectId: project.id,
+        machineLabel: (environmentId) =>
+          environments.find((item) => item.environmentId === environmentId)?.label ??
+          "the other machine",
+        sourceLabel: source?.label ?? "this machine",
+      });
+    // An open dialog follows the copy itself.
+    if (value) unwatchCopy(activityKey);
     setOpen(value);
     onOpenChange?.(value);
   };
+  // A background copy's toast opens this dialog while this project is on screen.
+  const latestChangeOpen = useRef(changeOpen);
+  latestChangeOpen.current = changeOpen;
+  useEffect(
+    () =>
+      registerCopyOpener(copyActivityKey(project.environmentId, project.id), () =>
+        latestChangeOpen.current(true),
+      ),
+    [project.environmentId, project.id],
+  );
   useEffect(() => {
     if (!requestedTarget) return;
     setSelected(requestedTarget);
@@ -528,19 +554,6 @@ export function ProjectMachineHandoff({
 
   return (
     <>
-      {!open && copyWatch > 0 && (
-        <HandoffFolderCopyWatcher
-          key={copyWatch}
-          environmentId={project.environmentId}
-          projectId={project.id}
-          machineLabel={(environmentId) =>
-            environments.find((item) => item.environmentId === environmentId)?.label ??
-            "the other machine"
-          }
-          sourceLabel={source?.label ?? "this machine"}
-          onOpenDialog={() => changeOpen(true)}
-        />
-      )}
       <Tip
         label={
           sourceReady

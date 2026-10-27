@@ -3,6 +3,10 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import {
+  isSecretLikeProjectPath,
+  isUntrackedSecretConfigPath,
+} from "../../workspace/WorkspaceSensitivePaths.ts";
 import { FILE_CLASSES, type FileClass } from "./classify.ts";
 import { privateDirectory, readJson, writeJson } from "./durable.ts";
 import { runGit } from "./git.ts";
@@ -1128,7 +1132,12 @@ export class SourceTransfers {
     if (!loaded.record.summary) throw new SourceTransferError(409, "scanning");
     let files;
     try {
-      files = selectSecretFiles(loaded.record.summary.secretFiles, input.paths);
+      const offered = await this.withLiveSecretFiles(
+        loaded.record.folder,
+        loaded.record.summary.secretFiles,
+        input.paths,
+      );
+      files = selectSecretFiles(offered, input.paths);
     } catch (cause) {
       if (cause instanceof SecretStepError)
         throw new SourceTransferError(400, cause.code, cause.message);
@@ -1145,6 +1154,37 @@ export class SourceTransfers {
             },
     });
     return loaded.record;
+  }
+
+  /**
+   * The measured secret files plus any ticked path the summary lacks that is still
+   * a secret-like regular file in the folder. The dialog can list a file from a later
+   * scan (a refreshed check, a build that listed the folder again) than the one this
+   * record kept; refusing it would fail the whole copy for a file the person may send.
+   */
+  private async withLiveSecretFiles(
+    folder: string,
+    offered: ReadonlyArray<{ readonly path: string; readonly size: number }>,
+    paths: ReadonlyArray<string>,
+  ): Promise<Array<{ path: string; size: number }>> {
+    const known = new Set(offered.map((file) => file.path));
+    const result = [...offered];
+    for (const path of new Set(paths)) {
+      if (known.has(path) || !isSafeRelativePath(path)) continue;
+      if (!isSecretLikeProjectPath(path) && !isUntrackedSecretConfigPath(path)) continue;
+      if (path.split("/").includes(".git")) continue;
+      let handle: NodeFSP.FileHandle | null = null;
+      try {
+        handle = await openInside(folder, path);
+        const stat = await handle.stat();
+        if (stat.isFile()) result.push({ path, size: stat.size });
+      } catch {
+        // Gone, a link, or behind a link: it stays refused below.
+      } finally {
+        await handle?.close();
+      }
+    }
+    return result;
   }
 
   /** The secret files the destination may pull: paths and sizes only. */

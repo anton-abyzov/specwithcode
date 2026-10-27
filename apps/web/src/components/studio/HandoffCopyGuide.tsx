@@ -223,6 +223,50 @@ function Names({
   );
 }
 
+/** "name (repository)" as the notices list worktrees of repositories other than the root. */
+const WORKTREE_OF = /^(.+) \(([^()]+)\)$/;
+
+/** Names grouped by repository, one line each with a count, so dozens stay readable. */
+function GroupedNames({
+  names,
+  label,
+}: {
+  readonly names: ReadonlyArray<string>;
+  readonly label: string;
+}) {
+  const groups = new Map<string, Array<string>>();
+  for (const name of names) {
+    const match = WORKTREE_OF.exec(name);
+    const repository = match?.[2] ?? "";
+    const list = groups.get(repository) ?? [];
+    list.push(match?.[1] ?? name);
+    groups.set(repository, list);
+  }
+  if (groups.size < 2) return <Names names={names} label={label} />;
+  const sorted = [...groups].toSorted((a, b) => b[1].length - a[1].length);
+  return (
+    <ul aria-label={label} className="mt-1 space-y-0.5" data-slot="copy-names-grouped">
+      {sorted.map(([repository, list]) => (
+        <li key={repository}>
+          <details>
+            <summary className="cursor-pointer text-muted-foreground">
+              <span className="font-mono">{repository.split("/").at(-1) || "this folder"}</span>:{" "}
+              {list.length.toLocaleString()}
+            </summary>
+            <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto pl-3 font-mono">
+              {list.map((name) => (
+                <li key={name} className="wrap-anywhere">
+                  {name}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** ": a, b and 3 more", naming the listed worktrees and how many the list left out. */
 function NameList({
   names,
@@ -325,8 +369,12 @@ export function CopyNoticesBlock({
             {notices.outsideWorktrees.length > 0 && (
               <li data-slot="copy-not-copied-outside">
                 {count(notices.outsideWorktrees.length, "worktree", "worktrees")} outside the
-                folder. Copy those folders separately to keep their uncommitted changes.
-                <Names names={notices.outsideWorktrees} label="Worktrees outside the folder" />
+                folder. Their branches travel with a repository copied whole; copy a worktree folder
+                separately only to keep its uncommitted changes.
+                <GroupedNames
+                  names={notices.outsideWorktrees}
+                  label="Worktrees outside the folder"
+                />
               </li>
             )}
           </ul>

@@ -17,7 +17,8 @@ export type RowStatus =
   | "dirty"
   | "conflict"
   | "new"
-  | "only-here";
+  | "only-here"
+  | "skipped";
 export type Choice = "keep-mine" | "take-theirs" | "leave-both" | "keep-both";
 /** Destination HEAD compared with the source HEAD. */
 export type Relation = "same" | "destination-behind" | "destination-ahead" | "diverged" | "unknown";
@@ -57,6 +58,17 @@ export interface PlanInput {
   readonly caseInsensitive: boolean;
   /** Repository rows (by id) the person chose to clone from origin instead of copying. */
   readonly clone?: ReadonlyArray<string>;
+  /**
+   * Repository rows (by id) the person left out: nothing of them, their nested
+   * repositories or their linked worktrees is copied, and what is here stays.
+   */
+  readonly skip?: ReadonlyArray<string>;
+  /**
+   * For repository rows chosen to clone: the origin address this machine can read,
+   * or null when it reached none, in which case the repository is copied whole.
+   * Rows not listed were not checked and clone from the source's origin.
+   */
+  readonly cloneOrigins?: Readonly<Record<string, string | null>>;
   /** "Mirror exactly": destination-only files outside repositories move to the backup. */
   readonly mirror?: boolean;
   readonly decisions?: Readonly<Record<string, Choice>>;
@@ -181,6 +193,8 @@ export function planReconcile(input: PlanInput): Plan {
   const machine = machineSlug(input.sourceMachine);
   const decisions = input.decisions ?? {};
   const clone = new Set(input.clone ?? []);
+  const skipRows = new Set(input.skip ?? []);
+  const skippedRepos = new Set<string>();
   const key = (path: string) => (input.caseInsensitive ? foldedPathKey(path) : path);
   const destinationFiles = new Map(input.destination.files.map((file) => [key(file.path), file]));
   const destinationRepos = new Map(
@@ -196,6 +210,8 @@ export function planReconcile(input: PlanInput): Plan {
     return found ? `${input.targetRoot}/${found}` : null;
   };
   const warnings: Array<string> = [];
+  // Repositories this machine cannot clone: said once, with how to give it access.
+  const unreadable: Array<string> = [];
 
   // Repository rows first: file actions depend on whether HEAD moves.
   interface RepoPlan {
@@ -251,13 +267,59 @@ export function planReconcile(input: PlanInput): Plan {
       ...patch,
     });
     const mainPlan = source.mainRepository ? repoPlans.get(source.mainRepository) : undefined;
-    if (!destination) {
-      const blocked = source.path !== "." && occupied(source.path);
+    const insideSkipped = [...skippedRepos].some((path) => source.path.startsWith(`${path}/`));
+    if (
+      source.path !== "." &&
+      (skipRows.has(id) ||
+        insideSkipped ||
+        (source.mainRepository !== null && skippedRepos.has(source.mainRepository)))
+    ) {
+      skippedRepos.add(source.path);
+      // Kept so the clone choice survives skipping a repository and taking it back.
       const cloneAvailable =
+        !destination &&
+        !insideSkipped &&
         source.kind === "main" &&
         source.identity !== null &&
         !source.identity.startsWith("file://");
+      repoPlans.set(source.path, {
+        row: {
+          ...base,
+          status: "skipped",
+          detail: destination
+            ? "Not copied; the copy here stays as it is."
+            : "Not copied; it stays on the source machine only.",
+          choices: [],
+          decision: null,
+          needsDecision: false,
+          cloneAvailable,
+          clone: cloneAvailable && clone.has(id),
+        },
+        step: null,
+        copyWhole: false,
+        headMoves: false,
+        sameHead: false,
+        sourceDirty,
+        destinationDirty,
+        skipGitData: true,
+        cloned: false,
+      });
+      continue;
+    }
+    if (!destination) {
+      const blocked = source.path !== "." && occupied(source.path);
+      const cloneOrigin = input.cloneOrigins?.[id];
+      // Chosen, but this machine cannot read the origin: copied whole instead of failing late.
+      const unreachable = clone.has(id) && cloneOrigin === null;
+      const cloneAvailable =
+        source.kind === "main" &&
+        source.identity !== null &&
+        !source.identity.startsWith("file://") &&
+        !unreachable;
       const cloned = cloneAvailable && clone.has(id);
+      const cloneStep = () =>
+        step({ kind: "clone", ...(cloneOrigin ? { origin: cloneOrigin } : {}) });
+      if (unreachable) unreadable.push(source.path === "." ? "the root repository" : source.path);
       if (blocked) {
         const choices: Array<Choice> = ["keep-mine", "take-theirs"];
         repoPlans.set(source.path, {
@@ -271,7 +333,8 @@ export function planReconcile(input: PlanInput): Plan {
             cloneAvailable,
             clone: cloned,
           },
-          step: decision === "take-theirs" ? step({ kind: cloned ? "clone" : "replace" }) : null,
+          step:
+            decision === "take-theirs" ? (cloned ? cloneStep() : step({ kind: "replace" })) : null,
           copyWhole: decision === "take-theirs",
           headMoves: false,
           sameHead: false,
@@ -297,7 +360,9 @@ export function planReconcile(input: PlanInput): Plan {
             ? "Not on this machine yet; cloned from origin, then local work copied."
             : viaWorktreeAdd
               ? "A worktree not on this machine yet; added to the existing repository."
-              : "Not on this machine yet; copied with its history, branches and stashes.",
+              : unreachable
+                ? "Not on this machine yet; copied with its history, because this machine cannot read its origin."
+                : "Not on this machine yet; copied with its history, branches and stashes.",
           choices: [],
           decision: null,
           needsDecision: false,
@@ -307,7 +372,7 @@ export function planReconcile(input: PlanInput): Plan {
         step: viaWorktreeAdd
           ? step({ kind: "add-worktree", fetch: true })
           : cloned
-            ? step({ kind: "clone" })
+            ? cloneStep()
             : step({ kind: "copy" }),
         copyWhole: true,
         headMoves: false,
@@ -455,8 +520,11 @@ export function planReconcile(input: PlanInput): Plan {
   const sourcePaths = new Set<string>();
   const skippedPrefixes: Array<string> = [];
 
+  for (const repo of skippedRepos) skippedPrefixes.push(`${repo}/`);
   for (const entry of input.entries) {
     if (skippedPrefixes.some((prefix) => entry.path.startsWith(prefix))) continue;
+    // The skipped repository's own folder is not created either.
+    if (skippedRepos.has(entry.path)) continue;
     sourcePaths.add(key(entry.path));
     const folded = key(entry.path);
     const earlier = seenKeys.get(folded);
@@ -660,6 +728,8 @@ export function planReconcile(input: PlanInput): Plan {
       if (file.repo !== null || file.type === "directory" || sourcePaths.has(key(file.path)))
         continue;
       if (ancestorsOf(file.path).some((ancestor) => destinationRepos.has(key(ancestor)))) continue;
+      // What is here under a skipped repository's folder stays untouched.
+      if ([...skippedRepos].some((repo) => key(file.path).startsWith(`${key(repo)}/`))) continue;
       actions.push({
         path: file.path,
         kind: "remove",
@@ -735,8 +805,16 @@ export function planReconcile(input: PlanInput): Plan {
         ),
       replacing: rows.reduce((sum, row) => sum + (row.replacing ?? 0), 0),
     },
-    warnings,
+    warnings: unreadable.length > 0 ? [gitAccessWarning(unreadable), ...warnings] : warnings,
   };
+}
+
+/** One notice for every repository the destination cannot clone, and how to fix it. */
+export function gitAccessWarning(paths: ReadonlyArray<string>): string {
+  const shown = paths.slice(0, 4).join(", ");
+  const more = paths.length > 4 ? ` and ${paths.length - 4} more` : "";
+  const subject = paths.length === 1 ? "it is" : "they are";
+  return `The destination machine cannot read ${paths.length === 1 ? "the origin of" : "the origins of"} ${shown}${more} (no GitHub sign-in or SSH key there), so ${subject} copied whole with ${paths.length === 1 ? "its" : "their"} history instead of cloned. To clone next time, install the GitHub CLI on it and run gh auth login, then gh auth setup-git.`;
 }
 
 /** Apply is allowed only when no row or file still needs a decision. */

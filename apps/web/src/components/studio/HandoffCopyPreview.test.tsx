@@ -280,3 +280,64 @@ describe("reduced preview", () => {
     );
   });
 });
+
+describe("repository choices", () => {
+  const repositories = [
+    row({ id: "repo:.", path: ".", status: "new", cloneAvailable: true }),
+    row({ id: "repo:api", path: "repositories/api", status: "new", cloneAvailable: true }),
+    row({ id: "repo:ec", path: "repositories/ec", status: "new", cloneAvailable: true }),
+  ];
+
+  it("leaves all repositories out or clones them all in one change", async () => {
+    const onRepositories = vi.fn();
+    await render(
+      <CopyPlanPreview
+        status={status(repositories)}
+        onDecide={vi.fn()}
+        onClone={vi.fn()}
+        onRepositories={onRepositories}
+        machines={{ here: "ministorm", source: "M4" }}
+        disabled={false}
+      />,
+    );
+    expect(container.querySelector('[data-slot="copy-repositories-count"]')?.textContent).toBe(
+      "2 of 2 copied, 0 cloned from origin",
+    );
+    expect(container.querySelector('[data-slot="copy-clone-explained"]')?.textContent).toContain(
+      "Commits not pushed to origin, local-only branches and stashes stay on M4",
+    );
+    await act(async () => button("Copy none").click());
+    expect(onRepositories).toHaveBeenLastCalledWith({
+      clone: [],
+      skip: ["repo:api", "repo:ec"],
+    });
+    await act(async () => button("Clone all from origin").click());
+    expect(onRepositories).toHaveBeenLastCalledWith({
+      clone: ["repo:.", "repo:api", "repo:ec"],
+      skip: [],
+    });
+  });
+
+  it("shows a pending choice at once and hides the clone option of a left-out repository", async () => {
+    const onRepositories = vi.fn();
+    await render(
+      <CopyPlanPreview
+        status={status(repositories)}
+        onDecide={vi.fn()}
+        onClone={vi.fn()}
+        repositories={{ clone: ["repo:api"], skip: ["repo:ec"] }}
+        onRepositories={onRepositories}
+        replanning
+        disabled={false}
+      />,
+    );
+    const rows = [...container.querySelectorAll('[data-slot="copy-row"]')];
+    expect(rows.map((item) => item.getAttribute("data-copied"))).toEqual([null, "true", "false"]);
+    expect(rows[2]?.querySelector('[data-slot="copy-clone"]')).toBeNull();
+    expect(rows[2]?.textContent).toContain("Not copied");
+    expect(container.textContent).toContain("Updating sizes…");
+    const copyEc = rows[2]?.querySelector<HTMLButtonElement>('[aria-label="Copy repositories/ec"]');
+    await act(async () => copyEc?.click());
+    expect(onRepositories).toHaveBeenLastCalledWith({ clone: ["repo:api"], skip: [] });
+  });
+});

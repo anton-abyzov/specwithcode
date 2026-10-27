@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { currentCopyActivities, resetCopyActivityForTests } from "../../studio/folderCopyActivity";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 
 const state = vi.hoisted(() => ({
@@ -513,6 +514,82 @@ it("keeps the remembered steps when it records the clone choice or drops a Repla
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(readPointer()).not.toHaveProperty("replaceAll");
     expect(readPointer()).toMatchObject({ seen: "review", viewed: "where" });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("shows a background copy's progress app wide and clears it once the copy is done", async () => {
+  vi.useFakeTimers();
+  try {
+    resetCopyActivityForTests();
+    pointer();
+    let phase: "copying" | "done" = "copying";
+    state.handlers.copyStatus = () =>
+      phase === "copying"
+        ? {
+            ...copyStatus("transferring"),
+            progress: {
+              phase: "files",
+              filesDone: 5,
+              filesTotal: 10,
+              bytesDone: 250,
+              bytesTotal: 1000,
+              bytesLocal: 0,
+            },
+          }
+        : copyStatus("applied");
+    state.handlers.copySourceStatus = () => ({ state: "committed", summary, error: null });
+    let done = 0;
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          machineLabel={() => "ministorm"}
+          onDone={() => (done += 1)}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(currentCopyActivities().get("m4:source")).toEqual({
+      machine: "ministorm",
+      label: "Copying files",
+      fraction: 0.25,
+      waiting: false,
+    });
+    phase = "done";
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(currentCopyActivities().has("m4:source")).toBe(false);
+    expect(done).toBe(1);
+    expect(state.toasts).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("never announces again a copy that finished before a reload", async () => {
+  vi.useFakeTimers();
+  try {
+    resetCopyActivityForTests();
+    pointer();
+    state.handlers.copyStatus = () => copyStatus("applied");
+    let done = 0;
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          machineLabel={() => "M3"}
+          restored
+          onDone={() => (done += 1)}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(state.toasts).toEqual([]);
+    expect(done).toBe(1);
+    expect(currentCopyActivities().size).toBe(0);
   } finally {
     vi.useRealTimers();
   }

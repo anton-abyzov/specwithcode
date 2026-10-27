@@ -293,6 +293,25 @@ describe("Apply backups", () => {
     await expect(
       transfers.approveSecrets({ operationId, paths: ["README.md"], destinationLabel: "M3" }),
     ).rejects.toMatchObject({ status: 400, code: "not_offered" });
+    // A secret file the dialog saw in a later scan than the record's is still accepted.
+    const late = NodePath.join(fixture.root, ".dev.vars");
+    NodeFS.writeFileSync(late, "LATE=fixture\n");
+    try {
+      const withLate = await transfers.approveSecrets({
+        operationId,
+        paths: [".env", ".dev.vars"],
+        destinationLabel: "M3",
+      });
+      expect(withLate.secrets?.files).toEqual([
+        expect.objectContaining({ path: ".env" }),
+        { path: ".dev.vars", size: 13 },
+      ]);
+    } finally {
+      NodeFS.rmSync(late);
+    }
+    await expect(
+      transfers.approveSecrets({ operationId, paths: [".dev.vars"], destinationLabel: "M3" }),
+    ).rejects.toMatchObject({ status: 400, code: "not_offered" });
     const approved = await transfers.approveSecrets({
       operationId,
       paths: [".env"],
@@ -376,5 +395,68 @@ describe("A re-offered copy", () => {
     expect((await copies.start(startInput(operationId, "stale-token", target))).token).toBe(
       again.token,
     );
+  }, 120_000);
+});
+
+describe("Clone from origin on a machine without access", () => {
+  const unreachable = "https://127.0.0.1:9/acme/svc-a.git";
+  let root: string;
+  beforeAll(() => {
+    root = makeUmbrella(NodePath.join(base, "no-access")).root;
+    git(NodePath.join(root, "repositories/svc-a"), "remote", "set-url", "origin", unreachable);
+  }, 60_000);
+
+  async function previewWithClone(copies: DestinationCopies, target: string) {
+    const operationId = NodeCrypto.randomUUID();
+    const offered = await transfers.offer({
+      operationId,
+      projectId: "project-source",
+      folder: root,
+      mode: "copy-only",
+      destinationEnvironmentId: "env-destination",
+    });
+    await copies.start(startInput(operationId, offered.token, target));
+    await settle(copies, operationId, ["previewed", "failed"]);
+    await copies.decide(operationId, { clone: [repoRowId("repositories/svc-a")] });
+    await settle(copies, operationId, ["previewed", "failed"]);
+    return operationId;
+  }
+
+  it("copies a repository with its history when this machine cannot read its origin", async () => {
+    const copies = new DestinationCopies(NodePath.join(base, "dest-state-no-access"), {
+      ...fast,
+      reachableOrigin: async () => null,
+    });
+    const target = NodePath.join(base, "targets", "no-access");
+    const operationId = await previewWithClone(copies, target);
+    const plan = await copies.readPlan(operationId);
+    const row = plan?.rows.find((entry) => entry.id === repoRowId("repositories/svc-a"));
+    expect(row).toMatchObject({ cloneAvailable: false, clone: false });
+    expect(plan?.git.find((step) => step.repo === "repositories/svc-a")?.kind).toBe("copy");
+    await copies.approve(operationId);
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+    expect(git(NodePath.join(target, "repositories/svc-a"), "rev-parse", "HEAD")).toBe(
+      git(NodePath.join(root, "repositories/svc-a"), "rev-parse", "HEAD"),
+    );
+  }, 120_000);
+
+  it("names the repository when a clone still fails, and Retry tries it again", async () => {
+    const copies = new DestinationCopies(NodePath.join(base, "dest-state-clone-fails"), {
+      ...fast,
+      // The preview saw the origin answer; it stopped answering before Apply.
+      reachableOrigin: async (origin) => origin,
+    });
+    const target = NodePath.join(base, "targets", "clone-fails");
+    const operationId = await previewWithClone(copies, target);
+    await copies.approve(operationId);
+    const failed = await settle(copies, operationId, ["applied", "failed"]);
+    expect(failed).toMatchObject({ state: "failed", failedStep: "applying" });
+    expect(failed.error?.message).toContain("Cloning repositories/svc-a from origin failed");
+    expect(failed.error?.message).toContain("gh auth login");
+    // Retry does not skip the clone the journal named before it ran.
+    await copies.retry(operationId);
+    const again = await settle(copies, operationId, ["applied", "failed"]);
+    expect(again.error?.message).toContain("Cloning repositories/svc-a");
   }, 120_000);
 });

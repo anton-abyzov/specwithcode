@@ -14,7 +14,13 @@ import type {
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { copiedProjectFolder, formatBytes } from "../../studio/folderCopy";
 import { HandoffSecretsStep } from "./HandoffSecretsStep";
-import { CopyClassPicker, CopyPlanPreview, CopyProgress } from "./HandoffCopyPreview";
+import {
+  CopyClassPicker,
+  CopyPlanPreview,
+  CopyProgress,
+  planRepositoryChoices,
+  type RepositoryChoices,
+} from "./HandoffCopyPreview";
 import { HandoffCopyScope, CopyScopeMapping, type useCopyScope } from "./HandoffCopyScope";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopySetup, type CopyMachine } from "./HandoffCopySetup";
@@ -24,6 +30,19 @@ import { replacesNothing } from "./handoffCopyAuto";
 import type { CopyNotices } from "./handoffCopyNotices";
 import { CopyNextStep, CopyNoticesBlock } from "./HandoffCopyGuide";
 import { Button } from "../ui/button";
+
+/** Secret files outside the repositories left out of the copy: those stay here anyway. */
+function secretFilesCopied(
+  files: FolderCopySourceSummary["secretFiles"],
+  copy: FolderCopyStatus,
+  skip: ReadonlyArray<string>,
+): FolderCopySourceSummary["secretFiles"] {
+  const prefixes = copy.rows
+    .filter((row) => skip.includes(row.id) && row.path !== ".")
+    .map((row) => `${row.path}/`);
+  if (prefixes.length === 0) return files;
+  return files.filter((file) => !prefixes.some((prefix) => file.path.startsWith(prefix)));
+}
 
 /** The body of the live stage, from the setup form to Done. Actions live in the footer. */
 export function HandoffCopyStepPanels({
@@ -57,6 +76,9 @@ export function HandoffCopyStepPanels({
   replaceLeft,
   replacingFiles,
   onChange,
+  repositoryChoices,
+  onRepositories,
+  replanning,
   secretPaths,
   secretsConfirmed,
   onSecretPathsChange,
@@ -111,6 +133,10 @@ export function HandoffCopyStepPanels({
     readonly decisions?: Readonly<Record<string, FolderCopyChoice>>;
     readonly clone?: ReadonlyArray<string>;
   }) => void;
+  /** Clone and skip clicks not yet in the plan; null when the plan has them all. */
+  readonly repositoryChoices: RepositoryChoices | null;
+  readonly onRepositories: (next: RepositoryChoices) => void;
+  readonly replanning: boolean;
   readonly secretPaths: ReadonlyArray<string>;
   readonly secretsConfirmed: boolean;
   readonly onSecretPathsChange: (paths: ReadonlyArray<string>) => void;
@@ -254,6 +280,9 @@ export function HandoffCopyStepPanels({
             onlyChanges={auto}
             hideWarnings
             onDecide={(decisions) => onChange({ decisions })}
+            repositories={repositoryChoices}
+            onRepositories={onRepositories}
+            replanning={replanning}
             onClone={(rowId, on) =>
               onChange({
                 clone: on
@@ -270,7 +299,11 @@ export function HandoffCopyStepPanels({
           )}
           {summary && (
             <HandoffSecretsStep
-              files={summary.secretFiles}
+              files={secretFilesCopied(
+                summary.secretFiles,
+                copy,
+                (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip,
+              )}
               selected={secretPaths}
               confirmed={secretsConfirmed}
               targetLabel={targetLabel}

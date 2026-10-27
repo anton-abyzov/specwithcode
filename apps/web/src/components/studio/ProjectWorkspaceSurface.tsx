@@ -18,6 +18,7 @@ import { useDurableCoordinatorDraft, whenHostReady } from "../../lib/durableComp
 import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { FolderCopyBanner } from "./FolderCopyBanner";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -1448,6 +1449,9 @@ export function ProjectWorkspaceSurface({
                 />
               </div>
             </WorkspacePageHeader>
+            {machinePrivate ? null : (
+              <FolderCopyBanner environmentId={project.environmentId} projectId={project.id} />
+            )}
             {coordinatorDetailsOpen && coordinatorId ? (
               <ProjectCoordinatorDetails
                 environmentId={project.environmentId}

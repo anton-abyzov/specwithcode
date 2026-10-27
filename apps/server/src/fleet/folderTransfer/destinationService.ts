@@ -1,16 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - plain async destination worker with private 0600 records.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { FOLDER_COPY_ALL_CONFLICTS_PREFIX } from "@specweave-studio/contracts";
 import { applyPlan, ApplyRefusedError, bytesNeeded, type RepositoryCheck } from "./apply.ts";
 import { DEFAULT_SELECTION, FILE_CLASSES, type FileClass } from "./classify.ts";
 import { repositoryRelations, scanDestination } from "./destinationScan.ts";
+import { reachableOrigin } from "./git.ts";
 import { deviceOf, exists, freeBytes, privateDirectory, readJson, writeJson } from "./durable.ts";
 import { readManifestFile, writeManifest, type Manifest } from "./manifest.ts";
 import { finalPass, pullFiles, type PullProgress } from "./pullWorker.ts";
 import {
   machineSlug,
+  repoRowId,
   planReady,
   planReconcile,
   pullRequirements,
@@ -93,6 +96,8 @@ export interface DestinationRecord {
   readonly selection: ReadonlyArray<FileClass>;
   readonly decisions: Readonly<Record<string, Choice>>;
   readonly clone: ReadonlyArray<string>;
+  /** Repository rows left out of the copy; missing on records from before it existed. */
+  readonly skip?: ReadonlyArray<string>;
   readonly mirror: boolean;
   readonly state: CopyState;
   readonly failedStep: CopyState | null;
@@ -150,6 +155,8 @@ export interface DestinationHooks {
   readonly backupRetentionMs?: number;
   /** How often held copies call the source to keep their grant; hourly by default. */
   readonly keepaliveMs?: number;
+  /** The origin address this machine can read, or null; `git ls-remote` by default. */
+  readonly reachableOrigin?: (origin: string, signal: AbortSignal) => Promise<string | null>;
 }
 
 export const BACKUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
@@ -204,6 +211,8 @@ export class DestinationCopies {
   private keeping: Promise<unknown> | null = null;
   /** Aborted by `close`, so a keepalive call to a silent source does not hold shutdown. */
   private keepaliveAbort: AbortController | null = null;
+  /** Origins checked from this machine: the address that answered, or null. */
+  private readonly origins = new Map<string, Promise<string | null>>();
 
   constructor(stateRoot: string, hooks: DestinationHooks = {}) {
     this.root = NodePath.join(stateRoot, "folder-copies");
@@ -450,12 +459,13 @@ export class DestinationCopies {
     return { record, created: true };
   }
 
-  /** Changes decisions, clone rows or "mirror exactly", then re-plans. */
+  /** Changes decisions, clone rows, skipped rows or "mirror exactly", then re-plans. */
   async decide(
     operationId: string,
     input: {
       readonly decisions?: Readonly<Record<string, Choice>>;
       readonly clone?: ReadonlyArray<string>;
+      readonly skip?: ReadonlyArray<string>;
       readonly mirror?: boolean;
     },
   ): Promise<DestinationRecord> {
@@ -479,6 +489,7 @@ export class DestinationCopies {
     const next = await this.update(operationId, {
       decisions: { ...record.decisions, ...decisions },
       ...(input.clone ? { clone: [...input.clone] } : {}),
+      ...(input.skip ? { skip: [...input.skip] } : {}),
       ...(input.mirror !== undefined ? { mirror: input.mirror } : {}),
       state: "scanning",
     });
@@ -923,6 +934,37 @@ export class DestinationCopies {
     });
   }
 
+  /**
+   * Checks, before the preview, that this machine can read the origin of every
+   * repository chosen to clone, so a clone without access is copied whole instead
+   * of failing at the end of the copy. A failed check is asked again next time.
+   */
+  private async cloneOrigins(
+    record: DestinationRecord,
+    manifest: Manifest,
+    signal: AbortSignal,
+  ): Promise<Record<string, string | null>> {
+    const result: Record<string, string | null> = {};
+    const chosen = new Set(record.clone);
+    const check =
+      this.hooks.reachableOrigin ??
+      ((origin: string, stop: AbortSignal) => reachableOrigin(origin, NodeOS.homedir(), stop));
+    await Promise.all(
+      manifest.header.repositories.map(async (repo) => {
+        const id = repoRowId(repo.path);
+        if (!chosen.has(id) || !repo.origin) return;
+        let answer = this.origins.get(repo.origin);
+        if (!answer) {
+          answer = check(repo.origin, signal).catch(() => null);
+          this.origins.set(repo.origin, answer);
+        }
+        result[id] = await answer;
+        if (result[id] === null) this.origins.delete(repo.origin);
+      }),
+    );
+    return result;
+  }
+
   private async plan(
     record: DestinationRecord,
     manifest: Manifest,
@@ -947,6 +989,8 @@ export class DestinationCopies {
         caseInsensitive: destination.caseInsensitive,
         decisions: record.decisions,
         clone: record.clone,
+        cloneOrigins: await this.cloneOrigins(record, manifest, signal),
+        skip: record.skip ?? [],
         mirror: record.mirror,
       }),
       ...(destination.fingerprint !== undefined

@@ -92,6 +92,7 @@ export const ROW_STATUS_TEXT: Record<FolderCopyRow["status"], string> = {
   conflict: "Conflicts",
   new: "New here",
   "only-here": "Only here",
+  skipped: "Not copied",
 };
 
 export const CHOICE_TEXT: Record<FolderCopyChoice, string> = {

@@ -138,11 +138,32 @@ export function CopyClassPicker({
   );
 }
 
+/** Which repository rows are cloned from origin and which are left out of the copy. */
+export interface RepositoryChoices {
+  readonly clone: ReadonlyArray<string>;
+  readonly skip: ReadonlyArray<string>;
+}
+
+/** The repository choices the destination's plan holds now. */
+export function planRepositoryChoices(rows: ReadonlyArray<FolderCopyRow>): RepositoryChoices {
+  return {
+    clone: rows.filter((row) => row.clone).map((row) => row.id),
+    skip: rows.filter((row) => row.status === "skipped").map((row) => row.id),
+  };
+}
+
+/** Repository rows the person can leave out: every repository except the folder's own root. */
+const skippable = (row: FolderCopyRow) =>
+  row.kind === "repository" && row.path !== "." && row.status !== "only-here";
+
 /** One row per repository plus the folder's other files, with their decisions. */
 export function CopyPlanPreview({
   status,
   onDecide,
   onClone,
+  repositories,
+  onRepositories,
+  replanning = false,
   disabled,
   machines,
   rootLabel,
@@ -152,6 +173,14 @@ export function CopyPlanPreview({
   readonly status: FolderCopyStatus;
   readonly onDecide: (decisions: Readonly<Record<string, FolderCopyChoice>>) => void;
   readonly onClone: (rowId: string, clone: boolean) => void;
+  /**
+   * Clone and skip choices not yet in the plan, shown at once while the destination
+   * compares again. With `onRepositories` the rows get Copy and Clone controls for all.
+   */
+  readonly repositories?: RepositoryChoices | null;
+  readonly onRepositories?: (next: RepositoryChoices) => void;
+  /** The destination is comparing again after a clone or skip change. */
+  readonly replanning?: boolean;
   readonly disabled: boolean;
   /** Names the machines in each choice instead of "this machine" and "the source". */
   readonly machines?: ChoiceMachines;
@@ -163,7 +192,11 @@ export function CopyPlanPreview({
   readonly hideWarnings?: boolean;
 }) {
   const totals = status.totals;
-  const rows = onlyChanges ? changedRows(status.rows) : status.rows;
+  const current = repositories ?? planRepositoryChoices(status.rows);
+  // A repository left out stays listed, so it can be taken back.
+  const rows = !onlyChanges
+    ? status.rows
+    : status.rows.filter((row) => current.skip.includes(row.id) || changedRows([row]).length > 0);
   const shown = new Set(rows);
   const hidden = status.rows.filter((row) => !shown.has(row));
   // Folders only on the destination are kept there, not copied.
@@ -171,8 +204,18 @@ export function CopyPlanPreview({
   const untouched = hidden.length - kept;
   return (
     <div className="space-y-3 text-sm" data-slot="copy-preview">
+      {onRepositories && (
+        <RepositoryControls
+          rows={status.rows}
+          current={current}
+          onChange={onRepositories}
+          disabled={disabled}
+          replanning={replanning}
+          machines={machines}
+        />
+      )}
       {totals && (
-        <p data-slot="copy-preview-totals">
+        <p data-slot="copy-preview-totals" className={replanning ? "opacity-60" : undefined}>
           {totals.filesToMove.toLocaleString()} files, {formatBytes(totals.bytesToMove)} to copy
           {totals.bytesPresent > 0 && `, ${formatBytes(totals.bytesPresent)} already here`}.
           {totals.decisionsNeeded > 0 &&
@@ -185,7 +228,31 @@ export function CopyPlanPreview({
             key={row.id}
             row={row}
             onDecide={onDecide}
-            onClone={onClone}
+            onClone={
+              onRepositories
+                ? (rowId, on) =>
+                    onRepositories({
+                      ...current,
+                      clone: on
+                        ? [...current.clone.filter((id) => id !== rowId), rowId]
+                        : current.clone.filter((id) => id !== rowId),
+                    })
+                : onClone
+            }
+            {...(onRepositories && skippable(row)
+              ? {
+                  copied: !current.skip.includes(row.id),
+                  onCopied: (on: boolean) =>
+                    onRepositories({
+                      ...current,
+                      skip: on
+                        ? current.skip.filter((id) => id !== row.id)
+                        : [...current.skip, row.id],
+                    }),
+                }
+              : {})}
+            cloned={onRepositories ? current.clone.includes(row.id) : row.clone}
+            stale={replanning}
             disabled={disabled}
             {...(machines ? { machines } : {})}
             {...(rootLabel ? { rootLabel } : {})}
@@ -225,10 +292,141 @@ export function CopyPlanPreview({
   );
 }
 
+function ToolbarButton({
+  disabled,
+  onClick,
+  children,
+}: {
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Copy all or none and clone all or none for the repository rows, with what cloning saves. */
+function RepositoryControls({
+  rows,
+  current,
+  onChange,
+  disabled,
+  replanning,
+  machines,
+}: {
+  readonly rows: ReadonlyArray<FolderCopyRow>;
+  readonly current: RepositoryChoices;
+  readonly onChange: (next: RepositoryChoices) => void;
+  readonly disabled: boolean;
+  readonly replanning: boolean;
+  readonly machines: ChoiceMachines | undefined;
+}) {
+  const repositories = rows.filter(skippable);
+  const cloneable = rows.filter(
+    (row) => row.kind === "repository" && row.cloneAvailable && !current.skip.includes(row.id),
+  );
+  if (repositories.length === 0 && cloneable.length === 0) return null;
+  const copied = repositories.filter((row) => !current.skip.includes(row.id)).length;
+  const cloned = cloneable.filter((row) => current.clone.includes(row.id)).length;
+  const target = machines?.here ?? "the other machine";
+  const source = machines?.source ?? "this machine";
+  const ids = (list: ReadonlyArray<FolderCopyRow>) => new Set(list.map((row) => row.id));
+  const repositoryIds = ids(repositories);
+  const cloneableIds = ids(cloneable);
+  return (
+    <div className="space-y-2 rounded-lg border p-3 text-xs" data-slot="copy-repositories">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-sm font-medium">Repositories</span>
+        {repositories.length > 0 && (
+          <span className="text-muted-foreground" data-slot="copy-repositories-count">
+            {copied} of {repositories.length} copied
+            {cloneable.length > 0 && `, ${cloned} cloned from origin`}
+          </span>
+        )}
+        <span role="status" aria-live="polite" className="ml-auto text-muted-foreground">
+          {replanning ? "Updating sizes…" : ""}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {repositories.length > 1 && (
+          <>
+            <ToolbarButton
+              disabled={disabled || copied === repositories.length}
+              onClick={() =>
+                onChange({ ...current, skip: current.skip.filter((id) => !repositoryIds.has(id)) })
+              }
+            >
+              Copy all
+            </ToolbarButton>
+            <ToolbarButton
+              disabled={disabled || copied === 0}
+              onClick={() =>
+                onChange({ ...current, skip: [...new Set([...current.skip, ...repositoryIds])] })
+              }
+            >
+              Copy none
+            </ToolbarButton>
+          </>
+        )}
+        {cloneable.length > 1 && (
+          <>
+            <ToolbarButton
+              disabled={disabled || cloned === cloneable.length}
+              onClick={() =>
+                onChange({ ...current, clone: [...new Set([...current.clone, ...cloneableIds])] })
+              }
+            >
+              Clone all from origin
+            </ToolbarButton>
+            <ToolbarButton
+              disabled={disabled || cloned === 0}
+              onClick={() =>
+                onChange({
+                  ...current,
+                  clone: current.clone.filter((id) => !cloneableIds.has(id)),
+                })
+              }
+            >
+              Copy all whole
+            </ToolbarButton>
+          </>
+        )}
+      </div>
+      {cloneable.length > 0 && (
+        <p className="text-muted-foreground" data-slot="copy-clone-explained">
+          Cloning from origin makes {target} download the committed files from the
+          repository&rsquo;s remote (such as GitHub) instead of receiving them from {source}, so
+          much less crosses between the machines and large repositories arrive sooner. Uncommitted
+          changes and untracked files are still copied. Commits not pushed to origin, local-only
+          branches and stashes stay on {source}; push them first, or copy that repository whole.
+        </p>
+      )}
+      {repositories.length > 0 && (
+        <p className="text-muted-foreground">
+          Untick a repository to leave it out. Nothing of it is copied, and whatever {target}{" "}
+          already has there stays as it is.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function CopyRow({
   row,
   onDecide,
   onClone,
+  copied,
+  onCopied,
+  cloned,
+  stale = false,
   disabled,
   machines,
   rootLabel,
@@ -236,11 +434,18 @@ function CopyRow({
   readonly row: FolderCopyRow;
   readonly onDecide: (decisions: Readonly<Record<string, FolderCopyChoice>>) => void;
   readonly onClone: (rowId: string, clone: boolean) => void;
+  /** Set when the row can be left out: whether it is copied. */
+  readonly copied?: boolean;
+  readonly onCopied?: (copied: boolean) => void;
+  readonly cloned: boolean;
+  /** The counts are from before the last change; new ones are on the way. */
+  readonly stale?: boolean;
   readonly disabled: boolean;
   readonly machines?: ChoiceMachines;
   readonly rootLabel?: string;
 }) {
   const title = copyRowTitle(row, rootLabel);
+  const left = copied === false;
   const open = row.conflicts.filter((conflict) => conflict.decision === null).length;
   const attention = (row.needsDecision && row.decision === null) || open > 0;
   const shared = (["keep-mine", "take-theirs"] as const).filter((choice) =>
@@ -248,11 +453,22 @@ function CopyRow({
   );
   return (
     <li
-      className={`space-y-2 rounded-lg border p-3 ${attention ? "border-warning/60" : ""}`}
+      className={`space-y-1.5 rounded-lg border px-3 py-2 ${attention && !left ? "border-warning/60" : ""} ${left ? "bg-muted/40" : ""}`}
       data-slot="copy-row"
       data-status={row.status}
+      data-copied={copied === undefined ? undefined : String(!left)}
     >
       <div className="flex min-w-0 items-start gap-2">
+        {onCopied && (
+          <span className="flex h-5 items-center">
+            <Checkbox
+              checked={!left}
+              disabled={disabled}
+              aria-label={`Copy ${title}`}
+              onCheckedChange={(checked) => onCopied(checked === true)}
+            />
+          </span>
+        )}
         {row.kind === "repository" ? (
           <GitBranchIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
         ) : (
@@ -260,25 +476,44 @@ function CopyRow({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-            <span className="break-all font-medium">{title}</span>
-            <span className="text-xs text-muted-foreground">{ROW_STATUS_TEXT[row.status]}</span>
+            <span className={`break-all font-medium ${left ? "text-muted-foreground" : ""}`}>
+              {title}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {left ? ROW_STATUS_TEXT.skipped : ROW_STATUS_TEXT[row.status]}
+            </span>
           </div>
-          {row.detail && (
+          {left ? (
+            row.status !== "skipped" && (
+              <p className="text-xs text-muted-foreground">Left out of this copy.</p>
+            )
+          ) : (
+            <p
+              className={`wrap-anywhere text-xs text-muted-foreground tabular-nums ${stale ? "opacity-60" : ""}`}
+            >
+              {row.status === "skipped" ? (
+                "Copied again once the comparison updates."
+              ) : (
+                <>
+                  {row.filesToMove.toLocaleString()} files, {formatBytes(row.bytesToMove)} to copy
+                  {row.bytesPresent > 0 && `, ${formatBytes(row.bytesPresent)} already here`}
+                  {row.detail && <span className="block">{row.detail}</span>}
+                </>
+              )}
+            </p>
+          )}
+          {left && row.status === "skipped" && row.detail && (
             <p className="wrap-anywhere text-xs text-muted-foreground">{row.detail}</p>
           )}
-          <p className="text-xs text-muted-foreground tabular-nums">
-            {row.filesToMove.toLocaleString()} files, {formatBytes(row.bytesToMove)} to copy
-            {row.bytesPresent > 0 && `, ${formatBytes(row.bytesPresent)} already here`}
-          </p>
         </div>
-        {!attention && row.status !== "same" && (
+        {!attention && !left && row.status !== "same" && (
           <CheckIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
         )}
       </div>
-      {row.cloneAvailable && (
+      {row.cloneAvailable && !left && (
         <label className="flex cursor-pointer items-center gap-2 text-xs" data-slot="copy-clone">
           <Checkbox
-            checked={row.clone}
+            checked={cloned}
             disabled={disabled}
             onCheckedChange={(checked) => onClone(row.id, checked === true)}
           />

@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { exists, JsonLog, lstatOrNull } from "./durable.ts";
-import { runGit } from "./git.ts";
+import { type GitResult, originCandidates, remoteEnv, runGit } from "./git.ts";
 import { hashFile, type RepositoryInfo } from "./manifest.ts";
 import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
 import { stagedPath } from "./pullWorker.ts";
@@ -379,13 +379,14 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
         const location = absoluteIn(root, step.repo);
         if (await lstatOrNull(location)) await backUp(step.repo, location);
       }
-      if (
-        step.kind === "clone" &&
-        !previous.some((entry) => entry.t === "cloned" && entry.path === step.repo)
-      ) {
-        await ensureFolders(root, `${step.repo}/x`, folders);
-        await journal.append({ t: "cloned", path: step.repo }, true);
-        await cloneRepository(root, step, warnings);
+      if (step.kind === "clone") {
+        if (!previous.some((entry) => entry.t === "cloned" && entry.path === step.repo)) {
+          await ensureFolders(root, `${step.repo}/x`, folders);
+          await journal.append({ t: "cloned", path: step.repo }, true);
+          await cloneRepository(root, step, warnings);
+        } else if (!(await exists(NodePath.join(absoluteIn(root, step.repo), ".git"))))
+          // The journal names a clone before it runs: a Retry clones what never arrived.
+          await cloneRepository(root, step, warnings);
       }
     }
     for (const step of steps)
@@ -586,19 +587,31 @@ async function cloneRepository(root: string, step: GitStep, warnings: Array<stri
   if (!step.origin)
     throw new ApplyRefusedError("git-failed", step.repo, "No origin to clone from.");
   const parent = NodePath.dirname(location);
-  const result = await runGit(
-    parent,
-    ["clone", "--quiet", "--no-checkout", step.origin, location],
-    {
+  // A Retry can find the folder already holding repositories nested in it; Git clones
+  // only into an empty folder, so it clones beside them and moves `.git` in.
+  const entries = await NodeFSP.readdir(location).catch(() => [] as Array<string>);
+  const into = entries.length > 0 ? NodePath.join(location, ".swc-clone") : location;
+  if (into !== location) await NodeFSP.rm(into, { recursive: true, force: true });
+  let result: GitResult | null = null;
+  for (const candidate of originCandidates(step.origin)) {
+    // Git removes what a failed clone wrote, so the next address starts from the same folder.
+    result = await runGit(parent, ["clone", "--quiet", "--no-checkout", candidate, into], {
       allowFailure: true,
       timeoutMs: 60 * 60_000,
-    },
-  );
-  if (result.code !== 0)
+      env: remoteEnv(),
+    });
+    if (result.code === 0) break;
+  }
+  if (into !== location) {
+    if (result?.code === 0)
+      await NodeFSP.rename(NodePath.join(into, ".git"), NodePath.join(location, ".git"));
+    await NodeFSP.rm(into, { recursive: true, force: true });
+  }
+  if (!result || result.code !== 0)
     throw new ApplyRefusedError(
       "git-failed",
       step.repo,
-      "Cloning from origin failed. Check this machine's access to the repository.",
+      `Cloning ${step.repo === "." ? "the root repository" : step.repo} from origin failed: this machine cannot read ${step.origin}${cloneFailureReason(result?.stderr ?? "")}. Copy again with that repository copied whole, or sign in to Git here (for example gh auth login) and Retry.`,
     );
   const head = step.sourceHead;
   const has = head
@@ -615,6 +628,15 @@ async function cloneRepository(root: string, step: GitStep, warnings: Array<stri
       `${step.repo}: the source commit is not on origin; cloned its default branch instead.`,
     );
   }
+}
+
+/** Git's own reason for a failed clone, short and without URLs that could carry tokens. */
+function cloneFailureReason(stderr: string): string {
+  const line = stderr
+    .split("\n")
+    .map((item) => item.replace(/^(?:fatal|error|remote): /, "").trim())
+    .find((item) => item.length > 0 && !/https?:\/\//.test(item));
+  return line ? ` (${line.slice(0, 160)})` : "";
 }
 
 /** Fetches every source branch (and the stash tip) into a private namespace for this operation. */
