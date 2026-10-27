@@ -5,6 +5,7 @@ import type {
   RunId,
 } from "@specweave-studio/contracts";
 import { backgroundWorkHoldsCompletion } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
+import { latestExecutedRun } from "@specweave-studio/shared/orchestrationV2ThreadError";
 
 /**
  * Server composition flag. No environment, settings or RPC switch enables it.
@@ -30,11 +31,13 @@ export function deferredResolutionBlocked(projection: ResolutionProjection, runI
   const run = runs.find((candidate) => candidate.id === runId);
   return (
     run === undefined ||
+    // The turn that ran last, as receipts bind it: queued runs are delivered
+    // out of ordinal order, and one cancelled before it started never ran.
+    latestExecutedRun(runs)?.id !== runId ||
     runs.some(
       (candidate) =>
-        candidate.ordinal > run.ordinal ||
-        (candidate.id !== runId &&
-          ["preparing", "queued", "starting", "running", "waiting"].includes(candidate.status)),
+        candidate.id !== runId &&
+        ["preparing", "queued", "starting", "running", "waiting"].includes(candidate.status),
     ) ||
     thread.deletedAt !== null ||
     thread.archivedAt !== null ||

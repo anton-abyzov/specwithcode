@@ -133,13 +133,15 @@ const HELD_STOP_ROUNDS = 1;
 
 /**
  * How long a request waits on a person, with no activity on its thread, before
- * that thread no longer holds back an automatic install.
+ * that thread no longer holds back an automatic install. Short on purpose: the
+ * request is recorded and asked again after the restart, so waiting on it gains
+ * nothing; the grace only spares a person who is answering right now.
  */
-export const STALE_WAIT_MS = 30 * 60_000;
+export const STALE_WAIT_MS = 2 * 60_000;
 /** How often the service looks for such threads while the update agent waits for quiet. */
-export const STALE_WAIT_SWEEP_MS = 5 * 60_000;
+export const STALE_WAIT_SWEEP_MS = 60_000;
 export const STALE_WAIT_REASON =
-  "Stopped so the app could install its update: this turn waited more than 30 minutes for an answer. It is asked again after the restart.";
+  "Paused so the app could install its update. It is asked again after the restart.";
 /** Why a thread Needs you does not show was stopped for an automatic install. */
 export const HIDDEN_WAIT_REASON =
   "Closed so the app could install its update: this thread is resolved or archived.";

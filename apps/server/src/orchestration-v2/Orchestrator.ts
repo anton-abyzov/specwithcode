@@ -1,8 +1,10 @@
 import {
   hasCurrentLifecycleAcceptance,
+  LifecycleEvidenceActivation,
   lifecycleAcceptanceDecision,
   settledNoteFromScope,
 } from "./ThreadLifecycleAcceptance.ts";
+import { currentLifecycleRequest } from "@specweave-studio/shared/threadLifecycleEvidence";
 import {
   deferredResolutionBlocked,
   DeferredResolutionActivation,
@@ -1151,6 +1153,7 @@ function lastDeliveredRunForProviderThread(
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const deferredResolutionEnabled = yield* DeferredResolutionActivation;
+  const lifecycleEvidenceRequired = yield* LifecycleEvidenceActivation;
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -11959,25 +11962,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
-        const currentProjection = yield* getProjectionWithPendingEvents(command.threadId, events);
-        const acceptanceNow = yield* DateTime.now;
-        const acceptedRunId = currentProjection.thread.lifecycleReceipt?.runId;
-        const acceptedRun = currentProjection.runs.find((run) => run.id === acceptedRunId);
-        if (
-          !hasCurrentLifecycleAcceptance(
-            currentProjection,
-            DateTime.toEpochMillis(acceptanceNow),
-          ) ||
-          acceptedRun === undefined ||
-          deferredResolutionBlocked(currentProjection, acceptedRun.id) ||
-          (yield* stopReachedRun(command, command.threadId, acceptedRun.id))
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause:
-              "Automatic resolution requires verified delivery evidence for the current request and acceptance revision.",
-          });
+        if (lifecycleEvidenceRequired) {
+          const currentProjection = yield* getProjectionWithPendingEvents(command.threadId, events);
+          const acceptanceNow = yield* DateTime.now;
+          const acceptedRunId = currentProjection.thread.lifecycleReceipt?.runId;
+          const acceptedRun = currentProjection.runs.find((run) => run.id === acceptedRunId);
+          if (
+            !hasCurrentLifecycleAcceptance(
+              currentProjection,
+              DateTime.toEpochMillis(acceptanceNow),
+            ) ||
+            acceptedRun === undefined ||
+            deferredResolutionBlocked(currentProjection, acceptedRun.id) ||
+            (yield* stopReachedRun(command, command.threadId, acceptedRun.id))
+          ) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause:
+                "Automatic resolution requires verified delivery evidence for the current request and acceptance revision.",
+            });
+          }
         }
         yield* dispatchThreadMutation(
           {
@@ -12030,10 +12035,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const now = yield* DateTime.now;
         const nowMs = DateTime.toEpochMillis(now);
         const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-        const latest = projection.runs.reduce<(typeof projection.runs)[number] | undefined>(
-          (found, candidate) => (!found || candidate.ordinal > found.ordinal ? candidate : found),
-          undefined,
-        );
+        // The turn that executed last, once complete with nothing else waiting.
+        const request = currentLifecycleRequest(projection);
+        const latest =
+          request === null ? undefined : projection.runs.find((run) => run.id === request.runId);
         const refuse = (cause: string) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -12043,11 +12048,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (projection.thread.deletedAt !== null) {
           return yield* refuse(`Thread ${command.threadId} is deleted.`);
         }
-        if (latest === undefined || latest.id !== command.runId || latest.status !== "completed") {
+        if (latest === undefined || latest.id !== command.runId) {
           return yield* refuse(
-            latest !== undefined && latest.status === "cancelled" && latest.startedAt === null
-              ? "A newer turn was cancelled before it started, so the named turn is no longer the latest. Record evidence after the next turn completes, or resolve the thread explicitly."
-              : "Delivery evidence must name this thread's latest completed turn. A running, newer or unfinished turn supersedes it.",
+            "Delivery evidence must name this thread's latest completed turn. A running, newer or unfinished turn supersedes it.",
           );
         }
         const receipt: LifecycleReceipt = {

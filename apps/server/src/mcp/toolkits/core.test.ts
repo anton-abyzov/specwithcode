@@ -257,6 +257,28 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
   });
 });
 
+const htmlToolkitLayer = McpHttpServer.layerHtmlToolkit.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(PreviewBrowser.layer),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-html-render-" })),
+  Layer.provide(NodeServices.layer),
+  // The preview browser is not installed in a fresh home, so nothing downloads.
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      // A live run: publishing stores a page, so it needs the caller's active turn.
+      getThreadShell: () =>
+        Effect.succeed({
+          id: threadId,
+          deletedAt: null,
+          archivedAt: null,
+          activeRunId: RunId.make("mcp-core-run"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        } as OrchestrationV2ThreadShell),
+    }),
+  ),
+);
+
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -277,31 +299,29 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     expect(
       htmlRenderFromToolItem({ toolName: "mcp__studio-code__html_render", output: result.content }),
     ).toEqual(reference);
-  }).pipe(
-    Effect.provide(
-      McpHttpServer.layerHtmlToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
-        Layer.provide(PreviewBrowser.layer),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-html-render-" })),
-        Layer.provide(NodeServices.layer),
-        // The preview browser is not installed in a fresh home, so nothing downloads.
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            // A live run: publishing stores a page, so it needs the caller's active turn.
-            getThreadShell: () =>
-              Effect.succeed({
-                id: threadId,
-                deletedAt: null,
-                archivedAt: null,
-                activeRunId: RunId.make("mcp-core-run"),
-                providerInstanceId: ProviderInstanceId.make("codex"),
-              } as OrchestrationV2ThreadShell),
-          }),
-        ),
-      ),
-    ),
-  ),
+  }).pipe(Effect.provide(htmlToolkitLayer)),
+);
+
+it.effect("publishes a show_visual fragment as a visual reference", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (widget_code: string) =>
+      server
+        .callTool({ name: "show_visual", arguments: { title: "login_flow", widget_code } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    const result = yield* call(
+      '<svg viewBox="0 0 100 40"><text class="t" x="4" y="20">Login</text></svg>',
+    );
+    expect(
+      htmlRenderFromToolItem({ toolName: "mcp__studio-code__show_visual", output: result.content }),
+    ).toMatchObject({ title: "login_flow", kind: "visual", height: 2000 });
+    const refused = yield* call("<!doctype html><html><body><p>Page</p></body></html>");
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.content)).toContain("html_render");
+  }).pipe(Effect.provide(htmlToolkitLayer)),
 );
 
 it.effect("returns invalid parameter errors through the production registration", () =>

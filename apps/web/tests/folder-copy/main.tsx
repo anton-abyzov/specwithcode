@@ -8,8 +8,15 @@ document.documentElement.classList.toggle("dark", params.get("theme") === "dark"
 function Fixture() {
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [locked, setLocked] = useState(false);
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
+      {/* Reopening remounts the copy flow, as closing and reopening the real dialog does. */}
+      {!open && (
+        <button type="button" data-slot="fixture-reopen" onClick={() => setOpen(true)}>
+          Open the copy again
+        </button>
+      )}
       <MachineHandoffDialog
         open={open}
         onOpenChange={setOpen}
@@ -21,6 +28,7 @@ function Fixture() {
         method="copy"
         onMethodChange={() => {}}
         copyBusy={busy}
+        copyLocked={locked}
         copyFlow={
           <HandoffFolderCopy
             project={
@@ -44,6 +52,7 @@ function Fixture() {
             savedFolder={() => null}
             canMove
             onBusyChange={setBusy}
+            onCloseLockChange={setLocked}
             onOpenProject={() => {}}
           />
         }

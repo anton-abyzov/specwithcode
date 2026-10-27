@@ -244,7 +244,9 @@ try {
             NodeAssert.ok(tip, "no tooltip opened");
             NodeAssert.match(tip, /Codex · GPT-6-Astra/);
             NodeAssert.match(tip, /Fallback for your pick, Claude Code · Opus 5\.5/);
-            NodeAssert.match(tip, /usage limit/);
+            NodeAssert.match(tip, /hit its usage limit\./);
+            // This is the open thread: its composer, not "open the thread", is the way back.
+            NodeAssert.doesNotMatch(tip, /Open the thread/);
           });
           await page.screenshot({
             path: NodePath.join(output, `${mode}-${width}-${theme}-hover.png`),
@@ -405,6 +407,35 @@ try {
     );
     await page.screenshot({
       path: NodePath.join(output, `account-1000-${theme}-hover.png`),
+      clip: { x: 0, y: 0, width: 1000, height: 200 },
+    });
+    await page.close();
+  }
+
+  // A usage pre-switch moved the idle thread before the limit: nothing "hit" it.
+  for (const theme of ["light", "dark"]) {
+    const page = await browser.newPage({
+      viewport: { width: 1000, height: 240 },
+      deviceScaleFactor: 2,
+      colorScheme: theme,
+    });
+    await page.goto(`${origin}/?theme=${theme}&scenario=preswitch`);
+    await page.waitForSelector("body[data-fixture-ready] .sws-thread-head .sws-model-chip");
+    await page.hover(".sws-thread-head .sws-model-chip");
+    await page.waitForTimeout(900);
+    const tip = await page.evaluate(TIP);
+    const spoken = await page.evaluate(
+      () => document.querySelector(".sws-thread-head .sws-model-state .sr-only")?.textContent ?? "",
+    );
+    receipt.hover.push({ theme, mode: "preswitch", width: 1000, tip, spoken });
+    check(`${theme} preswitch: the tooltip says the pick neared its limit, not hit it`, () => {
+      NodeAssert.match(tip ?? "", /Fallback for your pick, Claude Code · Opus 5\.5/);
+      NodeAssert.match(tip ?? "", /Opus 5\.5 neared its usage limit, so this thread moved/);
+      NodeAssert.doesNotMatch(tip ?? "", /hit its|Open the thread/);
+      NodeAssert.match(spoken, /fallback for Claude Code · Opus 5\.5 \(near its usage limit\)/);
+    });
+    await page.screenshot({
+      path: NodePath.join(output, `preswitch-1000-${theme}-hover.png`),
       clip: { x: 0, y: 0, width: 1000, height: 200 },
     });
     await page.close();

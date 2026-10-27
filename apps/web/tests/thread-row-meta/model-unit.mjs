@@ -486,7 +486,7 @@ try {
         });
         await tip.waitFor({ timeout: 3000 });
         const tipText = await tip.textContent();
-        check(`${theme}: focus explains the fallback and the way back`, () => {
+        check(`${theme}: focus explains the fallback`, () => {
           NodeAssert.match(tipText, /Fallback for your pick, Claude Code · Opus 5\.5/);
           NodeAssert.match(tipText, /hit its usage limit/);
         });

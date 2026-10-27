@@ -543,7 +543,9 @@ export class DestinationCopies {
         this.claimed.delete(operationId);
       }
     }
-    if (record.state !== "failed" || record.failedStep !== "applying")
+    if (record.state !== "failed")
+      throw new CopyError("refused", "Only a failed copy can be retried.");
+    if (record.failedStep !== "applying")
       // Before Apply the source has let the copy go and nothing changed here: copy again.
       throw new CopyError(
         "refused",

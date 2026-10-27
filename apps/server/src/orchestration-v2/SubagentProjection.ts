@@ -62,8 +62,14 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // Delivery evidence judges the parent's request, not the child's.
+  const {
+    lifecycleReceipt: _lifecycleReceipt,
+    lifecycleRevision: _lifecycleRevision,
+    ...parentThread
+  } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...parentThread,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

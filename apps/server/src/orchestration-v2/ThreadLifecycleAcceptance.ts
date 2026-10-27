@@ -1,9 +1,20 @@
 import type { OrchestrationV2ThreadProjection } from "@specweave-studio/contracts";
+import * as Context from "effect/Context";
 import {
   currentLifecycleRequest,
   evaluateLifecycleEvidence,
   type LifecycleEvidenceDecision,
 } from "@specweave-studio/shared/threadLifecycleEvidence";
+
+/**
+ * Server composition flag. When true, automatic settlement also requires a
+ * current accepted receipt. No environment, settings or RPC switch enables it;
+ * receipts are recorded, shown and resolve threads either way.
+ */
+export class LifecycleEvidenceActivation extends Context.Reference<boolean>(
+  "studio/orchestration-v2/LifecycleEvidenceActivation",
+  { defaultValue: () => false },
+) {}
 
 type AcceptanceProjection = Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">;
 

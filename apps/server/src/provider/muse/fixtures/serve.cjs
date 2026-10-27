@@ -29,6 +29,55 @@ const reply = (turnId) => {
     }, 20);
   }, 20);
 };
+// Wire frames of a real Muse 1.4.13 turn: reasoning, a reply, a shell approval,
+// the bash call and its output, the final answer and Muse's reminder children.
+let recorded;
+const recordedFrames = (turnId) => {
+  const fixture = JSON.parse(fs.readFileSync(__dirname + "/muse-1.4.13-turn.json", "utf8"));
+  return JSON.parse(JSON.stringify(fixture.events).replaceAll(fixture.turnId, turnId));
+};
+const replay = (frames) => {
+  for (const frame of frames) notify(frame.method, frame.params);
+};
+const startRecorded = (turnId, hidden) => {
+  const frames = recordedFrames(turnId);
+  if (hidden) {
+    replay(
+      frames.filter(
+        (f) => f.params.item?.kind === "reminderChild" || f.method === "turn/completed",
+      ),
+    );
+    return;
+  }
+  const review = frames.findIndex((f) => f.method === "approval/reviewing");
+  const resolved = frames.findIndex((f) => f.method === "approval/resolved");
+  replay(frames.slice(0, review));
+  // The ask-me profile hands the same request to the client instead of Muse's reviewer.
+  const { change: _change, ...request } = frames[review].params;
+  recorded = {
+    turnId,
+    request,
+    resolved: frames[resolved].params,
+    rest: frames.slice(resolved + 1),
+  };
+  notify("approval/requested", request);
+};
+const decideRecorded = (choiceId) => {
+  const { turnId, request, resolved, rest } = recorded;
+  recorded = undefined;
+  if (choiceId !== "allow_once") {
+    notify("approval/resolved", {
+      ...resolved,
+      decision: "abort",
+      policyResult: "deny",
+      resolvedBy: "user",
+    });
+    finish(turnId, "cancelled");
+    return;
+  }
+  notify("approval/resolved", { ...resolved, resolvedBy: "user", commandId: request.approvalId });
+  replay(rest);
+};
 const approval = (turnId) => ({
   approvalId: "approve-one",
   turnId,
@@ -186,6 +235,16 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (text === "crash") {
         process.exit(1);
       }
+      // SpecWithCode threads add their instructions around the prompt; the scenario is a line of its own.
+      const lines = p.input.flatMap((part) => String(part.text ?? "").split("\n"));
+      const scenario = ["recorded", "recorded-hidden"].find((name) =>
+        lines.some((line) => line.trim() === name),
+      );
+      if (scenario === "recorded" || scenario === "recorded-hidden") {
+        pending = turnId;
+        startRecorded(turnId, scenario === "recorded-hidden");
+        return;
+      }
       if (text === "approve") {
         pending = turnId;
         notify("approval/requested", approval(turnId));
@@ -196,6 +255,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     }
     case "approval/decide":
       send({ id, result: {} });
+      if (recorded) {
+        decideRecorded(p.choiceId);
+        return;
+      }
       if (p.choiceId === "once") reply(pending);
       else finish(pending, "cancelled");
       return;

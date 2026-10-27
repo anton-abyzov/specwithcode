@@ -20,6 +20,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { LifecycleEvidenceActivation } from "./ThreadLifecycleAcceptance.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -240,3 +241,210 @@ it.layer(layerTest)("recorded delivery evidence", (it) => {
     }),
   );
 });
+
+const autoSettle = (threadId: ThreadId, name: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    return yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make(`receipt:${name}:auto-settle`),
+        threadId,
+        snapshotAt: (yield* projections.getThread(threadId)).updatedAt,
+        snapshotSequence: yield* sink.latestSequence({ threadId }),
+      }),
+    );
+  });
+
+it.effect("automatic settlement needs no evidence while the gate is off", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId } = yield* completedThread("gate-off");
+    assert.equal((yield* autoSettle(threadId, "gate-off"))._tag, "Success");
+    assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("with the gate on, automatic settlement needs current accepted evidence", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, run } = yield* completedThread("gate-on");
+    assert.equal((yield* autoSettle(threadId, "gate-on-missing"))._tag, "Failure");
+    yield* record(
+      threadId,
+      run.id,
+      "gate-on-waiting",
+      report(yield* DateTime.now, {
+        obligations: [
+          {
+            kind: "review",
+            reason: "Fresh-context review is pending",
+            owner: "completion owner",
+            nextEvent: "Review verdict",
+            needsUserOutput: false,
+          },
+        ],
+      }),
+    );
+    assert.equal((yield* autoSettle(threadId, "gate-on-waiting"))._tag, "Failure");
+    assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest), Effect.provideService(LifecycleEvidenceActivation, true)),
+);
+
+it.effect("a steer into the turn belongs to its request", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const threadId = ThreadId.make("thread:receipt:steered");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("receipt:steered:create"),
+      threadId,
+      projectId,
+      title: "Deliver the fix",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("receipt:steered:start"),
+      threadId,
+      messageId: MessageId.make("receipt:steered:prompt"),
+      text: "Ship the fix",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const { runs, messages } = yield* projections.getThreadProjection(threadId);
+    const run = runs[0]!;
+    const now = yield* DateTime.now;
+    const later = DateTime.add(now, { seconds: 5 });
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("receipt:steered:running"),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...run, status: "running", startedAt: now },
+        },
+        {
+          // A steer joins the running turn as another user message.
+          id: EventId.make("receipt:steered:steer"),
+          type: "message.updated",
+          threadId,
+          occurredAt: later,
+          payload: {
+            ...messages[0]!,
+            id: MessageId.make("receipt:steered:steer"),
+            text: "Also update the docs",
+            runId: run.id,
+            createdAt: later,
+            updatedAt: later,
+          },
+        },
+      ],
+    });
+    // Evidence is recorded after the turn, never during it.
+    assert.equal(
+      (yield* Effect.exit(record(threadId, run.id, "steered-early", report(now))))._tag,
+      "Failure",
+    );
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("receipt:steered:complete"),
+          type: "run.updated",
+          threadId,
+          occurredAt: later,
+          payload: { ...run, status: "completed", startedAt: now, completedAt: later },
+        },
+      ],
+    });
+    yield* record(threadId, run.id, "steered", report(now));
+    assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("judges the turn that ran last, not a queued turn cancelled before it started", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const { threadId, run } = yield* completedThread("cancelled-queue");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("receipt:cancelled-queue:queued"),
+      threadId,
+      messageId: MessageId.make("receipt:cancelled-queue:queued-prompt"),
+      text: "One more change",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const queued = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+    const now = yield* DateTime.now;
+    // While another request waits to run, nothing can be adjudicated.
+    assert.equal(
+      (yield* Effect.exit(record(threadId, run.id, "cancelled-queue-waiting", report(now))))._tag,
+      "Failure",
+    );
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("receipt:cancelled-queue:cancel"),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...queued, status: "cancelled", startedAt: null, completedAt: now },
+        },
+      ],
+    });
+    yield* record(threadId, run.id, "cancelled-queue", report(now));
+    const thread = yield* projections.getThread(threadId);
+    assert.equal(thread.lifecycleReceipt?.runId, run.id);
+    assert.equal(thread.settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("settles a turn that ran last even when a higher ordinal finished first", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const { threadId, run } = yield* completedThread("out-of-order");
+    const now = yield* DateTime.now;
+    // A continuation started ahead of the held queue and ended before this turn.
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("receipt:out-of-order:ahead"),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...run,
+            id: RunId.make("receipt:out-of-order:ahead"),
+            ordinal: run.ordinal + 1,
+            status: "completed",
+            startedAt: DateTime.subtract(now, { minutes: 2 }),
+            completedAt: DateTime.subtract(now, { minutes: 1 }),
+          },
+        },
+      ],
+    });
+    yield* record(threadId, run.id, "out-of-order", report(now));
+    const thread = yield* projections.getThread(threadId);
+    assert.equal(thread.lifecycleReceipt?.runId, run.id);
+    assert.equal(thread.settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest)),
+);

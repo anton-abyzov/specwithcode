@@ -30,6 +30,10 @@ export type ModelState =
       readonly via?: string;
       /** The thread started here because the pick had no room; no usage limit stopped it. */
       readonly launched?: true;
+      /** The usage pre-switch moved the idle thread before the pick reached its limit (1075). */
+      readonly preswitched?: true;
+      /** Shown in the open thread itself, whose composer holds the way back. */
+      readonly inOpenThread?: true;
       readonly reason?: string | null;
       /** What the host knows beyond the shell: reset time, room again, the way back. */
       readonly detail?: string | null;
@@ -76,6 +80,8 @@ export function fallbackModelState(input: {
   readonly reason?: string | null;
   readonly detail?: string | null;
   readonly launched?: boolean;
+  readonly preswitched?: boolean;
+  readonly inOpenThread?: boolean;
 }): Extract<ModelState, { kind: "fallback" }> {
   const { pick, running } = input;
   const sameName = running !== null && sameModelName(running.model, pick.model);
@@ -94,6 +100,8 @@ export function fallbackModelState(input: {
     pickModel: names ? names[0] : pick.model,
     ...(names ? { via: names[1] } : {}),
     ...(input.launched ? { launched: true as const } : {}),
+    ...(input.preswitched ? { preswitched: true as const } : {}),
+    ...(input.inOpenThread ? { inOpenThread: true as const } : {}),
     ...(input.reason !== undefined ? { reason: input.reason } : {}),
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
   };
@@ -127,6 +135,19 @@ export function composerModelState(input: {
     });
   }
   return null;
+}
+
+/**
+ * Why a fallback stands in, for the words after the pick. A pre-switch moved the
+ * thread before the limit, so the pick never hit it (1075).
+ */
+export function fallbackReason(state: {
+  readonly launched?: boolean | undefined;
+  readonly preswitched?: boolean | undefined;
+  readonly reason?: string | null | undefined;
+}): string {
+  if (state.launched) return "no room at launch";
+  return state.preswitched ? "near its usage limit" : (state.reason ?? "usage limit");
 }
 
 export interface ModelStateCopy {
@@ -168,20 +189,24 @@ export function modelStateText(state: ModelState): ModelStateCopy {
     };
   }
   if (state.kind === "fallback") {
-    const reason = state.launched ? "no room at launch" : (state.reason ?? "usage limit");
+    const reason = fallbackReason(state);
     // The tip stands alone, so it says which provider runs a same-named model.
     const through = state.via ? `, the same model through ${state.via}` : "";
+    // In the open thread the way back is its composer, not "open the thread".
+    const back = state.inOpenThread ? "" : " Open the thread to switch back.";
     return {
       label: `Fallback for ${state.pickModel}`,
       short: "Fallback",
-      tip: `Fallback: runs on this model instead of your pick, ${state.pick}${through}${state.launched || state.reason ? ` (${reason})` : ""}.`,
+      tip: `Fallback: runs on this model instead of your pick, ${state.pick}${through}${state.launched || state.preswitched || state.reason ? ` (${reason})` : ""}.`,
       aria: `, fallback for ${state.pick} (${reason})`,
       line2: `Fallback for your pick, ${state.pick}`,
       detail:
         state.detail ??
         (state.launched
-          ? `${state.pickModel} had no room when this thread started. Open the thread to switch back.`
-          : `${state.pickModel} hit its ${reason}. Open the thread to switch back.`),
+          ? `${state.pickModel} had no room when this thread started.${back}`
+          : state.preswitched
+            ? `${state.pickModel} neared its usage limit, so this thread moved before its next turn.${back}`
+            : `${state.pickModel} hit its ${reason}.${back}`),
     };
   }
   const model = state.runningModel ?? state.running;

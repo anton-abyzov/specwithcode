@@ -16,6 +16,7 @@ import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
 import {
   makeAcpAdapterV2,
   AcpProviderCapabilitiesV2,
+  type AcpAdapterV2Flavor,
 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
 import { defaultProviderContinuationIdentity, type ProviderDriver } from "../ProviderDriver.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -32,6 +33,54 @@ import type { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
 
 const driver = ProviderDriverKind.make("muse");
+
+/** How SpecWithCode threads drive Muse; the driver and its adapter tests share it. */
+export const museAdapterFlavor = (
+  settings: MuseSettings,
+  environment: NodeJS.ProcessEnv,
+): AcpAdapterV2Flavor => ({
+  driver,
+  runtimeHarness: "Muse Code",
+  capabilities: {
+    ...AcpProviderCapabilitiesV2,
+    sessions: { ...AcpProviderCapabilitiesV2.sessions, supportsModelSwitchInSession: true },
+    threads: { ...AcpProviderCapabilitiesV2.threads, canRollbackThread: false },
+    planning: {
+      ...AcpProviderCapabilitiesV2.planning,
+      emitsPlanUpdated: false,
+      emitsTodoList: false,
+      supportsStructuredQuestions: false,
+    },
+  },
+  makeRuntime: (runtime) =>
+    makeMuseRuntime({
+      settings,
+      environment: {
+        ...environment,
+        ...runtime.processEnvironment,
+        ...runtime.agentEnvironment,
+      },
+      cwd: runtime.cwd,
+      ...(runtime.resumeSessionId ? { resumeSessionId: runtime.resumeSessionId } : {}),
+      runtimeMode: runtime.runtimePolicy.runtimeMode,
+      ...(runtime.onOutgoingResponse ? { onOutgoingResponse: runtime.onOutgoingResponse } : {}),
+      ...(runtime.onOutgoingResponseFailure
+        ? { onOutgoingResponseFailure: runtime.onOutgoingResponseFailure }
+        : {}),
+    }),
+  preferResumeSession: true,
+  supportsImagePrompts: false,
+  supportsCompaction: false,
+  applyModelSelection: ({ runtime, modelSelection }) =>
+    Effect.gen(function* () {
+      yield* runtime.setModel(modelSelection.model);
+      const effort = modelSelection.options?.find(
+        (option) => option.id === "reasoningEffort",
+      )?.value;
+      if (typeof effort === "string") yield* runtime.setConfigOption("reasoningEffort", effort);
+      return modelSelection.model;
+    }),
+});
 export type MuseDriverEnv =
   | Crypto.Crypto
   | Path.Path
@@ -161,46 +210,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         idAllocator,
         serverConfig,
         selfInvocation,
-        flavor: {
-          driver,
-          runtimeHarness: "Muse Code",
-          capabilities: {
-            ...AcpProviderCapabilitiesV2,
-            sessions: { ...AcpProviderCapabilitiesV2.sessions, supportsModelSwitchInSession: true },
-            threads: { ...AcpProviderCapabilitiesV2.threads, canRollbackThread: false },
-            planning: {
-              ...AcpProviderCapabilitiesV2.planning,
-              emitsPlanUpdated: false,
-              emitsTodoList: false,
-              supportsStructuredQuestions: false,
-            },
-          },
-          makeRuntime: (runtime) =>
-            makeMuseRuntime({
-              settings,
-              environment: {
-                ...environment,
-                ...runtime.processEnvironment,
-                ...runtime.agentEnvironment,
-              },
-              cwd: runtime.cwd,
-              ...(runtime.resumeSessionId ? { resumeSessionId: runtime.resumeSessionId } : {}),
-              runtimeMode: runtime.runtimePolicy.runtimeMode,
-            }),
-          preferResumeSession: true,
-          supportsImagePrompts: false,
-          supportsCompaction: false,
-          applyModelSelection: ({ runtime, modelSelection }) =>
-            Effect.gen(function* () {
-              yield* runtime.setModel(modelSelection.model);
-              const effort = modelSelection.options?.find(
-                (option) => option.id === "reasoningEffort",
-              )?.value;
-              if (typeof effort === "string")
-                yield* runtime.setConfigOption("reasoningEffort", effort);
-              return modelSelection.model;
-            }),
-        },
+        flavor: museAdapterFlavor(settings, environment),
       });
       const textGeneration = fromRunner("Muse Code", (request) =>
         Effect.fail(

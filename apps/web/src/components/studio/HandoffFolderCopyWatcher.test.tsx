@@ -487,3 +487,33 @@ it("never approves a one-click copy whose unchanged folder would overwrite files
     vi.useRealTimers();
   }
 });
+
+it("keeps the remembered steps when it records the clone choice or drops a Replace all", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true, method: "clone", seen: "review", viewed: "what" });
+    const decided: unknown[] = [];
+    state.handlers.copyStatus = () => previewed([row({ cloneAvailable: true })]);
+    state.handlers.copyDecide = (request) => {
+      decided.push(request);
+      return previewed([row({ cloneAvailable: true, clone: true })]);
+    };
+    state.handlers.copyApprove = () => new Promise(() => {});
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(decided).toHaveLength(1);
+    expect(readPointer()).toMatchObject({ cloneDecided: true, seen: "review", viewed: "what" });
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    pointer({ replaceAll: true, seen: "review", viewed: "where" });
+    state.handlers.copyStatus = () =>
+      previewed([row({ status: "diverged", choices: ["take-theirs"], needsDecision: true })], 1);
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(readPointer()).not.toHaveProperty("replaceAll");
+    expect(readPointer()).toMatchObject({ seen: "review", viewed: "where" });
+  } finally {
+    vi.useRealTimers();
+  }
+});

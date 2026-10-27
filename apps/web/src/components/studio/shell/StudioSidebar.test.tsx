@@ -345,6 +345,22 @@ describe("projects and chats sidebar", () => {
     expect(row.textContent).toContain("fallback for Claude Code · Opus 5.5 (no room at launch)");
     expect(row.textContent).not.toContain("usage limit");
   });
+  it("says a pre-switched chat's pick neared its usage limit, not that it hit it", async () => {
+    state.shells = [
+      shell("fallback", {
+        modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+        modelIdentity: {
+          current: { instanceId: "codex", model: "gpt-6.1-sol" },
+          preferred: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+          kind: "fallback",
+          preswitched: true,
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+    ];
+    await render();
+    const row = container.querySelector(".sws-chat-row")!;
+    expect(row.textContent).toContain("fallback for Claude Code · Opus 5.5 (near its usage limit)");
+  });
   it("names another machine's chat and marks it when that machine can't be reached", async () => {
     state.environments = [
       { environmentId: "host", label: "M4" },

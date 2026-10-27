@@ -278,6 +278,8 @@ export function ThreadModelBadge(props: {
           },
           reason: "usage limit",
           launched: identity?.launched === true,
+          preswitched: identity?.preswitched === true,
+          inOpenThread: props.header === true,
         })
       : { kind: "preferred", pick: label.full, pickModel: label.model }
     : null;

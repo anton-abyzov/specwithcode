@@ -24,7 +24,7 @@ import {
   PRESWITCH_RETURN_BLOCK_REASON,
   type PreswitchReturnBlock,
 } from "@specweave-studio/shared/preswitchReturn";
-import { ChevronDownIcon, GaugeIcon, Undo2Icon } from "lucide-react";
+import { ChevronDownIcon, GaugeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -557,68 +557,4 @@ export function preswitchFallbackDetail(input: {
   return input.hasRoom
     ? `${input.originalModel} neared its usage limit and has room again. The idle thread goes back on its own.`
     : `${input.originalModel} neared its usage limit. The idle thread goes back on its own once it has room.`;
-}
-
-/**
- * The thread runs on a limit fallback: "On Codex · GPT-6 Astra for Claude Code ·
- * Claude Opus 5.5", with the way back once the original model has room.
- */
-export function limitFallbackPairingBannerItem(props: {
-  id: string;
-  original: string;
-  originalModel: string;
-  /** The original model's reset, when its usage reading says. */
-  resetAt: number | null;
-  /** The original model can take the next turn now. */
-  hasRoom: boolean;
-  /** The original model can take a turn, but whether its limit lifted is unknown. */
-  roomUnknown?: LimitPairingRoomUnknown | undefined;
-  /** The thread stands in from its launch: the original never had room for it, so not "again". */
-  launched?: boolean | undefined;
-  /** Why the way back from a usage pre-switch will not move the thread by itself. */
-  returnBlock?: PreswitchReturnBlock | null | undefined;
-  onBack: () => void;
-  onDismiss: () => void;
-}): ComposerBannerStackItem | null {
-  if (!props.hasRoom && props.roomUnknown === undefined) return null;
-  return {
-    id: props.id,
-    variant: "info",
-    compact: true,
-    priority: "notice",
-    icon: <Undo2Icon />,
-    ...(props.returnBlock == null
-      ? {}
-      : {
-          description: `It stays on the fallback until you switch back: ${PRESWITCH_RETURN_BLOCK_REASON[props.returnBlock]}.`,
-        }),
-    title: props.hasRoom
-      ? `${props.originalModel} has room ${props.launched ? "now" : "again"}.`
-      : props.roomUnknown === "stale"
-        ? `${props.originalModel} may have room ${props.launched ? "now" : "again"}.`
-        : props.roomUnknown === "unread"
-          ? `${props.originalModel} has no current usage reading, so its room is unknown.`
-          : `${props.originalModel} reports no usage, so its room is unknown.`,
-    actions: (
-      <Button
-        size="xs"
-        variant="outline"
-        aria-label={`Switch back to ${props.original}`}
-        title={
-          props.roomUnknown === "stale"
-            ? "Its last usage reading is out of date; switching back re-checks it."
-            : props.roomUnknown
-              ? props.launched
-                ? `${props.original} may still be at its limit`
-                : `${props.original} may stop at its limit again`
-              : undefined
-        }
-        onClick={props.onBack}
-      >
-        {props.hasRoom ? "Switch back" : "Try switching back"}
-      </Button>
-    ),
-    dismissLabel: "Hide",
-    onDismiss: props.onDismiss,
-  };
 }

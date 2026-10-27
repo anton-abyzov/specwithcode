@@ -69,6 +69,7 @@ export type StudioMcpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
+  | "html-visual"
   | "design-read"
   | "design-edit";
 
@@ -441,6 +442,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   ),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  show_visual: tool(["Make", "Making", "Made", "a visual"], "html-visual"),
   design_list: tool(["List", "Listing", "Listed", "designs"], "design-read"),
   design_get: tool(["Read", "Reading", "Read", "a design"], "design-read"),
   design_create: tool(["Create", "Creating", "Created", "a design"], "design-edit"),

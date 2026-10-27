@@ -7,6 +7,7 @@ import type {
   FolderCopyStatus,
 } from "@specweave-studio/contracts";
 import { formatBytes } from "../../studio/folderCopy";
+import { isCopyStepId, type CopyStepId } from "./handoffCopyWizard";
 
 /**
  * What "Replace all" leads to: "copy" when it answers everything still open, "copy-kept"
@@ -53,6 +54,18 @@ export interface PendingCopy {
    * dropping it. A reopened dialog only tells the source again; it never resumes the copy.
    */
   readonly cancelled?: boolean;
+  /** The furthest live step this browser rendered for the copy. */
+  readonly seen?: CopyStepId;
+  /** The step on screen when it last changed, live or a review; a reopen comes back to it. */
+  readonly viewed?: CopyStepId;
+  /** Done rendered for a committed copy-only copy: the next reopen archives it as the last copy. */
+  readonly doneSeen?: true;
+  /** The copy was linked as a worker; a reopen does not link it again. */
+  readonly linked?: true;
+  /** The person saw the compared plan, so a one-click copy's Review was not approved automatically. */
+  readonly planShown?: true;
+  /** The last copy, opened again with View: it can go back to being the last copy. */
+  readonly reopened?: true;
 }
 
 export const CANCELLED_WHILE_MEASURING = "The copy was cancelled while measuring.";
@@ -74,43 +87,175 @@ const COPYABLE_CLASSES: Readonly<Record<Exclude<FolderCopyFileClass, "secret">, 
   rebuildable: true,
 };
 
+/** A pointer read back from storage, with every optional field checked; null when unusable. */
+function parsePendingCopy(value: unknown): PendingCopy | null {
+  const pointer = value as PendingCopy | null;
+  if (
+    !pointer ||
+    typeof pointer !== "object" ||
+    typeof pointer.operationId !== "string" ||
+    typeof pointer.environmentId !== "string"
+  )
+    return null;
+  const {
+    selection,
+    auto,
+    method,
+    cloneDecided,
+    replaceAll,
+    replaceAllOutcome,
+    moveAnyway,
+    cancelled,
+    seen,
+    viewed,
+    doneSeen,
+    linked,
+    planShown,
+    reopened,
+    ...fields
+  } = pointer;
+  const rest: PendingCopy = {
+    ...fields,
+    ...(auto === true ? { auto } : {}),
+    ...(method === "copy" || method === "clone" ? { method } : {}),
+    ...(cloneDecided === true ? { cloneDecided } : {}),
+    ...(replaceAll === true ? { replaceAll } : {}),
+    ...(replaceAll === true && REPLACE_ALL_OUTCOMES.has(replaceAllOutcome)
+      ? { replaceAllOutcome }
+      : {}),
+    ...(moveAnyway === true ? { moveAnyway } : {}),
+    ...(cancelled === true ? { cancelled } : {}),
+    ...(isCopyStepId(seen) ? { seen } : {}),
+    ...(isCopyStepId(viewed) ? { viewed } : {}),
+    ...(doneSeen === true ? { doneSeen } : {}),
+    ...(linked === true ? { linked } : {}),
+    ...(planShown === true ? { planShown } : {}),
+    ...(reopened === true ? { reopened } : {}),
+  };
+  // Secret-like files are never part of the class selection.
+  const kept: unknown[] = Array.isArray(selection)
+    ? selection.filter((entry) => entry !== "secret")
+    : [];
+  const copyable = (entry: unknown): entry is FolderCopyFileClass =>
+    typeof entry === "string" && Object.hasOwn(COPYABLE_CLASSES, entry);
+  return kept.length > 0 && kept.every(copyable) ? { ...rest, selection: kept } : rest;
+}
+
 export function readPendingCopy(key: string): PendingCopy | null {
   try {
-    const value = JSON.parse(localStorage.getItem(key) ?? "null") as PendingCopy | null;
-    if (!value || typeof value.operationId !== "string" || typeof value.environmentId !== "string")
-      return null;
-    const {
-      selection,
-      auto,
-      method,
-      cloneDecided,
-      replaceAll,
-      replaceAllOutcome,
-      moveAnyway,
-      cancelled,
-      ...fields
-    } = value;
-    const rest: PendingCopy = {
-      ...fields,
-      ...(auto === true ? { auto } : {}),
-      ...(method === "copy" || method === "clone" ? { method } : {}),
-      ...(cloneDecided === true ? { cloneDecided } : {}),
-      ...(replaceAll === true ? { replaceAll } : {}),
-      ...(replaceAll === true && REPLACE_ALL_OUTCOMES.has(replaceAllOutcome)
-        ? { replaceAllOutcome }
-        : {}),
-      ...(moveAnyway === true ? { moveAnyway } : {}),
-      ...(cancelled === true ? { cancelled } : {}),
-    };
-    // Secret-like files are never part of the class selection.
-    const kept: unknown[] = Array.isArray(selection)
-      ? selection.filter((entry) => entry !== "secret")
-      : [];
-    const copyable = (entry: unknown): entry is FolderCopyFileClass =>
-      typeof entry === "string" && Object.hasOwn(COPYABLE_CLASSES, entry);
-    return kept.length > 0 && kept.every(copyable) ? { ...rest, selection: kept } : rest;
+    return parsePendingCopy(JSON.parse(localStorage.getItem(key) ?? "null"));
   } catch {
     return null;
+  }
+}
+
+/**
+ * A finished copy-only copy, moved out of the pointer once Done was seen, so a reopen
+ * starts a new copy while View and Undo stay one click away.
+ */
+export interface LastCopy extends PendingCopy {
+  readonly finishedAt: string;
+}
+
+export const folderCopyLastKey = (environmentId: string, projectId: string) =>
+  `specwithcode:folder-copy-last:${environmentId}:${projectId}`;
+
+export function readLastCopy(key: string): LastCopy | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "null") as LastCopy | null;
+    const pointer = parsePendingCopy(value);
+    return pointer && typeof value?.finishedAt === "string"
+      ? { ...pointer, finishedAt: value.finishedAt }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keeps a finished copy as the last copy and clears the pointer. Returns the archived copy,
+ * or null when storage refused; the pointer then stays, so nothing about the copy is lost.
+ */
+export function archivePendingCopy(input: {
+  readonly pendingKey: string;
+  readonly lastKey: string;
+  readonly pointer: PendingCopy;
+  readonly finishedAt: string;
+}): LastCopy | null {
+  // Where the person was looking belongs to the open copy, not the archive.
+  const { doneSeen: _doneSeen, viewed: _viewed, reopened: _reopened, ...kept } = input.pointer;
+  const last: LastCopy = { ...kept, finishedAt: input.finishedAt };
+  try {
+    localStorage.setItem(input.lastKey, JSON.stringify(last));
+    localStorage.removeItem(input.pendingKey);
+    return last;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Makes the last copy the pointer again, so resuming lands on its Done with Undo. Done has
+ * to be seen again before it is archived again. Null when there is no last copy; a refused
+ * write still returns it, since the dialog can resume from memory.
+ */
+export function readoptLastCopy(input: {
+  readonly pendingKey: string;
+  readonly lastKey: string;
+}): PendingCopy | null {
+  const last = readLastCopy(input.lastKey);
+  if (!last) return null;
+  const { finishedAt: _finishedAt, doneSeen: _doneSeen, viewed: _viewed, ...kept } = last;
+  const pointer: PendingCopy = { ...kept, reopened: true };
+  try {
+    localStorage.setItem(input.pendingKey, JSON.stringify(pointer));
+    localStorage.removeItem(input.lastKey);
+  } catch {
+    /* Resuming still works for this window; only a later reopen needs the pointer. */
+  }
+  return pointer;
+}
+
+/** The setup choices while no copy has started, so closing the dialog on Where loses nothing. */
+export interface CopyDraft {
+  readonly machine: string | null;
+  readonly folder: string;
+  readonly copyRoot?: string;
+  readonly mode: FolderCopyMode;
+  readonly chooseFirst: boolean;
+}
+
+export const folderCopyDraftKey = (environmentId: string, projectId: string) =>
+  `specwithcode:folder-copy-draft:${environmentId}:${projectId}`;
+
+export function readCopyDraft(key: string): CopyDraft | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "null") as Partial<CopyDraft> | null;
+    if (!value || typeof value !== "object") return null;
+    const { machine, folder, copyRoot, mode, chooseFirst } = value;
+    if (machine !== null && typeof machine !== "string") return null;
+    if (typeof folder !== "string" || typeof chooseFirst !== "boolean") return null;
+    if (mode !== "copy-only" && mode !== "copy-and-move") return null;
+    return {
+      machine,
+      folder,
+      ...(typeof copyRoot === "string" && copyRoot ? { copyRoot } : {}),
+      mode,
+      chooseFirst,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Saves the draft, or removes it for null. Returns false when storage refused. */
+export function writeCopyDraft(key: string, draft: CopyDraft | null): boolean {
+  try {
+    if (draft) localStorage.setItem(key, JSON.stringify(draft));
+    else localStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
   }
 }
 

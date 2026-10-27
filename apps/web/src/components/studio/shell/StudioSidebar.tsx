@@ -162,6 +162,7 @@ import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
 import { describeThreadPlan } from "../../../studio/threadPlanProgress";
 import { canRenameChat, checkChatTitle } from "../../../studio/threadTitles";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
+import { fallbackReason } from "../../chat/ModelStateTag";
 import { SidebarChatRow } from "./SidebarChatRow";
 import {
   designsProjectId,
@@ -1073,7 +1074,7 @@ export default function StudioSidebar() {
                           : null;
                         const stateDescription = preferredLabel
                           ? thread.modelIdentity?.kind === "fallback"
-                            ? `, fallback for ${preferredLabel} (${thread.modelIdentity.launched ? "no room at launch" : "usage limit"})`
+                            ? `, fallback for ${preferredLabel} (${fallbackReason(thread.modelIdentity)})`
                             : `, saved model ${preferredLabel}`
                           : "";
                         // This machine is never offline (see isEnvironmentUnreachable);

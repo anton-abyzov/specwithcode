@@ -7,6 +7,9 @@ import {
   HTML_RENDER_MIN_HEIGHT,
   HTML_RENDER_THEME_GUIDE,
   HTML_RENDER_TOOL_NAME,
+  HTML_VISUAL_GUIDE,
+  HTML_VISUAL_MAX_CODE_LENGTH,
+  HTML_VISUAL_TOOL_NAME,
 } from "@specweave-studio/shared/htmlRender";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -21,6 +24,17 @@ const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_0
 
 const PAGE_RULES =
   'Write one self-contained document with inline <style> and <script>. Local images written as absolute file paths (src="/abs/shot.png", CSS url(/abs/bg.webp), or a JS string) are inlined automatically; remote http(s) URLs, such as a CDN chart library, load as-is.';
+
+const HtmlRenderSuccess = Schema.Struct({
+  htmlRender: Schema.Struct({
+    attachmentId: Schema.String,
+    title: Schema.String,
+    height: Schema.Number,
+    heights: Schema.optional(Schema.Array(Schema.Tuple([Schema.Int, Schema.Int]))),
+    kind: Schema.optional(Schema.Literal("visual")),
+  }),
+  message: Schema.String,
+});
 
 export const HtmlPreviewTool = Tool.make("html_preview", {
   description: `Render an HTML page in SpecWithCode's headless browser and get back a PNG screenshot, contentHeight (the height the page needs at this width), and its console output: log, info, warning, error, and uncaught exceptions, with stack traces pointing into page.html. console.log is a fine way to report your own checks. Use it to check and iterate on a page before html_render. The first preview on a machine can report that SpecWithCode is still installing its preview browser; call again a minute later. ${PAGE_RULES} The page gets the theme variables and layout described in html_render.`,
@@ -83,15 +97,7 @@ const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
       description: `The frame height in CSS pixels, ${HTML_RENDER_MIN_HEIGHT}-${HTML_RENDER_MAX_HEIGHT}. Use html_preview's contentHeight, or less to make long content scroll inside the frame.`,
     }),
   }),
-  success: Schema.Struct({
-    htmlRender: Schema.Struct({
-      attachmentId: Schema.String,
-      title: Schema.String,
-      height: Schema.Number,
-      heights: Schema.optional(Schema.Array(Schema.Tuple([Schema.Int, Schema.Int]))),
-    }),
-    message: Schema.String,
-  }),
+  success: HtmlRenderSuccess,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [
@@ -106,8 +112,40 @@ const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
+// A diagram or chart written as a fragment, shown in full in the reply with no
+// preview round trip: the server supplies the page, theme and classes.
+const ShowVisualTool = Tool.make(HTML_VISUAL_TOOL_NAME, {
+  description: `Show a quick visual inline in this thread, above your final text reply: a diagram, flowchart, architecture sketch, chart or small interactive widget, drawn as SVG or an HTML fragment. It appears in full under a collapsible "Made a visual" header and follows the reader's light or dark theme. Use it when a picture explains the answer better than prose; a long report with evidence belongs in html_render. Call it before writing your reply, and don't describe the visual in the reply. ${HTML_VISUAL_GUIDE}`,
+  parameters: Schema.Struct({
+    title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80)).annotate({
+      description:
+        "Short snake_case name for this visual, specific enough to tell it apart from others in the thread (oauth_login_flow, not diagram).",
+    }),
+    widget_code: Schema.String.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(HTML_VISUAL_MAX_CODE_LENGTH),
+    ).annotate({
+      description:
+        "SVG starting with <svg>, or an HTML fragment without DOCTYPE, html, head or body tags.",
+    }),
+  }),
+  success: HtmlRenderSuccess,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    HtmlRender.HtmlRender,
+  ],
+})
+  .annotate(Tool.Title, "Show visual")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const HtmlPreviewToolkit = Toolkit.make(HtmlPreviewTool);
 
-export const HtmlRenderToolkit = Toolkit.make(HtmlRenderTool);
+export const HtmlRenderToolkit = Toolkit.make(HtmlRenderTool, ShowVisualTool);
 
-export const HtmlToolkit = Toolkit.make(HtmlPreviewTool, HtmlRenderTool);
+export const HtmlToolkit = Toolkit.make(HtmlPreviewTool, HtmlRenderTool, ShowVisualTool);

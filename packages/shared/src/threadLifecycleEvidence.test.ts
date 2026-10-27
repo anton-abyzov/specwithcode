@@ -145,7 +145,14 @@ describe("request-bound lifecycle evidence", () => {
 
 describe("thread view delivery status", () => {
   const at = (iso: string) => DateTime.makeUnsafe(iso);
-  const projection = (extra: { runStatus?: string; laterMessage?: boolean } = {}) =>
+  const projection = (
+    extra: {
+      runStatus?: string;
+      laterMessage?: boolean;
+      steer?: boolean;
+      extraRuns?: ReadonlyArray<Record<string, unknown>>;
+    } = {},
+  ) =>
     ({
       thread: { lifecycleRevision: undefined },
       runs: [
@@ -155,13 +162,24 @@ describe("thread view delivery status", () => {
           status: extra.runStatus ?? "completed",
           userMessageId: "request-1",
           requestedAt: at("2026-10-25T00:00:00Z"),
+          startedAt: at("2026-10-25T00:00:01Z"),
+          completedAt: at("2026-10-25T00:30:00Z"),
         },
+        ...(extra.extraRuns ?? []),
       ],
       messages: [
-        { id: "request-1", role: "user", createdAt: at("2026-10-25T00:00:00Z") },
-        { id: "answer-1", role: "assistant", createdAt: at("2026-10-25T00:30:00Z") },
+        { id: "request-1", runId: "run-1", role: "user", createdAt: at("2026-10-25T00:00:00Z") },
+        ...(extra.steer
+          ? [{ id: "steer-1", runId: "run-1", role: "user", createdAt: at("2026-10-25T00:10:00Z") }]
+          : []),
+        {
+          id: "answer-1",
+          runId: "run-1",
+          role: "assistant",
+          createdAt: at("2026-10-25T00:30:00Z"),
+        },
         ...(extra.laterMessage
-          ? [{ id: "request-2", role: "user", createdAt: at("2026-10-25T01:00:00Z") }]
+          ? [{ id: "request-2", runId: null, role: "user", createdAt: at("2026-10-25T01:00:00Z") }]
           : []),
       ],
     }) as unknown as Parameters<typeof currentLifecycleRequest>[0];
@@ -175,6 +193,46 @@ describe("thread view delivery status", () => {
     });
     expect(currentLifecycleRequest(projection({ runStatus: "running" }))).toBeNull();
     expect(currentLifecycleRequest(projection({ laterMessage: true }))).toBeNull();
+  });
+
+  it("keeps a steer into the turn with its request", () => {
+    expect(currentLifecycleRequest(projection({ steer: true }))?.runId).toBe("run-1");
+  });
+
+  it("binds the turn that ran last and waits while another is pending", () => {
+    // A queued turn cancelled before it started never ran.
+    expect(
+      currentLifecycleRequest(
+        projection({
+          extraRuns: [
+            { id: "run-2", ordinal: 2, status: "cancelled", startedAt: null, completedAt: null },
+          ],
+        }),
+      )?.runId,
+    ).toBe("run-1");
+    // A delegated completion delivered before an older queued request ran last.
+    expect(
+      currentLifecycleRequest(
+        projection({
+          extraRuns: [
+            {
+              id: "run-0",
+              ordinal: 0,
+              status: "completed",
+              userMessageId: "request-1",
+              requestedAt: at("2026-10-24T23:00:00Z"),
+              startedAt: at("2026-10-25T00:40:00Z"),
+              completedAt: at("2026-10-25T00:50:00Z"),
+            },
+          ],
+        }),
+      )?.runId,
+    ).toBe("run-0");
+    expect(
+      currentLifecycleRequest(
+        projection({ extraRuns: [{ id: "run-2", ordinal: 2, status: "queued" }] }),
+      ),
+    ).toBeNull();
   });
 
   const bound = { ...request, requestedAt: "2026-10-25T00:00:00Z" };

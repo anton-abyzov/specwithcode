@@ -16,7 +16,6 @@ import { ComposerSurface } from "../../src/components/chat/ComposerSurface";
 import {
   canSelectManualFallback,
   fallbackUnavailableReason,
-  limitFallbackPairingBannerItem,
   usageLimitRecoveryBannerItem,
 } from "../../src/components/chat/UsageLimitRecoveryBanner";
 import { FallbackOrderList } from "../../src/components/settings/FallbackOrderList";
@@ -217,21 +216,6 @@ function Fixture() {
   });
 
   const [order, setOrder] = useState<ReadonlyArray<ModelSelection>>(fallbackOrder);
-  const pairing = params.get("pairing");
-  const pairingItem =
-    pairing === null
-      ? null
-      : limitFallbackPairingBannerItem({
-          id: "pairing",
-          current: "Codex · GPT-6 Astra",
-          original: "Claude · Claude Opus 5.5",
-          resetAt: pairing === "room" ? null : Date.parse(resetAt),
-          hasRoom: pairing === "room",
-          onBack: () => {
-            document.body.dataset.back = "true";
-          },
-          onDismiss: () => {},
-        });
   if (params.has("order"))
     return (
       <main
@@ -257,7 +241,7 @@ function Fixture() {
             <ComposerBanner.Column>
               <ComposerBannerStack
                 className="relative z-0"
-                items={params.has("resolved") ? [] : pairingItem ? [pairingItem] : [item]}
+                items={params.has("resolved") ? [] : [item]}
               />
             </ComposerBanner.Column>
           </ComposerBanner.Dock>

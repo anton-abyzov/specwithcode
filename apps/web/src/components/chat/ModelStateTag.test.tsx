@@ -127,6 +127,36 @@ describe("ModelStateTag", () => {
       detail: "Opus 5.5 hit its usage limit. Open the thread to switch back.",
     });
   });
+  it("says a pre-switched pick neared its limit, and leaves out the way back in the open thread", () => {
+    const pick = { full: "Claude Code · Opus 5.5", provider: "Claude Code", model: "Opus 5.5" };
+    const running = { full: "Codex · GPT-6-Astra", provider: "Codex", model: "GPT-6-Astra" };
+    const preswitched = fallbackModelState({
+      pick,
+      running,
+      reason: "usage limit",
+      preswitched: true,
+    });
+    expect(modelStateText(preswitched)).toMatchObject({
+      tip: "Fallback: runs on this model instead of your pick, Claude Code · Opus 5.5 (near its usage limit).",
+      aria: ", fallback for Claude Code · Opus 5.5 (near its usage limit)",
+      detail:
+        "Opus 5.5 neared its usage limit, so this thread moved before its next turn. Open the thread to switch back.",
+    });
+    const here = (launched: boolean) =>
+      modelStateText(
+        fallbackModelState({ pick, running, reason: "usage limit", launched, inOpenThread: true }),
+      ).detail;
+    expect(here(false)).toBe("Opus 5.5 hit its usage limit.");
+    expect(here(true)).toBe("Opus 5.5 had no room when this thread started.");
+    expect(
+      modelStateText(fallbackModelState({ pick, running, preswitched: true, inOpenThread: true }))
+        .detail,
+    ).toBe("Opus 5.5 neared its usage limit, so this thread moved before its next turn.");
+    // A launch fallback outranks a pre-switch, as in the composer.
+    expect(
+      modelStateText(fallbackModelState({ pick, running, launched: true, preswitched: true })).aria,
+    ).toBe(", fallback for Claude Code · Opus 5.5 (no room at launch)");
+  });
 });
 
 describe("ModelStateTag in a model chip", () => {

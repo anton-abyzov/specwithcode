@@ -13,6 +13,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
   type PullRequestSummary,
   type ServerSettings as ContractServerSettings,
@@ -40,6 +41,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import { LifecycleEvidenceActivation } from "./ThreadLifecycleAcceptance.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Duration from "effect/Duration";
 import * as Hold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -514,6 +516,12 @@ const ACCEPTED_RUN = {
   userMessageId: "message:accepted",
   requestedAt: DateTime.makeUnsafe("2026-08-01T00:00:00.000Z"),
 } as unknown as OrchestrationV2Run;
+const ACCEPTED_REQUEST = {
+  id: "message:accepted",
+  runId: "run:accepted",
+  role: "user",
+  createdAt: DateTime.makeUnsafe("2026-08-01T00:00:00.000Z"),
+} as unknown as OrchestrationV2ConversationMessage;
 const VERIFIED_GATE = {
   status: "verified",
   reference: "https://example.test/owner/repository/pull/42",
@@ -655,6 +663,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
               "lifecycleReceipt" in options ? options.lifecycleReceipt : ACCEPTED_RECEIPT,
           },
           runs: options.runs ?? [ACCEPTED_RUN],
+          messages: [ACCEPTED_REQUEST],
         }) as never,
       getSettlementCandidates: (threadId) =>
         Ref.update(candidateReads, (reads) => [...reads, threadId]).pipe(
@@ -787,11 +796,45 @@ describe("ThreadSettlementServiceV2 worker", () => {
   );
 
   it.effect.each([
-    { name: "no receipt", lifecycleReceipt: null, runs: undefined },
+    { name: "no receipt", lifecycleReceipt: null, runs: undefined, required: true, settles: false },
+    // The gate is off by default: settlement then behaves as before evidence existed.
+    {
+      name: "no receipt, gate off",
+      lifecycleReceipt: null,
+      runs: undefined,
+      required: false,
+      settles: true,
+    },
+    {
+      name: "accepted evidence",
+      lifecycleReceipt: ACCEPTED_RECEIPT,
+      runs: undefined,
+      required: true,
+      settles: true,
+    },
+    {
+      // A queued turn cancelled before it started never ran after the accepted one.
+      name: "a newer queued turn cancelled before it started",
+      lifecycleReceipt: ACCEPTED_RECEIPT,
+      runs: [
+        ACCEPTED_RUN,
+        {
+          ...ACCEPTED_RUN,
+          id: "run:cancelled",
+          ordinal: 2,
+          status: "cancelled",
+          startedAt: null,
+        } as unknown as OrchestrationV2Run,
+      ],
+      required: true,
+      settles: true,
+    },
     {
       name: "a receipt for an older turn",
       lifecycleReceipt: ACCEPTED_RECEIPT,
       runs: [ACCEPTED_RUN, { ...ACCEPTED_RUN, id: "run:newer", ordinal: 2 } as OrchestrationV2Run],
+      required: true,
+      settles: false,
     },
     {
       name: "an outstanding obligation",
@@ -808,10 +851,12 @@ describe("ThreadSettlementServiceV2 worker", () => {
         ],
       },
       runs: undefined,
+      required: true,
+      settles: false,
     },
   ] as const)(
-    "a merged pull request without accepted delivery evidence stays active: $name",
-    ({ lifecycleReceipt, runs }) =>
+    "a merged pull request settles only on accepted delivery evidence when required: $name",
+    ({ lifecycleReceipt, runs, required, settles }) =>
       Effect.scoped(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(NOW));
@@ -850,8 +895,13 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* Effect.gen(function* () {
             const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
             yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-            expect(yield* Ref.get(fixture.commands)).toEqual([]);
-          }).pipe(Effect.provide(fixture.layer));
+            const commands = yield* Ref.get(fixture.commands);
+            if (settles) expect(commands.map((command) => command.threadId)).toEqual([thread.id]);
+            else expect(commands).toEqual([]);
+          }).pipe(
+            Effect.provide(fixture.layer),
+            Effect.provideService(LifecycleEvidenceActivation, required),
+          );
         }),
       ),
   );

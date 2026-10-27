@@ -1,5 +1,6 @@
 import type { OrchestrationV2ThreadProjection } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import { latestExecutedRun } from "./orchestrationV2ThreadError.ts";
 
 /** Delivery evidence is independent of provider runtime status and PR readiness. */
 export interface LifecycleRequest {
@@ -141,27 +142,37 @@ export function lifecycleWaitGroup(
     : "Operational wait";
 }
 
+const PENDING_RUN_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
+
 /**
- * The request a receipt must name: the latest turn, once it completed, and only
- * while no newer user message waits. Null means current work supersedes any receipt.
+ * The request a receipt must name: the turn that executed last, once it
+ * completed, while no other turn waits to run and no newer user message waits
+ * for one. Queued turns are delivered out of ordinal order, and a queued turn
+ * cancelled before it started never ran. Null means current work supersedes
+ * any receipt.
  */
 export function currentLifecycleRequest(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
 ): LifecycleRequest | null {
-  const run = projection.runs.reduce<(typeof projection.runs)[number] | undefined>(
-    (latest, candidate) => (!latest || candidate.ordinal > latest.ordinal ? candidate : latest),
-    undefined,
-  );
+  const run = latestExecutedRun(projection.runs);
   if (!run || run.status !== "completed") return null;
+  if (
+    projection.runs.some(
+      (candidate) => candidate.id !== run.id && PENDING_RUN_STATUSES.has(candidate.status),
+    )
+  )
+    return null;
   const request = projection.messages.find((message) => message.id === run.userMessageId);
   if (!request || request.role !== "user") return null;
-  // A new request can exist before a new run has been created.
+  // A new request can exist before a new run has been created. Messages with a
+  // run are this turn's steers or requests that ran before it.
   const requestMs = DateTime.toEpochMillis(request.createdAt);
   if (
     projection.messages.some(
       (message) =>
         message.role === "user" &&
         message.id !== request.id &&
+        message.runId === null &&
         DateTime.toEpochMillis(message.createdAt) >= requestMs,
     )
   )

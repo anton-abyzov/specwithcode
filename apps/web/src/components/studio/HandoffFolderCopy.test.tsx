@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
-import { act, useCallback, useState } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { HandoffFolderCopy } from "./HandoffFolderCopy";
-import { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
+import {
+  copyHandlers,
+  CopyFixture,
+  copyStatus,
+  findButton,
+  newRow,
+  noSecrets,
+  onBusyChange,
+  onDialogClose,
+  onOpenProject,
+  project,
+  stepState,
+  summary,
+  total,
+  type FixtureOptions,
+} from "./HandoffFolderCopy.testkit";
 
 const state = vi.hoisted(() => ({
   calls: [] as Array<[string, unknown]>,
@@ -63,143 +77,15 @@ vi.mock("../../lib/utils", async (importOriginal) => ({
   randomUUID: () => `00000000-0000-4000-8000-00000000000${++state.uuid}`,
 }));
 
-const total = (files: number, bytes: number) => ({ files, bytes });
-const summary = {
-  totals: {
-    repository: total(1, 10),
-    tracked: total(1, 10),
-    untracked: total(1, 10),
-    ignoredData: total(1, 10),
-    rebuildable: total(1, 10),
-    secret: total(1, 10),
-  },
-  repositories: [],
-  secretFiles: [{ path: ".env", size: 10 }],
-  linksOutside: 0,
-  warnings: [],
-};
-const project = {
-  id: "source",
-  environmentId: "m4",
-  title: "Project",
-  workspaceRoot: "/Users/me/Projects/project",
-};
-const copyStatus = (state: string, overrides: Record<string, unknown> = {}) => ({
-  operationId: "00000000-0000-4000-8000-000000000001",
-  sourceEnvironmentId: "m4",
-  sourceProjectId: "source",
-  sourceMachine: "M4",
-  mode: "copy-only",
-  targetFolder: "/Users/me/Projects/project",
-  title: "Project",
-  selection: DEFAULT_COPY_SELECTION,
-  mirror: false,
-  state,
-  failedStep: null,
-  error: null,
-  progress: null,
-  disk: null,
-  rows: [],
-  totals: { filesToMove: 5, bytesToMove: 50, bytesPresent: 0, decisionsNeeded: 0 },
-  checks: [],
-  warnings: [],
-  unstable: [],
-  committed: state === "applied",
-  projectId: state === "applied" ? "copied" : null,
-  createdAt: "2026-10-19T20:00:00.000Z",
-  updatedAt: "2026-10-19T20:00:00.000Z",
-  ...overrides,
-});
-
 let root: Root;
 let container: HTMLDivElement;
 let statuses: Array<Record<string, unknown>>;
-const onOpenProject = vi.fn();
-const onBusyChange = vi.fn();
-const onDialogClose = vi.fn();
 const names = () => state.calls.map(([name]) => name);
-const stepState = () =>
-  [...document.querySelectorAll('[data-slot="copy-step"]')].map(
-    (step) => `${step.textContent}:${step.getAttribute("data-state")}`,
-  );
-const button = (label: string) => {
-  const element = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-    (node) => node.textContent?.trim() === label,
-  );
-  if (!element) throw new Error(`Missing button ${label}: ${container.textContent}`);
-  return element;
-};
+const button = (label: string) => findButton(container, label);
 const click = async (label: string) => {
   await act(async () => button(label).click());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 };
-interface FixtureOptions {
-  coordinatorId?: string | null;
-  canMove?: boolean;
-  savedFolder?: string;
-  m1Available?: boolean;
-  savedProject?: (environmentId: string, folder: string) => Record<string, unknown> | null;
-  dialog?: boolean;
-  workspaceRoot?: string;
-}
-function CopyFixture(overrides: FixtureOptions) {
-  const [busy, setBusy] = useState(false);
-  const [locked, setLocked] = useState(false);
-  const updateBusy = useCallback((value: boolean) => {
-    onBusyChange(value);
-    setBusy(value);
-  }, []);
-  const flow = (
-    <HandoffFolderCopy
-      project={
-        { ...project, workspaceRoot: overrides.workspaceRoot ?? project.workspaceRoot } as never
-      }
-      coordinatorId={(overrides.coordinatorId ?? "coordinator") as never}
-      sourceLabel="M4"
-      method="copy"
-      machines={[
-        { id: "m3" as never, label: "M3", unavailable: null },
-        {
-          id: "m1" as never,
-          label: "M1",
-          unavailable: overrides.m1Available ? null : "Connect first",
-        },
-      ]}
-      savedFolder={() => overrides.savedFolder ?? null}
-      savedProject={overrides.savedProject as never}
-      canMove={overrides.canMove ?? true}
-      onBusyChange={overrides.dialog ? updateBusy : onBusyChange}
-      onCloseLockChange={setLocked}
-      onOpenProject={onOpenProject}
-    />
-  );
-  return overrides.dialog ? (
-    <MachineHandoffDialog
-      open
-      onOpenChange={onDialogClose}
-      sourceLabel="M4"
-      projectTitle="Project"
-      destinations={[]}
-      selected=""
-      onSelect={() => {}}
-      method="copy"
-      onMethodChange={() => {}}
-      copyBusy={busy}
-      copyLocked={locked}
-      copyFlow={flow}
-      preview={null}
-      phase="choose"
-      consent={false}
-      onConsent={() => {}}
-      error={null}
-      onReview={() => {}}
-      onContinue={() => {}}
-      onOpenDestination={() => {}}
-    />
-  ) : (
-    flow
-  );
-}
 const mount = (overrides: FixtureOptions = {}) =>
   act(async () => root.render(<CopyFixture {...overrides} />));
 const dialogButton = (label: string) => {
@@ -226,62 +112,10 @@ beforeEach(() => {
   state.homes = { m3: "/home/anton", m1: "/Users/anton" };
   state.link = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ status: "linked" }));
   statuses = [copyStatus("previewed"), copyStatus("applied")];
-  state.handlers = {
-    copyScopes: () => ({
-      projectRoot: project.workspaceRoot,
-      recommendedCopyRoot: project.workspaceRoot,
-      scopes: [
-        {
-          copyRoot: project.workspaceRoot,
-          projectRelativePath: ".",
-          kind: "project",
-          label: "This project folder",
-          repositories: [],
-          truncated: false,
-        },
-      ],
-    }),
-    copyCapabilities: () => ({ scopeVersion: 1 }),
-    copyOffer: ({ input }: any) => ({
-      operationId: input.operationId,
-      sourceEnvironmentId: "m4",
-      sourceProjectId: "source",
-      sourceUrl: "https://m4.example.ts.net",
-      sourceMachine: "M4",
-      token: "grant",
-      title: "Project",
-      mode: input.mode,
-      status: { state: "scanned", summary, error: null },
-    }),
-    copyStart: () => copyStatus("scanning"),
-    copyStatus: () => statuses.shift() ?? copyStatus("applied"),
-    copyApprove: () => copyStatus("approved"),
-    copyDecide: () => copyStatus("previewed"),
-    copyCancel: () => copyStatus("cancelled"),
-    copySourceCancel: () => ({ state: "cancelled" }),
-    copyRelease: () => ({ released: true }),
-    prepare: ({ input }: any) => ({
-      // The source keeps the published bundle; later prepares return it as published.
-      publication:
-        input.publish || state.calls.filter(([name]) => name === "prepare").length > 2
-          ? "published"
-          : "unpublished",
-      bundle: {
-        digest: "d".repeat(64),
-        manifest: { operationId: input.operationId, repositories: [] },
-        destination: input.destination,
-        sourceEnvironmentId: "m4",
-        sourceProjectId: "source",
-        sourceThreadId: "coordinator",
-      },
-    }),
-    receive: ({ input }: any) => ({
-      phase: input.mode === "preview" ? "ready" : "started",
-      executionMode: "project-folder",
-      projectId: input.projectId,
-      coordinatorThreadId: `project-coordinator:${input.projectId}`,
-    }),
-  };
+  state.handlers = copyHandlers({
+    calls: () => state.calls,
+    nextStatus: () => statuses.shift() ?? copyStatus("applied"),
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -1007,6 +841,10 @@ it("keeps failed-copy Retry and cancellation in the footer; Retry before Apply c
   // The source let the copy go when it failed: Retry runs it again rather than asking
   // the destination to resume what it refuses to.
   expect(names().filter((name) => name === "copyRetry")).toHaveLength(0);
+  // The old source operation is dropped so its snapshot is not orphaned.
+  expect(state.calls.find(([name]) => name === "copySourceCancel")![1]).toMatchObject({
+    input: { operationId: first.operationId },
+  });
   const starts = state.calls.filter(([name]) => name === "copyStart");
   expect(starts).toHaveLength(2);
   expect((starts[1]![1] as any).input.operationId).not.toBe(first.operationId);
@@ -1323,9 +1161,9 @@ it("shows live measuring progress, then stops to choose and groups what is not c
   expect(names()).not.toContain("copyStart");
   expect(names()).not.toContain("copyApprove");
   expect(stepState()).toEqual([
-    "Measure:done",
-    "Choose:current",
-    "Preview:next",
+    "Where:done",
+    "What:current",
+    "Review:next",
     "Copy:next",
     "Done:next",
   ]);
@@ -1561,7 +1399,6 @@ it("drops a reopened copy whose source measuring failed and says why", async () 
   );
 });
 
-const noSecrets = { ...summary, secretFiles: [] };
 const measuredWithoutSecrets = () => {
   const offer = state.handlers.copyOffer!;
   state.handlers.copyOffer = (input) => ({
@@ -1575,24 +1412,6 @@ const measuredWithoutSecrets = () => {
     error: null,
   });
 };
-const newRow = (path: string, overrides: Record<string, unknown> = {}) => ({
-  id: `repo:${path}`,
-  kind: "repository",
-  path,
-  status: "new",
-  detail: "Not on this machine yet.",
-  filesToMove: 1,
-  bytesToMove: 10,
-  bytesPresent: 0,
-  choices: [],
-  decision: null,
-  needsDecision: false,
-  conflicts: [],
-  moreConflicts: 0,
-  cloneAvailable: false,
-  clone: false,
-  ...overrides,
-});
 /** Every stage the flow rendered, in order. */
 const watchStages = () => {
   const seen: string[] = [];
@@ -1620,7 +1439,13 @@ it("copies into an empty destination in one click without a preview", async () =
       finishApprove = () => resolve(copyStatus("approved"));
     });
   await mount();
-  expect(stepState()).toEqual(["Measure:current", "Copy:next", "Done:next"]);
+  expect(stepState()).toEqual([
+    "Where:current",
+    "What:next",
+    "Review:next",
+    "Copy:next",
+    "Done:next",
+  ]);
   expect(container.textContent).toContain(
     "What happens next: Measures the folder, then copies it to M3. Nothing on M3 is replaced without asking.",
   );
@@ -1629,7 +1454,13 @@ it("copies into an empty destination in one click without a preview", async () =
   expect(container.textContent).toContain(
     "What happens next: Copying 50 B. You can close this window; you'll get a notice when it's done.",
   );
-  expect(stepState()).toEqual(["Measure:done", "Copy:current", "Done:next"]);
+  expect(stepState()).toEqual([
+    "Where:done",
+    "What:done",
+    "Review:done",
+    "Copy:current",
+    "Done:next",
+  ]);
   await act(async () => finishApprove());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   stages.stop();
@@ -1639,7 +1470,13 @@ it("copies into an empty destination in one click without a preview", async () =
   expect(stages.seen).not.toContain("select");
   expect(container.querySelector('[data-slot="copy-preview"]')).toBeNull();
   expect(container.textContent).toContain("M3 has a copy in /Users/me/Projects/project");
-  expect(stepState()).toEqual(["Measure:done", "Copy:done", "Done:current"]);
+  expect(stepState()).toEqual([
+    "Where:done",
+    "What:done",
+    "Review:done",
+    "Copy:done",
+    "Done:current",
+  ]);
   // The pointer written by measuring kept the one-click choice and the selection.
   expect(JSON.parse(localStorage.getItem("specwithcode:folder-copy:m4:source")!)).toMatchObject({
     auto: true,
@@ -1689,7 +1526,13 @@ it("shows only what would be replaced and copies with Replace all", async () => 
   expect(container.querySelector('[data-slot="copy-preview-untouched"]')?.textContent).toBe(
     "1 other folder is new or unchanged and is copied as it is.",
   );
-  expect(stepState()).toEqual(["Measure:done", "Review:current", "Copy:next", "Done:next"]);
+  expect(stepState()).toEqual([
+    "Where:done",
+    "What:done",
+    "Review:current",
+    "Copy:next",
+    "Done:next",
+  ]);
   expect(button("Copy with these choices").disabled).toBe(true);
   await click("Replace all");
   expect(state.calls.find(([name]) => name === "copyDecide")![1]).toEqual({

@@ -30,7 +30,10 @@ const proof = {
 };
 const na = { status: "not_applicable" as const, rationale: "Research answer; no code changed" };
 
-const invoke = (target: ThreadId) => {
+const rootId = ThreadId.make("root");
+
+/** `parents` maps a thread to the thread that started it; the caller is the completion owner. */
+const invoke = (target: ThreadId, parents: ReadonlyMap<ThreadId, ThreadId> = new Map()) => {
   const dispatched: unknown[] = [];
   const services = Layer.mergeAll(
     NodeCrypto.layer,
@@ -51,7 +54,19 @@ const invoke = (target: ThreadId) => {
     }),
     Layer.mock(Threads.ThreadManagementService)({
       getThreadShell: (id) =>
-        Effect.succeed({ ...liveThreadShell(id), projectId: ProjectId.make("code") }),
+        Effect.succeed({
+          ...liveThreadShell(id),
+          projectId: ProjectId.make("code"),
+          ...(parents.has(id)
+            ? {
+                lineage: {
+                  parentThreadId: parents.get(id)!,
+                  relationshipToParent: "subagent" as const,
+                  rootThreadId: rootId,
+                },
+              }
+            : {}),
+        }),
       getProjectThreadRecords: ((input: { threadId: ThreadId }) =>
         Effect.succeed({
           thread: { ...liveThreadShell(input.threadId), projectId: ProjectId.make("code") },
@@ -111,5 +126,44 @@ it.effect("refuses a thread vouching for its own delivery", () =>
     const { result, dispatched } = yield* invoke(ownerId);
     expect(result).toMatchObject({ code: "invalid_request" });
     expect(dispatched).toEqual([]);
+  }),
+);
+
+it.effect.each([
+  { name: "its root", parents: [[ownerId, rootId]] },
+  {
+    name: "its parent",
+    parents: [
+      [ownerId, targetId],
+      [targetId, rootId],
+    ],
+  },
+  {
+    name: "an ancestor further up",
+    parents: [
+      [ownerId, ThreadId.make("middle")],
+      [ThreadId.make("middle"), targetId],
+      [targetId, rootId],
+    ],
+  },
+] as const)("refuses a subagent or fork vouching for $name", ({ name, parents }) =>
+  Effect.gen(function* () {
+    const target = name === "its root" ? rootId : targetId;
+    const { result, dispatched } = yield* invoke(target, new Map(parents));
+    expect(result).toMatchObject({ code: "invalid_request" });
+    expect(dispatched).toEqual([]);
+  }),
+);
+
+it.effect("lets a sibling under the same root vouch", () =>
+  Effect.gen(function* () {
+    const { result } = yield* invoke(
+      targetId,
+      new Map([
+        [ownerId, rootId],
+        [targetId, rootId],
+      ]),
+    );
+    expect(result).toEqual({ sequence: 7 });
   }),
 );

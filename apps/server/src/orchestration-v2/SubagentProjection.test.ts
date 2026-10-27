@@ -115,6 +115,56 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   });
 });
 
+it("never carries the parent's delivery evidence into a subagent child", () => {
+  const parentThread: OrchestrationV2AppThread = {
+    ...makeParentThread(),
+    lifecycleRevision: "command:reopen",
+    lifecycleReceipt: {
+      requestId: "message:parent",
+      runId: "run:parent",
+      acceptanceRevision: "command:reopen",
+      requestedAt: "2026-07-24T09:00:00.000Z",
+      kind: "no_code",
+      scope: "Parent answer",
+      scopeRevision: "answer-1",
+      recordedAt: "2026-07-24T09:06:00.000Z",
+      validUntil: "2026-07-25T09:00:00.000Z",
+      reportedBy: "thread:completion-owner",
+      obligations: [],
+      push: { status: "not_applicable", rationale: "No code" },
+      merge: { status: "not_applicable", rationale: "No code" },
+      deployment: { status: "not_applicable", rationale: "No code" },
+      deliverable: {
+        status: "verified",
+        reference: "message:answer",
+        observedAt: "2026-07-24T09:05:00.000Z",
+        scopeRevision: "answer-1",
+      },
+      verification: {
+        status: "verified",
+        reference: "message:answer",
+        observedAt: "2026-07-24T09:05:00.000Z",
+        scopeRevision: "answer-1",
+      },
+    },
+  };
+  const childThread = makeSubagentChildThread({
+    parentThread,
+    childThreadId,
+    parentNodeId: NodeId.make("node:subagent-parent"),
+    activeProviderThreadId: ProviderThreadId.make("provider-thread:subagent-evidence-child"),
+    providerInstanceId: childProviderInstanceId,
+    modelSelection: childModelSelection,
+    title: "Evidence child",
+    now: childCreatedAt,
+    createdBy: "agent",
+    creationSource: "provider",
+  });
+
+  assert.isUndefined(childThread.lifecycleReceipt);
+  assert.isUndefined(childThread.lifecycleRevision);
+});
+
 it("never carries a marked parent's launch stand-in into a child on its own model", () => {
   const parentThread: OrchestrationV2AppThread = {
     ...makeParentThread(),

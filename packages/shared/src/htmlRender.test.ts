@@ -7,7 +7,10 @@ import {
   htmlRenderReferencesEqual,
   htmlRenderTheme,
   htmlRenderThemeFragment,
+  htmlVisualDocument,
   injectHtmlRenderBootstrap,
+  isHtmlVisualDocument,
+  isHtmlVisualSvg,
   htmlRenderThemeMessage,
   legacyLocalPathFromOpenLink,
   normalizeEvidencePath,
@@ -157,6 +160,54 @@ describe("readHtmlRenderReference", () => {
     expect(readHtmlRenderReference({ ...reference, title: "  " })?.title).toBe("HTML");
     expect(readHtmlRenderReference({ ...reference, attachmentId: 4 })).toBeUndefined();
     expect(readHtmlRenderReference({ ...reference, height: Number.NaN })).toBeUndefined();
+  });
+});
+
+describe("show_visual references and pages", () => {
+  it("keeps only the visual kind and compares it", () => {
+    const visual = readHtmlRenderReference({ ...reference, kind: "visual" });
+    expect(visual?.kind).toBe("visual");
+    expect(readHtmlRenderReference({ ...reference, kind: "slides" })).not.toHaveProperty("kind");
+    expect(htmlRenderReferencesEqual(reference, visual!)).toBe(false);
+    expect(
+      htmlRenderFromToolItem({
+        toolName: "mcp__studio-code__show_visual",
+        output: { htmlRender: visual, message: "Shown." },
+      }),
+    ).toEqual(visual);
+  });
+
+  it("sizes an unmeasured visual modestly until the page reports its height", () => {
+    const visual = {
+      attachmentId: "a-html",
+      title: "flow",
+      height: HTML_RENDER_MAX_HEIGHT,
+      kind: "visual" as const,
+    };
+    expect(htmlRenderFrameHeight(visual, 728)).toBe(420);
+    expect(htmlRenderFrameHeight(visual, 728, 300)).toBe(300);
+    expect(htmlRenderFrameHeight(visual, 728, 1200)).toBe(1200);
+  });
+
+  it("wraps a fragment in a themed page and refuses whole documents", () => {
+    const svg = '<?xml version="1.0"?>\n<svg viewBox="0 0 10 10"><rect class="c-blue"/></svg>';
+    expect(isHtmlVisualSvg(svg)).toBe(true);
+    expect(isHtmlVisualSvg("<div>Chart</div>")).toBe(false);
+    const page = htmlVisualDocument(svg);
+    expect(page).toMatch(/^<!doctype html>/);
+    expect(page).not.toContain("<?xml");
+    expect(page).toContain('<body><svg viewBox="0 0 10 10">');
+    expect(page).toContain(".c-blue{--hue:");
+    expect(page).toContain("--text-primary:var(--foreground)");
+    for (const code of [
+      "<!doctype html><p>x</p>",
+      "<!-- note --><html><body></body></html>",
+      " <BODY>",
+    ]) {
+      expect(isHtmlVisualDocument(code)).toBe(true);
+    }
+    expect(isHtmlVisualDocument("<div><body-ish></body-ish></div>")).toBe(false);
+    expect(injectHtmlRenderBootstrap(page)).toContain('id="studio-theme"');
   });
 });
 

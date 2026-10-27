@@ -1,8 +1,7 @@
 /*
  * Synthetic data only: the production ChatComposer as the October 23 report shows it.
  * A usage limit moved the thread from Claude Code · Opus 5.5 to Codex · GPT-6.1-Sol
- * (27% left), Opus has room again, effort Low, Full access, and the "Continuing on"
- * pairing notice above. `?case=running` this turn runs on Codex while the saved model
+ * (27% left), Opus has room again, effort Low, Full access; the picker states the fallback. `?case=running` this turn runs on Codex while the saved model
  * is Opus; `?case=same` (or `idle`) nothing to add; `?case=next` the next message goes
  * to Opus, picked by hand while the thread is on Codex; `?case=long` the thread is on a
  * long custom Codex model id, nothing else to add. `?theme=dark` the theme;
@@ -14,7 +13,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useComposerDraftStore } from "../../src/composerDraftStore";
-import { limitFallbackPairingBannerItem } from "../../src/components/chat/UsageLimitRecoveryBanner";
+import { fallbackChain, fallbackStatusHeader } from "../../src/components/chat/fallbackStatus";
 import { createRoot } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -204,30 +203,42 @@ const hasRoom = scenarioName === "fallback-room";
 const onBack = () => {
   document.body.dataset.backClicked = "true";
 };
-const pairingBanner = scenario.fallbackFrom
-  ? limitFallbackPairingBannerItem({
-      id: "limit-pairing",
-      original: scenarioName === "twin" ? "Codex · GPT-6.1-Sol" : "Claude Code · Opus 5.5",
-      originalModel: scenarioName === "twin" ? "Codex" : "Opus 5.5",
-      resetAt: NOW + HOUR,
-      hasRoom,
-      onBack,
-      onDismiss: () => {},
-    })
-  : null;
-const bannerItems = pairingBanner ? [pairingBanner] : [];
+// The picker owns the way back now; the thread shows no banner for it.
+const bannerItems: never[] = [];
+const twin = scenarioName === "twin";
+const pickLabel = twin
+  ? { provider: "Codex", model: "GPT-6.1-Sol", full: "Codex · GPT-6.1-Sol" }
+  : { provider: "Claude Code", model: "Opus 5.5", full: "Claude Code · Opus 5.5" };
+const runningLabel = twin
+  ? { provider: "Devin", model: "GPT-6.1 Sol", full: "Devin · GPT-6.1 Sol" }
+  : { provider: "Codex", model: "GPT-6.1-Sol", full: "Codex · GPT-6.1-Sol" };
 const modelStateHeader = scenario.fallbackFrom
-  ? {
-      title: "Fallback for Claude Code · Opus 5.5",
-      detail: hasRoom
-        ? "Opus 5.5 hit its usage limit and has room again."
-        : "Opus 5.5 hit its usage limit and resets at 3:40 PM.",
-      back: {
-        label: "Back to Opus 5.5",
-        onClick: onBack,
-        disabledReason: hasRoom ? null : "Available at 3:40 PM",
-      },
-    }
+  ? fallbackStatusHeader({
+      pick: pickLabel,
+      pickModel: twin ? "Codex" : "Opus 5.5",
+      running: runningLabel,
+      launched: false,
+      hasRoom,
+      resetLabel: "3:40 PM",
+      chain: fallbackChain({
+        pick: { ...scenario.fallbackFrom, label: pickLabel },
+        running: { ...scenario.thread, label: runningLabel },
+        order: [
+          {
+            ...sol,
+            label: { provider: "Codex", model: "GPT-6.1-Sol", full: "Codex · GPT-6.1-Sol" },
+            unavailable: null,
+          },
+          {
+            instanceId: devin,
+            model: "gpt-6-1-sol-medium",
+            label: { provider: "Devin", model: "GPT-6.1 Sol", full: "Devin · GPT-6.1 Sol" },
+            unavailable: "unverified",
+          },
+        ],
+      }),
+      onBack,
+    })
   : null;
 // `host=strip` gives a collapsed composer a resting-controls strip above it, as ChatView
 // mounts for a thread with a branch or environment; without one it rests inline.

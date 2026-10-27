@@ -17,7 +17,7 @@ import {
   hasNotCopied,
   skippedWorktreeParts,
 } from "./handoffCopyNotices";
-import { copySteps, currentCopyStep, nextStepText, sourceProgressText } from "./handoffCopySteps";
+import { nextStepText, sourceProgressText } from "./handoffCopySteps";
 
 const row = (overrides: Record<string, unknown> = {}) =>
   ({
@@ -413,6 +413,20 @@ describe("steps and what happens next", () => {
     );
   });
 
+  it("says Retry before Apply starts the copy again from measuring", () => {
+    const failed = { ...base, stage: "failed" as const, failedBeforeApply: true };
+    expect(nextStepText(failed)).toBe(
+      "Retry starts the copy again: it measures and compares again, then copies unless it needs you. Nothing on ministorm changed, so Cancel copy leaves it as it was.",
+    );
+    expect(nextStepText({ ...failed, auto: false })).toBe(
+      "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on ministorm changed, so Cancel copy leaves it as it was.",
+    );
+    // After Apply the destination resumes the same copy.
+    expect(nextStepText({ ...failed, failedBeforeApply: false })).toBe(
+      "Retry continues where the copy stopped.",
+    );
+  });
+
   it("names the real reasons a one-click copy stops and promises no wait for idle", () => {
     const stops =
       "It stops for you first if files on ministorm would be replaced, a branch there would move, or ministorm is short of disk space.";
@@ -461,36 +475,6 @@ describe("steps and what happens next", () => {
     expect(nextStepText({ ...base, stage: "done", copyAgain: true })).toBe(
       "Copy again to bring over what changed since; it compares first and moves only changed files.",
     );
-  });
-
-  it("lists Measure, Copy, Done and the extra steps only when they apply", () => {
-    const input = {
-      stage: "copying" as const,
-      auto: true,
-      mode: "copy-only" as const,
-      contextTransferred: false,
-    };
-    expect(copySteps(input)).toEqual(["Measure", "Copy", "Done"]);
-    expect(copySteps({ ...input, auto: false })).toEqual([
-      "Measure",
-      "Choose",
-      "Preview",
-      "Copy",
-      "Done",
-    ]);
-    expect(copySteps({ ...input, stage: "preview" })).toEqual([
-      "Measure",
-      "Review",
-      "Copy",
-      "Done",
-    ]);
-    expect(copySteps({ ...input, mode: "copy-and-move" })).toEqual([
-      "Measure",
-      "Copy",
-      "Transfer",
-      "Done",
-    ]);
-    expect(currentCopyStep({ ...input, stage: "done", mode: "copy-and-move" })).toBe("Transfer");
   });
 
   it("names what the source is doing while it builds the copy", () => {

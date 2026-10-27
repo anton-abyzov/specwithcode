@@ -165,7 +165,7 @@ const PAUSE_DETAIL =
  * (`line`), with where and what happens in its tooltip (`detail`).
  *
  * Open questions or approvals come first: the install does not wait on them
- * for good (one left 30 minutes on a quiet thread is closed for the install
+ * for good (one left 2 minutes on a quiet thread is closed for the install
  * and asked again after the restart), and their wording stays as it was.
  * When the agent has also published when it pauses running work (`pauseAt`,
  * from `automaticPauseAt`), that time follows as `pauseLine`. With no
@@ -201,7 +201,7 @@ export function describeAutomaticInstallWait(
   const missed = pauseLine === null ? missedPauseMessage(pause.message) : null;
   if (threads !== null && what !== null) {
     const one = counts.questions + counts.approvals === 1;
-    const detail = `In ${threads}. The update installs once ${one ? "it is" : "they are"} answered or ${one ? "has" : "have"} waited 30 minutes; anything still open is asked again after the restart. Update now installs right away.`;
+    const detail = `In ${threads}. The update installs once ${one ? "it is" : "they are"} answered or ${one ? "has" : "have"} waited 2 minutes; anything still open is asked again after the restart. Update now installs right away.`;
     if (missed !== null) {
       return {
         line: `Update waits on ${what}.`,

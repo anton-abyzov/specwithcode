@@ -12,7 +12,9 @@ const fs = Effect.runSync(Effect.provide(FileSystem.FileSystem, NodeFileSystem.l
 const directories: string[] = [];
 afterEach(async () => {
   await Promise.all(
-    directories.splice(0).map((path) => Effect.runPromise(fs.remove(path, { recursive: true, force: true }))),
+    directories
+      .splice(0)
+      .map((path) => Effect.runPromise(fs.remove(path, { recursive: true, force: true }))),
   );
 });
 
@@ -26,12 +28,13 @@ describe.skipIf(!process.env.STUDIO_MUSE_NATIVE_BINARY)("official Muse native ru
     const wrapper = join(cwd, "muse-echo");
     await Effect.runPromise(
       fs.writeFileString(
-      wrapper,
-      `#!/bin/sh\nexec '${bin.replaceAll("'", "'\\''")}' "$@" --provider echo --contributor-mode off\n`,
-      { mode: 0o700 },
-    ),
+        wrapper,
+        `#!/bin/sh\nexec '${bin.replaceAll("'", "'\\''")}' "$@" --provider echo --contributor-mode off\n`,
+        { mode: 0o700 },
+      ),
     );
-    for (const name of ["config", "data", "cache"]) await Effect.runPromise(fs.makeDirectory(join(cwd, name)));
+    for (const name of ["config", "data", "cache"])
+      await Effect.runPromise(fs.makeDirectory(join(cwd, name)));
     const input = {
       cwd,
       settings: { enabled: true, binaryPath: wrapper },
@@ -45,11 +48,19 @@ describe.skipIf(!process.env.STUDIO_MUSE_NATIVE_BINARY)("official Muse native ru
     };
     let id = "";
     let text = "";
+    let projected = "";
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const runtime = yield* makeMuseRuntime(input);
           id = (yield* runtime.start()).sessionId;
+          yield* runtime.handleSessionUpdate((notification) =>
+            Effect.sync(() => {
+              const update = notification.update;
+              if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text")
+                projected += update.content.text;
+            }),
+          );
           yield* runtime.getEvents().pipe(
             Stream.runForEach((event) =>
               event._tag === "EventStreamBarrier"
@@ -70,6 +81,7 @@ describe.skipIf(!process.env.STUDIO_MUSE_NATIVE_BINARY)("official Muse native ru
     );
     expect(id).not.toBe("");
     expect(text).toContain("native validation hello");
+    expect(projected).toBe(text);
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {

@@ -2,6 +2,25 @@ import { MspError } from "@muse-code/sdk";
 import type { Session } from "@muse-code/sdk";
 import * as Effect from "effect/Effect";
 import type { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
+import { museToolInput, museToolKind } from "./MuseItems.ts";
+
+/**
+ * Muse's default permission profile (`:auto-review`) lets its own LLM reviewer
+ * approve tool calls before any client sees them. `:ask-me` keeps the same
+ * sandbox but names the person as reviewer, so requests reach SpecWithCode.
+ */
+export const MUSE_ASK_PROFILE = ":ask-me";
+
+/** Hosts that report the committed permission state must confirm a human reviewer. */
+export function museRequireHumanReviewer(session: unknown): void {
+  const state = (session as { permissionState?: { reviewerAuthority?: unknown } } | undefined)
+    ?.permissionState;
+  if (state !== undefined && state.reviewerAuthority !== "human")
+    throw new Error(
+      "Muse Code kept its automated reviewer for this session, so SpecWithCode cannot ask you before tool calls run.",
+    );
+}
+
 type Permission = Parameters<AcpSessionRuntime["Service"]["handleRequestPermission"]>[0];
 type Approval = ReturnType<Session["fold"]["pendingApprovals"]>[number]["requested"];
 type Question = ReturnType<Session["fold"]["pendingUserInputs"]>[number];
@@ -13,6 +32,8 @@ export async function watchMuseRequests(input: {
   request: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
   command: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
   permission: () => Permission | undefined;
+  /** Tells SpecWithCode the person's answer reached Muse (or did not); it waits for this. */
+  acknowledge?: (requestId: string, error?: unknown) => Promise<void>;
   failed: (error: unknown) => void;
 }) {
   const abort = new AbortController();
@@ -79,9 +100,17 @@ export async function watchMuseRequests(input: {
               {
                 sessionId: request.sessionId,
                 toolCall: {
-                  toolCallId: request.toolCallId,
-                  title: request.toolName,
-                  rawInput: request.rawArgs,
+                  // The tool item uses the Muse item id; the card must name the same call.
+                  toolCallId: request.itemId ?? request.toolCallId,
+                  title:
+                    request.subject?.kind === "shell" && typeof request.subject.command === "string"
+                      ? request.subject.command
+                      : request.toolName,
+                  kind:
+                    request.subject?.kind === "shell"
+                      ? "execute"
+                      : museToolKind(request.toolName, request.rawArgs),
+                  rawInput: museToolInput(request.rawArgs) ?? null,
                   status: "pending",
                 },
                 options: choices.map((c) => ({
@@ -100,14 +129,20 @@ export async function watchMuseRequests(input: {
             outcome.outcome === "selected"
               ? choices.find((c) => c.choiceId === outcome.optionId)
               : choices.find((c) => c.decision === "abort" || c.decision === "denied");
-          if (!choice) throw new Error("Muse Code did not offer the selected approval decision");
-          const ack = await input.command("approval/decide", {
-            sessionId: request.sessionId,
-            approvalId: request.approvalId,
-            requirementId: request.currentRequirementId,
-            choiceId: choice.choiceId,
-          });
-          if (ack.terminal === true) terminalApprovals.add(request.approvalId);
+          try {
+            if (!choice) throw new Error("Muse Code did not offer the selected approval decision");
+            const ack = await input.command("approval/decide", {
+              sessionId: request.sessionId,
+              approvalId: request.approvalId,
+              requirementId: request.currentRequirementId,
+              choiceId: choice.choiceId,
+            });
+            if (ack.terminal === true) terminalApprovals.add(request.approvalId);
+          } catch (error) {
+            await input.acknowledge?.(key, error);
+            throw error;
+          }
+          await input.acknowledge?.(key);
         },
         request.approvalId,
       );

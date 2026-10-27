@@ -768,7 +768,10 @@ describe("CoordinatorModelPicker limit fallback", () => {
       reason: "usage limit",
     });
     expect(state.pickerProps!.stateHeader).toMatchObject({
-      title: "Fallback for Codex · GPT-6",
+      title: "Running on a fallback",
+      now: "Copilot · GPT-6",
+      pick: { label: "Codex · GPT-6" },
+      returns: { mode: "auto" },
       back: null,
     });
     expect(state.pickerProps!.triggerStateDetail).toContain("goes back to Codex on its own");
@@ -875,8 +878,8 @@ describe("CoordinatorModelPicker limit fallback", () => {
       back: { label: string; onClick: () => void; disabledReason: string | null };
     };
     // Both run GPT-6, so the way back names the pick's provider, not the model twice.
-    expect(header.title).toBe("Fallback for Codex · GPT-6");
-    expect(header.back.label).toBe("Back to Codex");
+    expect(header.title).toBe("Running on a fallback");
+    expect(header.back.label).toBe("Return to Codex");
     expect(header.detail).toContain("Usage has reset.");
     expect(header.back.disabledReason).toBeNull();
     await act(async () => header.back.onClick());

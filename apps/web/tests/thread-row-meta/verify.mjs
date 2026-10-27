@@ -235,6 +235,13 @@ try {
         // The tooltip keeps what the compact form leaves out.
         await page.locator(".sws-thread-row[data-thread-id=matchcam] .sws-model").hover();
         await page.waitForSelector("[data-slot='tooltip-popup']", { timeout: 3000 });
+        const rowTip = await page.locator("[data-slot='tooltip-popup']").textContent();
+        check(`${theme}: a row's fallback tooltip keeps the way back`, () => {
+          NodeAssert.match(
+            rowTip,
+            /Opus 5\.5 hit its usage limit\. Open the thread to switch back\./,
+          );
+        });
         const tip = path(output, `thread-rows-tooltip-${theme}.png`);
         await page.screenshot({ path: tip });
         receipt.screenshots.push(tip);

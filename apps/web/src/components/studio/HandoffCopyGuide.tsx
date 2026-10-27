@@ -1,37 +1,191 @@
 import type { ReactNode } from "react";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, TriangleAlertIcon } from "lucide-react";
 import { hasNotCopied, type CopyNotices } from "./handoffCopyNotices";
+import type { CopyStepId, CopyStepTone } from "./handoffCopyWizard";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "../ui/button";
+import { HandoffCopyActions } from "./HandoffCopyActions";
 
-/** Where the person is in the copy: Measure, then Copy, then Done, with optional steps between. */
+export interface CopyStepItem {
+  readonly id: CopyStepId;
+  readonly label: string;
+  /** Relative to the live step: behind it, on it, or still ahead. */
+  readonly state: "done" | "current" | "next";
+  /** Skipped by a one-click copy: chosen automatically, still open to look at. */
+  readonly auto: boolean;
+  readonly tone: CopyStepTone | null;
+}
+
+const TONE_NAMES: Readonly<Record<CopyStepTone, string>> = {
+  failed: "stopped",
+  held: "held",
+  attention: "waiting for you",
+};
+
+const TONE_CLASSES: Readonly<Record<CopyStepTone, string>> = {
+  failed: "text-destructive-foreground",
+  held: "text-warning-foreground",
+  attention: "text-warning-foreground",
+};
+
+/**
+ * Where › What › Review › Copy › Done, with Transfer for a move. Steps the copy has passed
+ * are buttons that open a read-only look at them; the step text stays the bare label.
+ */
 export function CopyStepLine({
   steps,
-  current,
+  viewing = null,
+  onStepChange,
+  isStepDisabled,
 }: {
-  readonly steps: ReadonlyArray<string>;
-  readonly current: string;
+  readonly steps: ReadonlyArray<CopyStepItem>;
+  /** The earlier step on screen instead of the live one; null shows the live step. */
+  readonly viewing?: CopyStepId | null;
+  readonly onStepChange?: (id: CopyStepId) => void;
+  readonly isStepDisabled?: (id: CopyStepId) => boolean;
 }) {
-  const at = Math.max(0, steps.indexOf(current));
   return (
     <ol
       className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
       aria-label="Copy steps"
       data-slot="copy-steps"
     >
-      {steps.map((step, index) => (
-        <li key={step} className="flex items-center gap-1.5">
-          {index > 0 && <span aria-hidden>›</span>}
-          <span
-            data-slot="copy-step"
-            data-state={index < at ? "done" : index === at ? "current" : "next"}
-            aria-current={index === at ? "step" : undefined}
-            className={`inline-flex items-center gap-1 ${index === at ? "font-medium text-foreground" : ""}`}
-          >
-            {index < at && <CheckIcon className="size-3" aria-hidden />}
-            {step}
-          </span>
-        </li>
-      ))}
+      {steps.map((step, index) => {
+        const current = step.state === "current";
+        const shown = step.id === viewing;
+        // What the tooltip says; the visible text stays the bare label.
+        const note = [step.auto ? "chosen automatically" : null, step.tone && TONE_NAMES[step.tone]]
+          .filter((part) => !!part)
+          .join(", ");
+        const extra = [note, shown ? "on screen" : null].filter((part) => !!part).join(", ");
+        const props = {
+          "data-slot": "copy-step",
+          "data-step-id": step.id,
+          "data-state": step.state,
+          "data-auto": step.auto ? "true" : undefined,
+          "data-tone": step.tone ?? undefined,
+          "data-viewing": shown ? "true" : undefined,
+          "aria-current": current ? ("step" as const) : undefined,
+          "aria-label": extra ? `${step.label}, ${extra}` : undefined,
+          onClick: () => onStepChange?.(step.id),
+          className: `-mx-1 inline-flex items-center gap-1 rounded px-1 outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:cursor-pointer enabled:hover:text-foreground enabled:hover:underline ${current ? "font-medium" : ""} ${shown ? "underline underline-offset-4" : ""} ${step.tone ? TONE_CLASSES[step.tone] : current || shown ? "text-foreground" : ""}`,
+        };
+        const disabled = !onStepChange || (isStepDisabled?.(step.id) ?? false);
+        const content = (
+          <>
+            {step.tone ? (
+              <TriangleAlertIcon className="size-3" aria-hidden />
+            ) : (
+              step.state === "done" && <CheckIcon className="size-3" aria-hidden />
+            )}
+            {step.label}
+          </>
+        );
+        return (
+          <li key={step.id} className="flex items-center gap-1.5">
+            {index > 0 && <span aria-hidden>›</span>}
+            {note ? (
+              <Tooltip>
+                <TooltipTrigger render={<button type="button" disabled={disabled} />} {...props}>
+                  {content}
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {step.label}: {note}
+                </TooltipPopup>
+              </Tooltip>
+            ) : (
+              <button type="button" disabled={disabled} {...props}>
+                {content}
+              </button>
+            )}
+          </li>
+        );
+      })}
     </ol>
+  );
+}
+
+/** Says an earlier step is on screen for looking only, and where the copy really is. */
+export function CopyViewingBanner({
+  viewing,
+  live,
+}: {
+  readonly viewing: string;
+  readonly live: string;
+}) {
+  return (
+    <p
+      role="status"
+      className="rounded-lg border bg-muted/40 px-3 py-2 text-sm"
+      data-slot="copy-viewing"
+    >
+      You're viewing {viewing}. The copy is at {live}.
+    </p>
+  );
+}
+
+/** What happened while the window was closed, or that a reopen came back to the same step. */
+export function CopyResumeNote({ children }: { readonly children: ReactNode }) {
+  return (
+    <p
+      role="status"
+      className="rounded-lg border bg-muted/40 px-3 py-2 text-sm"
+      data-slot="copy-resume-note"
+    >
+      {children}
+    </p>
+  );
+}
+
+/**
+ * A reopened copy while its destination answers, in place of a setup form that would only
+ * flash. An unreachable destination keeps this, with its error and Check again.
+ */
+export function CopyCheckingStep({
+  checking,
+  folder,
+  targetLabel,
+  error,
+  onCheckAgain,
+  onStartNew,
+}: {
+  readonly checking: "checking" | "unreachable";
+  readonly folder: string;
+  readonly targetLabel: string;
+  readonly error: string | null;
+  readonly onCheckAgain: () => void;
+  /** The last copy opened with View: put it back and start a new copy instead of waiting. */
+  readonly onStartNew?: (() => void) | undefined;
+}) {
+  return (
+    <>
+      <p
+        role="status"
+        aria-live="polite"
+        className="text-sm text-muted-foreground"
+        data-slot="copy-checking"
+      >
+        {checking === "checking"
+          ? `Checking the copy to ${folder} on ${targetLabel}…`
+          : `A copy to ${folder} on ${targetLabel} is unfinished. Check it again once ${targetLabel} is reachable.`}
+      </p>
+      <HandoffCopyActions>
+        {error && (
+          <p
+            role="alert"
+            className="max-h-24 basis-full overflow-y-auto wrap-anywhere text-sm text-destructive-foreground"
+          >
+            {error}
+          </p>
+        )}
+        {checking === "unreachable" && onStartNew && (
+          <Button variant="outline" onClick={onStartNew}>
+            Start a new copy
+          </Button>
+        )}
+        {checking === "unreachable" && <Button onClick={onCheckAgain}>Check the copy again</Button>}
+      </HandoffCopyActions>
+    </>
   );
 }
 
