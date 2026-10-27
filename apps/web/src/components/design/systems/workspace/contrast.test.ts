@@ -12,7 +12,10 @@ describe("contrast", () => {
     expect(contrastRatio("#ffffff", "#ffffff")).toBeCloseTo(1, 5);
     expect(contrastRatio("#767676", "#ffffff")).toBeCloseTo(4.54, 2);
     expect(contrastRatio("rgba(0, 0, 0, 0)", "#ffffff")).toBeCloseTo(1, 5);
-    expect(contrastRatio("oklch(0.5 0.1 200)", "#ffffff")).toBeNull();
+    // oklch() and hsl() are measured too; a reference or color-mix() is not.
+    expect(contrastRatio("oklch(0.145 0 0)", "oklch(1 0 0)")).toBeGreaterThan(17);
+    expect(contrastRatio("hsl(0 0% 0%)", "#ffffff")).toBeCloseTo(21, 1);
+    expect(contrastRatio("color-mix(in srgb, red, blue)", "#ffffff")).toBeNull();
     // A see-through fill sits on the mode's ground, not on white.
     expect(contrastRatio("#E9E3FA", "rgba(124, 77, 222, 0.16)", "#0B0D12")).toBeGreaterThan(13);
   });
@@ -55,8 +58,8 @@ describe("contrast", () => {
     const check = tokenContrast(onPrimary, system, LIGHT)!;
     expect(check.against).toBe("primary");
     expect(check.ratio).toBeLessThan(TEXT_RATIO);
-    // X exists but is not hex or rgb(): no check, not a false failure on the ground.
-    const named = testToken("brand", "color", "color", "oklch(0.5 0.2 270)");
+    // X exists but cannot be read: no check, not a false failure on the ground.
+    const named = testToken("brand", "color", "color", "color-mix(in srgb, #4f8cff, white)");
     const onNamed = testToken("brand-foreground", "color", "color", "#ffffff");
     const unreadable = { tokens: [background, named, onNamed], modes: TEST_SYSTEM.modes };
     expect(tokenContrast(onNamed, unreadable, LIGHT)).toBeNull();

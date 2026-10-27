@@ -3,7 +3,10 @@
  * model turn, and the coordinator provider's skills, which insert their
  * invocation and go to the agent with the message.
  */
-import { resolveProviderSkillsForCwd } from "@specweave-studio/client-runtime/providerSkills";
+import {
+  providerSkillInvocation,
+  resolveProviderSkillsForCwd,
+} from "@specweave-studio/client-runtime/providerSkills";
 import type { ProviderDriverKind, ServerProvider } from "@specweave-studio/contracts";
 import { useMemo, useState, type KeyboardEvent } from "react";
 
@@ -55,7 +58,7 @@ export function coordinatorSlashItems(
         type: "skill",
         provider: provider.driverKind,
         skill,
-        label: `/skill:${skill.name}`,
+        label: providerSkillInvocation(skill),
         description:
           skill.shortDescription ??
           skill.description ??
@@ -94,7 +97,7 @@ export function useCoordinatorSlashMenu(input: CoordinatorSlashMenuInput) {
       return;
     }
     if (item.type === "skill") {
-      input.setPrompt(`$${item.skill.name} `);
+      input.setPrompt(`${providerSkillInvocation(item.skill)} `);
       setActiveId(null);
     }
   };

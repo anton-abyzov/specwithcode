@@ -145,13 +145,22 @@ function prefersReducedMotion() {
 export function SystemWorkspace(props: SystemWorkspaceProps) {
   const { system, onHashChange } = props;
   const editable = props.canEdit && !props.conflict;
+  const fonts = useFontUploads({
+    environmentId: props.environmentId,
+    owner: props.owner,
+    systemId: system.id,
+    canEdit: editable,
+    ...(props.onChanged === undefined ? {} : { onChanged: props.onChanged }),
+  });
+  const fontCount = fonts.fonts?.length ?? 0;
   const sections = useMemo(
     () =>
       visibleSections(buildSections(system), {
         canEdit: props.canEdit,
         componentCount: system.components.length,
+        fontCount,
       }),
-    [props.canEdit, system],
+    [fontCount, props.canEdit, system],
   );
   const ids = useMemo(() => sections.map((section) => section.id), [sections]);
   const idsKey = ids.join(" ");
@@ -162,13 +171,6 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
   const [adding, setAdding] = useState<Adding | null>(null);
   const [renaming, setRenaming] = useState(false);
   const titleInput = useRef<HTMLInputElement | null>(null);
-  const fonts = useFontUploads({
-    environmentId: props.environmentId,
-    owner: props.owner,
-    systemId: system.id,
-    canEdit: editable,
-    ...(props.onChanged === undefined ? {} : { onChanged: props.onChanged }),
-  });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** The hash this page wrote itself; it does not scroll again. */
   const ownHash = useRef<string | null>(null);
@@ -195,28 +197,35 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
     });
   }, []);
 
-  const showSection = useCallback(
-    (id: SectionId) => {
-      setFilesOpen(false);
-      setActive(id);
+  const expand = useCallback(
+    (id: SectionId) =>
       setCollapsed((current) => {
         if (!current.has(id)) return current;
         const next = new Set(current);
         next.delete(id);
         return next;
-      });
+      }),
+    [],
+  );
+
+  const showSection = useCallback(
+    (id: SectionId) => {
+      setFilesOpen(false);
+      setActive(id);
+      expand(id);
       writeHash(id);
       // After Files closes and the section opens.
       window.requestAnimationFrame(() => scrollToSection(id, true));
     },
-    [scrollToSection, writeHash],
+    [expand, scrollToSection, writeHash],
   );
 
   // A hash from outside (a link, back and forward, first load) scrolls to its section.
+  // A section not shown yet (Typography waiting for its font list) is tried again when it appears.
   useEffect(() => {
     if (props.hash === ownHash.current) return;
-    ownHash.current = props.hash;
     if (!isSectionId(props.hash) || !ids.includes(props.hash)) return;
+    ownHash.current = props.hash;
     setActive(props.hash);
     scrollToSection(props.hash, false);
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- runs for a new hash only
@@ -406,7 +415,10 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
                           : null
                     }
                     actions={
-                      section.kind === "typography" ? <UploadFontButton fonts={fonts} /> : null
+                      section.kind === "typography" ? (
+                        // Progress and results show in the section, so it opens first.
+                        <UploadFontButton fonts={fonts} onPick={() => expand(section.id)} />
+                      ) : null
                     }
                     onAdd={
                       editable && addable(section, system)
@@ -683,7 +695,7 @@ function Empty({
       {editable ? (
         <>
           {starter !== undefined ? (
-            <StarterOffer kind={starter} system={system} onEdit={onEdit} />
+            <StarterOffer kind={starter} sectionId={section.id} system={system} onEdit={onEdit} />
           ) : null}
           <Button
             variant="outline"

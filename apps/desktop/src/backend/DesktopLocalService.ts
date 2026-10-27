@@ -74,6 +74,16 @@ const INSTALL_WAIT_LIMIT_MS = SERVICE_INSTALL_LIMIT_MS;
 // instead of opening its own, empty home in its place.
 export const SERVICE_START_WAIT_LIMIT_MINUTES = 20;
 const SERVICE_START_WAIT_LIMIT_MS = SERVICE_START_WAIT_LIMIT_MINUTES * 60_000;
+// launchd waits out its throttle between restarts of a job that exited; a
+// kickstart starts it now. Asked no more often than this.
+const KICKSTART_INTERVAL_MS = 15_000;
+// A job launchd keeps loaded but not running this long, kickstarts included,
+// is crash-looping (2026-10-27: EADDRINUSE because the app's own server held its
+// port): the app says so instead of waiting out the full start limit.
+export const SERVICE_DOWN_LIMIT_MS = 2 * 60_000;
+// A job launchd has kept running this long is up (or opening a large store),
+// not crash-looping, so its down time starts over.
+const SERVICE_STABLE_RUN_MS = 15_000;
 const PAIR_TIMEOUT_MS = 30_000;
 // Under this much free space (1 GB, the server's critical line) the service
 // stalls on its own writes, which is the likely reason it does not answer.
@@ -110,6 +120,7 @@ export type LocalServiceDiscovery =
       readonly _tag: "service-not-started";
       readonly baseDir: string;
       readonly stateDir: string;
+      readonly reason: ServiceNotStartedReason;
     }
   | {
       readonly _tag: "unresponsive";
@@ -130,6 +141,14 @@ export type FreeDiskBytesReader = (path: string) => Effect.Effect<Option.Option<
  */
 export type LaunchdJobState = "running" | "stopped" | "absent" | "unknown";
 export type LaunchdJobStateReader = (target: string) => Effect.Effect<LaunchdJobState>;
+/** Asks launchd to start a loaded job now; true when launchctl accepted it. */
+export type LaunchdKickstarter = (target: string) => Effect.Effect<boolean>;
+
+/**
+ * Why an installed service did not answer: still starting after the full wait,
+ * loaded but not running (a crash loop), or not loaded in launchd at all.
+ */
+export type ServiceNotStartedReason = "timed-out" | "not-running" | "not-loaded";
 
 /** Reads the job's `state = …` line from `launchctl print` output. */
 export function parseLaunchdJobState(output: string): LaunchdJobState {
@@ -161,6 +180,26 @@ export const LaunchdJob = Context.Reference<LaunchdJobStateReader>(
   },
 );
 
+/**
+ * How discovery restarts an installed service launchd keeps loaded but not
+ * running. Plain `kickstart` (no -k) never stops a running process, so a
+ * service that came up meanwhile is left alone. Tests replace it.
+ */
+export const LaunchdKickstart = Context.Reference<LaunchdKickstarter>(
+  "@specweave-studio/desktop/backend/DesktopLocalService/LaunchdKickstart",
+  {
+    defaultValue: () => (target) =>
+      Effect.callback<boolean>((resume) => {
+        NodeChildProcess.execFile(
+          "/bin/launchctl",
+          ["kickstart", target],
+          { encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024 },
+          (error) => resume(Effect.succeed(!error)),
+        );
+      }),
+  },
+);
+
 /** How discovery reads free disk space; tests replace it. */
 export const FreeDiskBytes = Context.Reference<FreeDiskBytesReader>(
   "@specweave-studio/desktop/backend/DesktopLocalService/FreeDiskBytes",
@@ -177,11 +216,29 @@ export const FreeDiskBytes = Context.Reference<FreeDiskBytesReader>(
   },
 );
 
+interface ServiceJobTracker {
+  state: LaunchdJobState;
+  /** Since when launchd has reported the job down (loaded but not running, or not loaded). */
+  downSince: number | null;
+  /** Since when launchd has reported the job running without a break. */
+  runningSince: number | null;
+  kickstartedAt: number | null;
+}
+
 interface StudioHomeCandidate {
   readonly baseDir: string;
   readonly stateDir: string;
   /** An installed launchd service that may still be starting. */
   readonly serviceInstalled: boolean;
+  readonly launchdTarget?: string;
+  readonly port?: number;
+}
+
+/** An installed service found on this machine, wherever its home is. */
+export interface InstalledService {
+  readonly baseDir: string;
+  readonly stateDir: string;
+  readonly port?: number;
   readonly launchdTarget?: string;
 }
 
@@ -217,6 +274,13 @@ export class DesktopLocalService extends Context.Service<
     readonly discover: (options?: DiscoverOptions) => Effect.Effect<LocalServiceDiscovery>;
     readonly attach: (service: AttachedLocalService) => Effect.Effect<void>;
     readonly attached: Effect.Effect<Option.Option<AttachedLocalService>>;
+    /** Installed services on this machine (fleet receipts with `service.installed`). */
+    readonly installedServices: Effect.Effect<ReadonlyArray<InstalledService>>;
+    /**
+     * Whether the app runs on the default home, beside which the installed
+     * service keeps the person's projects; false for an explicit STUDIO_HOME.
+     */
+    readonly usesDefaultHome: boolean;
     /** Records that the app started its own backend instead of attaching to one. */
     readonly markSpawned: Effect.Effect<void>;
     /**
@@ -362,6 +426,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const readFreeDiskBytes = yield* FreeDiskBytes;
   const readLaunchdJob = yield* LaunchdJob;
+  const kickstartLaunchdJob = yield* LaunchdKickstart;
   const httpClient = yield* HttpClient.HttpClient;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const attachedRef = yield* Ref.make(Option.none<AttachedLocalService>());
@@ -379,26 +444,17 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  // The app's own home first. With no explicit STUDIO_HOME, also every home
-  // the fleet installer created beside it: the installed service runs from
-  // `~/.specwithcode/<identity>` (or an unmigrated `~/.specweave-studio/<identity>`),
-  // not from the default home.
-  const listCandidates = Effect.sync((): ReadonlyArray<StudioHomeCandidate> => {
-    const own = {
-      baseDir: environment.baseDir,
-      stateDir: environment.stateDir,
-      serviceInstalled: false,
-    };
-    const home = environment.homeDirectory;
-    const brandedRoot = environment.path.join(home, STUDIO_HOME_DIRECTORY);
-    const legacyRoot = environment.path.join(home, LEGACY_STUDIO_HOME_DIRECTORY);
-    if (
-      environment.baseDir !== studioRootDirectory(home) &&
-      environment.baseDir !== brandedRoot &&
-      environment.baseDir !== legacyRoot
-    ) {
-      return [own];
-    }
+  const home = environment.homeDirectory;
+  const brandedRoot = environment.path.join(home, STUDIO_HOME_DIRECTORY);
+  const legacyRoot = environment.path.join(home, LEGACY_STUDIO_HOME_DIRECTORY);
+  const usesDefaultHome =
+    environment.baseDir === studioRootDirectory(home) ||
+    environment.baseDir === brandedRoot ||
+    environment.baseDir === legacyRoot;
+
+  // Every home the fleet installer created: the installed service runs from
+  // `~/.specwithcode/<identity>` (or an unmigrated `~/.specweave-studio/<identity>`).
+  const scanInstallations = Effect.sync((): ReadonlyArray<StudioHomeCandidate> => {
     // Branded first; a real (unmigrated) legacy root may still hold a service next to a
     // fresh branded profile. A migrated legacy root is a link to the branded one.
     const roots = [brandedRoot];
@@ -435,7 +491,6 @@ export const make = Effect.gen(function* () {
         });
         if (installation === null) continue;
         seen.add(entry.name);
-        if (installation.stateDir === environment.stateDir) continue;
         installed.push({
           baseDir: installation.studioHome,
           stateDir: installation.stateDir,
@@ -443,6 +498,7 @@ export const make = Effect.gen(function* () {
           ...(installation.launchdTarget === undefined
             ? {}
             : { launchdTarget: installation.launchdTarget }),
+          ...(installation.port === undefined ? {} : { port: installation.port }),
         });
       }
     }
@@ -452,7 +508,42 @@ export const make = Effect.gen(function* () {
         Number(b.serviceInstalled) - Number(a.serviceInstalled) ||
         a.baseDir.localeCompare(b.baseDir),
     );
-    return [own, ...installed];
+    return installed;
+  });
+
+  const installedServices = scanInstallations.pipe(
+    Effect.map((installations) =>
+      installations
+        .filter((installation) => installation.serviceInstalled)
+        .map(({ baseDir, stateDir, port, launchdTarget }): InstalledService => ({
+          baseDir,
+          stateDir,
+          ...(port === undefined ? {} : { port }),
+          ...(launchdTarget === undefined ? {} : { launchdTarget }),
+        })),
+    ),
+  );
+
+  // The app's own home first (an installed service when a receipt says its home
+  // is this one). With no explicit STUDIO_HOME, also every installed home beside it.
+  const listCandidates = Effect.gen(function* () {
+    const installations = yield* scanInstallations;
+    const ownInstallation = installations.find(
+      (installation) => installation.stateDir === environment.stateDir,
+    );
+    const own: StudioHomeCandidate = {
+      baseDir: environment.baseDir,
+      stateDir: environment.stateDir,
+      serviceInstalled: ownInstallation?.serviceInstalled === true,
+      ...(ownInstallation?.serviceInstalled === true && ownInstallation.launchdTarget !== undefined
+        ? { launchdTarget: ownInstallation.launchdTarget }
+        : {}),
+    };
+    if (!usesDefaultHome) return [own];
+    return [
+      own,
+      ...installations.filter((installation) => installation.stateDir !== environment.stateDir),
+    ];
   });
 
   const discover = (options?: DiscoverOptions) =>
@@ -462,7 +553,16 @@ export const make = Effect.gen(function* () {
       let installWaitStartedAt: number | null = null;
       let installWaitOver = false;
       let startWaitStartedAt: number | null = null;
-      // The installed service launchd runs but which has not answered yet.
+      // What launchd has reported for each installed service's job, by home.
+      const jobs = new Map<string, ServiceJobTracker>();
+      const jobOf = (silent: { readonly candidate: StudioHomeCandidate }): ServiceJobTracker =>
+        jobs.get(silent.candidate.stateDir) ?? {
+          state: "unknown",
+          downSince: null,
+          runningSince: null,
+          kickstartedAt: null,
+        };
+      // The installed service that has not answered yet.
       let starting: {
         candidate: StudioHomeCandidate;
         runtime: RunningServerRuntimeState | null;
@@ -535,22 +635,75 @@ export const make = Effect.gen(function* () {
             });
           }
         }
-        // An installed service in another home holds the person's projects. While
-        // launchd runs its process it is still starting (a release that rebuilds a
-        // large store can take minutes), so a server started on the app's own, empty
-        // home would show no projects at all. A job loaded but not running is a
-        // crash loop between restarts: that keeps the usual grace.
+        // An installed service holds the person's projects, so a server started on
+        // the app's own, empty home would show none of them: the app waits for the
+        // service however long it takes to start (a release that rebuilds a large
+        // store can take minutes) and never opens an empty home in its place. A job
+        // launchd keeps loaded but not running (a crash loop between throttled
+        // restarts) is kickstarted; one that stays down past SERVICE_DOWN_LIMIT_MS,
+        // or is not loaded at all, is reported instead of waited on.
+        const installWaitRuns = installing !== undefined && !installWaitOver;
+        // Every silent service is followed on its own: the app keeps waiting while
+        // any of them may still come up, and reports once all have stayed down.
         starting = null;
+        let firstDown: {
+          candidate: StudioHomeCandidate;
+          runtime: RunningServerRuntimeState | null;
+        } | null = null;
         for (const silent of silentServices) {
+          const job = jobs.get(silent.candidate.stateDir) ?? {
+            state: "unknown",
+            downSince: null,
+            runningSince: null,
+            kickstartedAt: null,
+          };
+          jobs.set(silent.candidate.stateDir, job);
           const target = silent.candidate.launchdTarget;
-          if (silent.candidate.stateDir === environment.stateDir || target === undefined) continue;
-          if (environment.platform === "darwin" && (yield* readLaunchdJob(target)) === "running") {
-            starting = silent;
-            break;
+          job.state =
+            environment.platform === "darwin" && target !== undefined
+              ? yield* readLaunchdJob(target)
+              : "unknown";
+          if (job.state === "unknown" || installWaitRuns) {
+            // An install stops the service on purpose; its own wait covers that.
+            job.downSince = null;
+            job.runningSince = null;
+          } else if (job.state === "running") {
+            // A crash loop runs for a second or two between restarts (and a
+            // kickstart makes that likelier to be sampled): only a job that keeps
+            // running counts as up.
+            job.runningSince ??= now;
+            if (now - job.runningSince >= SERVICE_STABLE_RUN_MS) job.downSince = null;
+          } else {
+            job.runningSince = null;
+            job.downSince ??= now;
+            if (
+              job.state === "stopped" &&
+              target !== undefined &&
+              (job.kickstartedAt === null || now - job.kickstartedAt >= KICKSTART_INTERVAL_MS)
+            ) {
+              job.kickstartedAt = now;
+              const accepted = yield* kickstartLaunchdJob(target);
+              yield* (accepted ? logInfo : logWarning)(
+                accepted
+                  ? "asked launchd to start the installed Studio service"
+                  : "launchd did not accept a start of the installed Studio service",
+                { target, baseDir: silent.candidate.baseDir },
+              );
+            }
           }
+          const down = job.downSince !== null && now - job.downSince >= SERVICE_DOWN_LIMIT_MS;
+          if (!down) starting ??= silent;
+          // When all are down, report a job launchd still has loaded first.
+          else if (
+            firstDown === null ||
+            (job.state !== "absent" && jobOf(firstDown).state === "absent")
+          )
+            firstDown = silent;
         }
+        const allDown = starting === null && firstDown !== null;
+        starting ??= firstDown;
         // An update install has its own wait and limit; the start wait begins once it ends.
-        if (installing !== undefined && !installWaitOver) startWaitStartedAt = null;
+        if (installWaitRuns) startWaitStartedAt = null;
         else if (starting !== null) {
           if (startWaitStartedAt === null) {
             startWaitStartedAt = now;
@@ -559,16 +712,18 @@ export const make = Effect.gen(function* () {
             });
             if (options?.onServiceStartWait !== undefined) yield* options.onServiceStartWait;
           }
-          // Not counted until the limit: the full grace still follows it.
-          if (now - startWaitStartedAt < SERVICE_START_WAIT_LIMIT_MS) attempt = -1;
+          // Not counted until a limit: the full grace still follows it.
+          if (now - startWaitStartedAt < SERVICE_START_WAIT_LIMIT_MS && !allDown) attempt = -1;
         }
         yield* Effect.sleep(UNRESPONSIVE_GRACE_INTERVAL_MS);
       }
       if (starting !== null) {
-        // launchd still runs it, so its home is still the person's store:
-        // report it rather than open an empty one in its place.
+        const job = jobOf(starting);
+        // Its home is still the person's store: report it rather than open an
+        // empty one in its place.
         yield* logWarning("the installed Studio service did not start in time", {
           baseDir: starting.candidate.baseDir,
+          jobState: job.state,
           ...(starting.runtime === null ? {} : { pid: starting.runtime.pid }),
         });
         if (starting.runtime === null || !isProcessAlive(starting.runtime.pid)) {
@@ -576,12 +731,17 @@ export const make = Effect.gen(function* () {
             _tag: "service-not-started",
             baseDir: starting.candidate.baseDir,
             stateDir: starting.candidate.stateDir,
+            reason:
+              job.downSince === null
+                ? "timed-out"
+                : job.state === "absent"
+                  ? "not-loaded"
+                  : "not-running",
           } as const;
         }
         unresponsive = { runtime: starting.runtime, stateDir: starting.candidate.stateDir };
       } else if (unresponsive === null || unresponsive.stateDir !== environment.stateDir) {
-        // Only a live owner of the app's own home blocks startup; an installed
-        // service elsewhere whose job launchd no longer runs leaves this home free.
+        // No installed service: only a live owner of the app's own home blocks startup.
         if (unresponsive !== null) {
           yield* logWarning(
             "an installed Studio service does not answer; starting a local server",
@@ -735,6 +895,8 @@ export const make = Effect.gen(function* () {
 
   return DesktopLocalService.of({
     discover,
+    installedServices,
+    usesDefaultHome,
     attach: (service) =>
       Ref.set(attachedRef, Option.some(service)).pipe(
         Effect.andThen(Ref.set(tokenRef, Option.none())),
@@ -756,6 +918,8 @@ export const layerTest = (input?: {
   readonly attached?: AttachedLocalService;
   readonly bearer?: string;
   readonly spawned?: boolean;
+  readonly installedServices?: ReadonlyArray<InstalledService>;
+  readonly usesDefaultHome?: boolean;
 }) =>
   Layer.succeed(
     DesktopLocalService,
@@ -764,6 +928,8 @@ export const layerTest = (input?: {
         Effect.succeed(
           input?.attached ? { _tag: "running", service: input.attached } : { _tag: "none" },
         ),
+      installedServices: Effect.succeed(input?.installedServices ?? []),
+      usesDefaultHome: input?.usesDefaultHome ?? true,
       attach: () => Effect.void,
       attached: Effect.succeed(Option.fromUndefinedOr(input?.attached)),
       markSpawned: Effect.void,

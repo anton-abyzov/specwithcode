@@ -79,6 +79,8 @@ import { fileLinkMetaAtPath, mayBeDirectory, type MarkdownFileLinkMeta } from "~
 import { AudioPreview } from "../files/AudioPreview";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { BrowserDocumentFrame } from "../files/BrowserDocumentFrame";
+import { FilePreviewCard, HostDeckPreview } from "../files/DeckPreview";
+import { hostArtifactPath, hostFilePreview, noPreviewReason } from "../files/hostFilePreview";
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { Button } from "../ui/button";
 import { MenuItem } from "../ui/menu";
@@ -1026,6 +1028,24 @@ function ArtifactBody(props: {
       <UnreachableFileNotice name={artifact.name} path={path} reason={props.fileState.reason} />
     );
   }
+  // A deck draws its slides; a document or archive is a card that opens it in its app.
+  const host = artifact.kind === "file" && path !== null ? hostFilePreview(path) : "text";
+  const hostPath = path === null ? null : hostArtifactPath(path, props.cwd);
+  if (host === "deck" && hostPath !== null) {
+    return (
+      <HostDeckPreview environmentId={props.environmentId} path={hostPath} name={artifact.name} />
+    );
+  }
+  if (host === "card") {
+    return (
+      <FilePreviewCard
+        environmentId={props.environmentId}
+        path={hostPath}
+        name={artifact.name}
+        reason={noPreviewReason(artifact.name)}
+      />
+    );
+  }
   switch (artifact.kind) {
     case "markdown":
     case "code":
@@ -1126,6 +1146,16 @@ function ArtifactText(props: {
         path={meta.filePath}
         error={file.error}
         actions={<CopyPathButton path={meta.filePath} />}
+      />
+    );
+  }
+  if (contents === null && file.readError?.failure === "binary_file") {
+    return (
+      <FilePreviewCard
+        environmentId={props.environmentId}
+        path={meta.filePath}
+        name={props.artifact.name}
+        reason={`${props.artifact.name} is not a text file, and has no preview here.`}
       />
     );
   }

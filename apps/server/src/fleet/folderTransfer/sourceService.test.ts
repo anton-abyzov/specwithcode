@@ -447,3 +447,88 @@ describe("closing the source service", () => {
     expect(NodeFS.existsSync(state)).toBe(false);
   });
 });
+
+describe("scan freshness", () => {
+  it.live("keeps an unchanged resumed job, manifest and secret choices", () =>
+    Effect.gen(function* () {
+      const { sources, state, loaded } = yield* Effect.promise(() => snapshot(false, false));
+      const before = yield* Effect.promise(() => sources.read(operationId));
+      const manifest = NodeFS.readFileSync(
+        NodePath.join(state, "folder-sources", operationId, "manifest.ndjson.gz"),
+      );
+      const resumed = new SourceTransfers(state);
+      const checked = yield* Effect.promise(() => resumed.checkScan(operationId));
+      expect(checked?.freshness?.current).toBe(true);
+      expect(checked?.scanCompletedAt).toBe(before?.scanCompletedAt);
+      expect(yield* Effect.promise(() => resumed.read(operationId))).toEqual(before);
+      expect(
+        NodeFS.readFileSync(
+          NodePath.join(state, "folder-sources", operationId, "manifest.ndjson.gz"),
+        ),
+      ).toEqual(manifest);
+      expect(loaded.record.selection).not.toContain("secret");
+    }),
+  );
+
+  it.live("detects removed and added files without replacing the saved scan", () =>
+    Effect.gen(function* () {
+      const { sources, folder } = yield* Effect.promise(() => snapshot(false, false));
+      NodeFS.unlinkSync(NodePath.join(folder, "unfinished.txt"));
+      NodeFS.writeFileSync(NodePath.join(folder, "added.txt"), "new work");
+      const before = yield* Effect.promise(() => sources.read(operationId));
+      expect(
+        (yield* Effect.promise(() => sources.checkScan(operationId)))?.freshness?.current,
+      ).toBe(false);
+      expect(yield* Effect.promise(() => sources.read(operationId))).toEqual(before);
+    }),
+  );
+
+  it.live("detects added external worktrees and missing registrations", () =>
+    Effect.gen(function* () {
+      const { sources, repo } = yield* Effect.promise(() => snapshot(true, false));
+      const external = NodePath.join(
+        NodePath.dirname(NodePath.dirname(NodePath.dirname(NodePath.dirname(repo)))),
+        "outside-worktree",
+      );
+      yield* Effect.promise(() =>
+        runGit(repo, ["worktree", "add", "-q", "-b", "external", external]),
+      );
+      expect(
+        (yield* Effect.promise(() => sources.checkScan(operationId)))?.freshness?.current,
+      ).toBe(false);
+      NodeFS.rmSync(external, { recursive: true, force: true });
+      expect(
+        (yield* Effect.promise(() => sources.checkScan(operationId)))?.freshness?.current,
+      ).toBe(false);
+      expect(
+        (yield* Effect.promise(() => runGit(repo, ["worktree", "list", "--porcelain"]))).stdout,
+      ).toContain(external);
+    }),
+  );
+
+  it.live("does not bless a legacy scan that has no persisted fingerprint", () =>
+    Effect.gen(function* () {
+      const { sources, state } = yield* Effect.promise(() => snapshot(false, false));
+      const file = NodePath.join(state, "folder-sources", operationId, "operation.json");
+      const record = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+      delete record.sourceFingerprint;
+      delete record.scanCompletedAt;
+      NodeFS.writeFileSync(file, JSON.stringify(record));
+      const legacy = new SourceTransfers(state);
+      expect((yield* Effect.promise(() => legacy.checkScan(operationId)))?.freshness?.current).toBe(
+        false,
+      );
+      expect((yield* Effect.promise(() => sources.read(operationId)))?.state).toBe("ready");
+    }),
+  );
+});
+
+it.live("detects an added empty directory", () =>
+  Effect.gen(function* () {
+    const { sources, folder } = yield* Effect.promise(() => snapshot(false, false));
+    NodeFS.mkdirSync(NodePath.join(folder, "new-empty-directory"));
+    expect((yield* Effect.promise(() => sources.checkScan(operationId)))?.freshness?.current).toBe(
+      false,
+    );
+  }),
+);

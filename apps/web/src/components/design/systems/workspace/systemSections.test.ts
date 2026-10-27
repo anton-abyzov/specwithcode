@@ -51,6 +51,12 @@ describe("section order", () => {
       visibleSections(sections, { canEdit: false, componentCount: 0 }).map((s) => s.id),
     ).toEqual(["readme", "assets"]);
     expect(visibleSections(sections, { canEdit: true, componentCount: 0 })).toHaveLength(8);
+    // Typography with no styles still shows a viewer its font files.
+    expect(
+      visibleSections(sections, { canEdit: false, componentCount: 0, fontCount: 1 }).map(
+        (s) => s.id,
+      ),
+    ).toContain("type");
   });
 
   it("gives a family the group its tokens share, so new tokens stay there", () => {

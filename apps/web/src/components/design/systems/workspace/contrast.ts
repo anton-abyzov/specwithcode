@@ -7,7 +7,14 @@
  */
 import type { DesignSystem, DesignToken } from "@specweave-studio/contracts";
 
-import { groundOf, isCssColor, modeValue, parseColor, shownValue, type Rgba } from "./tokenValues";
+import {
+  groundOf,
+  isCssColor,
+  measureColor,
+  modeValue,
+  shownValue,
+  type Rgba,
+} from "./tokenValues";
 
 /** Body text needs 4.5:1; large text and controls 3:1. */
 export const TEXT_RATIO = 4.5;
@@ -36,15 +43,15 @@ function over(top: Rgba, bottom: Rgba): Rgba {
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 1 };
 
 /**
- * The ratio of a text color on a background, 1 to 21; null when either is not
- * hex or rgb(). A see-through background is laid over `backdrop` (white when
+ * The ratio of a text color on a background, 1 to 21; null when either cannot
+ * be read as a color. A see-through background is laid over `backdrop` (white when
  * it is not given or not opaque).
  */
 export function contrastRatio(text: string, background: string, backdrop?: string): number | null {
-  const fg = parseColor(text);
-  const bg = parseColor(background);
+  const fg = measureColor(text);
+  const bg = measureColor(background);
   if (fg === null || bg === null) return null;
-  const under = backdrop === undefined ? null : parseColor(backdrop);
+  const under = backdrop === undefined ? null : measureColor(backdrop);
   const ground = bg.a >= 1 ? bg : over(bg, under !== null && under.a >= 1 ? under : WHITE);
   const lighter = relativeLuminance(over(fg, ground));
   const darker = relativeLuminance(ground);
@@ -133,7 +140,7 @@ export function tokenContrast(
   if (text === null) return null;
   // Only an opaque ground counts: a see-through one has no known color under it.
   const groundColor = groundOf(system, mode.id);
-  const groundRgba = groundColor === null ? null : parseColor(groundColor);
+  const groundRgba = groundColor === null ? null : measureColor(groundColor);
   const ground = groundRgba !== null && groundRgba.a >= 1 ? groundColor : null;
   if (role.on !== "ground") {
     const fill = fillFor(token, role.on, system.tokens);
@@ -143,7 +150,7 @@ export function tokenContrast(
       const background = paintIn(fill, system, mode.id);
       if (background === null) return null;
       // A see-through fill needs an opaque ground under it; without one there is no check.
-      if ((parseColor(background)?.a ?? 1) < 1 && ground === null) return null;
+      if ((measureColor(background)?.a ?? 1) < 1 && ground === null) return null;
       const ratio = contrastRatio(text, background, ground ?? undefined);
       return ratio === null ? null : { ratio, against: fill.name };
     }

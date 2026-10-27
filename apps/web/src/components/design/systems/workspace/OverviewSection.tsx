@@ -21,6 +21,7 @@ import { Textarea } from "../../../ui/textarea";
 import { sourcesLabel } from "../reviewModel";
 import { OverviewCover } from "./OverviewCover";
 import { OverviewReadme } from "./OverviewReadme";
+import { focusSectionTitle } from "./StarterOffer";
 import { starterKit } from "./starterSets";
 import { newModeId, type SystemEditIntent } from "./systemEditIntents";
 import { sectionHeadingId } from "./systemSections";
@@ -73,13 +74,17 @@ export function OverviewSection(props: OverviewSectionProps) {
             owner={props.owner}
             systemId={system.id}
             canEdit={props.canEdit}
-            onStart={(options) =>
-              void props.onEdit({
+            onStart={async (options) => {
+              const origin = document.activeElement;
+              const added = await props.onEdit({
                 kind: "add-many",
                 label: "the basics",
                 tokens: starterKit(system.modes, options),
-              })
-            }
+              });
+              // The welcome sheet leaves with the empty system; Colors comes first.
+              if (added) focusSectionTitle("colors", origin);
+              return added;
+            }}
             {...(props.onChanged === undefined ? {} : { onChanged: props.onChanged })}
           />
         ) : null}

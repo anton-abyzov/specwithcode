@@ -22,6 +22,7 @@ import * as Result from "effect/Result";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
+import { SKILL_MENTION_PATTERN } from "@specweave-studio/shared/composerInlineTokens";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
@@ -230,7 +231,23 @@ const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
   skills: [],
 });
 
-/** Splits the latest ACP command advertisement into Studio's `/` and `$` menus. */
+/**
+ * GitHub Copilot CLI advertises its Agent Skills as plain ACP commands, which it
+ * runs as `/name`, and marks them apart from its own commands only with this
+ * input hint (Copilot CLI 1.0.98: 53 skills carried it, none of its 32 commands).
+ */
+const SLASH_SKILL_INPUT_HINT = "instructions for the skill";
+const SLASH_SKILL_PATH_PREFIX = "acp://command/";
+
+function isSlashSkillCommand(command: EffectAcpSchema.AvailableCommand): boolean {
+  return command.input?.hint?.trim().toLowerCase() === SLASH_SKILL_INPUT_HINT;
+}
+
+/**
+ * Splits the latest ACP command advertisement into Studio's `/` and `$` menus.
+ * A `$name` command is a skill the agent reads as `$name`; a Copilot skill
+ * command is a skill the agent runs as `/name` (see rewriteAcpSlashSkillMentions).
+ */
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): AcpRegistryAvailableCommands {
@@ -256,6 +273,14 @@ export function normalizeAcpRegistryCommands(
         scope: "agent",
         enabled: true,
       });
+    } else if (isSlashSkillCommand(command)) {
+      skills.push({
+        name,
+        ...(description ? { description } : {}),
+        path: `${SLASH_SKILL_PATH_PREFIX}${encodeURIComponent(name)}`,
+        scope: "agent",
+        enabled: true,
+      });
     } else {
       slashCommands.push({
         name,
@@ -267,6 +292,56 @@ export function normalizeAcpRegistryCommands(
     if (accepted === MAX_COMMANDS) break;
   }
   return { slashCommands, skills };
+}
+
+/** Fenced blocks (closed or running to the end) and inline code spans. */
+const CODE_SEGMENT = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+
+/**
+ * Composers insert `$name` for a skill. An agent that runs its skills as
+ * `/name` (Copilot) gets `/name` for each skill it advertised that way, at the
+ * start of the message or inside it, as its docs allow. Every other `$` token
+ * is left alone, as is anything inside code (a fenced example, `echo $HOME`).
+ */
+export function rewriteAcpSlashSkillMentions(
+  prompt: string,
+  commands: AcpRegistryAvailableCommands | undefined,
+): string {
+  const names = new Set(
+    (commands?.skills ?? [])
+      .filter((skill) => skill.path.startsWith(SLASH_SKILL_PATH_PREFIX))
+      .map((skill) => skill.name),
+  );
+  if (names.size === 0) return prompt;
+  const rewrite = (text: string) =>
+    text.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
+      names.has(name) ? `${prefix}/${name}` : match,
+    );
+  let out = "";
+  let last = 0;
+  for (const code of prompt.matchAll(CODE_SEGMENT)) {
+    out += rewrite(prompt.slice(last, code.index)) + code[0];
+    last = code.index + code[0].length;
+  }
+  return out + rewrite(prompt.slice(last));
+}
+
+/**
+ * The user's text for an ACP turn, rewritten against the commands its own
+ * session advertised, or the instance's latest advertisement when that session
+ * has not advertised yet (a new session's first turn).
+ */
+export function rewriteAcpUserText(
+  text: string,
+  sessionCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand> | undefined,
+  instanceCommands: AcpRegistryAvailableCommands | undefined,
+): string {
+  return rewriteAcpSlashSkillMentions(
+    text,
+    sessionCommands === undefined
+      ? instanceCommands
+      : normalizeAcpRegistryCommands(sessionCommands),
+  );
 }
 
 /** Builds the bounded wire result from a successfully created disposable ACP session. */

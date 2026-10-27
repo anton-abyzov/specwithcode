@@ -29,6 +29,62 @@ export function formatProviderSkillDisplayName(
   return titleCaseWords(skill.name);
 }
 
+/**
+ * The text that runs a skill in any thread: the `$name` mention a composer pick
+ * inserts and every provider adapter dispatches. It uses the provider's own id
+ * (`sw:do`, `review`), never the display name, which may hold spaces.
+ */
+export function providerSkillInvocation(skill: Pick<ServerProviderSkill, "name">): string {
+  return `$${skill.name}`;
+}
+
+/**
+ * The provider's display name when it says more than the id (Codex
+ * `interface.display_name`), else null: a title-cased id adds nothing beside
+ * the invocation.
+ */
+export function providerSkillDistinctDisplayName(
+  skill: Pick<ServerProviderSkill, "name" | "displayName">,
+): string | null {
+  const displayName = skill.displayName?.trim();
+  if (!displayName) return null;
+  const folded = displayName.toLowerCase();
+  return folded === skill.name.trim().toLowerCase() ||
+    folded === titleCaseWords(skill.name).toLowerCase()
+    ? null
+    : displayName;
+}
+
+const LEADING_SLASH_TOKEN = /^(\s*)\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/;
+
+/**
+ * A message that opens with `/name`, where name is exactly (case included) one of the
+ * provider's runnable skills, goes out as the `$name` mention a pick inserts,
+ * so `/sw:do 0042` runs the skill on providers whose turns do not expand slash
+ * text (the Codex app server, ACP agents). A provider or app command of that
+ * name keeps the text as typed, as does any name that is not a known skill.
+ */
+export function leadingSlashAsSkillMention(
+  text: string,
+  skills: ReadonlyArray<ServerProviderSkill>,
+  reservedCommands: ReadonlyArray<string>,
+): string {
+  const match = LEADING_SLASH_TOKEN.exec(text);
+  if (!match) return text;
+  const typed = match[2]!;
+  // Reserved names match in any case, so `/Continue` never becomes a mention;
+  // a skill id must match exactly.
+  const reserved = reservedCommands.some(
+    (command) => command.replace(/^\/+/, "").trim().toLowerCase() === typed.toLowerCase(),
+  );
+  if (reserved) return text;
+  const skill = skills.find(
+    (candidate) => isProviderSkillUserInvocable(candidate) && candidate.name.trim() === typed,
+  );
+  if (!skill) return text;
+  return `${match[1]}${providerSkillInvocation(skill)}${text.slice(match[0].length)}`;
+}
+
 export function dedupeProviderSkillsByName(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSkill[] {

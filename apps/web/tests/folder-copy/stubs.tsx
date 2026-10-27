@@ -91,6 +91,7 @@ export const fixture = {
     targetFolder: string;
   }>,
   transferReady: false,
+  scanCurrent: true,
   failCopy: false,
   pauseNext(name: string) {
     let release!: () => void;
@@ -203,11 +204,20 @@ export const useAtomCommand =
         mode,
         copyRoot,
         projectRelativePath,
-        status: { state: "scanned", summary, error: null },
+        status: { state: "scanned", summary, error: null, scanCompletedAt: 1793061000000 },
       };
     } else if (name === "copySourceStatus") {
       // A reopened copy reads the measured summary back from the source.
-      value = { state: "scanned", summary, error: null, progress: null };
+      value = {
+        state: "scanned",
+        summary,
+        error: null,
+        progress: null,
+        scanCompletedAt: 1793061000000,
+        ...(input.refresh
+          ? { freshness: { checkedAt: 1793062000000, current: fixture.scanCurrent, summary } }
+          : {}),
+      };
     } else if (name === "copyStart") {
       targetFolder = input.targetFolder;
       fixture.copyRequests.push({

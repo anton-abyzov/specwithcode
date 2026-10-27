@@ -11,6 +11,9 @@ import {
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
+  leadingSlashAsSkillMention,
+  providerSkillDistinctDisplayName,
+  providerSkillInvocation,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
@@ -54,6 +57,62 @@ describe("formatProviderSkillDisplayName", () => {
         name: "review-follow-up",
       }),
     ).toBe("Review Follow Up");
+  });
+});
+
+describe("providerSkillInvocation", () => {
+  it("is the dollar mention of the provider's own id, never the display name", () => {
+    expect(providerSkillInvocation({ name: "sw:do", displayName: "SpecWeave Do" } as never)).toBe(
+      "$sw:do",
+    );
+  });
+});
+
+describe("providerSkillDistinctDisplayName", () => {
+  it("keeps a display name that says more than the id", () => {
+    expect(
+      providerSkillDistinctDisplayName({ name: "sw:auto", displayName: "SpecWeave Auto" }),
+    ).toBe("SpecWeave Auto");
+  });
+
+  it("drops a missing name, the id itself and a title-cased id", () => {
+    expect(providerSkillDistinctDisplayName({ name: "sw:do" })).toBeNull();
+    expect(providerSkillDistinctDisplayName({ name: "review", displayName: "review" })).toBeNull();
+    expect(providerSkillDistinctDisplayName({ name: "sw:do", displayName: "Sw Do" })).toBeNull();
+  });
+});
+
+describe("leadingSlashAsSkillMention", () => {
+  const skills = [
+    { name: "sw:do", path: "/p/do/SKILL.md", enabled: true },
+    { name: "sw-grill-me", path: "/p/sw-grill-me/SKILL.md", enabled: true },
+    { name: "off", path: "/p/off/SKILL.md", enabled: false },
+    { name: "agent-only", path: "/p/a/SKILL.md", enabled: true, userInvocable: false },
+  ];
+
+  it("sends a typed leading /skill as its mention, arguments and all", () => {
+    expect(leadingSlashAsSkillMention("/sw:do 0042 --lanes", skills, [])).toBe(
+      "$sw:do 0042 --lanes",
+    );
+    expect(leadingSlashAsSkillMention("/sw-grill-me", skills, [])).toBe("$sw-grill-me");
+    expect(leadingSlashAsSkillMention("  /sw:do\nthen this", skills, [])).toBe(
+      "  $sw:do\nthen this",
+    );
+  });
+
+  it("leaves commands, unknown names and text elsewhere as typed", () => {
+    expect(leadingSlashAsSkillMention("/sw:do now", skills, ["/sw:do"])).toBe("/sw:do now");
+    expect(leadingSlashAsSkillMention("/sw-do 0042", skills, [])).toBe("/sw-do 0042");
+    expect(leadingSlashAsSkillMention("/off", skills, [])).toBe("/off");
+    expect(leadingSlashAsSkillMention("/agent-only", skills, [])).toBe("/agent-only");
+    expect(leadingSlashAsSkillMention("please /sw:do", skills, [])).toBe("please /sw:do");
+    expect(leadingSlashAsSkillMention("/sw:do.", skills, [])).toBe("/sw:do.");
+  });
+
+  it("matches a skill id exactly but a reserved command in any case", () => {
+    expect(leadingSlashAsSkillMention("/SW:DO now", skills, [])).toBe("/SW:DO now");
+    expect(leadingSlashAsSkillMention("/Sw-Grill-Me", skills, [])).toBe("/Sw-Grill-Me");
+    expect(leadingSlashAsSkillMention("/SW:DO", skills, ["sw:do"])).toBe("/SW:DO");
   });
 });
 

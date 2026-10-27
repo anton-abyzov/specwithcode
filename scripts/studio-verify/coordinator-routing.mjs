@@ -322,9 +322,9 @@ try {
     commandId: "proof-failure",
     prompt: "Isolated review fixture; provider disabled, no inference.",
   });
-  await page.getByRole("button", { name: /Needs review/i }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: /Run failed/i }).waitFor({ timeout: 30000 });
   await page.locator("#project-prompt").fill("Preserve this coordinator draft");
-  await page.getByRole("button", { name: /Needs review/i }).click();
+  await page.getByRole("button", { name: /Run failed/i }).click();
   assert.equal(page.url(), projectUrl, "A failed coordinator must stay in its conversation");
   assert.equal(
     await page.getByRole("button", { name: /Back to coordinator|Review coordinator/i }).count(),

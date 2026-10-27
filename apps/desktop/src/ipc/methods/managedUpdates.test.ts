@@ -114,6 +114,8 @@ function fixture() {
       attached: Effect.sync(() => Option.fromNullishOr(attached)),
       bearerToken: Effect.sync(getBearer),
       discover: () => Effect.die("unexpected discovery"),
+      installedServices: Effect.die("unexpected installed services"),
+      usesDefaultHome: true,
       attach: () => Effect.die("unexpected attach"),
       markSpawned: Effect.die("unexpected spawn"),
       ownsBundledService: Effect.succeed(false),

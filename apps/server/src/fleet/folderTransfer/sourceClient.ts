@@ -219,6 +219,23 @@ export class SourceClient {
     return hello;
   }
 
+  async validateScan(): Promise<void> {
+    const response = await this.request("POST", "validate", {}, 10 * 60_000);
+    if (response.status === 404)
+      throw new SourceClientError(
+        "outdated_source",
+        404,
+        "Update the source before validating this copy scan.",
+      );
+    const result = await this.json<{ current: boolean }>(response);
+    if (result.current !== true)
+      throw new SourceClientError(
+        "refused",
+        409,
+        "The source changed or this saved scan has no freshness evidence. Refresh the scan and review a new comparison before copying.",
+      );
+  }
+
   async requestManifest(selection: ReadonlyArray<string>) {
     return this.json<{ state: string }>(await this.request("POST", "manifest", { selection }));
   }

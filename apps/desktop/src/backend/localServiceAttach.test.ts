@@ -8,11 +8,13 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   buildPairArgs,
+  embeddedBackendRefusal,
   isProcessAlive,
   parsePairToken,
   parseServerRuntimeState,
   parseStudioInstallation,
   parseWindowsCommandLine,
+  reservedServicePorts,
   resolveServiceCliCommand,
 } from "./localServiceAttach.ts";
 
@@ -101,6 +103,92 @@ describe("parseStudioInstallation", () => {
     ).toBeNull();
     expect(parseStudioInstallation("{}", expected)).toBeNull();
     expect(parseStudioInstallation("not json", expected)).toBeNull();
+  });
+});
+
+describe("parseStudioInstallation port", () => {
+  const join = (...parts: string[]) => parts.join("/");
+  const expected = { studioRoot: "/Users/a/.specwithcode", directoryName: "m4", join };
+  const receipt = (port: unknown) =>
+    JSON.stringify({
+      schemaVersion: 1,
+      studioHome: "/Users/a/.specwithcode/m4",
+      stateDir: "/Users/a/.specwithcode/m4/userdata",
+      port,
+      service: { installed: true },
+    });
+
+  it("records the port the service listens on", () => {
+    expect(parseStudioInstallation(receipt(8319), expected)?.port).toBe(8319);
+  });
+
+  it("ignores a port that is not a TCP port", () => {
+    for (const port of ["8319", 0, -1, 70_000, 8319.5, null]) {
+      expect(parseStudioInstallation(receipt(port), expected)?.port).toBeUndefined();
+    }
+  });
+});
+
+describe("embeddedBackendRefusal", () => {
+  const m4 = { stateDir: "/Users/a/.specwithcode/m4/userdata", port: 8319 };
+  const own = "/Users/a/.specwithcode/userdata";
+
+  it("lets the app start its own server when no service is installed", () => {
+    expect(
+      embeddedBackendRefusal({ services: [], stateDir: own, port: 8319, defaultHome: true }),
+    ).toBeNull();
+  });
+
+  // 2026-10-27 on M4: the app's server took 8319 while the service restarted.
+  it("never takes an installed service's port", () => {
+    expect(
+      embeddedBackendRefusal({
+        services: [m4],
+        stateDir: "/tmp/dev/userdata",
+        port: 8319,
+        defaultHome: false,
+      }),
+    ).toContain("port 8319 belongs to the installed SpecWithCode service");
+  });
+
+  it("never runs a second writer on the service's own home", () => {
+    expect(
+      embeddedBackendRefusal({
+        services: [m4],
+        stateDir: m4.stateDir,
+        port: 8320,
+        defaultHome: false,
+      }),
+    ).toContain("a second server would write the same store");
+  });
+
+  it("never opens the empty default home beside an installed service", () => {
+    expect(
+      embeddedBackendRefusal({ services: [m4], stateDir: own, port: 8320, defaultHome: true }),
+    ).toContain("keeps your projects in /Users/a/.specwithcode/m4/userdata");
+  });
+
+  it("allows a deliberate separate home on another port", () => {
+    expect(
+      embeddedBackendRefusal({
+        services: [m4],
+        stateDir: "/tmp/dev/userdata",
+        port: 8320,
+        defaultHome: false,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("reservedServicePorts", () => {
+  it("collects the recorded ports", () => {
+    expect([
+      ...reservedServicePorts([
+        { stateDir: "/a", port: 8319 },
+        { stateDir: "/b" },
+        { stateDir: "/c", port: 8330 },
+      ]),
+    ]).toEqual([8319, 8330]);
   });
 });
 

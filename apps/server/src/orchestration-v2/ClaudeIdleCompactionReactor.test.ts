@@ -19,7 +19,6 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 const completedAt = Date.parse("2026-10-15T10:00:00.000Z");
 const idleThread = {
   archivedAt: null,
-  creationSource: "mcp" as const,
   status: "completed" as const,
   activeRunId: null,
   pendingRuntimeRequest: null,
@@ -30,6 +29,16 @@ const idleThread = {
   lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: ThreadId.make("t") },
 };
 const minutes = (value: number) => completedAt + value * 60_000;
+const IDLE_COMPACTION_ON = {
+  ...DEFAULT_SERVER_SETTINGS,
+  providers: {
+    ...DEFAULT_SERVER_SETTINGS.providers,
+    claudeAgent: {
+      ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+      compactBeforeCacheExpires: true,
+    },
+  },
+};
 
 describe("isIdleCompactionCandidate", () => {
   it("fires only in the window before the hour-long cache lapses", () => {
@@ -50,14 +59,31 @@ describe("isIdleCompactionCandidate", () => {
     }
   });
 
-  it("compacts delegated workers but not the provider's own subagents", () => {
-    const at = minutes(55);
+  it("leaves subagents, delegated workers included, to the resume prompt", () => {
     const worker = {
       ...idleThread,
       lineage: { ...idleThread.lineage, relationshipToParent: "subagent" as const },
     };
-    expect(isIdleCompactionCandidate(worker, at)).toBe(true);
-    expect(isIdleCompactionCandidate({ ...worker, creationSource: "provider" }, at)).toBe(false);
+    expect(isIdleCompactionCandidate(worker, minutes(55))).toBe(false);
+  });
+
+  it("waits for background work and snoozes", () => {
+    const at = minutes(55);
+    expect(
+      isIdleCompactionCandidate({ ...idleThread, pendingBackgroundTasks: [{} as never] }, at),
+    ).toBe(false);
+    expect(
+      isIdleCompactionCandidate(
+        { ...idleThread, snoozedUntil: DateTime.makeUnsafe(minutes(90)) },
+        at,
+      ),
+    ).toBe(false);
+    expect(
+      isIdleCompactionCandidate(
+        { ...idleThread, snoozedUntil: DateTime.makeUnsafe(minutes(10)) },
+        at,
+      ),
+    ).toBe(true);
   });
 
   it("leaves busy, archived, settled and subagent threads alone", () => {
@@ -87,7 +113,6 @@ describe("isIdleCompactionCandidate", () => {
         {
           ...idleThread,
           lineage: { ...idleThread.lineage, relationshipToParent: "subagent" },
-          creationSource: "provider",
         },
         at,
       ),
@@ -109,14 +134,30 @@ describe("idleCompactionUsedTokens", () => {
         [turn(1, 50_000), turn(3, 111_000), turn(2, 90_000), turn(4, 400_000, "other")],
         "provider-thread-1",
         "fix the tests",
+        minutes(55),
       ),
     ).toBe(111_000);
   });
 
   it("skips a thread whose last turn was already a compaction", () => {
-    expect(idleCompactionUsedTokens([turn(1, 300_000)], "provider-thread-1", " /Compact ")).toBe(
-      null,
-    );
+    expect(
+      idleCompactionUsedTokens([turn(1, 300_000)], "provider-thread-1", " /Compact ", minutes(55)),
+    ).toBe(null);
+  });
+
+  it("times the cache from the last request, not the end of the run", () => {
+    const used = (at: number) =>
+      idleCompactionUsedTokens([turn(1, 300_000)], "provider-thread-1", "fix the tests", at);
+    expect(used(minutes(57))).toBe(300_000);
+    expect(used(minutes(58) + 1)).toBe(null);
+    expect(
+      idleCompactionUsedTokens(
+        [{ ...turn(1, 300_000), tokenUsage: { usedTokens: 300_000, updatedAt: "bad" } }],
+        "provider-thread-1",
+        "fix the tests",
+        minutes(55),
+      ),
+    ).toBe(null);
   });
 });
 
@@ -149,33 +190,32 @@ function clearHostCacheVariables() {
 describe("idle compaction policy", () => {
   clearHostCacheVariables();
 
-  it("never goes below Claude Code's 100K floor", () => {
-    expect(idleCompactMinTokens(undefined)).toBe(100_000);
+  it("defaults to 200K and never goes below Claude Code's 100K floor", () => {
+    expect(idleCompactMinTokens(undefined)).toBe(200_000);
     expect(idleCompactMinTokens("50000")).toBe(100_000);
-    expect(idleCompactMinTokens("250000")).toBe(250_000);
-    expect(idleCompactMinTokens("nope")).toBe(100_000);
+    expect(idleCompactMinTokens("150000")).toBe(150_000);
+    expect(idleCompactMinTokens("nope")).toBe(200_000);
   });
 
-  it("is on by default for Claude and can be turned off", () => {
+  it("is off by default and can be turned on for Claude", () => {
     expect(
       claudeIdleCompactionPolicy(DEFAULT_SERVER_SETTINGS, ProviderInstanceId.make("claudeAgent")),
-    ).toEqual({
-      minTokens: idleCompactMinTokens(process.env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS),
-    });
-    expect(
-      claudeIdleCompactionPolicy(DEFAULT_SERVER_SETTINGS, ProviderInstanceId.make("codex")),
     ).toBeNull();
+    expect(
+      claudeIdleCompactionPolicy(IDLE_COMPACTION_ON, ProviderInstanceId.make("claudeAgent")),
+    ).toEqual({ minTokens: 200_000 });
+    expect(
+      claudeIdleCompactionPolicy(IDLE_COMPACTION_ON, ProviderInstanceId.make("codex")),
+    ).toBeNull();
+    // The settings panel saved the old key's default (true) into instance
+    // configs; it no longer turns anything on.
     expect(
       claudeIdleCompactionPolicy(
         {
           ...DEFAULT_SERVER_SETTINGS,
-          providers: {
-            ...DEFAULT_SERVER_SETTINGS.providers,
-            claudeAgent: {
-              ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
-              idleCompaction: false,
-            },
-          },
+          providerInstances: {
+            claudeAgent: { driver: "claudeAgent", config: { idleCompaction: true } },
+          } as never,
         },
         ProviderInstanceId.make("claudeAgent"),
       ),
@@ -193,7 +233,7 @@ describe("idle compaction policy", () => {
               environment: [
                 { name: "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS", value: "200000", sensitive: false },
               ],
-              config: {},
+              config: { compactBeforeCacheExpires: true },
             },
           } as never,
         },
@@ -211,7 +251,7 @@ describe("idle compaction policy", () => {
             claude_api: {
               driver: "claudeAgent",
               environment: [{ name, value, sensitive: false }],
-              config: {},
+              config: { compactBeforeCacheExpires: true },
             },
           } as never,
         },
@@ -278,7 +318,7 @@ describe("idle compaction sweep", () => {
               Layer.mergeAll(
                 Layer.succeed(ThreadManagementService.ThreadManagementService, threads),
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, {
-                  getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+                  getSettings: Effect.succeed(IDLE_COMPACTION_ON),
                 } as never),
               ),
             ),

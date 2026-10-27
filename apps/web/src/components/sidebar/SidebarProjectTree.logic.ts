@@ -55,7 +55,7 @@ export function classifyProjectTreeSession(thread: EnvironmentThreadShell): {
     case "limited":
       return { status: "attention", label: "Usage limit reached" };
     case "failed":
-      return { status: "failed", label: "Run needs review" };
+      return { status: "failed", label: "Run failed" };
     case "working":
       return { status: "working", label: "Working" };
     case "waiting":

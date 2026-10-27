@@ -321,6 +321,7 @@ export const make = Effect.gen(function* () {
       threadProjectMove: true,
       designMove: true,
       designDeckImport: true,
+      designDeckPreview: true,
       designCommentReplies: true,
       designSvgExport: true,
       studioFleetRemove: true,

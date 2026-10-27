@@ -6,11 +6,13 @@
 import type { DesignSystem } from "@specweave-studio/contracts";
 import type { ReactNode } from "react";
 
+import { cn } from "~/lib/utils";
+
 import { relativeLuminance } from "./contrast";
 import {
   baseValue,
   hexOf,
-  parseColor,
+  measureColor,
   parseTypeStyle,
   resolveFamily,
   safeFamily,
@@ -37,7 +39,7 @@ export function coverColors(system: Pick<DesignSystem, "tokens" | "modes">): str
   system.tokens.forEach((token, index) => {
     if (token.type !== "color") return;
     const value = baseValue(token, system.modes);
-    const color = value === null ? null : parseColor(shownValue(value));
+    const color = value === null ? null : measureColor(shownValue(value));
     if (color === null || color.a < 0.99 || relativeLuminance(color) > 0.86) return;
     const hex = hexOf(color);
     if (seen.has(hex)) return;
@@ -103,13 +105,17 @@ export function OverviewCover({
   const family = displayFamily(system);
   return (
     <div
-      className="grid min-h-56 border-border/50 border-b md:grid-cols-[minmax(0,1fr)_minmax(15rem,42%)]"
+      className={cn(
+        "grid min-h-56 border-border/50 border-b",
+        columns.length > 0 && "lg:grid-cols-[minmax(0,1fr)_minmax(15rem,42%)]",
+      )}
       data-testid="overview-cover"
     >
-      <div className="flex min-w-0 flex-col justify-center gap-4 px-5 py-10 sm:px-10 sm:py-14">
+      {/* The name follows its own column's width, not the window's, so words stay whole. */}
+      <div className="@container flex min-w-0 flex-col justify-center gap-4 px-5 py-10 sm:px-10 sm:py-14">
         <h2
           id={headingId}
-          className="break-words font-bold text-[clamp(2.5rem,6.5vw,5.5rem)] text-foreground leading-[0.98] tracking-[-0.035em] [text-wrap:balance]"
+          className="break-words font-bold text-[clamp(2rem,10cqi,5.5rem)] text-foreground leading-[0.98] tracking-[-0.035em] [text-wrap:balance]"
           style={family === null ? undefined : { fontFamily: family }}
           data-testid="overview-cover-name"
         >
@@ -121,7 +127,7 @@ export function OverviewCover({
         <div
           aria-hidden
           data-testid="overview-mosaic"
-          className="grid min-h-44 gap-3 max-md:h-44 sm:gap-4"
+          className="grid min-h-44 gap-3 max-lg:h-44 sm:gap-4"
           style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
         >
           {columns.map((tiles, column) => (

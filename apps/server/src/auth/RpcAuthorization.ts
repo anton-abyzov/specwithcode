@@ -79,6 +79,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Search results quote Library files, so reading knowledge is a file read.
   [WS_METHODS.projectsKnowledgeRead]: AuthFilesystemReadScope,
   [WS_METHODS.designExport]: AuthFilesystemReadScope,
+  [WS_METHODS.designPreviewDeck]: AuthFilesystemReadScope,
   [WS_METHODS.designWatch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsKnowledgeSearch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsKnowledgeReindex]: AuthOrchestrationOperateScope,

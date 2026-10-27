@@ -79,6 +79,15 @@ const writeJson = (path: string, value: unknown) => {
   NodeFS.writeFileSync(path, JSON.stringify(value));
 };
 
+const expectNotStarted = (
+  discovery: DesktopLocalService.LocalServiceDiscovery,
+  reason: DesktopLocalService.ServiceNotStartedReason,
+) => {
+  assert.equal(discovery._tag, "service-not-started");
+  if (discovery._tag !== "service-not-started") return;
+  assert.equal(discovery.reason, reason);
+};
+
 /** A home with the fleet installer's `m4` service, which owns its own Studio home. */
 const makeHomeWithInstalledService = (origin: string) => {
   const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-local-service-"));
@@ -110,11 +119,13 @@ const layerFor = (
   },
   readFreeDiskBytes?: DesktopLocalService.FreeDiskBytesReader,
   platform: NodeJS.Platform = "darwin",
-  // By default launchd no longer runs the service, so it gets only the usual grace.
+  // By default launchd does not have the service loaded.
   readLaunchdJob: DesktopLocalService.LaunchdJobStateReader = () => Effect.succeed("absent"),
+  kickstart: DesktopLocalService.LaunchdKickstarter = () => Effect.succeed(true),
 ) =>
   DesktopLocalService.layer.pipe(
     Layer.provide(Layer.succeed(DesktopLocalService.LaunchdJob, readLaunchdJob)),
+    Layer.provide(Layer.succeed(DesktopLocalService.LaunchdKickstart, kickstart)),
     Layer.provide(
       readFreeDiskBytes === undefined
         ? Layer.empty
@@ -723,7 +734,7 @@ describe("DesktopLocalService.discover", () => {
     }),
   );
 
-  it.effect("starts its own server once an install outlasts the agent's window", () =>
+  it.effect("reports the service, not its own server, once an install outlasts the window", () =>
     withDescriptorServer((origin) => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       return Effect.gen(function* () {
@@ -732,12 +743,14 @@ describe("DesktopLocalService.discover", () => {
         const discovering = yield* Effect.forkChild(service.discover());
         yield* TestClock.adjust("14 minutes");
         assert.isUndefined(discovering.pollUnsafe());
-        // 15 minutes of waiting, then the usual six-second grace.
+        // 15 minutes of waiting for the install, two more for a job launchd does
+        // not have loaded, then the usual six-second grace.
         yield* TestClock.adjust("1 minute");
+        yield* TestClock.adjust("2 minutes");
         yield* advanceSeconds(5);
         assert.isUndefined(discovering.pollUnsafe());
         yield* TestClock.adjust("1 second");
-        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        expectNotStarted(yield* Fiber.join(discovering), "not-loaded");
       }).pipe(
         Effect.provide(layerFor(home)),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
@@ -745,7 +758,7 @@ describe("DesktopLocalService.discover", () => {
     }),
   );
 
-  it.effect("falls back when the marker ages out partway through the wait", () =>
+  it.effect("reports the service when the marker ages out partway through the wait", () =>
     withDescriptorServer((origin) => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       return Effect.gen(function* () {
@@ -753,10 +766,12 @@ describe("DesktopLocalService.discover", () => {
         yield* stopForInstall(studioHome, 14 * 60_000 + 50_000);
         const service = yield* DesktopLocalService.DesktopLocalService;
         const discovering = yield* Effect.forkChild(service.discover());
-        yield* advanceSeconds(15);
+        yield* advanceSeconds(10);
+        yield* TestClock.adjust("2 minutes");
+        yield* advanceSeconds(5);
         assert.isUndefined(discovering.pollUnsafe());
         yield* TestClock.adjust("1 second");
-        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        expectNotStarted(yield* Fiber.join(discovering), "not-loaded");
       }).pipe(
         Effect.provide(layerFor(home)),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
@@ -798,10 +813,11 @@ describe("DesktopLocalService.discover", () => {
         const service = yield* DesktopLocalService.DesktopLocalService;
         const discovering = yield* Effect.forkChild(service.discover());
         yield* TestClock.adjust("1 minute");
+        yield* TestClock.adjust("2 minutes");
         yield* advanceSeconds(5);
         assert.isUndefined(discovering.pollUnsafe());
         yield* TestClock.adjust("1 second");
-        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        expectNotStarted(yield* Fiber.join(discovering), "not-loaded");
       }).pipe(
         Effect.provide(layerFor(home)),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
@@ -819,8 +835,9 @@ describe("DesktopLocalService.discover", () => {
         const discovering = yield* Effect.forkChild(
           service.discover({ onInstallWait: Effect.sync(() => (notices += 1)) }),
         );
+        yield* TestClock.adjust("2 minutes");
         yield* advanceSeconds(6);
-        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        expectNotStarted(yield* Fiber.join(discovering), "not-loaded");
         assert.equal(notices, 0);
       }).pipe(
         Effect.provide(layerFor(home)),
@@ -829,17 +846,24 @@ describe("DesktopLocalService.discover", () => {
     }),
   );
 
-  it.effect("gives a stopped service only the usual grace when no update is installing", () =>
+  // 2026-10-27 on M4: the service was between launchd restarts, the app gave up
+  // after six seconds, started its own server on the empty default home and took
+  // the service's port, so every restart failed with EADDRINUSE.
+  it.effect("never opens its own home while an installed service is down", () =>
     withDescriptorServer((origin) => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       NodeFS.rmSync(NodePath.join(studioHome, "userdata", "server-runtime.json"));
       return Effect.gen(function* () {
         const service = yield* DesktopLocalService.DesktopLocalService;
-        const discovering = yield* Effect.forkChild(service.discover());
-        yield* advanceSeconds(5);
+        let notices = 0;
+        const discovering = yield* Effect.forkChild(
+          service.discover({ onServiceStartWait: Effect.sync(() => (notices += 1)) }),
+        );
+        yield* advanceSeconds(6);
         assert.isUndefined(discovering.pollUnsafe());
-        yield* TestClock.adjust("1 second");
-        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        assert.equal(notices, 1);
+        yield* TestClock.adjust("2 minutes");
+        expectNotStarted(yield* Fiber.join(discovering), "not-loaded");
       }).pipe(
         Effect.provide(layerFor(home)),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
@@ -901,7 +925,7 @@ describe("DesktopLocalService.discover", () => {
         assert.isUndefined(discovering.pollUnsafe());
         yield* TestClock.adjust("1 second");
         const discovery = yield* Fiber.join(discovering);
-        assert.equal(discovery._tag, "service-not-started");
+        expectNotStarted(discovery, "timed-out");
         if (discovery._tag !== "service-not-started") return;
         assert.equal(discovery.stateDir, NodePath.join(studioHome, "userdata"));
       }).pipe(
@@ -914,10 +938,13 @@ describe("DesktopLocalService.discover", () => {
   );
 
   // A stopped service with the job state launchd reports, on a given platform,
-  // falls back to the app's own home after the usual six seconds.
-  const fallsBackAfterGrace = (
+  // is reported after `waitedSeconds` (the usual six-second grace included).
+  const reportsAfter = (
     platform: NodeJS.Platform,
     readLaunchdJob: DesktopLocalService.LaunchdJobStateReader,
+    waitedSeconds: number,
+    reason: DesktopLocalService.ServiceNotStartedReason,
+    kickstart?: DesktopLocalService.LaunchdKickstarter,
   ) =>
     withDescriptorServer((origin) => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
@@ -925,29 +952,191 @@ describe("DesktopLocalService.discover", () => {
       return Effect.gen(function* () {
         const service = yield* DesktopLocalService.DesktopLocalService;
         const discovering = yield* Effect.forkChild(service.discover());
-        yield* advanceSeconds(5);
+        yield* TestClock.adjust(`${waitedSeconds - 1} seconds`);
         assert.isUndefined(discovering.pollUnsafe());
         yield* TestClock.adjust("1 second");
-        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        expectNotStarted(yield* Fiber.join(discovering), reason);
       }).pipe(
-        Effect.provide(layerFor(home, {}, undefined, undefined, platform, readLaunchdJob)),
+        Effect.provide(
+          layerFor(home, {}, undefined, undefined, platform, readLaunchdJob, kickstart),
+        ),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
       );
     });
 
-  it.effect("keeps the usual grace when launchd cannot say whether the service runs", () =>
-    fallsBackAfterGrace("darwin", () => Effect.succeed("unknown")),
+  const START_WAIT_SECONDS = DesktopLocalService.SERVICE_START_WAIT_LIMIT_MINUTES * 60 + 6;
+  const DOWN_WAIT_SECONDS = DesktopLocalService.SERVICE_DOWN_LIMIT_MS / 1000 + 6;
+
+  it.effect("waits the full start limit when launchd cannot say whether the service runs", () =>
+    reportsAfter("darwin", () => Effect.succeed("unknown"), START_WAIT_SECONDS, "timed-out"),
   );
 
-  it.effect("keeps the usual grace for a crash-looping job launchd has not restarted", () =>
-    fallsBackAfterGrace("darwin", () => Effect.succeed("stopped")),
+  it.effect("kickstarts a crash-looping job, then reports it if it keeps stopping", () => {
+    const kicked: Array<string> = [];
+    return reportsAfter(
+      "darwin",
+      () => Effect.succeed("stopped"),
+      DOWN_WAIT_SECONDS,
+      "not-running",
+      (target) =>
+        Effect.sync(() => {
+          kicked.push(target);
+          return true;
+        }),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          // At once, then every 15 seconds while it stays down.
+          assert.equal(kicked[0], "gui/501/com.specweave.studio.m4");
+          assert.equal(kicked.length, 9);
+        }),
+      ),
+    );
+  });
+
+  it.effect("never asks launchd off macOS and still never opens an empty home", () =>
+    reportsAfter(
+      "linux",
+      () => Effect.die("launchctl is macOS only"),
+      START_WAIT_SECONDS,
+      "timed-out",
+      () => Effect.die("launchctl is macOS only"),
+    ),
   );
 
-  it.effect("never asks launchd off macOS", () =>
-    fallsBackAfterGrace("linux", () => Effect.die("launchctl is macOS only")),
+  // A real crash loop: launchd runs the job for a second or two (more often once
+  // kickstarted), then it exits with EADDRINUSE and waits out the throttle.
+  it.effect("reports a crash loop even though launchd briefly runs the job", () => {
+    let second = 0;
+    return reportsAfter(
+      "darwin",
+      () => Effect.sync(() => (second++ % 10 >= 8 ? "running" : "stopped")),
+      DOWN_WAIT_SECONDS,
+      "not-running",
+    );
+  });
+
+  it.effect("never kickstarts a service an update install stopped", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      const kicked: Array<string> = [];
+      return Effect.gen(function* () {
+        const install = yield* stopForInstall(studioHome, 0);
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* TestClock.adjust("5 minutes");
+        assert.isUndefined(discovering.pollUnsafe());
+        assert.deepEqual(kicked, []);
+        install.restart();
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Fiber.join(discovering))._tag, "running");
+        install.clearMarker();
+      }).pipe(
+        Effect.provide(
+          layerFor(
+            home,
+            {},
+            undefined,
+            undefined,
+            "darwin",
+            () => Effect.succeed("stopped"),
+            (target) =>
+              Effect.sync(() => {
+                kicked.push(target);
+                return true;
+              }),
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
   );
 
-  it.effect("stops waiting once launchd no longer runs the service", () =>
+  // A stale receipt whose job was booted out sorts before the real service.
+  it.effect("keeps waiting for a starting service beside a stale one", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      const runtimePath = NodePath.join(studioHome, "userdata", "server-runtime.json");
+      const runtime = NodeFS.readFileSync(runtimePath, "utf8");
+      NodeFS.rmSync(runtimePath);
+      const staleHome = NodePath.join(home, ".specweave-studio", "a-old");
+      writeJson(NodePath.join(staleHome, "installation.json"), {
+        schemaVersion: 1,
+        studioHome: staleHome,
+        stateDir: NodePath.join(staleHome, "userdata"),
+        service: { installed: true, domain: "gui/501", label: "com.specweave.studio.old" },
+      });
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        // The real service rebuilds its store for 8 minutes.
+        yield* TestClock.adjust("8 minutes");
+        assert.isUndefined(discovering.pollUnsafe());
+        NodeFS.writeFileSync(runtimePath, runtime);
+        yield* TestClock.adjust("1 second");
+        const discovery = yield* Fiber.join(discovering);
+        assert.equal(discovery._tag, "running");
+        if (discovery._tag !== "running") return;
+        assert.equal(discovery.service.baseDir, studioHome);
+      }).pipe(
+        Effect.provide(
+          layerFor(home, {}, undefined, undefined, "darwin", (target) =>
+            Effect.succeed(target.endsWith(".old") ? "absent" : "running"),
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("attaches once a kickstarted service answers", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      const runtimePath = NodePath.join(studioHome, "userdata", "server-runtime.json");
+      const runtime = NodeFS.readFileSync(runtimePath, "utf8");
+      NodeFS.rmSync(runtimePath);
+      let state: DesktopLocalService.LaunchdJobState = "stopped";
+      const kicked: Array<string> = [];
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovering = yield* Effect.forkChild(service.discover());
+        yield* advanceSeconds(20);
+        assert.isUndefined(discovering.pollUnsafe());
+        assert.deepEqual(kicked, [
+          "gui/501/com.specweave.studio.m4",
+          "gui/501/com.specweave.studio.m4",
+        ]);
+        // launchd runs it now; it opens its store and answers.
+        state = "running";
+        NodeFS.writeFileSync(runtimePath, runtime);
+        yield* TestClock.adjust("1 second");
+        const discovery = yield* Fiber.join(discovering);
+        assert.equal(discovery._tag, "running");
+        if (discovery._tag !== "running") return;
+        assert.equal(discovery.service.baseDir, studioHome);
+        assert.equal(kicked.length, 2);
+      }).pipe(
+        Effect.provide(
+          layerFor(
+            home,
+            {},
+            undefined,
+            undefined,
+            "darwin",
+            () => Effect.sync(() => state),
+            (target) =>
+              Effect.sync(() => {
+                kicked.push(target);
+                return true;
+              }),
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("reports a service launchd unloaded while the app waited", () =>
     withDescriptorServer((origin) => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       NodeFS.rmSync(NodePath.join(studioHome, "userdata", "server-runtime.json"));
@@ -957,14 +1146,47 @@ describe("DesktopLocalService.discover", () => {
         const discovering = yield* Effect.forkChild(service.discover());
         yield* TestClock.adjust("3 minutes");
         assert.isUndefined(discovering.pollUnsafe());
-        // The service was unloaded: its home no longer answers for anyone.
+        // The service was unloaded: the app reports it rather than open an empty home.
         state = "absent";
-        yield* advanceSeconds(7);
-        assert.equal((yield* Fiber.join(discovering))._tag, "none");
+        yield* TestClock.adjust("2 minutes");
+        yield* advanceSeconds(10);
+        expectNotStarted(yield* Fiber.join(discovering), "not-loaded");
       }).pipe(
         Effect.provide(
           layerFor(home, {}, undefined, undefined, "darwin", () => Effect.sync(() => state)),
         ),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("lists installed services with their ports", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithInstalledService(origin);
+      const receiptPath = NodePath.join(studioHome, "installation.json");
+      const receipt = JSON.parse(NodeFS.readFileSync(receiptPath, "utf8")) as object;
+      writeJson(receiptPath, { ...receipt, port: 8319 });
+      // A plain install without a service is no claim on anything.
+      const plainHome = NodePath.join(home, ".specweave-studio", "m1");
+      writeJson(NodePath.join(plainHome, "installation.json"), {
+        schemaVersion: 1,
+        studioHome: plainHome,
+        stateDir: NodePath.join(plainHome, "userdata"),
+        port: 8400,
+      });
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        assert.isTrue(service.usesDefaultHome);
+        assert.deepEqual(yield* service.installedServices, [
+          {
+            baseDir: studioHome,
+            stateDir: NodePath.join(studioHome, "userdata"),
+            port: 8319,
+            launchdTarget: "gui/501/com.specweave.studio.m4",
+          },
+        ]);
+      }).pipe(
+        Effect.provide(layerFor(home)),
         Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
       );
     }),

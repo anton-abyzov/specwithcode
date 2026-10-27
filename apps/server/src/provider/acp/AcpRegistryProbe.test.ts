@@ -20,6 +20,8 @@ import {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
+  rewriteAcpSlashSkillMentions,
+  rewriteAcpUserText,
   probeAcpRegistryConfiguration,
 } from "./AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
@@ -364,6 +366,94 @@ describe("ACP Registry probe", () => {
         },
       ],
     });
+  });
+
+  it("lists Copilot's skill commands as skills it runs with a slash", () => {
+    // Shape of Copilot CLI 1.0.98's advertisement: built-ins and skills side by side.
+    const commands = normalizeAcpRegistryCommands([
+      {
+        name: "compact",
+        description: "Summarize history",
+        input: { type: "text", hint: "focus instructions" },
+      },
+      { name: "skills", description: "Manage skills", input: { type: "text", hint: "" } },
+      {
+        name: "unslop",
+        description: "Cut AI tells from any writing.",
+        input: { type: "text", hint: "instructions for the skill" },
+      },
+    ]);
+    expect(commands.slashCommands.map((command) => command.name)).toEqual(["compact", "skills"]);
+    expect(commands.skills).toEqual([
+      {
+        name: "unslop",
+        description: "Cut AI tells from any writing.",
+        path: "acp://command/unslop",
+        scope: "agent",
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("sends a picked Copilot skill as /name and leaves every other $ token alone", () => {
+    const commands = normalizeAcpRegistryCommands([
+      { name: "$workspace-skill", description: "Reads $workspace-skill" },
+      {
+        name: "unslop",
+        description: "Skill",
+        input: { type: "text", hint: "instructions for the skill" },
+      },
+      {
+        name: "review",
+        description: "Built-in",
+        input: { type: "text", hint: "additional instructions" },
+      },
+    ]);
+    expect(rewriteAcpSlashSkillMentions("$unslop the README", commands)).toBe("/unslop the README");
+    expect(rewriteAcpSlashSkillMentions("then $unslop it", commands)).toBe("then /unslop it");
+    expect(rewriteAcpSlashSkillMentions("$workspace-skill now", commands)).toBe(
+      "$workspace-skill now",
+    );
+    expect(rewriteAcpSlashSkillMentions("$review and echo $HOME", commands)).toBe(
+      "$review and echo $HOME",
+    );
+    expect(rewriteAcpSlashSkillMentions("$unslop", undefined)).toBe("$unslop");
+  });
+
+  it("leaves skill mentions inside code alone", () => {
+    const commands = normalizeAcpRegistryCommands([
+      {
+        name: "unslop",
+        description: "Skill",
+        input: { type: "text", hint: "instructions for the skill" },
+      },
+      {
+        name: "HOME",
+        description: "Skill",
+        input: { type: "text", hint: "instructions for the skill" },
+      },
+    ]);
+    expect(
+      rewriteAcpSlashSkillMentions(
+        "$unslop this:\n```sh\necho $HOME\n$unslop\n```\nand `$HOME` then $HOME",
+        commands,
+      ),
+    ).toBe("/unslop this:\n```sh\necho $HOME\n$unslop\n```\nand `$HOME` then /HOME");
+    expect(rewriteAcpSlashSkillMentions("```\n$unslop unfinished fence", commands)).toBe(
+      "```\n$unslop unfinished fence",
+    );
+  });
+
+  it("rewrites against the turn's own session before the instance's latest list", () => {
+    const skill = (name: string) => ({
+      name,
+      description: "Skill",
+      input: { type: "text" as const, hint: "instructions for the skill" },
+    });
+    const instance = normalizeAcpRegistryCommands([skill("other")]);
+    expect(rewriteAcpUserText("$unslop it", [skill("unslop")], instance)).toBe("/unslop it");
+    expect(rewriteAcpUserText("$other it", [skill("unslop")], instance)).toBe("$other it");
+    expect(rewriteAcpUserText("$other it", undefined, instance)).toBe("/other it");
   });
 
   it.effect("captures commands advertised just after session creation", () =>

@@ -1,5 +1,8 @@
 import { classifyProjectActions } from "@specweave-studio/shared/projectAttention";
-import { observeProjectThread } from "@specweave-studio/client-runtime/state/projectAttention";
+import {
+  observeProjectThread,
+  reportsToParentAgent,
+} from "@specweave-studio/client-runtime/state/projectAttention";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectId, ThreadId } from "@specweave-studio/contracts";
@@ -27,10 +30,12 @@ export type ProjectThreadGroup = (typeof PROJECT_THREAD_GROUPS)[number];
 /** Attention and lifecycle remain independent in storage; grouping is only a view. */
 /**
  * What a quiet thread's last report says stops the work, while the thread is
- * neither running nor resolved: the question it is blocked on.
+ * neither running nor resolved: the question it is blocked on. A provider-native
+ * subagent's report goes to its parent agent, so it never blocks on the person.
  */
 export function threadBlocker(thread: EnvironmentThreadShell): string | null {
   if (!thread.reportedBlocker || thread.archivedAt !== null) return null;
+  if (reportsToParentAgent(thread)) return null;
   if (thread.settledOverride === "settled" || threadRuntimeIsActive(thread.runtime)) return null;
   return thread.reportedBlocker;
 }

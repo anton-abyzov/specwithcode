@@ -31,6 +31,10 @@
       "types": "./src/designSystemOps.ts",
       "import": "./src/designSystemOps.ts"
     },
+    "./colorContrast": {
+      "types": "./src/colorContrast.ts",
+      "import": "./src/colorContrast.ts"
+    },
     "./designRender": {
       "types": "./src/designRender.ts",
       "import": "./src/designRender.ts"

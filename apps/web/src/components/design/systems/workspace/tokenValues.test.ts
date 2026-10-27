@@ -10,6 +10,7 @@ import {
   formatTypeStyle,
   inferValueType,
   lengthProblem,
+  measureColor,
   lineHeightProblem,
   modeValue,
   parseColor,
@@ -45,6 +46,13 @@ describe("colors", () => {
     expect(parseColor("rgba(15, 20, 30, 0.52)")).toEqual({ r: 15, g: 20, b: 30, a: 0.52 });
     expect(parseColor("rgb(15 20 30 / 72%)")).toEqual({ r: 15, g: 20, b: 30, a: 0.72 });
     expect(parseColor("oklch(0.7 0.1 200)")).toBeNull();
+  });
+
+  it("measures oklch() and hsl() as sRGB, leaving parseColor to hex and rgb()", () => {
+    expect(measureColor("#0f141e")).toEqual({ r: 15, g: 20, b: 30, a: 1 });
+    expect(measureColor("oklch(1 0 0)")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+    expect(measureColor("hsl(0 100% 50% / 50%)")).toEqual({ r: 255, g: 0, b: 0, a: 0.5 });
+    expect(measureColor("{color.brand}")).toBeNull();
   });
 
   it("shows hex with alpha and stores CSS", () => {

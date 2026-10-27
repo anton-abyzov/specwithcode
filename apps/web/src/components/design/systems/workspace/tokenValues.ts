@@ -4,6 +4,7 @@
  * names people type. Messages are the sentences the page shows. Pure.
  */
 import type { DesignSystem, DesignToken, DesignTokenType } from "@specweave-studio/contracts";
+import { cssColorToRgba } from "@specweave-studio/shared/colorContrast";
 import {
   designTokenAlias,
   designTokensCss,
@@ -120,6 +121,24 @@ export function parseColor(value: string): Rgba | null {
         : Number(alphaPart);
   if (![r, g, b, a].every((number) => Number.isFinite(number))) return null;
   return { r: clampByte(r!), g: clampByte(g!), b: clampByte(b!), a: clampUnit(a) };
+}
+
+/**
+ * A color the page can measure: hex and rgb() as read, hsl() and oklch()
+ * converted to sRGB. Only for measuring and painting previews; an edit keeps
+ * the value as written.
+ */
+export function measureColor(value: string): Rgba | null {
+  const color = parseColor(value);
+  if (color !== null) return color;
+  const srgb = cssColorToRgba(value);
+  if (srgb === null) return null;
+  return {
+    r: clampByte(srgb.r * 255),
+    g: clampByte(srgb.g * 255),
+    b: clampByte(srgb.b * 255),
+    a: clampUnit(srgb.a),
+  };
 }
 
 const hexByte = (value: number) => clampByte(value).toString(16).padStart(2, "0");

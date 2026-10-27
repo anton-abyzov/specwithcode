@@ -246,13 +246,21 @@ export function buildSections(system: Pick<DesignSystem, "tokens">): SystemSecti
   return [...head, ...extra, ...tail];
 }
 
-/** Sections a viewer sees: empty core token sections only show their empty state to editors. */
+/**
+ * Sections a viewer sees: empty core token sections only show their empty
+ * state to editors. Typography with no styles still shows its font files.
+ */
 export function visibleSections(
   sections: readonly SystemSection[],
-  options: { readonly canEdit: boolean; readonly componentCount: number },
+  options: {
+    readonly canEdit: boolean;
+    readonly componentCount: number;
+    readonly fontCount?: number;
+  },
 ): SystemSection[] {
   return sections.filter((section) => {
     if (section.kind === "components") return options.canEdit || options.componentCount > 0;
+    if (section.kind === "typography" && (options.fontCount ?? 0) > 0) return true;
     return options.canEdit || !section.starter;
   });
 }

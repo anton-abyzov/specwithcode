@@ -285,6 +285,17 @@ const unlessProtected = (requestedPath: string, canonicalFile: string | null) =>
         Effect.map((isProtected) => (isProtected ? null : canonicalFile)),
       );
 
+/**
+ * An absolute host file by the rules absolute `media-file` assets follow: its
+ * canonical path when it is a regular file that is not protected, else null.
+ */
+export const readableHostFile = Effect.fn("AssetAccess.readableHostFile")(function* (
+  requestedPath: string,
+) {
+  const canonicalFile = yield* resolveCanonicalFile(requestedPath);
+  return yield* unlessProtected(requestedPath, canonicalFile);
+});
+
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
   function* (input: { readonly workspaceRoot: string; readonly relativePath: string }) {
     const fileSystem = yield* FileSystem.FileSystem;

@@ -1157,14 +1157,14 @@ import {
 } from "@specweave-studio/client-runtime/state/composer-dispatch";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import {
-  formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
+  providerSkillInvocation,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@specweave-studio/client-runtime/providerSkills";
-import { searchProviderSkills } from "../../providerSkillSearch";
+import { resolveLeadingSkillCommand, searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useProviderQuickSetup } from "../../hooks/useProviderQuickSetup";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -1543,6 +1543,8 @@ export interface ChatComposerHandle {
   };
   /** Validate the fully composed text immediately before a provider turn starts. */
   validateProviderInput: (providerInput: string) => boolean;
+  /** The message with a hand-typed leading `/skill-name` sent as that skill's `$` mention. */
+  resolveLeadingSkillCommand: (text: string) => string;
   rejectCreditSubmission: (message: string) => void;
   setMultipleModelSelections: (selections: ReadonlyArray<ModelSelection>) => void;
 }
@@ -2942,7 +2944,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         type: "skill" as const,
         provider: selectedProvider,
         skill,
-        label: `/skill:${skill.name}`,
+        label: providerSkillInvocation(skill),
         description:
           skill.shortDescription ??
           skill.description ??
@@ -2981,7 +2983,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         type: "skill" as const,
         provider: selectedProvider,
         skill,
-        label: formatProviderSkillDisplayName(skill),
+        label: providerSkillInvocation(skill),
         description:
           skill.shortDescription ??
           skill.description ??
@@ -4217,7 +4219,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "skill") {
-        const replacement = `$${item.skill.name} `;
+        const replacement = `${providerSkillInvocation(item.skill)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
@@ -6869,6 +6871,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setProviderInputSubmissionError(validationMessage);
         return validationMessage === null;
       },
+      resolveLeadingSkillCommand: (text: string) =>
+        resolveLeadingSkillCommand(text, selectedProviderStatus, gitCwd),
     }),
     [
       activeThread,
@@ -6911,6 +6915,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      selectedProviderStatus,
+      gitCwd,
       interactionMode,
       planModeUiEnabled,
       compactThreadContext,

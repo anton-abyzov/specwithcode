@@ -9,6 +9,8 @@ import ChatMarkdown from "../../ChatMarkdown";
 import { MarkdownDocumentView } from "../../chat/ReportReader";
 import { ViewerFileActions } from "../../chat/ViewerFileActions";
 import { ReadOnlySourcePreview } from "../../files/AttachmentFilePreview";
+import { FilePreviewCard, HostDeckPreview } from "../../files/DeckPreview";
+import { hostFilePreview, noPreviewReason } from "../../files/hostFilePreview";
 import { useProjectFileQuery } from "../../files/projectFilesQueryState";
 import { Button } from "../../ui/button";
 import { libraryFileType } from "../../../studio/projectPaneModel";
@@ -128,15 +130,33 @@ function LibraryFileBody(props: {
   readonly path: string;
   readonly name: string;
 }): ReactNode {
+  const host = hostFilePreview(props.path);
   const readable =
-    libraryFileType(props.path) !== "images" && !/\.(pdf|docx?|pptx?|xlsx?)$/i.test(props.path);
+    host === "text" && libraryFileType(props.path) !== "images" && !/\.pdf$/i.test(props.path);
   const file = useProjectFileQuery(props.environmentId, props.workspaceRoot, props.path, readable);
+  const absolute = hostPath(props.workspaceRoot, props.path);
   const notice = (text: string, role?: "alert" | "status") => (
     <p className="m-auto p-6 text-center text-muted-foreground text-sm" role={role}>
       {text}
     </p>
   );
-  if (!readable) return notice(`No preview for this kind of file. Open it in its app from ⋯.`);
+  if (host === "deck") {
+    return (
+      <HostDeckPreview environmentId={props.environmentId} path={absolute} name={props.name} />
+    );
+  }
+  const card = (reason: string) => (
+    <FilePreviewCard
+      environmentId={props.environmentId}
+      path={absolute}
+      name={props.name}
+      reason={reason}
+    />
+  );
+  if (!readable) return card(noPreviewReason(props.name));
+  if (file.readError?.failure === "binary_file") {
+    return card(`${props.name} is not a text file, and has no preview here.`);
+  }
   if (file.error) return notice(file.error, "alert");
   if (!file.data) return notice("Loading…", "status");
   const truncated = file.data.truncated ? (

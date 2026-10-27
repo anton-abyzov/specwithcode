@@ -70,10 +70,13 @@ describe("WelcomeSheet", () => {
       expect($('[data-testid="welcome-sheet"]')!.textContent).toContain(title);
     await act(async () => $<HTMLButtonElement>('[data-testid="welcome-import"]')!.click());
     expect(onImport).toHaveBeenCalledTimes(1);
-    await act(async () => $<HTMLButtonElement>('[data-testid="welcome-describe"]')!.click());
-    expect($('[data-testid="welcome-describe-panel"]')!.textContent).toContain(
-      "Fill in the Acme design system",
-    );
+    const describe = $<HTMLButtonElement>('[data-testid="welcome-describe"]')!;
+    expect(describe.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => describe.click());
+    const panel = $('[data-testid="welcome-describe-panel"]')!;
+    expect(panel.textContent).toContain("Fill in the Acme design system");
+    expect(describe.getAttribute("aria-expanded")).toBe("true");
+    expect(describe.getAttribute("aria-controls")).toBe(panel.id);
   });
 
   it("uploads brand files into assets/ and fonts/", async () => {
@@ -94,6 +97,77 @@ describe("WelcomeSheet", () => {
     expect($('[data-testid="welcome-message"]')!.textContent).toBe(
       "Added 2 files: 1 to Assets, 1 to Typography.",
     );
+  });
+
+  it("uploads nothing until the file list has loaded, so no stored file is replaced", async () => {
+    const { api } = fakeFilesApi([{ path: "fonts/Inter.woff2" }], {
+      listing: { data: null, isPending: true },
+    });
+    act(() =>
+      root.render(<WelcomeSheetView canEdit systemName="Acme" api={api} onImport={vi.fn()} />),
+    );
+    const input = $<HTMLInputElement>('[data-testid="welcome-upload-input"]')!;
+    const picker = vi.spyOn(input, "click");
+    await act(async () => $<HTMLButtonElement>('[data-testid="welcome-upload"]')!.click());
+    expect(picker).not.toHaveBeenCalled();
+    Object.defineProperty(input, "files", {
+      value: [new File([new Uint8Array([4])], "Inter.woff2")],
+      configurable: true,
+    });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    expect(api.put).not.toHaveBeenCalled();
+    expect($('[data-testid="welcome-message"]')!.textContent).toContain("hasn't loaded");
+    // The refused files keep their note after the list arrives.
+    const { api: loaded } = fakeFilesApi([{ path: "fonts/Inter.woff2" }]);
+    act(() =>
+      root.render(
+        <WelcomeSheetView
+          canEdit
+          systemName="Acme"
+          api={{ ...api, listing: loaded.listing }}
+          onImport={vi.fn()}
+        />,
+      ),
+    );
+    expect($('[data-testid="welcome-message"]')!.textContent).toContain("hasn't loaded");
+  });
+
+  it("keeps the basics panel, and focus, when adding them fails", async () => {
+    const { api } = fakeFilesApi([]);
+    const onStart = vi.fn(async () => false);
+    act(() =>
+      root.render(
+        <WelcomeSheetView
+          canEdit
+          systemName="Acme"
+          api={api}
+          onImport={vi.fn()}
+          onStart={onStart}
+        />,
+      ),
+    );
+    const start = $<HTMLButtonElement>('[data-testid="welcome-start"]')!;
+    await act(async () => start.click());
+    expect(start.getAttribute("aria-expanded")).toBe("true");
+    const add = $<HTMLButtonElement>('[data-testid="welcome-start-add"]')!;
+    add.focus();
+    await act(async () => add.click());
+    await flush();
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect($('[data-testid="welcome-start-panel"]')).not.toBeNull();
+    expect(document.activeElement).toBe(add);
+    let finish: (added: boolean) => void = () => undefined;
+    onStart.mockImplementationOnce(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    await act(async () => add.click());
+    // While it saves, the button says so; another press adds nothing.
+    expect(add.textContent).toBe("Adding…");
+    expect(add.getAttribute("aria-busy")).toBe("true");
+    await act(async () => add.click());
+    expect(onStart).toHaveBeenCalledTimes(2);
+    await act(async () => finish(true));
+    await flush();
+    expect($('[data-testid="welcome-start-panel"]')).toBeNull();
   });
 
   it("refuses a file type a design system does not keep", async () => {

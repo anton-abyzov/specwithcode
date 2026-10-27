@@ -499,3 +499,68 @@ describe("folder copy between two isolated sides", () => {
     }
   }, 120_000);
 });
+
+it("refuses changed source or destination before transfer and preserves preview choices", async () => {
+  const operation = await offer();
+  const folder = NodePath.join(base, "freshness-target");
+  const copies = new DestinationCopies(NodePath.join(base, "freshness-state"), fast);
+  await copies.start(startInput(operation.operationId, operation.token, folder));
+  await settle(copies, operation.operationId, ["previewed", "failed"]);
+  const before = await copies.read(operation.operationId);
+  const added = NodePath.join(fixture.root, "new-after-preview.txt");
+  write(added, "later source work");
+  await expect(copies.approve(operation.operationId)).rejects.toThrow(/source changed/);
+  expect((await copies.read(operation.operationId))?.state).toBe("previewed");
+  expect((await copies.read(operation.operationId))?.decisions).toEqual(before?.decisions);
+  expect(NodeFS.existsSync(NodePath.join(folder, "README.md"))).toBe(false);
+  NodeFS.unlinkSync(added);
+  write(NodePath.join(folder, "README.md"), "new destination work");
+  await expect(copies.approve(operation.operationId)).rejects.toThrow(/destination changed/);
+  expect((await copies.read(operation.operationId))?.state).toBe("previewed");
+  expect(NodeFS.readFileSync(NodePath.join(folder, "README.md"), "utf8")).toBe(
+    "new destination work",
+  );
+});
+
+it("refuses an edited resolved conflict even when row actions stay the same", async () => {
+  const operation = await offer();
+  const folder = NodePath.join(base, "resolved-freshness-target");
+  write(NodePath.join(folder, "README.md"), "destination first conflict");
+  const copies = new DestinationCopies(NodePath.join(base, "resolved-freshness-state"), fast);
+  await copies.start(startInput(operation.operationId, operation.token, folder));
+  await settle(copies, operation.operationId, ["previewed", "failed"]);
+  const plan = (await copies.readPlan(operation.operationId))!;
+  const decisions = Object.fromEntries(
+    plan.rows.flatMap((row) => [
+      [row.id, "take-theirs" as const],
+      [folderCopyAllConflictsKey(row.id), "take-theirs" as const],
+    ]),
+  );
+  await copies.decide(operation.operationId, { decisions });
+  await settle(copies, operation.operationId, ["previewed", "failed"]);
+  expect((await copies.readPlan(operation.operationId))?.totals.decisionsNeeded).toBe(0);
+  const storedDecisions = (await copies.read(operation.operationId))?.decisions;
+  write(NodePath.join(folder, "README.md"), "destination later conflict");
+  await expect(copies.approve(operation.operationId)).rejects.toThrow(/destination changed/);
+  expect((await copies.read(operation.operationId))?.decisions).toEqual(storedDecisions);
+  expect(NodeFS.readFileSync(NodePath.join(folder, "README.md"), "utf8")).toBe(
+    "destination later conflict",
+  );
+});
+
+it("allows only one concurrent approval of the same saved preview", async () => {
+  const operation = await offer();
+  const folder = NodePath.join(base, "concurrent-approval-target");
+  const copies = new DestinationCopies(NodePath.join(base, "concurrent-approval-state"), fast);
+  await copies.start(startInput(operation.operationId, operation.token, folder));
+  await settle(copies, operation.operationId, ["previewed", "failed"]);
+  const outcomes = await Promise.allSettled([
+    copies.approve(operation.operationId),
+    copies.approve(operation.operationId),
+  ]);
+  expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+  expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+  expect((await settle(copies, operation.operationId, ["applied", "failed"])).state).toBe(
+    "applied",
+  );
+});

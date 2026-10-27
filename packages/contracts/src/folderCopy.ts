@@ -128,6 +128,14 @@ export const FolderCopySourceStatus = Schema.Struct({
     "cancelled",
   ]),
   summary: Schema.NullOr(FolderCopySourceSummary),
+  scanCompletedAt: Schema.optional(count),
+  freshness: Schema.optional(
+    Schema.Struct({
+      checkedAt: count,
+      current: Schema.Boolean,
+      summary: Schema.optional(FolderCopySourceSummary),
+    }),
+  ),
   /** Files and bytes measured so far while scanning, or hashed so far while building. */
   progress: Schema.optional(
     Schema.NullOr(
@@ -216,6 +224,11 @@ export const FolderCopySentSecrets = Schema.Struct({
 });
 export type FolderCopySentSecrets = typeof FolderCopySentSecrets.Type;
 
+export const FolderCopySourceStatusInput = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type FolderCopySourceStatusInput = typeof FolderCopySourceStatusInput.Type;
 export const FolderCopyOperationInput = Schema.Struct({ operationId: MachineHandoffOperationId });
 export type FolderCopyOperationInput = typeof FolderCopyOperationInput.Type;
 export const FolderCopyCancelInput = Schema.Struct({

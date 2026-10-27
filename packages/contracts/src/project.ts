@@ -687,6 +687,9 @@ function readFileFailureMessage(props: ProjectFileFailureContext): string {
       ? `File not found: '${props.relativePath}'.`
       : `File not found: '${props.relativePath}' in '${props.cwd}'.`;
   }
+  if (props.failure === "binary_file") {
+    return `'${props.relativePath}' is not a text file, so it has no text preview.`;
+  }
   return absolute
     ? `Failed to read file '${props.relativePath}'.`
     : `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`;

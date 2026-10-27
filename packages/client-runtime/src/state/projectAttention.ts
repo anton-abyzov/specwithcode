@@ -16,6 +16,17 @@ const millis = (value: string | null | undefined): number | null => {
   const n = value ? Date.parse(value) : NaN;
   return Number.isFinite(n) ? n : null;
 };
+/**
+ * A provider-native subagent (Claude's Agent tool, Codex or Cursor subagents):
+ * its final report is its parent agent's tool result, not a message to the person.
+ */
+export const reportsToParentAgent = (
+  thread: Pick<EnvironmentThreadShell, "lineage"> & {
+    readonly source?: Pick<EnvironmentThreadShell["source"], "creationSource"> | undefined;
+  },
+): boolean =>
+  thread.lineage?.relationshipToParent === "subagent" &&
+  thread.source?.creationSource === "provider";
 export function observeProjectThread(
   thread: EnvironmentThreadShell,
   freshness: AttentionFreshness = "live",
@@ -39,7 +50,15 @@ export function observeProjectThread(
   // Final reports can ask for a decision after the native request has closed.
   // Use the same quiet-thread blocker that rows display, so those rows, project
   // counts and descendant attention all agree. A resumed turn supersedes it.
-  if (thread.reportedBlocker?.trim() && !threadRuntimeIsActive(thread.runtime) && !person)
+  // A provider-native subagent's report is its parent agent's tool result, not
+  // a message to the person: the parent decides, and relays a real decision in
+  // its own report. It never gets a user message, so it would never clear.
+  if (
+    thread.reportedBlocker?.trim() &&
+    !reportsToParentAgent(thread) &&
+    !threadRuntimeIsActive(thread.runtime) &&
+    !person
+  )
     requests.push({
       reason: "input",
       id: `blocker:${thread.reportedBlocker}`,

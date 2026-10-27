@@ -266,6 +266,14 @@ export interface AcpAdapterV2Flavor {
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
+  /**
+   * Puts the user's message in the agent's own syntax (Copilot runs skills as
+   * `/name`), given the commands the turn's session advertised, if any yet.
+   */
+  readonly rewriteUserText?: (
+    text: string,
+    sessionCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand> | undefined,
+  ) => Effect.Effect<string>;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
@@ -1924,6 +1932,11 @@ export function makeAcpAdapterV2(
         // Studio only owns the temporary Plan override. Remember the agent's
         // effective native configuration on entry and restore it on Build.
         const nativeBuildConfigurationBySessionId = new Map<string, AcpNativeBuildConfiguration>();
+        // Each session's latest command advertisement, for flavor.rewriteUserText.
+        const availableCommandsBySessionId = new Map<
+          string,
+          ReadonlyArray<EffectAcpSchema.AvailableCommand>
+        >();
         const initialSessionActivationFailure = yield* Ref.make<{
           readonly sessionId: string;
           readonly error: EffectAcpErrors.AcpError;
@@ -5868,6 +5881,10 @@ export function makeAcpAdapterV2(
                     clientTerminals.readOutputSnapshot,
                   );
             if (notification.update.sessionUpdate === "available_commands_update") {
+              availableCommandsBySessionId.set(
+                notification.sessionId,
+                notification.update.availableCommands,
+              );
               yield* (
                 flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
                   Effect.void
@@ -7078,7 +7095,12 @@ export function makeAcpAdapterV2(
           } satisfies StudioAcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const messageText = providerMessageTextWithAttachmentPaths({
-            text: turnInput.message.text,
+            text: flavor.rewriteUserText
+              ? yield* flavor.rewriteUserText(
+                  turnInput.message.text,
+                  availableCommandsBySessionId.get(sessionId),
+                )
+              : turnInput.message.text,
             attachments: turnInput.message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
           });

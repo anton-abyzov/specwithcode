@@ -77,6 +77,7 @@ import { CopyCheckingStep, CopyResumeNote, CopyStepLine } from "./HandoffCopyGui
 import { editActionFor } from "./handoffCopyWizard";
 import { useCopyStepView } from "./useCopyStepView";
 import { useCopyDraft } from "./useCopyDraft";
+import { HandoffCopyScanFreshness } from "./HandoffCopyScanFreshness";
 import { HandoffCopyStepPanels } from "./HandoffCopyStepPanels";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
 import { HandoffCopyReview } from "./HandoffCopyReview";
@@ -194,6 +195,7 @@ export function HandoffFolderCopy({
   const [chooseFirst, setChooseFirst] = useState(false);
   const [stage, setStage] = useState<Stage>("setup");
   const [offer, setOffer] = useState<FolderCopyOffer | null>(null);
+  const [scanStatus, setScanStatus] = useState<FolderCopySourceStatus | null>(null);
   const [summary, setSummary] = useState<FolderCopySourceSummary | null>(null);
   // The source's progress: measuring, then building the copy while the destination compares.
   const [measured, setMeasured] = useState<FolderCopySourceStatus["progress"]>(null);
@@ -377,6 +379,7 @@ export function HandoffFolderCopy({
         setMeasured(scanned.progress ?? null);
       }
       if (!scanned.summary) throw new Error(scanned.error ?? "The folder could not be read.");
+      setScanStatus(scanned);
       setSummary(scanned.summary);
       // One-click goes straight on to comparing; otherwise the person chooses what to copy.
       if (!saved.auto) setStage("select");
@@ -447,6 +450,7 @@ export function HandoffFolderCopy({
           input: { operationId: saved.operationId },
         }),
       );
+      setScanStatus(measured);
       if (measured.summary) setSummary(measured.summary);
       return measured.summary;
     } catch {
@@ -546,6 +550,7 @@ export function HandoffFolderCopy({
     } finally {
       setMeasured(null);
     }
+    await readSummary(compared.saved);
     await settlePreview(compared.next, compared.saved);
   };
 
@@ -781,6 +786,8 @@ export function HandoffFolderCopy({
       }
     }
     const operationId = randomUUID();
+    setSecretPaths([]);
+    setSecretsConfirmed(false);
     const projectId = destinationProjectId(
       machine,
       mode,
@@ -834,6 +841,23 @@ export function HandoffFolderCopy({
       });
     });
 
+  const refreshScan = () =>
+    run(async () => {
+      if (!pending) return;
+      const checked = unwrap(
+        await sourceStatus({
+          environmentId: project.environmentId,
+          input: { operationId: pending.operationId, refresh: true },
+        }),
+      );
+      setScanStatus(checked);
+      if (checked.freshness?.summary) setSummary(checked.freshness.summary);
+      if (!checked.freshness)
+        throw new Error(
+          "Update the source to check scan freshness. The saved copy and choices have been kept.",
+        );
+    });
+
   const choose = (next: ReadonlyArray<FolderCopyFileClass>) => {
     setSelection(next);
     if (pending) remember({ ...pending, selection: next });
@@ -842,6 +866,8 @@ export function HandoffFolderCopy({
   const plan = () =>
     run(async () => {
       if (!offer || !pending) return;
+      if (scanStatus?.freshness?.current === false)
+        throw new Error("Measure and compare again before previewing this changed source.");
       await planNow(offer, pending, selection);
     });
 
@@ -881,6 +907,8 @@ export function HandoffFolderCopy({
   const applyNow = async (saved: PendingCopy, secretsSent = false) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
+    if (scanStatus?.freshness?.current === false)
+      throw new Error("The source changed. Measure and compare again before copying.");
     if (!secretsSent && secretsTicked) await sendTickedSecrets(operationId);
     setStage("copying");
     try {
@@ -1388,6 +1416,14 @@ export function HandoffFolderCopy({
               Copy cancelled. Nothing on {cancelledFor} changed.
             </p>
           )}
+          {(stage === "select" || stage === "preview") && (
+            <HandoffCopyScanFreshness
+              status={scanStatus}
+              busy={busy}
+              onRefresh={() => void refreshScan()}
+              onCompareAgain={rechoose}
+            />
+          )}
           <HandoffCopyStepPanels
             stage={stage}
             project={project}
@@ -1457,6 +1493,7 @@ export function HandoffFolderCopy({
             onViewLast={draft.viewLastCopy}
           />
           <HandoffCopyFooter
+            sourceChanged={scanStatus?.freshness?.current === false}
             stage={stage}
             error={error}
             busy={busy}

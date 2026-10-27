@@ -497,6 +497,30 @@ export class DestinationCopies {
     const plan = await this.readPlan(operationId);
     if (!plan || !planReady(plan))
       throw new CopyError("refused", "Some rows still need a decision.");
+    // Revalidation is read-only and keeps the resumable job and all existing choices.
+    await this.client(record).validateScan();
+    const manifest = await readManifestFile(this.paths(operationId).manifest);
+    const currentPlan = await this.plan(record, manifest, new AbortController().signal);
+    const assertSamePreview = async () => {
+      if (
+        JSON.stringify(await this.require(operationId)) !== JSON.stringify(record) ||
+        JSON.stringify(await this.readPlan(operationId)) !== JSON.stringify(plan)
+      )
+        throw new CopyError(
+          "refused",
+          "The copy changed while checking its preview. Review it again.",
+        );
+    };
+    if (JSON.stringify(currentPlan) !== JSON.stringify(plan)) {
+      await this.locked(operationId, async () => {
+        await assertSamePreview();
+        await writeJson(this.paths(operationId).plan, currentPlan);
+      });
+      throw new CopyError(
+        "refused",
+        "The destination changed. Review the updated comparison before copying.",
+      );
+    }
     const paths = this.paths(operationId);
     const sameVolume = (await deviceOf(paths.staging)) === (await deviceOf(record.targetFolder));
     const needed = bytesNeeded(plan, sameVolume);
@@ -509,10 +533,17 @@ export class DestinationCopies {
         { needed, free },
       );
     }
-    const next = await this.update(operationId, {
-      state: "approved",
-      disk: { needed, free },
-      error: null,
+    const next = await this.locked(operationId, async () => {
+      await assertSamePreview();
+      const approved: DestinationRecord = {
+        ...record,
+        state: "approved",
+        disk: { needed, free },
+        error: null,
+        updatedAt: this.now(),
+      };
+      await writeJson(this.paths(operationId).record, approved);
+      return approved;
     });
     this.background(operationId, "transferring", (signal) => this.transfer(next, signal));
     return next;
@@ -905,18 +936,23 @@ export class DestinationCopies {
       destination.repositories,
       (repo, commits) => client.ancestry(repo, commits),
     );
-    return planReconcile({
-      sourceMachine: record.sourceMachine,
-      repositories: manifest.header.repositories,
-      entries: manifest.entries,
-      targetRoot: record.targetFolder,
-      destination,
-      relations,
-      caseInsensitive: destination.caseInsensitive,
-      decisions: record.decisions,
-      clone: record.clone,
-      mirror: record.mirror,
-    });
+    return {
+      ...planReconcile({
+        sourceMachine: record.sourceMachine,
+        repositories: manifest.header.repositories,
+        entries: manifest.entries,
+        targetRoot: record.targetFolder,
+        destination,
+        relations,
+        caseInsensitive: destination.caseInsensitive,
+        decisions: record.decisions,
+        clone: record.clone,
+        mirror: record.mirror,
+      }),
+      ...(destination.fingerprint !== undefined
+        ? { destinationFingerprint: destination.fingerprint }
+        : {}),
+    };
   }
 
   private async transfer(record: DestinationRecord, signal: AbortSignal) {

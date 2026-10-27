@@ -7,7 +7,15 @@ import type {
   NativeOtherToolInventory,
   NativeTool,
 } from "@specweave-studio/contracts";
+import { CheckIcon, ChevronDownIcon, CopyIcon, InfoIcon, SearchIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import {
+  filterRows,
+  statusCounts,
+  toggleTool,
+  type CellTone,
+  type StatusFilter,
+} from "./connectionFilters";
 import "./connections.css";
 
 const providers = ["codex", "claude"] as const;
@@ -26,6 +34,15 @@ const sourceNames: Record<string, string> = {
   "claude-user-settings": "Claude user settings.json",
   "claude-project-settings": "Project .claude/settings.json",
   "claude-local-settings": "Project .claude/settings.local.json",
+};
+/** Where a declaration lives, for Copy location: the file and the key inside it. */
+const sourceFiles: Record<string, string> = {
+  "codex-user": "~/.codex/config.toml",
+  "codex-project": ".codex/config.toml",
+  "claude-user": "~/.claude.json",
+  "claude-local": "~/.claude.json",
+  "claude-all-projects": "~/.claude.json",
+  "claude-project": ".mcp.json",
 };
 const otherToolNames: Record<NativeOtherTool, string> = {
   "claude-desktop": "Claude Desktop",
@@ -51,10 +68,17 @@ export const toolLabels: Record<NativeTool, string> = {
 const toolName = (provider: Provider) => (provider === "codex" ? "Codex" : "Claude Code");
 const sourceName = (id: string) => sourceNames[id] ?? "Native configuration";
 const stateName = {
-  configured: "Configured",
+  configured: "Enabled",
   disabled: "Disabled",
   invalid: "Invalid declaration",
 };
+const statusFilters: ReadonlyArray<{ id: StatusFilter; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "enabled", label: "Enabled" },
+  { id: "disabled", label: "Disabled" },
+  { id: "missing", label: "Missing somewhere" },
+  { id: "invalid", label: "Invalid" },
+];
 /** Declared in a file the user edits, as opposed to a plugin or one folder's local entry. */
 const own = (c: NativeConnection) => c.plugin === undefined && c.project === undefined;
 const groups = [
@@ -66,9 +90,30 @@ type Group = (typeof groups)[number]["id"];
 /** Claude Code local scope: `projects.<folder>.mcpServers` in the user's own file. */
 export const FOLDER_ONLY_NOTE =
   "Claude Code loads these only when it runs in that folder. Other folders, projects and providers do not get them. They are stored in your ~/.claude.json.";
+/** The one-line answer to "why is this server missing in Codex?". */
+export const PER_TOOL_NOTE =
+  "Each AI tool keeps its own MCP list, so a server enabled in Claude Code is not available in Codex until it is added there too.";
 /** "Claude Code, only in <folder>", naming how many other folders declare the same server. */
 const folderOnly = (folder: string, more: number) =>
   `Claude Code, only in ${folder}${more > 0 ? ` and ${more} more ${more === 1 ? "folder" : "folders"}` : ""}`;
+
+interface Column {
+  readonly id: NativeTool;
+  readonly label: string;
+  /** Present for the read-only columns of tools other than Codex and Claude Code. */
+  readonly inventory?: NativeOtherToolInventory;
+}
+type Density = "compact" | "detailed";
+
+/** A muted note: inline in the detailed view, an info mark with a tooltip in the compact one. */
+function Hint({ text, inline }: { text: string; inline: boolean }) {
+  if (inline) return <p className="text-xs text-muted-foreground">{text}</p>;
+  return (
+    <span className="connection-hint" title={text} aria-label={text} role="note" tabIndex={0}>
+      <InfoIcon aria-hidden className="size-3.5" />
+    </span>
+  );
+}
 
 /** Configuration evidence only: no cell claims native authentication, trust, or admission. */
 export function ConnectionMatrix({
@@ -78,51 +123,60 @@ export function ConnectionMatrix({
   pendingId = null,
   computerUseNote,
   manage = true,
+  initialDensity = "compact",
 }: {
   /** The machine supports the full edit set; an older one only enables and copies. */
   manage?: boolean;
   snapshot: NativeConnectionsSnapshot;
   project?: boolean;
   /**
-   * Shown under a `computer-use` row: agents use SpecWithCode's own computer
+   * Shown in a `computer-use` row's details: agents use SpecWithCode's own computer
    * use whatever Codex or Claude Code declare, so the note says what it needs.
    */
   computerUseNote?: ReactNode;
   /** Absent when this connection may not edit native configuration on the machine. */
   onApply?: (input: NativeConnectionApplyInput) => void;
   pendingId?: string | null;
+  initialDensity?: Density;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** A row opened from its name: its details without one tool's declaration chosen. */
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [chosenTools, setChosenTools] = useState<ReadonlyArray<NativeTool> | null>(null);
+  const [density, setDensity] = useState<Density>(initialDensity);
+  const [collapsed, setCollapsed] = useState<ReadonlyArray<Group>>([]);
+  const [copied, setCopied] = useState<string | null>(null);
+  const detailed = density === "detailed";
   // A tool gets a column once its configuration exists on this machine.
   const others = (snapshot.otherTools ?? []).filter((t) => t.status !== "missing");
+  const allColumns: ReadonlyArray<Column> = [
+    ...providers.map((provider) => ({ id: provider, label: toolName(provider) })),
+    ...others.map((t) => ({ id: t.tool, label: otherToolNames[t.tool], inventory: t })),
+  ];
+  const visibleTools = chosenTools?.filter((id) => allColumns.some((c) => c.id === id));
+  const columnsShown =
+    visibleTools && visibleTools.length > 0
+      ? allColumns.filter((c) => visibleTools.includes(c.id))
+      : allColumns;
   const names = [
     ...new Set([
       ...snapshot.connections.map((c) => c.name),
       ...others.flatMap((t) => t.connections.map((c) => c.name)),
     ]),
-  ].sort((a, b) => a.localeCompare(b));
+  ];
   const groupOf = (name: string): Group => {
     const entries = snapshot.connections.filter((c) => c.name === name);
     if (entries.length === 0 || entries.some(own)) return "own";
     return entries.some((c) => c.plugin !== undefined) ? "plugin" : "project";
   };
-  const rows = groups
-    .map((group) => ({ ...group, names: names.filter((name) => groupOf(name) === group.id) }))
-    .filter((group) => group.names.length > 0);
   const selected = snapshot.connections.find((c) => c.id === selectedId);
   const selectedOther = others
     .flatMap((t) => t.connections.map((c) => ({ ...c, tool: t.tool })))
     .find((c) => c.id === selectedId);
   const issues = snapshot.sources.filter((s) => s.status !== "read" && s.status !== "missing");
   const otherIssues = others.filter((t) => t.status !== "read");
-  const counts = [
-    ...providers.map((provider) => ({
-      label: toolName(provider),
-      count: new Set(snapshot.connections.filter((c) => c.provider === provider).map((c) => c.name))
-        .size,
-    })),
-    ...others.map((t) => ({ label: otherToolNames[t.tool], count: t.connections.length })),
-  ];
   /** The declaration the tool uses: its own file first, then a plugin, then a project. */
   function resolve(name: string, provider: Provider) {
     const entries = snapshot.connections.filter((c) => c.name === name && c.provider === provider);
@@ -133,6 +187,39 @@ export function ConnectionMatrix({
         entries.find((c) => c.plugin !== undefined) ??
         entries.find((c) => c.project !== undefined),
     };
+  }
+  function tone(name: string, column: Column): CellTone {
+    if (column.inventory) {
+      const found = column.inventory.connections.find((c) => c.name === name);
+      if (found) return found.state;
+      return column.inventory.status !== "read" || snapshot.truncated ? "unknown" : "none";
+    }
+    const provider = column.id as Provider;
+    const { found } = resolve(name, provider);
+    if (found) return found.state;
+    const incomplete = issues.some((s) => s.provider === provider) || snapshot.truncated;
+    return incomplete ? "unknown" : "none";
+  }
+  const allRows = names.map((name) => ({
+    name,
+    group: groupOf(name),
+    aliases: snapshot.connections
+      .filter((c) => c.name === name)
+      .flatMap((c) => [c.plugin, c.project].filter((x): x is string => x !== undefined)),
+    tones: columnsShown.map((column) => tone(name, column)),
+  }));
+  const counts = statusCounts(allRows, query);
+  const shownRows = filterRows(allRows, query, status);
+  const rows = groups
+    .map((group) => ({ ...group, rows: shownRows.filter((row) => row.group === group.id) }))
+    .filter((group) => group.rows.length > 0);
+  const enabledIn = (column: Column) =>
+    names.filter((name) => tone(name, column) === "configured").length;
+  const filtered = query.trim() !== "" || status !== "all" || chosenTools !== null;
+  function clearFilters() {
+    setQuery("");
+    setStatus("all");
+    setChosenTools(null);
   }
   function meta(connection: NativeConnection, entries: ReadonlyArray<NativeConnection>) {
     if (connection.plugin !== undefined)
@@ -149,6 +236,39 @@ export function ConnectionMatrix({
           : "User";
     return `${scope} · ${connection.transport}`;
   }
+  function select(id: string, name: string) {
+    const closing = selectedId === id;
+    setSelectedId(closing ? null : id);
+    setOpenRow(closing ? null : name);
+  }
+  function statusButton(id: string, name: string, label: string, text: string, title: string) {
+    const isSelected = selectedId === id;
+    return (
+      <button
+        type="button"
+        className="connection-status connection-status-button"
+        aria-label={`${name} ${label} details`}
+        aria-pressed={isSelected}
+        title={title}
+        onClick={() => select(id, name)}
+      >
+        <span aria-hidden className="connection-dot" />
+        {text}
+      </button>
+    );
+  }
+  function emptyCell(tone: "none" | "unknown", action: ReactNode = null) {
+    const text = tone === "unknown" ? "Unknown" : "Not found";
+    return (
+      <div className="connection-cell" data-tone={tone}>
+        <span className="connection-status" title={text}>
+          <span aria-hidden className="connection-dot" />
+          {detailed || tone === "unknown" ? text : <span className="sr-only">{text}</span>}
+        </span>
+        {action}
+      </div>
+    );
+  }
   function cell(name: string, provider: Provider) {
     const { entries, found } = resolve(name, provider);
     const incomplete = issues.some((s) => s.provider === provider) || snapshot.truncated;
@@ -163,64 +283,40 @@ export function ConnectionMatrix({
               own(c) &&
               !c.shadowed,
           );
-      return (
-        <div className="connection-cell" data-tone={incomplete ? "unknown" : "none"}>
-          <span className="connection-status">
-            <span aria-hidden className="connection-dot" />
-            {incomplete ? "Unknown" : "Not found"}
-          </span>
-          {other ? addAction(other, provider) : null}
-        </div>
-      );
+      return emptyCell(incomplete ? "unknown" : "none", other ? addAction(other, provider) : null);
     }
-    const isSelected = selected?.id === found.id;
+    const where = meta(found, entries);
     return (
       <div className="connection-cell" data-tone={found.state}>
-        <button
-          type="button"
-          className="connection-status connection-status-button"
-          aria-label={`${name} ${toolName(provider)} details`}
-          aria-pressed={isSelected}
-          onClick={() => setSelectedId(isSelected ? null : found.id)}
-        >
-          <span aria-hidden className="connection-dot" />
-          {stateName[found.state]}
-          {incomplete ? " · incomplete scan" : ""}
-        </button>
-        <div className="connection-meta">{meta(found, entries)}</div>
-        {found.state === "disabled" ? enableAction(found) : null}
+        <div className="connection-cell-line">
+          {statusButton(
+            found.id,
+            name,
+            toolName(provider),
+            `${stateName[found.state]}${incomplete ? " · incomplete scan" : ""}`,
+            where,
+          )}
+          {found.state === "disabled" ? enableAction(found) : null}
+        </div>
+        {detailed ? <div className="connection-meta">{where}</div> : null}
       </div>
     );
   }
   function otherCell(name: string, inventory: NativeOtherToolInventory) {
     const found = inventory.connections.find((c) => c.name === name);
-    if (!found) {
-      const unknown = inventory.status !== "read" || snapshot.truncated;
-      return (
-        <div className="connection-cell" data-tone={unknown ? "unknown" : "none"}>
-          <span className="connection-status">
-            <span aria-hidden className="connection-dot" />
-            {unknown ? "Unknown" : "Not found"}
-          </span>
-        </div>
-      );
-    }
-    const isSelected = selectedId === found.id;
+    if (!found)
+      return emptyCell(inventory.status !== "read" || snapshot.truncated ? "unknown" : "none");
+    const where = `${found.parked ? "Kept aside by SpecWithCode" : "User"} · ${found.transport}`;
     return (
       <div className="connection-cell" data-tone={found.state}>
-        <button
-          type="button"
-          className="connection-status connection-status-button"
-          aria-label={`${name} ${otherToolNames[inventory.tool]} details`}
-          aria-pressed={isSelected}
-          onClick={() => setSelectedId(isSelected ? null : found.id)}
-        >
-          <span aria-hidden className="connection-dot" />
-          {stateName[found.state]}
-        </button>
-        <div className="connection-meta">
-          {found.parked ? "Kept aside by SpecWithCode" : "User"} · {found.transport}
-        </div>
+        {statusButton(
+          found.id,
+          name,
+          otherToolNames[inventory.tool],
+          stateName[found.state],
+          where,
+        )}
+        {detailed ? <div className="connection-meta">{where}</div> : null}
       </div>
     );
   }
@@ -229,6 +325,7 @@ export function ConnectionMatrix({
     connection: NativeConnection,
     input: NativeConnectionApplyInput,
     label: string,
+    short = label,
   ) {
     if (!onApply) return null;
     return (
@@ -237,42 +334,45 @@ export function ConnectionMatrix({
         size="xs"
         disabled={pendingId !== null}
         aria-label={`${label}: ${connection.name}`}
+        title={label}
         onClick={() => onApply(input)}
       >
-        {pendingId === connection.id ? "Saving…" : label}
+        {pendingId === connection.id ? "Saving…" : detailed ? label : short}
       </Button>
     );
   }
   function enableAction(connection: NativeConnection) {
     if (connection.plugin !== undefined)
       return (
-        <p className="text-xs text-muted-foreground">
-          The {connection.plugin} plugin ships it turned off.
-        </p>
+        <Hint inline={detailed} text={`The ${connection.plugin} plugin ships it turned off.`} />
       );
     if (connection.pluginProvided)
       return (
-        <p className="text-xs text-muted-foreground">
-          Codex runs this through its {connection.name} plugin, so this older entry can stay off.
-        </p>
+        <Hint
+          inline={detailed}
+          text={`Codex runs this through its ${connection.name} plugin, so this older entry can stay off.`}
+        />
       );
     if (connection.parked)
       return actionButton(connection, { action: "enable", connectionId: connection.id }, "Turn on");
     if (connection.provider === "claude")
-      return <p className="text-xs text-muted-foreground">Turn it on with /mcp in Claude Code.</p>;
+      return <Hint inline={detailed} text="Turn it on with /mcp in Claude Code." />;
     if (connection.scope !== "user")
-      return <p className="text-xs text-muted-foreground">Turn it on in the project config.</p>;
+      return <Hint inline={detailed} text="Turn it on in the project config." />;
     return actionButton(connection, { action: "enable", connectionId: connection.id }, "Enable");
   }
   function addAction(source: NativeConnection, provider: Provider) {
     if (source.state === "invalid") return null;
     if (!source.portable)
       return (
-        <p className="text-xs text-muted-foreground">
-          {source.pluginProvided
-            ? `A ${toolName(source.provider)} feature; ${toolName(provider)} has no equivalent entry.`
-            : `This ${toolName(source.provider)} declaration cannot run in ${toolName(provider)}.`}
-        </p>
+        <Hint
+          inline={detailed}
+          text={
+            source.pluginProvided
+              ? `A ${toolName(source.provider)} feature; ${toolName(provider)} has no equivalent entry.`
+              : `This ${toolName(source.provider)} declaration cannot run in ${toolName(provider)}.`
+          }
+        />
       );
     // Copy what runs today; a disabled entry is enabled first, where it is declared.
     if (source.state !== "configured") return null;
@@ -280,8 +380,42 @@ export function ConnectionMatrix({
       source,
       { action: "copy", connectionId: source.id },
       `Add to ${toolName(provider)}`,
+      "+ Add",
     );
   }
+  /** Copies where a declaration lives (file and key), never its command, URL or secrets. */
+  function copyLocation(id: string, text: string) {
+    void navigator.clipboard?.writeText(text).then(
+      () => setCopied(id),
+      () => setCopied(null),
+    );
+  }
+  function copyButton(id: string, location: string | null) {
+    if (!location) return null;
+    return (
+      <Button
+        variant="outline"
+        size="xs"
+        aria-label={`Copy location: ${location}`}
+        title={location}
+        onClick={() => copyLocation(id, location)}
+      >
+        {copied === id ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+        {copied === id ? "Copied" : "Copy location"}
+      </Button>
+    );
+  }
+  const locationOf = (c: NativeConnection) => {
+    const file = sourceFiles[c.sourceId];
+    // A kept-aside entry lives in SpecWithCode's own state, not in the tool's file.
+    if (!file || c.plugin !== undefined || c.parked) return null;
+    if (c.provider === "codex") return `${file} [mcp_servers.${c.name}]`;
+    if (c.project !== undefined) return `${file} projects.<${c.project}>.mcpServers.${c.name}`;
+    if (c.sourceId === "claude-local") return `${file} projects.<this folder>.mcpServers.${c.name}`;
+    return `${file} mcpServers.${c.name}`;
+  };
+  const otherLocation = (tool: NativeOtherTool, name: string) =>
+    `${otherToolFiles[tool]} ${tool === "opencode" ? "mcp" : "mcpServers"}.${name}`;
   /** Edits for one declaration in a user file: off or on, remove, copy to every tool. */
   function manageActions(entry: {
     readonly id: string;
@@ -306,7 +440,7 @@ export function ConnectionMatrix({
     );
     const id = entry.id;
     return (
-      <div className="flex flex-wrap gap-2" data-testid="connection-actions">
+      <>
         {entry.state === "configured"
           ? button({ action: "disable", connectionId: id }, "Turn off")
           : entry.state === "disabled" && (entry.parked || entry.native)
@@ -316,7 +450,7 @@ export function ConnectionMatrix({
           ? button({ action: "copyAll", connectionId: id }, "Add to all tools")
           : null}
         {button({ action: "remove", connectionId: id }, "Remove")}
-      </div>
+      </>
     );
   }
   const plugins = snapshot.plugins ?? [];
@@ -370,20 +504,121 @@ export function ConnectionMatrix({
       : c.project !== undefined
         ? `${folderOnly(c.project, 0)} (~/.claude.json)`
         : sourceName(c.sourceId);
-  const columns = 1 + providers.length + others.length;
-  return (
-    <div className="space-y-4" data-testid="connection-matrix">
-      <p className="text-sm text-muted-foreground">
-        {project
-          ? "Project configuration includes user declarations and project overrides."
-          : "User configurations, plugins and folder-only Claude Code entries on this machine."}{" "}
-        Authentication and session availability are unverified.
-      </p>
-      {names.length > 0 && (
-        <p className="text-xs text-muted-foreground" data-testid="connection-counts">
-          {counts.map((c) => `${c.label} ${c.count}`).join(" · ")}
+  const closeDetails = () => {
+    setSelectedId(null);
+    setOpenRow(null);
+  };
+  /** The row's expanded panel: one declaration's provenance and edits, plus the row's notes. */
+  function details(name: string) {
+    const declaredIn = allColumns.filter((c) => {
+      const t = tone(name, c);
+      return t === "configured" || t === "disabled" || t === "invalid";
+    });
+    const title = selected
+      ? `${selected.name} · ${toolName(selected.provider)}`
+      : selectedOther
+        ? `${selectedOther.name} · ${otherToolNames[selectedOther.tool]}`
+        : name;
+    return (
+      <div aria-live="polite" className="connection-details" data-testid="connection-details">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-medium">{title}</h3>
+          <Button variant="ghost" size="sm" onClick={closeDetails}>
+            <XIcon aria-hidden />
+            Close details
+          </Button>
+        </div>
+        {selected ? (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+            <dt className="text-muted-foreground">Source</dt>
+            <dd>{detailSource(selected)}</dd>
+            <dt className="text-muted-foreground">Transport</dt>
+            <dd>{selected.transport}</dd>
+            <dt className="text-muted-foreground">Access owner</dt>
+            <dd>{toolName(selected.provider)} manages native access</dd>
+            <dt className="text-muted-foreground">Session</dt>
+            <dd>Not checked</dd>
+            {alternatives.length > 0 && (
+              <>
+                <dt className="text-muted-foreground">Other declarations</dt>
+                <dd>
+                  {alternatives
+                    .map((c) => `${detailSource(c)}${c.shadowed ? " (overridden)" : ""}`)
+                    .join(", ")}
+                </dd>
+              </>
+            )}
+          </dl>
+        ) : selectedOther ? (
+          <p className="text-sm">
+            {selectedOther.parked
+              ? `Turned off: SpecWithCode keeps the entry until you turn it on again.`
+              : `Declared in ${otherToolFiles[selectedOther.tool]}.`}
+          </p>
+        ) : (
+          <p className="text-sm">
+            {declaredIn.length > 0
+              ? `Declared for ${declaredIn.map((c) => c.label).join(", ")}. Select a status to manage one tool's entry.`
+              : "Not declared in any tool shown."}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2" data-testid="connection-actions">
+          {selected
+            ? own(selected) && selected.scope === "user"
+              ? manageActions({ ...selected, native: selected.provider === "codex" })
+              : selectedPlugin
+                ? pluginButton(selectedPlugin)
+                : null
+            : selectedOther
+              ? manageActions({ ...selectedOther, native: selectedOther.tool === "opencode" })
+              : null}
+          {selected
+            ? copyButton(selected.id, locationOf(selected))
+            : selectedOther
+              ? copyButton(
+                  selectedOther.id,
+                  selectedOther.parked
+                    ? null
+                    : otherLocation(selectedOther.tool, selectedOther.name),
+                )
+              : null}
+        </div>
+        {name === COMPUTER_USE_CONNECTION && computerUseNote ? (
+          <div data-testid="computer-use-connection-note">{computerUseNote}</div>
+        ) : null}
+        <p className="text-xs text-muted-foreground">
+          Project trust, account permissions and runtime policy may prevent use. SpecWithCode
+          project grants apply only to SpecWithCode-managed calls.
         </p>
-      )}
+      </div>
+    );
+  }
+  // The open row follows the selection; a refresh that drops the server closes it.
+  const detailsRow =
+    selected?.name ?? selectedOther?.name ?? (openRow && names.includes(openRow) ? openRow : null);
+  const columns = 1 + columnsShown.length;
+  const chip = (
+    pressed: boolean,
+    label: string,
+    count: number,
+    onClick: () => void,
+    aria = label,
+  ) => (
+    <button
+      key={aria}
+      type="button"
+      className="connection-chip"
+      aria-pressed={pressed}
+      aria-label={`${aria} (${count})`}
+      onClick={onClick}
+    >
+      {label}
+      <span className="connection-chip-count">{count}</span>
+    </button>
+  );
+  return (
+    <div className="space-y-3" data-testid="connection-matrix">
+      <p className="text-sm text-muted-foreground">{PER_TOOL_NOTE}</p>
       {(issues.length > 0 || otherIssues.length > 0) && (
         <div role="status" className="text-sm text-warning-foreground">
           Some sources could not be inspected:{" "}
@@ -408,132 +643,183 @@ export function ConnectionMatrix({
             : "No MCP declarations found in the inspected configuration files."}
         </p>
       ) : (
-        <div className="connection-table-wrap">
-          <table
-            className="connection-table"
-            style={{ minWidth: `${Math.max(520, 180 + (columns - 1) * 150)}px` }}
-          >
-            <caption className="sr-only">Configured MCP connections by AI tool</caption>
-            <colgroup>
-              <col className={columns > 3 ? "w-[24%]" : "w-[38%]"} />
-              {Array.from({ length: columns - 1 }, (_, index) => (
-                <col key={index} />
+        <>
+          <div className="connection-toolbar" data-testid="connection-filters">
+            <label className="connection-search">
+              <SearchIcon aria-hidden className="size-3.5 text-muted-foreground" />
+              <input
+                type="search"
+                value={query}
+                placeholder="Search servers, plugins, folders"
+                aria-label="Search connections"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <div className="connection-chips" role="group" aria-label="Filter by AI tool">
+              <span className="connection-chips-label">Tools</span>
+              {chip(
+                chosenTools === null,
+                "All",
+                allColumns.length,
+                () => setChosenTools(null),
+                "All tools",
+              )}
+              {allColumns.map((column) =>
+                chip(
+                  chosenTools?.includes(column.id) ?? false,
+                  column.label,
+                  enabledIn(column),
+                  () => setChosenTools((current) => toggleTool(current, column.id)),
+                  `${column.label} enabled`,
+                ),
+              )}
+            </div>
+            <div className="connection-chips" role="group" aria-label="Filter by status">
+              <span className="connection-chips-label">Status</span>
+              {statusFilters
+                .filter((f) => f.id !== "invalid" || counts.invalid > 0 || status === "invalid")
+                .map((f) => chip(status === f.id, f.label, counts[f.id], () => setStatus(f.id)))}
+            </div>
+            <div className="connection-chips connection-density" role="group" aria-label="Density">
+              {(["compact", "detailed"] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className="connection-chip"
+                  aria-pressed={density === d}
+                  onClick={() => setDensity(d)}
+                >
+                  {d === "compact" ? "Compact" : "Detailed"}
+                </button>
               ))}
-            </colgroup>
-            <thead>
-              <tr>
-                <th scope="col">Connection</th>
-                {providers.map((provider) => (
-                  <th key={provider} scope="col">
-                    {toolName(provider)}
-                  </th>
-                ))}
-                {others.map((t) => (
-                  <th key={t.tool} scope="col">
-                    {otherToolNames[t.tool]}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            {rows.map((group) => (
-              <tbody key={group.id} data-group={group.id}>
-                {rows.length > 1 && (
-                  <tr className="connection-group">
-                    <th scope="colgroup" colSpan={columns}>
-                      {group.title} · {group.names.length}
-                    </th>
-                  </tr>
-                )}
-                {group.id === "project" && (
-                  <tr data-testid="folder-only-note">
-                    <td colSpan={columns} className="text-xs text-muted-foreground">
-                      {FOLDER_ONLY_NOTE}
-                    </td>
-                  </tr>
-                )}
-                {group.names.map((name) => (
-                  <Fragment key={name}>
-                    <tr data-selected={selected?.name === name || undefined}>
-                      <th scope="row">
-                        <span className="connection-name" title={name}>
-                          {name}
-                        </span>
+            </div>
+          </div>
+          {shownRows.length === 0 ? (
+            <div role="status" className="connection-empty">
+              No connections match these filters.
+              <Button variant="outline" size="xs" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            </div>
+          ) : (
+            <div className="connection-table-wrap">
+              <table
+                className="connection-table"
+                data-density={density}
+                style={{
+                  minWidth: `${Math.max(480, (detailed ? 180 : 150) + (columns - 1) * (detailed ? 150 : 92))}px`,
+                }}
+              >
+                <caption className="sr-only">Configured MCP connections by AI tool</caption>
+                <colgroup>
+                  {columns > 3 ? (
+                    <col style={{ width: detailed ? 180 : 150 }} />
+                  ) : (
+                    <col className="w-[38%]" />
+                  )}
+                  {Array.from({ length: columns - 1 }, (_, index) => (
+                    <col key={index} />
+                  ))}
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col">Connection</th>
+                    {columnsShown.map((column) => (
+                      <th key={column.id} scope="col">
+                        {column.label}
                       </th>
-                      {providers.map((provider) => (
-                        <td key={provider}>{cell(name, provider)}</td>
-                      ))}
-                      {others.map((t) => (
-                        <td key={t.tool}>{otherCell(name, t)}</td>
-                      ))}
-                    </tr>
-                    {name === COMPUTER_USE_CONNECTION && computerUseNote ? (
-                      <tr data-testid="computer-use-connection-note">
-                        <td colSpan={columns}>{computerUseNote}</td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                ))}
-              </tbody>
-            ))}
-          </table>
-        </div>
-      )}
-      {selected && (
-        <div aria-live="polite" className="space-y-2 rounded-lg border border-border p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-medium">
-              {selected.name} · {toolName(selected.provider)}
-            </h3>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
-              Close details
-            </Button>
-          </div>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">Source</dt>
-            <dd>{detailSource(selected)}</dd>
-            <dt className="text-muted-foreground">Access owner</dt>
-            <dd>{toolName(selected.provider)} manages native access</dd>
-            <dt className="text-muted-foreground">Session</dt>
-            <dd>Not checked</dd>
-            {alternatives.length > 0 && (
-              <>
-                <dt className="text-muted-foreground">Other declarations</dt>
-                <dd>
-                  {alternatives
-                    .map((c) => `${detailSource(c)}${c.shadowed ? " (overridden)" : ""}`)
-                    .join(", ")}
-                </dd>
-              </>
-            )}
-          </dl>
-          {own(selected) && selected.scope === "user"
-            ? manageActions({ ...selected, native: selected.provider === "codex" })
-            : selectedPlugin
-              ? pluginButton(selectedPlugin)
-              : null}
-          <p className="text-xs text-muted-foreground">
-            Project trust, account permissions and runtime policy may prevent use. SpecWithCode
-            project grants apply only to SpecWithCode-managed calls.
-          </p>
-        </div>
-      )}
-      {selectedOther && !selected && (
-        <div aria-live="polite" className="space-y-2 rounded-lg border border-border p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-medium">
-              {selectedOther.name} · {otherToolNames[selectedOther.tool]}
-            </h3>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
-              Close details
-            </Button>
-          </div>
-          <p className="text-sm">
-            {selectedOther.parked
-              ? `Turned off: SpecWithCode keeps the entry until you turn it on again.`
-              : `Declared in ${otherToolFiles[selectedOther.tool]}.`}
-          </p>
-          {manageActions({ ...selectedOther, native: selectedOther.tool === "opencode" })}
-        </div>
+                    ))}
+                  </tr>
+                </thead>
+                {rows.map((group) => {
+                  const isCollapsed = collapsed.includes(group.id);
+                  return (
+                    <tbody key={group.id} data-group={group.id}>
+                      {(rows.length > 1 || group.id !== "own") && (
+                        <tr className="connection-group">
+                          <th scope="colgroup" colSpan={columns}>
+                            <span className="connection-group-head">
+                              <button
+                                type="button"
+                                className="connection-group-toggle"
+                                aria-expanded={!isCollapsed}
+                                onClick={() =>
+                                  setCollapsed((current) =>
+                                    isCollapsed
+                                      ? current.filter((g) => g !== group.id)
+                                      : [...current, group.id],
+                                  )
+                                }
+                              >
+                                <ChevronDownIcon aria-hidden className="size-3.5" />
+                                {group.title} · {group.rows.length}
+                              </button>
+                              {group.id === "project" ? (
+                                <span data-testid="folder-only-note">
+                                  <Hint inline={false} text={FOLDER_ONLY_NOTE} />
+                                </span>
+                              ) : null}
+                            </span>
+                          </th>
+                        </tr>
+                      )}
+                      {isCollapsed
+                        ? null
+                        : group.rows.map(({ name }) => (
+                            <Fragment key={name}>
+                              <tr data-selected={detailsRow === name || undefined}>
+                                <th scope="row">
+                                  <button
+                                    type="button"
+                                    className="connection-name"
+                                    title={name}
+                                    aria-expanded={detailsRow === name}
+                                    aria-label={`${name} row details`}
+                                    onClick={() => {
+                                      const open = detailsRow === name;
+                                      setSelectedId(null);
+                                      setOpenRow(open ? null : name);
+                                    }}
+                                  >
+                                    {name}
+                                  </button>
+                                  {name === COMPUTER_USE_CONNECTION && computerUseNote ? (
+                                    <Hint
+                                      inline={false}
+                                      text="Agents in SpecWithCode use the app's own computer use. Open for the permissions it needs."
+                                    />
+                                  ) : null}
+                                </th>
+                                {columnsShown.map((column) => (
+                                  <td key={column.id}>
+                                    {column.inventory
+                                      ? otherCell(name, column.inventory)
+                                      : cell(name, column.id as Provider)}
+                                  </td>
+                                ))}
+                              </tr>
+                              {detailsRow === name ? (
+                                <tr className="connection-details-row">
+                                  <td colSpan={columns}>{details(name)}</td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          ))}
+                    </tbody>
+                  );
+                })}
+              </table>
+            </div>
+          )}
+          {filtered && shownRows.length > 0 ? (
+            <p className="text-xs text-muted-foreground" role="status">
+              Showing {shownRows.length} of {names.length} servers.{" "}
+              <button type="button" className="underline" onClick={clearFilters}>
+                Clear filters
+              </button>
+            </p>
+          ) : null}
+        </>
       )}
       {plugins.length > 0 && (
         <details className="text-sm" data-testid="connection-plugins">
@@ -555,8 +841,15 @@ export function ConnectionMatrix({
           </ul>
         </details>
       )}
-      <details className="text-xs text-muted-foreground">
-        <summary className="cursor-pointer">Inspected sources and limits</summary>
+      <details className="text-xs text-muted-foreground" data-testid="connection-about">
+        <summary className="cursor-pointer">About this list: sources and limits</summary>
+        <p className="mt-2">
+          {project
+            ? "Project configuration includes user declarations and project overrides."
+            : "User configurations, plugins and folder-only Claude Code entries on this machine."}{" "}
+          Enabled means the entry is turned on in its file; sign-in and session availability are not
+          checked.
+        </p>
         <ul className="mt-2 space-y-1">
           {snapshot.sources.map((s) => (
             <li key={s.id}>
@@ -574,10 +867,11 @@ export function ConnectionMatrix({
             ? "Only the registered project root is inspected. "
             : "Select a project to inspect its project files and overrides. "}
           Plugins count only when enabled. Changes go to user files only, each previewed first and
-          backed up so it can be undone. claude.ai connectors and other account connectors live in
-          your account rather than in files, so they are not listed. Managed settings, ancestor
-          configurations and alternate client profiles are not inventoried. Matching names do not
-          prove matching servers or accounts.
+          backed up so it can be undone. Copy location copies the file and key, never the command,
+          URL or secrets. claude.ai connectors and other account connectors live in your account
+          rather than in files, so they are not listed. Managed settings, ancestor configurations
+          and alternate client profiles are not inventoried. Matching names do not prove matching
+          servers or accounts.
         </p>
       </details>
       <p className="text-xs text-muted-foreground">

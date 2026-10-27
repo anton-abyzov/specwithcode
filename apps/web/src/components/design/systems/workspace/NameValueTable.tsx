@@ -131,7 +131,6 @@ export function ValueField({
           aria-describedby={describedBy === "" ? undefined : describedBy}
           data-row-edit={edit ? "" : undefined}
           spellCheck={false}
-          inputMode={unit !== null ? "decimal" : undefined}
           value={draft}
           placeholder={placeholder}
           className={cn(FIELD, suffix !== null && "pr-9")}

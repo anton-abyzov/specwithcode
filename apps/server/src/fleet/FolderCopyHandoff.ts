@@ -87,6 +87,7 @@ const skippedList = <K extends string>(key: K, paths: ReadonlyArray<string> | un
     : ({} as Partial<Record<K, Array<string>>>);
 
 export function sourceStatus(record: SourceOperationRecord): FolderCopySourceStatus {
+  const { freshness: _freshness, ...base } = record;
   return {
     copyRoot: record.folder,
     projectRelativePath: record.projectRelativePath ?? ".",
@@ -94,6 +95,18 @@ export function sourceStatus(record: SourceOperationRecord): FolderCopySourceSta
     projectId: ProjectId.make(record.projectId),
     mode: record.mode,
     state: record.state,
+    ...(record.scanCompletedAt !== undefined ? { scanCompletedAt: record.scanCompletedAt } : {}),
+    ...(record.freshness
+      ? {
+          freshness: {
+            checkedAt: record.freshness.checkedAt,
+            current: record.freshness.current,
+            ...(record.freshness.summary
+              ? { summary: sourceStatus({ ...base, summary: record.freshness.summary }).summary! }
+              : {}),
+          },
+        }
+      : {}),
     summary: record.summary
       ? {
           totals: record.summary.totals,

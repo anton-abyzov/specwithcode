@@ -14,7 +14,7 @@ import {
   UploadIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -41,7 +41,8 @@ export interface WelcomeSheetProps {
   /** After a repository import is confirmed into this system, or brand files are stored. */
   readonly onChanged?: () => void;
   /** Adds every starter set; absent where the page cannot edit tokens. */
-  readonly onStart?: (options: StarterOptions) => void;
+  /** Adds the basics; false when the edit did not land. */
+  readonly onStart?: (options: StarterOptions) => Promise<boolean> | void;
 }
 
 /** "Not sure where to start?" for a system with no tokens yet. */
@@ -101,6 +102,8 @@ function Option({
   onClick,
   children,
   testId,
+  expanded,
+  controls,
 }: {
   icon: LucideIcon;
   title: string;
@@ -109,12 +112,17 @@ function Option({
   onClick: () => void;
   children?: ReactNode;
   testId: string;
+  /** For an option that opens a panel below the options. */
+  expanded?: boolean;
+  controls?: string;
 }) {
   return (
     <button
       type="button"
       data-testid={testId}
       disabled={busy}
+      aria-expanded={expanded}
+      aria-controls={expanded === true ? controls : undefined}
       className="group flex min-w-0 flex-col items-start gap-1.5 rounded-lg border border-border/70 bg-card px-4 py-3 text-left outline-none transition-colors hover:border-border hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-(--disabled-opacity)"
       onClick={onClick}
     >
@@ -139,36 +147,53 @@ export function WelcomeSheetView({
   api: Pick<SystemFilesApi, "put" | "listing">;
   onImport: () => void;
   onChanged?: (() => void) | undefined;
-  onStart?: ((options: StarterOptions) => void) | undefined;
+  onStart?: ((options: StarterOptions) => Promise<boolean> | void) | undefined;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [describing, setDescribing] = useState(false);
   const [starting, setStarting] = useState(false);
+  const adding = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const panelId = useId();
+  const startPanelId = `${panelId}-start`;
+  const describePanelId = `${panelId}-describe`;
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
   const [family, setFamily] = useState(DEFAULT_FAMILY);
   const canStart = canEdit && onStart !== undefined;
   const [progress, setProgress] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ text: string; problem: boolean } | null>(null);
+  const [message, setMessage] = useState<{
+    text: string;
+    problem: boolean;
+    /** Says the list has not loaded; it goes once the list does. */
+    waiting?: boolean;
+  } | null>(null);
   const [dropping, setDropping] = useState(false);
   const listing = api.listing.data;
 
+  // Without the list, a stored file of the same name would be replaced and the limits unchecked.
+  const notListed = {
+    text:
+      api.listing.error === null
+        ? "The file list hasn't loaded yet, so nothing was uploaded. Try again in a moment."
+        : `${api.listing.error} Nothing was uploaded.`,
+    problem: true,
+  };
+  // A press that opened nothing is moot once the list loads; refused files keep their note.
+  useEffect(() => {
+    if (listing !== null) setMessage((current) => (current?.waiting === true ? null : current));
+  }, [listing]);
+
   const upload = async (files: File[]) => {
+    if (listing === null) return setMessage(notListed);
     const taken = new Set(
-      (listing?.files ?? []).filter((file) => file.origin === "stored").map((file) => file.path),
+      listing.files.filter((file) => file.origin === "stored").map((file) => file.path),
     );
-    const plan = planUploads(
-      files,
-      (file) => brandFolder(file.name),
-      taken,
-      listing === null
-        ? null
-        : {
-            usedBytes: listing.usedBytes,
-            limitBytes: listing.limitBytes,
-            fileCount: taken.size,
-            limitFiles: listing.limitFiles,
-          },
-    );
+    const plan = planUploads(files, (file) => brandFolder(file.name), taken, {
+      usedBytes: listing.usedBytes,
+      limitBytes: listing.limitBytes,
+      fileCount: taken.size,
+      limitFiles: listing.limitFiles,
+    });
     if (!plan.ok) return setMessage({ text: plan.message, problem: true });
     setMessage(null);
     const report = await uploadAll(api, plan.uploads, (done, total) =>
@@ -241,7 +266,11 @@ export function WelcomeSheetView({
               title="Upload brand files"
               description="Logos, images, fonts and guidelines. Images go to Assets, fonts to Typography, Markdown to Overview."
               busy={progress !== null}
-              onClick={() => input.current?.click()}
+              onClick={() =>
+                listing === null
+                  ? setMessage({ ...notListed, waiting: true })
+                  : input.current?.click()
+              }
             />
           </>
         ) : null}
@@ -251,6 +280,8 @@ export function WelcomeSheetView({
             icon={LayersIcon}
             title="Start from the basics"
             description="A palette from your accent, a type scale, spacing, radii and shadows. Change any of it after."
+            expanded={starting}
+            controls={startPanelId}
             onClick={() => setStarting((open) => !open)}
           />
         ) : null}
@@ -259,6 +290,8 @@ export function WelcomeSheetView({
           icon={MessageSquareTextIcon}
           title="Describe it"
           description="Tell an agent the look you want; it proposes tokens for you to review."
+          expanded={describing}
+          controls={describePanelId}
           onClick={() => setDescribing((open) => !open)}
         />
       </div>
@@ -299,6 +332,7 @@ export function WelcomeSheetView({
       {starting && canStart ? (
         <div
           className="grid gap-4 rounded-lg border border-border/70 bg-background px-4 py-4 sm:grid-cols-2"
+          id={startPanelId}
           data-testid="welcome-start-panel"
         >
           <AccentPicker value={accent} onChange={setAccent} />
@@ -314,12 +348,20 @@ export function WelcomeSheetView({
               size="sm"
               data-testid="welcome-start-add"
               disabled={accentProblem(accent) !== null}
-              onClick={() => {
-                setStarting(false);
-                onStart?.({ accent, family });
+              aria-disabled={saving || undefined}
+              aria-busy={saving || undefined}
+              onClick={async () => {
+                if (adding.current) return;
+                adding.current = true;
+                setSaving(true);
+                const added = await onStart?.({ accent, family });
+                adding.current = false;
+                setSaving(false);
+                // On success the sheet leaves with the empty system; on failure focus stays here.
+                if (added !== false) setStarting(false);
               }}
             >
-              Add the basics
+              {saving ? "Adding…" : "Add the basics"}
             </Button>
           </div>
         </div>
@@ -327,6 +369,7 @@ export function WelcomeSheetView({
       {describing ? (
         <div
           className="flex flex-col gap-2 rounded-lg border border-border/70 bg-background px-4 py-3 text-sm"
+          id={describePanelId}
           data-testid="welcome-describe-panel"
         >
           <p className="text-foreground">Ask an agent in any thread, for example: “{prompt}”</p>

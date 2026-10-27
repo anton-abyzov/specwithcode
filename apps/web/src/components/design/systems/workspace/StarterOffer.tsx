@@ -77,12 +77,36 @@ export function starterIntent(
   };
 }
 
+/**
+ * Focus for after a starter set lands: the offer that had it is gone, so it
+ * moves to the title of the section the tokens were added to. Only when focus
+ * is still where the add started (`origin`), on that section's offer, or lost
+ * to the page; focus the person moved elsewhere while the edit saved stays there.
+ */
+export function focusSectionTitle(sectionId: string, origin: Element | null) {
+  window.requestAnimationFrame(() => {
+    const section = document.getElementById(`section-${sectionId}`);
+    const active = document.activeElement;
+    const lost =
+      active === null ||
+      active === document.body ||
+      active === origin ||
+      (section?.contains(active) === true &&
+        active.closest('[data-testid="starter-offer"]') !== null);
+    if (!lost) return;
+    section?.querySelector<HTMLElement>("header button[aria-expanded]")?.focus();
+  });
+}
+
 export function StarterOffer({
   kind,
+  sectionId,
   system,
   onEdit,
 }: {
   kind: StarterKind;
+  /** The section the offer sits in; it takes focus once the set is added. */
+  sectionId: string;
   system: Pick<DesignSystem, "modes">;
   onEdit: (intent: SystemEditIntent) => Promise<boolean>;
 }) {
@@ -105,14 +129,21 @@ export function StarterOffer({
         size="xs"
         data-testid="starter-offer"
         data-starter={kind}
-        onClick={() => void onEdit(starterIntent(kind, system))}
+        onClick={(event) => {
+          const origin = event.currentTarget;
+          void onEdit(starterIntent(kind, system)).then((added) => {
+            if (added) focusSectionTitle(sectionId, origin);
+          });
+        }}
       >
         {label}
       </Button>
     );
-  const add = () => {
+  const add = async () => {
+    const origin = document.activeElement;
     setOpen(false);
-    void onEdit(starterIntent(kind, system, kind === "colors" ? { accent } : { family }));
+    const intent = starterIntent(kind, system, kind === "colors" ? { accent } : { family });
+    if (await onEdit(intent)) focusSectionTitle(sectionId, origin);
   };
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -128,7 +159,7 @@ export function StarterOffer({
           <p className="text-muted-foreground text-xs">
             {kind === "colors"
               ? "Neutrals lean toward the accent. Light and dark values; change any of them after."
-              : "Display, headings, body, small, caption and code, plus sans and mono families."}
+              : "Display, headings, body, small, caption and code, plus body and mono families."}
           </p>
           <div className="flex justify-end">
             <Button

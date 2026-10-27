@@ -48,15 +48,68 @@ describe("project conversation aggregation", () => {
       aggregateProjectAttention({ members: [member], roots: [root], threads: [root] }),
     ).toMatchObject({ count: 1, working: 0, complete: true });
   });
-  it("folds report feedback from a child into its visible parent", () => {
+  it("folds report feedback from an app-launched child into its visible parent", () => {
     const root = thread("root");
     const result = aggregateProjectAttention({
       members: [member],
       roots: [root],
-      threads: [root, child("child", "root", { reportedBlocker: "Which option should I use?" })],
+      threads: [
+        root,
+        child("child", "root", {
+          reportedBlocker: "Which option should I use?",
+          source: { creationSource: "mcp" },
+        } as unknown as Partial<EnvironmentThreadShell>),
+      ],
     });
     expect(result.count).toBe(1);
     expect(result.roots[0]?.actions).toMatchObject([{ threadId: "child", reason: "input" }]);
+  });
+  // October 26: finished Claude Code subagents ("Close increment 1054", a
+  // close review from October 25) ended their reports with Blockers and kept
+  // their parents under Waiting on you, even while the parent ran.
+  describe("a provider-native subagent's report", () => {
+    const native = (id: string, props: Partial<EnvironmentThreadShell> = {}) =>
+      child(id, "root", {
+        source: { creationSource: "provider", pendingRuntimeRequest: null },
+        ...props,
+      } as unknown as Partial<EnvironmentThreadShell>);
+    const closer = native("closer", {
+      reportedBlocker: "You can close 1054 one of two ways: re-run verify, or close now.",
+    });
+    const aggregate = (root: EnvironmentThreadShell, sub: EnvironmentThreadShell) =>
+      aggregateProjectAttention({ members: [member], roots: [root], threads: [root, sub] });
+
+    it("is its parent's tool result, so it adds no attention", () => {
+      expect(classifyProjectActions(observeProjectThread(closer))).toEqual([]);
+      expect(aggregate(thread("root"), closer)).toMatchObject({ count: 0, complete: true });
+      const running = aggregate(thread("root", active), closer);
+      expect(running.roots[0]).toMatchObject({ actions: [], working: true });
+      expect(running.working).toBe(1);
+    });
+    it("still surfaces the subagent's real approval or question", () => {
+      for (const [kind, flag, reason] of [
+        ["command", "hasPendingApprovals", "approval"],
+        ["user_input", "hasPendingUserInput", "input"],
+      ] as const) {
+        const asking = native("closer", {
+          reportedBlocker: "Close 1054?",
+          [flag]: true,
+          source: {
+            creationSource: "provider",
+            pendingRuntimeRequest: { id: `req-${kind}`, kind, createdAt: null },
+          },
+        } as unknown as Partial<EnvironmentThreadShell>);
+        expect(aggregate(thread("root"), asking).roots[0]?.actions).toMatchObject([
+          { threadId: "closer", reason },
+        ]);
+      }
+    });
+    it("leaves the parent's own report blocker waiting on the person", () => {
+      const root = thread("root", { reportedBlocker: "Close 1054 now, or re-run verify?" });
+      expect(aggregate(root, closer).roots[0]?.actions).toMatchObject([
+        { threadId: "root", reason: "input" },
+      ]);
+    });
   });
   it("clears report attention when resumed, resolved, archived, deleted or removed", () => {
     const root = thread("root", { reportedBlocker: "Approve the release?" });

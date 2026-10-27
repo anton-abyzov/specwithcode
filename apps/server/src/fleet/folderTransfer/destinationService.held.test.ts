@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { DestinationCopies, type DestinationHooks } from "./destinationService.ts";
 import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
@@ -173,7 +173,15 @@ describe("A copy-and-move whose checks fail", () => {
     // A tracked file changes on the source after the comparison, while the copy runs.
     const readme = NodePath.join(fixture.root, "README.md");
     const original = NodeFS.readFileSync(readme);
-    NodeFS.writeFileSync(readme, "# Umbrella, changed during the copy\n");
+    // Change after the approval freshness check, exercising the existing during-transfer recovery.
+    const checkScan = transfers.checkScan.bind(transfers);
+    const check = vi.spyOn(transfers, "checkScan");
+    check.mockImplementationOnce(async (id) => {
+      const result = await checkScan(id);
+      check.mockRestore();
+      NodeFS.writeFileSync(readme, "# Umbrella, changed during the copy\n");
+      return result;
+    });
     try {
       await copies.approve(operationId);
       const held = await settle(copies, operationId, ["applied", "failed"]);
@@ -265,7 +273,15 @@ describe("A copy-and-move whose checks fail", () => {
     await settle(copies, operationId, ["previewed", "failed"]);
     const readme = NodePath.join(fixture.root, "README.md");
     const original = NodeFS.readFileSync(readme);
-    NodeFS.writeFileSync(readme, "# Umbrella, changed during the copy\n");
+    // Change after the approval freshness check, exercising the existing during-transfer recovery.
+    const checkScan = transfers.checkScan.bind(transfers);
+    const check = vi.spyOn(transfers, "checkScan");
+    check.mockImplementationOnce(async (id) => {
+      const result = await checkScan(id);
+      check.mockRestore();
+      NodeFS.writeFileSync(readme, "# Umbrella, changed during the copy\n");
+      return result;
+    });
     try {
       await copies.approve(operationId);
       const applied = await settle(copies, operationId, ["applied", "failed"]);

@@ -84,7 +84,7 @@ describe("searchSlashCommandItems", () => {
           enabled: true,
           shortDescription: "Open and control the in-app browser",
         },
-        label: "/skill:browser",
+        label: "$browser",
         description: "Open and control the in-app browser",
       },
     ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
@@ -110,7 +110,7 @@ describe("searchSlashCommandItems", () => {
           enabled: true,
           shortDescription: "Find the right skill or workflow",
         },
-        label: "/skill:ask-matt",
+        label: "$ask-matt",
         description: "Find the right skill or workflow",
       },
     ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
@@ -134,7 +134,7 @@ describe("searchSlashCommandItems", () => {
           path: "/skills/browser/SKILL.md",
           enabled: true,
         },
-        label: "/skill:browser",
+        label: "$browser",
         description: "Open and control the in-app browser",
       },
     ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
@@ -166,7 +166,7 @@ describe("searchSlashCommandItems", () => {
           path: "/skills/unslop/SKILL.md",
           enabled: true,
         },
-        label: "/skill:unslop",
+        label: "$unslop",
         description: "Cut AI tells from writing",
       },
     ] satisfies Array<Extract<ComposerCommandItem, { type: "slash-command" | "skill" }>>;
@@ -203,7 +203,7 @@ describe("searchSlashCommandItems", () => {
           path: "/skills/unslop/SKILL.md",
           enabled: true,
         },
-        label: "/skill:unslop",
+        label: "$unslop",
         description: "Cut AI tells from writing",
       },
     ] satisfies Array<

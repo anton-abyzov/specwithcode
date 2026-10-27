@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   DesktopBackendPortUnavailableError,
   DesktopDevelopmentBackendPortRequiredError,
+  DesktopEmbeddedBackendRefusedError,
   DesktopInstalledServiceNotStartedError,
   DesktopLocalServiceUnresponsiveError,
 } from "./DesktopApp.ts";
@@ -49,7 +50,26 @@ describe("DesktopApp errors", () => {
         stateDir: "/Users/a/.specwithcode/m4/userdata",
         waitedMinutes: 20,
       }).message,
-      "The SpecWithCode service that holds your projects (/Users/a/.specwithcode/m4/userdata) is installed but has not started after 20 minutes. The app did not open an empty store in its place. Check it with `specweave-studio triage` or restart the service, then open the app again.",
+      "The SpecWithCode service that holds your projects (/Users/a/.specwithcode/m4/userdata) is installed but has not started after 20 minutes. The app did not open an empty store in its place. Check it with `specweave-studio triage` or restart the service, then retry.",
+    );
+  });
+
+  it("tells a crash-looping service from one launchd does not have loaded", () => {
+    const notStarted = (reason: "not-running" | "not-loaded") =>
+      new DesktopInstalledServiceNotStartedError({
+        stateDir: "/Users/a/.specwithcode/m4/userdata",
+        waitedMinutes: 20,
+        reason,
+      }).message;
+    assert.include(notStarted("not-running"), "keeps stopping right after launchd starts it");
+    assert.include(notStarted("not-loaded"), "launchd does not have it loaded");
+  });
+
+  it("says why the app did not start its own server", () => {
+    assert.equal(
+      new DesktopEmbeddedBackendRefusedError({ reason: "port 8319 belongs to the service" })
+        .message,
+      "SpecWithCode did not start its own server: port 8319 belongs to the service. Start the installed service (`specweave-studio triage`), then open the app again.",
     );
   });
 

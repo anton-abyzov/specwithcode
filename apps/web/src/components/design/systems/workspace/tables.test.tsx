@@ -82,6 +82,12 @@ describe("ColorTable", () => {
     expect(byLabel("Remove color-brand")).toBeNull();
   });
 
+  it("says in an inherited cell's edit button that it inherits", () => {
+    render(<ColorTable {...editor()} tokens={colorTokens} onAdd={() => undefined} />);
+    expect(byLabel("Edit color-scrim, Dark, inherits Light")).not.toBeNull();
+    expect(byLabel("Edit color-scrim, Light")).not.toBeNull();
+  });
+
   it("shows a text color's contrast on the page ground in each mode", () => {
     render(<ColorTable {...editor(false)} tokens={colorTokens} onAdd={() => undefined} />);
     for (const mode of ["light", "dark"]) {
