@@ -1,5 +1,6 @@
 import type {
   DesignSystemComponentChange,
+  DesignSystemProposedFile,
   DesignSystemTokenChange,
   DesignTokenValue,
 } from "@specweave-studio/contracts";
@@ -9,6 +10,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../../ui/badge";
 import { Checkbox } from "../../ui/checkbox";
 import { displayValue, locationLabel, swatchColor, tokenModes } from "./reviewModel";
+import { formatSize } from "./workspace/filesModel";
 
 function Swatch({ value }: { value: DesignTokenValue | undefined }) {
   const color = swatchColor(value);
@@ -188,6 +190,32 @@ export function ComponentRow({
           <span className="text-muted-foreground">No variants</span>
         )}
       </div>
+    </li>
+  );
+}
+
+/** A brand file the import would store: where it lands, where it comes from, its size. */
+export function FileRow({
+  file,
+  checked,
+  onChange,
+}: {
+  file: DesignSystemProposedFile;
+  checked: boolean;
+  onChange: (ticked: boolean) => void;
+}) {
+  return (
+    <li
+      data-testid="file-row"
+      data-path={file.path}
+      className="grid grid-cols-[auto_minmax(0,16rem)_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-3 py-2"
+    >
+      <RowCheckbox label={`Include ${file.path}`} checked={checked} onChange={onChange} />
+      <div className="min-w-0">
+        <span className="block truncate text-xs font-medium text-foreground">{file.path}</span>
+        <span className="text-2xs text-muted-foreground">{formatSize(file.bytes)}</span>
+      </div>
+      <code className="break-all font-mono text-2xs text-muted-foreground">{file.source}</code>
     </li>
   );
 }

@@ -15,7 +15,7 @@ export const HEADLESS_BROWSER_ENVIRONMENT = {
 /**
  * `environment` with HEADLESS_BROWSER_ENVIRONMENT applied last, so an inherited
  * or provider-supplied value cannot turn it off. Every provider spawn site uses
- * this; scripts/studio-brand-audit.mjs and providerSpawnSites.test.ts check it.
+ * this; providerSpawnSites.test.ts checks it.
  */
 export function withHeadlessBrowserEnvironment(
   environment: NodeJS.ProcessEnv | undefined,

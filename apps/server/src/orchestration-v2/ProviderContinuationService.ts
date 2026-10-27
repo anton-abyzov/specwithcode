@@ -8,15 +8,9 @@ import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { delegatedCompletionWakeText } from "./DelegatedCompletionText.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
-
-function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
-  const taskList = taskIds.join(", ");
-  return taskIds.length === 1
-    ? `Delegated task ${taskList} reached a terminal state. Use task_status with taskId ${taskList} to read the result.`
-    : `Delegated tasks ${taskList} reached terminal states. Use task_status with each taskId to read the results.`;
-}
 
 function currentDelegatedCompletionDelivery(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs" | "providerTurns">,
@@ -135,7 +129,7 @@ export const layer = Layer.effectDiscard(
             commandId,
             threadId: request.threadId,
             messageId: delivery.messageId,
-            text: delegatedCompletionText(delivery.taskIds),
+            text: delegatedCompletionWakeText(delivery.taskIds),
             attachments: [],
             dispatchMode: { type: "queue_after_active" },
             createdBy: "agent",

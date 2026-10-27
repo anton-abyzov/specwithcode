@@ -105,6 +105,9 @@ export const layer = Access.toLayer(DesignSystemsToolkit, {
           from: {
             kind: "code",
             paths,
+            ...(input.paths === undefined && suggestion && suggestion.copies.length > 0
+              ? { copies: suggestion.copies }
+              : {}),
             ...(name === undefined ? {} : { name }),
             ...(input.targetSystemId === undefined ? {} : { targetSystemId: input.targetSystemId }),
           },

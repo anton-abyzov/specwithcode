@@ -1,4 +1,5 @@
 import type * as Layer from "effect/Layer";
+import type * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import type * as Ws from "./ws.ts";
 import type * as Server from "./server.ts";
 
@@ -30,4 +31,10 @@ export type WebSocketLayerTypeChecks = [
       ? true
       : false
   >,
+];
+
+/** The MCP route joins the same graph; its requirements stay exact too. */
+export type McpLayerTypeChecks = [
+  AssertFalse<IsAny<Layer.Services<typeof McpHttpServer.layer>>>,
+  AssertFalse<IsUnknown<Layer.Services<typeof McpHttpServer.layer>>>,
 ];

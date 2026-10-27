@@ -13,6 +13,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useComposerDraftStore } from "../../src/composerDraftStore";
+import { NO_PROVIDER_MODEL_SELECTION } from "../../src/providerInstances";
 import { fallbackChain, fallbackStatusHeader } from "../../src/components/chat/fallbackStatus";
 import { createRoot } from "react-dom/client";
 import {
@@ -185,6 +186,10 @@ const scenarios: Record<
   idle: { thread: sol, running: null, fallbackFrom: null },
   next: { thread: sol, running: null, fallbackFrom: null },
   long: { thread: long, running: null, fallbackFrom: null },
+  // A new chat with no project default: the thread holds only the placeholder.
+  // `draft` nothing picked; `draft-picked` GPT-6.1-Sol picked by hand.
+  draft: { thread: NO_PROVIDER_MODEL_SELECTION, running: null, fallbackFrom: null },
+  "draft-picked": { thread: NO_PROVIDER_MODEL_SELECTION, running: null, fallbackFrom: null },
   // Devin's GPT-6.1 Sol standing in for Codex's: the same model name on another provider.
   twin: {
     thread: { instanceId: devin, model: "gpt-6-1-sol-medium" } as ModelSelection,
@@ -198,6 +203,11 @@ fixtureEnvironment(environmentId, providers);
 if (scenarioName === "next") {
   useComposerDraftStore.getState().setModelSelection(threadRef, opus, { explicit: true });
 }
+const isDraft = scenarioName.startsWith("draft");
+if (scenarioName === "draft-picked") {
+  useComposerDraftStore.getState().setModelSelection(threadRef, sol, { explicit: true });
+}
+
 const scenario = scenarios[scenarioName] ?? scenarios.fallback!;
 const hasRoom = scenarioName === "fallback-room";
 const onBack = () => {
@@ -277,8 +287,8 @@ function Composer() {
         activeThread={undefined}
         activeThreadShell={null}
         promptHistoryMessages={[]}
-        isServerThread
-        isLocalDraftThread={false}
+        isServerThread={!isDraft}
+        isLocalDraftThread={isDraft}
         forceExpandedOnMobile={false}
         projectSelectionRequired={false}
         phase={scenario.running ? "running" : "ready"}
@@ -309,7 +319,7 @@ function Composer() {
         lockedProvider={null}
         providerStatuses={providers}
         providerCatalogKnown
-        activeProjectDefaultModelSelection={opus}
+        activeProjectDefaultModelSelection={isDraft ? null : opus}
         activeThreadModelSelection={scenario.thread}
         reportedModelSelection={scenario.running}
         limitFallbackFrom={scenario.fallbackFrom}

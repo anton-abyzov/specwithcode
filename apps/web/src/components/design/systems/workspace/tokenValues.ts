@@ -405,8 +405,21 @@ const SURFACE_NAMES = [
   /(?:^|-)raised$/,
 ];
 
-const isDarkMode = (mode: { id: string; name: string }) =>
+/** A mode named or keyed dark or night. */
+export const isDarkMode = (mode: { id: string; name: string }) =>
   /dark|night/i.test(mode.id) || /dark|night/i.test(mode.name);
+
+const TEXT_NAME_WORDS = new Set(["ink", "text", "foreground", "fg"]);
+
+/** A text color's name: on-X, or one with ink, text, foreground or fg in it. Never a ground or a surface. */
+export function isTextColorName(name: string): boolean {
+  const parts = name
+    .toLowerCase()
+    .split(/[-_./]+/)
+    .filter(Boolean);
+  const on = parts.lastIndexOf("on");
+  return (on >= 0 && on < parts.length - 1) || parts.some((part) => TEXT_NAME_WORDS.has(part));
+}
 
 function colorByNames(
   tokens: readonly DesignToken[],
@@ -414,7 +427,7 @@ function colorByNames(
   modes: DesignSystem["modes"],
   modeId: string,
 ): string | null {
-  const colors = tokens.filter((token) => token.type === "color");
+  const colors = tokens.filter((token) => token.type === "color" && !isTextColorName(token.name));
   for (const pattern of patterns) {
     for (const token of colors) {
       if (!pattern.test(token.name.toLowerCase())) continue;
@@ -425,6 +438,14 @@ function colorByNames(
     }
   }
   return null;
+}
+
+/** The mode's page ground from a ground, background, page or canvas color; null when none is named. */
+export function groundOf(
+  system: Pick<DesignSystem, "tokens" | "modes">,
+  modeId: string,
+): string | null {
+  return colorByNames(system.tokens, GROUND_NAMES, system.modes, modeId);
 }
 
 /** The page ground and the card color a shadow is shown on, per mode, with neutral fallbacks. */

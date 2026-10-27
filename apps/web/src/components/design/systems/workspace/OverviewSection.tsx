@@ -1,6 +1,7 @@
 /**
- * Overview: what the system is (name, description), its modes, where it came
- * from (sources and lineage), how many designs use it, then its README.
+ * Overview: the cover (name, description, its own colors), then its modes,
+ * where it came from (sources and lineage), how many designs use it, and
+ * its README.
  */
 import type { DesignOwnerInput, DesignSystem, EnvironmentId } from "@specweave-studio/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
@@ -18,8 +19,11 @@ import {
 import { Button } from "../../../ui/button";
 import { Textarea } from "../../../ui/textarea";
 import { sourcesLabel } from "../reviewModel";
+import { OverviewCover } from "./OverviewCover";
 import { OverviewReadme } from "./OverviewReadme";
+import { starterKit } from "./starterSets";
 import { newModeId, type SystemEditIntent } from "./systemEditIntents";
+import { sectionHeadingId } from "./systemSections";
 import { longDate, plural, usageLabel } from "./systemText";
 import { WelcomeSheet } from "./WelcomeSheet";
 
@@ -41,8 +45,8 @@ export const isEmptySystem = (system: Pick<DesignSystem, "tokens" | "components"
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid gap-1 py-2.5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
-      <dt className="text-muted-foreground text-sm">{label}</dt>
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <dt className="text-muted-foreground text-xs">{label}</dt>
       <dd className="min-w-0 text-sm text-foreground">{children}</dd>
     </div>
   );
@@ -58,65 +62,77 @@ export function OverviewSection(props: OverviewSectionProps) {
         ? `Copied from revision ${system.copiedFrom.revision} of ${system.copiedFrom.id} on ${longDate(system.copiedFrom.copiedAt)}`
         : null;
   return (
-    <div className="flex flex-col gap-6 px-4 pb-5" data-testid="overview-section">
-      {isEmptySystem(system) ? (
-        <WelcomeSheet
+    <div className="flex flex-col" data-testid="overview-section">
+      <OverviewCover system={system} headingId={sectionHeadingId("readme")}>
+        <Description {...props} />
+      </OverviewCover>
+      <div className="flex flex-col gap-8 px-5 pt-6 pb-8 sm:px-10">
+        {isEmptySystem(system) ? (
+          <WelcomeSheet
+            environmentId={props.environmentId}
+            owner={props.owner}
+            systemId={system.id}
+            canEdit={props.canEdit}
+            onStart={(options) =>
+              void props.onEdit({
+                kind: "add-many",
+                label: "the basics",
+                tokens: starterKit(system.modes, options),
+              })
+            }
+            {...(props.onChanged === undefined ? {} : { onChanged: props.onChanged })}
+          />
+        ) : null}
+        <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_repeat(4,minmax(0,1fr))]">
+          <Fact label="Modes">
+            <Modes {...props} />
+          </Fact>
+          <Fact label="Contents">
+            {plural(system.tokens.length, "token")} ·{" "}
+            {plural(system.components.length, "component")}
+          </Fact>
+          <Fact label="Sources">
+            {system.sources.length === 0 ? (
+              "Started from scratch"
+            ) : (
+              <div className="flex min-w-0 flex-col gap-1">
+                <span>{sourcesLabel(system.sources)}</span>
+                {files.length > 0 ? (
+                  <ul className="flex min-w-0 flex-col gap-0.5">
+                    {files.slice(0, 8).map((source) => (
+                      <li
+                        key={source.location}
+                        className="truncate font-mono text-muted-foreground text-xs"
+                        title={source.location}
+                      >
+                        {source.location}
+                      </li>
+                    ))}
+                    {files.length > 8 ? (
+                      <li className="text-muted-foreground text-xs">
+                        and {plural(files.length - 8, "more file")}
+                      </li>
+                    ) : null}
+                  </ul>
+                ) : null}
+              </div>
+            )}
+          </Fact>
+          {lineage !== null ? <Fact label="Lineage">{lineage}</Fact> : null}
+          <Fact label="Designs">
+            <span data-testid="system-usage">{usageLabel(props.usage)}</span>
+          </Fact>
+          <Fact label="Revision">
+            {system.revision} · Updated {longDate(system.updatedAt)}
+          </Fact>
+        </dl>
+        <OverviewReadme
           environmentId={props.environmentId}
           owner={props.owner}
           systemId={system.id}
           canEdit={props.canEdit}
-          {...(props.onChanged === undefined ? {} : { onChanged: props.onChanged })}
         />
-      ) : null}
-      <Description {...props} />
-      <dl className="flex flex-col divide-y divide-border/50 border-border/50 border-y">
-        <Fact label="Modes">
-          <Modes {...props} />
-        </Fact>
-        <Fact label="Contents">
-          {plural(system.tokens.length, "token")} · {plural(system.components.length, "component")}
-        </Fact>
-        <Fact label="Sources">
-          {system.sources.length === 0 ? (
-            "Started from scratch"
-          ) : (
-            <div className="flex min-w-0 flex-col gap-1">
-              <span>{sourcesLabel(system.sources)}</span>
-              {files.length > 0 ? (
-                <ul className="flex min-w-0 flex-col gap-0.5">
-                  {files.slice(0, 8).map((source) => (
-                    <li
-                      key={source.location}
-                      className="truncate font-mono text-muted-foreground text-xs"
-                      title={source.location}
-                    >
-                      {source.location}
-                    </li>
-                  ))}
-                  {files.length > 8 ? (
-                    <li className="text-muted-foreground text-xs">
-                      and {plural(files.length - 8, "more file")}
-                    </li>
-                  ) : null}
-                </ul>
-              ) : null}
-            </div>
-          )}
-        </Fact>
-        {lineage !== null ? <Fact label="Lineage">{lineage}</Fact> : null}
-        <Fact label="Designs">
-          <span data-testid="system-usage">{usageLabel(props.usage)}</span>
-        </Fact>
-        <Fact label="Revision">
-          {system.revision} · Updated {longDate(system.updatedAt)}
-        </Fact>
-      </dl>
-      <OverviewReadme
-        environmentId={props.environmentId}
-        owner={props.owner}
-        systemId={system.id}
-        canEdit={props.canEdit}
-      />
+      </div>
     </div>
   );
 }
@@ -126,13 +142,15 @@ function Description({ system, canEdit, onEdit }: OverviewSectionProps) {
   const text = system.description ?? "";
   if (!canEdit)
     return text === "" ? null : (
-      <p className="max-w-[46rem] text-base text-muted-foreground leading-relaxed">{text}</p>
+      <p className="max-w-[40rem] text-base text-muted-foreground leading-relaxed sm:text-lg">
+        {text}
+      </p>
     );
   if (draft === null)
     return (
       <button
         type="button"
-        className="-mx-2 max-w-[46rem] rounded-md px-2 py-1 text-left text-base leading-relaxed outline-none transition-colors duration-[120ms] hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+        className="-mx-2 max-w-[40rem] rounded-md px-2 py-1 text-left text-base leading-relaxed outline-none transition-colors duration-[120ms] hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring sm:text-lg"
         onClick={() => setDraft(text)}
       >
         {text === "" ? (
@@ -149,7 +167,7 @@ function Description({ system, canEdit, onEdit }: OverviewSectionProps) {
     setDraft(null);
   };
   return (
-    <div className="flex max-w-[46rem] flex-col gap-2">
+    <div className="flex max-w-[40rem] flex-col gap-2">
       <Textarea
         autoFocus
         aria-label="Description"

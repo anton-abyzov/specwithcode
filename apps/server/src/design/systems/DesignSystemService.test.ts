@@ -26,6 +26,13 @@ import {
   makeDesignSystemService,
   userCaller,
 } from "./DesignSystemService.ts";
+import {
+  STATUS_COPY,
+  UIKIT,
+  UIKIT_BARREL,
+  UIKIT_TOKENS,
+  layOutUmbrella,
+} from "./umbrellaFixture.testkit.ts";
 
 const withWrite = (roots: Pick<typeof DesignSystemRoots.Service, "resolve">) =>
   DesignSystemRoots.of({ ...roots, resolveForWrite: roots.resolve });
@@ -53,6 +60,8 @@ const agent = (scope: DesignOwnerInput): DesignSystemCaller => ({
 const memoryFiles = () => {
   const systems = new Map<string, DesignSystem>();
   const writes: Array<{ root: string; id: string; expectedRevision: number | null }> = [];
+  /** Stored files by `<root>|<system id>`, then by path. */
+  const storedFiles = new Map<string, Map<string, Uint8Array>>();
   const service = DesignSystemFiles.of({
     listDesignSystems: async (root) => ({
       systems: [...systems.entries()]
@@ -82,8 +91,15 @@ const memoryFiles = () => {
       writes.push({ root, id: system.id, expectedRevision: options.expectedRevision });
       return stored;
     },
+    listStoredFiles: async (root, id) =>
+      [...(storedFiles.get(`${root}|${id}`)?.keys() ?? [])].sort(),
+    putStoredFile: async (root, id, path, bytes) => {
+      const key = `${root}|${id}`;
+      if (!storedFiles.has(key)) storedFiles.set(key, new Map());
+      storedFiles.get(key)!.set(path, bytes);
+    },
   });
-  return { service, systems, writes };
+  return { service, systems, writes, storedFiles };
 };
 
 async function setup(options: { readonly permissiveRoots?: boolean } = {}) {
@@ -172,6 +188,114 @@ ${["canvas", "text", "accent", "border", "muted", "canvas", "text", "accent"].ma
 `;
 
 describe("DesignSystemService", () => {
+  it("rescans a tokens-only kit into its components and brand files, then stores the kept files", async () => {
+    const { checkout, files, run } = await setup();
+    const umbrella = await layOutUmbrella();
+    temps.push(umbrella);
+    await NodeFSP.cp(umbrella, checkout, { recursive: true });
+    const put = async (path: string, text: string) => {
+      await NodeFSP.mkdir(NodePath.dirname(NodePath.join(checkout, path)), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(checkout, path), text);
+    };
+    await put(`${UIKIT}/README.md`, "# UI kit");
+    await put("repositories/acme/status-site/public/brand/mark.svg", "<svg id='mark'/>");
+    await put("repositories/acme/status-site/public/brand/mark-dark.svg", "<svg id='dark'/>");
+
+    // Imported from the tokens alone, as EasyChamp's kit was before scans grouped its barrels.
+    const first = await run((service) =>
+      service.propose(userCaller, {
+        owner: project,
+        from: { kind: "code", paths: [UIKIT_TOKENS], name: "Kit" },
+      }),
+    );
+    const kept = await run((service) =>
+      service.confirm(userCaller, {
+        proposalId: first.id,
+        excludeTokens: [],
+        excludeComponents: [],
+        excludeFiles: (first.files ?? []).map((file) => file.path),
+      }),
+    );
+    expect(kept.system.tokens.length).toBeGreaterThan(0);
+    expect(kept.system.components).toEqual([]);
+    expect([...files.storedFiles.values()].flatMap((stored) => [...stored.keys()])).toEqual([]);
+
+    const rescan = await run((service) =>
+      service.rescan(userCaller, { owner: project, systemId: kept.system.id }),
+    );
+    if (rescan.status !== "changed") throw new Error(`expected changed, got ${rescan.status}`);
+    expect(rescan).toMatchObject({ changed: [], missing: [], added: [UIKIT_BARREL] });
+    expect(
+      rescan.proposal.components.map((change) => [change.component.name, change.change]),
+    ).toEqual([
+      ["Button", "added"],
+      ["Card", "added"],
+      ["Dialog", "added"],
+    ]);
+    expect(rescan.proposal.files?.map((file) => [file.source, file.path])).toEqual([
+      [`${UIKIT}/README.md`, "README.md"],
+      ["repositories/acme/status-site/public/brand/mark-dark.svg", "assets/Brand/mark-dark.svg"],
+      ["repositories/acme/status-site/public/brand/mark.svg", "assets/Brand/mark.svg"],
+    ]);
+    expect(STATUS_COPY.startsWith("repositories/acme/status-site/public/brand/")).toBe(true);
+
+    // A file changed after the review is not written; an unticked one is not either.
+    await put("repositories/acme/status-site/public/brand/mark-dark.svg", "<svg id='edited'/>");
+    const confirmed = await run((service) =>
+      service.confirm(userCaller, {
+        proposalId: rescan.proposal.id,
+        excludeTokens: [],
+        excludeComponents: [],
+        excludeFiles: ["assets/Brand/mark.svg"],
+      }),
+    );
+    expect(confirmed.system.components).toHaveLength(3);
+    expect(confirmed.system.sources.map((source) => source.location)).toEqual([
+      UIKIT_BARREL,
+      UIKIT_TOKENS,
+    ]);
+    const stored = files.storedFiles.get(
+      `${NodePath.join(checkout, ".specweave/design")}|${kept.system.id}`,
+    );
+    expect([...(stored?.keys() ?? [])]).toEqual(["README.md"]);
+    expect(new TextDecoder().decode(stored!.get("README.md"))).toBe("# UI kit");
+
+    // With components and stored files, a rescan only compares hashes again.
+    const again = await run((service) =>
+      service.rescan(userCaller, { owner: project, systemId: kept.system.id }),
+    );
+    expect(again.status).toBe("unchanged");
+  });
+
+  it("offers brand files on a rescan while the system stores none (D-03)", async () => {
+    const { checkout, run } = await setup();
+    const umbrella = await layOutUmbrella();
+    temps.push(umbrella);
+    await NodeFSP.cp(umbrella, checkout, { recursive: true });
+    const proposal = await run((service) =>
+      service.propose(userCaller, {
+        owner: project,
+        from: { kind: "code", paths: [UIKIT_TOKENS, UIKIT_BARREL], name: "Kit" },
+      }),
+    );
+    const imported = await run((service) =>
+      service.confirm(userCaller, {
+        proposalId: proposal.id,
+        excludeTokens: [],
+        excludeComponents: [],
+      }),
+    );
+    // The README arrives after the import, so only brand files are new.
+    await NodeFSP.writeFile(NodePath.join(checkout, UIKIT, "README.md"), "# UI kit");
+
+    const rescan = await run((service) =>
+      service.rescan(userCaller, { owner: project, systemId: imported.system.id }),
+    );
+    if (rescan.status !== "changed") throw new Error(`expected changed, got ${rescan.status}`);
+    expect(rescan).toMatchObject({ changed: [], missing: [] });
+    expect(rescan.proposal.files?.map((file) => file.path)).toEqual(["README.md"]);
+  });
+
   it("scans, proposes, confirms the reviewed items, and rescans without parsing when nothing changed", async () => {
     const { files, run, write } = await setup();
     const scan = await run((service) => service.scan(userCaller, { owner: project }));

@@ -10,7 +10,7 @@ import type {
   DesignToken,
   EnvironmentId,
 } from "@specweave-studio/contracts";
-import { ChevronRightIcon, EyeIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, EyeIcon, PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -33,6 +33,7 @@ import { SectionsMenu, SystemNav } from "./SystemNav";
 import {
   buildSections,
   isSectionId,
+  sectionHeadingId,
   visibleSections,
   type SectionId,
   type SystemSection,
@@ -40,6 +41,19 @@ import {
 } from "./systemSections";
 import { TypographyTable } from "./TypographyTable";
 import { CONFLICT_TEXT } from "./useSystemEdits";
+import { FontFilesList, UploadFontButton, useFontUploads, type FontUploads } from "./FontFiles";
+import { StarterOffer } from "./StarterOffer";
+import type { StarterKind } from "./starterSets";
+import { INSET } from "./tokenRows";
+
+/** Empty core sections that offer a starter set. */
+const STARTERS: Partial<Record<TokenSectionKind, StarterKind>> = {
+  colors: "colors",
+  typography: "typography",
+  spacing: "spacing",
+  radius: "radius",
+  shadows: "shadows",
+};
 
 export const EMPTY_TEXT: Record<TokenSectionKind | "components", string> = {
   colors: "No colors yet.",
@@ -148,6 +162,13 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
   const [adding, setAdding] = useState<Adding | null>(null);
   const [renaming, setRenaming] = useState(false);
   const titleInput = useRef<HTMLInputElement | null>(null);
+  const fonts = useFontUploads({
+    environmentId: props.environmentId,
+    owner: props.owner,
+    systemId: system.id,
+    canEdit: editable,
+    ...(props.onChanged === undefined ? {} : { onChanged: props.onChanged }),
+  });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** The hash this page wrote itself; it does not scroll again. */
   const ownHash = useRef<string | null>(null);
@@ -370,7 +391,7 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
               className="absolute inset-0 overflow-y-auto overscroll-contain"
               data-testid="system-scroll"
             >
-              <div className="mx-auto flex w-full max-w-[76rem] flex-col gap-4 px-3 py-4 sm:px-6 sm:py-6">
+              <div className="mx-auto flex w-full max-w-[76rem] flex-col gap-6 px-3 py-4 sm:px-8 sm:py-8">
                 {sections.map((section) => (
                   <SectionCard
                     key={section.id}
@@ -383,6 +404,9 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
                         : isTokenSection(section)
                           ? section.tokens.length
                           : null
+                    }
+                    actions={
+                      section.kind === "typography" ? <UploadFontButton fonts={fonts} /> : null
                     }
                     onAdd={
                       editable && addable(section, system)
@@ -400,6 +424,7 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
                       section={section}
                       editable={editable}
                       goTo={goTo}
+                      fonts={fonts}
                       onAdd={(group) =>
                         setAdding(
                           section.kind === "components"
@@ -411,6 +436,7 @@ export function SystemWorkspace(props: SystemWorkspaceProps) {
                   </SectionCard>
                 ))}
               </div>
+              {fonts.input}
             </div>
             {filesOpen ? (
               <FilesBrowser
@@ -466,6 +492,7 @@ function SectionCard({
   open,
   count,
   onToggle,
+  actions,
   onAdd,
   children,
 }: {
@@ -473,62 +500,71 @@ function SectionCard({
   open: boolean;
   count: number | null;
   onToggle: () => void;
+  /** Section tools before "+ Add" (Typography's Upload font). */
+  actions?: ReactNode;
   onAdd: (() => void) | null;
   children: ReactNode;
 }) {
-  const headingId = `section-${section.id}-title`;
+  const headingId = sectionHeadingId(section.id);
+  // Overview opens on its cover, whose name is the heading.
+  const cover = section.kind === "overview";
   return (
     <section
       id={`section-${section.id}`}
       aria-labelledby={headingId}
       data-section={section.id}
-      className="scroll-mt-2 rounded-xl border border-border/70 bg-card text-card-foreground"
+      className="scroll-mt-4 overflow-clip rounded-2xl border border-border/60 bg-card text-card-foreground"
     >
-      <header
-        className={cn(
-          "sticky top-0 z-10 flex items-center gap-2 rounded-t-xl bg-card/95 px-3 py-2.5 backdrop-blur-sm sm:px-4",
-          !open && "rounded-b-xl",
-        )}
-      >
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={`section-${section.id}-body`}
-          className="-ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={onToggle}
+      {cover ? null : (
+        <header
+          className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 pt-6 pb-5 sm:pt-8", INSET)}
         >
-          <ChevronRightIcon
-            aria-hidden
-            className={cn(
-              "size-4 shrink-0 text-muted-foreground transition-transform duration-[120ms] motion-reduce:transition-none",
-              open && "rotate-90",
-            )}
-          />
-          <h2
-            id={headingId}
-            className="truncate font-[family-name:var(--report-serif)] text-2xl text-foreground leading-tight tracking-[-0.01em]"
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={`section-${section.id}-body`}
+            className="group/title -mx-1 flex min-w-0 items-center gap-2 rounded-md px-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={onToggle}
           >
-            {section.title}
-          </h2>
-        </button>
-        {count !== null && count > 0 ? (
-          <span className="shrink-0 text-muted-foreground text-xs tabular-nums">{count}</span>
-        ) : null}
-        {onAdd !== null ? (
-          <Button
-            variant="outline"
-            size="xs"
-            className="ml-auto shrink-0"
-            aria-label={`Add to ${section.title}`}
-            data-testid="section-add"
-            onClick={onAdd}
-          >
-            <PlusIcon aria-hidden />
-            Add
-          </Button>
-        ) : null}
-      </header>
-      <div id={`section-${section.id}-body`} hidden={!open} className="pb-2">
+            <h2
+              id={headingId}
+              className="report-document truncate font-[family-name:var(--report-serif)] font-normal text-[2rem] text-foreground leading-[1.15] tracking-[-0.015em] sm:text-[2.5rem]"
+            >
+              {section.title}
+            </h2>
+            {count !== null && count > 0 ? (
+              <span className="mt-2 shrink-0 text-muted-foreground text-sm tabular-nums">
+                {count}
+              </span>
+            ) : null}
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "mt-1 size-4 shrink-0 text-muted-foreground opacity-0 transition-[opacity,transform] duration-[120ms] group-hover/title:opacity-100 group-focus-visible/title:opacity-100 motion-reduce:transition-none",
+                !open && "-rotate-90 opacity-100",
+              )}
+            />
+          </button>
+          {(actions !== null && actions !== undefined) || onAdd !== null ? (
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {actions}
+              {onAdd !== null ? (
+                <Button
+                  variant="outline"
+                  size="xs"
+                  aria-label={`Add to ${section.title}`}
+                  data-testid="section-add"
+                  onClick={onAdd}
+                >
+                  <PlusIcon aria-hidden />
+                  Add
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </header>
+      )}
+      <div id={`section-${section.id}-body`} hidden={!open} className={cover ? undefined : "pb-5"}>
         {open ? children : null}
       </div>
     </section>
@@ -540,6 +576,7 @@ function SectionBody(
     section: SystemSection;
     editable: boolean;
     goTo: (name: string) => void;
+    fonts: FontUploads;
     onAdd: (group: string | null) => void;
   },
 ) {
@@ -564,7 +601,7 @@ function SectionBody(
     );
   if (section.kind === "assets")
     return (
-      <div className="px-3 pb-3 sm:px-4">
+      <div className={INSET}>
         <AssetsSection
           environmentId={props.environmentId}
           owner={props.owner}
@@ -580,18 +617,35 @@ function SectionBody(
       <ComponentsSection system={system} canEdit={props.editable} onEdit={props.onEdit} />
     );
   if (!isTokenSection(section)) return null;
+  if (section.kind === "typography")
+    return (
+      <>
+        {section.tokens.length === 0 ? (
+          <Empty {...props} text={EMPTY_TEXT.typography} section={section} />
+        ) : (
+          <TypographyTable {...table} tokens={section.tokens} onAdd={props.onAdd} />
+        )}
+        <FontFilesList fonts={props.fonts} />
+      </>
+    );
   if (section.tokens.length === 0)
     return <Empty {...props} text={EMPTY_TEXT[section.kind]} section={section} />;
   switch (section.kind) {
     case "colors":
       return <ColorTable {...table} tokens={section.tokens} onAdd={props.onAdd} />;
-    case "typography":
-      return <TypographyTable {...table} tokens={section.tokens} onAdd={props.onAdd} />;
     case "shadows":
       return <ShadowTable {...table} tokens={section.tokens} />;
     case "spacing":
     case "radius":
-      return <NameValueTable {...table} tokens={section.tokens} check="length" split />;
+      return (
+        <NameValueTable
+          {...table}
+          tokens={section.tokens}
+          check="length"
+          preview={section.kind}
+          split
+        />
+      );
     case "family":
       return (
         <NameValueTable
@@ -607,27 +661,40 @@ function SectionBody(
 function Empty({
   text,
   section,
+  system,
   editable,
+  onEdit,
   onAdd,
 }: {
   text: string;
   section: SystemSection;
+  system: DesignSystem;
   editable: boolean;
+  onEdit: (intent: SystemEditIntent) => Promise<boolean>;
   onAdd: (group: string | null) => void;
 }) {
+  const starter = isTokenSection(section) ? STARTERS[section.kind] : undefined;
   return (
-    <div className="flex flex-wrap items-center gap-3 px-4 pt-1 pb-4" data-testid="section-empty">
-      <p className="text-muted-foreground text-sm">{text}</p>
+    <div
+      className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 pb-2", INSET)}
+      data-testid="section-empty"
+    >
+      <p className="mr-auto text-muted-foreground text-sm">{text}</p>
       {editable ? (
-        <Button
-          variant="outline"
-          size="xs"
-          aria-label={`Add to ${section.title}`}
-          onClick={() => onAdd(null)}
-        >
-          <PlusIcon aria-hidden />
-          Add
-        </Button>
+        <>
+          {starter !== undefined ? (
+            <StarterOffer kind={starter} system={system} onEdit={onEdit} />
+          ) : null}
+          <Button
+            variant="outline"
+            size="xs"
+            aria-label={`Add to ${section.title}`}
+            onClick={() => onAdd(null)}
+          >
+            <PlusIcon aria-hidden />
+            Add
+          </Button>
+        </>
       ) : null}
     </div>
   );

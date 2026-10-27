@@ -505,6 +505,24 @@ it("keeps the coordinator role to what tools and code do not already say", () =>
   // About 1,100 tokens; it was about 1,850 before the role moved into tools and code.
   assert.isAtMost(coordinator.length, 4_500);
 });
+it("keeps the worker and personal coordinator roles within their budgets", () => {
+  const settings = {
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    coordinatorThreadId: ThreadId.make("c"),
+  };
+  const role = (threadId: string, kind: "code" | "personal") =>
+    Workspace.projectContextText({
+      projectId: "p",
+      threadId,
+      settings: { ...settings, kind },
+      files: [],
+      index: "",
+    }).split("\nGoal:\n")[0]!;
+  // About 210 tokens on every worker turn (October 26, 2026).
+  assert.isAtMost(role("w", "code").length, 900);
+  // About 1,780 tokens for a personal project's coordinator (October 26, 2026).
+  assert.isAtMost(role("c", "personal").length, 7_200);
+});
 it("tells a coordinator how to run workers on another machine and where this project's go", () => {
   const settings = {
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,

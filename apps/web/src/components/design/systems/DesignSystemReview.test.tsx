@@ -102,6 +102,39 @@ describe("DesignSystemReview", () => {
     });
   });
 
+  it("lists brand files on their own tab and sends unticked ones as excludes", () => {
+    const sha256 = "a".repeat(64);
+    const { onConfirm } = render({
+      proposal: {
+        ...WEAVE_PROPOSAL,
+        files: [
+          { source: "packages/kit/README.md", path: "README.md", bytes: 120, sha256 },
+          {
+            source: "apps/site/public/brand/mark.svg",
+            path: "assets/Brand/mark.svg",
+            bytes: 2048,
+            sha256,
+          },
+        ],
+      },
+    });
+    click(
+      [...container.querySelectorAll("button")].find((b) => b.textContent === "Files (2)") ?? null,
+    );
+    const rows = [...container.querySelectorAll('[data-testid="file-row"]')];
+    expect(rows.map((row) => row.getAttribute("data-path"))).toEqual([
+      "README.md",
+      "assets/Brand/mark.svg",
+    ]);
+    expect(rows[1]!.textContent).toContain("apps/site/public/brand/mark.svg");
+    expect(rows[1]!.textContent).toContain("2 KB");
+    click($('[aria-label="Include assets/Brand/mark.svg"]'));
+    click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ excludeFiles: ["assets/Brand/mark.svg"] }),
+    );
+  });
+
   it("disables Confirm when nothing ticked would change the system", () => {
     render();
     for (const group of ["new", "changed", "removed"])

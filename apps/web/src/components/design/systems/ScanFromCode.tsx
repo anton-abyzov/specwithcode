@@ -140,7 +140,12 @@ export function ScanFromCode({
     setError(null);
     void onPropose({
       owner: { kind: "project", projectId },
-      from: { kind: "code", paths: [...paths], name: suggestion.name },
+      from: {
+        kind: "code",
+        paths: [...paths],
+        ...(suggestion.copies.length > 0 ? { copies: suggestion.copies.slice(0, 200) } : {}),
+        name: suggestion.name,
+      },
     }).then((problem) => {
       setBusy(null);
       setError(problem);

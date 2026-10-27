@@ -9,7 +9,7 @@ index 780dc041c58e83ebfcd84434e500ec471020813a..6b5c02dac6e48b344c4a16defdf1709e
            if (params.socket) {
              return net.createConnection(params.socket);
            }
-+          // T3 Code never passes Unix descriptors, so usocket is not installed.
++          // SpecWithCode never passes Unix descriptors, so usocket is not installed.
 +          // Node connects to both path and abstract sockets natively.
            if (params.abstract) {
 -            const usocket = require('usocket');

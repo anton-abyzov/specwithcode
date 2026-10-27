@@ -92,6 +92,23 @@ describe("SystemFilesStore paths", () => {
     expect(await exists(NodePath.join(folder, "files"))).toBe(false);
   });
 
+  it("keeps a stored file when an import writes the same name only if absent", async () => {
+    const { root } = await systemRoot();
+    await putSystemFile(root, SYSTEM, "README.md", text("by hand"));
+    const kept = await putSystemFile(root, SYSTEM, "readme.md", text("imported"), undefined, {
+      ifAbsent: true,
+    });
+    expect(kept.path).toBe("README.md");
+    expect(new TextDecoder().decode((await readSystemFile(root, SYSTEM, "README.md")).bytes)).toBe(
+      "by hand",
+    );
+    await putSystemFile(root, SYSTEM, "docs/usage.md", text("new"), undefined, { ifAbsent: true });
+    expect((await listSystemFiles(root, SYSTEM)).files.map((file) => file.path)).toEqual([
+      "README.md",
+      "docs/usage.md",
+    ]);
+  });
+
   it("refuses a system id that names a path", async () => {
     const { root } = await systemRoot();
     for (const id of ["../systems", "systems", "s/x"]) {

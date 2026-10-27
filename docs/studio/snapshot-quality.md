@@ -10,7 +10,7 @@ The preview picker sends `getBoundingClientRect()` coordinates, measured in CSS 
 
 ## Preview, paste and provider boundaries
 
-The user references are screenshots of T3 Code. Their cards alone do not establish the quality of T3's attached source or the bytes received by its provider. These fixes address independently reproduced defects in this app; they do not claim to diagnose T3's runtime.
+The user references are screenshots of another coding-agent app. Their cards alone do not establish the quality of that app's attached source or the bytes received by its provider. These fixes address independently reproduced defects in this app; they do not claim to diagnose the other app's runtime.
 
 The composer generates a cached 256 × 256 center-cropped thumbnail for its small attachment cards. That is a display derivative. Expanded image previews and uploads use the attachment file, never that thumbnail. No screenshot-blur filter was found in these app card paths. Tiny card text is not a reliable source-quality test.
 

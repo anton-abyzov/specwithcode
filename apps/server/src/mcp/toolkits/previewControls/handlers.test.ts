@@ -67,6 +67,7 @@ it.effect.each([
         Layer.succeed(Preview.PreviewManager, manager),
         Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
         McpToolAccessTestkit.liveThreadsLayer,
+        McpToolAccessTestkit.noProjectsLayer,
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed(settings),
         }),

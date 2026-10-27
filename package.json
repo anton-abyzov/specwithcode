@@ -19,7 +19,6 @@
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
-    "brand:audit": "node scripts/studio-brand-audit.mjs",
     "icons:export:android": "node scripts/export-android-icons.ts",
     "build": "vp run --filter './apps/*' build",
     "build:marketing": "vp run --filter @specweave-studio/marketing build",

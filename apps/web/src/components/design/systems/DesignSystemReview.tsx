@@ -17,7 +17,7 @@ import { Checkbox } from "../../ui/checkbox";
 import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import { Toggle, ToggleGroup } from "../../ui/toggle-group";
-import { ComponentRow, TokenRow } from "./ReviewRows";
+import { ComponentRow, FileRow, TokenRow } from "./ReviewRows";
 import {
   buildConfirmInput,
   CHANGE_GROUPS,
@@ -169,9 +169,10 @@ export function DesignSystemReview({
   const id = useId();
   const [selection, setSelection] = useState<ReviewSelection>(EMPTY_SELECTION);
   const [name, setName] = useState(proposal.system.name);
-  const [tab, setTab] = useState<"tokens" | "components">(
+  const [tab, setTab] = useState<"tokens" | "components" | "files">(
     proposal.tokens.length === 0 && proposal.components.length > 0 ? "components" : "tokens",
   );
+  const files = proposal.files ?? [];
   const counts = proposalCounts(proposal);
   const tokens = groupByChange(proposal.tokens);
   const components = groupByChange(proposal.components);
@@ -237,7 +238,7 @@ export function DesignSystemReview({
           value={[tab]}
           onValueChange={(next) => {
             const value = next[0];
-            if (value === "tokens" || value === "components") setTab(value);
+            if (value === "tokens" || value === "components" || value === "files") setTab(value);
           }}
         >
           <Toggle value="tokens" size="sm">
@@ -246,9 +247,33 @@ export function DesignSystemReview({
           <Toggle value="components" size="sm">
             Components ({proposal.components.length})
           </Toggle>
+          {files.length > 0 ? (
+            <Toggle value="files" size="sm">
+              Files ({files.length})
+            </Toggle>
+          ) : null}
         </ToggleGroup>
 
-        {tab === "tokens" ? (
+        {tab === "files" ? (
+          <div className="flex flex-col gap-3" data-testid="review-files">
+            <ChangeGroup
+              title="Brand files"
+              hint="README to Overview, images to Assets, fonts to Typography"
+              keys={files.map((file) => file.path)}
+              unticked={selection.files}
+              onToggle={toggle("files")}
+            >
+              {files.map((file) => (
+                <FileRow
+                  key={file.path}
+                  file={file}
+                  checked={!selection.files.has(file.path)}
+                  onChange={(ticked) => toggle("files")([file.path], ticked)}
+                />
+              ))}
+            </ChangeGroup>
+          </div>
+        ) : tab === "tokens" ? (
           <div className="flex flex-col gap-3" data-testid="review-tokens">
             {CHANGE_GROUPS.map((group) => (
               <ChangeGroup

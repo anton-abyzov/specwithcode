@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright, expect
 
 os.environ["PWDEBUG"] = "0"
 os.environ["PLAYWRIGHT_HTML_OPEN"] = "never"
-out = Path(os.environ.get("PHONE_SETUP_EVIDENCE", "/Users/you/.specwithcode/m4/evidence/t3-connect-1014"))
+out = Path(os.environ.get("PHONE_SETUP_EVIDENCE", "/Users/you/.specwithcode/m4/evidence/phone-setup-1014"))
 out.mkdir(parents=True, exist_ok=True)
 checks = []
 

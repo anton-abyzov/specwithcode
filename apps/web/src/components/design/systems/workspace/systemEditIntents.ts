@@ -27,6 +27,12 @@ export type SystemEditIntent =
   /** The usage note; empty removes it. */
   | { readonly kind: "set-usage"; readonly name: string; readonly text: string }
   | { readonly kind: "add"; readonly token: DesignTokenEdit }
+  /** A starter set: every token whose name is free, in one undoable edit. */
+  | {
+      readonly kind: "add-many";
+      readonly label: string;
+      readonly tokens: readonly DesignTokenEdit[];
+    }
   /** A whole token, for edits that change its value and its note together (typography). */
   | { readonly kind: "replace"; readonly token: DesignTokenEdit }
   | { readonly kind: "set-info"; readonly name?: string; readonly description?: string | null }
@@ -62,6 +68,19 @@ function withAlias(edit: DesignTokenEdit, baseModeId: string | undefined): Desig
   const target = base === undefined ? null : aliasTarget(base);
   const { aliasOf: _previous, ...rest } = edit;
   return target === null || target === edit.name ? rest : { ...rest, aliasOf: target };
+}
+
+/** Trimmed name, values and note; empty values dropped; the alias recorded. */
+function cleanEdit(edit: DesignTokenEdit, baseModeId: string | undefined): DesignTokenEdit {
+  const token = { ...edit, name: edit.name.trim() };
+  const values = Object.fromEntries(
+    Object.entries(token.values)
+      .map(([modeId, raw]) => [modeId, raw.trim()] as const)
+      .filter(([, raw]) => raw !== ""),
+  );
+  const description = token.description?.trim();
+  const { description: _description, ...rest } = token;
+  return withAlias({ ...rest, values, ...(description ? { description } : {}) }, baseModeId);
 }
 
 const findToken = (system: DesignSystem, name: string) =>
@@ -109,24 +128,18 @@ export function operationsFor(
       return [{ op: "put_token", token: text === "" ? edit : { ...edit, description: text } }];
     }
     case "add":
-    case "replace": {
-      const token = { ...intent.token, name: intent.token.name.trim() };
-      const values = Object.fromEntries(
-        Object.entries(token.values)
-          .map(([modeId, raw]) => [modeId, raw.trim()] as const)
-          .filter(([, raw]) => raw !== ""),
-      );
-      const description = token.description?.trim();
-      const { description: _description, ...rest } = token;
-      return [
-        {
-          op: "put_token",
-          token: withAlias(
-            { ...rest, values, ...(description ? { description } : {}) },
-            baseModeId,
-          ),
-        },
-      ];
+    case "replace":
+      return [{ op: "put_token", token: cleanEdit(intent.token, baseModeId) }];
+    case "add-many": {
+      const taken = new Set(system.tokens.map((token) => token.name));
+      return intent.tokens
+        .map((token) => cleanEdit(token, baseModeId))
+        .filter((token) => {
+          if (token.name === "" || taken.has(token.name)) return false;
+          taken.add(token.name);
+          return true;
+        })
+        .map((token) => ({ op: "put_token" as const, token }));
     }
     case "set-info": {
       const name = intent.name?.trim();
@@ -261,6 +274,8 @@ export function intentLabel(intent: SystemEditIntent): string {
         : `Saved the usage note of ${intent.name}`;
     case "add":
       return `Added ${intent.token.name.trim()}`;
+    case "add-many":
+      return `Added ${intent.label}`;
     case "replace":
       return `Changed ${intent.token.name}`;
     case "set-info":

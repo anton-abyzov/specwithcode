@@ -291,7 +291,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
   taskLane: Schema.optional(OrchestratorMcpTaskLaneHint),
   title: Schema.optional(OrchestratorMcpTitle),
-  role: Schema.optional(OrchestratorMcpTaskRole),
+  role: Schema.optional(
+    OrchestratorMcpTaskRole.annotate({
+      description:
+        "Deprecated; accepted for compatibility. Put what the child should do in task. review only adds a pointer to the sw-review skill; other values add nothing.",
+    }),
+  ),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
@@ -939,6 +944,10 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     incrementalThreadRead: Schema.Boolean,
     scheduledTasks: Schema.Boolean,
     maxBatchThreads: Schema.Number,
+    /** Most unfinished delegate_task children one parent run may hold at once. */
+    maxLiveChildTasks: Schema.optional(Schema.Number),
+    /** Most delegate_task levels below the thread that started the chain. */
+    maxDelegationDepth: Schema.optional(Schema.Number),
   }),
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;

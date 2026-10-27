@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import { DesignService, PLAYGROUND_DESIGN_DIR } from "../DesignService.ts";
 import * as Store from "../DesignStore.ts";
 import * as DesignSystemEditing from "./DesignSystemEditing.ts";
+import { listSystemFiles, putSystemFile } from "./SystemFilesStore.ts";
 import {
   type DesignSystemCaller,
   DesignSystemFiles,
@@ -86,6 +87,11 @@ export const layerFiles = Layer.succeed(
     listDesignSystems: Store.listDesignSystems,
     readDesignSystem: Store.readDesignSystem,
     writeDesignSystem: Store.writeDesignSystem,
+    listStoredFiles: async (root, systemId) =>
+      (await listSystemFiles(root, systemId)).files.map((file) => file.path),
+    putStoredFile: async (root, systemId, path, bytes) => {
+      await putSystemFile(root, systemId, path, bytes, undefined, { ifAbsent: true });
+    },
   }),
 );
 

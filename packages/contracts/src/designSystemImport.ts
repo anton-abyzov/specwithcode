@@ -206,6 +206,22 @@ export const DesignSystemProposalOrigin = Schema.Literals([
 ]);
 export type DesignSystemProposalOrigin = typeof DesignSystemProposalOrigin.Type;
 
+/**
+ * A brand file a code import would store beside the system: the package's
+ * README and docs, its logos and fonts, and those next to copies of its
+ * tokens. `path` is where it lands under the system's files; a path the
+ * system already stores is never offered, so nothing is overwritten.
+ */
+export const DesignSystemProposedFile = Schema.Struct({
+  /** Project-relative file it is copied from. */
+  source: Path,
+  /** Stored path under the system's files (`README.md`, `assets/Brand/logo.svg`). */
+  path: Path,
+  bytes: NonNegativeInt,
+  sha256: Sha256,
+});
+export type DesignSystemProposedFile = typeof DesignSystemProposedFile.Type;
+
 export const DesignSystemProposal = Schema.Struct({
   id: DesignSystemProposalId,
   owner: DesignOwnerInput,
@@ -219,6 +235,8 @@ export const DesignSystemProposal = Schema.Struct({
   tokens: Schema.Array(DesignSystemTokenChange),
   components: Schema.Array(DesignSystemComponentChange),
   findings: Schema.Array(DesignSystemFinding),
+  /** Brand files to store with the system; only code proposals have them. */
+  files: Schema.optionalKey(Schema.Array(DesignSystemProposedFile)),
 });
 export type DesignSystemProposal = typeof DesignSystemProposal.Type;
 
@@ -257,6 +275,8 @@ export const DesignSystemProposeFrom = Schema.Union([
     kind: Schema.Literal("code"),
     /** Candidate paths from a scan, relative to the project root. */
     paths: Schema.Array(Path).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    /** The suggestion's copies; brand files next to them are offered too. */
+    copies: Schema.optionalKey(Schema.Array(Path).check(Schema.isMaxLength(200))),
     ...proposeCommon,
   }),
   Schema.Struct({
@@ -298,6 +318,8 @@ export const DesignSystemConfirmInput = Schema.Struct({
   excludeTokens: Schema.Array(Schema.String.check(Schema.isMaxLength(200))),
   /** Component ids the user unticked. */
   excludeComponents: Schema.Array(Schema.String.check(Schema.isMaxLength(200))),
+  /** Stored paths of proposed brand files the user unticked. */
+  excludeFiles: Schema.optionalKey(Schema.Array(Path).check(Schema.isMaxLength(500))),
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(180))),
 });
 export type DesignSystemConfirmInput = typeof DesignSystemConfirmInput.Type;
@@ -320,6 +342,8 @@ export const DesignSystemRescanResult = Schema.Union([
     status: Schema.Literal("changed"),
     changed: Schema.Array(Path),
     missing: Schema.Array(Path),
+    /** Sources the project now offers for the system that it did not read before. */
+    added: Schema.optionalKey(Schema.Array(Path)),
     proposal: DesignSystemProposal,
   }),
   Schema.Struct({

@@ -61,6 +61,7 @@ const client = McpSchema.McpServerClient.of({
 const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+  Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-http-server-test-" }),

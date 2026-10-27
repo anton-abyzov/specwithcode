@@ -78,8 +78,8 @@ const handlers = {
 
 const { computer_screenshot, ...standardHandlers } = handlers;
 
-export const layerStandard = McpToolAccess.toLayer(ComputerStandardToolkit, standardHandlers);
+export const layerStandard = McpToolAccess.toWorkerLayer(ComputerStandardToolkit, standardHandlers);
 
-export const layerScreenshot = McpToolAccess.toLayer(ComputerScreenshotToolkit, {
+export const layerScreenshot = McpToolAccess.toWorkerLayer(ComputerScreenshotToolkit, {
   computer_screenshot,
 });

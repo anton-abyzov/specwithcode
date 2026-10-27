@@ -7,7 +7,7 @@
  * helper that exits without replying makes every close wait the full timeout,
  * a spawn failure emits an unhandled `error` that crashes the server, and a
  * non-object reply throws. The reviewed node-pty patch must stay as it is
- * (scripts/studio-toolchain/preservation-audit.mjs), so Studio replaces the
+ *, so Studio replaces the
  * lookup on each agent instance instead.
  */
 

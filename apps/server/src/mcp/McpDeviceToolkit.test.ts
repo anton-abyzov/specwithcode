@@ -105,6 +105,7 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+  Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-device-toolkit-test-" }),
@@ -143,6 +144,7 @@ it.effect("returns the complete bounded launch diagnostics to the agent", () => 
       McpHttpServer.layerDeviceToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
         Layer.provide(failedDevices),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-boot-error-test-" }),
@@ -219,6 +221,7 @@ it.effect("rejects unavailable agent access before booting or opening a device",
       McpHttpServer.layerDeviceToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
         Layer.provide(layerUnavailable),
         Layer.provide(NodeServices.layer),
       ),

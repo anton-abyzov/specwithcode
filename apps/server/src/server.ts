@@ -870,6 +870,11 @@ export interface WebSocketRouteLayer extends Layer.Layer<
 > {}
 const layerWebSocketRoutes: WebSocketRouteLayer = Ws.layer;
 
+// The route graph's requirements are exact (ws.layer-types.ts asserts it), but the Effect
+// language service reads them as `any` when the checker that owns this file resolves
+// them before ws.ts and the MCP toolkits, which depends on how files split across
+// `--checkers`. main shows the same diagnostics with `--checkers 1`.
+// @effect-diagnostics-next-line anyUnknownInErrorContext:off
 const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -896,6 +901,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerBrowserStream.routeLayer,
     BrowserExtension.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     layerWebSocketRoutes,
   ),
   // The MCP session registry is provided globally (shared with V2 provider
@@ -903,6 +909,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // delegation targets through the same live adapter facade the V2
   // orchestrator uses, so MCP capability reporting can never drift from
   // what dispatch can actually serve.
+  // @effect-diagnostics-next-line layerMergeAllWithDependencies:off
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
@@ -930,6 +937,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(ServerHttp.layerHttpCompression),
 );
 
+// @effect-diagnostics-next-line anyUnknownInErrorContext:off
 const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -1274,6 +1282,7 @@ const layerMakeServer = Layer.unwrap(
       ).pipe(Effect.asVoid),
     }).pipe(Layer.provideMerge(layerRuntimeDependencies), Layer.provide(layerLauncher));
 
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     const layerRoutes = HttpRouter.serve(layerMakeRoutes.pipe(Layer.provide(layerLauncher)), {
       disableLogger: !config.logWebSocketEvents,
       routerConfig: HTTP_ROUTER_CONFIG,
@@ -1281,7 +1290,9 @@ const layerMakeServer = Layer.unwrap(
       withUntracedRequests,
       Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
     );
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     const layerServerApplication = Layer.mergeAll(
+      // @effect-diagnostics-next-line anyUnknownInErrorContext:off
       layerRoutes,
       layerHttpListening,
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
@@ -1290,6 +1301,7 @@ const layerMakeServer = Layer.unwrap(
       HeapSnapshot.layer,
     );
 
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     return layerServerApplication.pipe(
       // The connect routes and the startup/shutdown link work share one instance.
       Layer.provide(CloudLink.layer),

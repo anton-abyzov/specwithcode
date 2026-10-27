@@ -1122,6 +1122,7 @@ import {
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
+import { composerDisplayedThreadSelection } from "./composerModelDisplay";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -2514,10 +2515,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const displayedIdentity =
     props.activeThreadShell?.modelIdentity ??
     threadModelIdentity({
-      thread: activeThreadModelSelection ?? {
-        instanceId: selectedInstanceId,
-        model: selectedModelForPickerWithCustomFallback,
-      },
+      thread: composerDisplayedThreadSelection({
+        isServerThread,
+        threadSelection: activeThreadModelSelection,
+        sendTarget: {
+          instanceId: selectedInstanceId,
+          model: selectedModelForPickerWithCustomFallback,
+        },
+      }),
       running: runningModelSelection,
       fallbackFrom: limitFallbackFrom as ModelSelection | null,
     });
