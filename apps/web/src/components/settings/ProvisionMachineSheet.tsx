@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useState } from "react";
-import { CheckIcon, CircleAlertIcon, LoaderCircleIcon } from "lucide-react";
+import { CheckIcon, CircleAlertIcon, LoaderCircleIcon, PackageIcon } from "lucide-react";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   AuthEnvironmentMaintainScope,
@@ -298,13 +298,13 @@ export function ProvisionMachineButton({
   return (
     <>
       <Button
-        className="self-start"
         size="xs"
-        variant="ghost-muted"
+        variant="outline"
         disabled={!canMaintain}
         title={canMaintain ? undefined : "Needs permission to maintain that machine"}
         onClick={() => setOpen(true)}
       >
+        <PackageIcon aria-hidden />
         Provision
       </Button>
       {open ? (

@@ -73,10 +73,11 @@ import * as FleetTargets from "./fleet/FleetTargets.ts";
 import * as PhoneLinks from "./fleet/phoneLinks.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as WorkGrants from "./fleet/WorkGrants.ts";
-import { workGrantsSnapshot } from "./fleet/workGrantsSnapshot.ts";
+import { coordinatorLabels, workGrantsSnapshot } from "./fleet/workGrantsSnapshot.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import * as ServerSettings from "./serverSettings.ts";
 
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
@@ -189,6 +190,20 @@ export const layer = HttpApiBuilder.group(
     const threadManagement = yield* ThreadManagement.ThreadManagementService;
     const projectService = yield* ProjectService.ProjectService;
     const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    /** Coordinator names for the grants list: the fleet list's, else shared nicknames. */
+    const grantLabels = Effect.gen(function* () {
+      const fleetConfig = yield* Effect.tryPromise(() => readFleetConfig(config.baseDir)).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      const settings = Option.isSome(serverSettings)
+        ? yield* serverSettings.value.getSettings.pipe(Effect.option)
+        : Option.none();
+      return coordinatorLabels(
+        fleetConfig?.machines ?? [],
+        Option.getOrUndefined(settings)?.machineNicknames,
+      );
+    });
     const fleetTargets = yield* FleetTargets.FleetTargets;
     const fleetFetch = fleetTargets.fetch;
     // One proof key and address book for every fleet call this group makes.
@@ -222,17 +237,9 @@ export const layer = HttpApiBuilder.group(
               : new EnvironmentHttpInternalServerError({ message: error.message }),
           ),
         );
-        const fleetConfig = yield* Effect.tryPromise(() => readFleetConfig(config.baseDir)).pipe(
-          Effect.orElseSucceed(() => null),
-        );
         const snapshot = yield* workGrantsSnapshot({
           ownEnvironmentId: yield* serverEnvironment.getEnvironmentId,
-          labels: new Map(
-            (fleetConfig?.machines ?? []).map((machine) => [
-              machine.environmentId as string,
-              machine.label,
-            ]),
-          ),
+          labels: yield* grantLabels,
           ...(isScratch === undefined ? {} : { isScratch }),
         }).pipe(
           Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
@@ -548,17 +555,9 @@ export const layer = HttpApiBuilder.group(
           Effect.gen(function* () {
             yield* requireEnvironmentScope(AuthAccessReadScope);
             yield* noStore;
-            const fleetConfig = yield* Effect.tryPromise(() =>
-              readFleetConfig(config.baseDir),
-            ).pipe(Effect.orElseSucceed(() => null));
             return yield* workGrantsSnapshot({
               ownEnvironmentId: yield* serverEnvironment.getEnvironmentId,
-              labels: new Map(
-                (fleetConfig?.machines ?? []).map((machine) => [
-                  machine.environmentId as string,
-                  machine.label,
-                ]),
-              ),
+              labels: yield* grantLabels,
               ...(isScratch === undefined ? {} : { isScratch }),
             }).pipe(
               Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),

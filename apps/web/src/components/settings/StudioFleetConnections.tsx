@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from "react";
-import { CheckIcon, LaptopIcon, RefreshCwIcon } from "lucide-react";
+import { CheckIcon, EllipsisIcon, LaptopIcon, ListChecksIcon, RefreshCwIcon } from "lucide-react";
 import {
   AuthAccessWriteScope,
   type EnvironmentId,
@@ -63,6 +63,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 
 /** A listener's bind address does not describe Tailscale Serve or an SSH tunnel. */
 export function StudioListenerRow({
@@ -132,12 +133,13 @@ export function FleetWorkersRow({
   const view = fleetWorkersView(workers);
   const busy = disabled || !canManage;
   return (
-    <div className="min-w-0 space-y-1.5 pl-7" aria-label={`Workers on ${machine.label}`}>
+    <div className="min-w-0 space-y-1.5" aria-label={`Workers on ${machine.label}`}>
       <p className="text-xs text-muted-foreground">
         <span className="text-foreground/80">Workers</span> · {view.summary}
+        {view.action === "allow" && !canManage ? " Allowing them needs Manage access." : null}
       </p>
       {view.problem ? <p className="text-xs text-warning-foreground">{view.problem}</p> : null}
-      {view.action === "allow" ? (
+      {view.action === "allow" && canManage ? (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Select
             value={draft.access}
@@ -181,18 +183,13 @@ export function FleetWorkersRow({
           ) : null}
           <Button
             size="xs"
-            variant="outline"
             disabled={busy || (view.codeNeeded && !draft.pairingCode.trim())}
             onClick={() => onAction("allow")}
           >
-            {canManage ? "Allow workers" : "Manage access required"}
+            Allow workers
           </Button>
         </div>
-      ) : (
-        <Button size="xs" variant="ghost-muted" disabled={busy} onClick={() => onAction("stop")}>
-          Stop workers
-        </Button>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -589,20 +586,35 @@ export function StudioFleetRoster({
               fleetMachineAddress(machine, snapshot.machines),
               fleetMachineTransport(machine),
             ].filter(Boolean);
+            const ready = canCheckReadiness && (current || (saved && own?.connected));
+            const workersView = machine.workers ? fleetWorkersView(machine.workers) : null;
+            const busy = pending !== null || failed;
+            const canStop = !current && onWorkers !== undefined && workersView?.action === "stop";
+            const canRemove = !current && onRemove !== undefined && canManageWorkers;
+            const readinessOpen = readinessFor === machine.id;
+            // Why pairing is not offered reads as a note, not as a button that does nothing.
+            const pairNote = !machine.pairingConfigured
+              ? "Pairing needs setup"
+              : !canPair
+                ? "Pairing permission required"
+                : null;
             const reinvite = fleetMachineNeedsReinvite(machine);
             return (
               <li
                 key={machine.id}
-                className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"
+                className="flex min-w-0 flex-col gap-2 px-3 py-3 sm:px-4"
                 aria-label={machine.label}
               >
-                <div className="flex min-w-0 items-center gap-3">
-                  <LaptopIcon aria-hidden className="size-4 shrink-0 text-foreground/70" />
+                <div className="flex min-w-0 items-start gap-3">
+                  <LaptopIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-foreground/70" />
                   <div className="min-w-0 flex-1">
-                    <h3 className="truncate text-sm">
+                    <h3 className="truncate text-sm font-medium">
                       {machine.label}
                       {machine.machineName && machine.machineName !== machine.label ? (
-                        <span className="text-muted-foreground"> · {machine.machineName}</span>
+                        <span className="font-normal text-muted-foreground">
+                          {" "}
+                          · {machine.machineName}
+                        </span>
                       ) : null}
                     </h3>
                     {/* Short facts that wrap rather than cut off; the reason gets its own line below. */}
@@ -626,82 +638,108 @@ export function StudioFleetRoster({
                       />
                     ) : null}
                   </div>
-                  {current || saved ? (
-                    <CheckIcon
-                      aria-label={current ? "Current environment" : "Saved for the machine picker"}
-                      className="size-3.5 shrink-0 text-muted-foreground"
+                  <div className="flex shrink-0 items-center gap-1">
+                    {current || saved ? (
+                      <CheckIcon
+                        aria-label={
+                          current ? "Current environment" : "Saved for the machine picker"
+                        }
+                        className="size-3.5 text-muted-foreground"
+                      />
+                    ) : pairNote && pending !== machine.id ? (
+                      <span className="text-xs text-muted-foreground">{pairNote}</span>
+                    ) : (
+                      <Button
+                        size="xs"
+                        variant="default"
+                        disabled={busy || !reachable || pairNote !== null}
+                        onClick={() => onPair(machine)}
+                      >
+                        {pending === machine.id
+                          ? "Connecting…"
+                          : rejected
+                            ? "Approve again"
+                            : "Connect machine"}
+                      </Button>
+                    )}
+                    {pending === `remove:${machine.id}` ? (
+                      <span className="text-xs text-muted-foreground" role="status">
+                        Removing…
+                      </span>
+                    ) : null}
+                    {canStop || canRemove ? (
+                      <Menu>
+                        <MenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost-muted"
+                              size="icon-xs"
+                              aria-label={`More actions for ${machine.label}`}
+                            />
+                          }
+                        >
+                          <EllipsisIcon className="size-3.5" />
+                        </MenuTrigger>
+                        <MenuPopup align="end">
+                          {canStop ? (
+                            <MenuItem
+                              disabled={busy || !canManageWorkers}
+                              onClick={() => onWorkers?.(machine, "stop")}
+                            >
+                              Stop workers
+                            </MenuItem>
+                          ) : null}
+                          {canStop && canRemove ? <MenuSeparator /> : null}
+                          {canRemove ? (
+                            <MenuItem
+                              variant="destructive"
+                              disabled={busy}
+                              onClick={() => onRemove?.(machine)}
+                            >
+                              {pending === `remove:${machine.id}` ? "Removing…" : "Remove machine"}
+                            </MenuItem>
+                          ) : null}
+                        </MenuPopup>
+                      </Menu>
+                    ) : null}
+                  </div>
+                </div>
+                {!current && onWorkers && onWorkerDraftChange && machine.workers ? (
+                  <div className="pl-7">
+                    <FleetWorkersRow
+                      machine={machine}
+                      disabled={busy}
+                      canManage={canManageWorkers}
+                      draft={workerDrafts[machine.id] ?? defaultWorkerDraft}
+                      onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
+                      onAction={(action) => onWorkers(machine, action)}
                     />
-                  ) : (
+                  </div>
+                ) : null}
+                {ready ? (
+                  <div className="flex flex-wrap items-center gap-1.5 pl-7">
+                    <ProvisionMachineButton
+                      environmentId={machine.environmentId}
+                      environmentLabel={machine.label}
+                    />
                     <Button
-                      className="shrink-0"
                       size="xs"
                       variant="outline"
-                      disabled={
-                        pending !== null ||
-                        !reachable ||
-                        !machine.pairingConfigured ||
-                        !canPair ||
-                        failed
-                      }
-                      onClick={() => onPair(machine)}
+                      aria-expanded={readinessOpen}
+                      onClick={() => setReadinessFor(readinessOpen ? null : machine.id)}
                     >
-                      {pending === machine.id
-                        ? "Connecting…"
-                        : !machine.pairingConfigured
-                          ? "Pairing needs setup"
-                          : !canPair
-                            ? "Pairing permission required"
-                            : rejected
-                              ? "Approve again"
-                              : "Connect machine"}
+                      <ListChecksIcon aria-hidden />
+                      {readinessOpen ? "Hide readiness" : "Check readiness"}
                     </Button>
-                  )}
-                </div>
-                {canCheckReadiness && (current || (saved && own?.connected)) ? (
-                  <ProvisionMachineButton
-                    environmentId={machine.environmentId}
-                    environmentLabel={machine.label}
-                  />
+                  </div>
                 ) : null}
-                {canCheckReadiness && (current || (saved && own?.connected)) ? (
-                  readinessFor === machine.id ? (
-                    <div className="rounded-lg border p-2.5">
-                      <MachineReadinessChecklist
-                        environmentId={machine.environmentId}
-                        environmentLabel={machine.label}
-                      />
-                    </div>
-                  ) : (
-                    <Button
-                      className="self-start"
-                      size="xs"
-                      variant="ghost-muted"
-                      onClick={() => setReadinessFor(machine.id)}
-                    >
-                      Check readiness
-                    </Button>
-                  )
-                ) : null}
-                {!current && onWorkers && onWorkerDraftChange ? (
-                  <FleetWorkersRow
-                    machine={machine}
-                    disabled={pending !== null || failed}
-                    canManage={canManageWorkers}
-                    draft={workerDrafts[machine.id] ?? defaultWorkerDraft}
-                    onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
-                    onAction={(action) => onWorkers(machine, action)}
-                  />
-                ) : null}
-                {!current && onRemove && canManageWorkers ? (
-                  <div className="pl-7">
-                    <Button
-                      size="xs"
-                      variant="ghost-destructive"
-                      disabled={pending !== null || failed}
-                      onClick={() => onRemove(machine)}
-                    >
-                      {pending === `remove:${machine.id}` ? "Removing…" : "Remove machine"}
-                    </Button>
+                {ready && readinessOpen ? (
+                  <div className="ms-7 rounded-lg border bg-muted/30 px-3 py-2.5">
+                    <MachineReadinessChecklist
+                      environmentId={machine.environmentId}
+                      environmentLabel={machine.label}
+                    />
                   </div>
                 ) : null}
               </li>

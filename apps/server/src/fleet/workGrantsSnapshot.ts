@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  type MachineNicknames,
   type Project,
   type ProjectId,
   type ProviderInstanceId,
@@ -9,6 +10,7 @@ import {
   type StudioWorkGrantsSnapshot,
   workGrantHopLimit,
 } from "@specweave-studio/contracts/studioFleet";
+import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { isAutomatedProject } from "@specweave-studio/shared/projectOrigin";
 import * as Clock from "effect/Clock";
@@ -72,6 +74,27 @@ export const workGrantProjectChoices = (input: {
   });
 
 /**
+ * Coordinator names by environment id: the name this machine's fleet list gives
+ * it, else the nickname paired machines share. A coordinator that is in neither
+ * is left out, and the screen names it by a short id.
+ */
+export const coordinatorLabels = (
+  machines: ReadonlyArray<{ readonly environmentId: string; readonly label: string }>,
+  nicknames: MachineNicknames | undefined,
+): Map<string, string> => {
+  const labels = new Map<string, string>();
+  for (const [environmentId, entry] of Object.entries(nicknames ?? {})) {
+    const name = normalizeMachineNickname(entry.name);
+    if (name !== "") labels.set(environmentId, name);
+  }
+  for (const machine of machines) {
+    const label = machine.label.trim();
+    if (label !== "") labels.set(machine.environmentId, label);
+  }
+  return labels;
+};
+
+/**
  * The machine's projects for the grants snapshot. A failed read still answers, so the
  * grants stay visible and revocable, and says so with `projectsUnreadable`.
  */
@@ -93,7 +116,7 @@ export const readGrantProjects = <E, R>(
  */
 export const workGrantsSnapshot = (input: {
   readonly ownEnvironmentId: EnvironmentId;
-  /** Names this machine's fleet list gives coordinators, by environment id. */
+  /** Coordinator names by environment id; see {@link coordinatorLabels}. */
   readonly labels: ReadonlyMap<string, string>;
   /** Whether a project is this machine's Scratch project ("No project"). */
   readonly isScratch?: (projectId: ProjectId) => Effect.Effect<boolean>;

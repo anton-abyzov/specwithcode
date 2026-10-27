@@ -359,7 +359,10 @@ export const workGrantHopLimit = (owner: StudioWorkGrantOwner) => (owner === "se
  */
 export const StudioWorkGrant = Schema.Struct({
   coordinatorEnvironmentId: EnvironmentId,
-  /** The coordinator's name in this machine's fleet list, else its environment id. */
+  /**
+   * The coordinator's name in this machine's fleet list, else its shared
+   * nickname, else its environment id (clients show a short form for that).
+   */
   machineLabel: Schema.String,
   projects: StudioWorkGrantProjects,
   accounts: StudioWorkGrantAccounts,

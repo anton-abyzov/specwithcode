@@ -25,7 +25,7 @@ import { useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useMachineWorkGrants, useStudioFleet } from "../../studio/fleet";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -41,6 +41,7 @@ import {
   type MachineWorkerGrant,
   type MachineWorkHere,
 } from "./machinesSettings.logic";
+import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
@@ -71,8 +72,18 @@ function currentServerOrigin(): string | null {
 /** Settings > Machines: the machines this app knows of, then who may run work on this one. */
 export function MachinesSettingsPanel() {
   const fleet = usePrimaryFleet();
-  const grants = useMachineWorkGrants(fleet.primaryEnvironmentId);
+  const rawGrants = useMachineWorkGrants(fleet.primaryEnvironmentId);
   const { environments } = useEnvironments();
+  const machineName = useMachineNicknames();
+  // A coordinator the server cannot name gets a name this app knows, else a short id.
+  const labeledSnapshot = useMemo(
+    () =>
+      withReadableGrantLabels(rawGrants.snapshot, (id) =>
+        machineName(id, environments.find((entry) => entry.environmentId === id)?.label),
+      ),
+    [rawGrants.snapshot, environments, machineName],
+  );
+  const grants = { ...rawGrants, snapshot: labeledSnapshot };
   const projects = useProjects();
   // Read once: the page shows sign-ins, not countdowns, so it never ticks.
   const [now] = useState(Date.now);

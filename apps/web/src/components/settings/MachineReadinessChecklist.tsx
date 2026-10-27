@@ -54,8 +54,20 @@ function Row({
         />
       )}
       <div className="min-w-0 flex-1">
-        <p className="wrap-anywhere">{title}</p>
-        {detail ? <p className="wrap-anywhere text-xs text-muted-foreground">{detail}</p> : null}
+        {/* A short detail, such as the signed-in account, shares the title's line. */}
+        {detail && detail.length <= 60 ? (
+          <p className="wrap-anywhere">
+            {title}
+            <span className="text-xs text-muted-foreground"> · {detail}</span>
+          </p>
+        ) : (
+          <>
+            <p className="wrap-anywhere">{title}</p>
+            {detail ? (
+              <p className="wrap-anywhere text-xs text-muted-foreground">{detail}</p>
+            ) : null}
+          </>
+        )}
         {children}
       </div>
     </li>
@@ -128,7 +140,7 @@ export function MachineReadinessChecklist({
       aria-label={`Ready to work on ${environmentLabel}`}
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium">Ready to work on {environmentLabel}?</h3>
+        <h3 className="text-sm font-medium">Ready to work on {environmentLabel}?</h3>
         <Button size="xs" variant="outline" disabled={checking} onClick={() => void run()}>
           {checking ? "Checking…" : report ? "Check again" : "Check readiness"}
         </Button>
@@ -136,7 +148,7 @@ export function MachineReadinessChecklist({
       <p className="text-xs text-muted-foreground">
         Sign-ins are never copied between machines. Each one happens on {environmentLabel} itself.
       </p>
-      <ul className="space-y-2">
+      <ul className="space-y-1">
         {enabled.length === 0 ? (
           <Row ok={false} title="No coding agent is installed and enabled there." />
         ) : (

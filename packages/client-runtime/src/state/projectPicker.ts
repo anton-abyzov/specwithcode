@@ -1,5 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
-import { projectOrigin } from "@specweave-studio/shared/projectOrigin";
+import { isAppScratchFolder, projectOrigin } from "@specweave-studio/shared/projectOrigin";
 import { isScratchProject } from "./projects.js";
 
 /** Minimal catalog fields shared by web and mobile project choices. */
@@ -26,14 +26,17 @@ export function projectChoiceIneligibleReason(
   scratchRootFor: ScratchRootLookup,
   purpose: ProjectPickerPurpose = "work",
 ): IneligibleProjectReason | null {
-  if (
-    project.workspaceRoot !== undefined &&
-    isScratchProject(
-      { workspaceRoot: project.workspaceRoot },
-      scratchRootFor(project.environmentId),
+  if (project.workspaceRoot !== undefined) {
+    const scratchRoot = scratchRootFor(project.environmentId);
+    // Without the machine's scratch path (not arrived, or not readable with this
+    // session's scopes), the app's scratch folder is still "No project", never automated.
+    if (
+      scratchRoot == null
+        ? isAppScratchFolder(project.workspaceRoot)
+        : isScratchProject({ workspaceRoot: project.workspaceRoot }, scratchRoot)
     )
-  )
-    return "scratch";
+      return "scratch";
+  }
   if (project.workspaceSettings?.archived === true) return "archived";
   if (
     projectOrigin({

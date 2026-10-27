@@ -524,18 +524,22 @@ async function captureSource({
         linuxActivationFailure = { cause };
       });
     }
-    const animationStarted =
-      linuxFeedback?.animationStarted ??
-      (await showCaptureFeedback(
-        transition,
-        flash,
-        captureId,
-        `data:image/png;base64,${png.toString("base64")}`,
-        settings,
-        active,
-        platform,
-        destinationWindowBounds,
-      ));
+    // Self-capture already has the right app/window in front. Overlay windows and
+    // app activation can switch macOS Spaces or raise a different app window.
+    const capturedOwnWindow = active?.owner.processId === process.pid;
+    const animationStarted = capturedOwnWindow
+      ? false
+      : (linuxFeedback?.animationStarted ??
+        (await showCaptureFeedback(
+          transition,
+          flash,
+          captureId,
+          `data:image/png;base64,${png.toString("base64")}`,
+          settings,
+          active,
+          platform,
+          destinationWindowBounds,
+        )));
     return {
       source,
       active,
@@ -543,6 +547,7 @@ async function captureSource({
       linuxActivationFailure,
       contextPromise,
       animationStarted,
+      capturedOwnWindow,
       png,
       imageTempReady,
     };
@@ -901,7 +906,7 @@ export const make = Effect.gen(function* () {
       }
       if (snapshot.animationStarted) {
         yield* emit({ type: "started", id: id as DesktopSnapShotId });
-      } else {
+      } else if (!snapshot.capturedOwnWindow) {
         yield* desktopWindow.activate.pipe(Effect.ignoreCause);
       }
       return { id, capturedAt, ...snapshot };

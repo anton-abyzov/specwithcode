@@ -1378,6 +1378,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         outcome={turnOnOutcome(
                           entryByInstanceId.get(instanceId)?.snapshot,
                           elsewhereSetup.machineLabel ?? "this machine",
+                          {
+                            identity: provider.identity,
+                            remote: elsewhereSetup.remote === true,
+                          },
                         )}
                         onOpenSetup={
                           props.onOpenProviderSetup

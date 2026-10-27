@@ -19,7 +19,7 @@ import type * as AcpSchema from "@specweave-studio/effect-acp/compat";
 import { AcpRequestError } from "@specweave-studio/effect-acp/errors";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import { makeAcpRegistryAuth } from "./AcpRegistryAuth.ts";
+import { makeAcpRegistryAuth, type AcpRegistryCredential } from "./AcpRegistryAuth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import type { AcpSessionRuntime } from "./AcpSessionRuntime.ts";
 
@@ -68,12 +68,16 @@ const makeHarness = (
   settings = decodeSettings({ agentId: "test-agent" }),
   providerInstanceId = instanceId,
   preflight: { help?: string; version?: string; hang?: boolean; noopExit?: number } = {},
+  credentials = false,
+  extra: { environment?: NodeJS.ProcessEnv; canSave?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const verify = yield* Deferred.make<void>();
     const changed: boolean[] = [];
     const closed: number[] = [];
     const authenticated: string[] = [];
+    const authenticatedMeta: unknown[] = [];
+    const saved: AcpRegistryCredential[] = [];
     const started: number[] = [];
     let runtimes = 0;
     let version = "1.0.0";
@@ -133,11 +137,20 @@ const makeHarness = (
       instanceId: providerInstanceId,
       settings,
       cwd: "/workspace",
-      environment: { PATH: "/tools", OVERRIDE: "base" },
+      environment: { PATH: "/tools", OVERRIDE: "base", ...extra.environment },
+      ...(extra.canSave === undefined ? {} : { canSaveCredential: Effect.succeed(extra.canSave) }),
       onChanged: (value) =>
         Effect.sync(() => {
           changed.push(value);
         }),
+      ...(credentials
+        ? {
+            saveCredential: (credential: AcpRegistryCredential) =>
+              Effect.sync(() => {
+                saved.push(credential);
+              }),
+          }
+        : {}),
       makeRuntime: () =>
         Effect.gen(function* () {
           const id = ++runtimes;
@@ -160,10 +173,12 @@ const makeHarness = (
               Effect.sync(() => {
                 elicitation = handler;
               }),
-            authenticate: (methodId) =>
+            authenticate: (methodId, meta) =>
               Effect.gen(function* () {
                 authenticated.push(methodId);
-                if (elicitation)
+                authenticatedMeta.push(meta);
+                // An API-key method reads its key from the environment, not a browser.
+                if (elicitation && !meta && methodId !== "gemini-api-key")
                   yield* elicitation(
                     {
                       mode: "url",
@@ -267,6 +282,8 @@ const makeHarness = (
       changed,
       closed,
       authenticated,
+      authenticatedMeta,
+      saved,
       started,
       phase,
       state,
@@ -710,5 +727,130 @@ it.effect("rechecks changed CLI capabilities after cancellation and allows a sup
     assert.notStrictEqual(retry.flowId, original.flowId);
     assert.strictEqual(h.preflightCommands.filter((args) => args.includes("--help")).length, 3);
     assert.deepEqual(h.changed, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const geminiApiKeyMethod = {
+  id: "gemini-api-key",
+  name: "Gemini API key",
+  _meta: { "api-key": { provider: "google" } },
+};
+
+it.effect(
+  "asks for a Gemini API key, verifies it with the agent and saves it on this machine",
+  () =>
+    Effect.gen(function* () {
+      const key = "AIza-test-not-a-real-key";
+      const h = yield* makeHarness(
+        geminiApiKeyMethod,
+        false,
+        decodeSettings({ agentId: "gemini" }),
+        instanceId,
+        {},
+        true,
+      );
+      const methods = yield* h.state((value) => (value.methods?.length ?? 0) > 0);
+      assert.strictEqual(methods.methods?.[0]?.type, "credentials");
+      const flow = yield* h.controller.start("owner", Effect.void, "gemini-api-key");
+      const waiting = yield* h.phase("waiting");
+      assert.deepEqual(waiting.interaction, {
+        type: "credentials",
+        id: "api-key",
+        fields: [{ name: "api_key", label: "Gemini API key", secret: true }],
+      });
+      yield* h.controller.respond!("owner", {
+        instanceId,
+        flowId: flow.flowId!,
+        interactionId: "api-key",
+        response: { type: "credentials", values: { api_key: `  ${key}  ` } },
+      });
+      const verifying = yield* h.phase("verifying");
+      assert.notInclude(JSON.stringify(verifying), key);
+      assert.deepEqual(h.saved, []);
+      yield* Deferred.succeed(h.verify, undefined);
+      const succeeded = yield* h.phase("succeeded");
+      assert.notInclude(JSON.stringify(succeeded), key);
+      assert.deepEqual(h.authenticated, ["gemini-api-key"]);
+      assert.deepEqual(h.authenticatedMeta, [{ "api-key": key }]);
+      assert.deepEqual(h.saved, [
+        { envName: "GEMINI_API_KEY", value: key, authMethodId: "gemini-api-key" },
+      ]);
+      assert.deepEqual(h.changed, [true]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not save a Gemini API key the agent rejects", () =>
+  Effect.gen(function* () {
+    const key = "AIza-rejected-test-key";
+    const h = yield* makeHarness(
+      geminiApiKeyMethod,
+      true,
+      decodeSettings({ agentId: "gemini" }),
+      instanceId,
+      {},
+      true,
+    );
+    const flow = yield* h.controller.start("owner", Effect.void, "gemini-api-key");
+    yield* h.phase("waiting");
+    yield* h.controller.respond!("owner", {
+      instanceId,
+      flowId: flow.flowId!,
+      interactionId: "api-key",
+      response: { type: "credentials", values: { api_key: key } },
+    });
+    yield* Deferred.succeed(h.verify, undefined);
+    const failed = yield* h.phase("failed");
+    assert.notInclude(JSON.stringify(failed), key);
+    assert.deepEqual(h.saved, []);
+    assert.deepEqual(h.changed, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps an API-key method on the agent's own sign-in without a credential store", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(geminiApiKeyMethod, false, decodeSettings({ agentId: "gemini" }));
+    const methods = yield* h.state((value) => (value.methods?.length ?? 0) > 0);
+    assert.strictEqual(methods.methods?.[0]?.type, "agent");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("uses a GEMINI_API_KEY already set on this machine without asking for one", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      geminiApiKeyMethod,
+      false,
+      decodeSettings({ agentId: "gemini" }),
+      instanceId,
+      {},
+      true,
+      { environment: { GEMINI_API_KEY: "AIza-existing-test-key" } },
+    );
+    yield* h.controller.start("owner", Effect.void, "gemini-api-key");
+    yield* h.phase("verifying");
+    yield* Deferred.succeed(h.verify, undefined);
+    yield* h.phase("succeeded");
+    assert.deepEqual(h.authenticated, ["gemini-api-key"]);
+    assert.deepEqual(h.authenticatedMeta, [undefined]);
+    assert.deepEqual(h.saved, []);
+    assert.deepEqual(h.changed, [true]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("sends no API key to the agent when it could not be saved afterwards", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      geminiApiKeyMethod,
+      false,
+      decodeSettings({ agentId: "gemini" }),
+      instanceId,
+      {},
+      true,
+      { canSave: false },
+    );
+    yield* h.controller.start("owner", Effect.void, "gemini-api-key");
+    const failed = yield* h.phase("failed");
+    assert.include(failed.message ?? "", "no longer set up");
+    assert.deepEqual(h.authenticated, []);
+    assert.deepEqual(h.saved, []);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

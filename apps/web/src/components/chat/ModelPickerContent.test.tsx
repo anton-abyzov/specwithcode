@@ -320,6 +320,27 @@ describe("model picker Turn on here outcome", () => {
     expect(onOpenProviderSetup).toHaveBeenCalledWith(geminiId);
   });
 
+  it("on a remote machine, offers a Gemini API key from here and opens its setup", async () => {
+    const onOpenProviderSetup = vi.fn();
+    await mount({
+      instanceEntries: [
+        ready,
+        geminiHere({
+          status: "warning",
+          auth: { status: "unauthenticated", type: "agent", label: "Log in with Google" },
+        }),
+      ],
+      onOpenProviderSetup,
+      quickSetup: setupFor({ remote: true }),
+    });
+    expect(row()?.textContent).toContain(
+      '"Log in with Google" opens a browser on ministorm. From here: add a Gemini API key (aistudio.google.com/apikey); it stays on ministorm.',
+    );
+    expect(button("Sign in")).toBeUndefined();
+    await act(async () => button("Add API key")!.click());
+    expect(onOpenProviderSetup).toHaveBeenCalledWith(geminiId);
+  });
+
   it("shows the real error with a retry", async () => {
     const setup = setupFor({
       errors: new Map([

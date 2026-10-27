@@ -1,14 +1,10 @@
+import { isAppScratchFolder } from "@specweave-studio/shared/projectOrigin";
 import {
   partitionProjectGroups,
   type ProjectListGroup,
   type ScratchRootLookup,
 } from "../studio/projectListVisibility";
 import { resolveThreadStatusPill } from "./Sidebar.logic";
-
-// A machine's "No project" folder: `scratch` directly in the app's data folder, or in a
-// machine folder inside it (`~/.specwithcode/<machine>/scratch`, older homes included).
-const SCRATCH_FOLDER =
-  /\/(?:\.specwithcode|\.specweave-studio|\.local\/share\/specweave(?:-studio)?)(?:\/[^/]+)?\/scratch\/?$/i;
 
 /**
  * Whether a group may be a machine's "No project" folder the client cannot confirm yet
@@ -17,9 +13,7 @@ const SCRATCH_FOLDER =
  */
 function mayBeScratchGroup(group: ProjectListGroup): boolean {
   return group.memberProjects.some(
-    (member) =>
-      member.workspaceRoot !== undefined &&
-      SCRATCH_FOLDER.test(member.workspaceRoot.replaceAll("\\", "/")),
+    (member) => member.workspaceRoot !== undefined && isAppScratchFolder(member.workspaceRoot),
   );
 }
 

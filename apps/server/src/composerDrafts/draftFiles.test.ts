@@ -18,6 +18,26 @@ const image = (id: string, data?: Uint8Array) => ({
   ...(data ? { data } : {}),
 });
 
+const snapshotSource = {
+  kind: "snap-shot" as const,
+  capturedAt: "2026-10-27T00:42:15.142Z",
+  appName: "SpecWithCode",
+  windowTitle: "Settings",
+  accessibleText: "Snapshot settings",
+  accessibility: {
+    format: "element-tree" as const,
+    coordinateSpace: "captured-image" as const,
+    imageSize: { width: 4096, height: 2420 },
+    truncated: false,
+    root: {
+      role: "button",
+      name: "Done",
+      bounds: { x: 2456, y: 1500, width: 118, height: 64 },
+      children: [],
+    },
+  },
+};
+
 let dir: string;
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "composer-drafts-"));
@@ -27,6 +47,31 @@ afterEach(async () => {
 });
 
 describe("composer draft files", () => {
+  it("preserves snapshot context and coordinates across disk saves without resending bytes", async () => {
+    const attachment = { ...image("snapshot", png(1)), source: snapshotSource };
+    await putDraft(
+      dir,
+      { key: "coordinator:p1", prompt: "User words", attachments: [attachment], editedAt: 1 },
+      1,
+    );
+    const first = await readDraftWithData(dir, "coordinator:p1");
+    expect(first?.attachments[0]?.source).toEqual(snapshotSource);
+    await putDraft(
+      dir,
+      {
+        key: "coordinator:p1",
+        prompt: "User words",
+        attachments: [{ ...image("snapshot"), source: snapshotSource }],
+        editedAt: 2,
+      },
+      2,
+    );
+    const restored = await readDraftWithData(dir, "coordinator:p1");
+    expect(restored?.prompt).toBe("User words");
+    expect(restored?.attachments[0]?.source).toEqual(snapshotSource);
+    expect([...restored!.data.get("snapshot")!]).toEqual([...png(1)]);
+  });
+
   it("keeps text and attachment bytes, and bumps the revision on every save", async () => {
     const first = await putDraft(
       dir,

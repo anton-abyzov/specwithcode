@@ -4,8 +4,26 @@ import {
   type ScopedThreadRef,
   type ScopedProjectRef,
   type EnvironmentId,
+  ComposerDraftKey,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGES,
 } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useRef } from "react";
+import { useLocation, useParams, useRouter, useSearch } from "@tanstack/react-router";
+import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useUnreachableHosts } from "../../studio/unreachableHosts";
+import { parseProjectWorkspaceSearch } from "../../studio/projectPaneThreads";
+import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
+import { durableComposerDrafts } from "../../lib/durableComposerDraftBindings";
+import { createIndexedDbDraftJournal } from "../../lib/durableComposerDraftJournal";
+import {
+  isCoordinatorSnapShotTarget,
+  resolveProjectSnapShotTarget,
+  sameSnapShotTarget,
+  snapShotReturnHref,
+  type SnapShotTarget,
+} from "./snapShotTarget";
 
 import {
   type DraftId,
@@ -15,7 +33,7 @@ import {
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useClientSettings, useLegacySidebarEnabled } from "../../hooks/useSettings";
 import { useScratchProject } from "../../hooks/useScratchProject";
-import { readThreadShell } from "../../state/entities";
+import { readProjects, readThreadShell } from "../../state/entities";
 import { compressImageToByteLimit, dataUrlToFile } from "../../lib/imageCompression";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import {
@@ -37,13 +55,21 @@ import {
 import { readFileAsDataUrl } from "../ChatView.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
-type CaptureTarget = DraftId | ScopedThreadRef;
+type CaptureTarget = SnapShotTarget;
 
 export function resolveExistingSnapShotTarget(
   target: CaptureTarget,
   routeThreadRef: ScopedThreadRef | null,
 ): CaptureTarget | null {
   const store = useComposerDraftStore.getState();
+  if (isCoordinatorSnapShotTarget(target)) {
+    return readProjects().some(
+      (p) =>
+        p.environmentId === target.projectRef.environmentId && p.id === target.projectRef.projectId,
+    )
+      ? target
+      : null;
+  }
   if (typeof target === "string") {
     const draftSession = store.getDraftSession(target);
     if (draftSession?.promotedTo) return draftSession.promotedTo;
@@ -70,7 +96,11 @@ export async function beginSnapShotAnimationWhenReady(
   pendingStarts.add(id);
   try {
     const resolvedTarget = await target;
-    if (pendingStarts.delete(id) && resolvedTarget) {
+    if (
+      pendingStarts.delete(id) &&
+      resolvedTarget &&
+      !isCoordinatorSnapShotTarget(resolvedTarget)
+    ) {
       beginSnapShotAnimation(id, resolvedTarget);
     }
   } finally {
@@ -138,6 +168,7 @@ export async function deliverSnapShot(
   bridge: DesktopSnapShotBridge,
   item: DesktopPendingSnapShot,
   target: CaptureTarget,
+  focus = true,
 ): Promise<void> {
   const store = useComposerDraftStore.getState();
   updateSnapShotAnimationSource(item.id, item.source);
@@ -151,6 +182,69 @@ export async function deliverSnapShot(
   const file = compressed.file;
   const source = resizeSnapShotSource(capture.source, compressed.imageSize);
   const dataUrl = compressed.recompressed ? await readFileAsDataUrl(file) : capture.dataUrl;
+  if (isCoordinatorSnapShotTarget(target)) {
+    const { environmentId, projectId } = target.projectRef;
+    const composer = getProjectCoordinatorComposer(environmentId, projectId);
+    const attachments = composer.getSnapshot().attachments;
+    if (!attachments.some(({ id }) => id === capture.id)) {
+      if (
+        attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ||
+        attachments.filter((item) => item.type === "image").length >= PROVIDER_SEND_TURN_MAX_IMAGES
+      )
+        throw new Error("Remove an attachment, then try this capture again.");
+      composer.setAttachments([
+        ...attachments,
+        {
+          type: "image",
+          id: capture.id,
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          previewUrl: dataUrl,
+          file,
+          source,
+        },
+      ]);
+    }
+    const draft = composer.getSnapshot();
+    const key = ComposerDraftKey.make(`coordinator:${projectId}`);
+    durableComposerDrafts.schedule(
+      { environmentId, key },
+      {
+        prompt: draft.prompt,
+        attachments: draft.attachments.flatMap((item) =>
+          item.file
+            ? [
+                {
+                  id: item.id,
+                  type: item.type,
+                  name: item.name,
+                  mimeType: item.mimeType,
+                  sizeBytes: item.sizeBytes,
+                  file: item.file,
+                  ...(item.type === "image" && item.source ? { source: item.source } : {}),
+                },
+              ]
+            : [],
+        ),
+      },
+    );
+    await durableComposerDrafts.journalSettled();
+    const saved = await createIndexedDbDraftJournal()?.read(key);
+    if (
+      saved?.environmentId !== environmentId ||
+      !saved.snapshot.attachments.some(
+        (item) =>
+          item.id === capture.id &&
+          item.sizeBytes === file.size &&
+          JSON.stringify(item.source) === JSON.stringify(source),
+      )
+    )
+      throw new Error("The captured window could not be saved to the project draft.");
+    finishSnapShotAnimation(capture.id);
+    await bridge.acknowledgeSnapShot(capture.id);
+    return;
+  }
   const alreadyAttached =
     store.getComposerDraft(target)?.images.some(({ id }) => id === capture.id) ?? false;
   if (
@@ -194,7 +288,7 @@ export async function deliverSnapShot(
     await afterNextPaint();
   }
   await bridge.acknowledgeSnapShot(capture.id);
-  dispatchSnapShotComposerFocus();
+  if (focus) dispatchSnapShotComposerFocus();
 }
 
 /** A global capture without an existing chat starts an independent chat on the chosen machine. */
@@ -224,24 +318,67 @@ export function SnapShotCoordinator() {
     defaultProjectRef,
     handleNewThread,
     routeDraftId,
-    routeThreadRef,
+    routeThreadRef: legacyRouteThreadRef,
   } = useHandleNewThread();
+  const location = useLocation();
+  const router = useRouter();
+  const { projectKey } = useParams({ strict: false });
+  const search = useSearch({
+    strict: false,
+    select: (value) => parseProjectWorkspaceSearch(value as Record<string, unknown>),
+  });
+  const groups = useSettingsProjectGroups();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const unreachable = useUnreachableHosts();
+  const lastViewed = useClientSettings((settings) => settings.projectCoordinatorMachines);
+  const projectTarget = projectKey
+    ? resolveProjectSnapShotTarget({
+        group: groups.find((group) => group.projectKey === projectKey),
+        search,
+        lastViewed: lastViewed[projectKey],
+        primaryEnvironmentId,
+        unreachable,
+      })
+    : null;
+  const routeThreadRef =
+    legacyRouteThreadRef ??
+    (projectTarget &&
+    typeof projectTarget !== "string" &&
+    !isCoordinatorSnapShotTarget(projectTarget)
+      ? projectTarget
+      : null);
   const captureSound = useClientSettings((settings) =>
     settings.snapShotPlaySound ? settings.snapShotSound : null,
   );
   const animateCaptures = useClientSettings((settings) => settings.snapShotAnimations);
   const captureTargetsRef = useRef(new Map<string, Promise<CaptureTarget | null>>());
   const lastTargetRef = useRef<CaptureTarget | null>(null);
+  const lastTargetHrefRef = useRef<string | null>(null);
+  const captureLocationsRef = useRef(
+    new Map<string, { requestedHref: string; returnHref: string | null }>(),
+  );
+  const locationRef = useRef(location);
+  locationRef.current = location;
   const targetResolutionRef = useRef<Promise<CaptureTarget | null> | null>(null);
   const drainingRef = useRef<Promise<void> | null>(null);
   const rerunRequestedRef = useRef(false);
   const soundedCaptureIdsRef = useRef(new Set<string>());
   const pendingAnimationStartsRef = useRef(new Set<string>());
 
-  const currentTarget = routeThreadRef ?? routeDraftId;
-  if (currentTarget) lastTargetRef.current = currentTarget;
+  const currentTarget = routeThreadRef ?? routeDraftId ?? projectTarget;
+  const currentTargetRef = useRef<CaptureTarget | null>(currentTarget);
+  currentTargetRef.current = currentTarget;
+  if (projectKey && !currentTarget) {
+    lastTargetRef.current = null;
+    lastTargetHrefRef.current = null;
+  }
+  if (currentTarget) {
+    lastTargetRef.current = currentTarget;
+    lastTargetHrefRef.current = location.href;
+  }
 
   const resolveTarget = useCallback(async (): Promise<CaptureTarget | null> => {
+    if (projectKey && !currentTarget) return null;
     const lastTarget = lastTargetRef.current;
     if (lastTarget) {
       const existingTarget = resolveExistingSnapShotTarget(lastTarget, routeThreadRef);
@@ -272,6 +409,8 @@ export function SnapShotCoordinator() {
     defaultProjectRef,
     handleNewThread,
     routeThreadRef,
+    projectKey,
+    currentTarget,
     legacy,
     scratchEnvironmentId,
     startScratchThread,
@@ -329,7 +468,23 @@ export function SnapShotCoordinator() {
           }
 
           try {
-            await deliverSnapShot(bridge, item, target);
+            const captureLocation = captureLocationsRef.current.get(item.id);
+            await deliverSnapShot(bridge, item, target, false);
+            const href = captureLocation
+              ? snapShotReturnHref(
+                  captureLocation.requestedHref,
+                  router.state.location.href,
+                  captureLocation.returnHref,
+                )
+              : null;
+            if (href) await router.navigate({ href });
+            await afterNextPaint();
+            if (
+              sameSnapShotTarget(currentTargetRef.current, target) &&
+              !isCoordinatorSnapShotTarget(target)
+            )
+              dispatchSnapShotComposerFocus();
+            captureLocationsRef.current.delete(item.id);
             captureTargetsRef.current.delete(item.id);
             soundedCaptureIdsRef.current.delete(item.id);
           } catch (error) {
@@ -363,7 +518,7 @@ export function SnapShotCoordinator() {
       });
     drainingRef.current = operation;
     return operation;
-  }, [playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+  }, [playCaptureSound, resolveCaptureTarget, routeThreadRef, router]);
 
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
@@ -372,6 +527,10 @@ export function SnapShotCoordinator() {
     const unsubscribe = bridge.onSnapShotEvent((event) => {
       switch (event.type) {
         case "requested": {
+          captureLocationsRef.current.set(event.id, {
+            requestedHref: locationRef.current.href,
+            returnHref: lastTargetHrefRef.current,
+          });
           const current = lastTargetRef.current;
           const target = current ? resolveExistingSnapShotTarget(current, routeThreadRef) : null;
           // Creating a new draft would navigate the renderer before a self-capture finishes.
@@ -402,7 +561,10 @@ export function SnapShotCoordinator() {
           void drain();
           return;
         case "failed": {
-          if (event.id) captureTargetsRef.current.delete(event.id);
+          if (event.id) {
+            captureTargetsRef.current.delete(event.id);
+            captureLocationsRef.current.delete(event.id);
+          }
           dismissFailedSnapShot(
             event.id,
             soundedCaptureIdsRef.current,

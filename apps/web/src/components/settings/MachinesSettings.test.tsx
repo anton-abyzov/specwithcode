@@ -88,6 +88,8 @@ vi.mock("../../connection/desktopLocal", () => ({ isThisMachineTarget: () => fal
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNickname: (environmentId: string, label?: string) =>
     runtime.nicknames[environmentId] ?? label ?? "",
+  useMachineNicknames: () => (environmentId: string, label?: string | null) =>
+    runtime.nicknames[environmentId] ?? label ?? environmentId,
 }));
 vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
 vi.mock("../../environments/primary", () => ({
@@ -250,6 +252,30 @@ describe("Settings > Machines", () => {
     expect(html).toContain("May run work here");
     expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
     expect(html.match(/May run work here/g)).toHaveLength(1);
+  });
+
+  it("names a coordinator the server sends only by id, never printing the raw id", () => {
+    setUp();
+    const grant = {
+      coordinatorEnvironmentId: m3,
+      machineLabel: m3 as string,
+      projects: { kind: "linked" as const },
+      accounts: { kind: "all" as const },
+      owner: "self" as const,
+      hopLimit: 2,
+      runtimeCap: "auto" as const,
+      expiresAt: null,
+      status: "active" as const,
+      revokedAt: null,
+      interruptAt: null,
+      runningThreads: 0,
+      legacy: false,
+    };
+    runtime.grants = { grants: [grant], projects: [], accounts: [] };
+    runtime.nicknames = { [m3]: "M3" };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).toContain("Projects linked to M3 (none yet)");
+    expect(html).not.toContain(`Projects linked to ${m3}`);
   });
 
   it("connects a private machine this app cannot see with the fleet pairing", async () => {

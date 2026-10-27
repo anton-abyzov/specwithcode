@@ -15,6 +15,7 @@ const runtime = vi.hoisted(() => ({
   projects: [] as any[],
   toast: vi.fn(),
   change: null as null | ((value: string) => void),
+  scratchRoot: "/scratch" as string | null,
 }));
 vi.mock("~/state/entities", () => ({
   useProjects: () => runtime.projects,
@@ -45,7 +46,7 @@ vi.mock("~/hooks/useSettings", () => ({
 vi.mock("~/hooks/useScratchProject", () => ({
   useScratchProject: () => ({
     scratchEnvironmentId: () => "m4",
-    scratchWorkspaceRootFor: () => "/scratch",
+    scratchWorkspaceRootFor: () => runtime.scratchRoot,
     openScratchProject: vi.fn(),
   }),
 }));
@@ -111,6 +112,7 @@ async function render() {
 }
 beforeEach(() => {
   runtime.legacy = true;
+  runtime.scratchRoot = "/scratch";
   runtime.coordinator.mockReset().mockResolvedValue(true);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
@@ -188,6 +190,28 @@ it("offers only active project rows and keeps No project outside the dropdown", 
   expect(rows).toContain("App");
   expect(document.body.textContent).not.toContain("Acceptance check");
   expect(document.body.textContent).not.toContain("Scratch");
+});
+
+it("keeps each machine's No project folder out of the rows while its scratch path is unknown", async () => {
+  runtime.scratchRoot = null;
+  runtime.projects.push(
+    {
+      ...project(m4, "scratch4", "No project"),
+      workspaceRoot: "/Users/x/.specwithcode/m4/scratch",
+      repositoryIdentity: undefined,
+    },
+    {
+      ...project(m1, "scratch1", "No project"),
+      workspaceRoot: "/Users/x/.specwithcode/m1/scratch",
+      repositoryIdentity: undefined,
+    },
+    project(m1, "app", "App"),
+  );
+  await render();
+  expect([...container.querySelectorAll("button")].map((node) => node.textContent)).toEqual([
+    "Source",
+    "App",
+  ]);
 });
 
 it.each([

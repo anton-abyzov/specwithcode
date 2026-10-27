@@ -21,7 +21,11 @@ import type * as AcpSchema from "@specweave-studio/effect-acp/compat";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
-import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./AcpRegistryProbe.ts";
+import {
+  acpApiKeyCredential,
+  normalizeAcpRegistryAuthMethods,
+  normalizeAcpRegistryWebUrl,
+} from "./AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -44,6 +48,13 @@ type Runtime = Pick<
   "initialize" | "authenticate" | "start" | "handleElicitation" | "logout"
 >;
 
+/** An API key accepted at sign-in, stored as a secret environment variable on this instance. */
+export interface AcpRegistryCredential {
+  readonly envName: string;
+  readonly value: string;
+  readonly authMethodId: string;
+}
+
 /** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -51,6 +62,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly onChanged: (authenticated: boolean) => Effect.Effect<void>;
+  /** Persists an API-key sign-in on this machine only. Without it, API-key methods are not offered. */
+  readonly saveCredential?: (
+    credential: AcpRegistryCredential,
+  ) => Effect.Effect<void, ProviderSetupError>;
+  /** False when a key accepted now could not be saved, so none is sent. */
+  readonly canSaveCredential?: Effect.Effect<boolean>;
   readonly makeRuntime?: (
     spawn: AcpSessionRuntime.AcpSpawnInput,
   ) => Effect.Effect<Runtime, ProviderSetupError, Scope.Scope>;
@@ -136,6 +153,13 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             failure("methods", "Could not discover this agent's sign-in methods.", cause),
           ),
         );
+      const apiKeyMethods = new Set(
+        options.saveCredential
+          ? (initialized.authMethods ?? []).flatMap((method) =>
+              acpApiKeyCredential(method) ? [method.id] : [],
+            )
+          : [],
+      );
       const advertised = normalizeAcpRegistryAuthMethods(initialized.authMethods)
         .filter(
           (method) => method.id.length <= 128 && (method.type !== "terminal" || Option.isSome(pty)),
@@ -145,7 +169,10 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           id: method.id,
           name: method.name,
           description: method.description,
-          type: method.type === "env_var" ? ("credentials" as const) : method.type,
+          type:
+            method.type === "env_var" || apiKeyMethods.has(method.id)
+              ? ("credentials" as const)
+              : method.type,
         }));
       knownMethods = { version: inspected.version, methods: advertised };
       return advertised;
@@ -337,6 +364,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     Effect.gen(function* () {
       if (!options.settings.enabled)
         return yield* failure("start", "Enable this provider before signing in.");
+      let savedCredential: AcpRegistryCredential | undefined;
       const login = Effect.scoped(
         Effect.gen(function* () {
           const resolved = yield* resolve;
@@ -399,6 +427,73 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
                   ),
                 ),
               );
+          } else if (options.saveCredential && acpApiKeyCredential(method)) {
+            const credential = acpApiKeyCredential(method)!;
+            if (!runtime.authenticate)
+              return yield* failure("start", "This runtime does not support explicit ACP sign-in.");
+            // A key already set for this instance or machine is used as is.
+            if ((options.environment[credential.env]?.trim() ?? "").length > 0) {
+              yield* context.verifying;
+              yield* runtime
+                .authenticate(methodId)
+                .pipe(
+                  Effect.mapError(() =>
+                    failure(
+                      "verify",
+                      `${credential.label} did not accept the ${credential.env} already set on this machine.`,
+                    ),
+                  ),
+                );
+              yield* runtime
+                .start()
+                .pipe(
+                  Effect.mapError(() =>
+                    failure("verify", "The provider could not create a session with this API key."),
+                  ),
+                );
+              return;
+            }
+            // Accepting a key switches the agent's sign-in mode on this machine,
+            // so nothing is sent unless the key can be saved afterwards.
+            if (options.canSaveCredential && !(yield* options.canSaveCredential))
+              return yield* failure(
+                "start",
+                "This provider is no longer set up on this machine. Refresh and try again.",
+              );
+            const submitted = yield* Deferred.make<string>();
+            yield* context.setInteraction(
+              {
+                type: "credentials",
+                id: "api-key",
+                fields: [{ name: "api_key", label: `${credential.label} API key`, secret: true }],
+              },
+              (response) => {
+                if (response.type !== "credentials") return Effect.void;
+                const value = response.values.api_key?.trim() ?? "";
+                return value.length === 0
+                  ? Effect.fail(failure("respond", "Enter an API key."))
+                  : Deferred.succeed(submitted, value).pipe(Effect.asVoid);
+              },
+            );
+            const apiKey = yield* Deferred.await(submitted);
+            yield* context.verifying;
+            // The agent keeps the key in memory for this connection only. The
+            // error cause is dropped so an agent echo of the key is never logged.
+            yield* runtime
+              .authenticate(methodId, { "api-key": apiKey })
+              .pipe(
+                Effect.mapError(() =>
+                  failure("verify", `${credential.label} did not accept this API key.`),
+                ),
+              );
+            yield* runtime
+              .start()
+              .pipe(
+                Effect.mapError(() =>
+                  failure("verify", "The provider could not create a session with this API key."),
+                ),
+              );
+            savedCredential = { envName: credential.env, value: apiKey, authMethodId: methodId };
           } else {
             if (method.type === undefined || method.type === "agent") {
               if (!runtime.authenticate)
@@ -434,6 +529,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       yield* Option.isSome(coordinator)
         ? coordinator.value.withForegroundStartup(agentKey, login)
         : login;
+      // Saving changes provider settings, which rebuilds this instance, so it
+      // runs only after the key is verified.
+      if (savedCredential && options.saveCredential) yield* options.saveCredential(savedCredential);
       yield* options.onChanged(true);
     });
   const logout = Effect.scoped(

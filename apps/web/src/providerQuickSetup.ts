@@ -235,13 +235,50 @@ export function withInstalledBinary(
 export type TurnOnOutcome =
   | { readonly kind: "checking" }
   | { readonly kind: "ready" }
-  | { readonly kind: "sign-in"; readonly step: string }
+  | { readonly kind: "sign-in"; readonly step: string; readonly action: string }
   | { readonly kind: "not-installed"; readonly message: string }
   | { readonly kind: "unavailable"; readonly message: string };
+
+/**
+ * How to sign in to a provider on another machine without going to it. A
+ * browser login there opens a window nobody sees, so each provider gets the
+ * route that works from here; credentials still stay on that machine.
+ */
+function remoteSignInStep(
+  identity: string | undefined,
+  machineLabel: string,
+): { readonly step: string; readonly action: string } | null {
+  switch (identity) {
+    case "acp:gemini":
+      return {
+        step: `"Log in with Google" opens a browser on ${machineLabel}. From here: add a Gemini API key (aistudio.google.com/apikey); it stays on ${machineLabel}.`,
+        action: "Add API key",
+      };
+    case "acp:github-copilot-cli":
+      return {
+        step: `Sign in from here with a GitHub device code. The sign-in stays on ${machineLabel}.`,
+        action: "Sign in",
+      };
+    case "driver:grok":
+    case "acp:grok-build":
+      return {
+        step: `Grok's browser sign-in opens on ${machineLabel}. From here: create an xAI API key (console.x.ai) and add it as the secret variable XAI_API_KEY in Grok setup; it stays on ${machineLabel}.`,
+        action: "Add API key",
+      };
+    default:
+      return null;
+  }
+}
 
 export function turnOnOutcome(
   snapshot: ServerProvider | undefined,
   machineLabel: string,
+  options: {
+    /** `providerIdentity` of the provider, for its sign-in route. */
+    readonly identity?: string;
+    /** The machine is not the one this app runs on. */
+    readonly remote?: boolean;
+  } = {},
 ): TurnOnOutcome {
   if (!snapshot || !snapshot.enabled) return { kind: "checking" };
   const name = snapshot.displayName?.trim() || "This provider";
@@ -252,10 +289,13 @@ export function turnOnOutcome(
     };
   }
   if (snapshot.auth.status === "unauthenticated") {
+    const remoteStep = options.remote ? remoteSignInStep(options.identity, machineLabel) : null;
+    if (remoteStep) return { kind: "sign-in", ...remoteStep };
     const method = snapshot.auth.label ? `"${snapshot.auth.label}"` : "its sign-in";
     return {
       kind: "sign-in",
       step: `Sign in on ${machineLabel}: open ${name} setup and choose ${method}. Credentials stay on each machine.`,
+      action: "Sign in",
     };
   }
   if (snapshot.status === "ready" && snapshot.models.length > 0) return { kind: "ready" };

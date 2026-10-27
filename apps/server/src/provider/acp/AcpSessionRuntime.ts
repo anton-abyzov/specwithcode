@@ -1237,8 +1237,14 @@ export class AcpSessionRuntime extends Context.Service<
       EffectAcpSchema.InitializeResponse,
       EffectAcpErrors.AcpError
     >;
-    /** Explicit login uses the negotiated v1 authenticate / v2 auth/login operation. */
-    readonly authenticate?: (methodId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /**
+     * Explicit login uses the negotiated v1 authenticate / v2 auth/login operation.
+     * `meta` carries method-specific inputs (for example an API key) and is never logged.
+     */
+    readonly authenticate?: (
+      methodId: string,
+      meta?: NonNullable<EffectAcpSchema.AuthenticateRequest["_meta"]>,
+    ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     /**
      * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
      * Concurrent calls share the same in-flight startup and a failed startup may be retried.
@@ -2568,10 +2574,14 @@ export const make = (
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
       initialize: () => initialize,
-      authenticate: (methodId) =>
+      authenticate: (methodId, meta) =>
         initialize.pipe(
           Effect.andThen(
-            runLoggedRequest("authenticate", { methodId }, acp.agent.authenticate({ methodId })),
+            runLoggedRequest(
+              "authenticate",
+              { methodId },
+              acp.agent.authenticate(meta ? { methodId, _meta: meta } : { methodId }),
+            ),
           ),
           Effect.asVoid,
         ),

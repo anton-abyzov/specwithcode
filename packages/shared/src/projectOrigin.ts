@@ -43,6 +43,20 @@ const APP_DATA_FOLDERS = [
 /** Temporary folders on macOS, Linux and Windows. */
 const TEMP_PREFIXES = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"];
 
+// A machine's "No project" folder: `scratch` directly in the app's data folder, or in a
+// machine folder inside it (`~/.specwithcode/<machine>/scratch`, older homes included).
+const APP_SCRATCH_FOLDER =
+  /\/(?:\.specwithcode|\.specweave-studio|\.local\/share\/specweave(?:-studio)?)(?:\/[^/]+)?\/scratch\/?$/i;
+
+/**
+ * True when a folder is where the app keeps a machine's "No project" chats. For a
+ * client that cannot read the machine's own scratch path (it has not arrived, or the
+ * session may not read it), so that folder is not taken for a check's workspace.
+ */
+export function isAppScratchFolder(workspaceRoot: string): boolean {
+  return APP_SCRATCH_FOLDER.test(workspaceRoot.replaceAll("\\", "/"));
+}
+
 function segmentsOf(path: string): string[] {
   return path.replaceAll("\\", "/").split("/").filter(Boolean);
 }

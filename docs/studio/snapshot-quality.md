@@ -44,3 +44,13 @@ The desktop production bundle passes. Ten focused test files pass, 347 tests: na
 The optional Claude adapter attachment suite did not execute because this checkout's installed dependencies lack `pptxgenjs`: `Error: Cannot find package 'pptxgenjs' imported from /Users/you/.specwithcode/m4/worktrees/snapshot-retina-quality/apps/server/src/design/export/pptx.ts`. Its source delivery path was inspected; this is not a provider-runtime pass.
 
 These are source/build and private headless fixture proofs. The installed app, real OS capture shortcut, actual clipboard representations and a live provider turn have not been tested. No app restart, account change or independent release was performed. Release 1015 owns inclusion and dispatch.
+
+## Settings and project destinations
+
+The physical both-Shift shortcut was confirmed by the user on October 26, 2026. The resulting native PNGs are 4096 × 2420 and 4096 × 2368. This confirms real shortcut capture and retained native-sized attachments; live selected-element annotation at 150% remains pending.
+
+Project-pane conversations use a thread and machine in URL search parameters. Snapshot delivery now resolves that exact pane, or the viewed project's coordinator, before acquisition. Settings retains the prior destination and full project URL. Delivery adds the image without changing existing prompt text. It leaves Settings only when the user has not navigated elsewhere since the capture began. A project whose destination is unavailable retains the pending capture instead of opening an unrelated Scratch chat.
+
+Capturing the app itself skips native application activation and capture feedback overlays, preserving its existing window and macOS Space. Captures of other processes keep their existing behavior. This removes an app-driven focus/Space change path; the original reported desktop transition has not been independently reproduced on the installed patched build.
+
+Source checks exercise the real snapshot coordinator through project → Settings → requested/ready delivery. The original implementation fails both regression cases; the corrected implementation preserves the image, prompt, machine and thread and respects newer navigation. Coordinator attachment acknowledgment requires its bytes to be present in the durable journal. These source checks do not substitute for installed acceptance of the new routing behavior.

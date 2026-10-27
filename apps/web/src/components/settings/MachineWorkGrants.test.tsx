@@ -19,6 +19,7 @@ import {
   workGrantProjectsSummary,
   workGrantStatus,
 } from "./MachineWorkGrants";
+import { withReadableGrantLabels, workGrantMachineLabel } from "./machineWorkGrants.logic";
 
 const m4 = EnvironmentId.make("env-m4");
 const friend = EnvironmentId.make("env-friend");
@@ -53,6 +54,25 @@ const snapshot: StudioWorkGrantsSnapshot = {
 const children = (element: { props: { children?: unknown } }) => element.props.children;
 
 describe("who can run work on this Mac", () => {
+  it("never prints a coordinator's raw environment id as its name", () => {
+    const uuid = EnvironmentId.make("4d73e481-1b03-4ee8-b4c1-87a448431538");
+    const unnamed = { ...grant, coordinatorEnvironmentId: uuid, machineLabel: uuid as string };
+    expect(workGrantMachineLabel(grant)).toBe("M4MAX");
+    expect(workGrantMachineLabel(unnamed)).toBe("Machine 4d73e481");
+    // A name this app knows (a nickname or a saved connection) comes before the short id.
+    expect(workGrantMachineLabel(unnamed, () => "M4")).toBe("M4");
+    expect(workGrantMachineLabel(unnamed, (id) => id)).toBe("Machine 4d73e481");
+    const labeled = withReadableGrantLabels({ ...snapshot, grants: [grant, unnamed] });
+    expect(labeled?.grants.map((entry) => entry.machineLabel)).toEqual([
+      "M4MAX",
+      "Machine 4d73e481",
+    ]);
+    expect(labeled?.grants[0]).toBe(grant);
+    expect(workGrantProjectsSummary(labeled!.grants[1]!, snapshot.projects)).toBe(
+      "Projects linked to Machine 4d73e481 (none yet)",
+    );
+    expect(withReadableGrantLabels(null)).toBeNull();
+  });
   it("names the linked projects, chosen projects and sign-ins it may use", () => {
     expect(workGrantProjectsSummary(grant, snapshot.projects)).toBe(
       "Projects linked to M4MAX: specwithcode",

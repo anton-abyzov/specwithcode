@@ -130,6 +130,26 @@ function terminalAuthCommand(
   return displayCommand.length <= MAX_COMMAND_LINE_LENGTH ? displayCommand : undefined;
 }
 
+// Agents that accept an API key in authenticate `_meta` (Gemini's
+// `_meta["api-key"] = { provider: "google" }`) read the same key from this
+// environment variable in later sessions.
+const ACP_API_KEY_ENV_BY_PROVIDER: Readonly<Record<string, { env: string; label: string }>> = {
+  google: { env: "GEMINI_API_KEY", label: "Gemini" },
+};
+
+/** The credential an ACP auth method takes through `_meta["api-key"]`, if SpecWithCode can store it. */
+export function acpApiKeyCredential(
+  method: EffectAcpSchema.AuthMethod,
+): { readonly provider: string; readonly env: string; readonly label: string } | undefined {
+  const meta = "_meta" in method ? method._meta : undefined;
+  const apiKey = meta && typeof meta === "object" ? meta["api-key"] : undefined;
+  if (!apiKey || typeof apiKey !== "object" || Array.isArray(apiKey)) return undefined;
+  const provider = (apiKey as { readonly provider?: unknown }).provider;
+  if (typeof provider !== "string") return undefined;
+  const known = ACP_API_KEY_ENV_BY_PROVIDER[provider];
+  return known ? { provider, ...known } : undefined;
+}
+
 export function normalizeAcpRegistryAuthMethods(
   methods: ReadonlyArray<EffectAcpSchema.AuthMethod> | undefined,
   spawn?: AcpRegistryAuthSpawnContext,

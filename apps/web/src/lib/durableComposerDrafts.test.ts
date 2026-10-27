@@ -1,3 +1,8 @@
+import {
+  ComposerDraftPutInput as DraftPutSchema,
+  ComposerDraftRecord as DraftRecordSchema,
+} from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
 import type {
   ComposerDraftKey,
   ComposerDraftPutInput,
@@ -8,8 +13,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   createDurableDraftSync,
   type DurableDraftEdit,
+  type DurableDraftJournalEntry,
   type DurableDraftSnapshot,
 } from "./durableComposerDrafts";
+
+const snapshotSource = {
+  kind: "snap-shot" as const,
+  capturedAt: "2026-10-27T00:42:15.142Z",
+  appName: "SpecWithCode",
+  windowTitle: "Settings",
+  accessibleText: "Snapshot settings",
+  accessibility: {
+    format: "element-tree" as const,
+    coordinateSpace: "captured-image" as const,
+    imageSize: { width: 4096, height: 2420 },
+    truncated: false,
+    root: {
+      role: "button",
+      name: "Done",
+      bounds: { x: 2456, y: 1500, width: 118, height: 64 },
+      children: [],
+    },
+  },
+};
 
 const KEY = "thread:t1" as ComposerDraftKey;
 const TARGET = { environmentId: "env", key: KEY };
@@ -40,6 +66,7 @@ function makeHost() {
           failNext = false;
           throw new Error("offline");
         }
+        input = Schema.decodeSync(DraftPutSchema)(input);
         puts.push(input);
         const previous = drafts.get(input.key);
         if (!input.prompt.trim() && input.attachments.length === 0) {
@@ -67,7 +94,10 @@ function makeHost() {
         });
         return { revision, missingAttachmentIds: missing };
       },
-      get: async (_environmentId: string, key: ComposerDraftKey) => drafts.get(key) ?? null,
+      get: async (_environmentId: string, key: ComposerDraftKey) => {
+        const draft = drafts.get(key);
+        return draft ? Schema.decodeSync(DraftRecordSchema)(draft) : null;
+      },
     },
   };
 }
@@ -83,7 +113,7 @@ function makeSync(host: ReturnType<typeof makeHost>, log = new Map<string, Durab
   return { sync, log };
 }
 
-const text = (prompt: string, attachments = [] as ReturnType<typeof image>[]) =>
+const text = (prompt: string, attachments: DurableDraftSnapshot["attachments"] = []) =>
   ({ prompt, attachments }) satisfies DurableDraftSnapshot;
 
 beforeEach(() => {
@@ -94,6 +124,68 @@ afterEach(() => {
 });
 
 describe("durable composer drafts", () => {
+  it("restores complete snapshot context from the local journal before the host is available", async () => {
+    const entries = new Map<string, DurableDraftJournalEntry>();
+    const journal = {
+      write: async (entry: DurableDraftJournalEntry) => {
+        entries.set(entry.key, structuredClone(entry));
+      },
+      read: async (key: ComposerDraftKey) => entries.get(key),
+      remove: async (key: ComposerDraftKey) => {
+        entries.delete(key);
+      },
+    };
+    const host = makeHost();
+    const edits = { read: () => undefined, write: () => undefined };
+    const before = createDurableDraftSync({ transport: host.transport, edits, journal });
+    before.schedule(
+      TARGET,
+      text("Unsent user words", [{ ...image("shot"), source: snapshotSource }]),
+    );
+    await before.journalSettled();
+    let restored: DurableDraftSnapshot | undefined;
+    const after = createDurableDraftSync({ transport: host.transport, edits, journal });
+    await after.restoreLocal({
+      target: TARGET,
+      local: () => text(""),
+      apply: (snapshot) => {
+        restored = snapshot;
+      },
+    });
+    expect(restored?.prompt).toBe("Unsent user words");
+    expect(restored?.attachments[0]?.source).toEqual(snapshotSource);
+    expect([...new Uint8Array(await restored!.attachments[0]!.file.arrayBuffer())]).toEqual([
+      1, 2, 3,
+    ]);
+    expect(host.puts).toHaveLength(0);
+  });
+
+  it("persists metadata-only changes and restores snapshot context with the original bytes", async () => {
+    const host = makeHost();
+    const { sync, log } = makeSync(host);
+    const attachment = image("shot", [9, 8, 7]);
+    sync.schedule(TARGET, text("User words", [attachment]));
+    await sync.flush();
+    sync.schedule(TARGET, text("User words", [{ ...attachment, source: snapshotSource }]));
+    await sync.flush();
+    expect(host.puts).toHaveLength(2);
+    expect(host.puts[1]!.attachments[0]!.dataBase64).toBeUndefined();
+    expect(host.drafts.get(KEY)?.attachments[0]?.source).toEqual(snapshotSource);
+    let restored: DurableDraftSnapshot | undefined;
+    await makeSync(host, log).sync.restore({
+      target: TARGET,
+      local: () => text(""),
+      apply: (snapshot) => {
+        restored = snapshot;
+      },
+    });
+    expect(restored?.prompt).toBe("User words");
+    expect(restored?.attachments[0]?.source).toEqual(snapshotSource);
+    expect([...new Uint8Array(await restored!.attachments[0]!.file.arrayBuffer())]).toEqual([
+      9, 8, 7,
+    ]);
+  });
+
   it("saves after the debounce and sends attachment bytes only once", async () => {
     const host = makeHost();
     const { sync } = makeSync(host);

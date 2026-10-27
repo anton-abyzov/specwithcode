@@ -5,6 +5,7 @@
  * fsynced and renamed, then the folder is fsynced, so a write that returned
  * survives the process being killed (kill -9, a crash, an update restart).
  */
+import type { SnapShotSource } from "@specweave-studio/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -15,6 +16,7 @@ export interface DraftAttachmentMeta {
   readonly name: string;
   readonly mimeType: string;
   readonly sizeBytes: number;
+  readonly source?: SnapShotSource;
 }
 
 export interface StoredDraft {
@@ -191,6 +193,7 @@ async function writeDraft(
       name: attachment.name,
       mimeType: attachment.mimeType,
       sizeBytes: attachment.sizeBytes,
+      ...(attachment.source ? { source: attachment.source } : {}),
     });
   }
   const revision = (previous?.revision ?? 0) + 1;

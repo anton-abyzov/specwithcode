@@ -29,11 +29,13 @@ beforeEach(() => {
   transitionCapturePageMock.mockReset().mockResolvedValue(undefined);
   transitionSnapshotMock.mockReset().mockResolvedValue(undefined);
   prepareCaptureRevealMock.mockReset();
+  activateWindowMock.mockReset();
   accessibilityListMock.mockReset().mockResolvedValue([]);
 });
 
 const {
   activeWindowMock,
+  activateWindowMock,
   animationSettingsMock,
   accessibilityProcessWarmMock,
   accessibilityProcessCloseMock,
@@ -73,6 +75,7 @@ const {
   transitionSnapshotMock,
 } = vi.hoisted(() => ({
   activeWindowMock: vi.fn(),
+  activateWindowMock: vi.fn(),
   animationSettingsMock: vi.fn(() => ({
     prefersReducedMotion: true,
     shouldRenderRichAnimation: false,
@@ -516,7 +519,7 @@ const layerTest = (
         Layer.succeed(
           DesktopWindow.DesktopWindow,
           DesktopWindow.DesktopWindow.of({
-            activate: Effect.void,
+            activate: Effect.sync(activateWindowMock),
             prepareCaptureReveal: Effect.sync(prepareCaptureRevealMock),
             dispatchMenuAction: () => Effect.void,
             dispatchSnapShotEvent: () => Effect.void,
@@ -3927,4 +3930,58 @@ it.effect("rejects macOS test capture on other platforms", () =>
       assert.equal(error.reason, "unsupported-session");
     }),
   ).pipe(Effect.provide(layerTest("win32"))),
+);
+
+it.effect.each([
+  { ownProcess: true, animations: false },
+  { ownProcess: true, animations: true },
+  { ownProcess: false, animations: false },
+])(
+  "keeps self-captures in their current window (own: $ownProcess, animations: $animations)",
+  ({ ownProcess, animations }) => {
+    const active = {
+      platform: "macos",
+      id: 42,
+      title: "Settings",
+      owner: {
+        name: "SpecWithCode",
+        processId: ownProcess ? process.pid : process.pid + 1,
+        path: "/Applications/SpecWithCode.app",
+      },
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    } as const;
+    activeWindowMock.mockReset().mockResolvedValue(active);
+    macCaptureMock
+      .mockReset()
+      .mockResolvedValue({ source: { name: "Settings" }, png: Buffer.from([1, 2, 3]) });
+    accessibilityProcessReadMock
+      .mockReset()
+      .mockReturnValue({ started: Promise.resolve(), result: Promise.resolve(undefined) });
+    flashWindows.length = 0;
+    animationSettingsMock.mockReturnValue({
+      prefersReducedMotion: false,
+      shouldRenderRichAnimation: true,
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* DesktopSnapShot.make;
+        yield* service.configure(
+          enabledSettings({ snapShotAnimations: animations, snapShotFlash: true }),
+        );
+        yield* service.capture;
+        assert.lengthOf(macCaptureMock.mock.calls, 1);
+        assert.lengthOf(activateWindowMock.mock.calls, ownProcess ? 0 : 1);
+        if (ownProcess) assert.lengthOf(flashWindows, 0);
+      }),
+    ).pipe(
+      Effect.provide(
+        layerTest("darwin", {
+          makeDirectory: () => Effect.void,
+          rename: () => Effect.void,
+          writeFile: () => Effect.void,
+          writeFileString: () => Effect.void,
+        }),
+      ),
+    );
+  },
 );

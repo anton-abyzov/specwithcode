@@ -19,6 +19,7 @@ import {
   accountLabel,
   formatTime,
   workGrantAccountsSummary,
+  workGrantMachineLabel,
   workGrantProjectsSummary,
   workGrantStatus,
   workGrantUnavailableNote,
@@ -462,7 +463,14 @@ export function MachineWorkGrants({
     setError(null);
     setNotice(null);
     try {
-      const grant = await changeMachineWorkGrant(environmentId, next);
+      const changed = await changeMachineWorkGrant(environmentId, next);
+      const grant = {
+        ...changed,
+        machineLabel:
+          snapshot?.grants.find(
+            (candidate) => candidate.coordinatorEnvironmentId === changed.coordinatorEnvironmentId,
+          )?.machineLabel ?? workGrantMachineLabel(changed),
+      };
       if (next.action === "revoke")
         setNotice(
           grant.runningThreads > 0 && grant.interruptAt
