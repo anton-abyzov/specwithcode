@@ -53,6 +53,8 @@ export interface AcpRegistryCredential {
   readonly envName: string;
   readonly value: string;
   readonly authMethodId: string;
+  /** The key is already in this machine's environment; only the method is saved. */
+  readonly keepEnvironment?: boolean;
 }
 
 /** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
@@ -451,6 +453,15 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
                     failure("verify", "The provider could not create a session with this API key."),
                   ),
                 );
+              // Later sessions sign in with the saved method; without it they
+              // fall back to the agent's first method (a browser login for Gemini).
+              if (options.settings.authMethodId !== methodId)
+                savedCredential = {
+                  envName: credential.env,
+                  value: options.environment[credential.env]!.trim(),
+                  authMethodId: methodId,
+                  keepEnvironment: true,
+                };
               return;
             }
             // Accepting a key switches the agent's sign-in mode on this machine,
@@ -476,6 +487,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
               },
             );
             const apiKey = yield* Deferred.await(submitted);
+            // The instance can be removed while the prompt is open.
+            if (options.canSaveCredential && !(yield* options.canSaveCredential))
+              return yield* failure(
+                "start",
+                "This provider is no longer set up on this machine. Refresh and try again.",
+              );
             yield* context.verifying;
             // The agent keeps the key in memory for this connection only. The
             // error cause is dropped so an agent echo of the key is never logged.
@@ -531,7 +548,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         : login;
       // Saving changes provider settings, which rebuilds this instance, so it
       // runs only after the key is verified.
-      if (savedCredential && options.saveCredential) yield* options.saveCredential(savedCredential);
+      // The save rebuilds this instance and the rebuilt one owns the sign-in
+      // record, so this one must not write it after the save.
+      if (savedCredential && options.saveCredential) {
+        yield* options.saveCredential(savedCredential);
+        return;
+      }
       yield* options.onChanged(true);
     });
   const logout = Effect.scoped(

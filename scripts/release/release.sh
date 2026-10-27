@@ -1501,10 +1501,31 @@ desktop_swap_settled() {
 }
 
 stage_desktop() {
-  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version current="" grants="$STAGE/desktop-grants.json" probed=0 aside
+  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version current="" grants="$STAGE/desktop-grants.json" probed=0 aside="" moved_old=0
+  # The new app is unpacked and checked beside $APP, on the same volume, and only then renamed into
+  # place, so a ditto cut short (a full disk, a killed run) never leaves a broken $APP or moves the
+  # working one to the Trash. The dot keeps Launch Services from listing the unpacked copy.
+  local unpack="${APP%/*}/.${APP##*/}-$VERSION-unpack" old="$APP.release-old"
+  local fresh="$unpack/${APP##*/}"
   stage_quit_desktop
   need_output "$zip" "the signed desktop zip from the sign stage"
   desktop_swap_settled
+  # A run killed mid-unpack leaves a partial app in its hidden folder; no copy stays loose.
+  if [ "$MODE" = real ]; then
+    for aside in "${APP%/*}/.${APP##*/}"-*-unpack; do
+      if [ -d "$aside" ]; then x desktop-unpack-stale -- rm -rf "$aside"; fi
+    done
+    aside=""
+  fi
+  # An earlier attempt stopped between its two renames: put the previous app back, or, when the
+  # new one made it in, send the previous one to the Trash it was headed for.
+  if [ "$MODE" = real ] && [ -d "$old" ]; then
+    if [ ! -e "$APP" ]; then
+      x desktop-restore -- mv "$old" "$APP"
+    else
+      x desktop-trash-old -- osascript -e "tell application \"Finder\" to delete POSIX file \"$old\""
+    fi
+  fi
   # Read once that update is over: it may have just put this release in.
   if [ "$MODE" != dry ]; then
     current="$(q app-version-before --may-fail -- /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
@@ -1527,7 +1548,6 @@ stage_desktop() {
       else
         say "desktop: $APP has no readable version (an install cut short); moving it to $aside and installing again"
       fi
-      x desktop-aside -- mv "$APP" "$aside"
     elif [ "$MODE" != real ] || [ -d "$APP" ]; then
       # Computer use keeps one Accessibility and Screen Recording grant only while each release
       # satisfies the installed one's designated requirement; record both before the swap.
@@ -1535,9 +1555,31 @@ stage_desktop() {
       probed=1
       x desktop-backup -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py snapshot "$APP"
       x desktop-prune -C "$BUILD" -- python3 -B scripts/studio-fleet/desktop_backup.py prune --keep 1
-      x desktop-trash -- osascript -e "tell application \"Finder\" to delete POSIX file \"$APP\""
     fi
-    x desktop-install -- ditto -x -k "$zip" "$(dirname "$APP")"
+    x desktop-unpack-clear -- rm -rf "$unpack"
+    x desktop-unpack-dir -- mkdir -p "$unpack"
+    if ! x desktop-install -- ditto -x -k "$zip" "$unpack" ||
+      ! x desktop-unpacked-codesign -- codesign --verify --deep --strict "$fresh"; then
+      x desktop-unpack-drop -- rm -rf "$unpack" || true
+      die "could not unpack and verify $zip (is the disk full?); $APP was left as it was"
+    fi
+    if [ -n "$aside" ]; then
+      x desktop-aside -- mv "$APP" "$aside"
+    elif [ "$MODE" != real ] || [ -d "$APP" ]; then
+      # Renamed aside, not trashed, until the new app is in place: a failed swap puts it back.
+      x desktop-old-aside -- mv "$APP" "$old"
+      moved_old=1
+    fi
+    if ! x desktop-swap -- mv "$fresh" "$APP"; then
+      if [ -d "$old" ] && [ ! -e "$APP" ]; then x desktop-restore -- mv "$old" "$APP" || true; fi
+      die "could not move the new app to $APP; the previous app is back in place or at ${aside:-$old}"
+    fi
+    x desktop-unpack-done -- rm -rf "$unpack"
+    if [ "$moved_old" -eq 1 ]; then
+      # The previous app goes to the Trash only now, where it can still be restored.
+      x desktop-trash -- osascript -e "tell application \"Finder\" to delete POSIX file \"$old\"" ||
+        say "(could not move $old to the Trash; remove it by hand)"
+    fi
   fi
   x desktop-codesign -- codesign --verify --deep --strict "$APP"
   x desktop-signature -C "$BUILD" -- node scripts/studio-projects/mac-signature.mjs "$APP"

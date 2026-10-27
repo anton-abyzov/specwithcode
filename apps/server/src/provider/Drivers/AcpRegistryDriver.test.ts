@@ -676,6 +676,37 @@ describe("saveAcpRegistryCredential", () => {
     ),
   );
 
+  it.effect("saves only the method when the key is already in the environment", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* saveAcpRegistryCredential(settings, geminiId, {
+        envName: "GEMINI_API_KEY",
+        value: "AIza-host-test-key",
+        authMethodId: "gemini-api-key",
+        keepEnvironment: true,
+      });
+      const instance = (yield* settings.getSettings).providerInstances[geminiId];
+      expect(instance?.config).toEqual({ agentId: "gemini", authMethodId: "gemini-api-key" });
+      expect(instance?.environment).toEqual([
+        { name: "HTTPS_PROXY", value: "http://proxy", sensitive: false },
+      ]);
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [geminiId]: {
+              driver: "acpRegistry",
+              displayName: "Gemini CLI",
+              enabled: true,
+              config: { agentId: "gemini" },
+              environment: [{ name: "HTTPS_PROXY", value: "http://proxy", sensitive: false }],
+            },
+          },
+        } as never),
+      ),
+    ),
+  );
+
   it.effect("fails without echoing the key when the instance is gone", () =>
     Effect.gen(function* () {
       const settings = yield* ServerSettings.ServerSettingsService;

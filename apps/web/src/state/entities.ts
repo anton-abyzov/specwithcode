@@ -11,7 +11,7 @@ import {
   type ThreadLinkTarget,
 } from "@specweave-studio/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@specweave-studio/contracts";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@specweave-studio/contracts";
+import { EnvironmentId, type OrchestrationV2ProjectedTurnItem } from "@specweave-studio/contracts";
 import { Atom } from "effect/reactivity";
 import { useContext } from "react";
 import { SelectedThreadShell, resolveSelectedThreadShell } from "./selectedThreadShell";
@@ -21,6 +21,7 @@ import { environmentServerConfigsAtom } from "./server";
 import {
   allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
+  environmentShell,
 } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 import { waitForAtomValue } from "./waitForAtomValue";
@@ -104,6 +105,22 @@ export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThread
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {
   return useAtomValue(allEnvironmentShellsBootstrappedAtom);
+}
+
+const NO_SHELL_LIVE_ATOM = Atom.make(false).pipe(Atom.withLabel("web-environment-shell-live:none"));
+const environmentShellLiveAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.map(environmentShell.stateValueAtom(environmentId), (shell) => shell.status === "live").pipe(
+    Atom.withLabel(`web-environment-shell-live:${environmentId}`),
+  ),
+);
+
+/** The machine's project list is synchronized since it last connected. */
+export function useEnvironmentShellLive(environmentId: string | null): boolean {
+  return useAtomValue(
+    environmentId === null
+      ? NO_SHELL_LIVE_ATOM
+      : environmentShellLiveAtom(EnvironmentId.make(environmentId)),
+  );
 }
 
 export function useAllEnvironmentProjectSnapshotsReady(): boolean {

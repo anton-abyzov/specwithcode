@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 
 import {
+  checkoutKeyEnvironmentId,
+  checkoutUnavailableReason,
   chooseCoordinatorView,
   coordinatorMachineKey,
   orchestratorCopies,
@@ -251,5 +253,49 @@ describe("orchestratorCopies", () => {
       "pending",
       "workers",
     ]);
+  });
+});
+
+describe("checkoutUnavailableReason", () => {
+  const environments = [
+    { environmentId: "env-m4", connection: { phase: "connected" } },
+    { environmentId: "env-m1", connection: { phase: "backoff" } },
+    { environmentId: "env-m3", connection: { phase: "connecting" } },
+    { environmentId: "env-m5", connection: { phase: "error" } },
+    { environmentId: "env-m6", connection: { phase: "unsupported" } },
+  ];
+  const reason = (
+    environmentId: string,
+    unreachable: readonly string[] = [],
+    projectsLive = true,
+  ) =>
+    checkoutUnavailableReason({
+      environmentId,
+      environments,
+      unreachable: new Set(unreachable),
+      projectsLive,
+    });
+
+  it("names a machine this device is not paired with", () => {
+    expect(reason("env-m2")).toBe("host-unknown");
+  });
+  it("names an unreachable machine as offline", () => {
+    expect(reason("env-m1", ["env-m1"])).toBe("host-offline");
+  });
+  it("waits on a machine that has not answered yet", () => {
+    expect(reason("env-m3")).toBe("host-loading");
+  });
+  it("waits on a reconnected machine until it sends its projects", () => {
+    expect(reason("env-m4", [], false)).toBe("host-loading");
+  });
+  it.each(["env-m5", "env-m6"])("never promises a refused machine %s comes back", (id) => {
+    expect(reason(id, [id])).toBe("host-refused");
+  });
+  it("names an online machine with no such project", () => {
+    expect(reason("env-m4")).toBe("not-registered");
+  });
+  it("reads the machine from a saved checkout key", () => {
+    expect(checkoutKeyEnvironmentId("env-m4:proj-a")).toBe("env-m4");
+    expect(checkoutKeyEnvironmentId("env-m4")).toBe("env-m4");
   });
 });

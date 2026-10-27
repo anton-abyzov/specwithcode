@@ -17,6 +17,8 @@ import { ProjectWorkspace } from "./ProjectWorkspace";
 import { UnreachableHostsContext } from "../../studio/unreachableHosts";
 import { enqueueProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 
+const laptopOffline: ReadonlySet<string> = new Set(["laptop"]);
+
 describe("thread links inside the project", () => {
   const openThread = (id: string) => container.querySelector(`[data-native-thread="${id}"]`);
   it.each(["user", undefined] as const)(
@@ -237,11 +239,72 @@ describe("switching the coordinator machine", () => {
       ),
     );
     expect(container.textContent).toContain("Linked checkout unavailable");
+    expect(container.textContent).toContain(
+      "Test host is online but has no project for this checkout.",
+    );
     expect(container.querySelector("#project-prompt")).toBeNull();
     expect(state.send).not.toHaveBeenCalled();
     await click("Use host · /scratch/atlas");
     expect(onSelectCheckout).toHaveBeenCalledWith("host:project");
     expect(state.savedMachines).toEqual({ atlas: "host:project" });
+  });
+  const unavailableReason = () =>
+    container
+      .querySelector("[data-checkout-unavailable]")
+      ?.getAttribute("data-checkout-unavailable");
+  it("says the linked checkout's machine is offline, keeping the explicit choices", async () => {
+    state.pairedHosts = ["laptop"];
+    state.offlineHosts = ["laptop"];
+    const onSelectCheckout = vi.fn();
+    await act(async () =>
+      root.render(
+        <UnreachableHostsContext.Provider value={laptopOffline}>
+          <ProjectWorkspace
+            projectKey="atlas"
+            checkoutKey="laptop:remote-project"
+            onSelectCheckout={onSelectCheckout}
+          />
+        </UnreachableHostsContext.Provider>,
+      ),
+    );
+    expect(unavailableReason()).toBe("host-offline");
+    expect(container.textContent).toContain(
+      "laptop is offline. Its projects show again when it reconnects.",
+    );
+    expect(container.textContent).not.toContain("Connect the linked host");
+    await click("Use host · /scratch/atlas");
+    expect(onSelectCheckout).toHaveBeenCalledWith("host:project");
+  });
+  it("says this device is not paired with the linked checkout's machine", async () => {
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="atlas" checkoutKey="studio-m1:remote-project" />),
+    );
+    expect(unavailableReason()).toBe("host-unknown");
+    expect(container.textContent).toContain(
+      "This device is not paired with the machine that holds this checkout.",
+    );
+  });
+  it("waits on a machine that reconnected but has not sent its projects", async () => {
+    state.pairedHosts = ["laptop"];
+    state.syncingHosts = ["laptop"];
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="atlas" checkoutKey="laptop:remote-project" />),
+    );
+    expect(unavailableReason()).toBe("host-loading");
+    expect(container.textContent).toContain(
+      "laptop has not answered yet. Its projects show once it connects.",
+    );
+  });
+  it("says an online machine has no project for the linked checkout", async () => {
+    state.pairedHosts = ["laptop"];
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="atlas" checkoutKey="laptop:remote-project" />),
+    );
+    expect(unavailableReason()).toBe("not-registered");
+    expect(
+      container.querySelector('[data-checkout-unavailable-reason="not-registered"]')?.textContent,
+    ).toBe("laptop is online but has no project for this checkout.");
+    expect(state.send).not.toHaveBeenCalled();
   });
   const openSwitcher = () =>
     act(async () =>
@@ -718,5 +781,56 @@ describe("project request drafts from PR actions", () => {
     );
     expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe("Fix PR 9");
     expect(state.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("the project folder's health", () => {
+  it.each([
+    ["missing", "Project folder /scratch/atlas is missing on Test host."],
+    ["file", "Project folder /scratch/atlas on Test host is a file, not a folder."],
+  ] as const)("names a %s folder and relinks it from Project settings", async (health, text) => {
+    state.folderHealth = health;
+    await render();
+    const notice = container.querySelector(`[data-project-folder-health="${health}"]`);
+    expect(notice?.textContent).toContain(text);
+    await click("Relink…");
+    const settings = container.querySelector("[data-settings-tab]");
+    expect(settings?.getAttribute("data-settings-tab")).toBe("general");
+    expect(settings?.getAttribute("data-settings-row")).toBe("project-folder");
+    expect(state.send).not.toHaveBeenCalled();
+  });
+  it.each(["ok", "unknown"] as const)("says nothing while the folder is %s", async (health) => {
+    state.folderHealth = health;
+    await render();
+    expect(container.querySelector("[data-project-folder-health]")).toBeNull();
+    expect(container.textContent).not.toContain("Relink");
+  });
+  it("never names the folder of a personal project", async () => {
+    state.folderHealth = "missing";
+    state.projectKind = "personal";
+    await render();
+    expect(container.querySelector("[data-project-folder-health]")).toBeNull();
+  });
+  it("waits for the project read before naming the folder", async () => {
+    state.folderHealth = "missing";
+    state.projectReadPending = true;
+    await render();
+    expect(container.querySelector("[data-project-folder-health]")).toBeNull();
+  });
+  it("checks this project's own folder on its machine", async () => {
+    state.realFolderHealth = true;
+    state.send.mockResolvedValue({
+      _tag: "Success",
+      value: { projectId: "project", targetExists: false },
+    });
+    await render();
+    await act(async () => {});
+    expect(state.send).toHaveBeenCalledWith({
+      environmentId: "host",
+      input: { projectId: "project", workspaceRoot: "/scratch/atlas" },
+    });
+    expect(
+      container.querySelector('[data-project-folder-health="missing"]')?.textContent,
+    ).toContain("Project folder /scratch/atlas is missing on Test host.");
   });
 });

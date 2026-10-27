@@ -140,9 +140,34 @@ export function originCandidates(origin: string): Array<string> {
 /** SSH never asks for a password or passphrase; an unreachable host fails fast. */
 const BATCH_SSH = { GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=15" };
 
-/** Git's environment for talking to a remote without a person at the keyboard. */
+let ownSsh: boolean | null = null;
+
+/** The person set their own SSH program (a Windows agent, plink, a per-key command). */
+function hasOwnSsh(): boolean {
+  if (process.env.GIT_SSH_COMMAND || process.env.GIT_SSH) return true;
+  if (ownSsh === null) {
+    try {
+      ownSsh =
+        NodeChildProcess.execFileSync("git", ["config", "--get", "core.sshCommand"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 10_000,
+        }).trim() !== "";
+    } catch {
+      // Exit 1: not set.
+      ownSsh = false;
+    }
+  }
+  return ownSsh;
+}
+
+/**
+ * Git's environment for talking to a remote without a person at the keyboard.
+ * `GIT_SSH_COMMAND` outranks `GIT_SSH` and `core.sshCommand`, so it is only set
+ * when the person configured none of them.
+ */
 export function remoteEnv(): Readonly<Record<string, string>> {
-  return process.env.GIT_SSH_COMMAND ? {} : BATCH_SSH;
+  return hasOwnSsh() ? {} : BATCH_SSH;
 }
 
 /**

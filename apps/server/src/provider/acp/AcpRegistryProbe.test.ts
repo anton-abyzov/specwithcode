@@ -442,6 +442,75 @@ describe("ACP Registry probe", () => {
     expect(rewriteAcpSlashSkillMentions("```\n$unslop unfinished fence", commands)).toBe(
       "```\n$unslop unfinished fence",
     );
+    expect(rewriteAcpSlashSkillMentions("~~~text\n$unslop\n~~~\n$unslop", commands)).toBe(
+      "~~~text\n$unslop\n~~~\n/unslop",
+    );
+    expect(rewriteAcpSlashSkillMentions("~~~\n$unslop unfinished", commands)).toBe(
+      "~~~\n$unslop unfinished",
+    );
+    expect(rewriteAcpSlashSkillMentions("````md\n```\n$unslop\n````\n$unslop", commands)).toBe(
+      "````md\n```\n$unslop\n````\n/unslop",
+    );
+    expect(rewriteAcpSlashSkillMentions("```\n```\n$unslop", commands)).toBe("```\n```\n/unslop");
+    expect(rewriteAcpSlashSkillMentions("run ``a ` $unslop`` then $unslop", commands)).toBe(
+      "run ``a ` $unslop`` then /unslop",
+    );
+    // A fence closes only on its own character.
+    expect(
+      rewriteAcpSlashSkillMentions("```\n$unslop\n```~\n$unslop\n```\n$unslop", commands),
+    ).toBe("```\n$unslop\n```~\n$unslop\n```\n/unslop");
+    expect(rewriteAcpSlashSkillMentions("``` $unslop", commands)).toBe("``` $unslop");
+    // CRLF line endings close a fence like LF does.
+    expect(rewriteAcpSlashSkillMentions("```\r\n$unslop\r\n```\r\n$unslop", commands)).toBe(
+      "```\r\n$unslop\r\n```\r\n/unslop",
+    );
+    expect(rewriteAcpSlashSkillMentions("~~~\r\n$unslop\r\n~~~  \r\n$unslop", commands)).toBe(
+      "~~~\r\n$unslop\r\n~~~  \r\n/unslop",
+    );
+    // A backtick fence's info string holds no backtick: this is an inline span.
+    expect(rewriteAcpSlashSkillMentions("```npm i``` then run $unslop", commands)).toBe(
+      "```npm i``` then run /unslop",
+    );
+    // An inline span never crosses a fence or a blank line.
+    expect(
+      rewriteAcpSlashSkillMentions(
+        "Press the ` key.\n```sh\necho `date` $unslop\n```\nthen $unslop",
+        commands,
+      ),
+    ).toBe("Press the ` key.\n```sh\necho `date` $unslop\n```\nthen /unslop");
+    expect(rewriteAcpSlashSkillMentions("a ` b\n\n$unslop ` c", commands)).toBe(
+      "a ` b\n\n/unslop ` c",
+    );
+    // A span may still wrap inside one paragraph.
+    expect(rewriteAcpSlashSkillMentions("a `b\n$unslop` c $unslop", commands)).toBe(
+      "a `b\n$unslop` c /unslop",
+    );
+    // A mention must follow whitespace in the whole prompt, not just after code.
+    expect(rewriteAcpSlashSkillMentions("see `x`$unslop now", commands)).toBe("see `x`$unslop now");
+  });
+
+  it("handles long unmatched backtick runs in linear time", () => {
+    const commands = normalizeAcpRegistryCommands([
+      {
+        name: "unslop",
+        description: "Skill",
+        input: { type: "text", hint: "instructions for the skill" },
+      },
+    ]);
+    const prompt = `x ${"`".repeat(200_000)} ${"` `` ".repeat(20_000)}$unslop`;
+    const started = performance.now();
+    expect(rewriteAcpSlashSkillMentions(prompt, commands).endsWith("/unslop")).toBe(true);
+    expect(performance.now() - started).toBeLessThan(500);
+    // Unmatched runs of many distinct lengths stay linear too.
+    let distinct = "x ";
+    for (let length = 1; distinct.length < 2_000_000; length += 1) {
+      distinct += `${"`".repeat(length)} `;
+    }
+    const distinctStarted = performance.now();
+    expect(rewriteAcpSlashSkillMentions(`${distinct}$unslop`, commands).endsWith("/unslop")).toBe(
+      true,
+    );
+    expect(performance.now() - distinctStarted).toBeLessThan(500);
   });
 
   it("rewrites against the turn's own session before the instance's latest list", () => {

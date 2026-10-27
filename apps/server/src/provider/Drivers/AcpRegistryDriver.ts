@@ -188,8 +188,9 @@ export const saveAcpRegistryCredential = (
   const saveFailed = new ProviderSetupError({
     instanceId,
     operation: "save",
-    detail:
-      "The API key worked but could not be saved on this machine. The agent here now expects an API key: sign in again to save it, or choose another sign-in method.",
+    detail: credential.keepEnvironment
+      ? `Signed in with the ${credential.envName} already set on this machine, but the sign-in method could not be saved. Sign in again so later sessions use it.`
+      : "The API key worked but could not be saved on this machine. The agent here now expects an API key: sign in again to save it, or choose another sign-in method.",
   });
   return Effect.gen(function* () {
     const settings = yield* serverSettings.getSettings;
@@ -204,12 +205,14 @@ export const saveAcpRegistryCredential = (
       instanceId,
       instance: {
         ...instance,
-        environment: [
-          ...(instance.environment ?? []).filter(
-            (variable) => variable.name !== credential.envName,
-          ),
-          { name: credential.envName, value: credential.value, sensitive: true },
-        ],
+        environment: credential.keepEnvironment
+          ? (instance.environment ?? [])
+          : [
+              ...(instance.environment ?? []).filter(
+                (variable) => variable.name !== credential.envName,
+              ),
+              { name: credential.envName, value: credential.value, sensitive: true },
+            ],
         config: { ...config, authMethodId: credential.authMethodId },
       },
     });

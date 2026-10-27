@@ -4,6 +4,7 @@ import { AcpRegistrySettings, ProviderInstanceId } from "@specweave-studio/contr
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   forgetVerifiedCredential,
@@ -124,7 +125,11 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
         processEnvironment: { HOME: "/home/test", GEMINI_API_KEY: "AIza-other" },
       });
       assert.isFalse(yield* otherKey.get);
-      const rebuilt = yield* makeAcpRegistryAuthenticationState(saved);
+      // A key padded in the environment still matches the trimmed key in the note.
+      const rebuilt = yield* makeAcpRegistryAuthenticationState({
+        ...saved,
+        processEnvironment: { HOME: "/home/test", GEMINI_API_KEY: ` ${key}\r` },
+      });
       assert.isTrue(yield* rebuilt.get);
       // The note is used once; the confirmation itself persists.
       assert.isTrue(yield* (yield* makeAcpRegistryAuthenticationState(saved)).get);
@@ -132,6 +137,30 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
       yield* forgetVerifiedCredential({ cacheDir, instanceId });
       yield* (yield* makeAcpRegistryAuthenticationState(saved)).set(false);
       assert.isFalse(yield* (yield* makeAcpRegistryAuthenticationState(saved)).get);
+    }),
+  );
+  it.effect("ignores a verified-key note the rebuilt instance never used in time", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fs.makeTempDirectoryScoped();
+      const instanceId = ProviderInstanceId.make("acp_gemini");
+      const key = "AIza-stale-test-key";
+      yield* rememberVerifiedCredential({
+        cacheDir,
+        instanceId,
+        authMethodId: "gemini-api-key",
+        envName: "GEMINI_API_KEY",
+        value: key,
+      });
+      yield* TestClock.adjust("11 minutes");
+      const later = yield* makeAcpRegistryAuthenticationState({
+        cacheDir,
+        instanceId,
+        settings: { ...settings, agentId: "gemini", authMethodId: "gemini-api-key" },
+        environment: [{ name: "GEMINI_API_KEY", value: key, sensitive: true }],
+        processEnvironment: { HOME: "/home/test", GEMINI_API_KEY: key },
+      });
+      assert.isFalse(yield* later.get);
     }),
   );
 });

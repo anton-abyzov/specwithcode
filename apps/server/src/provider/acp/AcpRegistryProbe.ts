@@ -294,8 +294,105 @@ export function normalizeAcpRegistryCommands(
   return { slashCommands, skills };
 }
 
-/** Fenced blocks (closed or running to the end) and inline code spans. */
-const CODE_SEGMENT = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+const FENCE_OPEN = / {0,3}(`{3,}|~{3,})([^\n]*)/y;
+const FENCE_CLOSE = / {0,3}(`+|~+)[ \t]*(?=\r?\n|$)/y;
+
+/** The run opening a fence on the line starting at `i`, or null. A backtick fence's info string holds no backtick. */
+function fenceOpenAt(text: string, i: number): string | null {
+  FENCE_OPEN.lastIndex = i;
+  const open = FENCE_OPEN.exec(text);
+  if (!open) return null;
+  return open[1]![0] === "`" && open[2]!.includes("`") ? null : open[1]!;
+}
+
+/** End of a fence opened at `start` with `run`: its closing line, or the text's end. */
+function fenceEnd(text: string, start: number, run: string): number {
+  for (let pos = text.indexOf("\n", start); pos !== -1; pos = text.indexOf("\n", pos + 1)) {
+    FENCE_CLOSE.lastIndex = pos + 1;
+    const close = FENCE_CLOSE.exec(text);
+    if (close && close[1]![0] === run[0] && close[1]!.length >= run.length) {
+      return FENCE_CLOSE.lastIndex;
+    }
+  }
+  return text.length;
+}
+
+/** Start of the line after the one holding `i`, or the text's end. */
+function nextLine(text: string, i: number): number {
+  const newline = text.indexOf("\n", i);
+  return newline === -1 ? text.length : newline + 1;
+}
+
+function isBlankLine(text: string, start: number, end: number): boolean {
+  for (let i = start; i < end; i += 1) {
+    const ch = text[i];
+    if (ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n") return false;
+  }
+  return true;
+}
+
+/**
+ * Inline code spans in `[from, to)`: a backtick run up to the next run of the
+ * same length. A run with no such partner is literal. Linear in the slice.
+ */
+function pushInlineRanges(
+  text: string,
+  from: number,
+  to: number,
+  ranges: Array<readonly [number, number]>,
+): void {
+  const runs: Array<readonly [number, number]> = [];
+  for (let i = from; i < to; i += 1) {
+    if (text[i] !== "`") continue;
+    const start = i;
+    while (i + 1 < to && text[i + 1] === "`") i += 1;
+    runs.push([start, i + 1]);
+  }
+  const partner = Array.from({ length: runs.length }, () => -1);
+  const nextOfLength = new Map<number, number>();
+  for (let k = runs.length - 1; k >= 0; k -= 1) {
+    const length = runs[k]![1] - runs[k]![0];
+    partner[k] = nextOfLength.get(length) ?? -1;
+    nextOfLength.set(length, k);
+  }
+  for (let k = 0; k < runs.length; k += 1) {
+    const close = partner[k]!;
+    if (close === -1) continue;
+    ranges.push([runs[k]![0], runs[close]![1]]);
+    k = close;
+  }
+}
+
+/**
+ * Markdown code ranges, in order and in linear time. Blocks come first: a
+ * backtick or tilde fence runs to a line holding a run of its character at
+ * least as long (or to the end); other text splits into paragraphs at blank
+ * lines and fences, and an inline span never crosses a paragraph.
+ */
+function codeRanges(text: string): ReadonlyArray<readonly [number, number]> {
+  const ranges: Array<readonly [number, number]> = [];
+  let i = 0;
+  while (i < text.length) {
+    const run = fenceOpenAt(text, i);
+    if (run) {
+      const end = fenceEnd(text, i, run);
+      ranges.push([i, end]);
+      i = nextLine(text, end);
+      continue;
+    }
+    let end = nextLine(text, i);
+    if (!isBlankLine(text, i, end)) {
+      while (end < text.length) {
+        const after = nextLine(text, end);
+        if (isBlankLine(text, end, after) || fenceOpenAt(text, end)) break;
+        end = after;
+      }
+      pushInlineRanges(text, i, end, ranges);
+    }
+    i = end;
+  }
+  return ranges;
+}
 
 /**
  * Composers insert `$name` for a skill. An agent that runs its skills as
@@ -313,17 +410,17 @@ export function rewriteAcpSlashSkillMentions(
       .map((skill) => skill.name),
   );
   if (names.size === 0) return prompt;
-  const rewrite = (text: string) =>
-    text.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
-      names.has(name) ? `${prefix}/${name}` : match,
-    );
-  let out = "";
-  let last = 0;
-  for (const code of prompt.matchAll(CODE_SEGMENT)) {
-    out += rewrite(prompt.slice(last, code.index)) + code[0];
-    last = code.index + code[0].length;
-  }
-  return out + rewrite(prompt.slice(last));
+  const ranges = codeRanges(prompt);
+  let range = 0;
+  return prompt.replace(
+    SKILL_MENTION_PATTERN,
+    (match, prefix: string, name: string, offset: number) => {
+      const at = offset + prefix.length;
+      while (range < ranges.length && ranges[range]![1] <= at) range += 1;
+      const inCode = range < ranges.length && ranges[range]![0] <= at;
+      return !inCode && names.has(name) ? `${prefix}/${name}` : match;
+    },
+  );
 }
 
 /**
