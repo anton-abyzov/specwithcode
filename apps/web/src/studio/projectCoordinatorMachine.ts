@@ -68,8 +68,7 @@ export function chooseCoordinatorView<T extends EnvironmentProject>(input: {
     return exact ? viewOf(exact) : { member: undefined, missing: true, problem: null };
   }
   if (lastViewed) {
-    const separator = lastViewed.indexOf(":");
-    const environmentId = separator > 0 ? lastViewed.slice(0, separator) : lastViewed;
+    const environmentId = checkoutKeyEnvironmentId(lastViewed);
     const viewed =
       members.find((member) => coordinatorMachineKey(member) === lastViewed) ??
       members.find((member) => member.environmentId === environmentId);
@@ -91,6 +90,49 @@ export function chooseCoordinatorView<T extends EnvironmentProject>(input: {
     preferred(reachable(members)) ??
     preferred(members);
   return viewOf(fallback, Boolean(lastViewed) && members.length > 0);
+}
+
+/**
+ * Why a linked checkout is not listed. host-unknown: this device is not paired
+ * with the checkout's machine. host-refused: the connection stopped for good or
+ * this build cannot talk to the machine, so it does not come back on its own.
+ * host-offline: the machine is paired but cannot be reached now. host-loading:
+ * the machine is connecting, or connected and has not sent its projects since.
+ * not-registered: the machine sent its projects and has no such project.
+ */
+export type CheckoutUnavailableReason =
+  | "host-unknown"
+  | "host-refused"
+  | "host-offline"
+  | "host-loading"
+  | "not-registered";
+
+/** The machine part of a saved `environmentId:projectId` checkout key. */
+export function checkoutKeyEnvironmentId(key: string): string {
+  const separator = key.indexOf(":");
+  return separator > 0 ? key.slice(0, separator) : key;
+}
+
+export function checkoutUnavailableReason(input: {
+  readonly environmentId: string;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly connection: { readonly phase: string };
+  }>;
+  /** Machines known to be unreachable now; a machine still connecting is not one. */
+  readonly unreachable: ReadonlySet<string>;
+  /** The machine's project list is synchronized since it last connected. */
+  readonly projectsLive: boolean;
+}): CheckoutUnavailableReason {
+  const environment = input.environments.find(
+    (candidate) => candidate.environmentId === input.environmentId,
+  );
+  if (!environment) return "host-unknown";
+  const { phase } = environment.connection;
+  if (phase === "error" || phase === "unsupported") return "host-refused";
+  if (input.unreachable.has(input.environmentId)) return "host-offline";
+  if (phase !== "connected" || !input.projectsLive) return "host-loading";
+  return "not-registered";
 }
 
 function coordinatorProblem<T extends EnvironmentProject>(

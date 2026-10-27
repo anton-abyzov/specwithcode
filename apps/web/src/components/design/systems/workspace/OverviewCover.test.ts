@@ -1,7 +1,15 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { fontFiles } from "./FontFiles";
-import { coverColors, displayFamily, mosaicColumns } from "./OverviewCover";
+import {
+  coverColors,
+  coverNameSize,
+  displayFamily,
+  mosaicColumns,
+  OverviewCover,
+} from "./OverviewCover";
 import { TEST_SYSTEM, testToken } from "./testSystem";
 
 describe("the Overview cover", () => {
@@ -32,6 +40,28 @@ describe("the Overview cover", () => {
       ["#3", "#4"],
       ["#5"],
     ]);
+  });
+
+  it("sizes the name so its longest word fits its column, down to 1rem", () => {
+    expect(coverNameSize("Acceptance Basics")).toBe(
+      "max(1rem, min(clamp(1.25rem, 10cqi, 5.5rem), calc(100cqi / 6.20)))",
+    );
+    expect(coverNameSize("  Internationalization ")).toBe(
+      "max(1rem, min(clamp(1.25rem, 10cqi, 5.5rem), calc(100cqi / 12.40)))",
+    );
+    expect(coverNameSize("")).toContain("calc(100cqi / 0.62)");
+  });
+
+  it("lays out on its own width from inside the cover container", () => {
+    const html = renderToStaticMarkup(
+      createElement(OverviewCover, { system: TEST_SYSTEM, headingId: "cover", children: null }),
+    );
+    // A container can't query itself: the element naming `cover` must not
+    // carry the classes that ask about it.
+    const own = /class="([^"]*@container\/cover[^"]*)"/.exec(html)?.[1] ?? "";
+    expect(own).not.toBe("");
+    expect(own).not.toMatch(/@[\w-]+\/cover:/);
+    expect(html.indexOf("@2xl/cover:grid-cols")).toBeGreaterThan(html.indexOf("@container/cover"));
   });
 
   it("sets the name in the display style's family, or the app's face", () => {

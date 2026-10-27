@@ -69,7 +69,7 @@ const makeHarness = (
   providerInstanceId = instanceId,
   preflight: { help?: string; version?: string; hang?: boolean; noopExit?: number } = {},
   credentials = false,
-  extra: { environment?: NodeJS.ProcessEnv; canSave?: boolean } = {},
+  extra: { environment?: NodeJS.ProcessEnv; canSave?: Effect.Effect<boolean> } = {},
 ) =>
   Effect.gen(function* () {
     const verify = yield* Deferred.make<void>();
@@ -138,7 +138,7 @@ const makeHarness = (
       settings,
       cwd: "/workspace",
       environment: { PATH: "/tools", OVERRIDE: "base", ...extra.environment },
-      ...(extra.canSave === undefined ? {} : { canSaveCredential: Effect.succeed(extra.canSave) }),
+      ...(extra.canSave === undefined ? {} : { canSaveCredential: extra.canSave }),
       onChanged: (value) =>
         Effect.sync(() => {
           changed.push(value);
@@ -775,7 +775,8 @@ it.effect(
       assert.deepEqual(h.saved, [
         { envName: "GEMINI_API_KEY", value: key, authMethodId: "gemini-api-key" },
       ]);
-      assert.deepEqual(h.changed, [true]);
+      // The save rebuilds the instance; the rebuilt one owns the sign-in record.
+      assert.deepEqual(h.changed, []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -831,8 +832,67 @@ it.effect("uses a GEMINI_API_KEY already set on this machine without asking for 
     yield* h.phase("succeeded");
     assert.deepEqual(h.authenticated, ["gemini-api-key"]);
     assert.deepEqual(h.authenticatedMeta, [undefined]);
+    // Only the method is saved, so later sessions sign in with the key too.
+    assert.deepEqual(h.saved, [
+      {
+        envName: "GEMINI_API_KEY",
+        value: "AIza-existing-test-key",
+        authMethodId: "gemini-api-key",
+        keepEnvironment: true,
+      },
+    ]);
+    assert.deepEqual(h.changed, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("saves nothing when a set key's method is already the saved one", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      geminiApiKeyMethod,
+      false,
+      decodeSettings({ agentId: "gemini", authMethodId: "gemini-api-key" }),
+      instanceId,
+      {},
+      true,
+      { environment: { GEMINI_API_KEY: "AIza-existing-test-key" } },
+    );
+    yield* h.controller.start("owner", Effect.void, "gemini-api-key");
+    yield* h.phase("verifying");
+    yield* Deferred.succeed(h.verify, undefined);
+    yield* h.phase("succeeded");
     assert.deepEqual(h.saved, []);
     assert.deepEqual(h.changed, [true]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("sends no API key when the instance was removed while the prompt was open", () =>
+  Effect.gen(function* () {
+    let checks = 0;
+    const h = yield* makeHarness(
+      geminiApiKeyMethod,
+      false,
+      decodeSettings({ agentId: "gemini" }),
+      instanceId,
+      {},
+      true,
+      { canSave: Effect.sync(() => ++checks === 1) },
+    );
+    const flow = yield* h.controller.start("owner", Effect.void, "gemini-api-key");
+    yield* h.phase("waiting");
+    // Failing the flow ends the reply's own fiber, so the reply runs detached.
+    yield* Effect.forkChild(
+      h.controller.respond!("owner", {
+        instanceId,
+        flowId: flow.flowId!,
+        interactionId: "api-key",
+        response: { type: "credentials", values: { api_key: "AIza-late-test-key" } },
+      }),
+    );
+    const failed = yield* h.phase("failed");
+    assert.include(failed.message ?? "", "no longer set up");
+    assert.notInclude(JSON.stringify(failed), "AIza-late-test-key");
+    assert.deepEqual(h.authenticated, []);
+    assert.deepEqual(h.saved, []);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -845,7 +905,7 @@ it.effect("sends no API key to the agent when it could not be saved afterwards",
       instanceId,
       {},
       true,
-      { canSave: false },
+      { canSave: Effect.succeed(false) },
     );
     yield* h.controller.start("owner", Effect.void, "gemini-api-key");
     const failed = yield* h.phase("failed");

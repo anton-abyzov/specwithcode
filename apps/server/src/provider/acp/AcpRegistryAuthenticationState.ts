@@ -3,6 +3,7 @@ import type {
   ProviderInstanceEnvironment,
   ProviderInstanceId,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -25,9 +26,15 @@ const hash = Effect.fn("AcpRegistryAuthenticationState.hash")(function* (value: 
   return Hex.encode(digest);
 });
 
+const VERIFIED_NOTE_TTL_MS = 10 * 60 * 1000;
 const decodePending = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
-    Schema.Struct({ authMethodId: Schema.String, envName: Schema.String, digest: Schema.String }),
+    Schema.Struct({
+      authMethodId: Schema.String,
+      envName: Schema.String,
+      digest: Schema.String,
+      at: Schema.Number,
+    }),
   ),
 );
 const pendingPath = Effect.fn("AcpRegistryAuthenticationState.pendingPath")(function* (
@@ -61,6 +68,7 @@ export const rememberVerifiedCredential = Effect.fn(
       authMethodId: input.authMethodId,
       envName: input.envName,
       digest: yield* hash(input.value),
+      at: yield* Clock.currentTimeMillis,
     }).pipe(Effect.orDie),
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -117,9 +125,15 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
       Effect.flatMap(decodePending),
       Effect.orElseSucceed(() => undefined),
     );
-    const pendingKey = pending ? input.processEnvironment[pending.envName] : undefined;
+    // Sign-in trims the key before writing the note, so compare trimmed values.
+    const pendingKey = pending ? input.processEnvironment[pending.envName]?.trim() : undefined;
+    const now = yield* Clock.currentTimeMillis;
+    // A note the rebuilt instance never used goes stale, so a key set by hand
+    // later is not confirmed without a sign-in.
     const verifiedHere =
       pending !== undefined &&
+      now - pending.at >= 0 &&
+      now - pending.at < VERIFIED_NOTE_TTL_MS &&
       pending.authMethodId === input.settings.authMethodId &&
       pendingKey !== undefined &&
       pendingKey.length > 0 &&

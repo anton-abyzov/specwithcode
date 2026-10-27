@@ -121,6 +121,16 @@ const state = vi.hoisted(() => ({
   recoveryHosts: [] as string[],
   /** Other machines whose servers this device cannot reach. */
   offlineHosts: [] as string[],
+  /** Other machines this device is paired with; each is connected unless offline. */
+  pairedHosts: [] as string[],
+  /** Paired machines that are connected but have not sent their projects since. */
+  syncingHosts: [] as string[],
+  /** What the project page's folder check reports, unless the real check runs. */
+  folderHealth: "unknown" as "unknown" | "ok" | "missing" | "file",
+  /** Runs the real folder check, answered by `send`, in place of `folderHealth`. */
+  realFolderHealth: false,
+  /** The project read's kind; unset leaves it out, as an older server does. */
+  projectKind: undefined as "code" | "personal" | undefined,
   savedMachines: {} as Record<string, string>,
   project: {
     id: "project",
@@ -158,6 +168,8 @@ vi.mock("../../lib/archivedThreadsState", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useAllEnvironmentShellsBootstrapped: () => state.shellsBootstrapped,
+  useEnvironmentShellLive: (environmentId: string | null) =>
+    environmentId !== null && !state.syncingHosts.includes(environmentId),
   useProjects: () => (state.projectLoaded ? [state.project, ...state.otherCheckouts] : []),
   useThreadShells: () => state.shells,
   // Like the atoms behind them: a list keeps its identity while nothing it holds changed.
@@ -226,6 +238,13 @@ vi.mock("../../state/environments", () => ({
         environmentId,
         label: environmentId,
         connection: { phase: "connected" },
+      })),
+      ...state.pairedHosts.map((environmentId) => ({
+        environmentId,
+        label: environmentId,
+        connection: {
+          phase: state.offlineHosts.includes(environmentId) ? "disconnected" : "connected",
+        },
       })),
       {
         environmentId: "host",
@@ -375,6 +394,7 @@ const projectRead = vi.hoisted(() => () => ({
           paused: false,
           archived: false,
           autoResume: true,
+          ...(state.projectKind ? { kind: state.projectKind } : {}),
         },
         memory: { files: [], totalBytes: 0 },
       },
@@ -603,7 +623,19 @@ vi.mock("./ProjectWorkspaceAttachments", () => ({
     </div>
   ),
 }));
-vi.mock("./ProjectWorkspaceSettings", () => ({ ProjectWorkspaceSettings: () => null }));
+vi.mock("./ProjectWorkspaceSettings", () => ({
+  ProjectWorkspaceSettings: (props: { initialTab: string; initialRow?: string | null }) => (
+    <div data-settings-tab={props.initialTab} data-settings-row={props.initialRow ?? ""} />
+  ),
+}));
+vi.mock("../../studio/useProjectFolderHealth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../studio/useProjectFolderHealth")>();
+  return {
+    ...actual,
+    useProjectFolderHealth: (project: Parameters<typeof actual.useProjectFolderHealth>[0]) =>
+      state.realFolderHealth ? actual.useProjectFolderHealth(project) : state.folderHealth,
+  };
+});
 vi.mock("./RemoteWorkerCards", () => ({ RemoteWorkerCards: () => null }));
 vi.mock("../../studio/useProjectAttention", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../studio/useProjectAttention")>();
@@ -722,6 +754,7 @@ vi.mock("../ChatView", async () => {
   };
 });
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { resetProjectFolderChecksForTests } from "../../studio/useProjectFolderHealth";
 import { forgetCoordinatorPlaces } from "./CoordinatorConversation";
 import { enqueueProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
@@ -799,6 +832,12 @@ beforeEach(() => {
   state.otherCheckouts = [];
   state.recoveryHosts = [];
   state.offlineHosts = [];
+  state.pairedHosts = [];
+  state.syncingHosts = [];
+  state.folderHealth = "unknown";
+  state.realFolderHealth = false;
+  state.projectKind = undefined;
+  resetProjectFolderChecksForTests();
   state.savedMachines = {};
   state.nativeError = null;
   sessionStorage.clear();

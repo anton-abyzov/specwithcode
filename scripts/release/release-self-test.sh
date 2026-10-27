@@ -1053,7 +1053,7 @@ desktop_partial_ok() {
   local app="$F/Applications/SpecWithCode.app"
   run 0 1.5.13 || return 1
   has 'fails its signature check; moving it to' && has 'SpecWithCode 1.5.13 is released.' || return 1
-  [ "$(labels_of desktop)" = "desktop-aside desktop-install desktop-codesign desktop-signature desktop-open " ] &&
+  [ "$(labels_of desktop)" = "desktop-unpack-clear desktop-unpack-dir desktop-install desktop-unpacked-codesign desktop-aside desktop-swap desktop-unpack-done desktop-codesign desktop-signature desktop-open " ] &&
     stage_line desktop desktop-aside | grep -qE "^mv $app $app\.partial-[0-9]{8}T[0-9]{6}Z\$"
 }
 check 'a desktop app on the release that fails its signature check is moved aside and installed again' desktop_partial_ok
@@ -1068,12 +1068,37 @@ desktop_unreadable_ok() {
   mkdir -p "$app/Contents/Frameworks"
   { run 0 1.5.18 && has 'has no readable version (an install cut short); moving it to' &&
     has 'SpecWithCode 1.5.18 is released.' &&
-    [ "$(labels_of desktop)" = "desktop-aside desktop-install desktop-codesign desktop-signature desktop-open " ] &&
+    [ "$(labels_of desktop)" = "desktop-unpack-clear desktop-unpack-dir desktop-install desktop-unpacked-codesign desktop-aside desktop-swap desktop-unpack-done desktop-codesign desktop-signature desktop-open " ] &&
     ! logged desktop-grants-before && ! logged desktop-backup; } || rc=1
   rm -rf "$app"
   [ "$rc" -eq 0 ]
 }
 check 'a desktop app with no readable version is moved aside, not snapshotted or probed for grants' desktop_unreadable_ok
+
+# The new app is unpacked and verified beside the installed one before anything moves: the
+# previous app is renamed aside, the new one renamed in, and only then the previous one trashed.
+use_machine "$F" 1.5.19
+desktop_atomic_ok() {
+  local app="$F/Applications/SpecWithCode.app"
+  run 0 1.5.19 || return 1
+  [ "$(labels_of desktop)" = "desktop-grants-before desktop-backup desktop-prune desktop-unpack-clear desktop-unpack-dir desktop-install desktop-unpacked-codesign desktop-old-aside desktop-swap desktop-unpack-done desktop-trash desktop-codesign desktop-signature desktop-grants desktop-open " ] &&
+    stage_line desktop desktop-install | grep -qF "$F/Applications/.SpecWithCode.app-1.5.19-unpack" &&
+    stage_line desktop desktop-old-aside | grep -qxF "mv $app $app.release-old" &&
+    stage_line desktop desktop-swap | grep -qxF "mv $F/Applications/.SpecWithCode.app-1.5.19-unpack/SpecWithCode.app $app" &&
+    stage_line desktop desktop-trash | grep -qF "$app.release-old"
+}
+check 'the desktop app is unpacked and verified first, then swapped in, and only then the previous one trashed' desktop_atomic_ok
+
+# A ditto cut short, such as by a full disk, stops the stage with the installed app untouched.
+use_machine "$F" 1.5.20
+stub_set RELEASE_STUB_FAIL=desktop:desktop-install
+desktop_unpack_fail_ok() {
+  run 1 1.5.20 || return 1
+  has 'was left as it was' && logged desktop-unpack-drop && ! logged desktop-old-aside &&
+    ! logged desktop-swap && ! logged desktop-trash && ! logged desktop-open
+}
+check 'a failed unpack leaves the installed desktop app in place and never trashes it' desktop_unpack_fail_ok
+stub_set RELEASE_STUB_FAIL=
 
 # A signed app updates through Squirrel.Mac: while the app's own ShipIt still runs, the stage waits
 # (60 polls, not slept in a stub run), then stops rather than snapshot or swap under it.

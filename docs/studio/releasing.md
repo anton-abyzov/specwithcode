@@ -316,6 +316,22 @@ when the new app fails the old app's requirement, or when a grant that was on is
 writes the TCC database. macOS still asks again after the user revokes a grant or resets TCC, and
 it periodically shows its own screen-capture reminder for every app that records the screen.
 
+## Swapping the desktop app
+
+The desktop stage never leaves `/Applications/SpecWithCode.app` broken or in the Trash. It unpacks
+the zip into `/Applications/.SpecWithCode.app-<version>-unpack` (same volume, hidden from Launch
+Services) and checks its signature there. Only then does it rename the installed app to
+`SpecWithCode.app.release-old`, rename the new one in, and move the old one to the Trash. A ditto
+cut short, for example by a full disk, stops the stage with the installed app untouched. A run
+stopped between the two renames is repaired on `--resume`: the old app goes back when nothing
+took its place, or to the Trash when the new one did.
+
+Never install the desktop app by hand by trashing the installed bundle and then unzipping over
+`/Applications`. On October 27, 2026 that order, with 239 MB free, trashed 1.0.101 and left a
+three-file `SpecWithCode.app`, so macOS refused to open it ("in the Trash"). Run the desktop stage,
+or follow the same order: unpack elsewhere on the volume, `codesign --verify --deep --strict`, then
+rename.
+
 ## Rollback copies
 
 Never leave a copy of the desktop app as a loose `.app`, anywhere. Spotlight lists it as another

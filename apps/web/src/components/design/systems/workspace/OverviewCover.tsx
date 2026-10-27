@@ -83,6 +83,17 @@ export function displayFamily(system: Pick<DesignSystem, "tokens" | "modes">): s
   return value === null ? null : safeFamily(resolveFamily(value.raw, system.tokens));
 }
 
+/**
+ * The name's size: a tenth of its column between 1.25rem and 5.5rem, then
+ * smaller still when its longest word would not fit on one line (0.62em per
+ * letter covers bold display faces), down to 1rem.
+ */
+export function coverNameSize(name: string): string {
+  const longest = Math.max(1, ...name.split(/\s+/).map((word) => word.length));
+  const fit = `calc(100cqi / ${(longest * 0.62).toFixed(2)})`;
+  return `max(1rem, min(clamp(1.25rem, 10cqi, 5.5rem), ${fit}))`;
+}
+
 /** Tile heights per column, so the mosaic steps like a woven pattern. */
 const WEIGHTS = [
   [1, 1.7],
@@ -104,49 +115,55 @@ export function OverviewCover({
   const columns = mosaicColumns(coverColors(system));
   const family = displayFamily(system);
   return (
-    <div
-      className={cn(
-        "grid min-h-56 border-border/50 border-b",
-        columns.length > 0 && "lg:grid-cols-[minmax(0,1fr)_minmax(15rem,42%)]",
-      )}
-      data-testid="overview-cover"
-    >
-      {/* The name follows its own column's width, not the window's, so words stay whole. */}
-      <div className="@container flex min-w-0 flex-col justify-center gap-4 px-5 py-10 sm:px-10 sm:py-14">
-        <h2
-          id={headingId}
-          className="break-words font-bold text-[clamp(2rem,10cqi,5.5rem)] text-foreground leading-[0.98] tracking-[-0.035em] [text-wrap:balance]"
-          style={family === null ? undefined : { fontFamily: family }}
-          data-testid="overview-cover-name"
-        >
-          {system.name}
-        </h2>
-        {children}
-      </div>
-      {columns.length > 0 ? (
-        <div
-          aria-hidden
-          data-testid="overview-mosaic"
-          className="grid min-h-44 gap-3 max-lg:h-44 sm:gap-4"
-          style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
-        >
-          {columns.map((tiles, column) => (
-            <div key={tiles.join(" ")} className="flex min-h-0 flex-col gap-3 sm:gap-4">
-              {tiles.map((color, index) => (
-                <div
-                  key={color}
-                  data-color={color}
-                  className="min-h-6 ring-1 ring-black/5 ring-inset dark:ring-white/10"
-                  style={{
-                    backgroundColor: color,
-                    flexGrow: tiles.length === 1 ? 1 : WEIGHTS[column % 4]![index],
-                  }}
-                />
-              ))}
-            </div>
-          ))}
+    // Lay out on the cover's own width, not the window's, so words stay whole
+    // beside the sidebars. A container can't query itself, so the grid sits inside.
+    <div className="@container/cover border-border/50 border-b" data-testid="overview-cover">
+      <div
+        className={cn(
+          "grid min-h-56",
+          columns.length > 0 && "@2xl/cover:grid-cols-[minmax(0,1fr)_minmax(15rem,42%)]",
+        )}
+        data-testid="overview-cover-grid"
+      >
+        <div className="@container flex min-w-0 flex-col justify-center gap-4 px-5 py-10 @xl/cover:px-10 @xl/cover:py-14">
+          <h2
+            id={headingId}
+            className="break-words font-bold text-foreground leading-[0.98] tracking-[-0.035em] [text-wrap:balance]"
+            style={{
+              fontSize: coverNameSize(system.name),
+              ...(family === null ? {} : { fontFamily: family }),
+            }}
+            data-testid="overview-cover-name"
+          >
+            {system.name}
+          </h2>
+          {children}
         </div>
-      ) : null}
+        {columns.length > 0 ? (
+          <div
+            aria-hidden
+            data-testid="overview-mosaic"
+            className="grid min-h-44 gap-3 @max-2xl/cover:h-44 @xl/cover:gap-4"
+            style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
+          >
+            {columns.map((tiles, column) => (
+              <div key={tiles.join(" ")} className="flex min-h-0 flex-col gap-3 @xl/cover:gap-4">
+                {tiles.map((color, index) => (
+                  <div
+                    key={color}
+                    data-color={color}
+                    className="min-h-6 ring-1 ring-black/5 ring-inset dark:ring-white/10"
+                    style={{
+                      backgroundColor: color,
+                      flexGrow: tiles.length === 1 ? 1 : WEIGHTS[column % 4]![index],
+                    }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { CoordinatorComposerControls } from "./CoordinatorAccessPicker";
 import { useProjectThreadInventory } from "../../studio/useProjectThreadInventory";
 import { ProjectExecutionHistory, ProjectThreadAvailability } from "./ProjectExecutionHistory";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
+import { ProjectFolderHealthNotice } from "./ProjectFolderHealthNotice";
 import { toggleProjectThreadResolution } from "../../studio/projectThreadResolution";
 import { ProjectWorkspaceColumns } from "./ProjectWorkspaceColumns";
 import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
@@ -104,9 +105,8 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
 import { Button } from "../ui/button";
 import { isElectron } from "../../env";
-import { ProjectWorkspaceSettings, type ProjectSettingsTab } from "./ProjectWorkspaceSettings";
-import { isProjectSettingsTab } from "./projectSettingsSearch.logic";
-import { useProjectSettingsRequest } from "../../studio/projectSettingsRequests";
+import { ProjectWorkspaceSettings } from "./ProjectWorkspaceSettings";
+import { useProjectSettingsDialog } from "./useProjectSettingsDialog";
 import { fileAttachmentStagingLimit } from "../chat/composerAttachmentFiles";
 import { coordinatorRetryMessage, coordinatorRetryFingerprint } from "./coordinatorRecovery";
 import { QuestionLiveStatus, useLiveAnnouncement } from "../chat/questionLiveStatus";
@@ -280,23 +280,8 @@ export function ProjectWorkspaceSurface({
       executionScopes,
     ],
   );
-  const [tab, setTab] = useState<ProjectSettingsTab | null>(null);
-  const [focusName, setFocusName] = useState(false);
-  const [settingsRow, setSettingsRow] = useState<string | null>(null);
-  useProjectSettingsRequest(
-    projectKey,
-    useCallback((target) => {
-      // A search result opens its tab and row; a bare request (double-click) renames.
-      if (target && isProjectSettingsTab(target.tab)) {
-        setFocusName(false);
-        setSettingsRow(target.row ?? null);
-        setTab(target.tab);
-        return;
-      }
-      setFocusName(true);
-      setTab("general");
-    }, []),
-  );
+  const { tab, setTab, focusName, settingsRow, openSettingsAt, closeSettings } =
+    useProjectSettingsDialog(projectKey);
   const [planOpen, setPlanOpen] = useState(false);
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
@@ -367,14 +352,13 @@ export function ProjectWorkspaceSurface({
     useCallback(
       (text: string) => {
         setPrompt((current) => (current.trim() ? `${current}\n\n${text}` : text));
-        setTab(null);
-        setFocusName(false);
+        closeSettings();
         setPlanOpen(false);
         setCoordinatorDetailsOpen(false);
         setPaneExpanded(false);
         showCoordinator();
       },
-      [showCoordinator, setPrompt],
+      [closeSettings, showCoordinator, setPrompt],
     ),
   );
   // The subagent whose transcript peeks over the open thread; it is not a thread itself.
@@ -1493,6 +1477,14 @@ export function ProjectWorkspaceSurface({
                 </p>
               )}
               <ProjectHandoffRecovery scopes={executionScopes} members={iconCheckouts} />
+              {/* A personal project has no folder of its own to relink; wait for its kind. */}
+              {snapshot && !machinePrivate ? (
+                <ProjectFolderHealthNotice
+                  project={project}
+                  machine={machineName}
+                  onRelink={() => openSettingsAt("general", "project-folder")}
+                />
+              ) : null}
               <ProjectExecutionHistory
                 project={project}
                 members={iconCheckouts}
@@ -1885,18 +1877,12 @@ export function ProjectWorkspaceSurface({
             initialTab={tab}
             initialRow={settingsRow}
             focusName={focusName}
-            onClose={() => {
-              setTab(null);
-              setFocusName(false);
-              setSettingsRow(null);
-            }}
+            onClose={closeSettings}
             onSaved={query.refresh}
             onOpenThread={openThread}
             canOperate={canOperate && connected}
             onDeleted={() => {
-              setTab(null);
-              setFocusName(false);
-              setSettingsRow(null);
+              closeSettings();
               void navigate({ to: "/" });
             }}
           />

@@ -7,7 +7,11 @@ import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { derivePhysicalProjectKey, deriveLogicalProjectKey } from "../../logicalProject";
-import { useAllEnvironmentShellsBootstrapped, useProjects } from "../../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useEnvironmentShellLive,
+  useProjects,
+} from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { useMachineNicknames } from "../../studio/machineNickname";
@@ -18,8 +22,11 @@ import {
   useUpdateClientSettings,
 } from "../../hooks/useSettings";
 import {
+  checkoutKeyEnvironmentId,
+  checkoutUnavailableReason,
   chooseCoordinatorView,
   coordinatorMachineKey,
+  type CheckoutUnavailableReason,
   orchestratorCopies,
   unloadedMachineRef,
   unloadedMachineRefs,
@@ -126,6 +133,9 @@ export function ProjectWorkspace({
   // Which machine's orchestrator is shown. Viewing reads that machine's server and
   // never moves a thread or a coordinator; the last view is saved per project.
   const unreachable = useUnreachableHosts();
+  // The machine of a linked checkout, read to say why that checkout is not listed.
+  const checkoutEnvironmentId = checkoutKey ? checkoutKeyEnvironmentId(checkoutKey) : null;
+  const checkoutProjectsLive = useEnvironmentShellLive(checkoutEnvironmentId);
   const view = chooseCoordinatorView({
     members,
     checkoutKey,
@@ -244,16 +254,32 @@ export function ProjectWorkspace({
         </div>
       </SidebarInset>
     );
-  if (!project)
+  if (!project) {
+    // Say why the linked checkout is not here, naming its machine.
+    const unavailable =
+      checkoutEnvironmentId === null
+        ? null
+        : checkoutUnavailableReason({
+            environmentId: checkoutEnvironmentId,
+            environments,
+            unreachable,
+            projectsLive: checkoutProjectsLive,
+          });
     return (
       <SidebarInset className="h-dvh">
-        <div className="project-surface flex min-h-0 flex-1 flex-col">
+        <div
+          className="project-surface flex min-h-0 flex-1 flex-col"
+          data-checkout-unavailable={unavailable ?? undefined}
+        >
           <WorkspacePageHeader electron={isElectron}>Project workspace</WorkspacePageHeader>
           <div className="project-empty">
             <h1>{checkoutKey ? "Linked checkout unavailable" : "Project unavailable"}</h1>
-            <p>
-              {checkoutKey
-                ? "Connect the linked host, or choose an available checkout explicitly."
+            <p data-checkout-unavailable-reason={unavailable ?? undefined}>
+              {unavailable && checkoutEnvironmentId !== null
+                ? checkoutUnavailableText(
+                    unavailable,
+                    machineName(checkoutEnvironmentId) ?? "That machine",
+                  )
                 : "Connect its host or select a registered project."}
             </p>
             {members[0] ? (
@@ -279,6 +305,7 @@ export function ProjectWorkspace({
         </div>
       </SidebarInset>
     );
+  }
   const pageKey = `${project.environmentId}:${project.id}`;
   const page = (
     <ProjectWorkspaceSurface
@@ -309,4 +336,19 @@ export function ProjectWorkspace({
       isLive={(key) => projects.some((p) => `${p.environmentId}:${p.id}` === key)}
     />
   );
+}
+
+function checkoutUnavailableText(reason: CheckoutUnavailableReason, machine: string): string {
+  switch (reason) {
+    case "host-offline":
+      return `${machine} is offline. Its projects show again when it reconnects.`;
+    case "host-refused":
+      return `This device cannot connect to ${machine}. Check it under Settings > Connections.`;
+    case "host-unknown":
+      return "This device is not paired with the machine that holds this checkout.";
+    case "host-loading":
+      return `${machine} has not answered yet. Its projects show once it connects.`;
+    case "not-registered":
+      return `${machine} is online but has no project for this checkout.`;
+  }
 }
