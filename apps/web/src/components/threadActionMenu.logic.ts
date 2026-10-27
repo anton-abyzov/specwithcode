@@ -102,6 +102,11 @@ export interface ThreadActionMenuState {
     readonly isActive: boolean;
   } | null;
   readonly isPinned: boolean;
+  /**
+   * True for a chat in a machine's "No project" folder. A chat is not a project's
+   * thread: it is never resolved, only archived or moved into a project.
+   */
+  readonly isChat?: boolean;
   readonly isSettled: boolean;
   /** False while the user has turned automatic settlement off for this thread. */
   readonly autoSettleEnabled: boolean;
@@ -192,7 +197,7 @@ export function buildThreadActionMenuItems(
     // Both lifecycle actions stay available on pinned threads: settling
     // clears the pin ("done" beats "keep on top"), and snoozing hides the
     // card until wake with the pin intact.
-    ...(state.supports.settlement
+    ...(state.supports.settlement && !state.isChat
       ? [
           state.isSettled
             ? {
@@ -260,7 +265,7 @@ export function buildThreadActionMenuItems(
     // this is a setting, and it sits with the other per-thread settings
     // rather than the lifecycle verbs above. Disabled keeps long-running
     // threads out of the settled shelf no matter how quiet they get.
-    ...(state.supports.autoSettleOptOut
+    ...(state.supports.autoSettleOptOut && !state.isChat
       ? [
           {
             id: "auto-settle" as const,
@@ -313,7 +318,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "move-to-project" as const,
-            label: "Move to another project…",
+            label: state.isChat ? "Move to project…" : "Move to another project…",
             icon: "folder-input",
             separatorBefore: true,
             disabled: state.moveToProjectBlockedReason !== null,
@@ -351,7 +356,7 @@ export function buildThreadActionMenuItems(
       : []),
     {
       id: "archive",
-      label: "Archive thread",
+      label: state.isChat ? "Archive chat" : "Archive thread",
       icon: "archive",
       disabled: state.isRunning,
       separatorBefore: !(

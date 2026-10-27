@@ -117,7 +117,7 @@ const providers = [
           id: "five_hour",
           kind: "session",
           label: "Session",
-          usedPercent: 4,
+          usedPercent: params.get("case") === "draft-seeded" ? 100 : 4,
           resetsAt: iso(NOW + 4 * HOUR),
         },
       ],
@@ -190,6 +190,9 @@ const scenarios: Record<
   // `draft` nothing picked; `draft-picked` GPT-6.1-Sol picked by hand.
   draft: { thread: NO_PROVIDER_MODEL_SELECTION, running: null, fallbackFrom: null },
   "draft-picked": { thread: NO_PROVIDER_MODEL_SELECTION, running: null, fallbackFrom: null },
+  // A new chat on a machine whose default seeds Opus, which is at its limit, with
+  // GPT-6.1-Sol picked by hand (the October 26 ministorm report).
+  "draft-seeded": { thread: opus, running: null, fallbackFrom: null },
   // Devin's GPT-6.1 Sol standing in for Codex's: the same model name on another provider.
   twin: {
     thread: { instanceId: devin, model: "gpt-6-1-sol-medium" } as ModelSelection,
@@ -204,7 +207,7 @@ if (scenarioName === "next") {
   useComposerDraftStore.getState().setModelSelection(threadRef, opus, { explicit: true });
 }
 const isDraft = scenarioName.startsWith("draft");
-if (scenarioName === "draft-picked") {
+if (scenarioName === "draft-picked" || scenarioName === "draft-seeded") {
   useComposerDraftStore.getState().setModelSelection(threadRef, sol, { explicit: true });
 }
 

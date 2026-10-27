@@ -515,6 +515,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             threadId: ThreadId.make(id),
             worktreePath: stub,
             expectedWorktreePath: null,
+            sameWorkingFolder: true,
           })),
         );
       }),
@@ -909,6 +910,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     threadId: ThreadId.make(id),
     worktreePath: stub,
     expectedWorktreePath: null,
+    sameWorkingFolder: true,
   });
   const undoCommand = (id: string, stub: string) => ({
     type: "thread.metadata.update",
@@ -916,6 +918,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     threadId: ThreadId.make(id),
     worktreePath: null,
     expectedWorktreePath: stub,
+    sameWorkingFolder: true,
   });
 
   it.effect("undoes the kept threads when the project update fails", () =>
@@ -1041,7 +1044,8 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         scenario.afterDispatch = () => {
           if (started) return;
           started = true;
-          scenario.threads[1] = shell("worker", { title: "Worker", status: "queued" });
+          // The coordinator follows the project, so its new work blocks the change.
+          scenario.threads[0] = shell("coordinator", { title: "Coordinator", status: "queued" });
         };
         const busy = yield* withFolders(scenario, (folders) =>
           folders.change({
@@ -1052,12 +1056,89 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
           }),
         ).pipe(Effect.flip);
         expect(busy).toMatchObject({ reason: "changed_meanwhile" });
-        expect(busy.message).toContain('"Worker" started work while the folder was changing');
+        expect(busy.message).toContain('"Coordinator" started work while the folder was changing');
         expect(scenario.dispatched).toEqual([
           keepCommand("worker", stub),
           undoCommand("worker", stub),
         ]);
         expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("lets threads that stay where they run keep working through an umbrella move", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { scenario, parent, stub } = yield* keepScenario;
+        const ownCheckout = `${scenario.root}/worktrees/app/fix`;
+        yield* fs.makeDirectory(ownCheckout, { recursive: true });
+        scenario.threads[1] = shell("worker", {
+          title: "Worker",
+          status: "running",
+          activeRunId: RunId.make("run-worker"),
+        });
+        scenario.threads.push(
+          shell("own", {
+            title: "Own checkout",
+            worktreePath: ownCheckout,
+            status: "waiting",
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("hand-test"),
+              kind: "user_input",
+              createdAt: "2026-10-26T00:00:00Z",
+            } as unknown as OrchestrationV2ThreadShell["pendingRuntimeRequest"],
+          }),
+        );
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(check.activeThreads).toEqual([]);
+        const changed = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        );
+        expect(changed.project.workspaceRoot).toBe(parent);
+        expect(changed.keptInPlace).toBe(1);
+        expect(scenario.dispatched).toEqual([keepCommand("worker", stub)]);
+        // The fixture's dispatcher records the pin without applying it.
+        expect(
+          [...(scenario.updates[0]?.threadsStayingInPlace ?? [])].toSorted(([a], [b]) =>
+            a.localeCompare(b),
+          ),
+        ).toEqual([
+          ["own", ownCheckout],
+          ["worker", null],
+        ]);
+
+        // The coordinator moves with the project, so its work still has to finish first.
+        scenario.projects.set(
+          projectId,
+          projectFixture(projectId, {
+            title: "specweave",
+            workspaceRoot: stub,
+            workspaceSettings: {
+              coordinatorThreadId: ThreadId.make("coordinator"),
+            } as Project["workspaceSettings"],
+          }),
+        );
+        scenario.threads[0] = shell("coordinator", { title: "Coordinator", status: "running" });
+        scenario.threads[1] = shell("worker", { title: "Worker" });
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "active_work" });
+        expect(refused.message).toContain('"Coordinator"');
+        expect(refused.message).not.toContain('"Own checkout"');
       }),
     ),
   );

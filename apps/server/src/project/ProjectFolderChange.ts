@@ -195,7 +195,7 @@ export function folderChangeRefusal(
   if (check.activeThreads.length > 0)
     return {
       reason: "active_work",
-      detail: `Stop the running work first: ${titles(check.activeThreads)}. The folder can change once nothing is queued, running or waiting for an answer.`,
+      detail: `Stop the running work first: ${titles(check.activeThreads)}. ${check.activeThreads.length === 1 ? "It runs" : "They run"} in the folder this change moves, so the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} nothing queued, running or waiting for an answer. Threads on their own checkouts, or kept in the current folder, can go on working.`,
     };
   if (!check.sameRepository && !confirmDifferentRepository)
     return {
@@ -408,18 +408,40 @@ export const make = Effect.gen(function* () {
       : isDirectory(currentRoot);
 
   /**
-   * Threads that run in the project folder itself, except the project's
-   * coordinator. A project that never bound one still has the default
-   * coordinator id ProjectCoordinatorService starts it under.
+   * The project's coordinator. A project that never bound one still has the
+   * default coordinator id ProjectCoordinatorService starts it under.
    */
+  const coordinatorOf = (project: Pick<Project, "id" | "workspaceSettings">) =>
+    project.workspaceSettings?.coordinatorThreadId ??
+    ThreadId.make(`project-coordinator:${project.id}`);
+
+  /** Threads that run in the project folder itself, except the project's coordinator. */
   const rootThreads = (
     shells: ReadonlyArray<OrchestrationV2ThreadShell>,
     project: Pick<Project, "id" | "workspaceSettings">,
   ) => {
-    const coordinator =
-      project.workspaceSettings?.coordinatorThreadId ??
-      ThreadId.make(`project-coordinator:${project.id}`);
+    const coordinator = coordinatorOf(project);
     return shells.filter((thread) => thread.worktreePath === null && thread.id !== coordinator);
+  };
+
+  /**
+   * Whether the change moves a thread's working folder, so its work must be idle
+   * first. The coordinator always follows the project; other threads in the
+   * project folder follow it unless they are kept in place; a checkout inside
+   * the old folder moves when it is rebound. A thread on its own checkout, or
+   * one kept in the old folder, goes on running where it is.
+   */
+  const movesWithFolder = (
+    project: Pick<Project, "id" | "workspaceSettings">,
+    keep: boolean,
+    rebound: ReadonlyArray<{ readonly threadId: ThreadId }>,
+  ) => {
+    const coordinator = coordinatorOf(project);
+    const reboundIds = new Set<string>(rebound.map((move) => move.threadId));
+    return (thread: Pick<OrchestrationV2ThreadShell, "id" | "worktreePath">) =>
+      thread.id === coordinator ||
+      (thread.worktreePath === null && !keep) ||
+      reboundIds.has(thread.id);
   };
 
   /** Layout and planning impact; both are on-demand reads of the two folders only. */
@@ -555,6 +577,7 @@ export const make = Effect.gen(function* () {
                 archived: conflictingProject.workspaceSettings?.archived ?? false,
               },
         activeThreads: shells
+          .filter(movesWithFolder(project, keep, rebound))
           .filter((thread) => threadBlocksFolderChange(thread, input.approvalRequestId))
           .map((thread) => ({ id: thread.id, title: thread.title || "Untitled thread" })),
         threadCount: shells.length,
@@ -681,6 +704,7 @@ export const make = Effect.gen(function* () {
               threadId: thread.id,
               worktreePath: null,
               expectedWorktreePath: previousRoot,
+              sameWorkingFolder: true,
             })
             .pipe(
               Effect.catchCause((cause) =>
@@ -701,6 +725,8 @@ export const make = Effect.gen(function* () {
           threadId: thread.id,
           worktreePath: previousRoot,
           expectedWorktreePath: null,
+          // It already runs there: a running turn keeps its agent.
+          sameWorkingFolder: true,
         })
         .pipe(
           Effect.onError(() => undoKeeps),
@@ -715,9 +741,13 @@ export const make = Effect.gen(function* () {
     // The check ran before the binds: a thread created or started since then
     // would move with the root or have it moved from under its work.
     const latest = yield* projectThreads(input.projectId).pipe(Effect.onError(() => undoKeeps));
-    const busy = latest.filter((thread) =>
-      threadBlocksFolderChange(thread, input.approvalRequestId),
+    const moves = current === null ? () => true : movesWithFolder(current, keep, rebound);
+    const busy = latest.filter(
+      (thread) => moves(thread) && threadBlocksFolderChange(thread, input.approvalRequestId),
     );
+    const staying = latest
+      .filter((thread) => !moves(thread))
+      .map((thread) => [thread.id, thread.worktreePath] as const);
     const appeared =
       keep && current !== null
         ? rootThreads(latest, current).filter((thread) => !keptIds.has(thread.id))
@@ -738,6 +768,7 @@ export const make = Effect.gen(function* () {
         commandId: input.commandId,
         projectId: input.projectId,
         workspaceRoot: checked.targetRoot,
+        ...(staying.length === 0 ? {} : { threadsStayingInPlace: new Map(staying) }),
         ...(input.approvalRequestId === undefined
           ? {}
           : { approvalRequestId: input.approvalRequestId }),

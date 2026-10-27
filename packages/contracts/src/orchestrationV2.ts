@@ -3657,6 +3657,12 @@ export type OrchestrationV2ServerCommand =
   | (Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }> & {
       /** Server only: absent from the public command schema and stripped at transport decoding. */
       readonly limitRecoveryPolicyArm?: true;
+      /**
+       * Server only: the new worktreePath names the folder the thread already runs
+       * in (a folder change pinning it to the old project folder), so its live
+       * provider sessions stay attached.
+       */
+      readonly sameWorkingFolder?: true;
       readonly limitRecoveryAffinity?: NonNullable<OrchestrationV2LimitAvailability["affinity"]>;
       readonly limitAvailability?: {
         readonly runId: RunId;

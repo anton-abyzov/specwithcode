@@ -199,9 +199,9 @@ export const exportedDeck = async () => {
   return writePptx(plan, [], { title: deck.title });
 };
 
-const NS =
+export const NS =
   'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
-const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+export const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 /** A hand-written deck: one slide part per entry of `slides` (its spTree body), plus extra files. */
 export function minimalDeck(input: {
@@ -213,6 +213,9 @@ export function minimalDeck(input: {
   readonly claimed?: ReadonlyMap<string, number>;
   /** The `p:sldSz` attributes; a 16:9 widescreen slide by default. */
   readonly slideSize?: string;
+  /** Attributes of every `p:sld`, and a `p:bg` before its tree. */
+  readonly slideAttributes?: string;
+  readonly background?: string;
 }): Buffer {
   const listed = input.listed ?? input.slides.length;
   const ids = Array.from(
@@ -241,7 +244,7 @@ export function minimalDeck(input: {
       ...input.slides.flatMap((tree, index) => [
         [
           `ppt/slides/slide${index + 1}.xml`,
-          `<?xml version="1.0"?><p:sld ${NS}><p:cSld><p:spTree>${tree}</p:spTree></p:cSld></p:sld>`,
+          `<?xml version="1.0"?><p:sld ${NS} ${input.slideAttributes ?? ""}><p:cSld>${input.background ?? ""}<p:spTree>${tree}</p:spTree></p:cSld></p:sld>`,
         ] as const,
         [
           `ppt/slides/_rels/slide${index + 1}.xml.rels`,

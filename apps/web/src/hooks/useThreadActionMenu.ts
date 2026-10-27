@@ -45,6 +45,7 @@ import {
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
   useProjects,
+  useServerConfigs,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
@@ -60,6 +61,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
+import { isScratchMember } from "../studio/projectListVisibility";
 import { useThreadActions } from "./useThreadActions";
 
 /**
@@ -105,6 +107,7 @@ export function useThreadActionMenu(input: {
   const { threadRef, projectCwd, onStartRename } = input;
   const router = useRouter();
   const projects = useProjects();
+  const configs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const logicalProjectKeyByPhysicalKey = useMemo(
@@ -190,6 +193,12 @@ export function useThreadActionMenu(input: {
           branch: thread.branch ?? null,
           projectFilter: null,
           isPinned: thread.pinnedAt != null,
+          isChat:
+            menuProject !== undefined &&
+            isScratchMember(
+              menuProject,
+              (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+            ),
           isSettled: supports.settlement && thread.settledOverride === "settled",
           autoSettleEnabled: thread.autoSettleDisabledAt == null,
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
@@ -433,6 +442,7 @@ export function useThreadActionMenu(input: {
     },
     [
       archiveThread,
+      configs,
       confirmThreadArchive,
       confirmThreadDelete,
       confirmAndUnpinThread,

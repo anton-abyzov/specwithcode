@@ -4,8 +4,11 @@
  * 1920 x 1080 frame, text bodies become text nodes, simple preset shapes
  * become shapes, pictures become images (stored later through the design
  * asset store) and the notes slide becomes the page's speaker notes. Slides
- * follow presentation.xml. Whatever cannot be kept (charts, tables, SmartArt,
- * media, freeform or other preset shapes) is listed for each slide.
+ * follow presentation.xml. Pictures keep their crop and transparency, and
+ * come from picture placeholders, picture-filled rectangles, groups, the
+ * slide background (or its layout's or master's) and the layout and master
+ * themselves. Whatever cannot be kept (charts, tables, SmartArt, media,
+ * freeform or other preset shapes) is listed for each slide.
  *
  * The reader is defensive: only real .pptx decks (no macros), bounded zip
  * sizes and entry counts, paths that stay inside the archive, and XML without
@@ -19,6 +22,7 @@ import {
 import * as Yauzl from "yauzl";
 
 import { MAX_ASSET_BYTES } from "../DesignStore.ts";
+import { imagePixelSize } from "../export/imageSize.ts";
 import {
   child,
   childrenNamed,
@@ -339,7 +343,8 @@ const num = (value: string | undefined, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const round = (value: number) => Math.round(value * 100) / 100;
+/** Two decimals; `+ 0` turns -0 into 0. */
+const round = (value: number) => Math.round(value * 100) / 100 + 0;
 
 /**
  * A position or a length within the contract's bounds, so a hostile offset,
@@ -497,6 +502,8 @@ interface SlideContext {
   readonly nodes: ImportedNode[];
   readonly notImported: string[];
   readonly media: Map<string, ImportedMedia>;
+  /** Reading a layout or master: only its own pictures show on the slide. */
+  readonly inherited: boolean;
 }
 
 const SHAPES: ReadonlyMap<string, "rect" | "roundRect" | "ellipse" | "line"> = new Map([
@@ -558,15 +565,54 @@ function readShape(context: SlideContext, shape: XmlElement, transform: Transfor
   };
   const geometry = child(spPr, "a:prstGeom")?.attrs.prst;
   const custom = child(spPr, "a:custGeom") !== undefined;
-  const fill = child(spPr, "a:noFill") !== undefined ? undefined : solidColor(spPr);
+  const pictureFill = child(spPr, "a:blipFill");
+  if (pictureFill !== undefined) {
+    // A placeholder inherits its geometry from the layout; nearly all of those are rectangles.
+    const kind =
+      geometry === undefined
+        ? placeholder === undefined
+          ? undefined
+          : "rect"
+        : SHAPES.get(geometry);
+    if (custom || (kind !== "rect" && kind !== "roundRect")) {
+      context.notImported.push(
+        label(`Picture-filled shape (${clip(geometry ?? "freeform")})`, name),
+      );
+    } else {
+      const adjust = descendants(spPr!, "a:gd").find((gd) => gd.attrs.name === "adj");
+      const radius =
+        kind === "roundRect"
+          ? length(
+              Math.min(box.width, box.height) *
+                (num(/val\s+(-?\d+)/.exec(adjust?.attrs.fmla ?? "")?.[1], 16_667) / 100_000),
+            )
+          : undefined;
+      addPicture(context, pictureFill, {
+        name,
+        hidden,
+        alt: undefined,
+        box,
+        ...(radius === undefined || radius <= 0 ? {} : { radius }),
+      });
+    }
+  }
+  const fill =
+    pictureFill !== undefined || child(spPr, "a:noFill") !== undefined
+      ? undefined
+      : solidColor(spPr);
   const ln = child(spPr, "a:ln");
   const stroke = child(ln, "a:noFill") !== undefined ? undefined : solidColor(ln);
   const strokeWidth = ln?.attrs.w === undefined ? undefined : length(num(ln.attrs.w) * context.k);
   const kind = geometry === undefined ? undefined : SHAPES.get(geometry);
   const drawn = fill !== undefined || stroke !== undefined;
   if (custom) {
-    context.notImported.push(label("Freeform shape", name));
-  } else if (geometry !== undefined && kind === undefined && (drawn || text === undefined)) {
+    if (pictureFill === undefined) context.notImported.push(label("Freeform shape", name));
+  } else if (
+    geometry !== undefined &&
+    kind === undefined &&
+    pictureFill === undefined &&
+    (drawn || text === undefined)
+  ) {
     context.notImported.push(label(`Shape (${clip(geometry)})`, name));
   } else if (kind === "line") {
     const [x0, x1] = box.flipH ? [box.width, 0] : [0, box.width];
@@ -638,22 +684,57 @@ function readShape(context: SlideContext, shape: XmlElement, transform: Transfor
   }
 }
 
-function readPicture(context: SlideContext, picture: XmlElement, transform: Transform) {
-  const { name, hidden, alt } = shapeName(picture);
-  const nvPr = path(picture, "p:nvPicPr", "p:nvPr");
-  if (child(nvPr, "a:videoFile") !== undefined || child(nvPr, "a:audioFile") !== undefined) {
-    context.notImported.push(
-      label(child(nvPr, "a:videoFile") === undefined ? "Audio" : "Video", name),
-    );
-    return;
-  }
-  const embed = path(picture, "p:blipFill", "a:blip")?.attrs["r:embed"];
+interface Crop {
+  readonly l: number;
+  readonly t: number;
+  readonly r: number;
+  readonly b: number;
+}
+
+/** `a:srcRect` as fractions of the picture cut from each side; a negative side pads. */
+function cropOf(blipFill: XmlElement): Crop {
+  const rect = child(blipFill, "a:srcRect");
+  const side = (key: string) => Math.max(-10, Math.min(1, num(rect?.attrs[key]) / 100_000));
+  return { l: side("l"), t: side("t"), r: side("r"), b: side("b") };
+}
+
+const near = (a: number, b: number, within = 0.002) => Math.abs(a - b) <= within;
+
+/** How a cropped picture fits its box: a centered crop that keeps its shape is a cover or contain fit. */
+function fitOf(crop: Crop, box: Box, size: { width: number; height: number } | null) {
+  const { l, t, r, b } = crop;
+  if ([l, t, r, b].every((side) => near(side, 0))) return "fill" as const;
+  if (size === null || !near(l, r) || !near(t, b)) return undefined;
+  const sx = box.width / Math.max(1, size.width * (1 - l - r));
+  const sy = box.height / Math.max(1, size.height * (1 - t - b));
+  if (!near(sx / sy, 1, 0.01) || (!near(l, 0) && !near(t, 0))) return undefined;
+  if (l >= -0.002 && t >= -0.002) return "cover" as const;
+  if (l <= 0.002 && t <= 0.002) return "contain" as const;
+  return undefined;
+}
+
+interface PictureAt {
+  readonly name: string | undefined;
+  readonly hidden: boolean;
+  readonly alt: string | undefined;
+  readonly box: Box;
+  readonly radius?: number;
+  /** Shown before the slide's own nodes (a background). */
+  readonly first?: boolean;
+}
+
+/**
+ * A picture fill (`p:blipFill` or `a:blipFill`) as an image node. A crop that
+ * a fit cannot express becomes a clipping frame around the whole picture.
+ */
+function addPicture(context: SlideContext, blipFill: XmlElement, at: PictureAt) {
+  const { name, box } = at;
+  const blip = child(blipFill, "a:blip");
+  const embed = blip?.attrs["r:embed"];
   const target = embed === undefined ? undefined : context.rels.get(embed)?.target;
-  const box = boxOf(path(picture, "p:spPr", "a:xfrm"), transform);
   const extension = target?.split(".").at(-1)?.toLowerCase() ?? "";
   const mimeType = IMAGE_TYPES.get(extension);
-  const bytes = target === undefined ? undefined : context.parts.entries.get(target);
-  if (box === undefined || target === undefined || mimeType === undefined) {
+  if (target === undefined || mimeType === undefined) {
     context.notImported.push(
       label(
         mimeType === undefined && target !== undefined
@@ -664,6 +745,7 @@ function readPicture(context: SlideContext, picture: XmlElement, transform: Tran
     );
     return;
   }
+  const bytes = context.parts.entries.get(target);
   if (bytes === undefined) {
     context.notImported.push(
       label(`Picture larger than ${megabytes(PPTX_IMPORT_LIMITS.imageBytes)}`, name),
@@ -671,26 +753,117 @@ function readPicture(context: SlideContext, picture: XmlElement, transform: Tran
     return;
   }
   context.media.set(target, { bytes, mimeType });
-  addNode(context, {
+  const amount = child(blip, "a:alphaModFix")?.attrs.amt;
+  const opacity =
+    amount === undefined ? 1 : round(Math.max(0, Math.min(1, num(amount, 100_000) / 100_000)));
+  const crop = cropOf(blipFill);
+  const size = mimeType === "image/svg+xml" ? null : imagePixelSize(bytes);
+  const fit = fitOf(crop, box, size);
+  const common = {
+    ...(name === undefined || name === "" ? {} : { name }),
+    ...(at.hidden ? { hidden: true } : {}),
+    ...(opacity < 1 ? { opacity } : {}),
+  };
+  // The asset name is filled in once the picture is stored.
+  const asset = `${"0".repeat(64)}.png`;
+  const alt = at.alt === undefined || at.alt === "" ? {} : { alt: at.alt };
+  const rotation = box.rotation === undefined ? {} : { rotation: box.rotation };
+  const push = (node: ImportedNode) =>
+    at.first === true ? context.nodes.unshift(node) : addNode(context, node);
+  if (fit !== undefined) {
+    push({
+      kind: "image",
+      media: target,
+      node: {
+        id: context.nodeId(),
+        parentId: context.frameId,
+        type: "image",
+        ...common,
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+        ...rotation,
+        asset,
+        fit,
+        ...alt,
+        ...(at.radius === undefined ? {} : { radius: at.radius }),
+      },
+    });
+    return;
+  }
+  // The whole picture, placed so the crop falls on the box, inside a frame that clips to the box.
+  const visibleW = Math.max(0.001, 1 - crop.l - crop.r);
+  const visibleH = Math.max(0.001, 1 - crop.t - crop.b);
+  const width = box.width / visibleW;
+  const height = box.height / visibleH;
+  const frameId = context.nodeId();
+  const image: ImportedNode = {
     kind: "image",
     media: target,
     node: {
       id: context.nodeId(),
-      parentId: context.frameId,
+      parentId: frameId,
       type: "image",
       ...(name === undefined || name === "" ? {} : { name }),
+      x: coordinate(-crop.l * width),
+      y: coordinate(-crop.t * height),
+      width: length(width),
+      height: length(height),
+      asset,
+      fit: "fill",
+      ...alt,
+    },
+  };
+  const frame: ImportedNode = {
+    kind: "node",
+    node: {
+      id: frameId,
+      parentId: context.frameId,
+      type: "frame",
+      ...common,
+      ...(name === undefined || name === "" ? { name: "Cropped picture" } : {}),
       x: box.x,
       y: box.y,
       width: box.width,
       height: box.height,
-      ...(box.rotation === undefined ? {} : { rotation: box.rotation }),
-      ...(hidden ? { hidden: true } : {}),
-      // The asset name is filled in once the picture is stored.
-      asset: `${"0".repeat(64)}.png`,
-      fit: "fill",
-      ...(alt === undefined || alt === "" ? {} : { alt }),
+      ...rotation,
+      clip: true,
+      ...(at.radius === undefined ? {} : { radius: at.radius }),
     },
-  });
+  };
+  if (at.first === true) {
+    context.nodes.unshift(frame, image);
+    return;
+  }
+  addNode(context, frame);
+  addNode(context, image);
+}
+
+function readPicture(context: SlideContext, picture: XmlElement, transform: Transform) {
+  const { name, hidden, alt } = shapeName(picture);
+  const placeholder = placeholderOf(picture);
+  // A layout's own picture placeholders are prompts, not pictures.
+  if (context.inherited && placeholder !== undefined) return;
+  const nvPr = path(picture, "p:nvPicPr", "p:nvPr");
+  if (child(nvPr, "a:videoFile") !== undefined || child(nvPr, "a:audioFile") !== undefined) {
+    context.notImported.push(
+      label(child(nvPr, "a:videoFile") === undefined ? "Audio" : "Video", name),
+    );
+    return;
+  }
+  const blipFill = child(picture, "p:blipFill");
+  // A picture placeholder takes its position from the layout or master.
+  const box =
+    boxOf(path(picture, "p:spPr", "a:xfrm"), transform) ??
+    (placeholder === undefined
+      ? undefined
+      : boxOf(context.placeholderXfrm(placeholder), transform));
+  if (box === undefined || blipFill === undefined) {
+    context.notImported.push(label("Picture", name));
+    return;
+  }
+  addPicture(context, blipFill, { name, hidden, alt, box });
 }
 
 const GRAPHIC_KINDS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -705,12 +878,13 @@ function readTree(context: SlideContext, tree: XmlElement, transform: Transform,
     switch (item.name) {
       case "p:sp":
       case "p:cxnSp":
-        readShape(context, item, transform);
+        if (!context.inherited) readShape(context, item, transform);
         break;
       case "p:pic":
         readPicture(context, item, transform);
         break;
       case "p:graphicFrame": {
+        if (context.inherited) break;
         const uri = path(item, "a:graphic", "a:graphicData")?.attrs.uri ?? "";
         const kind = GRAPHIC_KINDS.find(([pattern]) => pattern.test(uri))?.[1] ?? "Embedded object";
         context.notImported.push(label(kind, shapeName(item).name));
@@ -729,7 +903,7 @@ function readTree(context: SlideContext, tree: XmlElement, transform: Transform,
           xfrm?.attrs.flipH === "1" ||
           xfrm?.attrs.flipV === "1"
         ) {
-          context.notImported.push(label("Rotated or flipped group", name));
+          if (!context.inherited) context.notImported.push(label("Rotated or flipped group", name));
           break;
         }
         if (off === undefined || ext === undefined || chOff === undefined || chExt === undefined) {
@@ -753,6 +927,7 @@ function readTree(context: SlideContext, tree: XmlElement, transform: Transform,
       }
       case "mc:AlternateContent":
       case "p:contentPart":
+        if (context.inherited) break;
         context.notImported.push("Ink or content that needs a newer PowerPoint");
         break;
       default:
@@ -889,14 +1064,58 @@ export async function readPptxDeck(bytes: Uint8Array, nodeId: () => string): Pro
       nodes: [],
       notImported: [],
       media,
+      inherited: false,
     };
     const cSld = child(slide, "p:cSld");
+    const layoutPath = relOfType(rels, "/slideLayout");
+    const masterPath =
+      layoutPath === undefined ? undefined : relOfType(parts.rels(layoutPath), "/slideMaster");
+    const layout = layoutPath === undefined ? undefined : parts.xml(layoutPath);
+    // The master's and layout's own pictures (a logo, a band) show under the slide's shapes.
+    const inherited = [
+      ...(slide?.attrs.showMasterSp !== "0" && layout?.attrs.showMasterSp !== "0"
+        ? [masterPath]
+        : []),
+      ...(slide?.attrs.showMasterSp !== "0" ? [layoutPath] : []),
+    ];
+    for (const part of inherited) {
+      const tree = part === undefined ? undefined : path(parts.xml(part), "p:cSld", "p:spTree");
+      if (part === undefined || tree === undefined) continue;
+      readTree({ ...context, rels: parts.rels(part), inherited: true }, tree, transform, 0);
+    }
     const tree = child(cSld, "p:spTree");
     if (tree !== undefined) readTree(context, tree, transform, 0);
-    const bgPr = path(cSld, "p:bg", "p:bgPr");
+    // The background is the slide's, else its layout's, else its master's.
+    const owner = [slidePath, layoutPath, masterPath].find(
+      (part) => part !== undefined && path(parts.xml(part), "p:cSld", "p:bg") !== undefined,
+    );
+    const bgPr =
+      owner === undefined ? undefined : path(parts.xml(owner), "p:cSld", "p:bg", "p:bgPr");
     const background = solidColor(bgPr);
-    if (bgPr !== undefined && background === undefined && child(bgPr, "a:noFill") === undefined) {
-      context.notImported.push("Background picture or gradient");
+    const backgroundPicture = child(bgPr, "a:blipFill");
+    if (owner !== undefined && backgroundPicture !== undefined) {
+      addPicture({ ...context, rels: parts.rels(owner) }, backgroundPicture, {
+        name: "Background picture",
+        hidden: false,
+        alt: undefined,
+        // The slide area, letterboxed like the shapes when the deck is not 16:9.
+        box: {
+          x: round(transform.dx),
+          y: round(transform.dy),
+          width: round(cx * k),
+          height: round(cy * k),
+          rotation: undefined,
+          flipH: false,
+          flipV: false,
+        },
+        first: true,
+      });
+    } else if (
+      bgPr !== undefined &&
+      background === undefined &&
+      child(bgPr, "a:noFill") === undefined
+    ) {
+      context.notImported.push("Background gradient or pattern");
     }
     return {
       name: `Slide ${index + 1}`,

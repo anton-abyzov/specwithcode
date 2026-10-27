@@ -233,6 +233,20 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids(baseState)).toEqual(expect.arrayContaining(["pin", "settle", "snooze"]));
   });
 
+  it("never offers to resolve a chat, only to move it into a project or archive it", () => {
+    const chat = {
+      ...baseState,
+      isChat: true,
+      isSettled: true,
+      moveToProjectBlockedReason: null,
+      supports: { ...baseState.supports, projectMove: true },
+    };
+    const items = buildThreadActionMenuItems(chat);
+    for (const id of ["settle", "unsettle", "auto-settle"]) expect(allIds(chat)).not.toContain(id);
+    expect(items.find((item) => item.id === "move-to-project")?.label).toBe("Move to project…");
+    expect(items.find((item) => item.id === "archive")?.label).toBe("Archive chat");
+  });
+
   it("offers auto-settle as a submenu with the current option checked", () => {
     const find = (state: ThreadActionMenuState) =>
       buildThreadActionMenuItems(state).find((item) => item.id === "auto-settle");

@@ -7,8 +7,11 @@
  * shared renderer in headless Chrome and placed as a transparent image. Each
  * slide carries its page's speaker notes.
  *
- * Known differences from the canvas: a frame does not clip children that
- * overflow it, and PowerPoint's own text layout decides line breaks.
+ * Pictures keep their own bytes in ppt/media: a cover or contain fit and a
+ * clipping frame become the picture's crop (`a:srcRect`), so only the part
+ * the canvas shows is drawn. Known differences from the canvas: a frame does
+ * not clip other children that overflow it, and PowerPoint's own text layout
+ * decides line breaks.
  */
 import { DesignError, type DesignDocument, type DesignNode } from "@specweave-studio/contracts";
 import {
@@ -27,6 +30,7 @@ import PptxModule from "pptxgenjs";
 import type * as HtmlRender from "../../htmlRender/HtmlRender.ts";
 import { MAX_FIXED_CAPTURE_EDGE } from "../../htmlRender/headlessChrome.ts";
 import { parseCssColor, type PptxColor } from "./cssColor.ts";
+import { imagePixelSize } from "./imageSize.ts";
 import { rasterJob, type DesignSheet, type RasterJob } from "./sheets.ts";
 
 export const PPTX_MIME_TYPE =
@@ -112,31 +116,30 @@ export function pptxFontFace(stack: string | undefined): string {
   return "Arial";
 }
 
-/** Pixel size of a PNG, GIF or JPEG from its header, for cover and contain crops. */
-export function imagePixelSize(bytes: Uint8Array): { width: number; height: number } | null {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.length >= 24 && view.getUint32(0) === 0x89504e47) {
-    return { width: view.getUint32(16), height: view.getUint32(20) };
-  }
-  if (bytes.length >= 10 && view.getUint32(0) === 0x47494638) {
-    return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
-  }
-  if (bytes.length >= 4 && view.getUint16(0) === 0xffd8) {
-    let offset = 2;
-    while (offset + 9 < bytes.length) {
-      if (bytes[offset] !== 0xff) return null;
-      const marker = bytes[offset + 1]!;
-      const length = view.getUint16(offset + 2);
-      const isFrame =
-        marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-      if (isFrame) return { width: view.getUint16(offset + 7), height: view.getUint16(offset + 5) };
-      offset += 2 + length;
-    }
-  }
-  return null;
+const NATIVE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif"]);
+
+interface Rect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
 }
 
-const NATIVE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif"]);
+/** The overlap of two rectangles, where a null `b` is no clip; `null` when they miss. */
+function intersect(a: Rect, b: Rect | null): Rect | null {
+  if (b === null) return a;
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const width = Math.min(a.x + a.width, b.x + b.width) - x;
+  const height = Math.min(a.y + a.height, b.y + b.height) - y;
+  return width <= 0 || height <= 0 ? null : { x, y, width, height };
+}
+
+const sameRect = (a: Rect, b: Rect) =>
+  Math.abs(a.x - b.x) < 0.01 &&
+  Math.abs(a.y - b.y) < 0.01 &&
+  Math.abs(a.width - b.width) < 0.01 &&
+  Math.abs(a.height - b.height) < 0.01;
 
 const decodeDataUrl = (url: string) => {
   const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
@@ -206,6 +209,32 @@ function planSheet(
     objectName: node.name ?? node.id,
   });
 
+  /** The clipping frames' common area around the node being walked, in sheet pixels. */
+  let clip: Rect | null = null;
+  /**
+   * A picture drawn over `drawn` of which `shown` is visible, as pptxgenjs's crop:
+   * `w` and `h` are the whole picture and `sizing` the visible part within it.
+   */
+  const placeCropped = (node: DesignNode, drawn: Rect, shown: Rect): ImagePlacement => {
+    const base = place({ ...node, width: shown.width, height: shown.height }, shown.x, shown.y);
+    if (sameRect(drawn, shown)) return base;
+    return {
+      ...base,
+      w: inch(drawn.width),
+      h: inch(drawn.height),
+      sizing: {
+        type: "crop",
+        x: inch(shown.x - drawn.x),
+        y: inch(shown.y - drawn.y),
+        w: inch(shown.width),
+        h: inch(shown.height),
+      },
+    };
+  };
+  /** What of `drawn` the clipping frames show; a rotated node is not cropped. */
+  const visible = (node: DesignNode, drawn: Rect) =>
+    node.rotation !== undefined && node.rotation !== 0 ? drawn : intersect(drawn, clip);
+
   const raster = (node: DesignNode, withChildren: boolean): number =>
     rasters.push(rasterJob(document, page, node, withChildren, context)) - 1;
   const addRaster = (
@@ -214,15 +243,19 @@ function planSheet(
     y: number,
     alpha: number,
     withChildren: boolean,
-  ) =>
+  ) => {
+    const drawn = { x, y, width: node.width, height: node.height };
+    const shown = visible(node, drawn);
+    if (shown === null) return;
     items.push({
       kind: "raster",
       job: raster(node, withChildren),
       options: {
-        ...place(node, x, y),
+        ...placeCropped(node, drawn, shown),
         ...(alpha < 1 ? { transparency: Math.round((1 - alpha) * 100) } : {}),
       },
     });
+  };
 
   /** A literal or token paint: absent, a PowerPoint color, or unsupported (drawn as an image). */
   const paint = (value: Parameters<typeof resolveDesignPaint>[0]) => {
@@ -392,18 +425,25 @@ function planSheet(
     ) {
       return addRaster(node, x, y, alpha, false);
     }
-    const box = place(node, x, y);
+    // Where the whole picture lands: the box when stretched, else scaled about its center.
+    let drawn: Rect = { x, y, width: node.width, height: node.height };
+    if (size !== null) {
+      const fitScale = fit === "cover" ? Math.max : Math.min;
+      const scale = fitScale(
+        node.width / Math.max(1, size.width),
+        node.height / Math.max(1, size.height),
+      );
+      const width = size.width * scale;
+      const height = size.height * scale;
+      drawn = { x: x + (node.width - width) / 2, y: y + (node.height - height) / 2, width, height };
+    }
+    const inBox = intersect(drawn, { x, y, width: node.width, height: node.height });
+    const shown = inBox === null ? null : visible(node, inBox);
+    if (shown === null) return;
     const options: ImagePlacement = {
-      ...box,
+      ...placeCropped(node, drawn, shown),
       ...(node.alt === undefined ? {} : { altText: node.alt }),
       ...(alpha < 1 ? { transparency: Math.round((1 - alpha) * 100) } : {}),
-      ...(size === null
-        ? {}
-        : {
-            // pptxgenjs reads w and h as the picture's proportions and sizing as its box.
-            h: box.w * (size.height / Math.max(1, size.width)),
-            sizing: { type: fit === "contain" ? "contain" : "cover", w: box.w, h: box.h },
-          }),
     };
     items.push({ kind: "image", data: `${decoded.mimeType};base64,${decoded.base64}`, options });
   };
@@ -421,7 +461,17 @@ function planSheet(
           return addRaster(node, x, y, alpha, true);
         }
         if (!shape(node, x, y, alpha)) addRaster(node, x, y, alpha, false);
+        const outer = clip;
+        // A clipping frame that misses the clip shows nothing; a non-clipping one keeps `outer`.
+        if (node.clip !== false) {
+          clip = intersect({ x, y, width: node.width, height: node.height }, outer);
+          if (clip === null) {
+            clip = outer;
+            return;
+          }
+        }
         for (const kid of kids) walk(kid, x, y, alpha);
+        clip = outer;
         return;
       }
       case "rect":
@@ -484,6 +534,7 @@ function planSheet(
       const { fill: _fill, ...outline } = frame;
       shape({ ...outline, x: 0, y: 0 }, 0, 0, alpha);
     }
+    clip = frame.clip === false ? null : { x: 0, y: 0, width: frame.width, height: frame.height };
     for (const kid of children.get(frame.id) ?? []) walk(kid, 0, 0, alpha);
   } else if (frame !== undefined) {
     walk({ ...frame, x: 0, y: 0, rotation: 0 }, 0, 0, 1);

@@ -32,6 +32,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -560,6 +561,8 @@ interface HarnessOptions {
   readonly runs?: ReadonlyArray<OrchestrationV2Run>;
   readonly lifecycleReceipt?: OrchestrationV2AppThread["lifecycleReceipt"];
   readonly candidateSequence?: number;
+  /** Projects that are the machine's "No project" folder, whose chats never resolve. */
+  readonly scratchProjectIds?: ReadonlyArray<string>;
 }
 
 const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options: HarnessOptions) {
@@ -688,6 +691,11 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       getThreadEventSequence: () => Effect.succeed(options.candidateSequence ?? 10),
       streamDomainEvents: Stream.fromPubSub(domainEvents),
       dispatch,
+    }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      isScratch: (projectId) =>
+        Effect.succeed(options.scratchProjectIds?.includes(projectId) ?? false),
     }),
     Layer.mock(TerminalManager.TerminalManager)({
       closeIdle: (input) => Queue.offer(closedIdle, input).pipe(Effect.as([])),
@@ -1031,6 +1039,35 @@ describe("ThreadSettlementServiceV2 worker", () => {
           expect(commands[0]?.settledAt).toEqual(thread.latestRunCompletedAt);
           expect(commands[0]?.snapshotAt).toEqual(thread.updatedAt);
           expect(commands[0]?.snapshotSequence).toBe(10);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("never resolves a chat outside every project", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const thread = makeThread("standalone-chat", {
+          linkedPullRequest: {
+            projectId: PROJECT_ID,
+            repository: "owner/repository",
+            number: 42,
+            url: "https://example.test/owner/repository/pull/42",
+          },
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-08-25T00:00:00.000Z"),
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 2 },
+          pullRequestSummary: (input) =>
+            Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
+          scratchProjectIds: [PROJECT_ID],
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

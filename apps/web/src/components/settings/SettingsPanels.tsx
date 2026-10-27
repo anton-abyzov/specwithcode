@@ -17,6 +17,8 @@ import {
 } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { presentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
+import { useServerConfigs } from "../../state/entities";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -3476,6 +3478,7 @@ export function ArchivedThreadsPanel() {
     isLoading: isLoadingArchive,
     refresh: refreshArchivedThreads,
   } = useArchivedThreadSnapshots(scope.environmentIds);
+  const serverConfigs = useServerConfigs();
 
   const archivedGroups = useMemo(() => {
     const selectedProjectKeys =
@@ -3503,6 +3506,8 @@ export function ArchivedThreadsPanel() {
     const groups: Array<{
       readonly project: (typeof archivedProjects)[number];
       readonly threads: Array<(typeof threads)[number]>;
+      /** A machine's "No project" folder: its threads are the person's chats. */
+      readonly chats: boolean;
     }> = [];
     for (const project of archivedProjects) {
       const projectThreads: Array<(typeof threads)[number]> = [];
@@ -3514,6 +3519,10 @@ export function ArchivedThreadsPanel() {
       if (projectThreads.length > 0) {
         groups.push({
           project,
+          chats: isScratchProject(
+            project,
+            serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot,
+          ),
           threads: projectThreads.toSorted((left, right) => {
             const leftKey = left.archivedAt ?? left.createdAt;
             const rightKey = right.archivedAt ?? right.createdAt;
@@ -3522,8 +3531,9 @@ export function ArchivedThreadsPanel() {
         });
       }
     }
-    return groups;
-  }, [archivedSnapshots, scope]);
+    // Chats come first: the Chats list sends people here for them.
+    return groups.toSorted((left, right) => Number(right.chats) - Number(left.chats));
+  }, [archivedSnapshots, scope, serverConfigs]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -3603,11 +3613,11 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }, index) => (
+        archivedGroups.map(({ project, threads: projectThreads, chats }, index) => (
           <SettingsSection
             key={`${project.environmentId}:${project.id}`}
             id={index === 0 ? searchableSetting("archive").id : undefined}
-            title={project.title}
+            title={chats ? "Chats" : project.title}
             icon={<ProjectFavicon project={project} />}
           >
             {projectThreads.map((thread) => (

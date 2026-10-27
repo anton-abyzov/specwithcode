@@ -114,6 +114,9 @@ import {
 } from "../../../studio/projectPaneThreads";
 import { checkProjectName, renameTargets, type NamedProject } from "../../../studio/projectRename";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
+import { asStandaloneChat, standaloneChatKeys } from "../../../studio/standaloneChats";
+import { requestThreadMove } from "../../ThreadMoveDialog";
+import { threadMoveBlockedReason } from "../../threadMove.logic";
 import { useProjectPaneThreadParam } from "../../../studio/useProjectPaneThreadParam";
 import {
   buildChatGroups,
@@ -268,6 +271,24 @@ export default function StudioSidebar() {
         map.set(`${member.environmentId}:${member.id}`, group);
     return map;
   }, [projectGroups]);
+  // Chats in a machine's "No project" folder are not project threads: they never resolve.
+  const chatProjectKeys = useMemo(
+    () =>
+      standaloneChatKeys(
+        projectGroups.flatMap((group) => group.memberProjects),
+        scratchRootFor,
+      ),
+    [projectGroups, scratchRootFor],
+  );
+  const isStandaloneChat = useCallback(
+    (thread: EnvironmentThreadShell) =>
+      chatProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+    [chatProjectKeys],
+  );
+  const listedThreads = useMemo(
+    () => threads.map((thread) => (isStandaloneChat(thread) ? asStandaloneChat(thread) : thread)),
+    [isStandaloneChat, threads],
+  );
   const unreachable = useUnreachableHosts();
   // The checkout each project page shows, as the page itself picks it.
   const displayedCheckouts = useMemo(() => {
@@ -388,8 +409,8 @@ export default function StudioSidebar() {
     [displayedCheckouts, now, projectByMember, threadByKey],
   );
   const chatGroups = useMemo(
-    () => buildChatGroups(threads, options, chatGroupInput),
-    [chatGroupInput, options, threads],
+    () => buildChatGroups(listedThreads, options, chatGroupInput),
+    [chatGroupInput, listedThreads, options],
   );
   const chatTotal = chatGroups.reduce((sum, group) => sum + group.threads.length, 0);
   // Only worked out for an empty list: whether project threads are all that is left out.
@@ -397,11 +418,12 @@ export default function StudioSidebar() {
     () =>
       chatTotal > 0 || options.projectThreads === "show"
         ? 0
-        : buildChatGroups(threads, { ...options, projectThreads: "show" }, chatGroupInput).reduce(
-            (sum, group) => sum + group.threads.length,
-            0,
-          ),
-    [chatGroupInput, chatTotal, options, threads],
+        : buildChatGroups(
+            listedThreads,
+            { ...options, projectThreads: "show" },
+            chatGroupInput,
+          ).reduce((sum, group) => sum + group.threads.length, 0),
+    [chatGroupInput, chatTotal, listedThreads, options],
   );
   const chatTools = <ChatFilterMenu options={options} onChange={setOptions} />;
   // A menu closes on click, so a refused action has to say so somewhere else.
@@ -1135,7 +1157,18 @@ export default function StudioSidebar() {
                             rename={chatRenameFor(thread)}
                             menuItems={
                               <>
-                                {thread.settledOverride === "settled" ? (
+                                {isStandaloneChat(thread) ? (
+                                  // A chat is never resolved; it joins a project or is archived.
+                                  serverConfigs.get(thread.environmentId)?.environment?.capabilities
+                                    .threadProjectMove === true ? (
+                                    <MenuItem
+                                      disabled={threadMoveBlockedReason(thread, undefined) !== null}
+                                      onClick={() => void requestThreadMove(ref)}
+                                    >
+                                      Move to project…
+                                    </MenuItem>
+                                  ) : null
+                                ) : thread.settledOverride === "settled" ? (
                                   <MenuItem
                                     onClick={() =>
                                       void reportFailure("reopen", actions.unsettleThread(ref))
@@ -1218,6 +1251,17 @@ const FILTER_SECTIONS = [
   { key: "groupBy", title: "Group by", values: CHAT_GROUPINGS },
   { key: "sortBy", title: "Sort by", values: CHAT_SORTS },
 ] as const;
+/**
+ * A chat never resolves, so "Resolved" only means something while agent threads are
+ * listed too; a saved pick stays visible so it can be changed.
+ */
+function chatFilterValues(
+  section: (typeof FILTER_SECTIONS)[number],
+  options: ChatListOptions,
+): readonly string[] {
+  if (section.key !== "status" || options.projectThreads === "show") return section.values;
+  return section.values.filter((value) => value !== "resolved" || options.status === "resolved");
+}
 /** The first row that chooses how the list is arranged rather than what it lists. */
 const FIRST_ARRANGE_SECTION = FILTER_SECTIONS.findIndex((section) => section.key === "groupBy");
 
@@ -1275,7 +1319,7 @@ function ChatFilterMenu(props: {
                         } as ChatListOptions)
                       }
                     >
-                      {section.values.map((value) => (
+                      {chatFilterValues(section, props.options).map((value) => (
                         <MenuRadioItem key={value} value={value} closeOnClick={false}>
                           <span className="flex items-center justify-between gap-6">
                             {labels[value]}
@@ -1290,14 +1334,17 @@ function ChatFilterMenu(props: {
             </Fragment>
           );
         })}
+        <MenuSeparator />
         {changed ? (
-          <>
-            <MenuSeparator />
-            <MenuItem onClick={() => props.onChange(DEFAULT_CHAT_LIST_OPTIONS)}>
-              Reset to defaults
-            </MenuItem>
-          </>
+          <MenuItem onClick={() => props.onChange(DEFAULT_CHAT_LIST_OPTIONS)}>
+            Reset to defaults
+          </MenuItem>
         ) : null}
+        {/* Rarely needed, so it waits here rather than taking a row in the list. */}
+        <MenuItem render={<Link to="/settings/archived" />}>
+          <ArchiveIcon aria-hidden />
+          Archived chats
+        </MenuItem>
       </MenuPopup>
     </Menu>
   );

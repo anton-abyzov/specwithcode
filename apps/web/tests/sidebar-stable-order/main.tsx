@@ -97,6 +97,51 @@ if (params.get("scenario") === "projects") {
   });
 }
 
+// `?scenario=chats`: chats in the machine's "No project" folder, one of them marked
+// resolved by an older server's idle sweep, beside a project of the person's own.
+if (params.get("scenario") === "chats") {
+  const scratchRoot = "/Users/me/.specwithcode/scratch";
+  publish({
+    configs: new Map([
+      [
+        "host",
+        {
+          scratchWorkspaceRoot: scratchRoot,
+          providers: [],
+          environment: { capabilities: { threadProjectMove: true } },
+        },
+      ],
+    ]),
+    groups: [
+      {
+        projectKey: "host:/Users/me/Projects/specweave",
+        displayName: "specweave",
+        workspaceRoot: "/Users/me/Projects/specweave",
+        memberProjects: [
+          {
+            environmentId: "host",
+            id: "specweave",
+            title: "specweave",
+            workspaceRoot: "/Users/me/Projects/specweave",
+            workspaceSettings: { kind: "code", archived: false, revision: 1 },
+          },
+        ],
+      },
+      {
+        projectKey: `host:${scratchRoot}`,
+        displayName: "No project",
+        workspaceRoot: scratchRoot,
+        memberProjects: [
+          { environmentId: "host", id: "scratch", title: "No project", workspaceRoot: scratchRoot },
+        ],
+      },
+    ],
+    shells: fixture.shells.map((t) =>
+      t.id === "time" ? { ...t, settledOverride: "settled" as const } : t,
+    ),
+  });
+}
+
 const LANES = ["lane-0949", "lane-0948", "lane-0951", "prep"];
 let tick = 0;
 /** One server event: a streamed item, a tool call or a status change on one lane. */
@@ -144,6 +189,7 @@ Object.assign(window, {
       });
     },
     projectUpdates: () => [...fixture.projectUpdates],
+    moves: () => [...fixture.moves],
     newChat() {
       const now = new Date().toISOString();
       publish({

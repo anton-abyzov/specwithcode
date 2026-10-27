@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Reads the fixture deck and stored assets.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
@@ -116,6 +117,60 @@ describe("design.importDeck (1051 AC-03)", () => {
         });
         expect(document.pages).toHaveLength(6);
         expect(document.pages.every((page) => (page.notes ?? "").startsWith("Notes"))).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("stores every picture of a deck as a design asset with its own bytes", () =>
+    withDesigns((designs) =>
+      Effect.gen(function* () {
+        const bytes = NodeFS.readFileSync(
+          NodePath.join(import.meta.dirname, "fixtures", "pictures-8-slides.pptx"),
+        );
+        const result = yield* importDeck(designs, owner, {
+          owner: playground,
+          title: "Pictures",
+          designSystem: null,
+          data: bytes.toString("base64"),
+        });
+        expect(result.notImported).toEqual([]);
+        const { document } = yield* designs.get(owner, {
+          owner: playground,
+          designId: result.ref.designId,
+        });
+        const images = document.pages.flatMap((page) =>
+          page.nodes.flatMap((node) => (node.type === "image" ? [node] : [])),
+        );
+        // Every picture of the eight slides, the background and the grouped ones included.
+        expect(images.map((node) => node.name)).toEqual([
+          "Quadrants PNG",
+          "Sunset JPEG",
+          "Rotated logo",
+          "Cropped BC",
+          "Placeholder picture",
+          "Background picture",
+          "Grouped logo",
+          "Grouped quadrants",
+          "Scaled logo",
+          "SVG badge",
+          "Picture-filled rectangle",
+          "Offset crop CD",
+        ]);
+        for (const image of images) {
+          const file = yield* designs.assetFile(owner, {
+            owner: playground,
+            designId: result.ref.designId,
+            asset: image.asset,
+          });
+          const stored = NodeFS.readFileSync(file);
+          // The asset is named by the SHA-256 of the bytes it holds.
+          expect(NodeCrypto.createHash("sha256").update(stored).digest("hex")).toBe(
+            image.asset.split(".")[0],
+          );
+        }
+        expect(new Set(images.map((node) => node.asset.split(".")[1]))).toEqual(
+          new Set(["png", "jpg"]),
+        );
       }),
     ),
   );

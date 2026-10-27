@@ -21,6 +21,10 @@ export const fixture = {
   groups: null as unknown[] | null,
   /** Workspace-settings patches the sidebar sent, in order. */
   projectUpdates: [] as unknown[],
+  /** Server configs by machine: the "No project" folder and capabilities. */
+  configs: new Map() as Map<string, unknown>,
+  /** Chats the person asked to move into a project. */
+  moves: [] as string[],
 };
 export function publish(change: Partial<typeof fixture>): void {
   Object.assign(fixture, change);
@@ -91,12 +95,16 @@ export const useNavigate = () => navigate;
 export const useRouter = () => ({ navigate, routesById: {} });
 
 // state/entities, state/environments, state/projects, state/use-atom-command
-const NO_CONFIGS = new Map();
 export const useThreadShells = () => useFixture(() => fixture.shells);
 export const readThreadShell = (ref: { environmentId: string; threadId: string }) =>
   fixture.shells.find((t) => t.environmentId === ref.environmentId && t.id === ref.threadId) ??
   null;
-export const useServerConfigs = () => NO_CONFIGS;
+export const useServerConfigs = () => useFixture(() => fixture.configs);
+
+// ThreadMoveDialog: the dialog itself is covered by its own tests.
+export const requestThreadMove = async (ref: { threadId: string }) => {
+  fixture.moves.push(ref.threadId);
+};
 export const usePrimaryEnvironmentId = () => "host";
 const NO_ENVIRONMENTS = { environments: [] };
 export const useEnvironments = () => NO_ENVIRONMENTS;

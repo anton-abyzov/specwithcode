@@ -1290,6 +1290,7 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
     const snapshot = yield* projections.getShellSnapshot();
     const projectId = ProjectId.make("active-environment");
     let pending = false;
+    let busyPath: string | null = "/work/own-checkout";
     const service = yield* ProjectService.make.pipe(
       Effect.provideService(ProjectionStore.ProjectionStoreV2, {
         ...projections,
@@ -1298,6 +1299,8 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
             ...snapshot,
             threads: [
               {
+                id: "busy",
+                worktreePath: busyPath,
                 projectId,
                 activeRunId: pending ? null : "active-run",
                 pendingRuntimeRequest: pending ? {} : null,
@@ -1393,6 +1396,29 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
       additionalFolders: [second, extra],
       repositories: [repository],
     });
+    // A folder change that leaves the busy thread where it runs does not wait for it,
+    // unless the thread moved since the change read it.
+    busyPath = null;
+    const movedMeanwhile = yield* service
+      .update({
+        projectId,
+        commandId: CommandId.make("active-root-change-moved"),
+        workspaceRoot: elsewhere,
+        threadsStayingInPlace: new Map([["busy", "/work/own-checkout"]]),
+      })
+      .pipe(Effect.flip);
+    assert.equal(
+      movedMeanwhile._tag === "ProjectRequestDeniedError" && movedMeanwhile.reason,
+      "environment_active",
+    );
+    busyPath = "/work/own-checkout";
+    const moved = yield* service.update({
+      projectId,
+      commandId: CommandId.make("active-root-change-staying"),
+      workspaceRoot: elsewhere,
+      threadsStayingInPlace: new Map([["busy", "/work/own-checkout"]]),
+    });
+    assert.equal(moved.workspaceRoot, elsewhere);
   }).pipe(Effect.provide(layerProjectServiceDependencies), Effect.provide(NodeServices.layer)),
 );
 
