@@ -38,6 +38,9 @@ apps/server/src/project/connections/NativeConnectionDiscovery.test.ts TS377057 2
 apps/server/src/project/connections/NativeConnectionDiscovery.ts TS377026 1
 apps/server/src/project/connections/NativeConnectionDiscovery.ts TS377049 2
 apps/server/src/project/connections/NativeConnectionDiscovery.ts TS377057 2
+apps/server/src/server.ts TS377000 8
+apps/server/src/server.ts TS377030 8
+apps/server/src/server.ts TS377035 1
 apps/server/src/serviceUpdate/UpdateInstallGate.ts TS377000 1
 apps/server/src/studio/Capacity.integration.test.ts TS377033 1
 apps/server/src/studio/Capacity.test.ts TS377033 2

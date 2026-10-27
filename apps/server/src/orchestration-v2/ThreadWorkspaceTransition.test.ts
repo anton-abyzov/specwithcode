@@ -32,7 +32,9 @@ const adapter = {
   openSession: () => Effect.die("This deterministic fixture never opens a native process"),
 } as ProviderAdapterV2Shape;
 const databaseLayer = fixtureProjectDatabase(
-  ["prepared", "nonempty", "empty", "unqualified"].map((name) => ProjectId.make(`project:${name}`)),
+  ["prepared", "nonempty", "empty", "unqualified", "pinned"].map((name) =>
+    ProjectId.make(`project:${name}`),
+  ),
 );
 const layerTest = Layer.mergeAll(
   databaseLayer,
@@ -241,4 +243,23 @@ it.effect(
       assert.equal(requests[0].type, "provider-session.detach");
       assert.equal(requests[0].detail, "Workspace changed.");
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the agent of a thread pinned to the folder it already runs in", () =>
+  Effect.gen(function* () {
+    const threadId = yield* setup("pinned", null);
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("folder-change:keep:pinned"),
+      threadId,
+      worktreePath: "/repo",
+      expectedWorktreePath: null,
+      sameWorkingFolder: true,
+    });
+    const after = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(after.thread.worktreePath, "/repo");
+    assert.equal(after.providerSessions.length, 1);
+    assert.deepEqual(yield* outbox, []);
+  }).pipe(Effect.provide(layerTest)),
 );

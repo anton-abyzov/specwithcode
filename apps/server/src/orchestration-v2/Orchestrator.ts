@@ -4047,7 +4047,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
         : command.type === "thread.metadata.update" &&
             command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+            command.worktreePath !== thread.worktreePath &&
+            command.sameWorkingFolder !== true
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? runtimeModeSessionsToDetach(command, providerContext?.providerSessions ?? [])

@@ -106,6 +106,13 @@ export interface ProjectUpdateInput extends ProjectUpdatePayload {
    * request does not count as active work in the thread that asked.
    */
   readonly approvalRequestId?: RuntimeRequestId;
+  /**
+   * Internal, from a folder change: threads that go on running where they are
+   * (their own checkout, or kept in the old folder), each with the worktree path
+   * it had then. Their work does not hold up a new root while that path is
+   * unchanged. Ignored when the update also changes the approved folders.
+   */
+  readonly threadsStayingInPlace?: ReadonlyMap<string, string | null>;
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
 }
@@ -803,10 +810,14 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+        const staying = suppliedEnvironment === undefined ? input.threadsStayingInPlace : undefined;
         if (
           [...snapshot.threads, ...snapshot.archivedThreads].some(
             (thread) =>
               thread.projectId === input.projectId &&
+              !(
+                staying?.has(thread.id) === true && staying.get(thread.id) === thread.worktreePath
+              ) &&
               threadHasActiveWork(thread, input.approvalRequestId),
           )
         )

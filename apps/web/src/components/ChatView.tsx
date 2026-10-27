@@ -8583,8 +8583,11 @@ function useChatViewActions(
     activeThreadWokeAt,
     activeLatestRun,
   ]);
+  // A chat ("No project") is never resolved; only a project's thread is.
   const activeThreadSettled =
-    supportsSettlement && activeThreadShell?.settledOverride === "settled";
+    supportsSettlement &&
+    !activeProjectIsScratch &&
+    activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });

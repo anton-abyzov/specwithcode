@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   noChatMachine: vi.fn(),
   scratchOffered: true,
   settle: vi.fn(),
+  requestMove: vi.fn(async () => undefined),
   pathname: "/",
   params: {} as Record<string, string>,
   search: {} as Record<string, string>,
@@ -150,6 +151,7 @@ vi.mock("../../../hooks/useThreadActions", () => ({
     archiveThread: state.settle,
   }),
 }));
+vi.mock("../../ThreadMoveDialog", () => ({ requestThreadMove: state.requestMove }));
 vi.mock("../../../lib/chatThreadActions", () => ({ startNewThreadFromContext: state.start }));
 vi.mock("../../../threadRoutes", () => ({
   buildThreadRouteParams: (ref: { environmentId: string; threadId: string }) => ref,
@@ -1067,6 +1069,64 @@ describe("cleaning up the projects list", () => {
     await render();
     expect(projectNames()).toEqual(["Atlas", "Borealis"]);
     expect(chats()).toEqual(["Chat loose"]);
+  });
+
+  it("never resolves a chat: it stays listed, archives, and moves into a project", async () => {
+    state.scratchRoots = new Map([
+      [
+        "host",
+        {
+          scratchWorkspaceRoot: "/home/user/scratch",
+          environment: { capabilities: { threadProjectMove: true } },
+        } as never,
+      ],
+    ]);
+    state.groups.push(scratch("host", "/home/user/scratch"));
+    state.shells = [
+      // Marked resolved by an older server's idle sweep.
+      shell("loose", {
+        projectId: "scratch-host" as EnvironmentThreadShell["projectId"],
+        settledOverride: "settled",
+      }),
+      shell("worker", { settledOverride: "settled" }),
+    ];
+    await render();
+    expect(chats()).toEqual(["Chat loose"]);
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Actions for Chat loose"]',
+    )!;
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      trigger.click();
+    });
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
+      (entry) => entry.textContent,
+    );
+    expect(labels).toContain("Move to project…");
+    expect(labels).toContain("Archive");
+    expect(labels).not.toContain("Resolve");
+    expect(labels).not.toContain("Reopen");
+    const move = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (entry) => entry.textContent === "Move to project…",
+    ) as HTMLElement;
+    await act(async () => move.click());
+    expect(state.requestMove).toHaveBeenCalledWith({ environmentId: "host", threadId: "loose" });
+  });
+
+  it("keeps archived chats behind the filter menu, not in the list", async () => {
+    await render();
+    expect(container.textContent).not.toContain("Archived chats");
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter and sort chats"]',
+    )!;
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      trigger.click();
+    });
+    const archived = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (entry) => entry.textContent === "Archived chats",
+    );
+    expect(archived?.getAttribute("href")).toBe("/settings/archived");
   });
 
   it("folds archived projects under Archived (N) and lists them again on request", async () => {

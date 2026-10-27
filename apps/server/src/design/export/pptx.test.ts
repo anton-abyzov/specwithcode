@@ -15,7 +15,8 @@ import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import type * as HtmlRender from "../../htmlRender/HtmlRender.ts";
-import { exportPptx, imagePixelSize, planPptx, pptxFontFace, writePptx } from "./pptx.ts";
+import { imagePixelSize } from "./imageSize.ts";
+import { exportPptx, planPptx, pptxFontFace, writePptx } from "./pptx.ts";
 import { readZipText, slideXml, textRuns } from "./pptx.testkit.ts";
 import { exportSheets } from "./sheets.ts";
 
@@ -333,7 +334,14 @@ describe("planPptx", () => {
     expect(named(body, "n_glow")).toMatchObject({ kind: "raster" });
     expect(named(body, "n_photo")).toMatchObject({
       kind: "image",
-      options: { sizing: { type: "cover", w: 300 / 144, h: 300 / 144 }, h: (300 / 144) * 0.5 },
+      // A 2:1 picture covering a square: the whole picture is 600 x 300, its middle shows.
+      options: {
+        x: 100 / 144,
+        y: 600 / 144,
+        w: 600 / 144,
+        h: 300 / 144,
+        sizing: { type: "crop", x: 150 / 144, y: 0, w: 300 / 144, h: 300 / 144 },
+      },
     });
     expect(named(body, "n_note")).toMatchObject({ kind: "text", text: "Check the source" });
     expect(named(body, "n_hidden")).toBeUndefined();
@@ -352,6 +360,75 @@ describe("planPptx", () => {
         options: { color: "F8FAFC" },
       },
     );
+  });
+});
+
+describe("planPptx frame clipping", () => {
+  const caption = (parentId: string, id: string, x = 10) =>
+    child(parentId, { id, name: id, type: "text", text: id, x, y: 10, width: 80, height: 20 });
+  const unclipped = (id: string, parentId: string | null, x = 100) =>
+    ({ ...frame(id), parentId, x, y: 100, width: 200, height: 200, clip: false }) as DesignNode;
+  const names = (doc: DesignDocument) =>
+    planPptx(doc, exportSheets(doc), context()).slides.flatMap((slide) =>
+      slide.items.map((item) => item.options.objectName),
+    );
+
+  it("walks a non-clipping frame inside a non-clipping slide", () => {
+    const doc: DesignDocument = {
+      ...deck,
+      pages: [
+        {
+          id: "p_open",
+          name: "Open",
+          nodes: [
+            { ...frame("n_slide"), clip: false } as DesignNode,
+            unclipped("n_group", "n_slide"),
+            caption("n_group", "n_inner"),
+          ],
+        },
+      ],
+    };
+    expect(names(doc)).toContain("n_inner");
+  });
+
+  it("walks nested non-clipping frames in a design's root frame", () => {
+    const doc: DesignDocument = {
+      ...deck,
+      kind: "design",
+      pages: [
+        {
+          id: "p_free",
+          name: "Free",
+          nodes: [
+            unclipped("n_root", null, 0),
+            unclipped("n_outer", "n_root"),
+            unclipped("n_middle", "n_outer"),
+            caption("n_middle", "n_inside"),
+          ],
+        },
+      ],
+    };
+    expect(names(doc)).toContain("n_inside");
+  });
+
+  it("drops the children of a clipping frame that lies outside the slide", () => {
+    const doc: DesignDocument = {
+      ...deck,
+      pages: [
+        {
+          id: "p_off",
+          name: "Off",
+          nodes: [
+            frame("n_slide"),
+            { ...unclipped("n_off", "n_slide", 4000), clip: true } as DesignNode,
+            caption("n_off", "n_gone"),
+            caption("n_slide", "n_kept"),
+          ],
+        },
+      ],
+    };
+    expect(names(doc)).toContain("n_kept");
+    expect(names(doc)).not.toContain("n_gone");
   });
 });
 

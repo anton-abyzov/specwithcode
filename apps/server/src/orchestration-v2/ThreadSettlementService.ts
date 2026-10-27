@@ -25,6 +25,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -236,6 +237,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const terminals = yield* TerminalManager.TerminalManager;
   const updateHold = yield* ServiceUpdateHold.optional;
+  const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const lifecycleEvidenceRequired = yield* LifecycleEvidenceActivation;
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
@@ -264,6 +266,9 @@ export const make = Effect.gen(function* () {
       threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs)),
       (thread) =>
         Effect.gen(function* () {
+          // A chat ("No project") is not a project's thread: it is never resolved,
+          // only archived by the person.
+          if (yield* managedFolders.isScratch(thread.projectId)) return null;
           const sequence = yield* orchestrator.getThreadEventSequence(thread.id);
           if (sequence > beforeReadSequence) return null;
           snapshotSequences.set(thread.id, sequence);

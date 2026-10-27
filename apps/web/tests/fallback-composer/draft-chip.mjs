@@ -39,6 +39,7 @@ const browser = await chromium.launch({
 const EXPECT = {
   draft: { model: "Opus 5.5", next: false },
   "draft-picked": { model: "GPT-6.1-Sol", next: false },
+  "draft-seeded": { model: "GPT-6.1-Sol", next: false },
   next: { model: "GPT-6.1-Sol", next: true },
 };
 const receipt = { headless: true, checks: [], screenshots: [] };
