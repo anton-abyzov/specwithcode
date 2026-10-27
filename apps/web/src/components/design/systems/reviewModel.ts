@@ -230,9 +230,15 @@ export function groupByChange<T extends { readonly change: DesignSystemChangeKin
 export interface ReviewSelection {
   readonly tokens: ReadonlySet<string>;
   readonly components: ReadonlySet<string>;
+  /** Stored paths of brand files. */
+  readonly files: ReadonlySet<string>;
 }
 
-export const EMPTY_SELECTION: ReviewSelection = { tokens: new Set(), components: new Set() };
+export const EMPTY_SELECTION: ReviewSelection = {
+  tokens: new Set(),
+  components: new Set(),
+  files: new Set(),
+};
 
 export function toggleItems(
   selection: ReviewSelection,
@@ -259,7 +265,8 @@ export function writeCount(proposal: DesignSystemProposal, selection: ReviewSele
   const components = proposal.components.filter(
     (change) => writes(change) && !selection.components.has(change.id),
   ).length;
-  return tokens + components;
+  const files = (proposal.files ?? []).filter((file) => !selection.files.has(file.path)).length;
+  return tokens + components + files;
 }
 
 /** The confirm request: unticked names and ids that would change something, plus a new name. */
@@ -274,11 +281,15 @@ export function buildConfirmInput(
   const excludeComponents = proposal.components
     .filter((change) => writes(change) && selection.components.has(change.id))
     .map((change) => change.id);
+  const excludeFiles = (proposal.files ?? [])
+    .filter((file) => selection.files.has(file.path))
+    .map((file) => file.path);
   const trimmed = name.trim();
   return {
     proposalId: proposal.id,
     excludeTokens,
     excludeComponents,
+    ...(excludeFiles.length > 0 ? { excludeFiles } : {}),
     ...(proposal.target === null && trimmed !== "" ? { name: trimmed.slice(0, 180) } : {}),
   };
 }

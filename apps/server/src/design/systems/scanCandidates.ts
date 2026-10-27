@@ -176,6 +176,17 @@ export const readInsideRoot = async (
   maxBytes = DESIGN_SYSTEM_IMPORT_MAX_FILE_BYTES,
   budget?: ReadBudget,
 ): Promise<SourceText> => {
+  const { path, bytes } = await readBytesInsideRoot(realRoot, relative, maxBytes, budget);
+  return sourceText(path, bytes.toString("utf8"));
+};
+
+/** `readInsideRoot` for any file, images and fonts included: the bytes as read. */
+export const readBytesInsideRoot = async (
+  realRoot: string,
+  relative: string,
+  maxBytes = DESIGN_SYSTEM_IMPORT_MAX_FILE_BYTES,
+  budget?: ReadBudget,
+): Promise<{ readonly path: string; readonly bytes: Buffer }> => {
   const normalized = toPosix(NodePath.normalize(relative)).replace(/^\.\//, "");
   if (
     NodePath.isAbsolute(relative) ||
@@ -233,7 +244,7 @@ export const readInsideRoot = async (
       budget.files -= 1;
       budget.bytes -= length;
     }
-    return sourceText(normalized, buffer.subarray(0, length).toString("utf8"));
+    return { path: normalized, bytes: buffer.subarray(0, length) };
   } finally {
     await handle.close();
   }

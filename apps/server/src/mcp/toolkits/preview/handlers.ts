@@ -265,8 +265,8 @@ const handlers = {
 
 const { preview_snapshot, ...standardHandlers } = handlers;
 
-export const layerStandard = McpToolAccess.toLayer(PreviewStandardToolkit, standardHandlers);
+export const layerStandard = McpToolAccess.toWorkerLayer(PreviewStandardToolkit, standardHandlers);
 
-export const layerSnapshot = McpToolAccess.toLayer(PreviewSnapshotToolkit, {
+export const layerSnapshot = McpToolAccess.toWorkerLayer(PreviewSnapshotToolkit, {
   preview_snapshot,
 });

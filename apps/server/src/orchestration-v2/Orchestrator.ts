@@ -12,6 +12,7 @@ import {
 } from "./DeferredThreadResolution.ts";
 import { runtimeModeSessionsToDetach } from "./RuntimeModeSessions.ts";
 import { fallbackMove } from "./providerOpenFailure.ts";
+import { delegatedCompletionWakeText } from "./DelegatedCompletionText.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { guardProjectCreation } from "../project/ProjectCommandAdmission.ts";
 import {
@@ -899,13 +900,6 @@ function legacyPullRequestLink(
     },
     threadPullRequestsOf(thread).find((link) => threadPullRequestKeysEqual(link, key))?.watch,
   );
-}
-
-function delegatedCompletionWakeDetail(taskIds: ReadonlyArray<string>): string {
-  const taskList = taskIds.join(", ");
-  return taskIds.length === 1
-    ? `Delegated task ${taskList} reached a terminal state. Use task_status with taskId ${taskList} to read the result.`
-    : `Delegated tasks ${taskList} reached terminal states. Use task_status with each taskId to read the results.`;
 }
 
 function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
@@ -2685,7 +2679,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             occurredAt: now,
             payload: {
               ...message,
-              text: delegatedCompletionWakeDetail(remainingTaskIds),
+              text: delegatedCompletionWakeText(remainingTaskIds),
               delegatedCompletion: {
                 parentRunId: parentRun.id,
                 generation: delivery.generation,
@@ -5721,7 +5715,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const dispatchText =
         delegatedCompletion === undefined
           ? `${handoffContext === null ? "" : `${handoffContext}\n\n---\n\n`}${command.text}${questionReminder}`
-          : delegatedCompletionWakeDetail(delegatedCompletion.taskIds);
+          : delegatedCompletionWakeText(delegatedCompletion.taskIds);
       const sourcePlanProjection =
         command.sourcePlanRef === undefined
           ? null
@@ -11199,7 +11193,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? undefined
               : {
                   ...message,
-                  text: delegatedCompletionWakeDetail(taskIds),
+                  text: delegatedCompletionWakeText(taskIds),
                   delegatedCompletion: {
                     parentRunId: input.parentRun.id,
                     generation: delivery.generation,

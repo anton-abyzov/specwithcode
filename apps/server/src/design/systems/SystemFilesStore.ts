@@ -107,7 +107,7 @@ const nameProblem = (name: string): string | null => {
 };
 
 /** Why `path` cannot name a stored file, or null when it can. */
-function pathProblem(path: string): string | null {
+export function pathProblem(path: string): string | null {
   if (path.length === 0 || path.length > DESIGN_SYSTEM_FILE_PATH_MAX_LENGTH) {
     return `A path has 1 to ${DESIGN_SYSTEM_FILE_PATH_MAX_LENGTH} characters.`;
   }
@@ -367,7 +367,8 @@ const sizeLabel = (bytes: number) => {
 
 /**
  * Writes or replaces one stored file, making its folders, within the size and
- * count limits (`limits` is a test seam).
+ * count limits (`limits` is a test seam). With `ifAbsent`, a file already
+ * stored under that name (in any case) is kept and returned as it is.
  */
 export async function putSystemFile(
   root: string,
@@ -375,6 +376,7 @@ export async function putSystemFile(
   path: string,
   bytes: Uint8Array,
   limits: SystemFileLimits = SYSTEM_FILE_LIMITS,
+  options: { readonly ifAbsent?: boolean } = {},
 ): Promise<DesignSystemFile> {
   const names = checkPath(path);
   if (bytes.byteLength > DESIGN_SYSTEM_FILE_MAX_BYTES) {
@@ -384,6 +386,11 @@ export async function putSystemFile(
   return Store.withDesignSystemLock(root, systemId, async () => {
     const files = (await filesFolder(root, systemId, true))!;
     const { files: listed, usedBytes } = await listSystemFiles(root, systemId);
+    // An import adds files beside hand-stored ones and never replaces them.
+    const existing = options.ifAbsent
+      ? listed.find((file) => file.path.toLowerCase() === path.toLowerCase())
+      : undefined;
+    if (existing !== undefined) return existing;
     const previous = listed.find((file) => file.path === path);
     if (previous === undefined && listed.length >= limits.maxFiles) {
       throw new Store.DesignStoreProblem(

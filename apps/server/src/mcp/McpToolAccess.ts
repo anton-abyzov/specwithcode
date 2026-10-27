@@ -5,6 +5,7 @@ import {
   type ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Struct from "effect/Struct";
 import type * as Layer from "effect/Layer";
@@ -15,6 +16,8 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
 import {
@@ -319,5 +322,66 @@ export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX =
       Effect.isEffect(build)
         ? Effect.map(build, checkedHandlers<Toolkit.HandlersFrom<Tools>>)
         : checkedHandlers(build),
+    ),
+  );
+
+export const COORDINATOR_HANDS_ON_REFUSAL =
+  "The coordinator delegates this; start or message a worker with delegate_task or studio_thread_send.";
+
+/**
+ * Refuses when the calling thread is its project's coordinator. A caller
+ * outside a thread, or one whose thread or project cannot be read, passes:
+ * this narrows what a coordinator does, it does not grant anything.
+ */
+const refuseCoordinatorCaller = (projects: ProjectService.ProjectService["Service"]) =>
+  Effect.gen(function* () {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    if (scope.thread === undefined) return;
+    const threadId = scope.thread.threadId;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    if (shell === null) return;
+    const project = yield* projects.getById(shell.projectId).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (project?.workspaceSettings?.coordinatorThreadId !== threadId) return;
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message: COORDINATOR_HANDS_ON_REFUSAL,
+    });
+  });
+
+/**
+ * `toLayer` for hands-on toolkits (preview, preview controls, Chrome,
+ * computer, device) that only workers use: every tool first refuses a
+ * project's coordinator, which delegates such work instead of doing it.
+ * Each tool's failure schema already carries `OrchestratorMcpFailure` and its
+ * dependencies `ThreadManagementService`, which every declaration requires.
+ */
+export const toWorkerLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX = never>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  build: Handlers<Tools> | Effect.Effect<Handlers<Tools>, EX, RX>,
+): HandlersLayer<Tools, EX, Exclude<RX | ProjectService.ProjectService, Scope.Scope>> =>
+  handlersLayer(
+    toolkit.toLayer(
+      Effect.gen(function* () {
+        const projects = yield* ProjectService.ProjectService;
+        const declarations = Effect.isEffect(build) ? yield* build : build;
+        const handlers = checkedHandlers<Toolkit.HandlersFrom<Tools>>(declarations);
+        const guard = refuseCoordinatorCaller(projects);
+        type AnyHandler = (
+          params: unknown,
+        ) => Effect.Effect<unknown, OrchestratorMcpFailure, never>;
+        const guarded = Object.fromEntries(
+          Object.entries(handlers as unknown as Record<string, AnyHandler>).map(
+            ([name, handler]) => [
+              name,
+              (params: unknown) => Effect.andThen(guard, handler(params)),
+            ],
+          ),
+        );
+        return guarded as unknown as Toolkit.HandlersFrom<Tools>;
+      }),
     ),
   );

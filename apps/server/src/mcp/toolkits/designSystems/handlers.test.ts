@@ -101,6 +101,8 @@ const files = DesignSystemFiles.of({
     written.push(system);
     return system;
   },
+  listStoredFiles: async () => [],
+  putStoredFile: async () => undefined,
 });
 
 const layerFor = (invocation: Context.McpInvocationScope, projectRoot = checkout) =>

@@ -7,8 +7,8 @@ import { ColorTable } from "./ColorTable";
 import { NameValueTable } from "./NameValueTable";
 import { ShadowTable } from "./ShadowTable";
 import type { SystemEditIntent } from "./systemEditIntents";
-import { TEST_SYSTEM } from "./testSystem";
-import { SystemUsageContext } from "./tokenRows";
+import { TEST_SYSTEM, testToken } from "./testSystem";
+import { SystemUsageContext, UsageNotes } from "./tokenRows";
 import { TypographyTable } from "./TypographyTable";
 
 let container: HTMLDivElement;
@@ -75,10 +75,35 @@ describe("ColorTable", () => {
     const inherited = scrim.querySelector<HTMLElement>('[data-mode="dark"]')!;
     expect(inherited.dataset.inherited).toBe("true");
     expect(inherited.title).toBe("Inherits Light");
+    expect(inherited.textContent).toBe("Inherits Light");
     expect(row("color-brand").querySelector('[data-mode="dark"]')!.textContent).toBe("#7D84FF");
     // Read-only: no edit triggers and no Remove.
     expect(byLabel("Edit color-brand, Light")).toBeNull();
     expect(byLabel("Remove color-brand")).toBeNull();
+  });
+
+  it("shows a text color's contrast on the page ground in each mode", () => {
+    render(<ColorTable {...editor(false)} tokens={colorTokens} onAdd={() => undefined} />);
+    for (const mode of ["light", "dark"]) {
+      const badge = row("color-ink").querySelector<HTMLElement>(
+        `[data-mode="${mode}"] [data-testid="contrast-badge"]`,
+      )!;
+      expect(badge.dataset.passes).toBe("true");
+      expect(badge.textContent).toMatch(/^\d+(\.\d)?:1 contrast, passes for body text$/);
+    }
+    expect(row("color-brand").querySelector('[data-testid="contrast-badge"]')).toBeNull();
+  });
+
+  it("checks an inherited text color in the mode it is shown in", () => {
+    const faint = testToken("color-text-faint", "color", "color", "#22263b");
+    const system = { ...TEST_SYSTEM, tokens: [...TEST_SYSTEM.tokens, faint] };
+    render(
+      <ColorTable {...editor(false)} system={system} tokens={[faint]} onAdd={() => undefined} />,
+    );
+    const dark = row("color-text-faint").querySelector<HTMLElement>('[data-mode="dark"]')!;
+    expect(dark.dataset.inherited).toBe("true");
+    const badge = dark.querySelector<HTMLElement>('[data-testid="contrast-badge"]')!;
+    expect(badge.dataset.passes).toBe("false");
   });
 
   it("follows an alias to its target", () => {
@@ -198,6 +223,70 @@ describe("NameValueTable", () => {
     });
   });
 
+  it("edits a length as a number with its unit after it, and draws its size", () => {
+    const props = editor();
+    render(
+      <NameValueTable {...props} tokens={tokensOf("spacing")} check="length" preview="spacing" />,
+    );
+    const input = byLabel<HTMLInputElement>("Value of space-2")!;
+    expect(input.value).toBe("8");
+    expect(row("space-2").textContent).toContain("px");
+    expect(
+      row("space-2").querySelector<HTMLElement>('[data-testid="spacing-preview"]')!.style.width,
+    ).toBe("8px");
+    typeInto(input, "12");
+    press(input, "Enter");
+    expect(props.onEdit).toHaveBeenCalledWith({
+      kind: "set-value",
+      name: "space-2",
+      modeId: "light",
+      raw: "12px",
+    });
+  });
+
+  it("gives a bare 0 a unit and never saves a field that was only passed through", () => {
+    const zero = testToken("space-0", "dimension", "spacing", "0");
+    const upper = testToken("space-big", "dimension", "spacing", "16PX");
+    const props = editor();
+    render(
+      <NameValueTable
+        {...props}
+        system={{ ...TEST_SYSTEM, tokens: [zero, upper] }}
+        tokens={[zero, upper]}
+        check="length"
+      />,
+    );
+    const big = byLabel<HTMLInputElement>("Value of space-big")!;
+    expect(big.value).toBe("16");
+    act(() => big.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(props.onEdit).not.toHaveBeenCalled();
+    const input = byLabel<HTMLInputElement>("Value of space-0")!;
+    expect(input.getAttribute("aria-describedby")).toBeTruthy();
+    act(() => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(props.onEdit).not.toHaveBeenCalled();
+    typeInto(input, "4");
+    press(input, "Enter");
+    expect(props.onEdit).toHaveBeenCalledWith({
+      kind: "set-value",
+      name: "space-0",
+      modeId: "light",
+      raw: "4px",
+    });
+  });
+
+  it("draws a corner at each radius", () => {
+    render(
+      <NameValueTable
+        {...editor(false)}
+        tokens={tokensOf("radius")}
+        check="length"
+        preview="radius"
+      />,
+    );
+    const corner = row("radius-md").querySelector<HTMLElement>('[data-testid="radius-preview"]')!;
+    expect(corner.style.borderTopLeftRadius).toBe("8px");
+  });
+
   it("shows values as text when read-only", () => {
     render(<NameValueTable {...editor(false)} tokens={tokensOf("duration")} check="plain" />);
     expect(byLabel("Value of duration-micro")).toBeNull();
@@ -247,5 +336,22 @@ describe("ShadowTable", () => {
     expect(stages[1]!.style.backgroundColor).toBe("rgb(18, 22, 28)");
     const card = stages[0]!.querySelector<HTMLElement>("[style*='box-shadow']")!;
     expect(card.style.boxShadow).toContain("rgba(15, 23, 42, 0.08)");
+  });
+});
+
+describe("UsageNotes", () => {
+  it("closes when its note vanishes for a viewer, so it never reopens on its own", () => {
+    const setOpen = vi.fn<(open: boolean) => void>();
+    const state = { open: true, setOpen, draft: "Brand fills only.", setDraft: vi.fn() };
+    render(
+      <UsageNotes
+        name="color-brand"
+        note=""
+        canEdit={false}
+        onSave={() => undefined}
+        state={state}
+      />,
+    );
+    expect(setOpen).toHaveBeenCalledWith(false);
   });
 });

@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 
 const EPOCH = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
 
@@ -70,6 +71,14 @@ export const liveThreadShell = (
  */
 export const liveThreadsLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
   getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+});
+
+/**
+ * `ProjectService` that finds no project, so no caller is its project's
+ * coordinator: what hands-on toolkits need when the test is not about that.
+ */
+export const noProjectsLayer = Layer.mock(ProjectService.ProjectService)({
+  getById: () => Effect.succeedNone,
 });
 
 /**

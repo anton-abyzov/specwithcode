@@ -273,3 +273,34 @@ describe("labels and ids", () => {
     });
   });
 });
+
+describe("adding a starter set", () => {
+  it("adds every free name in one edit, skips names already there, and undoes as one", () => {
+    const operations = operationsFor(TEST_SYSTEM, {
+      kind: "add-many",
+      label: "a starter palette",
+      tokens: [
+        { name: " color-ink ", type: "color", group: "color", values: { light: "#000000" } },
+        {
+          name: "color-new",
+          type: "color",
+          group: "color",
+          values: { light: " #123456 ", dark: "" },
+        },
+        { name: "color-new", type: "color", group: "color", values: { light: "#654321" } },
+      ],
+    });
+    expect(operations).toEqual([
+      {
+        op: "put_token",
+        token: { name: "color-new", type: "color", group: "color", values: { light: "#123456" } },
+      },
+    ]);
+    expect(inverseOperations(TEST_SYSTEM, operations)).toEqual([
+      { op: "delete_token", name: "color-new" },
+    ]);
+    expect(intentLabel({ kind: "add-many", label: "a starter palette", tokens: [] })).toBe(
+      "Added a starter palette",
+    );
+  });
+});

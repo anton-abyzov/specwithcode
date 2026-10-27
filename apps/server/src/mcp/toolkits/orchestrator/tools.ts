@@ -47,6 +47,7 @@ import * as HandoffMode from "../../../handoff/HandoffMode.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { INCREMENT_LAUNCH_INSTRUCTION } from "../../../project/launchIncrement.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import { DELEGATED_RESULT_VERIFY_SENTENCE } from "../../../orchestration-v2/DelegatedCompletionText.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -91,7 +92,8 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Needs an agent running inside a SpecWithCode thread. Read a SpecWithCode-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. When you tell the user, relay its outcome in your response style and link the child; do not paste summary verbatim, but quote provider errors, failing tests and security warnings in it exactly. A project coordinator does not relay: the result stays in the worker's thread. hasPendingChildRuns reports later queued or executing turns in the backing child thread, even after the task is terminal; it does not reopen the task, and task_cancel stops those turns too. latestTerminal* provides later non-monitor turn results. Reading a terminal result acknowledges its automatic parent delivery.",
+    "Needs an agent running inside a SpecWithCode thread. Read a SpecWithCode-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. When you tell the user, relay its outcome in your response style and link the child; do not paste summary verbatim, but quote provider errors, failing tests and security warnings in it exactly. A project coordinator does not relay: the result stays in the worker's thread. hasPendingChildRuns reports later queued or executing turns in the backing child thread, even after the task is terminal; it does not reopen the task, and task_cancel stops those turns too. latestTerminal* provides later non-monitor turn results. Reading a terminal result acknowledges its automatic parent delivery. " +
+    DELEGATED_RESULT_VERIFY_SENTENCE,
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,

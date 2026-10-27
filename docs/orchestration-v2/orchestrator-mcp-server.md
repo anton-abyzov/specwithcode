@@ -16,8 +16,18 @@ agent can use this endpoint to:
 
 These are SpecWithCode orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a SpecWithCode child thread and run. The child receives
-only the supplied task prompt, plus an optional role instruction supplied in
-the same tool call. Parent conversation history is not copied into the child.
+only the supplied task prompt. Parent conversation history is not copied into
+the child. The `role` field is deprecated and accepted only for compatibility:
+it adds no persona line. `role: "review"` prepends a pointer to load the
+`sw-review` skill when it is installed; every other value adds nothing.
+
+`delegate_task` enforces two harness limits before it dispatches anything: a
+parent run may hold at most 20 unfinished child tasks, and a chain of delegated
+children may go at most 6 levels below the thread that started it. Over either
+limit the call fails with `invalid_request` and a message telling the model to
+finish or cancel a child, or do the step itself. A retry of a round that already
+created its child is not counted again. `orchestrator_capabilities` reports both
+limits as `features.maxLiveChildTasks` and `features.maxDelegationDepth`.
 
 `ThreadManagementService` is the shared server application boundary for V2
 WebSocket commands and MCP. It owns thread lookup, listing, send-mode

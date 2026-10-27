@@ -508,9 +508,9 @@ const handlers = {
 
 const { chrome_screenshot, ...standardHandlers } = handlers;
 
-export const layerStandard = McpToolAccess.toLayer(ChromeStandardToolkit, standardHandlers);
+export const layerStandard = McpToolAccess.toWorkerLayer(ChromeStandardToolkit, standardHandlers);
 
-export const layerScreenshot = McpToolAccess.toLayer(ChromeScreenshotToolkit, {
+export const layerScreenshot = McpToolAccess.toWorkerLayer(ChromeScreenshotToolkit, {
   chrome_screenshot,
 });
 

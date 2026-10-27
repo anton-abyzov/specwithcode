@@ -180,7 +180,13 @@ describe("NewDesignSystemDialog", () => {
     await flush();
     expect(onPropose).toHaveBeenCalledWith({
       owner: { kind: "project", projectId: "atlas-web" },
-      from: { kind: "code", paths: ["weave/tokens.json", "weave/weave.css"], name: "Weave" },
+      from: {
+        kind: "code",
+        paths: ["weave/tokens.json", "weave/weave.css"],
+        // Brand files beside copies are offered too.
+        copies: ["vskill-platform/src/styles/weave.css"],
+        name: "Weave",
+      },
     });
   });
 });

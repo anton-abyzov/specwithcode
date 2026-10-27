@@ -1,12 +1,13 @@
 /**
  * Colors: one table per group derived from names, with a column per mode.
- * A cell shows a swatch (click copies the value), the hex value and its
- * opacity; an alias links to its target; a later mode without its own value
- * inherits the first mode's, shown muted. Editors change a value in a color
- * field: the system color picker, an opacity slider and the CSS text.
+ * A cell is a field holding a swatch (click copies the value), the hex value
+ * and its opacity; a text color adds its contrast on the page ground; an
+ * alias links to its target; a later mode without its own value says it
+ * inherits the first mode's. Editors change a value in a color field: the
+ * system color picker, an opacity slider and the CSS text.
  */
 import type { DesignSystem, DesignToken } from "@specweave-studio/contracts";
-import { ArrowUpRightIcon, PlusIcon } from "lucide-react";
+import { ArrowUpRightIcon, CheckIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
 import { useId, useState, type CSSProperties, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -14,9 +15,17 @@ import { cn } from "~/lib/utils";
 import { Button } from "../../../ui/button";
 import { Input } from "../../../ui/input";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../../../ui/popover";
+import { LARGE_RATIO, ratioLabel, TEXT_RATIO, tokenContrast, type ContrastCheck } from "./contrast";
 import { copyText } from "./pageActions";
 import { groupTokensByName } from "./systemSections";
-import { GUTTER, TableHeader, TokenRow, type TokenTableProps } from "./tokenRows";
+import {
+  GUTTER,
+  TABLE_TITLE,
+  TableHeader,
+  TokensScroller,
+  TokenRow,
+  type TokenTableProps,
+} from "./tokenRows";
 import {
   aliasTarget,
   baseValue,
@@ -67,21 +76,30 @@ export function ColorTable(
   },
 ) {
   const modes = props.system.modes;
-  // Columns shrink with the viewport so Light and Dark both fit at 360 px; more modes scroll.
-  const nameMin = "min(8rem, 26vw)";
-  const modeMin = "min(8.5rem, 24vw)";
+  // Name and modes side by side; in a table under 42rem the name and actions
+  // share a line, so Light and Dark fit at 360 px. More modes scroll sideways.
+  const nameMin = "min(9rem, 26vw)";
+  const modeMin = "min(11rem, 42vw)";
   const columns = `minmax(${nameMin},1.1fr) repeat(${modes.length}, minmax(${modeMin},1fr)) ${GUTTER}`;
-  const minWidth = `calc(${nameMin} + ${modes.length} * ${modeMin} + ${GUTTER} + min(2rem, 2vw))`;
+  const narrowColumns = `repeat(${modes.length}, minmax(6.5rem,1fr))`;
+  // Columns, the gaps between them and the row's side padding, wide and narrow.
+  const minWidth = {
+    "--table-min": `calc(${nameMin} + ${modes.length} * ${modeMin} + ${GUTTER} + ${modes.length + 1}rem + 3.5rem)`,
+    "--table-min-narrow": `calc(${modes.length} * 6.5rem + ${(modes.length - 1) * 0.5}rem + 2.5rem)`,
+  } as CSSProperties;
   const colorNames = props.system.tokens
     .filter((token) => token.type === "color")
     .map((token) => token.name);
   const groups = groupTokensByName(props.tokens);
   return (
-    <div className="overflow-x-auto" data-testid="color-table">
-      <div className="flex flex-col gap-5 pb-2" style={{ minWidth }}>
+    <TokensScroller data-testid="color-table">
+      <div
+        className="flex min-w-[var(--table-min-narrow)] flex-col gap-8 @2xl/tokens:min-w-[var(--table-min)]"
+        style={minWidth}
+      >
         {groups.map((group) => (
           <div role="table" aria-label={`${group.label} colors`} key={group.key}>
-            <div className="flex items-center gap-2 px-3 pb-1">
+            <div className={TABLE_TITLE}>
               <h3 className="font-medium text-sm text-foreground">{group.label}</h3>
               <span className="text-muted-foreground text-xs tabular-nums">
                 {group.tokens.length}
@@ -98,7 +116,11 @@ export function ColorTable(
                 </Button>
               ) : null}
             </div>
-            <TableHeader columns={columns} labels={["Name", ...modes.map((mode) => mode.name)]} />
+            <TableHeader
+              columns={columns}
+              narrowColumns={narrowColumns}
+              labels={["Name", ...modes.map((mode) => mode.name)]}
+            />
             {group.tokens.map((token) => {
               const base = baseValue(token, modes);
               return (
@@ -107,6 +129,7 @@ export function ColorTable(
                   {...props}
                   token={token}
                   columns={columns}
+                  narrowColumns={narrowColumns}
                   copyValue={base === null ? null : base.raw}
                   aliasOf={token.aliasOf ?? (base === null ? null : aliasTarget(base.raw))}
                 >
@@ -126,9 +149,13 @@ export function ColorTable(
           </div>
         ))}
       </div>
-    </div>
+    </TokensScroller>
   );
 }
+
+/** The field a color value sits in; read-only viewers see it without a fill. */
+const FIELD =
+  "flex h-8 w-full max-w-[16rem] min-w-0 items-center gap-2 rounded-md border pr-1.5 pl-1.5 transition-colors duration-[120ms]";
 
 function ColorCell({
   token,
@@ -157,7 +184,10 @@ function ColorCell({
   const label = colorLabel(paint === null ? value.raw : shown);
   const alias = aliasTarget(value.raw);
   const baseName = system.modes[0]?.name ?? "the first mode";
-  const text = (
+  const contrast = tokenContrast(token, system, mode);
+  const text = value.inherited ? (
+    <span className="truncate text-muted-foreground text-[13px]">Inherits {baseName}</span>
+  ) : (
     <>
       <span className="truncate font-mono text-[13px] tabular-nums">{label.text}</span>
       {label.alpha !== null ? (
@@ -173,27 +203,38 @@ function ColorCell({
       data-mode={mode.id}
       data-inherited={value.inherited || undefined}
       title={value.inherited ? `Inherits ${baseName}` : undefined}
-      className={cn("flex min-w-0 items-center gap-2", value.inherited && "opacity-55")}
+      className="flex min-w-0 items-center gap-1"
     >
-      <Swatch color={paint} label={paint ?? value.raw} />
-      {canEdit ? (
-        <ColorField
-          name={token.name}
-          modeName={mode.name}
-          baseName={baseName}
-          isBase={isBase}
-          raw={value.inherited ? "" : value.raw}
-          placeholder={value.raw}
-          colorNames={colorNames}
-          onCommit={(raw) =>
-            void onEdit({ kind: "set-value", name: token.name, modeId: mode.id, raw })
-          }
-        >
-          {text}
-        </ColorField>
-      ) : (
-        <span className="flex min-w-0 items-baseline gap-1.5">{text}</span>
-      )}
+      <div
+        className={cn(
+          FIELD,
+          canEdit
+            ? "border-input bg-background focus-within:border-ring hover:border-ring/60"
+            : "border-border/60",
+          value.inherited && "border-dashed",
+        )}
+      >
+        <Swatch color={paint} label={paint ?? value.raw} />
+        {canEdit ? (
+          <ColorField
+            name={token.name}
+            modeName={mode.name}
+            baseName={baseName}
+            isBase={isBase}
+            raw={value.inherited ? "" : value.raw}
+            placeholder={value.raw}
+            colorNames={colorNames}
+            onCommit={(raw) =>
+              void onEdit({ kind: "set-value", name: token.name, modeId: mode.id, raw })
+            }
+          >
+            {text}
+          </ColorField>
+        ) : (
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">{text}</span>
+        )}
+        {contrast !== null ? <ContrastBadge check={contrast} modeName={mode.name} /> : null}
+      </div>
       {alias !== null && !value.inherited ? (
         <button
           type="button"
@@ -206,6 +247,41 @@ function ColorCell({
         </button>
       ) : null}
     </div>
+  );
+}
+
+/** "✓ 14.2:1" at 4.5:1 or more; a warning below, red under 3:1. */
+export function ContrastBadge({ check, modeName }: { check: ContrastCheck; modeName: string }) {
+  const passes = check.ratio >= TEXT_RATIO;
+  const large = !passes && check.ratio >= LARGE_RATIO;
+  const ratio = ratioLabel(check.ratio);
+  const verdict = passes
+    ? "passes for body text"
+    : large
+      ? "large text only; body text needs 4.5:1"
+      : "fails; body text needs 4.5:1";
+  return (
+    <span
+      data-testid="contrast-badge"
+      data-passes={passes}
+      title={`${ratio} on ${check.against} in ${modeName}: ${verdict}`}
+      className={cn(
+        "ml-auto inline-flex shrink-0 items-center gap-0.5 font-mono text-[11px] tabular-nums",
+        passes
+          ? "text-muted-foreground"
+          : large
+            ? "text-warning-foreground"
+            : "text-destructive-foreground",
+      )}
+    >
+      {passes ? (
+        <CheckIcon aria-hidden className="size-3" />
+      ) : (
+        <TriangleAlertIcon aria-hidden className="size-3" />
+      )}
+      <span className="@max-md/tokens:sr-only">{ratio}</span>
+      <span className="sr-only"> contrast, {verdict}</span>
+    </span>
   );
 }
 
@@ -266,7 +342,7 @@ export function ColorField({
             type="button"
             data-row-edit={isBase ? "" : undefined}
             aria-label={`Edit ${name}, ${modeName}`}
-            className="-mx-1 flex min-w-0 items-baseline gap-1.5 rounded-sm px-1 text-left outline-none transition-colors duration-[120ms] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         }
       >

@@ -1568,6 +1568,8 @@ describe("orchestrator MCP toolkit", () => {
                 batchThreadCreation: true,
                 threadManagement: true,
                 incrementalThreadRead: true,
+                maxLiveChildTasks: 20,
+                maxDelegationDepth: 6,
               },
               providers: expect.arrayContaining([
                 expect.objectContaining({

@@ -17,9 +17,12 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
@@ -44,18 +47,83 @@ export interface TokenTableProps {
   readonly onGoTo: (name: string) => void;
 }
 
+/** The page's side inset: section titles, table rows and empty states line up on it. */
+export const INSET = "px-5 sm:px-7";
 export const ROW =
-  "group/row grid min-h-10 items-center gap-x-3 border-t border-border/50 px-3 py-1.5 transition-colors duration-500 ease-out-quint hover:bg-accent/35 data-[flash=true]:bg-primary/14 data-[flash=true]:duration-150 motion-reduce:transition-none";
+  "group/row grid min-h-12 items-center gap-x-4 border-t border-border/50 px-5 py-2 sm:px-7 transition-colors duration-500 ease-out-quint hover:bg-accent/30 data-[flash=true]:bg-primary/14 data-[flash=true]:duration-150 motion-reduce:transition-none";
 export const HEADER_ROW =
-  "grid items-end gap-x-3 px-3 pt-1 pb-2 text-xs font-normal text-muted-foreground";
+  "grid items-end gap-x-4 border-t border-border/50 px-5 pt-3 pb-2.5 sm:px-7 text-xs font-normal text-muted-foreground";
+/** A table's own heading inside a section ("Palette", "Display"). */
+export const TABLE_TITLE = "flex items-center gap-2 px-5 pb-2.5 sm:px-7";
 /** The right gutter: usage notes and Remove. */
 export const GUTTER = "4.25rem";
 
-export function TableHeader({ columns, labels }: { columns: string; labels: readonly string[] }) {
+/** A token table's scroller is a size container, for pieces that follow its width in CSS. */
+export const TOKENS_CONTAINER = "@container/tokens";
+
+/** Whether the table around a row is under 42rem wide, from its TokensScroller. */
+const NarrowTable = createContext(false);
+
+/**
+ * A token table's sideways scroller. Under 42rem its rows that have a narrow
+ * layout switch to it: the name cell spans the first line with the row's
+ * actions in it, and the value cells get the whole line under it, so focus
+ * follows what is seen. Measured before paint and on every resize.
+ */
+export function TokensScroller({ className, children, ...rest }: ComponentProps<"div">) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    const measure = () => {
+      const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      setNarrow(element.getBoundingClientRect().width < 42 * rem);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   return (
-    <div role="row" className={HEADER_ROW} style={{ gridTemplateColumns: columns }}>
-      {labels.map((label) => (
-        <span key={label} role="columnheader" className="truncate">
+    <NarrowTable.Provider value={narrow}>
+      <div ref={ref} className={cn(TOKENS_CONTAINER, "overflow-x-auto", className)} {...rest}>
+        {children}
+      </div>
+    </NarrowTable.Provider>
+  );
+}
+
+/** The row grid: the narrow columns inside a narrow table, when the table has them. */
+function useGrid(columns: string, narrowColumns: string | undefined) {
+  const narrow = useContext(NarrowTable) && narrowColumns !== undefined;
+  return {
+    narrow,
+    className: narrow ? "gap-x-2 gap-y-1.5" : undefined,
+    style: { gridTemplateColumns: narrow ? narrowColumns : columns } as CSSProperties,
+  };
+}
+
+export function TableHeader({
+  columns,
+  narrowColumns,
+  labels,
+}: {
+  columns: string;
+  /** The narrow layout's value columns, without the name or actions (see gridColumns). */
+  narrowColumns?: string | undefined;
+  labels: readonly string[];
+}) {
+  const grid = useGrid(columns, narrowColumns);
+  return (
+    <div role="row" className={cn(HEADER_ROW, grid.className)} style={grid.style}>
+      {labels.map((label, index) => (
+        <span
+          key={label}
+          role="columnheader"
+          className={cn("truncate", index === 0 && grid.narrow && "sr-only")}
+        >
           {label}
         </span>
       ))}
@@ -81,6 +149,8 @@ function editRow(row: HTMLElement | null) {
 export interface TokenRowProps extends TokenTableProps {
   readonly token: DesignToken;
   readonly columns: string;
+  /** The narrow layout's value columns, without the name or actions (see gridColumns). */
+  readonly narrowColumns?: string | undefined;
   /** The value cells, after the name. */
   readonly children: ReactNode;
   /** The first mode's value, for Copy value. */
@@ -103,6 +173,38 @@ export function TokenRow(props: TokenRowProps) {
     ((text: string) => void props.onEdit({ kind: "set-usage", name: token.name, text }));
   const remove = () => void props.onEdit({ kind: "remove", name: token.name });
   const aliasOf = props.aliasOf ?? null;
+  const grid = useGrid(props.columns, props.narrowColumns);
+  const narrow = grid.narrow;
+  // The notes popover's state lives here, so it survives the actions moving between layouts.
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState(note);
+  const actions = (
+    <>
+      <UsageNotes
+        name={token.name}
+        note={note}
+        canEdit={canEdit}
+        onSave={saveNote}
+        state={{
+          open: notesOpen,
+          setOpen: setNotesOpen,
+          draft: notesDraft,
+          setDraft: setNotesDraft,
+        }}
+      />
+      {canEdit ? (
+        <Button
+          variant="ghost-destructive"
+          size="icon-xs"
+          aria-label={`Remove ${token.name}`}
+          className="opacity-0 transition-opacity duration-[120ms] group-hover/row:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+          onClick={remove}
+        >
+          <Trash2Icon aria-hidden />
+        </Button>
+      ) : null}
+    </>
+  );
 
   return (
     <ContextMenu.Root>
@@ -113,41 +215,42 @@ export function TokenRow(props: TokenRowProps) {
             role="row"
             data-token-row={token.name}
             data-testid="token-row"
-            className={ROW}
-            style={{ gridTemplateColumns: props.columns } as CSSProperties}
+            className={cn(ROW, grid.className)}
+            style={grid.style}
           />
         }
       >
-        <div role="cell" className="flex min-w-0 flex-col gap-0.5">
-          <TokenName
-            name={token.name}
-            canEdit={canEdit}
-            renaming={renaming}
-            existing={props.system.tokens.map((candidate) => candidate.name)}
-            onStartRename={() => setRenaming(true)}
-            onRename={(to) => {
-              setRenaming(false);
-              if (to !== token.name) void props.onEdit({ kind: "rename", from: token.name, to });
-            }}
-            onCancel={() => setRenaming(false)}
-          />
-          {props.nameSuffix}
+        <div
+          role="cell"
+          className={
+            narrow
+              ? "col-span-full flex min-w-0 items-start gap-2"
+              : "flex min-w-0 flex-col gap-0.5"
+          }
+        >
+          <div className={narrow ? "flex min-w-0 flex-1 flex-col gap-0.5" : "contents"}>
+            <TokenName
+              name={token.name}
+              canEdit={canEdit}
+              renaming={renaming}
+              existing={props.system.tokens.map((candidate) => candidate.name)}
+              onStartRename={() => setRenaming(true)}
+              onRename={(to) => {
+                setRenaming(false);
+                if (to !== token.name) void props.onEdit({ kind: "rename", from: token.name, to });
+              }}
+              onCancel={() => setRenaming(false)}
+            />
+            {props.nameSuffix}
+          </div>
+          {narrow ? <div className="flex shrink-0 items-center gap-0.5">{actions}</div> : null}
         </div>
         {props.children}
-        <div role="cell" className="flex items-center justify-end gap-0.5">
-          <UsageNotes name={token.name} note={note} canEdit={canEdit} onSave={saveNote} />
-          {canEdit ? (
-            <Button
-              variant="ghost-destructive"
-              size="icon-xs"
-              aria-label={`Remove ${token.name}`}
-              className="opacity-0 transition-opacity duration-[120ms] group-hover/row:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
-              onClick={remove}
-            >
-              <Trash2Icon aria-hidden />
-            </Button>
-          ) : null}
-        </div>
+        {narrow ? null : (
+          <div role="cell" className="flex items-center justify-end gap-0.5">
+            {actions}
+          </div>
+        )}
       </ContextMenu.Trigger>
       <MenuPopup className="min-w-44" data-testid="token-row-menu">
         {canEdit ? (
@@ -296,21 +399,42 @@ function RenameField({
 }
 
 /** The usage-notes popover; read-only viewers see it only when a note exists. */
+export interface NotesState {
+  readonly open: boolean;
+  readonly setOpen: (open: boolean) => void;
+  readonly draft: string;
+  readonly setDraft: (draft: string) => void;
+}
+
 export function UsageNotes({
   name,
   note,
   canEdit,
   onSave,
+  state,
 }: {
   name: string;
   note: string;
   canEdit: boolean;
   onSave: (text: string) => void;
+  /** State held by the caller, so it outlives this trigger; its own otherwise. */
+  state?: NotesState;
 }) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(note);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const [ownDraft, setOwnDraft] = useState(note);
+  const { open, setOpen, draft, setDraft } = state ?? {
+    open: ownOpen,
+    setOpen: setOwnOpen,
+    draft: ownDraft,
+    setDraft: setOwnDraft,
+  };
   const has = note.trim() !== "";
-  if (!canEdit && !has) return <span aria-hidden className="size-7 sm:size-6" />;
+  const gone = !canEdit && !has;
+  // With no trigger left to close it, a popover open when its note vanished would reopen later on its own.
+  useEffect(() => {
+    if (gone && open) setOpen(false);
+  }, [gone, open, setOpen]);
+  if (gone) return <span aria-hidden className="size-7 sm:size-6" />;
   const title = has || !canEdit ? "Usage notes" : "Add usage notes";
   return (
     <Popover
@@ -362,5 +486,5 @@ export function UsageNotes({
 
 /** A section's empty state: what goes here, and "+ Add" for editors. */
 export function EmptyTokens({ children }: { children: ReactNode }) {
-  return <p className="px-4 py-6 text-sm text-muted-foreground">{children}</p>;
+  return <p className={cn("py-6 text-sm text-muted-foreground", INSET)}>{children}</p>;
 }

@@ -1,18 +1,29 @@
 /**
- * The first thing an empty design system shows on Overview: three ways to
+ * The first thing an empty design system shows on Overview: four ways to
  * fill it. Importing reads a repository and reviews the result, uploading
  * stores brand files (images in assets/, fonts in fonts/, Markdown as
- * guidance in docs/), and describing it hands the work to an agent.
+ * guidance in docs/), starting from the basics adds neutral starter sets
+ * from one accent and one family, and describing it hands the work to an
+ * agent.
  */
 import type { DesignOwnerInput, DesignSystemId, EnvironmentId } from "@specweave-studio/contracts";
-import { FolderGit2Icon, MessageSquareTextIcon, UploadIcon, type LucideIcon } from "lucide-react";
+import {
+  FolderGit2Icon,
+  LayersIcon,
+  MessageSquareTextIcon,
+  UploadIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { Button } from "../../../ui/button";
 import { hasFiles } from "./AssetSetCard";
 import { extensionOf } from "./filesModel";
 import { ACCEPT_ATTRIBUTE, FONT_EXTENSIONS, planUploads } from "./storedPaths";
+import { AccentPicker, accentProblem, FamilyPicker } from "./StarterOffer";
+import { DEFAULT_ACCENT, DEFAULT_FAMILY, type StarterOptions } from "./starterSets";
 import { SystemImportDialog } from "./SystemImportDialog";
 import {
   uploadAll,
@@ -29,6 +40,8 @@ export interface WelcomeSheetProps {
   readonly canEdit: boolean;
   /** After a repository import is confirmed into this system, or brand files are stored. */
   readonly onChanged?: () => void;
+  /** Adds every starter set; absent where the page cannot edit tokens. */
+  readonly onStart?: (options: StarterOptions) => void;
 }
 
 /** "Not sure where to start?" for a system with no tokens yet. */
@@ -44,6 +57,7 @@ export function WelcomeSheet(props: WelcomeSheetProps) {
         api={api}
         onImport={() => setImporting(true)}
         onChanged={props.onChanged}
+        onStart={props.onStart}
       />
       {importing ? (
         <SystemImportDialog
@@ -118,15 +132,21 @@ export function WelcomeSheetView({
   api,
   onImport,
   onChanged,
+  onStart,
 }: {
   canEdit: boolean;
   systemName: string;
   api: Pick<SystemFilesApi, "put" | "listing">;
   onImport: () => void;
   onChanged?: (() => void) | undefined;
+  onStart?: ((options: StarterOptions) => void) | undefined;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [describing, setDescribing] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [accent, setAccent] = useState(DEFAULT_ACCENT);
+  const [family, setFamily] = useState(DEFAULT_FAMILY);
+  const canStart = canEdit && onStart !== undefined;
   const [progress, setProgress] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; problem: boolean } | null>(null);
   const [dropping, setDropping] = useState(false);
@@ -203,7 +223,9 @@ export function WelcomeSheetView({
             : "This design system is empty. Someone who can edit it can fill it from code, brand files or an agent."}
         </p>
       </div>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div
+        className={cn("grid gap-3 sm:grid-cols-2", canStart ? "xl:grid-cols-4" : "lg:grid-cols-3")}
+      >
         {canEdit ? (
           <>
             <Option
@@ -222,6 +244,15 @@ export function WelcomeSheetView({
               onClick={() => input.current?.click()}
             />
           </>
+        ) : null}
+        {canStart ? (
+          <Option
+            testId="welcome-start"
+            icon={LayersIcon}
+            title="Start from the basics"
+            description="A palette from your accent, a type scale, spacing, radii and shadows. Change any of it after."
+            onClick={() => setStarting((open) => !open)}
+          />
         ) : null}
         <Option
           testId="welcome-describe"
@@ -264,6 +295,34 @@ export function WelcomeSheetView({
         >
           {message.text}
         </p>
+      ) : null}
+      {starting && canStart ? (
+        <div
+          className="grid gap-4 rounded-lg border border-border/70 bg-background px-4 py-4 sm:grid-cols-2"
+          data-testid="welcome-start-panel"
+        >
+          <AccentPicker value={accent} onChange={setAccent} />
+          <div className="flex flex-col gap-2">
+            <span className="text-muted-foreground text-xs">Font family</span>
+            <FamilyPicker value={family} onChange={setFamily} />
+          </div>
+          <div className="flex items-center justify-between gap-3 sm:col-span-2">
+            <p className="text-muted-foreground text-xs">
+              Adds about 40 tokens in one step; Undo removes them all.
+            </p>
+            <Button
+              size="sm"
+              data-testid="welcome-start-add"
+              disabled={accentProblem(accent) !== null}
+              onClick={() => {
+                setStarting(false);
+                onStart?.({ accent, family });
+              }}
+            >
+              Add the basics
+            </Button>
+          </div>
+        </div>
       ) : null}
       {describing ? (
         <div

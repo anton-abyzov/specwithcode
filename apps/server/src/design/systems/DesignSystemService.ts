@@ -35,6 +35,7 @@ import {
   type DesignSystemSuggestionPreview,
   type DesignTokenType,
   type FigmaDesktopStatus,
+  DESIGN_SYSTEM_FILE_MAX_BYTES,
   FIGMA_DESKTOP_MCP_URL,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
@@ -49,14 +50,17 @@ import {
   parseVariableDefinitions,
 } from "../figma/FigmaDesktopMcpClient.ts";
 import { assemble } from "./assemble.ts";
+import { type BrandFileOffer, findBrandFiles } from "./brandFiles.ts";
 import {
   type Collected,
   type MutableToken,
   clip,
   compareText,
+  finding,
   modeName,
   safeId,
   sha256Hex,
+  sortFindings,
 } from "./common.ts";
 import {
   type SourcedExtraction,
@@ -73,6 +77,7 @@ import {
   knownSystemByKey,
   knownSystemFor,
   preloadReader,
+  readBytesInsideRoot,
   readInsideRoot,
   scanCandidates,
 } from "./scanCandidates.ts";
@@ -149,6 +154,15 @@ export class DesignSystemFiles extends Context.Service<
       system: DesignSystem,
       options: { expectedRevision: number | null; actor: DesignActor },
     ) => Promise<DesignSystem>;
+    /** Paths of the files a system stores beside system.json (README, docs, fonts, assets). */
+    readonly listStoredFiles: (root: string, systemId: string) => Promise<ReadonlyArray<string>>;
+    /** Stores one file beside the system, within its limits; a file stored under that name is kept. */
+    readonly putStoredFile: (
+      root: string,
+      systemId: string,
+      path: string,
+      bytes: Uint8Array,
+    ) => Promise<void>;
   }
 >()("specweave-studio/design/systems/DesignSystemService/DesignSystemFiles") {}
 
@@ -382,6 +396,7 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
         description?: string;
         derivedFrom?: DesignSystemLineage;
         derivedFromLabel?: string;
+        brand?: BrandFileOffer;
       },
     ) =>
       Effect.gen(function* () {
@@ -410,42 +425,67 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
             : undefined;
         const systemId =
           previous?.id ?? twin?.system.id ?? (yield* newSystemId(resolved, owner, name));
+        const built = buildProposal({
+          id: twin?.id ?? NodeCrypto.randomUUID(),
+          owner,
+          origin,
+          createdBy: caller.actor,
+          now: now(),
+          sourced,
+          previous,
+          systemId,
+          name,
+          ...(request.description !== undefined ? { description: request.description } : {}),
+          ...(request.derivedFrom !== undefined ? { derivedFrom: request.derivedFrom } : {}),
+          ...(request.derivedFromLabel !== undefined
+            ? { derivedFromLabel: request.derivedFromLabel }
+            : {}),
+        });
+        const brand = request.brand;
         return yield* remember(
-          buildProposal({
-            id: twin?.id ?? NodeCrypto.randomUUID(),
-            owner,
-            origin,
-            createdBy: caller.actor,
-            now: now(),
-            sourced,
-            previous,
-            systemId,
-            name,
-            ...(request.description !== undefined ? { description: request.description } : {}),
-            ...(request.derivedFrom !== undefined ? { derivedFrom: request.derivedFrom } : {}),
-            ...(request.derivedFromLabel !== undefined
-              ? { derivedFromLabel: request.derivedFromLabel }
-              : {}),
-          }),
+          brand && (brand.files.length > 0 || brand.findings.length > 0)
+            ? {
+                ...built,
+                findings: sortFindings([...built.findings, ...brand.findings]),
+                files: brand.files,
+              }
+            : built,
         );
       });
+
+    /** Stored file paths of a system; none when it has no files folder yet. */
+    const storedPaths = (resolved: DesignOwnerRoots, systemId: string | undefined) =>
+      systemId === undefined
+        ? Effect.succeed<ReadonlyArray<string>>([])
+        : Effect.promise(() =>
+            files
+              .listStoredFiles(resolved.designRoot, systemId)
+              .catch((): ReadonlyArray<string> => []),
+          );
 
     const proposeFromCode = (
       caller: DesignSystemCaller,
       owner: DesignOwnerInput,
       paths: ReadonlyArray<string>,
       request: { name?: string; targetSystemId?: string },
+      copies: ReadonlyArray<string> = [],
+      offerBrandFiles = true,
     ) =>
       Effect.gen(function* () {
         const resolved = yield* resolve(caller, owner);
         const realRoot = yield* projectRoot(resolved);
-        const sourced = yield* attempt(() => extractFromCode(realRoot, paths));
+        const folders = yield* attempt(() => listFolders(realRoot));
+        const sourced = yield* attempt(() => extractFromCode(realRoot, paths, { folders }));
         if (sourced.sources.length === 0) {
           return yield* failure(
             "invalid",
             "None of the selected files could be read inside the project.",
           );
         }
+        const stored = yield* storedPaths(resolved, request.targetSystemId);
+        const brand = offerBrandFiles
+          ? yield* attempt(() => findBrandFiles(realRoot, folders, paths, copies, stored))
+          : undefined;
         const known = knownSystemFor(paths);
         const upstream = known?.upstream ? yield* findUpstream(resolved, known.upstream) : null;
         return yield* finish(caller, owner, "code", sourced, {
@@ -454,6 +494,7 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
           ...(known?.upstream ? { derivedFromLabel: known.upstream.name } : {}),
           ...(upstream ? { derivedFrom: upstream } : {}),
           ...(known ? { description: known.description } : {}),
+          ...(brand ? { brand } : {}),
         });
       });
 
@@ -590,6 +631,48 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
         return (await readInsideRoot(realRoot, location).catch(() => null))?.sha256 ?? null;
       });
 
+    /**
+     * Writes the brand files a confirmed proposal offered and the user kept.
+     * Each is read again inside the project and written only when its bytes
+     * are the ones reviewed and its stored path is still free; one that
+     * cannot be stored is left out without undoing the confirmed system.
+     */
+    const storeBrandFiles = (
+      resolved: DesignOwnerRoots,
+      systemId: string,
+      proposal: DesignSystemProposal,
+      excluded: ReadonlyArray<string>,
+    ) =>
+      Effect.promise(async () => {
+        const skip = new Set(excluded);
+        const offered = (proposal.files ?? []).filter((file) => !skip.has(file.path));
+        if (offered.length === 0 || resolved.projectRoot === null) return;
+        const realRoot = await NodeFS.realpath(resolved.projectRoot).catch(() => null);
+        if (realRoot === null) return;
+        const present = new Set(
+          (
+            await files
+              .listStoredFiles(resolved.designRoot, systemId)
+              .catch((): ReadonlyArray<string> => [])
+          ).map((path) => path.toLowerCase()),
+        );
+        for (const file of offered) {
+          if (present.has(file.path.toLowerCase())) continue;
+          try {
+            const read = await readBytesInsideRoot(
+              realRoot,
+              file.source,
+              DESIGN_SYSTEM_FILE_MAX_BYTES,
+            );
+            if (sha256Hex(read.bytes) !== file.sha256) continue;
+            await files.putStoredFile(resolved.designRoot, systemId, file.path, read.bytes);
+            present.add(file.path.toLowerCase());
+          } catch {
+            // Gone, changed into a link, or over the system's limits: the rest still land.
+          }
+        }
+      });
+
     return DesignSystemService.of({
       scan: (caller, input) =>
         Effect.gen(function* () {
@@ -621,7 +704,7 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
         };
         switch (from.kind) {
           case "code":
-            return proposeFromCode(caller, input.owner, from.paths, request);
+            return proposeFromCode(caller, input.owner, from.paths, request, from.copies ?? []);
           case "tokens-file":
             return Effect.gen(function* () {
               const sourced = extractFromTokensFiles(from.files);
@@ -684,6 +767,7 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
             }),
           );
           proposals.delete(proposal.id);
+          yield* storeBrandFiles(resolved, written.id, proposal, input.excludeFiles ?? []);
           return {
             ref: {
               owner: resolved.owner,
@@ -722,14 +806,68 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
             if (hash === null) missing.push(source.location);
             else if (hash !== source.sha256) changed.push(source.location);
           }
-          if (changed.length === 0 && missing.length === 0)
-            return { status: "unchanged" as const, checked: fileSources };
-          const present = fileSources
-            .map((source) => source.location)
-            .filter((location) => !missing.includes(location));
+          // A system missing a whole kind (components, say) is widened with what the
+          // project now offers for the same package; one that has every kind is not,
+          // so files someone left out on purpose are not offered on every rescan.
+          // Brand files are offered only while the system stores no files: then they
+          // alone are worth a review (D-03); once any are kept, declined ones stay out.
+          const stored = yield* storedPaths(resolved, system.id);
+          const lacking = system.components.length === 0 || system.tokens.length === 0;
+          const offerBrandFiles = stored.length === 0;
+          const recorded = new Set(fileSources.map((source) => source.location));
+          const needsScan =
+            lacking || (offerBrandFiles && (changed.length > 0 || missing.length > 0));
+          const scan = needsScan ? yield* attempt(() => scanCandidates(realRoot)) : null;
+          // A recorded file the scan folded in as a copy still ties the system to that suggestion.
+          const related = (scan?.suggestions ?? []).filter((suggestion) =>
+            [...suggestion.paths, ...suggestion.copies].some((path) => recorded.has(path)),
+          );
+          const copies = [...new Set(related.flatMap((suggestion) => suggestion.copies))].sort(
+            compareText,
+          );
+          const candidates = new Map(
+            (scan?.candidates ?? []).map((candidate) => [candidate.path, candidate]),
+          );
+          const added = [...new Set(related.flatMap((suggestion) => suggestion.paths))]
+            .filter((path) => {
+              const candidate = candidates.get(path);
+              if (recorded.has(path) || candidate === undefined) return false;
+              return (
+                (system.components.length === 0 && candidate.componentCount > 0) ||
+                (system.tokens.length === 0 && candidate.tokenCount > 0)
+              );
+            })
+            .sort(compareText);
+          if (changed.length === 0 && missing.length === 0 && added.length === 0) {
+            const brand = offerBrandFiles
+              ? yield* attempt(() =>
+                  findBrandFiles(
+                    realRoot,
+                    folders,
+                    fileSources.map((source) => source.location),
+                  ),
+                )
+              : null;
+            if (brand === null || brand.files.length === 0) {
+              return { status: "unchanged" as const, checked: fileSources };
+            }
+          }
+          const present = [
+            ...fileSources
+              .map((source) => source.location)
+              .filter((location) => !missing.includes(location)),
+            ...added,
+          ];
           const proposal =
             present.length > 0
-              ? yield* proposeFromCode(caller, input.owner, present, { targetSystemId: system.id })
+              ? yield* proposeFromCode(
+                  caller,
+                  input.owner,
+                  present,
+                  { targetSystemId: system.id },
+                  copies.filter((copy) => !recorded.has(copy)),
+                  offerBrandFiles,
+                )
               : yield* finish(
                   caller,
                   input.owner,
@@ -737,11 +875,28 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
                   { extraction: assemble([]), sources: [] },
                   { targetSystemId: system.id },
                 );
+          // Say in the review why sources it never read before are in it.
+          const noted =
+            added.length > 0
+              ? {
+                  ...proposal,
+                  findings: sortFindings([
+                    ...proposal.findings,
+                    finding(
+                      "added-sources",
+                      "info",
+                      `${added.length} ${added.length === 1 ? "source" : "sources"} the project now offers for this system ${added.length === 1 ? "was" : "were"} added: ${added.slice(0, 5).join(", ")}${added.length > 5 ? ", …" : ""}`,
+                    ),
+                  ]),
+                }
+              : proposal;
+          if (noted !== proposal) proposals.set(noted.id, noted);
           return {
             status: "changed" as const,
             changed: changed.sort(compareText),
             missing: missing.sort(compareText),
-            proposal,
+            ...(added.length > 0 ? { added } : {}),
+            proposal: noted,
           };
         }),
       figmaStatus: () => Effect.promise(() => figma().status()),

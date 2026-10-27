@@ -480,7 +480,12 @@ function ConnectedGallery({
         environmentId,
         input: {
           owner: { kind: "project", projectId },
-          from: { kind: "code", paths: found.paths.slice(0, 200), name: found.name },
+          from: {
+            kind: "code",
+            paths: found.paths.slice(0, 200),
+            ...(found.copies.length > 0 ? { copies: found.copies.slice(0, 200) } : {}),
+            name: found.name,
+          },
         },
       });
       return result._tag === "Success"

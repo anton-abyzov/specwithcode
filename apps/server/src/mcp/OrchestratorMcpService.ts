@@ -745,9 +745,11 @@ function taskPrompt(
   increment: LaunchIncrementOutcome = {},
 ): string {
   const task = withIncrementBrief(input.task, increment);
-  return input.role === undefined || input.role === "general"
-    ? task
-    : `Act as the ${input.role} worker for this task.\n\n${task}`;
+  // `role` is deprecated: it adds no persona, only a pointer to the skill that
+  // holds the procedure, and only where such a skill exists.
+  return input.role === "review"
+    ? `Load the sw-review skill first, when it is installed.\n\n${task}`
+    : task;
 }
 
 /**
@@ -1038,6 +1040,88 @@ import {
 import { writeLaunchBinding } from "../project/ThreadIncrementProgress.ts";
 import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
 import { fileChangePatchText } from "../orchestration-v2/fileChangePatches.ts";
+
+/**
+ * Harness-side limits on delegate_task fan-out and nesting. They sit at or
+ * above what normal work needs (20 matches features.maxBatchThreads) and
+ * stop runaway chains the prompt alone cannot stop.
+ */
+export const MAX_LIVE_CHILD_TASKS_PER_RUN = 20;
+export const MAX_DELEGATION_DEPTH = 6;
+/** Hard ceiling of the lineage walk, shared with stranded-subagent recovery. */
+export const MAX_LINEAGE_WALK = 16;
+
+export interface DelegationLimits {
+  readonly maxLiveChildTasks: number;
+  readonly maxDepth: number;
+}
+
+export const DEFAULT_DELEGATION_LIMITS: DelegationLimits = {
+  maxLiveChildTasks: MAX_LIVE_CHILD_TASKS_PER_RUN,
+  maxDepth: MAX_DELEGATION_DEPTH,
+};
+
+const TERMINAL_CHILD_TASK_STATUSES: ReadonlySet<OrchestrationV2Subagent["status"]> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+
+/** Unfinished app-owned children that the given parent run started. */
+export function liveChildTaskCount(
+  parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
+  parentRunId: RunId,
+): number {
+  return parent.subagents.filter(
+    (task) =>
+      task.origin === "app_owned" &&
+      task.threadId === parent.thread.id &&
+      task.runId === parentRunId &&
+      !TERMINAL_CHILD_TASK_STATUSES.has(task.status),
+  ).length;
+}
+
+/** Lineage may be absent on partial thread records; such a thread counts as a root. */
+export interface LineageThread {
+  readonly id: ThreadId;
+  readonly lineage?: OrchestrationV2ThreadProjection["thread"]["lineage"] | undefined;
+}
+
+/**
+ * One step of the lineage walk: the parent `thread` was delegated from, or
+ * null when it is a root, not a subagent, or a parent already seen (a cycle).
+ * The caller loads each parent and stops at MAX_LINEAGE_WALK steps or at a
+ * parent it cannot load. Kept free of Effect so this module stays a plain
+ * leaf of the large MCP service graph.
+ */
+export function delegationParentId(
+  thread: LineageThread,
+  seen: ReadonlySet<ThreadId>,
+): ThreadId | null {
+  const lineage = thread.lineage;
+  if (lineage === undefined || lineage.relationshipToParent !== "subagent") return null;
+  const parentId = lineage.parentThreadId;
+  if (parentId === null || seen.has(parentId)) return null;
+  return parentId;
+}
+
+/** A readable refusal when a new child would cross a limit, else null. */
+export function delegationLimitRefusal(input: {
+  readonly liveChildren: number;
+  readonly parentDepth: number;
+  readonly limits: DelegationLimits;
+}): string | null {
+  const { liveChildren, parentDepth, limits } = input;
+  const advice = "Finish or cancel a child task, or do this step yourself.";
+  if (liveChildren >= limits.maxLiveChildTasks) {
+    return `Delegation limit reached: ${liveChildren} live child tasks in this run (max ${limits.maxLiveChildTasks}). ${advice}`;
+  }
+  if (parentDepth + 1 > limits.maxDepth) {
+    return `Delegation limit reached: a new child would sit at depth ${parentDepth + 1} (max ${limits.maxDepth}). ${advice}`;
+  }
+  return null;
+}
 
 const effortField = (selection: Pick<ModelSelection, "options"> | undefined) => {
   const effort = modelSelectionEffortValue(selection);
@@ -2488,6 +2572,8 @@ const make = Effect.gen(function* () {
             incrementalThreadRead: true,
             scheduledTasks: true,
             maxBatchThreads: 20,
+            maxLiveChildTasks: DEFAULT_DELEGATION_LIMITS.maxLiveChildTasks,
+            maxDelegationDepth: DEFAULT_DELEGATION_LIMITS.maxDepth,
           },
         };
       }),
@@ -2558,6 +2644,34 @@ const make = Effect.gen(function* () {
             "invalid_request",
             "Resume or restore the project before delegating work.",
           );
+        }
+        // Harness limits on fan-out and nesting. A retry of a round that
+        // already created its child is not a new delegation.
+        const retriedChildThreadId = deriveDelegatedTaskThread({ commandId });
+        if (!parent.subagents.some((task) => task.childThreadId === retriedChildThreadId)) {
+          // Subagent levels above the parent, bounded by a seen-set and
+          // MAX_LINEAGE_WALK; a parent that cannot be loaded ends the walk.
+          const seen = new Set<ThreadId>([parent.thread.id]);
+          let current: LineageThread = parent.thread;
+          let parentDepth = 0;
+          while (parentDepth < MAX_LINEAGE_WALK) {
+            const parentId = delegationParentId(current, seen);
+            if (parentId === null) break;
+            seen.add(parentId);
+            parentDepth += 1;
+            const next = yield* threadManagement.getThreadRecords(parentId, []).pipe(
+              Effect.map((records) => records.thread),
+              Effect.option,
+            );
+            if (Option.isNone(next)) break;
+            current = next.value;
+          }
+          const refusal = delegationLimitRefusal({
+            liveChildren: liveChildTaskCount(parent, parentRun.id),
+            parentDepth,
+            limits: DEFAULT_DELEGATION_LIMITS,
+          });
+          if (refusal !== null) return yield* failure("invalid_request", refusal);
         }
         // The child runs in the parent's checkout; a bad ref dispatches nothing.
         const increment = yield* launchIncrementFor(project, parent.thread, {

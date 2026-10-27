@@ -11,7 +11,7 @@ const access = Effect.gen(function* () {
   const scope = yield* requireThreadMcpCapability("preview");
   return { scope, manager: yield* Preview.PreviewManager };
 });
-export const layer = McpToolAccess.toLayer(PreviewControlsToolkit, {
+export const layer = McpToolAccess.toWorkerLayer(PreviewControlsToolkit, {
   studio_preview_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const { scope, manager } = yield* access;

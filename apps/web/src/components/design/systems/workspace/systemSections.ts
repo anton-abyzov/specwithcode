@@ -257,6 +257,9 @@ export function visibleSections(
   });
 }
 
+/** The id of a section's heading: its title, or the cover's name on Overview. */
+export const sectionHeadingId = (id: SectionId) => `section-${id}-title`;
+
 export function isSectionId(value: string): value is SectionId {
   return (
     HEAD.some((entry) => entry.id === value) ||

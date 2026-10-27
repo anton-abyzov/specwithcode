@@ -263,8 +263,8 @@ export function pngDimensions(png: Uint8Array): { width: number; height: number 
 
 const { device_screenshot, ...standardHandlers } = handlers;
 
-export const layerStandard = McpToolAccess.toLayer(DeviceStandardToolkit, standardHandlers);
+export const layerStandard = McpToolAccess.toWorkerLayer(DeviceStandardToolkit, standardHandlers);
 
-export const layerScreenshot = McpToolAccess.toLayer(DeviceScreenshotToolkit, {
+export const layerScreenshot = McpToolAccess.toWorkerLayer(DeviceScreenshotToolkit, {
   device_screenshot,
 });

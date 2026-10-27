@@ -17,7 +17,14 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { NameValueTable } from "./NameValueTable";
 import { tokenToEdit } from "./systemEditIntents";
 import { typographyParts } from "./systemSections";
-import { GUTTER, TableHeader, TokenRow, type TokenTableProps } from "./tokenRows";
+import {
+  GUTTER,
+  TABLE_TITLE,
+  TableHeader,
+  TokenRow,
+  TokensScroller,
+  type TokenTableProps,
+} from "./tokenRows";
 import {
   baseValue,
   familyLabel,
@@ -261,12 +268,14 @@ export function TypographyTable(
 ) {
   const parts = typographyParts(props.tokens);
   const columns = `minmax(7.5rem,0.6fr) minmax(12rem,2fr) ${GUTTER}`;
+  // In a table under 42rem the name and actions share a line and the preview the line under it.
+  const narrowColumns = "minmax(0,1fr)";
   return (
-    <div className="flex flex-col gap-6" data-testid="typography-table">
+    <div className="flex flex-col gap-8" data-testid="typography-table">
       {parts.sets.map((set) => (
-        <div role="table" aria-label={set.label} key={set.key} className="overflow-x-auto">
-          <div className="min-w-[26rem]">
-            <div className="flex items-center gap-2 px-3 pb-1">
+        <TokensScroller role="table" aria-label={set.label} key={set.key}>
+          <div className="min-w-0">
+            <div className={TABLE_TITLE}>
               <h3 className="font-medium text-sm text-foreground">{set.label}</h3>
               <span className="text-muted-foreground text-xs tabular-nums">
                 {set.tokens.length}
@@ -283,18 +292,23 @@ export function TypographyTable(
                 </Button>
               ) : null}
             </div>
-            <TableHeader columns={columns} labels={["Name", "Preview"]} />
+            <TableHeader
+              columns={columns}
+              narrowColumns={narrowColumns}
+              labels={["Name", "Preview"]}
+            />
             {set.tokens.map((token) => (
               <TypeRow
                 key={token.name}
                 {...props}
                 token={token}
                 columns={columns}
+                narrowColumns={narrowColumns}
                 families={parts.families}
               />
             ))}
           </div>
-        </div>
+        </TokensScroller>
       ))}
       {parts.families.length > 0 ? (
         <NameValueTable {...props} title="Font families" tokens={parts.families} check="plain" />
@@ -313,6 +327,7 @@ function TypeRow(
   props: TokenTableProps & {
     token: DesignToken;
     columns: string;
+    narrowColumns: string;
     families: readonly DesignToken[];
   },
 ) {
