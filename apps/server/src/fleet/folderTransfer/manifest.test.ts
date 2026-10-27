@@ -4,7 +4,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
+import {
+  isSecretLikeProjectPath,
+  isUntrackedSecretConfigPath,
+} from "../../workspace/WorkspaceSensitivePaths.ts";
 import {
   classifyFile,
   DEFAULT_SELECTION,
@@ -205,6 +208,51 @@ describe("paths and secret-like files", () => {
       expect(isSecretLikeProjectPath(path)).toBe(true);
     for (const path of ["README.md", "src/env.ts", "docs/aws.md", "environment.json"])
       expect(isSecretLikeProjectPath(path)).toBe(false);
+  });
+
+  it("treats untracked per-stack config secrets as secret and env templates as ordinary", () => {
+    for (const path of [
+      "src/Api/appsettings.Development.json",
+      "src/Api/appsettings.json",
+      "src/Api/secrets.json",
+      "src/Api/Properties/PublishProfiles/Prod.pubxml.user",
+      "service/src/main/resources/application-local.yml",
+      "android/key.properties",
+      "android/keystore.properties",
+      "worker/.dev.vars",
+      "worker/.dev.vars.production",
+      "config/master.key",
+      ".streamlit/secrets.toml",
+      "infra/prod.tfvars",
+      "infra/terraform.tfstate",
+      "deploy/kubeconfig",
+      "gcp/service-account.json",
+      "gcp/client_secret_123.apps.googleusercontent.com.json",
+      "google/credentials.json",
+    ]) {
+      expect(isUntrackedSecretConfigPath(path)).toBe(true);
+      expect(classifyFile({ relative: path, insideGitData: false, gitState: "ignored" })).toBe(
+        "secret",
+      );
+      expect(classifyFile({ relative: path, insideGitData: false, gitState: "tracked" })).toBe(
+        "tracked",
+      );
+    }
+    for (const path of [
+      ".env.example",
+      "tools/xero-sync/.env.example",
+      "apps/web/.env.local.example",
+      ".env.sample",
+      ".env.template",
+      ".env.dist",
+      "src/Api/appsettings.cs",
+      "service/src/main/resources/application.yml",
+      "package.json",
+      "tsconfig.json",
+    ]) {
+      expect(isSecretLikeProjectPath(path)).toBe(false);
+      expect(isUntrackedSecretConfigPath(path)).toBe(false);
+    }
   });
 });
 

@@ -122,3 +122,47 @@ export async function gitText(cwd: string, args: ReadonlyArray<string>): Promise
 export async function gitList(cwd: string, args: ReadonlyArray<string>): Promise<Array<string>> {
   return (await runGit(cwd, args)).stdout.split("\0").filter(Boolean);
 }
+
+/**
+ * The URLs to try for an origin: itself, then its HTTPS form when it is an SSH
+ * address (`git@host:owner/repo`, `ssh://git@host/owner/repo`). A machine without
+ * an SSH key can often still clone over HTTPS: a public repository needs no
+ * sign-in, and a private one uses the Git credential helper (such as `gh auth`).
+ */
+export function originCandidates(origin: string): Array<string> {
+  const scp = /^[^@/]+@([^:/]+):(?!\/)(.+?)(?:\.git)?\/?$/.exec(origin);
+  const ssh = /^ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/.exec(origin);
+  const match = scp ?? ssh;
+  if (!match) return [origin];
+  return [origin, `https://${match[1]}/${match[2]}.git`];
+}
+
+/** SSH never asks for a password or passphrase; an unreachable host fails fast. */
+const BATCH_SSH = { GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=15" };
+
+/** Git's environment for talking to a remote without a person at the keyboard. */
+export function remoteEnv(): Readonly<Record<string, string>> {
+  return process.env.GIT_SSH_COMMAND ? {} : BATCH_SSH;
+}
+
+/**
+ * The first of `originCandidates(origin)` this machine can read, or null when
+ * none answers (no network, no key, no access). Runs `git ls-remote`, which reads
+ * refs only.
+ */
+export async function reachableOrigin(
+  origin: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  for (const candidate of originCandidates(origin)) {
+    const result = await runGit(cwd, ["ls-remote", "--quiet", "--heads", candidate], {
+      allowFailure: true,
+      timeoutMs: 45_000,
+      env: remoteEnv(),
+      ...(signal ? { signal } : {}),
+    }).catch(() => null);
+    if (result?.code === 0) return candidate;
+  }
+  return null;
+}

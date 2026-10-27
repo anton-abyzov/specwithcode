@@ -628,6 +628,7 @@ const make = Effect.gen(function* () {
       copies.decide(input.operationId, {
         ...(input.decisions ? { decisions: input.decisions } : {}),
         ...(input.clone ? { clone: input.clone } : {}),
+        ...(input.skip ? { skip: input.skip } : {}),
         ...(input.mirror !== undefined ? { mirror: input.mirror } : {}),
       }),
     ).pipe(Effect.flatMap(destinationStatus));

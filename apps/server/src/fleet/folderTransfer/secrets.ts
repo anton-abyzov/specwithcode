@@ -59,7 +59,7 @@ export function selectSecretFiles(
     if (!file || !isSafeRelativePath(path))
       throw new SecretStepError(
         "not_offered",
-        "Only secret files found in the folder can be sent.",
+        `${path} is no longer a secret file in the folder. Untick it, or measure again.`,
       );
     if (file.size > MAX_SECRET_FILE_BYTES)
       throw new SecretStepError("too_large", `${path} is larger than 1 MB; copy it by hand.`);

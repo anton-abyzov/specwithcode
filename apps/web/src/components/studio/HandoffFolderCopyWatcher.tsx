@@ -10,6 +10,13 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { cloneableRows, copySettled, DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
+import {
+  copyActivityFromSource,
+  copyActivityFromStatus,
+  copyActivityKey,
+  copyOpener,
+  setCopyActivity,
+} from "../../studio/folderCopyActivity";
 import { toastManager } from "../ui/toast";
 import {
   folderCopyStorageKey,
@@ -128,8 +135,10 @@ const writePointer = (key: string, value: PendingCopy) => {
 };
 
 /**
- * Mounted while the handoff dialog is closed after it left a measure or copy running.
- * It watches that one operation and says when it is ready, then stops. A one-click copy
+ * Mounted app wide while the handoff dialog is closed after it left a measure or copy
+ * running, so switching projects never stops it. It watches that one operation, shows
+ * its progress on the project's sidebar row and banner, and says when it is ready, then
+ * stops. A one-click copy
  * keeps going here: once measured it starts comparing, and a plan that replaces nothing
  * and has no secret files to choose is approved, as the dialog would. Reopening the
  * dialog unmounts it; the dialog resumes the operation itself.
@@ -140,6 +149,8 @@ export function HandoffFolderCopyWatcher({
   machineLabel,
   sourceLabel = "this machine",
   onOpenDialog,
+  restored = false,
+  onDone,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
@@ -148,6 +159,10 @@ export function HandoffFolderCopyWatcher({
   readonly sourceLabel?: string;
   /** Opens the handoff dialog, which resumes this copy; a warning toast's action calls it. */
   readonly onOpenDialog?: () => void;
+  /** Restored after a reload: a copy that already finished is not announced again. */
+  readonly restored?: boolean;
+  /** Called once the watcher stops watching. */
+  readonly onDone?: () => void;
 }) {
   const status = useAtomCommand(machineHandoff.copyStatus, { reportFailure: false });
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
@@ -156,12 +171,18 @@ export function HandoffFolderCopyWatcher({
   const decide = useAtomCommand(machineHandoff.copyDecide, { reportFailure: false });
   const approve = useAtomCommand(machineHandoff.copyApprove, { reportFailure: false });
   const commands = { status, sourceStatus, offerCopy, start, decide, approve };
-  const latest = useRef({ commands, machineLabel, sourceLabel, onOpenDialog });
-  latest.current = { commands, machineLabel, sourceLabel, onOpenDialog };
+  const latest = useRef({ commands, machineLabel, sourceLabel, onOpenDialog, onDone });
+  latest.current = { commands, machineLabel, sourceLabel, onOpenDialog, onDone };
 
   useEffect(() => {
     const key = folderCopyStorageKey(environmentId, projectId);
-    if (!readPendingCopy(key)) return;
+    const activityKey = copyActivityKey(environmentId, projectId);
+    if (!readPendingCopy(key)) {
+      latest.current.onDone?.();
+      return;
+    }
+    // Only the first check of a restored watch can find a copy that finished unseen.
+    let quiet = restored;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let startFailures = 0;
@@ -257,8 +278,12 @@ export function HandoffFolderCopyWatcher({
         input: { operationId },
       });
       if (stopped) return false;
+      const firstCheck = quiet;
+      quiet = false;
       if (destination._tag === "Success") {
+        setCopyActivity(activityKey, copyActivityFromStatus(destination.value, machine));
         if (!copySettled(destination.value)) return true;
+        if (firstCheck) return false;
         if ((saved.auto || saved.replaceAll) && destination.value.state === "previewed") {
           // A refused choice or approval waits for the person instead of retrying.
           const outcome = await settle(saved, destination.value).catch(() => "ask" as const);
@@ -267,16 +292,22 @@ export function HandoffFolderCopyWatcher({
         }
         const summary = destination.value.state === "applied" ? await readSummary() : null;
         if (stopped) return false;
-        const open = latest.current.onOpenDialog;
+        const open = latest.current.onOpenDialog ?? copyOpener(activityKey);
         announceCopy(destination.value, machine, summary, sourceLabel, open ? () => open() : null);
         return false;
       }
-      // An unreachable destination may come back; keep watching.
-      if (!isFolderCopyNotFound(squashAtomCommandFailure(destination))) return true;
+      // An unreachable destination may come back; keep watching, unless only restored.
+      if (!isFolderCopyNotFound(squashAtomCommandFailure(destination))) return !firstCheck;
       const source = await commands.sourceStatus({ environmentId, input: { operationId } });
       if (stopped) return false;
-      if (source._tag === "Failure") return !isFolderCopyNotFound(squashAtomCommandFailure(source));
+      if (source._tag === "Failure") {
+        const gone = isFolderCopyNotFound(squashAtomCommandFailure(source));
+        if (gone) setCopyActivity(activityKey, null);
+        return !gone;
+      }
+      setCopyActivity(activityKey, copyActivityFromSource(source.value, machine));
       if (source.value.state === "scanning") return true;
+      if (firstCheck && !saved.auto) return false;
       if (source.value.summary && source.value.state !== "failed") {
         if (saved.auto) {
           try {
@@ -308,14 +339,20 @@ export function HandoffFolderCopyWatcher({
       timer = setTimeout(async () => {
         // Another dialog session finished or replaced this operation.
         const saved = readPendingCopy(key);
-        if (stopped || saved?.operationId !== operationId) return;
+        if (stopped) return;
+        if (saved?.operationId !== operationId) {
+          latest.current.onDone?.();
+          return;
+        }
         let again = true;
         try {
           again = await check(saved);
         } catch {
           again = true;
         }
-        if (again && !stopped) tick();
+        if (stopped) return;
+        if (again) tick();
+        else latest.current.onDone?.();
       }, WATCH_MS);
     };
     tick();
@@ -323,7 +360,7 @@ export function HandoffFolderCopyWatcher({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [environmentId, projectId]);
+  }, [environmentId, projectId, restored]);
 
   return null;
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { FileClass } from "./classify.ts";
 import type { ManifestEntry, RepositoryInfo } from "./manifest.ts";
 import {
+  gitAccessWarning,
   planReady,
   planReconcile,
   repoRowId,
@@ -286,6 +287,78 @@ describe("repository matrix", () => {
     });
     expect(step(result, "svc").kind).toBe("clone");
     expect(result.actions.map((action) => action.path)).toEqual(["svc/notes.md"]);
+  });
+
+  it("a clone this machine cannot read is copied whole, and a readable one uses that address", () => {
+    const result = plan({
+      repositories: [sourceRepo("."), sourceRepo("svc"), sourceRepo("web")],
+      entries: [
+        file("svc/.git/HEAD", "h", { class: "repository", repo: "svc" }),
+        file("svc/src/a.ts", "a", { repo: "svc" }),
+        file("web/src/b.ts", "b", { repo: "web" }),
+      ],
+      clone: [repoRowId("svc"), repoRowId("web")],
+      cloneOrigins: {
+        [repoRowId("svc")]: null,
+        [repoRowId("web")]: "https://github.com/acme/web.git",
+      },
+    });
+    expect(row(result, repoRowId("svc"))).toMatchObject({ clone: false, cloneAvailable: false });
+    expect(row(result, repoRowId("svc")).detail).toContain("cannot read its origin");
+    expect(step(result, "svc").kind).toBe("copy");
+    expect(step(result, "web")).toMatchObject({
+      kind: "clone",
+      origin: "https://github.com/acme/web.git",
+    });
+    expect(result.actions.map((action) => action.path).sort()).toEqual([
+      "svc/.git/HEAD",
+      "svc/src/a.ts",
+    ]);
+    expect(result.warnings).toContain(gitAccessWarning(["svc"]));
+  });
+
+  it("names every unreadable repository once, with how to sign in", () => {
+    expect(gitAccessWarning(["the root repository", "a", "b", "c", "d", "e"])).toBe(
+      "The destination machine cannot read the origins of the root repository, a, b, c and 2 more (no GitHub sign-in or SSH key there), so they are copied whole with their history instead of cloned. To clone next time, install the GitHub CLI on it and run gh auth login, then gh auth setup-git.",
+    );
+  });
+
+  it("a skipped repository, its nested repositories and its worktrees copy nothing", () => {
+    const result = plan({
+      repositories: [
+        sourceRepo("."),
+        sourceRepo("repos/ec"),
+        sourceRepo("repos/ec/vendor/lib"),
+        sourceRepo("repos/ec-wt", { kind: "linked", mainRepository: "repos/ec" }),
+        sourceRepo("repos/kept"),
+      ],
+      entries: [
+        file("repos/ec", "", { type: "directory", repo: ".", class: "untracked" }),
+        file("repos/ec/.git/HEAD", "h", { class: "repository", repo: "repos/ec" }),
+        file("repos/ec/src/a.ts", "a", { repo: "repos/ec" }),
+        file("repos/ec/.env", "e", { repo: "repos/ec", class: "secret" }),
+        file("repos/ec/vendor/lib/b.ts", "b", { repo: "repos/ec/vendor/lib" }),
+        file("repos/ec-wt/c.ts", "c", { repo: "repos/ec-wt" }),
+        file("repos/kept/d.ts", "d", { repo: "repos/kept" }),
+      ],
+      destination: {
+        files: [here("repos/ec/local.md", "l", { repo: null, class: "untracked" })],
+        repositories: [destinationRepo(".")],
+      },
+      mirror: true,
+      clone: [repoRowId("repos/ec")],
+      skip: [repoRowId("repos/ec")],
+    });
+    for (const path of ["repos/ec", "repos/ec/vendor/lib", "repos/ec-wt"])
+      expect(row(result, repoRowId(path))).toMatchObject({
+        status: "skipped",
+        filesToMove: 0,
+        needsDecision: false,
+      });
+    expect(row(result, repoRowId("repos/ec"))).toMatchObject({ cloneAvailable: true, clone: true });
+    expect(result.git.map((item) => item.repo).sort()).toEqual([".", "repos/kept"]);
+    expect(result.actions.map((action) => action.path)).toEqual(["repos/kept/d.ts"]);
+    expect(planReady(result)).toBe(true);
   });
 
   it("a different repository at the same path is a conflict", () => {

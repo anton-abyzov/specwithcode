@@ -3031,3 +3031,57 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-project-divider:active {
   background: color-mix(in srgb, var(--primary) 25%, transparent);
 }
+/* A folder copy to another machine runs in the background: the row dims and a thin
+   bar along its bottom edge shows how far it is. The project stays usable. */
+.sws-project-row[data-copying] .sws-side-row > :is(img, svg, .sws-side-row-label) {
+  opacity: 0.55;
+}
+.sws-copy-progress {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 1px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--sidebar-muted-foreground) 25%, transparent);
+  pointer-events: none;
+}
+.sws-copy-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 400ms ease;
+}
+.sws-copy-progress[data-waiting] .sws-copy-progress-fill {
+  width: 100%;
+  background: var(--sidebar-muted-foreground);
+}
+.sws-copy-progress[data-indeterminate] .sws-copy-progress-fill {
+  width: 30%;
+  animation: sws-copy-sweep 1.4s ease-in-out infinite;
+}
+@keyframes sws-copy-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-copy-progress[data-indeterminate] .sws-copy-progress-fill {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}
+/* The same bar, full width in the project's copy banner. */
+.sws-copy-progress[data-inline] {
+  position: relative;
+  inset: auto;
+  height: 4px;
+  border-radius: 2px;
+}

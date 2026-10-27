@@ -38,9 +38,37 @@ export function HandoffSecretsStep({
     <fieldset className="min-w-0 space-y-2 text-sm" data-slot="copy-secrets" disabled={disabled}>
       <legend className="mb-1 font-medium">Secret files</legend>
       <p className="text-xs text-muted-foreground">
-        These files look like passwords, keys or tokens, so they stay here unless you tick them.
-        Sign-ins to Claude, Codex and GitHub are never copied; sign in on {targetLabel} instead.
+        These files look like passwords, keys or tokens (.env files, private keys, .NET appsettings
+        overrides and secrets.json, Spring profiles, .dev.vars, Terraform variables, service-account
+        JSON), so they stay here unless you tick them. Sign-ins to Claude, Codex and GitHub are
+        never copied; sign in on {targetLabel} instead.
       </p>
+      {files.length > 1 && (
+        <div className="flex flex-wrap gap-2 text-xs" data-slot="copy-secrets-all">
+          <button
+            type="button"
+            disabled={disabled || files.every((file) => selected.includes(file.path))}
+            className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
+            onClick={() => {
+              onSelectedChange(files.map((file) => file.path));
+              onConfirmedChange(false);
+            }}
+          >
+            Tick all
+          </button>
+          <button
+            type="button"
+            disabled={disabled || selected.length === 0}
+            className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
+            onClick={() => {
+              onSelectedChange([]);
+              onConfirmedChange(false);
+            }}
+          >
+            Untick all
+          </button>
+        </div>
+      )}
       <ul className="max-h-48 space-y-1 overflow-auto rounded-lg border p-2">
         {files.map((file) => (
           <li key={file.path}>

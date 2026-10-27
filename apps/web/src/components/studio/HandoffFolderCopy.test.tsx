@@ -1757,6 +1757,71 @@ it("keeps the person's clone choices when a decided clone copy is reopened", asy
   expect(container.querySelector('[data-slot="copy-secrets"]')).not.toBeNull();
 });
 
+it("keeps the preview while repository clicks re-compare once", async () => {
+  localStorage.setItem(
+    "specwithcode:folder-copy:m4:source",
+    JSON.stringify({
+      operationId: "00000000-0000-4000-8000-000000000009",
+      environmentId: "m3",
+      mode: "copy-only",
+      targetFolder: "/target",
+      projectId: null,
+      method: "copy",
+    }),
+  );
+  state.handlers.copySourceStatus = () => ({
+    state: "ready",
+    summary,
+    progress: null,
+    error: null,
+  });
+  const rows = [
+    newRow("."),
+    newRow("repos/app", { cloneAvailable: true }),
+    newRow("repos/ec", { cloneAvailable: true }),
+  ];
+  statuses = [
+    copyStatus("previewed", { rows }),
+    copyStatus("previewed", {
+      rows: [
+        rows[0],
+        { ...rows[1], clone: true },
+        { ...rows[2], status: "skipped", filesToMove: 0 },
+      ],
+    }),
+  ];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  const checkbox = (label: string) =>
+    container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+  const cloneApp = container.querySelector<HTMLElement>(
+    '[data-slot="copy-clone"] [data-slot="checkbox"]',
+  )!;
+  await act(async () => cloneApp.click());
+  await act(async () => checkbox("Copy repos/ec").click());
+  // Shown at once, before the destination answers; the preview is not replaced.
+  expect(container.querySelector('[data-slot="copy-row"][data-copied="false"]')).not.toBeNull();
+  expect(container.textContent).toContain("Updating sizes…");
+  expect(names()).not.toContain("copyDecide");
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 600)));
+  expect(state.calls.filter(([name]) => name === "copyDecide")).toEqual([
+    [
+      "copyDecide",
+      {
+        environmentId: "m3",
+        input: {
+          operationId: "00000000-0000-4000-8000-000000000009",
+          clone: ["repo:repos/app"],
+          skip: ["repo:repos/ec"],
+        },
+      },
+    ],
+  ]);
+  expect(container.querySelector('[data-slot="copy-preview"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("Updating sizes…");
+  expect(container.textContent).not.toContain("Comparing with");
+});
+
 it("reports not busy when the copy flow unmounts mid-measure", async () => {
   const offer = state.handlers.copyOffer!;
   state.handlers.copyOffer = (input) => ({ ...(offer(input) as object), status: scanning() });

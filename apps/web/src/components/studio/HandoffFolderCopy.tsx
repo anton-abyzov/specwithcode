@@ -7,6 +7,7 @@ import {
   type FolderCopyFileClass,
   type FolderCopyMode,
   type FolderCopyOffer,
+  type FolderCopyRow,
   type FolderCopySourceStatus,
   type FolderCopySourceSummary,
   type FolderCopyStatus,
@@ -79,8 +80,15 @@ import { useCopyStepView } from "./useCopyStepView";
 import { useCopyDraft } from "./useCopyDraft";
 import { HandoffCopyScanFreshness } from "./HandoffCopyScanFreshness";
 import { HandoffCopyStepPanels } from "./HandoffCopyStepPanels";
+import {
+  copyActivityFromSource,
+  copyActivityFromStatus,
+  copyActivityKey,
+  setCopyActivity,
+} from "../../studio/folderCopyActivity";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
 import { HandoffCopyReview } from "./HandoffCopyReview";
+import type { RepositoryChoices } from "./HandoffCopyPreview";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
 export type { CopyMachine };
@@ -100,12 +108,33 @@ interface CopyChoices {
 }
 
 const POLL_MS = 1000;
+/** Repository clicks closer together than this re-compare once. */
+const REPOSITORY_SETTLE_MS = 400;
+
+/** True when `path` sits inside a repository row the person left out. */
+function insideSkipped(
+  path: string,
+  skip: ReadonlyArray<string>,
+  rows: ReadonlyArray<FolderCopyRow>,
+): boolean {
+  return rows.some(
+    (row) => skip.includes(row.id) && row.path !== "." && path.startsWith(`${row.path}/`),
+  );
+}
 const NOT_ABSOLUTE = "Enter the full absolute path of the folder on the destination machine.";
 const absolute = (folder: string) => folder.startsWith("/") || /^[A-Za-z]:[\\/]/.test(folder);
 /**
  * Copies the project folder to another machine: the destination pulls the files from
  * this machine, previews what changes, and applies only after approval.
  */
+/** What a running step is called on the sidebar row before its status first arrives. */
+const STAGE_ACTIVITY: Partial<Record<Stage, string>> = {
+  scanning: "Measuring the folder",
+  planning: "Comparing folders",
+  copying: "Copying files",
+  moving: "Transferring context",
+};
+
 export function HandoffFolderCopy({
   project,
   coordinatorId,
@@ -218,6 +247,12 @@ export function HandoffFolderCopy({
   const [recompare, setRecompare] = useState<CopyRecompare>(null);
   const [transferRecovery, setTransferRecovery] = useState(false);
   const [working, setWorking] = useState(false);
+  // Clone and skip choices not yet in the destination's plan, and whether it is re-comparing.
+  const [repositoryChoices, setRepositoryChoices] = useState<RepositoryChoices | null>(null);
+  const [replanning, setReplanning] = useState(false);
+  const repositoryDraft = useRef<RepositoryChoices | null>(null);
+  const repositoryTimer = useRef<number | null>(null);
+  const repositorySending = useRef(false);
   const [link, setLink] = useState<CopyLinkOutcome | { readonly status: "linking" } | null>(null);
   const [linkDialog, setLinkDialog] = useState(false);
   // The machine a copy was just cancelled for before Apply, said once on the setup form.
@@ -247,7 +282,10 @@ export function HandoffFolderCopy({
   const measureStop = useRef<AbortController | null>(null);
   useEffect(() => {
     const controller = abort.current;
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (repositoryTimer.current !== null) window.clearTimeout(repositoryTimer.current);
+    };
   }, []);
 
   const busy =
@@ -263,6 +301,22 @@ export function HandoffFolderCopy({
   useEffect(() => onCloseLockChange?.(closeLocked), [closeLocked, onCloseLockChange]);
   // Unmounting ends this view of the copy; the parent must not keep a stale busy or lock.
   // The parent reads its running flag when the dialog closes, before this runs.
+  // The sidebar row and project banner show a running copy; once the dialog closes on a
+  // running copy, the app-wide watcher keeps them current.
+  const machineName = machines.find((item) => item.id === machine)?.label ?? "the other machine";
+  const activityKey = copyActivityKey(project.environmentId, project.id);
+  useEffect(() => {
+    if (!busy) return setCopyActivity(activityKey, null);
+    const fromCopy = copy ? copyActivityFromStatus(copy, machineName) : null;
+    const fromSource = scanStatus ? copyActivityFromSource(scanStatus, machineName) : null;
+    const label = STAGE_ACTIVITY[stage];
+    setCopyActivity(
+      activityKey,
+      fromCopy ??
+        (fromSource && !fromSource.waiting ? fromSource : null) ??
+        (label ? { machine: machineName, label, fraction: null, waiting: false } : null),
+    );
+  }, [activityKey, busy, copy, scanStatus, machineName, stage]);
   const reporters = useRef({ onBusyChange, onCloseLockChange });
   reporters.current = { onBusyChange, onCloseLockChange };
   useEffect(
@@ -451,7 +505,16 @@ export function HandoffFolderCopy({
         }),
       );
       setScanStatus(measured);
-      if (measured.summary) setSummary(measured.summary);
+      setSummary(measured.summary ?? null);
+      if (measured.summary) {
+        // A ticked file the source no longer lists is unticked, not sent and refused.
+        const listed = new Set(measured.summary.secretFiles.map((file) => file.path));
+        setSecretPaths((ticked) =>
+          ticked.every((path) => listed.has(path))
+            ? ticked
+            : ticked.filter((path) => listed.has(path)),
+        );
+      }
       return measured.summary;
     } catch {
       return null;
@@ -557,6 +620,12 @@ export function HandoffFolderCopy({
   // Resume a copy this browser started before a reload or a closed dialog.
   const resume = (saved: PendingCopy) => {
     stepView.armRestore(saved);
+    // Secret files and worktrees shown must be this copy's, never an earlier copy's.
+    if (latestPending.current?.operationId !== saved.operationId) {
+      setSummary(null);
+      setSecretPaths([]);
+      setSecretsConfirmed(false);
+    }
     latestPending.current = saved;
     setPending(saved);
     // A copy linked before the dialog closed is not linked again.
@@ -786,6 +855,7 @@ export function HandoffFolderCopy({
       }
     }
     const operationId = randomUUID();
+    setSummary(null);
     setSecretPaths([]);
     setSecretsConfirmed(false);
     const projectId = destinationProjectId(
@@ -888,6 +958,58 @@ export function HandoffFolderCopy({
       );
       show(await pollCopy(machine, pending.operationId));
     });
+
+  /**
+   * Clone and skip clicks show at once and wait briefly, so several clicks re-compare
+   * once. The preview stays on screen while the destination compares; Copy waits for it.
+   */
+  const changeRepositories = (next: RepositoryChoices) => {
+    repositoryDraft.current = next;
+    setRepositoryChoices(next);
+    // Secret files inside a repository left out stay here too.
+    setSecretPaths((ticked) =>
+      ticked.filter((path) => !insideSkipped(path, next.skip, copy?.rows ?? [])),
+    );
+    if (repositoryTimer.current !== null) window.clearTimeout(repositoryTimer.current);
+    repositoryTimer.current = window.setTimeout(() => {
+      repositoryTimer.current = null;
+      void sendRepositories();
+    }, REPOSITORY_SETTLE_MS);
+    setReplanning(true);
+  };
+  const sendRepositories = async () => {
+    if (repositorySending.current) return;
+    repositorySending.current = true;
+    try {
+      for (;;) {
+        const sent = repositoryDraft.current;
+        const saved = latestPending.current;
+        if (!sent || !saved) break;
+        const environmentId = saved.environmentId as EnvironmentId;
+        if (saved.replaceAll) withoutReplaceAll(saved);
+        unwrap(
+          await decide({
+            environmentId,
+            input: { operationId: saved.operationId, clone: sent.clone, skip: sent.skip },
+          }),
+        );
+        const next = await pollCopy(environmentId, saved.operationId);
+        // Clicks made while comparing go out in one more round.
+        if (repositoryDraft.current !== sent) continue;
+        repositoryDraft.current = null;
+        setRepositoryChoices(null);
+        if (next.state !== "previewed") show(next);
+        break;
+      }
+    } catch (cause) {
+      repositoryDraft.current = null;
+      setRepositoryChoices(null);
+      if (!isAbortError(cause)) setError(messageOf(cause));
+    } finally {
+      repositorySending.current = false;
+      if (repositoryTimer.current === null) setReplanning(false);
+    }
+  };
 
   const secretsTicked = secretPaths.length > 0 && secretsConfirmed;
   /** The ticked and confirmed secret files go to the source for this destination only. */
@@ -1468,6 +1590,9 @@ export function HandoffFolderCopy({
             replaceLeft={replaceLeft}
             replacingFiles={replacingFiles}
             onChange={(input) => void change(input)}
+            repositoryChoices={repositoryChoices}
+            onRepositories={changeRepositories}
+            replanning={replanning}
             secretPaths={secretPaths}
             secretsConfirmed={secretsConfirmed}
             onSecretPathsChange={setSecretPaths}
@@ -1496,7 +1621,7 @@ export function HandoffFolderCopy({
             sourceChanged={scanStatus?.freshness?.current === false}
             stage={stage}
             error={error}
-            busy={busy}
+            busy={busy || replanning}
             working={working}
             pending={pending}
             copy={copy}

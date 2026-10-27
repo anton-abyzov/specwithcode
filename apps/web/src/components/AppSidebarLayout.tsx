@@ -47,6 +47,7 @@ import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
+import { FolderCopyWatchers } from "./studio/FolderCopyWatchers";
 import {
   clampThreadSidebarWidth,
   resolveInitialThreadSidebarWidth,
@@ -346,6 +347,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           {children}
           <SidebarControl />
           <LowDiskSpaceBanner />
+          <FolderCopyWatchers />
           <ViewerOverlayHost />
           <ViewerOverlayRouteGuard />
           <NavigationHistoryShortcuts />

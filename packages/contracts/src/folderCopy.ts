@@ -275,6 +275,8 @@ export const FolderCopyDecideInput = Schema.Struct({
   operationId: MachineHandoffOperationId,
   decisions: Schema.optional(Schema.Record(bounded(4200), FolderCopyChoice)),
   clone: Schema.optional(Schema.Array(bounded(4200))),
+  /** Repository rows to leave out of the copy entirely. Older destinations ignore it. */
+  skip: Schema.optional(Schema.Array(bounded(4200))),
   mirror: Schema.optional(Schema.Boolean),
 });
 export type FolderCopyDecideInput = typeof FolderCopyDecideInput.Type;
@@ -301,6 +303,7 @@ export const FolderCopyRow = Schema.Struct({
     "conflict",
     "new",
     "only-here",
+    "skipped",
   ]),
   detail: bounded(4000),
   filesToMove: count,

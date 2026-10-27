@@ -500,9 +500,10 @@ describe("scan freshness", () => {
       expect(
         (yield* Effect.promise(() => sources.checkScan(operationId)))?.freshness?.current,
       ).toBe(false);
+      // Git on Windows lists paths with forward slashes.
       expect(
         (yield* Effect.promise(() => runGit(repo, ["worktree", "list", "--porcelain"]))).stdout,
-      ).toContain(external);
+      ).toContain(external.replaceAll("\\", "/"));
     }),
   );
 

@@ -17,9 +17,18 @@ import type { PendingCopy, ReplaceAllOutcome } from "./handoffFolderCopyPending"
  */
 
 /** Row states that cannot replace anything on the destination, whatever it reports. */
-const NOTHING_THERE: ReadonlySet<FolderCopyRow["status"]> = new Set(["new", "only-here"]);
+const NOTHING_THERE: ReadonlySet<FolderCopyRow["status"]> = new Set([
+  "new",
+  "only-here",
+  "skipped",
+]);
 /** Row states that leave the destination's files as they are when nothing is counted as replaced. */
-const UNTOUCHED: ReadonlySet<FolderCopyRow["status"]> = new Set(["new", "same", "only-here"]);
+const UNTOUCHED: ReadonlySet<FolderCopyRow["status"]> = new Set([
+  "new",
+  "same",
+  "only-here",
+  "skipped",
+]);
 
 /** Files this row's plan replaces or moves to the backup; null when the destination does not say. */
 export function rowReplacing(row: FolderCopyRow): number | null {

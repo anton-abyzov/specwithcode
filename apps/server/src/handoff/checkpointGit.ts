@@ -12,7 +12,10 @@ import {
 } from "@specweave-studio/contracts";
 
 import { gitText, runGit } from "../fleet/folderTransfer/git.ts";
-import { isSecretLikeProjectPath } from "../workspace/WorkspaceSensitivePaths.ts";
+import {
+  isSecretLikeProjectPath,
+  isUntrackedSecretConfigPath,
+} from "../workspace/WorkspaceSensitivePaths.ts";
 
 const SKIPPED_LIST_MAX = 200;
 const REQUIRED_SECRET_PATHS_MAX = 200;
@@ -129,9 +132,15 @@ export async function writeCheckpoint(input: {
     ]);
     const secretPaths = new Set<string>();
     for (const entry of ignored.stdout.split("\0")) {
-      if (entry && !entry.endsWith("/") && isSecretLikeProjectPath(entry)) secretPaths.add(entry);
+      if (
+        entry &&
+        !entry.endsWith("/") &&
+        (isSecretLikeProjectPath(entry) || isUntrackedSecretConfigPath(entry))
+      )
+        secretPaths.add(entry);
     }
     const candidates = new Set<string>();
+    const untrackedPaths = new Set(untracked.stdout.split("\0").filter(Boolean));
     for (const entry of changed.stdout.split("\0")) if (entry) candidates.add(entry);
     for (const entry of untracked.stdout.split("\0")) if (entry) candidates.add(entry);
 
@@ -146,7 +155,11 @@ export async function writeCheckpoint(input: {
         skip({ path: path.slice(0, -1), bytes: 0, reason: "submodule" });
         continue;
       }
-      if (isSecretLikeProjectPath(path)) {
+      // A tracked appsettings.json is ordinary work; an untracked one usually holds secrets.
+      if (
+        isSecretLikeProjectPath(path) ||
+        (untrackedPaths.has(path) && isUntrackedSecretConfigPath(path))
+      ) {
         excludedSecretCount += 1;
         secretPaths.add(path);
         continue;
