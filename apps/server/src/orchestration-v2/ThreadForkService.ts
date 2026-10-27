@@ -85,8 +85,10 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
             cause: forkableSourceRunStatusError(input.sourceRun),
           });
         }
+        const { lifecycleRevision: _lifecycleRevision, ...sourceThread } =
+          input.sourceProjection.thread;
         const targetThread: OrchestrationV2AppThread = {
-          ...input.sourceProjection.thread,
+          ...sourceThread,
           createdBy: input.createdBy,
           creationSource: input.creationSource,
           id: input.targetThreadId,
@@ -107,7 +109,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           createdAt: input.createdAt,
           updatedAt: input.createdAt,
           archivedAt: null,
-          // The source's delivery evidence names the source's turns, not the fork's.
+          // The source's delivery evidence and revision name the source's turns, not the fork's.
           lifecycleReceipt: null,
           settledOverride: null,
           settledAt: null,

@@ -42,6 +42,18 @@ export default defineConfig({
             ),
             "utf8",
           );
+          // `?visual`: a diagram fragment, wrapped as show_visual wraps it.
+          if (req.url?.includes("visual")) {
+            const code = readFileSync(here("./visual.svg"), "utf8");
+            res.setHeader("Content-Type", "text/html");
+            res.end(
+              mod.injectHtmlRenderBootstrap(
+                mod.htmlVisualDocument?.(code) ??
+                  `<!doctype html><html><body>${code}</body></html>`,
+              ),
+            );
+            return;
+          }
           if (req.url?.includes("historical")) {
             res.setHeader("Content-Type", "text/html");
             res.end(html);

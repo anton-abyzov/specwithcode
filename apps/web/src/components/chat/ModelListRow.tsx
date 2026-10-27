@@ -50,6 +50,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   warningReason?: string | null;
   /** Usage for this model, shown after the provider name. */
   availability?: AvailabilityText | null;
+  /** Its part in a fallback: `Now`, `Your pick`, `Fallback 2`. */
+  fallbackRole?: { readonly label: string; readonly tone: "now" | "pick" | "order" } | null;
   onToggleFavorite: () => void;
 }) {
   const providerLabel = props.model.subProvider
@@ -86,6 +88,21 @@ export const ModelListRow = memo(function ModelListRow(props: {
               aria-label="New model"
             >
               New
+            </span>
+          ) : null}
+          {props.fallbackRole ? (
+            <span
+              className={cn(
+                "shrink-0 rounded border px-1 py-px text-3xs font-semibold leading-none",
+                props.fallbackRole.tone === "now"
+                  ? "border-warning/40 bg-warning/15 text-warning-foreground"
+                  : props.fallbackRole.tone === "pick"
+                    ? "border-primary/35 bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground",
+              )}
+              data-fallback-role={props.fallbackRole.tone}
+            >
+              {props.fallbackRole.label}
             </span>
           ) : null}
           {props.unavailable ? (

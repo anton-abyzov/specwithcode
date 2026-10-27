@@ -1,4 +1,8 @@
-import type { FolderCopyMode, FolderCopySourceStatus } from "@specweave-studio/contracts";
+import type {
+  FolderCopyMode,
+  FolderCopySourceStatus,
+  FolderCopyStatus,
+} from "@specweave-studio/contracts";
 import { formatBytes } from "../../studio/folderCopy";
 import type { ReplaceAllOutcome } from "./handoffFolderCopyPending";
 import { DestinationContextPreviewError, messageOf } from "./useCoordinatorTransfer";
@@ -25,48 +29,6 @@ export type CopyRecompare = "choices" | "replace-all" | "replace-kept" | null;
 /** The re-compare a Replace all click leads to; a pointer from before outcomes were kept copies. */
 export function recompareFor(outcome: ReplaceAllOutcome | undefined): CopyRecompare {
   return outcome === "ask" ? "choices" : outcome === "copy-kept" ? "replace-kept" : "replace-all";
-}
-
-interface StepInput {
-  readonly stage: CopyStage;
-  /** One-click: no choosing step; a review step only when something would be replaced. */
-  readonly auto: boolean;
-  readonly mode: FolderCopyMode;
-  readonly contextTransferred: boolean;
-}
-
-/** Measure › Copy › Done, with Choose and Preview when choosing, Review when asked, Transfer for a move. */
-export function copySteps({ stage, auto, mode }: StepInput): ReadonlyArray<string> {
-  const steps = ["Measure"];
-  if (!auto) steps.push("Choose", "Preview");
-  else if (stage === "preview") steps.push("Review");
-  steps.push("Copy");
-  if (mode === "copy-and-move") steps.push("Transfer");
-  steps.push("Done");
-  return steps;
-}
-
-export function currentCopyStep({ stage, auto, mode, contextTransferred }: StepInput): string {
-  switch (stage) {
-    case "setup":
-    case "scanning":
-      return "Measure";
-    case "select":
-      return auto ? "Copy" : "Choose";
-    case "planning":
-      return auto ? "Copy" : "Preview";
-    case "preview":
-      return auto ? "Review" : "Preview";
-    case "copying":
-    case "failed":
-      return "Copy";
-    case "moving":
-      return "Transfer";
-    case "done":
-      return mode === "copy-and-move" && !contextTransferred ? "Transfer" : "Done";
-    case "undone":
-      return "Done";
-  }
 }
 
 /** One plain sentence saying what the next click, or the wait, does. */
@@ -138,9 +100,10 @@ export function nextStepText(input: {
     case "failed":
       if (input.held)
         return `Copy again to bring over what changed; it compares first and moves only changed files. Move anyway transfers coordinator context with these differences; Undo puts ${machine}'s folder back.`;
-      return input.failedBeforeApply
-        ? `Retry continues where the copy stopped. Nothing on ${machine} changed, so Cancel copy leaves it as it was.`
-        : "Retry continues where the copy stopped.";
+      // Before Apply the destination cannot resume: Retry runs the same copy from measuring.
+      if (input.failedBeforeApply)
+        return `Retry starts the copy again: ${input.auto ? "it measures and compares again, then copies unless it needs you" : "it measures again, then you choose what to copy and preview it"}. Nothing on ${machine} changed, so Cancel copy leaves it as it was.`;
+      return "Retry continues where the copy stopped.";
     case "done":
       if (move && !input.contextTransferred)
         return input.copyAgain
@@ -153,6 +116,23 @@ export function nextStepText(input: {
     case "undone":
       return "Start a new copy whenever you are ready.";
   }
+}
+
+/** Closing the dialog leaves these running on the machines; reopening resumes them. */
+export const CLOSABLE_WHILE_WORKING: ReadonlySet<CopyStage> = new Set([
+  "setup",
+  "scanning",
+  "planning",
+  "copying",
+]);
+
+/** The step a destination's copy status puts the dialog on; a cancelled copy reads as undone. */
+export function stageForStatus(next: FolderCopyStatus): CopyStage {
+  if (next.state === "previewed") return "preview";
+  if (next.state === "failed") return "failed";
+  if (next.state === "undone" || next.state === "cancelled") return "undone";
+  if (next.state === "applied" && next.committed && next.projectId) return "done";
+  return "copying";
 }
 
 type SourceProgress = NonNullable<FolderCopySourceStatus["progress"]>;

@@ -171,10 +171,10 @@ try {
           await page.screenshot({ path: file, fullPage: true });
           receipt.screenshots.push(file);
         }
-        if (scenario === "fallback") assert(!result.text.includes("Switch back"));
-        if (scenario === "fallback-room") {
-          assert(result.text.includes("Switch back"));
-          assert(result.bannerHeight <= 40, `banner wraps ${result.bannerHeight}`);
+        // One way back, in the picker: the thread shows no Switch back banner.
+        if (scenario.startsWith("fallback")) {
+          assert(!result.text.includes("Switch back"));
+          assert.equal(result.bannerHeight, null);
         }
         if (scenario === "fallback" || scenario === "fallback-room") {
           const file = path.join(
@@ -184,18 +184,43 @@ try {
           await page.screenshot({ path: file, fullPage: true });
           receipt.screenshots.push(file);
         }
-        if (scenario === "fallback" && width === 900) {
+        if (scenario.startsWith("fallback") && width === 900) {
           await page.locator("[data-chat-provider-model-picker]").click();
-          await page.getByRole("status").filter({ hasText: "Back to Opus 5.5" }).waitFor();
-          assert(
-            await page
-              .getByRole("status")
-              .filter({ hasText: "Back to Opus 5.5" })
+          const status = page.locator("[data-fallback-status]");
+          await status.waitFor();
+          const text = await status.innerText();
+          for (const part of [
+            "Running on a fallback",
+            "GPT-6.1-Sol · Codex",
+            "Opus 5.5 · Claude Code",
+            "Hit its usage limit.",
+            "Automatic",
+            "Order",
+          ])
+            assert(
+              text.toLowerCase().includes(part.toLowerCase()),
+              `${theme} ${scenario}: status lacks ${part}`,
+            );
+          assert.equal(await status.locator("[data-fallback-chain-role]").count(), 3);
+          assert.equal(
+            await status
+              .locator('[data-fallback-chain-role="now"]')
               .innerText()
-              .then((t) => t.includes("Back to Opus 5.5")),
+              .then((t) => t.includes("(now)")),
+            true,
           );
-          assert(await page.getByRole("button", { name: "Back to Opus 5.5" }).isDisabled());
-          const file = path.join(output, `composer-menu-${theme}.png`);
+          const back = page.getByRole("button", { name: "Return to Opus 5.5 now" });
+          assert.equal(await back.isDisabled(), scenario === "fallback");
+          assert.equal(await page.getByText(/Switch back|Back to Opus/).count(), 0);
+          // The running model's row says so in the list, not only by a star.
+          assert.equal(
+            await page.locator('[data-fallback-role="now"]').first().innerText(),
+            "Now · fallback 1",
+          );
+          const file = path.join(
+            output,
+            `composer-menu-${scenario === "fallback-room" ? "room-" : ""}${theme}.png`,
+          );
           await page.screenshot({ path: file, fullPage: true });
           receipt.screenshots.push(file);
         }

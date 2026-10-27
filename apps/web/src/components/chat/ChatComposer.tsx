@@ -2572,6 +2572,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             },
             reason: "usage limit",
             launched: displayedIdentity.launched === true,
+            preswitched: displayedIdentity.preswitched === true,
           })
         : { kind: "preferred" as const, pick: preferredLabel.full };
 

@@ -1,0 +1,567 @@
+{
+  "source": "Muse Code 1.4.13 (1.4.13-R6996.1) view/page of a real native-subscription turn, October 26, 2026; user prompt and session ids removed, workspace path replaced",
+  "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+  "events": [
+    {
+      "method": "item/started",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-a54d-78f0-b954-004b996d336c", "sequence": 36 },
+          "last": { "id": "01a1796a-a54d-78f0-b954-004b996d336c", "sequence": 36 }
+        },
+        "item": {
+          "itemId": "01a1796a-a54d-78f0-b954-004b996d336c",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 1,
+          "status": "inProgress",
+          "recordedAt": "2026-10-26T18:13:14.701275Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-a530-7361-bf48-76e0008efa92",
+          "reminderAgentId": "skill-reminder",
+          "generationId": 1,
+          "taskId": "01a1796a-a530-7361-bf48-76d964ad8b83"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-bac4-7d93-a0de-2a8c165d0be9", "sequence": 50 },
+          "last": { "id": "01a1796a-bac4-7d93-a0de-2a8c165d0be9", "sequence": 50 }
+        },
+        "item": {
+          "itemId": "3333ff52-02fe-4daf-9089-a8b37fa15824",
+          "kind": "reasoning",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 2,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:20.196226Z",
+          "summary": [
+            "Evaluating a conflicting instruction to output a fixed string and execute a shell command requiring approval.",
+            "Resolving the conflict between the required fixed string output and the shell command approval."
+          ],
+          "providerItemId": "rs_6adf983d83dcda73ef6047f5:rs_01a1796aaec97107b1b10102dd9d065a"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-bada-7462-8089-cc145b03a61a", "sequence": 52 },
+          "last": { "id": "01a1796a-bada-7462-8089-cc145b03a61a", "sequence": 52 }
+        },
+        "item": {
+          "itemId": "0bd3ee58-f816-4cdb-b196-74b1a38ab062",
+          "kind": "agentMessage",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 1,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:20.218456Z",
+          "text": "MUSE_TURN_OK",
+          "messagePhase": "commentary"
+        }
+      }
+    },
+    {
+      "method": "approval/reviewing",
+      "params": {
+        "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+        "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+        "taskId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+        "itemId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+        "toolCallId": "call_01a1796aba5976c28f0ab9cfb956b246",
+        "toolName": "bash",
+        "rawArgs": "{\"command\":\"echo MUSE_APPROVAL_OK\",\"description\":\"Echo approval check token\"}",
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-bcc0-7252-bb22-32353b5d69b6", "sequence": 60 },
+          "last": { "id": "01a1796a-bcc0-7252-bb22-32353b5d69b6", "sequence": 60 }
+        },
+        "subject": {
+          "kind": "shell",
+          "command": "echo MUSE_APPROVAL_OK",
+          "workspaceRoot": "/workspace",
+          "stages": [
+            {
+              "requirementId": {
+                "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+                "sourceIndex": 0
+              },
+              "position": 1,
+              "totalStages": 1,
+              "argv": ["echo", "MUSE_APPROVAL_OK"],
+              "argvComplete": true,
+              "resolution": { "kind": "unresolved" },
+              "suggestedPrefix": {
+                "argvPrefix": ["echo"],
+                "label": "Always allow in this workspace: echo ..."
+              }
+            }
+          ]
+        },
+        "currentRequirementId": {
+          "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+          "sourceIndex": 0
+        },
+        "availableChoices": [
+          {
+            "choiceId": "allow_once",
+            "label": "Allow once",
+            "decision": "approved",
+            "scope": "once"
+          },
+          {
+            "choiceId": "allow_local_prefix",
+            "label": "Always allow in this workspace: echo ...",
+            "decision": "approvedPolicyAmendment",
+            "scope": "localPersistent",
+            "rulePreview": "Always allow in this workspace: echo ..."
+          },
+          {
+            "choiceId": "abort",
+            "label": "Reject",
+            "decision": "abort",
+            "scope": "once",
+            "acceptsFeedback": true
+          }
+        ],
+        "protectedWrite": false,
+        "judgeEscalated": false
+      }
+    },
+    {
+      "method": "approval/updated",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-bcf9-70b1-812e-fa56f6351272", "sequence": 62 },
+          "last": { "id": "01a1796a-bcf9-70b1-812e-fa56f6351272", "sequence": 62 }
+        },
+        "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+        "currentRequirementId": {
+          "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+          "sourceIndex": 0
+        },
+        "subject": {
+          "kind": "shell",
+          "command": "echo MUSE_APPROVAL_OK",
+          "workspaceRoot": "/workspace",
+          "stages": [
+            {
+              "requirementId": {
+                "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+                "sourceIndex": 0
+              },
+              "position": 1,
+              "totalStages": 1,
+              "argv": ["echo", "MUSE_APPROVAL_OK"],
+              "argvComplete": true,
+              "resolution": { "kind": "unresolved" },
+              "suggestedPrefix": {
+                "argvPrefix": ["echo"],
+                "label": "Always allow in this workspace: echo ..."
+              }
+            }
+          ]
+        },
+        "availableChoices": [
+          {
+            "choiceId": "allow_once",
+            "label": "Allow once",
+            "decision": "approved",
+            "scope": "once"
+          },
+          {
+            "choiceId": "allow_local_prefix",
+            "label": "Always allow in this workspace: echo ...",
+            "decision": "approvedPolicyAmendment",
+            "scope": "localPersistent",
+            "rulePreview": "Always allow in this workspace: echo ..."
+          },
+          {
+            "choiceId": "abort",
+            "label": "Reject",
+            "decision": "abort",
+            "scope": "once",
+            "acceptsFeedback": true
+          }
+        ],
+        "change": { "kind": "reviewStarted" }
+      }
+    },
+    {
+      "method": "approval/updated",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-c96b-7db0-8701-4890aa6550d8", "sequence": 63 },
+          "last": { "id": "01a1796a-c96b-7db0-8701-4890aa6550d8", "sequence": 63 }
+        },
+        "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+        "currentRequirementId": {
+          "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+          "sourceIndex": 0
+        },
+        "subject": {
+          "kind": "shell",
+          "command": "echo MUSE_APPROVAL_OK",
+          "workspaceRoot": "/workspace",
+          "stages": [
+            {
+              "requirementId": {
+                "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+                "sourceIndex": 0
+              },
+              "position": 1,
+              "totalStages": 1,
+              "argv": ["echo", "MUSE_APPROVAL_OK"],
+              "argvComplete": true,
+              "resolution": { "kind": "unresolved" },
+              "suggestedPrefix": {
+                "argvPrefix": ["echo"],
+                "label": "Always allow in this workspace: echo ..."
+              }
+            }
+          ]
+        },
+        "availableChoices": [
+          {
+            "choiceId": "allow_once",
+            "label": "Allow once",
+            "decision": "approved",
+            "scope": "once"
+          },
+          {
+            "choiceId": "allow_local_prefix",
+            "label": "Always allow in this workspace: echo ...",
+            "decision": "approvedPolicyAmendment",
+            "scope": "localPersistent",
+            "rulePreview": "Always allow in this workspace: echo ..."
+          },
+          {
+            "choiceId": "abort",
+            "label": "Reject",
+            "decision": "abort",
+            "scope": "once",
+            "acceptsFeedback": true
+          }
+        ],
+        "change": { "kind": "reviewCompleted" }
+      }
+    },
+    {
+      "method": "approval/resolved",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-c96f-76f1-95b2-e74c0ca984ac", "sequence": 64 },
+          "last": { "id": "01a1796a-c96f-76f1-95b2-e74c0ca984ac", "sequence": 64 }
+        },
+        "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+        "itemId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+        "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+        "decision": "approved",
+        "policyResult": "allow",
+        "resolvedBy": "llmJudge",
+        "decidedAt": "2026-10-26T18:13:23.951995Z",
+        "stageEvidence": [
+          {
+            "requirementId": {
+              "approvalId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+              "sourceIndex": 0
+            },
+            "position": 1,
+            "totalStages": 1,
+            "argv": ["echo", "MUSE_APPROVAL_OK"],
+            "resolution": { "kind": "allowOnce" }
+          }
+        ]
+      }
+    },
+    {
+      "method": "item/started",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-bc9c-7291-8f11-d7fd8f7a8c5c", "sequence": 57 },
+          "last": { "id": "01a1796a-c9a7-7283-94fe-3db6e9b1492b", "sequence": 69 }
+        },
+        "item": {
+          "itemId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+          "kind": "toolCall",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 1,
+          "status": "inProgress",
+          "recordedAt": "2026-10-26T18:13:24.007501Z",
+          "tool": "bash",
+          "callId": "call_01a1796aba5976c28f0ab9cfb956b246",
+          "args": "{\"command\":\"echo MUSE_APPROVAL_OK\",\"description\":\"Echo approval check token\"}"
+        }
+      }
+    },
+    {
+      "method": "item/updated",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-bc9c-7291-8f11-d7fd8f7a8c5c", "sequence": 57 },
+          "last": { "id": "c54d07e0-c755-5428-a729-f618ef75ef61", "sequence": 72 }
+        },
+        "item": {
+          "itemId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+          "kind": "toolCall",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 2,
+          "status": "inProgress",
+          "recordedAt": "2026-10-26T18:13:24.056486Z",
+          "tool": "bash",
+          "callId": "call_01a1796aba5976c28f0ab9cfb956b246",
+          "args": "{\"command\":\"echo MUSE_APPROVAL_OK\",\"description\":\"Echo approval check token\"}"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-bc9c-7291-8f11-d7fd8f7a8c5c", "sequence": 57 },
+          "last": { "id": "01a1796a-c9f5-7e42-a263-c895b8f252d3", "sequence": 75 }
+        },
+        "item": {
+          "itemId": "01a1796a-bca3-7ae2-b997-2e832ff1a850",
+          "kind": "toolCall",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 3,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:24.085542Z",
+          "tool": "bash",
+          "callId": "call_01a1796aba5976c28f0ab9cfb956b246",
+          "args": "{\"command\":\"echo MUSE_APPROVAL_OK\",\"description\":\"Echo approval check token\"}",
+          "visibleOutput": "{\n  \"chunk_id\": \"exec-1-1\",\n  \"command\": \"echo MUSE_APPROVAL_OK\",\n  \"description\": \"Echo approval check token\",\n  \"exit_code\": 0,\n  \"terminal_status\": \"completed\",\n  \"output\": \"MUSE_APPROVAL_OK\\n\",\n  \"original_output_bytes\": 17,\n  \"original_output_tokens\": 5,\n  \"truncated\": false\n}"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-a54d-78f0-b954-004b996d336c", "sequence": 36 },
+          "last": { "id": "01a1796a-ca18-7bc1-bfb0-1dfa62e0b9af", "sequence": 79 }
+        },
+        "item": {
+          "itemId": "01a1796a-a54d-78f0-b954-004b996d336c",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 2,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:24.120693Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-a530-7361-bf48-76e0008efa92",
+          "reminderAgentId": "skill-reminder",
+          "generationId": 1,
+          "taskId": "01a1796a-a530-7361-bf48-76d964ad8b83"
+        }
+      }
+    },
+    {
+      "method": "item/started",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-ca60-7741-b4d2-e910ce575ba1", "sequence": 88 },
+          "last": { "id": "01a1796a-ca60-7741-b4d2-e910ce575ba1", "sequence": 88 }
+        },
+        "item": {
+          "itemId": "01a1796a-ca60-7741-b4d2-e910ce575ba1",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 1,
+          "status": "inProgress",
+          "recordedAt": "2026-10-26T18:13:24.192355Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-ca35-77b3-b896-10e271ed5ab8",
+          "reminderAgentId": "skill-reminder",
+          "generationId": 2,
+          "taskId": "01a1796a-ca35-77b3-b896-10df8b5cb99b"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-d4d7-7e21-9d88-c64d00d34e37", "sequence": 101 },
+          "last": { "id": "01a1796a-d4d7-7e21-9d88-c64d00d34e37", "sequence": 101 }
+        },
+        "item": {
+          "itemId": "c4595109-2cc5-4b6a-abb8-af61344317f0",
+          "kind": "agentMessage",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 1,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:26.871224Z",
+          "text": "MUSE_APPROVAL_OK\n",
+          "messagePhase": "finalAnswer"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-ca60-7741-b4d2-e910ce575ba1", "sequence": 88 },
+          "last": { "id": "01a1796a-d526-72b3-bd93-156153796314", "sequence": 107 }
+        },
+        "item": {
+          "itemId": "01a1796a-ca60-7741-b4d2-e910ce575ba1",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 2,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:26.950257Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-ca35-77b3-b896-10e271ed5ab8",
+          "reminderAgentId": "skill-reminder",
+          "generationId": 2,
+          "taskId": "01a1796a-ca35-77b3-b896-10df8b5cb99b"
+        }
+      }
+    },
+    {
+      "method": "turn/foregroundCompleted",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-d56b-7481-a3d6-04b85ffa1a79", "sequence": 116 },
+          "last": { "id": "01a1796a-d56b-7481-a3d6-04b85ffa1a79", "sequence": 116 }
+        },
+        "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+        "blockingAgents": ["goal-reminder"]
+      }
+    },
+    {
+      "method": "item/started",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-d56b-7481-a3d6-04b85ffa1a79", "sequence": 116 },
+          "last": { "id": "01a1796a-d56b-7481-a3d6-04b85ffa1a79", "sequence": 116 }
+        },
+        "item": {
+          "itemId": "01a1796a-d56b-7481-a3d6-04b85ffa1a79",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 1,
+          "status": "inProgress",
+          "recordedAt": "2026-10-26T18:13:27.019501Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-d544-7162-8036-29cecce81881",
+          "reminderAgentId": "goal-reminder",
+          "generationId": 1,
+          "taskId": "01a1796a-d544-7162-8036-29b68f2c35cf",
+          "childSessionLogPath": "subagent/01a1796a-d544-7162-8036-29cecce81881/session.jsonl",
+          "blocking": true
+        }
+      }
+    },
+    {
+      "method": "item/started",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-d5a0-7cd0-bc26-c3aff4891127", "sequence": 123 },
+          "last": { "id": "01a1796a-d5a0-7cd0-bc26-c3aff4891127", "sequence": 123 }
+        },
+        "item": {
+          "itemId": "01a1796a-d5a0-7cd0-bc26-c3aff4891127",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 1,
+          "status": "inProgress",
+          "recordedAt": "2026-10-26T18:13:27.072589Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-d575-7491-87a4-7104169e7af0",
+          "reminderAgentId": "verify-reminder",
+          "generationId": 1,
+          "taskId": "01a1796a-d575-7491-87a4-70fc9d71bedd",
+          "childSessionLogPath": "subagent/01a1796a-d575-7491-87a4-7104169e7af0/session.jsonl",
+          "blocking": true
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-d56b-7481-a3d6-04b85ffa1a79", "sequence": 116 },
+          "last": { "id": "01a1796a-dffd-73b0-abee-15769acf3cb9", "sequence": 127 }
+        },
+        "item": {
+          "itemId": "01a1796a-d56b-7481-a3d6-04b85ffa1a79",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 2,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:29.725639Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-d544-7162-8036-29cecce81881",
+          "reminderAgentId": "goal-reminder",
+          "generationId": 1,
+          "taskId": "01a1796a-d544-7162-8036-29b68f2c35cf",
+          "childSessionLogPath": "subagent/01a1796a-d544-7162-8036-29cecce81881/session.jsonl",
+          "blocking": true
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-d5a0-7cd0-bc26-c3aff4891127", "sequence": 123 },
+          "last": { "id": "01a1796a-e002-7913-9383-146437cab9f7", "sequence": 128 }
+        },
+        "item": {
+          "itemId": "01a1796a-d5a0-7cd0-bc26-c3aff4891127",
+          "kind": "reminderChild",
+          "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+          "revision": 2,
+          "status": "completed",
+          "recordedAt": "2026-10-26T18:13:29.730717Z",
+          "fallbackText": "Reminder child session",
+          "childSessionId": "01a1796a-d575-7491-87a4-7104169e7af0",
+          "reminderAgentId": "verify-reminder",
+          "generationId": 1,
+          "taskId": "01a1796a-d575-7491-87a4-70fc9d71bedd",
+          "childSessionLogPath": "subagent/01a1796a-d575-7491-87a4-7104169e7af0/session.jsonl",
+          "blocking": true
+        }
+      }
+    },
+    {
+      "method": "turn/completed",
+      "params": {
+        "sourceRange": {
+          "stream": { "kind": "session", "id": "01a1796a-a322-7611-9608-94ee80067818" },
+          "first": { "id": "01a1796a-e027-72c0-a045-cba6bad7c3e4", "sequence": 133 },
+          "last": { "id": "01a1796a-e027-72c0-a045-cba6bad7c3e4", "sequence": 133 }
+        },
+        "turnId": "01a1796a-a47d-7000-a970-41d6ac5bf504",
+        "terminal": "completed",
+        "durationMs": 15244,
+        "timeToFirstTokenMs": 4124
+      }
+    }
+  ]
+}

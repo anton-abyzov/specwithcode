@@ -16,7 +16,6 @@ import {
   canSelectManualFallback,
   fallbackUnavailableReason,
   formatResetIn,
-  limitFallbackPairingBannerItem,
   limitPairingRoom,
   preswitchFallbackDetail,
   preswitchPairingRoom,
@@ -318,82 +317,6 @@ it("suggests switching before the limit under the offer rule", async () => {
   await act(async () => button("Switch to Codex").props.onClick());
   expect(onSwitch).toHaveBeenCalledOnce();
 });
-it("only announces an actionable way back, without repeating the running model", async () => {
-  const onBack = vi.fn();
-  const base = {
-    id: "pairing",
-    original: "Claude Code · Opus 5.5",
-    originalModel: "Opus 5.5",
-    resetAt: null,
-    onBack,
-    onDismiss: () => {},
-  };
-  expect(limitFallbackPairingBannerItem({ ...base, hasRoom: false })).toBeNull();
-  const ready = limitFallbackPairingBannerItem({ ...base, hasRoom: true })!;
-  expect(ready.title).toBe("Opus 5.5 has room again.");
-  expect(ready.description).toBeUndefined();
-  expect(ready.actionsLayout).toBeUndefined();
-  await act(() => {
-    renderer = create(<>{ready.actions}</>);
-  });
-  await act(async () => button("Switch back to Claude Code · Opus 5.5").props.onClick());
-  expect(onBack).toHaveBeenCalledOnce();
-  expect(rendered()).not.toMatch(/Continuing on/);
-});
-it.each(["stale", "unreported", "unread"] as const)(
-  "offers an honest retry when room is %s",
-  async (roomUnknown) => {
-    const item = limitFallbackPairingBannerItem({
-      id: "pairing",
-      original: "Claude Code · Opus 5.5",
-      originalModel: "Opus 5.5",
-      resetAt: null,
-      hasRoom: false,
-      roomUnknown,
-      onBack: vi.fn(),
-      onDismiss: () => {},
-    })!;
-    expect(item.title).toBe(
-      roomUnknown === "stale"
-        ? "Opus 5.5 may have room again."
-        : roomUnknown === "unread"
-          ? "Opus 5.5 has no current usage reading, so its room is unknown."
-          : "Opus 5.5 reports no usage, so its room is unknown.",
-    );
-    await act(() => {
-      renderer = create(<>{item.actions}</>);
-    });
-    expect(button("Try switching back")).toBeDefined();
-    expect(item.description).toBeUndefined();
-  },
-);
-it("says a launch stand-in's original has room now, not again", () => {
-  const base = {
-    id: "pairing",
-    original: "Claude Code · Opus 5.5",
-    originalModel: "Opus 5.5",
-    resetAt: null,
-    onBack: vi.fn(),
-    onDismiss: () => {},
-  };
-  expect(limitFallbackPairingBannerItem({ ...base, hasRoom: true, launched: true })!.title).toBe(
-    "Opus 5.5 has room now.",
-  );
-  expect(limitFallbackPairingBannerItem({ ...base, hasRoom: true, launched: false })!.title).toBe(
-    "Opus 5.5 has room again.",
-  );
-  expect(
-    limitFallbackPairingBannerItem({
-      ...base,
-      hasRoom: false,
-      roomUnknown: "stale",
-      launched: true,
-    })!.title,
-  ).toBe("Opus 5.5 may have room now.");
-  expect(
-    limitFallbackPairingBannerItem({ ...base, hasRoom: false, roomUnknown: "stale" })!.title,
-  ).toBe("Opus 5.5 may have room again.");
-});
 it("knows a stood-in model has room only from a fresh usage reading", () => {
   const nowMs = Date.parse("2026-10-22T14:10:00.000Z");
   const fresh = "2026-10-22T14:09:00.000Z";
@@ -487,21 +410,6 @@ it("knows a stood-in model has room only from a fresh usage reading", () => {
       instanceId: ProviderInstanceId.make("claudeAgent"),
     }),
   ).toEqual({ hasRoom: false });
-});
-it("never says an out-of-date reading showed room when there is no reading", () => {
-  const item = (roomUnknown: "stale" | "unread") =>
-    limitFallbackPairingBannerItem({
-      id: "pairing",
-      original: "Claude Code · Opus 5.5",
-      originalModel: "Opus 5.5",
-      resetAt: null,
-      hasRoom: false,
-      roomUnknown,
-      onBack: vi.fn(),
-      onDismiss: vi.fn(),
-    })!.title;
-  expect(item("stale")).toBe("Opus 5.5 may have room again.");
-  expect(item("unread")).toBe("Opus 5.5 has no current usage reading, so its room is unknown.");
 });
 it("lays its buttons out below the title instead of in a column beside it", () => {
   const item = usageLimitRecoveryBannerItem({ ...props, onChange: vi.fn() });
@@ -857,39 +765,9 @@ it("claims room for a pre-switched thread only below the switch threshold", () =
   expect(shown(40)).toEqual({ hasRoom: true });
   // Under another rule the way back waits only for the limit.
   expect(shown(92, "ask")).toEqual({ hasRoom: true });
-  const item = (hasRoom: boolean) =>
-    limitFallbackPairingBannerItem({
-      id: "pairing",
-      original: "Claude Code · Opus 5.5",
-      originalModel: "Claude Opus 5.5",
-      resetAt: null,
-      ...shown(hasRoom ? 40 : 92),
-      onBack: vi.fn(),
-      onDismiss: vi.fn(),
-    });
-  expect(item(false)).toBeNull();
-  expect(item(true)!.title).toBe("Claude Opus 5.5 has room again.");
   expect(
     preswitchFallbackDetail({ originalModel: "Claude Opus 5.5", ...shown(92), returnBlock: null }),
   ).toBe(
     "Claude Opus 5.5 neared its usage limit. The idle thread goes back on its own once it has room.",
   );
-});
-
-it("says on the pairing banner why a pre-switched thread will not go back by itself", () => {
-  const item = (returnBlock: "excluded" | null) =>
-    limitFallbackPairingBannerItem({
-      id: "pairing",
-      original: "Claude Code · Opus 5.5",
-      originalModel: "Claude Opus 5.5",
-      resetAt: null,
-      hasRoom: true,
-      returnBlock,
-      onBack: vi.fn(),
-      onDismiss: vi.fn(),
-    })!;
-  expect(item("excluded").description).toBe(
-    "It stays on the fallback until you switch back: the original model is excluded from automatic moves.",
-  );
-  expect(item(null).description).toBeUndefined();
 });

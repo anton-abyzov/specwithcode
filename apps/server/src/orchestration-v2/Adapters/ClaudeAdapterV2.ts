@@ -1180,6 +1180,7 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__studio_queue_read",
   "mcp__studio-code__html_preview",
   "mcp__studio-code__html_render",
+  "mcp__studio-code__show_visual",
   "mcp__studio-code__design_list",
   "mcp__studio-code__design_get",
   "mcp__studio-code__design_history",

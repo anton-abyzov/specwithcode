@@ -364,12 +364,28 @@ describe("model picker usage limits", () => {
 it("explains the fallback above search without stealing initial focus", async () => {
   await mount({
     stateHeader: {
-      title: "Fallback for Claude Code · Opus 5.5",
+      title: "Running on a fallback",
       detail: "Opus 5.5 hit its usage limit.",
-      back: { label: "Back to Opus 5.5", onClick: vi.fn(), disabledReason: "Available at 3:40 PM" },
+      now: "GPT-6-Astra · Codex",
+      pick: { label: "Opus 5.5 · Claude Code", why: "Hit its usage limit." },
+      returns: { mode: "auto", text: "Goes back on its own after it resets at 3:40 PM." },
+      back: {
+        label: "Return to Opus 5.5 now",
+        onClick: vi.fn(),
+        disabledReason: "Available at 3:40 PM",
+      },
+      chain: [],
     },
   });
-  expect(container.querySelector('[role="status"]')?.textContent).toContain("Available at 3:40 PM");
-  expect(button("Back to Opus 5.5")?.disabled).toBe(true);
+  const status = container.querySelector('[role="status"]');
+  expect(status?.querySelector("[data-fallback-now]")?.textContent).toBe("GPT-6-Astra · Codex");
+  expect(status?.querySelector("[data-fallback-pick]")?.textContent).toContain("Opus 5.5");
+  expect(status?.querySelector('[data-fallback-return="auto"]')?.textContent).toContain(
+    "Automatic",
+  );
+  expect(button("Return to Opus 5.5 now")?.disabled).toBe(true);
+  expect(button("Return to Opus 5.5 now")?.title).toBe("Available at 3:40 PM");
+  // One way back: nothing else in the picker offers it.
+  expect(container.textContent).not.toMatch(/Switch back|Back to /);
   expect(document.activeElement).toBe(container.querySelector("input"));
 });

@@ -51,7 +51,26 @@ const status = (state: string) => ({
   error: state === "failed" ? { message: "The copy connection was interrupted." } : null,
   progress: null,
   disk: null,
-  rows: [],
+  // One repository the destination does not have yet, so a one-click copy approves itself.
+  rows: [
+    {
+      id: `repo:${child}`,
+      kind: "repository",
+      path: child,
+      status: "new",
+      detail: "Not on this machine yet.",
+      filesToMove: 8,
+      bytesToMove: 2048,
+      bytesPresent: 0,
+      choices: [],
+      decision: null,
+      needsDecision: false,
+      conflicts: [],
+      moreConflicts: 0,
+      cloneAvailable: false,
+      clone: false,
+    },
+  ],
   totals: { filesToMove: 8, bytesToMove: 2048, bytesPresent: 0, decisionsNeeded: 0 },
   checks: [],
   warnings: summary.warnings,
@@ -186,6 +205,9 @@ export const useAtomCommand =
         projectRelativePath,
         status: { state: "scanned", summary, error: null },
       };
+    } else if (name === "copySourceStatus") {
+      // A reopened copy reads the measured summary back from the source.
+      value = { state: "scanned", summary, error: null, progress: null };
     } else if (name === "copyStart") {
       targetFolder = input.targetFolder;
       fixture.copyRequests.push({

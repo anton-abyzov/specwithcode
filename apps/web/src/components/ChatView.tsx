@@ -37,8 +37,6 @@ import { ChatCanvas } from "./chat/ChatCanvas";
 import {
   canSelectManualFallback,
   fallbackUnavailableReason,
-  limitFallbackPairingBannerItem,
-  preswitchFallbackDetail,
   preswitchPairingRoom,
   limitPairingRoom,
   type FallbackChoice,
@@ -243,6 +241,7 @@ import {
   limitStopWaitsForReset,
   provenFallbackSelection,
   providerUsedPercent,
+  reportsNoUsage,
   resolveApiCreditSelections,
   describeFallbackOrder,
   resolveProviderFallback,
@@ -250,6 +249,7 @@ import {
   usageAtThreshold,
   usageResetAt,
 } from "@specweave-studio/shared/providerFallback";
+import { fallbackChain, fallbackStatusHeader } from "./chat/fallbackStatus";
 import { preswitchReturnBlock } from "@specweave-studio/shared/preswitchReturn";
 import { resolveProviderInstanceDisplayName } from "@specweave-studio/client-runtime/state/provider-instance-display";
 import { isApiCreditAccountDriver } from "./settings/apiCreditAccount";
@@ -10659,6 +10659,11 @@ export default function ChatView(props: ChatViewProps) {
               ? provenFallbackSelection(activeThreadShell, activeCoordinatorShell)
               : null,
           );
+          const pickLabel = threadIdentityLabel(
+            originalEntry,
+            pairing.original.instanceId,
+            pairing.original.model,
+          );
           // A pre-switched thread goes back only below the switch threshold, so
           // the banner and header claim room only then; a pick back stays open.
           const shownRoom =
@@ -10673,6 +10678,18 @@ export default function ChatView(props: ChatViewProps) {
           return {
             original: originalLabel.pick,
             originalModel: originalLabel.pickModel,
+            pickLabel,
+            running: runningSelection
+              ? {
+                  instanceId: runningSelection.instanceId as string,
+                  model: runningSelection.model,
+                  label: threadIdentityLabel(
+                    runningEntry,
+                    runningSelection.instanceId,
+                    runningSelection.model,
+                  ),
+                }
+              : null,
             launched: pairing.launched === true,
             canPickBack: room.hasRoom || room.roomUnknown !== undefined,
             // Why the way back from a usage pre-switch will not move the thread (1075).
@@ -10726,10 +10743,6 @@ export default function ChatView(props: ChatViewProps) {
             },
           };
         })();
-  const pairingKey =
-    pairing && pairingStandIn
-      ? `limit-pairing:${routeThreadKey}:${pairing.stoppedRunId}:${pairingStandIn.hasRoom ? "room" : pairingStandIn.roomUnknown}`
-      : null;
   const pairingResetLabel =
     pairingStandIn?.resetAt == null
       ? null
@@ -10737,48 +10750,62 @@ export default function ChatView(props: ChatViewProps) {
           hour: "numeric",
           minute: "2-digit",
         });
-  // A launch fallback has no limit stop to return from: nothing moves it back on its own.
-  const pairingLaunched = pairing?.launched === true;
-  const modelStateHeader = pairingStandIn
-    ? {
-        title: `Fallback for ${pairingStandIn.original}`,
-        detail: pairingLaunched
-          ? pairingStandIn.hasRoom
-            ? `${pairingStandIn.originalModel} had no room when this thread started and has room now.`
-            : pairingStandIn.roomUnknown
-              ? `${pairingStandIn.originalModel} had no room when this thread started. Its room is unknown.`
-              : `${pairingStandIn.originalModel} had no room when this thread started. Switch back when it has room.`
-          : pairing?.preswitched === true
-            ? preswitchFallbackDetail(pairingStandIn)
-            : pairingStandIn.hasRoom
-              ? `${pairingStandIn.originalModel} hit its usage limit and has room again.`
-              : pairingStandIn.roomUnknown
-                ? `${pairingStandIn.originalModel} hit its usage limit. Its room is unknown.`
-                : pairingResetLabel
-                  ? `${pairingStandIn.originalModel} hit its usage limit and resets at ${pairingResetLabel}. The next turn after that goes back on its own.`
-                  : `${pairingStandIn.originalModel} hit its usage limit. It has no room yet.`,
-        back: {
-          label: `Back to ${pairingStandIn.originalModel}`,
-          onClick: pairingStandIn.onBack,
-          disabledReason: pairingStandIn.canPickBack
-            ? null
-            : pairingResetLabel
-              ? `Available at ${pairingResetLabel}`
-              : `${pairingStandIn.originalModel} has no room yet`,
-        },
-      }
-    : null;
-  const pairingBanner = useBannerItem(
-    limitFallbackPairingBannerItem,
-    pairingStandIn && pairingKey && activeThreadShell && !dismissedUsageApproaching.has(pairingKey)
-      ? {
-          ...pairingStandIn,
-          id: pairingKey,
-          onDismiss: () =>
-            setDismissedUsageApproaching((current) => new Set(current).add(pairingKey)),
-        }
-      : null,
-  );
+  // One status in the picker: what runs now, the pick and why not, the way back
+  // (automatic after a limit, by hand for a launch stand-in) and the fallback order.
+  // No thread banner repeats the way back.
+  const modelStateHeader =
+    pairing && pairingStandIn
+      ? fallbackStatusHeader({
+          pick: pairingStandIn.pickLabel,
+          pickModel: pairingStandIn.originalModel,
+          running: pairingStandIn.running?.label ?? null,
+          launched: pairing.launched === true,
+          preswitched: pairing.preswitched === true,
+          returnBlock: pairingStandIn.returnBlock,
+          canPickBack: pairingStandIn.canPickBack,
+          hasRoom: pairingStandIn.hasRoom,
+          roomUnknown: pairingStandIn.roomUnknown,
+          pickReportsNoUsage: pairingProvider !== undefined && reportsNoUsage(pairingProvider),
+          resetLabel: pairingResetLabel,
+          chain: fallbackChain({
+            pick: {
+              instanceId: pairing.original.instanceId,
+              model: pairing.original.model,
+              label: pairingStandIn.pickLabel,
+            },
+            running: pairingStandIn.running,
+            order: (activeThreadShell
+              ? describeFallbackOrder({
+                  providers: providerStatuses,
+                  currentInstanceId: activeThreadShell.providerInstanceId,
+                  rule: activeProjectSettings.settings,
+                  nowMs: approachingNowMs,
+                  belowPercent: 100,
+                })
+              : []
+            ).map((step) => ({
+              instanceId: step.selection.instanceId,
+              model: step.selection.model,
+              label: threadIdentityLabel(
+                providerInstanceEntries.find(
+                  (entry) => entry.instanceId === step.selection.instanceId,
+                ) ?? null,
+                step.selection.instanceId,
+                step.selection.model,
+              ),
+              unavailable: step.unavailable,
+              resetLabel:
+                step.resetAt === null
+                  ? null
+                  : new Date(step.resetAt).toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    }),
+            })),
+          }),
+          onBack: pairingStandIn.onBack,
+        })
+      : null;
   const [dismissedAccountChanges, setDismissedAccountChanges] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -10842,9 +10869,7 @@ export default function ChatView(props: ChatViewProps) {
           ? [limitRecoveryBanner]
           : usageApproachingBanner !== null
             ? [usageApproachingBanner]
-            : pairingBanner !== null
-              ? [pairingBanner]
-              : [];
+            : [];
     const backgroundWorkItems = [goalBannerItem, backgroundWorkBannerItem].filter(
       (item) => item !== null,
     );
@@ -10934,7 +10959,6 @@ export default function ChatView(props: ChatViewProps) {
     accountChangedBanner,
     limitRecoveryBanner,
     usageApproachingBanner,
-    pairingBanner,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     backgroundWorkBannerItem,

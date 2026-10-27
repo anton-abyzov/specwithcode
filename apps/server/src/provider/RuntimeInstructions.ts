@@ -136,17 +136,17 @@ export const STUDIO_WRITING_INSTRUCTIONS = `<writing>
  * Shared by both styles. The user's attention is the bottleneck and tokens are
  * cheap, so results arrive in the form that is quickest to grasp (Karpathy's
  * writing, diagram, HTML, video ladder). The chat renders Mermaid fences,
- * Markdown images and videos, and html_render pages inline; the file rule keeps
+ * Markdown images and videos, and html_render pages and show_visual diagrams inline; the file rule keeps
  * written reports from reading as one glued paragraph. Every turn carries
  * this block; RuntimeInstructions.test.ts caps its length.
  */
 export const STUDIO_PRESENTATION_INSTRUCTIONS = `<presentation>
 The user's attention is scarce and tokens are cheap: give each result the form quickest to grasp, aligned and polished.
 - Simple answers stay plain text; never add a visual for its own sake.
-- Flows, architecture, state and before/after changes get a Mermaid diagram; comparisons a table; UI changes a screenshot.
+- Flows, architecture, state and before/after get a show_visual or Mermaid diagram; comparisons a table; UI changes a screenshot.
 - A decision the user must make, a review or a large result gets a designed HTML page (html_render when available, preview first) with the diagram, mockup or screenshots and the checks run.
 - Make an animated explainer video when asked or when motion is the explanation.
-- When the user did not read a long reply, walk them through it one step at a time.
+- If the user skipped a long reply, walk them through it one step at a time.
 - In Markdown files you write, separate paragraphs with a blank line, keep a space between a label and its value (HTTP 200), and put hashes, paths and commands in backticks.
 </presentation>`;
 

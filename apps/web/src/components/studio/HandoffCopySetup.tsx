@@ -27,6 +27,7 @@ export function HandoffCopySetup({
   chooseFirst,
   onChooseFirstChange,
   disabled,
+  folderDisabled = disabled,
 }: {
   readonly machines: ReadonlyArray<CopyMachine>;
   readonly machine: EnvironmentId | null;
@@ -43,6 +44,8 @@ export function HandoffCopySetup({
   readonly chooseFirst: boolean;
   readonly onChooseFirstChange: (chooseFirst: boolean) => void;
   readonly disabled: boolean;
+  /** Lets only the folder be edited, as when saving a new folder while choosing. */
+  readonly folderDisabled?: boolean;
 }) {
   return (
     <>
@@ -87,7 +90,7 @@ export function HandoffCopySetup({
               ? "Finding the destination home folder…"
               : "Absolute path on the destination"
           }
-          disabled={disabled}
+          disabled={folderDisabled}
           spellCheck={false}
           onChange={(event) => onFolderChange(event.currentTarget.value)}
           aria-label={`Folder on ${targetLabel}`}

@@ -204,7 +204,7 @@ describe("agentWaitsForQuiet", () => {
 });
 
 it.live(
-  "stops a turn that waited 30 minutes on a person, so an automatic install can go ahead",
+  "stops a turn that waited 2 minutes on a person, so an automatic install can go ahead",
   () => {
     const fixture = newFixture(true);
     return run(fixture, (parts) =>
@@ -284,11 +284,11 @@ it.live("releases a card that asks a closed approval again, as it released the a
   );
 });
 
-it.live("keeps waiting while the thread had activity in the last 30 minutes", () => {
+it.live("keeps waiting while the thread had activity in the last 2 minutes", () => {
   const fixture = newFixture(true);
   return run(fixture, (parts) =>
     Effect.gen(function* () {
-      yield* waitingWorker(45, 5);
+      yield* waitingWorker(45, 1);
       assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
       assert.deepEqual(fixture.dispatched, []);
       assert.deepEqual(fixture.cleanupCalls, []);
@@ -300,11 +300,11 @@ it.live("keeps waiting while the thread had activity in the last 30 minutes", ()
   );
 });
 
-it.live("keeps waiting while the request is younger than 30 minutes", () => {
+it.live("keeps waiting while the request is younger than 2 minutes", () => {
   const fixture = newFixture(true);
   return run(fixture, (parts) =>
     Effect.gen(function* () {
-      yield* waitingWorker(20, 20);
+      yield* waitingWorker(1, 1);
       assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
       assert.deepEqual(fixture.dispatched, []);
     }),
@@ -347,7 +347,7 @@ it.live("does not count a turn that is only running, with no request, as waiting
   );
 });
 
-it.live("releases a question left 30 minutes, so it never holds the install back for good", () => {
+it.live("releases a question left 2 minutes, so it never holds the install back for good", () => {
   const fixture = newFixture(true);
   return run(fixture, (parts) =>
     Effect.gen(function* () {
@@ -365,7 +365,7 @@ it.live("keeps a fresh question waiting: the person may still answer it", () => 
   const fixture = newFixture(true);
   return run(fixture, (parts) =>
     Effect.gen(function* () {
-      yield* waitingWorker(10, 10, "user_input");
+      yield* waitingWorker(1, 1, "user_input");
       assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
       assert.deepEqual(fixture.dispatched, []);
     }),

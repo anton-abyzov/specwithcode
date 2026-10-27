@@ -185,12 +185,28 @@ export function CoordinatorModelPicker(props: {
     : undefined;
   const stateHeader = fallbackState
     ? {
-        title: `Fallback for ${fallbackState.pick}`,
+        title: "Running on a fallback",
         detail:
           fallbackDetail ?? "The coordinator is running on a different model from your saved pick.",
+        now: shown ? modelLabel(shownEntry, shown.instanceId, shown.model).full : null,
+        pick: {
+          label: fallbackState.pick,
+          why: running?.reason
+            ? `${running.reason.charAt(0).toUpperCase()}${running.reason.slice(1).replace(/\.?$/, ".")}`
+            : "Not running on your saved pick.",
+        },
+        returns: running?.returnsTo
+          ? {
+              mode: "auto" as const,
+              text: `Goes back to ${fallbackState.pickModel} on its own once it has room.`,
+            }
+          : {
+              mode: "manual" as const,
+              text: "It does not switch back on its own.",
+            },
         back: running?.onSwitchBack
           ? {
-              label: `Back to ${fallbackState.pickModel}`,
+              label: `Return to ${fallbackState.pickModel}`,
               onClick: running.onSwitchBack,
               disabledReason: props.saving || running.switching ? "Switching models…" : null,
             }

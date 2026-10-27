@@ -18,6 +18,8 @@ const search = new URLSearchParams(location.search);
 const dark = search.get("theme") === "dark";
 // `&evidence`: the reply's own thread and folder, which evidence links open in.
 const evidence = search.has("evidence");
+// `&visual`: a show_visual diagram instead of a report.
+const visual = search.has("visual");
 document.documentElement.classList.toggle("dark", dark);
 function Root() {
   return (
@@ -30,12 +32,19 @@ function Root() {
           <HtmlRenderFrame
             environmentId={"fixture" as never}
             htmlRender={
-              {
-                attachmentId: "example",
-                title: "Season setup and registration",
-                height: 1500,
-                width: 728,
-              } as never
+              (visual
+                ? {
+                    attachmentId: "visual",
+                    title: "agent_visual_flow",
+                    height: 2000,
+                    kind: "visual",
+                  }
+                : {
+                    attachmentId: "example",
+                    title: "Season setup and registration",
+                    height: 1500,
+                    width: 728,
+                  }) as never
             }
             {...(evidence
               ? {

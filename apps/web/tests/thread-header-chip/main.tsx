@@ -6,7 +6,7 @@
  * `?theme=dark` the theme, `?electron=1` the desktop title bar's drag region,
  * `?scenario=plain` a thread on its own pick, `?scenario=account` a second Codex
  * account, `?scenario=busy` a routing decision and an open pull request after the
- * model chip, `?title=long` an agent-named title of 112 characters. The runner sets the
+ * model chip, `?scenario=preswitch` a fallback the usage pre-switch chose before the limit, `?title=long` an agent-named title of 112 characters. The runner sets the
  * panel width with the viewport.
  */
 import { useState } from "react";
@@ -78,6 +78,7 @@ const thread = {
     current: astra,
     preferred: fallback ? opus : null,
     kind: fallback ? "fallback" : null,
+    ...(scenario === "preswitch" ? { preswitched: true } : {}),
   },
 } as unknown as EnvironmentThreadShell;
 

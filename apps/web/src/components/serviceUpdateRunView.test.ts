@@ -87,12 +87,12 @@ describe("describeAutomaticInstallWait", () => {
     expect(describeAutomaticInstallWait([question("Fix login")])).toEqual({
       line: "Update waits on 1 question.",
       detail:
-        'In "Fix login". The update installs once it is answered or has waited 30 minutes; anything still open is asked again after the restart. Update now installs right away.',
+        'In "Fix login". The update installs once it is answered or has waited 2 minutes; anything still open is asked again after the restart. Update now installs right away.',
     });
     expect(describeAutomaticInstallWait([question("Fix login", 2), question("Docs")])).toEqual({
       line: "Update waits on 3 questions.",
       detail:
-        'In "Fix login" and "Docs". The update installs once they are answered or have waited 30 minutes; anything still open is asked again after the restart. Update now installs right away.',
+        'In "Fix login" and "Docs". The update installs once they are answered or have waited 2 minutes; anything still open is asked again after the restart. Update now installs right away.',
     });
     // A service that splits them: approvals are named as such, tool calls are not counted.
     expect(

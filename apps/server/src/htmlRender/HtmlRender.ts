@@ -113,6 +113,7 @@ export class HtmlRender extends Context.Service<
       readonly html: string;
       readonly title: string;
       readonly height: number;
+      readonly kind?: HtmlRenderReference["kind"];
     }) => Effect.Effect<HtmlRenderReference, HtmlRenderPrepareError | HtmlRenderStoreError>;
     /** Screenshots a page in headless Chrome, tolerating unreadable local images. */
     readonly preview: (input: {
@@ -496,6 +497,7 @@ const make = Effect.gen(function* () {
     readonly html: string;
     readonly title: string;
     readonly height: number;
+    readonly kind?: HtmlRenderReference["kind"];
   }) {
     const html = yield* prepare(input.html);
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
@@ -522,6 +524,7 @@ const make = Effect.gen(function* () {
       title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
       height: clampHtmlRenderHeight(input.height),
       ...(heights === undefined ? {} : { heights }),
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
     } satisfies HtmlRenderReference;
   });
 

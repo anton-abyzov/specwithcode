@@ -280,28 +280,7 @@ try {
       missingModelDisabled: "passed",
     });
   }
-  for (const width of [375, 1440]) {
-    for (const state of ["full", "room"]) {
-      await page.setViewportSize({ width, height: 700 });
-      await page.goto(`${origin}/?pairing=${state}&theme=dark`);
-      await page.getByText("Continuing on Codex · GPT-6 Astra").waitFor();
-      const back = page.getByRole("button", { name: "Back to Claude · Claude Opus 5.5" });
-      assert.equal(await back.isDisabled(), state === "full");
-      if (state === "room") {
-        await back.click();
-        assert.equal(await page.locator("body").getAttribute("data-back"), "true");
-      }
-      assert.equal(
-        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
-        false,
-      );
-      await page.screenshot({
-        path: path.join(output, `pairing-${state}-${width}.png`),
-        fullPage: true,
-      });
-      receipt.push({ width, pairing: state });
-    }
-  }
+  // The way back from a fallback lives in the model picker (tests/fallback-composer).
   for (const width of [375, 1024]) {
     await page.setViewportSize({ width, height: 500 });
     await page.goto(`${origin}/?order=1`);

@@ -73,6 +73,21 @@ describe("ThreadModelBadge", () => {
     }
   });
 
+  it.each([false, true])("tells a usage pre-switch from a limit stop (header %s)", (header) => {
+    const thread = shell({ instanceId: "codex", model: "gpt-6-astra" });
+    const preswitched = {
+      ...thread,
+      modelIdentity: { ...thread.modelIdentity!, preswitched: true },
+    } as OrchestrationV2ThreadShell;
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      <ThreadModelBadge thread={preswitched} entries={new Map()} header={header} />,
+    );
+    expect(host.querySelector(".sws-model-state .sr-only")?.textContent).toBe(
+      ", fallback for Claude Code · Opus 5.5 (near its usage limit)",
+    );
+  });
+
   it("lets only the header's chip leave the name out of sight", () => {
     const root = render({ instanceId: "codex", model: "gpt-6-astra" }, true);
     expect(root.getAttribute("data-row-line")).toBe("header");

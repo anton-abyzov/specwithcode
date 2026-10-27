@@ -1,4 +1,9 @@
 import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
+import {
+  HTML_RENDER_MAX_HEIGHT,
+  htmlVisualDocument,
+  isHtmlVisualDocument,
+} from "@specweave-studio/shared/htmlRender";
 import * as Effect from "effect/Effect";
 
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
@@ -53,6 +58,36 @@ const handlers = {
       };
     }),
   ),
+  // The frame fits the measured page, so the visual asks for the largest frame
+  // and never scrolls inside the reply.
+  show_visual: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      if (isHtmlVisualDocument(input.widget_code)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "widget_code is a whole document. Pass only the <svg> or the HTML fragment, without DOCTYPE, html, head or body tags, or publish the page with html_render.",
+        });
+      }
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "show_visual");
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const reference = yield* htmlRender
+        .publish({
+          threadId: thread.threadId,
+          html: htmlVisualDocument(input.widget_code),
+          title: input.title,
+          height: HTML_RENDER_MAX_HEIGHT,
+          kind: "visual",
+        })
+        .pipe(Effect.mapError(toFailure));
+      return {
+        htmlRender: reference,
+        message:
+          "Shown to the reader above your reply. Don't mention or describe the visual; reply with only what it doesn't already say.",
+      };
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof HtmlToolkit.tools>;
 
 export const layerPreview = McpToolAccess.toLayer(HtmlPreviewToolkit, {
@@ -61,4 +96,5 @@ export const layerPreview = McpToolAccess.toLayer(HtmlPreviewToolkit, {
 
 export const layerRender = McpToolAccess.toLayer(HtmlRenderToolkit, {
   html_render: handlers.html_render,
+  show_visual: handlers.show_visual,
 });

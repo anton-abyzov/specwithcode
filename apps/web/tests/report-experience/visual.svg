@@ -1,0 +1,30 @@
+<svg viewBox="0 0 680 322" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Today and proposal: how the app reaches worker machines">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 10 5 0 10z" fill="context-stroke" />
+    </marker>
+  </defs>
+  <text class="th" x="165" y="22" text-anchor="middle">Today</text>
+  <text class="th" x="515" y="22" text-anchor="middle">Proposal</text>
+  <path d="M340 10V318" stroke="var(--text-muted)" stroke-dasharray="4 4" />
+
+  <g class="c-blue"><rect x="110" y="44" width="110" height="36" rx="6" /><text class="t" x="165" y="67" text-anchor="middle">Your app</text></g>
+  <path class="arr" d="M150 80 112 128" marker-end="url(#a)" />
+  <path class="arr" d="M180 80 218 128" marker-end="url(#a)" />
+  <text class="ts" x="165" y="112" text-anchor="middle">Connect</text>
+  <g class="c-amber"><rect x="20" y="132" width="110" height="40" rx="6" /><text class="t" x="75" y="157" text-anchor="middle">M4 coordinator</text></g>
+  <g class="c-gray"><rect x="200" y="132" width="110" height="40" rx="6" /><text class="t" x="255" y="157" text-anchor="middle">M1, M3</text></g>
+  <path class="arr" d="M130 152H196" marker-end="url(#a)" />
+  <g class="c-red"><rect x="40" y="200" width="250" height="52" rx="6" /><text class="t" x="165" y="222" text-anchor="middle">M4 to workers: Tailscale only</text><text class="ts" x="165" y="241" text-anchor="middle">no Tailscale = no delegation</text></g>
+
+  <g class="c-blue"><rect x="460" y="44" width="110" height="36" rx="6" /><text class="t" x="515" y="67" text-anchor="middle">Your app</text></g>
+  <path class="arr" d="M500 80 462 128" marker-end="url(#a)" />
+  <path class="arr" d="M530 80 568 128" marker-end="url(#a)" />
+  <text class="ts" x="515" y="112" text-anchor="middle">Connect</text>
+  <g class="c-amber"><rect x="370" y="132" width="110" height="40" rx="6" /><text class="t" x="425" y="157" text-anchor="middle">M4 coordinator</text></g>
+  <g class="c-gray"><rect x="550" y="132" width="110" height="40" rx="6" /><text class="t" x="605" y="157" text-anchor="middle">M1, M3</text></g>
+  <path class="arr" d="M480 152H546" marker-end="url(#a)" />
+  <g class="c-green"><rect x="390" y="200" width="250" height="52" rx="6" /><text class="t" x="515" y="222" text-anchor="middle">Everything over Connect</text><text class="ts" x="515" y="241" text-anchor="middle">Tailscale optional, a faster shortcut</text></g>
+  <text class="ts" x="515" y="290" text-anchor="middle">Clicks go through your app</text>
+  <text class="ts" x="515" y="310" text-anchor="middle">Only coordinator work uses M4 to worker</text>
+</svg>

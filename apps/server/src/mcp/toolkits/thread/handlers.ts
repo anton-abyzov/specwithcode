@@ -361,12 +361,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_thread_record_delivery: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection, scope } = yield* readThread(input.threadId);
-      if (scope.thread?.threadId === projection.thread.id) {
+      const { threads, projection, scope, caller } = yield* readThread(input.threadId);
+      // Nor can the subagents and forks it started, at any depth, vouch for it.
+      let ancestor = caller?.lineage.parentThreadId ?? null;
+      for (let hop = 0; ancestor !== null && ancestor !== projection.thread.id && hop < 64; hop++) {
+        const shell = yield* threads.getThreadShell(ancestor).pipe(Effect.mapError(unavailable));
+        ancestor = shell?.lineage.parentThreadId ?? null;
+      }
+      if (
+        scope.thread?.threadId === projection.thread.id ||
+        ancestor === projection.thread.id ||
+        caller?.lineage.rootThreadId === projection.thread.id
+      ) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message:
-            "A thread cannot vouch for its own delivery. Another thread, such as the completion owner, verifies and records it.",
+            "A thread cannot vouch for its own delivery, nor can its subagents or forks. Another thread, such as the completion owner, verifies and records it.",
         });
       }
       const { threadId: _threadId, expectedRunId, ...report } = input;

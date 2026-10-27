@@ -10,6 +10,9 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
+import { baseModelSlug } from "@specweave-studio/shared/threadModelIdentity";
+import type { ModelStateHeader } from "./fallbackStatus";
+import { FallbackStatusCard } from "./FallbackStatusCard";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { HarnessDescription } from "./HarnessDescription";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -156,6 +159,9 @@ export function adjacentModelPickerProvider(input: {
   ]!;
 }
 
+const fallbackRoleKey = (instanceId: string, model: string) =>
+  `${instanceId}\u0000${baseModelSlug(model)}`;
+
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const MODEL_LIST_ESTIMATED_ITEM_SIZE = 52;
 
@@ -163,11 +169,7 @@ function ModelListSeparator() {
   return <div className="h-0.5" />;
 }
 
-export type ModelStateHeader = {
-  title: string;
-  detail: string;
-  back: { label: string; onClick: () => void; disabledReason: string | null } | null;
-};
+export type { ModelStateHeader } from "./fallbackStatus";
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** The instance currently selected in the composer (combobox "value"). */
@@ -825,9 +827,39 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
+  // Each model's part in the fallback, so the list says which runs now, which is the
+  // pick and where the rest sit in the order, not only which are starred.
+  const stateChain = props.stateHeader?.chain;
+  const fallbackRoleByKey = useMemo(() => {
+    const roles = new Map<
+      string,
+      { readonly label: string; readonly tone: "now" | "pick" | "order" }
+    >();
+    for (const entry of stateChain ?? []) {
+      // `claude-opus-5-5[1m]` runs the row `claude-opus-5-5`: the bracket names a variant.
+      roles.set(
+        fallbackRoleKey(entry.instanceId, entry.model),
+        entry.role === "now"
+          ? {
+              label: entry.position === null ? "Now" : `Now · fallback ${entry.position}`,
+              tone: "now",
+            }
+          : entry.role === "pick"
+            ? { label: "Your pick", tone: "pick" }
+            : { label: `Fallback ${entry.position}`, tone: "order" },
+      );
+    }
+    return roles;
+  }, [stateChain]);
   const modelListExtraData = useMemo(
-    () => ({ favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet }),
-    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet],
+    () => ({
+      favoritesSet,
+      modelJumpLabelByKey,
+      activeModelKey,
+      selectedModelKeySet,
+      fallbackRoleByKey,
+    }),
+    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet, fallbackRoleByKey],
   );
 
   useEffect(() => {
@@ -945,6 +977,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         return entry ? [entry] : [];
       });
   }, [accountLineMarked, entryByInstanceId, filteredModelByKey]);
+  // The fallback status names the running model already; the note stays only to say a
+  // different pick waits for the next message.
   const pickedDiffers =
     running !== null &&
     (running.instanceId !== props.activeInstanceId || running.model !== activeModelSlug);
@@ -953,7 +987,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     .get(props.activeInstanceId)
     ?.find((option) => option.slug === activeModelSlug);
   const runningNote =
-    running && !onToggleModel ? (
+    running && !onToggleModel && (!props.stateHeader || pickedDiffers) ? (
       <ModelPickerRunningNote
         runningLabel={`${runningOption ? getTriggerDisplayModelName(runningOption) : running.model}${
           runningEntry ? ` (${runningEntry.displayName})` : ""
@@ -974,8 +1008,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ref={pickerContentRef}
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
-          // The usage band takes room from the list, not from the models.
-          usage ? "max-h-[min(27rem,70dvh)]" : "max-h-86.5",
+          // The usage band takes room from the list, not from the models; a fallback
+          // status takes more, so the picker grows rather than hiding the list.
+          props.stateHeader
+            ? "max-h-[min(38rem,80dvh)]"
+            : usage
+              ? "max-h-[min(27rem,70dvh)]"
+              : "max-h-86.5",
         )}
         // Hold the height from when the search started; results scroll instead of resizing.
         style={isSearching ? { height: searchHeight } : undefined}
@@ -1050,33 +1089,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               showSidebar && "border-l border-border/70",
             )}
           >
-            {props.stateHeader ? (
-              <div
-                role="status"
-                className="shrink-0 border-b border-warning/30 bg-warning/9 px-2.5 py-2 text-xs"
-              >
-                <p className="font-medium text-foreground">{props.stateHeader.title}</p>
-                <p className="mt-0.5 text-muted-foreground">{props.stateHeader.detail}</p>
-                {props.stateHeader.back ? (
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded border border-border px-2 py-1 text-foreground disabled:opacity-50"
-                      disabled={props.stateHeader.back.disabledReason !== null}
-                      title={props.stateHeader.back.disabledReason ?? undefined}
-                      onClick={props.stateHeader.back.onClick}
-                    >
-                      {props.stateHeader.back.label}
-                    </button>
-                    {props.stateHeader.back.disabledReason ? (
-                      <span className="text-muted-foreground">
-                        {props.stateHeader.back.disabledReason}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            {props.stateHeader ? <FallbackStatusCard header={props.stateHeader} /> : null}
             <ComboboxSearchInput
               ref={searchInputRef}
               placeholder="Search models..."
@@ -1168,7 +1181,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {/* Model list */}
             <div
               className="relative min-h-0 overflow-hidden pr-px"
-              style={{ height: modelListHeight }}
+              style={{
+                height: modelListHeight,
+                // At least two rows stay in view however much the bands above take.
+                ...(props.stateHeader && filteredItemKeys.length > 0
+                  ? { minHeight: `min(${modelListContentSize}px + var(--spacing) * 5, 7rem)` }
+                  : {}),
+              }}
             >
               <ComboboxListVirtualized>
                 <LegendList<string>
@@ -1249,6 +1268,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           )
                             ? usage.text(model.instanceId, rowAvailability(usageState))
                             : null
+                        }
+                        fallbackRole={
+                          fallbackRoleByKey.get(fallbackRoleKey(model.instanceId, model.slug)) ??
+                          null
                         }
                         onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
                       />

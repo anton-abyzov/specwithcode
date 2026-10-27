@@ -15,8 +15,9 @@ import type {
 import type { MuseSettings } from "@specweave-studio/contracts";
 import { connectMuse, museControl } from "./MuseConnection.ts";
 import { museModels, museSubscription } from "./MuseDiscovery.ts";
-import { watchMuseRequests } from "./MuseRequests.ts";
-import { museItemEvents } from "./MuseItems.ts";
+import { MUSE_ASK_PROFILE, museRequireHumanReviewer, watchMuseRequests } from "./MuseRequests.ts";
+import { museItemUpdates, museTurnProjection } from "./MuseItems.ts";
+import { parseSessionUpdateEvent } from "../acp/AcpRuntimeModel.ts";
 
 type Runtime = AcpSessionRuntime["Service"];
 const failure = (cause: unknown) =>
@@ -35,6 +36,8 @@ export const makeMuseRuntime = (input: {
   resumeSessionId?: string;
   runtimeMode?: string;
   connect?: typeof connectMuse;
+  onOutgoingResponse?: (requestId: string) => Effect.Effect<void>;
+  onOutgoingResponseFailure?: (requestId: string, error: AcpTransportError) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     const fs = yield* Effect.provide(FileSystem.FileSystem, NodeFileSystem.layer);
@@ -72,6 +75,8 @@ export const makeMuseRuntime = (input: {
     let permission: Parameters<Runtime["handleRequestPermission"]>[0] | undefined;
     const noRegistration = () => Effect.void;
     const mode = input.runtimeMode === "full-access" ? "allowAll" : "promptUnmatched";
+    const permissionProfile = input.runtimeMode === "full-access" ? undefined : MUSE_ASK_PROFILE;
+    const sessionUpdates: Array<Parameters<Runtime["handleSessionUpdate"]>[0]> = [];
     const initialized: Acp.InitializeResponse = {
       protocolVersion: 1,
       agentCapabilities: { loadSession: true },
@@ -93,11 +98,19 @@ export const makeMuseRuntime = (input: {
         if (started && !resumeId) return started;
         session = resumeId
           ? await museControl(
-              client.resumeSession({ sessionId: resumeId, excludeItems: true }),
+              client.resumeSession({
+                sessionId: resumeId,
+                excludeItems: true,
+                ...(permissionProfile ? { permissionProfile } : {}),
+              }),
               () => client.close(),
             )
           : await museControl(
-              client.startSession({ workspaceRoot: input.cwd, approvalMode: mode }),
+              client.startSession({
+                workspaceRoot: input.cwd,
+                approvalMode: mode,
+                ...(permissionProfile ? { permissionProfile } : {}),
+              }),
               () => client.close(),
             );
         // Restored sessions keep their native policy until explicitly reconciled.
@@ -109,6 +122,7 @@ export const makeMuseRuntime = (input: {
           (await realpath(workspaceRoot).catch(() => null)) !== (await realpath(input.cwd))
         )
           throw new Error("Muse session belongs to a different workspace.");
+        if (permissionProfile) museRequireHumanReviewer(identity.session);
         const policy = await command("session/setApprovalMode", {
           sessionId: session.sessionId,
           mode,
@@ -122,6 +136,12 @@ export const makeMuseRuntime = (input: {
           request,
           command,
           permission: () => permission,
+          acknowledge: (requestId, error) =>
+            Effect.runPromise(
+              error === undefined
+                ? (input.onOutgoingResponse?.(requestId) ?? Effect.void)
+                : (input.onOutgoingResponseFailure?.(requestId, failure(error)) ?? Effect.void),
+            ),
           failed: (error) => {
             void client.close();
             void emit({ _tag: "ConnectionTerminated", error: failure(error) });
@@ -184,7 +204,10 @@ export const makeMuseRuntime = (input: {
       handleTerminalWaitForExit: noRegistration,
       handleTerminalKill: noRegistration,
       handleTerminalRelease: noRegistration,
-      handleSessionUpdate: noRegistration,
+      handleSessionUpdate: (handler) =>
+        Effect.sync(() => {
+          sessionUpdates.push(handler);
+        }),
       handleElicitationComplete: noRegistration,
       handleUnknownExtRequest: noRegistration,
       handleUnknownExtNotification: noRegistration,
@@ -226,8 +249,20 @@ export const makeMuseRuntime = (input: {
           );
           if (options?.dispatched) yield* Deferred.succeed(options.dispatched, undefined);
           const current = turn;
-          const texts = new Map<string, string>();
-          const completed = new Set<string>();
+          const projection = museTurnProjection();
+          // Two readers fold this turn; one chain keeps updates in fold order.
+          let delivered = Promise.resolve();
+          const deliver = (update: Acp.SessionUpdate) => {
+            const notification: Acp.SessionNotification = { sessionId: active.sessionId, update };
+            delivered = delivered.then(async () => {
+              // Turn items are projected only from session updates; a parsed event alone reaches nobody.
+              if (sessionUpdates.length === 0)
+                throw new Error("SpecWithCode is not listening for Muse Code output.");
+              for (const handler of sessionUpdates) await Effect.runPromise(handler(notification));
+              for (const event of parseSessionUpdateEvent(notification).events) await emit(event);
+            });
+            return delivered;
+          };
           yield* attempt(async () => {
             const publish = async (item: import("@muse-code/sdk").FoldedItem) => {
               const accumulated = active.fold.items.accumulated(item.itemId);
@@ -251,7 +286,7 @@ export const makeMuseRuntime = (input: {
                 accumulated && accumulated.length > (item.text?.length ?? 0)
                   ? { ...base, text: accumulated }
                   : base;
-              for (const event of museItemEvents(visible, texts, completed)) await emit(event);
+              for (const update of museItemUpdates(visible, projection)) await deliver(update);
             };
             await Promise.all([
               (async () => {
@@ -264,6 +299,7 @@ export const makeMuseRuntime = (input: {
                 }
               })(),
             ]);
+            await delivered;
           });
           const outcome = yield* attempt(() => current.completed);
           turn = undefined;
@@ -285,6 +321,14 @@ export const makeMuseRuntime = (input: {
             outcome.params.terminal !== "interrupted"
           )
             return yield* Effect.fail(failure(new Error("Unrecognized Muse terminal result")));
+          if (outcome.params.terminal === "completed" && !projection.replied)
+            return yield* Effect.fail(
+              failure(
+                new Error(
+                  "Muse Code finished the turn without a reply or tool call SpecWithCode could show. Update SpecWithCode, then retry.",
+                ),
+              ),
+            );
           return {
             stopReason:
               outcome.params.terminal === "completed"

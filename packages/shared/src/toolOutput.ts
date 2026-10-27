@@ -3,6 +3,7 @@ import * as Predicate from "effect/Predicate";
 
 import {
   HTML_RENDER_TOOL_NAME,
+  HTML_VISUAL_TOOL_NAME,
   readHtmlRenderReference,
   type HtmlRenderReference,
 } from "./htmlRender.ts";
@@ -164,12 +165,13 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
-/** The page a completed `html_render` tool call published, if this item is one. */
+/** The page a completed `html_render` or `show_visual` call published, if this item is one. */
 export function htmlRenderFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
 }): HtmlRenderReference | undefined {
-  if (resolveStudioMcpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+  const toolId = resolveStudioMcpToolId(item.toolName);
+  if (toolId !== HTML_RENDER_TOOL_NAME && toolId !== HTML_VISUAL_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.htmlRender;
 }

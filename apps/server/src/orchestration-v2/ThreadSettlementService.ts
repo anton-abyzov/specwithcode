@@ -2,7 +2,10 @@ import { backgroundWorkHoldsCompletion } from "@specweave-studio/shared/orchestr
 import { sourceControlRepositorySelector } from "@specweave-studio/shared/sourceControl";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
-import { evaluateLifecycleEvidence } from "@specweave-studio/shared/threadLifecycleEvidence";
+import {
+  currentLifecycleRequest,
+  evaluateLifecycleEvidence,
+} from "@specweave-studio/shared/threadLifecycleEvidence";
 import {
   CommandId,
   type ThreadId,
@@ -30,6 +33,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
+import { LifecycleEvidenceActivation } from "./ThreadLifecycleAcceptance.ts";
 
 import { resolutionMergeAt, type ResolutionPullRequest } from "./ThreadResolutionPolicy.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -232,6 +236,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const terminals = yield* TerminalManager.TerminalManager;
   const updateHold = yield* ServiceUpdateHold.optional;
+  const lifecycleEvidenceRequired = yield* LifecycleEvidenceActivation;
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -283,9 +288,12 @@ export const make = Effect.gen(function* () {
         if (settledAt === null) return thread;
         // The candidate query omits queued runs, including held queues older than
         // the optimistic start grace. Read durable runs before declaring completion.
-        const { thread: stored, runs } = yield* projections.getThreadRecords(thread.id, ["runs"]);
+        const records = yield* projections.getThreadRecords(
+          thread.id,
+          lifecycleEvidenceRequired ? ["runs", "messages"] : ["runs"],
+        );
         if (
-          runs.some((run) =>
+          records.runs.some((run) =>
             ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
           )
         ) {
@@ -294,25 +302,22 @@ export const make = Effect.gen(function* () {
         // Merge readiness, age and a finished turn are not delivery. Only current
         // recorded evidence reaches the orchestrator, which rechecks it under lock;
         // dispatching without it would only record a refusal on every sweep.
-        const latest = runs.reduce<(typeof runs)[number] | undefined>(
-          (found, run) => (!found || run.ordinal > found.ordinal ? run : found),
-          undefined,
-        );
-        if (
-          latest === undefined ||
-          latest.status !== "completed" ||
-          evaluateLifecycleEvidence(
-            {
-              requestId: latest.userMessageId,
-              runId: latest.id,
-              acceptanceRevision: stored.lifecycleRevision ?? latest.id,
-              requestedAt: DateTime.formatIso(latest.requestedAt),
-            },
-            stored.lifecycleReceipt,
-            DateTime.toEpochMillis(decisionNow),
-          ) !== "accepted"
-        ) {
-          return thread;
+        if (lifecycleEvidenceRequired) {
+          const request = currentLifecycleRequest({
+            thread: records.thread,
+            runs: records.runs,
+            messages: records.messages,
+          });
+          if (
+            request === null ||
+            evaluateLifecycleEvidence(
+              request,
+              records.thread.lifecycleReceipt,
+              DateTime.toEpochMillis(decisionNow),
+            ) !== "accepted"
+          ) {
+            return thread;
+          }
         }
         // Every representation (including visible multi-PR links) must pass
         // the current branch guard. A prior merge can leave the branch reused

@@ -229,6 +229,8 @@ describe("buildRuntimeInstructions", () => {
     expect(presentation).toContain("never add a visual for its own sake");
     // ChatMarkdown renders Mermaid fences inline.
     expect(presentation).toContain("Mermaid diagram");
+    // show_visual diagrams sit whole in the reply.
+    expect(presentation).toContain("show_visual or Mermaid diagram");
     expect(presentation).toContain("UI changes a screenshot");
     expect(presentation).toContain("A decision the user must make");
     expect(presentation).toContain("html_render when available, preview first");

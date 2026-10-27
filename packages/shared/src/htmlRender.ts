@@ -14,9 +14,13 @@ import {
  */
 
 export const HTML_RENDER_TOOL_NAME = "html_render";
+/** Quick inline diagrams and charts from an SVG or HTML fragment, stored as an HTML render. */
+export const HTML_VISUAL_TOOL_NAME = "show_visual";
 export const HTML_RENDER_MIN_HEIGHT = 80;
 export const HTML_RENDER_MAX_HEIGHT = 2000;
 export const HTML_RENDER_MAX_TITLE_LENGTH = 200;
+/** The frame height of a visual published before the preview browser could measure it. */
+export const HTML_VISUAL_UNMEASURED_HEIGHT = 420;
 
 /** What the `html_render` tool result carries so clients can show the page. */
 export interface HtmlRenderReference {
@@ -29,6 +33,11 @@ export interface HtmlRenderReference {
    * width. Absent when the preview browser was not installed yet.
    */
   readonly heights?: ReadonlyArray<readonly [width: number, height: number]>;
+  /**
+   * `visual` for a `show_visual` diagram, shown in full inline under a
+   * collapsible "Made a visual" header; absent for a report page.
+   */
+  readonly kind?: "visual";
 }
 
 /** Frame widths the server measures a page at, from phones to the wide chat setting. */
@@ -64,7 +73,7 @@ function readMeasuredHeights(value: unknown) {
 
 export function readHtmlRenderReference(value: unknown): HtmlRenderReference | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { attachmentId, title, height, heights } = value as Record<string, unknown>;
+  const { attachmentId, title, height, heights, kind } = value as Record<string, unknown>;
   if (
     typeof attachmentId !== "string" ||
     attachmentId.length === 0 ||
@@ -81,6 +90,7 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
     title: title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
+    ...(kind === "visual" ? { kind } : {}),
   };
 }
 
@@ -90,6 +100,7 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
     left.attachmentId === right.attachmentId &&
     left.title === right.title &&
     left.height === right.height &&
+    left.kind === right.kind &&
     (left.heights ?? []).length === (right.heights ?? []).length &&
     (left.heights ?? []).every(
       ([width, height], index) =>
@@ -122,7 +133,10 @@ export function htmlRenderFrameHeight(
 ) {
   const heights = reference.heights;
   if (heights === undefined || heights.length === 0) {
-    return clampHtmlRenderHeight(Math.min(reference.height, contentHeight ?? reference.height));
+    // A visual always asks for the largest frame, so an unmeasured one waits
+    // at a modest height until the page reports its own.
+    const fallback = reference.kind === "visual" ? HTML_VISUAL_UNMEASURED_HEIGHT : reference.height;
+    return clampHtmlRenderHeight(Math.min(reference.height, contentHeight ?? fallback));
   }
   const cap =
     measuredHeight(heights, HTML_RENDER_COLUMN_WIDTH) > reference.height
@@ -268,6 +282,87 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   'Link local evidence with a labeled anchor whose href is the absolute path (<a href="/Users/me/run/login.png">Login screenshot</a>); SpecWithCode shows it as a compact chip that opens the file in the app and copies its path. Do not print long paths as inline code.',
 
   "Give charts fixed heights. Let content set page height; avoid 100vh or height:100% on html/body because the frame grows to fit content.",
+].join(" ");
+
+/** The color ramps a visual's shapes take by class, as `c-<name>`. */
+export const HTML_VISUAL_COLORS = {
+  blue: "#3b82f6",
+  teal: "#14b8a6",
+  green: "#22c55e",
+  amber: "#f59e0b",
+  coral: "#f97362",
+  red: "#ef4444",
+  pink: "#ec4899",
+  purple: "#8b5cf6",
+  gray: "#8b8d93",
+} as const;
+
+export const HTML_VISUAL_MAX_CODE_LENGTH = 256_000;
+
+const VISUAL_SHAPES = ":is(rect,circle,ellipse,polygon)";
+const VISUAL_CLASSES = Object.keys(HTML_VISUAL_COLORS)
+  .map((name) => `.c-${name}`)
+  .join(",");
+
+// Each ramp is mixed against the live theme instead of fixed per mode: a
+// shape gets a faint fill over the page background, and its stroke and text
+// the hue pulled toward the foreground (darker in light, lighter in dark), so one class reads in light and
+// dark and follows the user's theme. Text tokens alias the app's own.
+const VISUAL_CSS =
+  ":root{--text-primary:var(--foreground);--text-secondary:var(--muted-foreground);" +
+  "--text-muted:color-mix(in srgb,var(--muted-foreground) 72%,var(--background));" +
+  "--text-success:var(--success-foreground);--text-warning:var(--warning);--text-danger:var(--destructive);--text-accent:var(--accent);" +
+  "--surface-1:color-mix(in srgb,var(--foreground) 4%,var(--background));--surface-2:color-mix(in srgb,var(--foreground) 7%,var(--background))}" +
+  "body{padding:2px 0;color:var(--text-primary);overflow-wrap:break-word}" +
+  "body>svg{display:block;width:100%;max-width:100%;height:auto;margin:0 auto}" +
+  "svg text{font-family:var(--font-sans)}" +
+  ".t,.th{font-size:14px;fill:var(--text-primary)}.th{font-weight:500}.ts{font-size:12px;fill:var(--text-secondary)}" +
+  Object.entries(HTML_VISUAL_COLORS)
+    .map(([name, color]) => `.c-${name}{--hue:${color}}`)
+    .join("") +
+  `${VISUAL_SHAPES}:is(${VISUAL_CLASSES}),:is(${VISUAL_CLASSES})>${VISUAL_SHAPES}{fill:color-mix(in srgb,var(--hue) 14%,var(--background));stroke:color-mix(in srgb,var(--hue) 70%,var(--foreground));stroke-width:1}` +
+  `:is(${VISUAL_CLASSES}) :is(.t,.th){fill:color-mix(in srgb,var(--hue) 45%,var(--foreground))}` +
+  `:is(${VISUAL_CLASSES}) .ts{fill:color-mix(in srgb,var(--hue) 60%,var(--foreground))}` +
+  ".arr{fill:none;stroke:var(--text-secondary);stroke-width:1.5}";
+
+/** Whether a visual's code is an SVG rather than an HTML fragment. */
+export function isHtmlVisualSvg(code: string) {
+  return /^\s*(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(code);
+}
+
+/** Whether `code` is a whole document, which belongs in `html_render` instead. */
+export function isHtmlVisualDocument(code: string) {
+  return /^\s*(?:<!--[\s\S]*?-->\s*)*<(?:!doctype|html|head|body)[\s>]/i.test(code);
+}
+
+/**
+ * The self-contained page a `show_visual` fragment is stored as: the visual
+ * stylesheet, then the agent's SVG or HTML as the body. The theme bootstrap is
+ * injected on publish like any HTML render, so the frame stays sandboxed.
+ */
+export function htmlVisualDocument(code: string): string {
+  const body = code.replace(/^\s*<\?xml[^>]*>/i, "").trim();
+  return (
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    `<style id="studio-visual">${VISUAL_CSS}</style></head><body>${body}</body></html>`
+  );
+}
+
+/** Agent-facing rules for a `show_visual` fragment, used in its tool description. */
+export const HTML_VISUAL_GUIDE = [
+  "widget_code is an SVG starting with <svg>, or an HTML fragment with no DOCTYPE, html, head or body tags; SpecWithCode wraps it in a page with the theme.",
+  "Leave the background transparent and never hard-code a hex or rgb color for text or a background.",
+  "In HTML use color: var(--text-primary), var(--text-secondary) or var(--text-muted); var(--text-success), var(--text-warning), var(--text-danger) or var(--text-accent) for status (as text, or the fill of a bar or dot); background: var(--surface-1) or var(--surface-2) for a panel, and var(--border) for lines.",
+  'In SVG give every <text> class="t" (14px), "ts" (12px, secondary) or "th" (14px, medium) instead of a fill.',
+  `Color a rect, circle, ellipse or polygon, or the <g> that directly holds it and its text, with class ${Object.keys(
+    HTML_VISUAL_COLORS,
+  )
+    .map((name) => `c-${name}`)
+    .join(", ")}; the text inside takes a matching color.`,
+  'Give a connecting line or path class="arr", with fill="context-stroke" on an arrowhead marker\'s path.',
+  `Use a viewBox about ${HTML_RENDER_COLUMN_WIDTH - 48} units wide and no fixed width, so the SVG scales to the reply column; the frame fits its height.`,
+  "Scripts run in a sandbox after the fragment is in the page; remote http(s) libraries load as-is.",
 ].join(" ");
 
 // The bridge between a render and its client speaks the MCP Apps protocol

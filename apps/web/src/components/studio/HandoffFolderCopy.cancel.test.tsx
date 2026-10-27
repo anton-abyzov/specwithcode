@@ -252,3 +252,53 @@ it("reads a cancelled pointer with the person's choices", () => {
   localStorage.setItem(KEY, JSON.stringify({ ...pointerNow(), cancelled: "yes" }));
   expect(readPendingCopy(KEY)).not.toHaveProperty("cancelled");
 });
+
+const moveRadio = () =>
+  [...container.querySelectorAll<HTMLElement>('[role="radio"]')].find((node) =>
+    node.closest("label")?.textContent?.includes("Copy and transfer coordinator context"),
+  )!;
+const checkbox = (selector: string) =>
+  container.querySelector<HTMLElement>(`${selector} [data-slot="checkbox"]`)!;
+const folderValue = () =>
+  container.querySelector<HTMLInputElement>('input[aria-label="Folder on M3"]')!.value;
+
+it("stops measuring to change where, the same way Cancel copy does", async () => {
+  state.handlers.copySourceCancel = () => ({ state: "cancelled" });
+  await mount();
+  await click("Copy to M3");
+  expect(stage()).toBe("scanning");
+  await click("Back");
+  await click("Change where (cancels this copy)");
+  expect(names()).toContain("copySourceCancel");
+  expect(names()).not.toContain("copyStart");
+  expect(pointerNow()).toBeNull();
+  expect(stage()).toBe("setup");
+  expect(alertText()).toBe("");
+  expect(container.querySelector('[data-slot="copy-cancelled"]')?.textContent).toBe(
+    "Copy cancelled. Nothing on M3 changed.",
+  );
+  expect(folderValue()).toBe("/home/anton/Projects/project");
+  expect(button("Copy to M3").disabled).toBe(false);
+});
+
+it("keeps machine, folder, mode and chosen classes after Cancel copy while choosing", async () => {
+  state.handlers.copySourceCancel = () => ({ state: "cancelled" });
+  const offer = state.handlers.copyOffer!;
+  state.handlers.copyOffer = (input) => ({ ...(offer(input) as object), status: scanned() });
+  await mount();
+  await act(async () => moveRadio().click());
+  await act(async () => checkbox('[data-slot="copy-choose-first"]').click());
+  await click("Measure the folder");
+  expect(stage()).toBe("select");
+  await act(async () => checkbox('[data-class="untracked"]').click());
+  await click("Cancel copy");
+  expect(names()).toContain("copyRelease");
+  expect(pointerNow()).toBeNull();
+  expect(stage()).toBe("setup");
+  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
+  expect(folderValue()).toBe("/home/anton/Projects/project");
+  await click("Measure the folder");
+  expect(stage()).toBe("select");
+  expect(checkbox('[data-class="untracked"]').getAttribute("aria-checked")).toBe("false");
+  expect(pointerNow()).toMatchObject({ mode: "copy-and-move" });
+});

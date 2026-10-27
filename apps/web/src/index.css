@@ -2250,6 +2250,57 @@ video.artifact-viewer-media {
   }
 }
 
+/* An agent's show_visual diagram sits whole in the reply under a "Made a visual" toggle. */
+.html-visual {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.html-visual-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.html-visual-toggle:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+.html-visual-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.html-visual-body {
+  align-self: stretch;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--background);
+}
+.html-visual-body[hidden] {
+  display: none;
+}
+.html-visual-document {
+  position: relative;
+  width: 100%;
+}
+.html-visual-placeholder {
+  padding: 12px 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+@media (max-width: 480px) {
+  .html-visual-body {
+    padding: 10px;
+  }
+}
+
 /* The editor's save word crossfades in when its state changes. */
 .save-state-label {
   animation: save-state-in 150ms var(--ease-out-quint);
