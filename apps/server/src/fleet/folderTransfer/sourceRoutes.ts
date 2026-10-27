@@ -73,6 +73,10 @@ export async function handleSourceRequest(
       }
     };
     switch (`${request.method} ${action}`) {
+      case "POST validate": {
+        const checked = await transfers.checkScan(operationId);
+        return json(200, { current: checked?.freshness?.current === true });
+      }
       case "GET hello":
         return json(200, transfers.hello(loaded, environmentId));
       case "POST manifest": {

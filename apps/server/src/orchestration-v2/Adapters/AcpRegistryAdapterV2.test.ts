@@ -1,8 +1,18 @@
 import { providerFailureFallbackMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@specweave-studio/contracts";
+import {
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { resolveSelfInvocation } from "@specweave-studio/shared/nodeRuntime";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -17,9 +27,10 @@ import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import type {
-  AcpRegistryAvailableCommands,
-  AcpRegistryLiveConfiguration,
+import {
+  normalizeAcpRegistryCommands,
+  type AcpRegistryAvailableCommands,
+  type AcpRegistryLiveConfiguration,
 } from "../../provider/acp/AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
 import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
@@ -616,6 +627,165 @@ describe("AcpRegistryAdapterV2", () => {
         SPECWEAVE_TOOL: "",
         SPECWEAVE_MODEL: "",
       });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("sends a picked skill the agent runs as /name in that form", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: serverConfig.providerStatusCacheDir,
+        toolsDir: serverConfig.baseDir + "/tools",
+        registryUrl,
+      });
+      const logDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-acp-skill-" });
+      const requestLogPath = path.join(logDir, "requests.ndjson");
+      // What Copilot CLI advertised on an earlier session of this instance.
+      const advertised = normalizeAcpRegistryCommands([
+        {
+          name: "review",
+          description: "Built-in",
+          input: { type: "text", hint: "additional instructions" },
+        },
+        {
+          name: "unslop",
+          description: "Skill",
+          input: { type: "text", hint: "instructions for the skill" },
+        },
+      ]);
+      const instanceId = ProviderInstanceId.make("acp-registry-slash-skill");
+      const adapter = makeAcpRegistryAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        selfInvocation: yield* resolveSelfInvocation(),
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({
+          agentId: "fixture-agent",
+          commandPath: process.execPath,
+          authMethodId: "test",
+        }),
+        environment: {
+          STUDIO_ACP_SESSION_LIFECYCLE: "1",
+          STUDIO_ACP_REQUEST_LOG_PATH: requestLogPath,
+        },
+        childProcessSpawner,
+        fileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        runtimeCoordinator: {
+          withForegroundStartup: (_agentId, effect) => effect,
+          runBackgroundProbe: (_agentId, effect) => effect.pipe(Effect.map(Option.some)),
+          withSessionMutation: (effect) => effect,
+          clearAvailableCommands: () => Effect.void,
+          publishAvailableCommands: () => Effect.void,
+          getAvailableCommands: () => Effect.succeed(Option.some(advertised)),
+          watchAvailableCommands: () => Effect.never,
+          clearLiveConfiguration: () => Effect.void,
+          publishLiveConfiguration: () => Effect.void,
+          getLiveConfiguration: () => Effect.succeed(Option.none()),
+          watchLiveConfiguration: () => Effect.never,
+          requestUrlAuthentication: () => Effect.succeed(false),
+          acceptUrlAuthentication: () => Effect.succeed(false),
+          getUrlAuthAction: () => Effect.succeed(Option.none()),
+          watchUrlAuthAction: () => Effect.never,
+        },
+        resolver: {
+          resolve: (configuredSettings, cwd, environment) =>
+            resolver.resolve(configuredSettings, cwd, environment).pipe(
+              Effect.map((resolved) => ({
+                ...resolved,
+                spawn: { ...resolved.spawn, args: [mockAgentPath] },
+              })),
+            ),
+        },
+        serverConfig,
+      });
+      const threadId = ThreadId.make("thread-acp-registry-slash-skill");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-registry-slash-skill"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* session
+        .startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-acp-registry-slash-skill"),
+            title: "Slash skill",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-acp-registry-slash-skill"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-acp-registry-slash-skill"),
+          rootNodeId: NodeId.make("node-acp-registry-slash-skill"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-acp-registry-slash-skill"),
+            text: "$unslop tighten the README, then $review it",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      const readPrompts = fileSystem.readFileString(requestLogPath).pipe(
+        Effect.orElseSucceed(() => ""),
+        Effect.map((log) =>
+          log
+            .split("\n")
+            .filter((line) => line.includes('"session/prompt"'))
+            .map(
+              (line) =>
+                (JSON.parse(line) as { params: { prompt: Array<{ text?: string }> } }).params
+                  .prompt,
+            ),
+        ),
+      );
+      let prompts = yield* readPrompts;
+      for (let attempt = 0; prompts.length === 0 && attempt < 100; attempt += 1) {
+        yield* Effect.sleep("100 millis");
+        prompts = yield* readPrompts;
+      }
+      assert.lengthOf(prompts, 1);
+      assert.strictEqual(prompts[0]![0]!.text, "/unslop tighten the README, then $review it");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

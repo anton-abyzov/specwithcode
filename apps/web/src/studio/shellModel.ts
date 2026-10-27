@@ -581,7 +581,9 @@ export function threadStatusWord(
   if (status === "approval") return "Approval requested";
   if (status === "input") return "Answer needed";
   if (status === "limited") return "Usage limit reached";
-  if (status === "failed") return "Needs review";
+  // Failures are not attention (see projectAttention): say what happened, not
+  // ask the reader to act, so the word agrees with the Idle group it sits in.
+  if (status === "failed") return "Run failed";
   if (threadHeldQueue(thread) !== null) return "Queue held";
   if (threadBlocker(thread) !== null) return "Blocked";
   const tone = threadTone(thread);
@@ -592,7 +594,7 @@ export function threadStatusWord(
 export const THREAD_TONE_LABELS: Record<ThreadTone, string> = {
   waiting: "Waiting on you",
   working: "Working",
-  failed: "Needs review",
+  failed: "Run failed",
   resolved: "Resolved",
   idle: "Idle",
 };

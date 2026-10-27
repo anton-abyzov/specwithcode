@@ -26,6 +26,7 @@ function Content() {
           "signin",
           "held",
           "operational",
+          "review-routing",
           "resolved",
           "archive",
           "delete",

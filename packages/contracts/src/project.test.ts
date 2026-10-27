@@ -141,6 +141,14 @@ describe("project RPC errors", () => {
         cause,
       }).message,
     ).toBe("Failed to read file '/tmp/report.md'.");
+    // A deck or other binary file says what it is, not that reading failed.
+    expect(
+      new ProjectReadFileError({
+        cwd: "/workspace",
+        relativePath: "/tmp/exports/deck.pptx",
+        failure: "binary_file",
+      }).message,
+    ).toBe("'/tmp/exports/deck.pptx' is not a text file, so it has no text preview.");
 
     const contentSearchError = new ProjectSearchContentsError({
       cwd: "/workspace",

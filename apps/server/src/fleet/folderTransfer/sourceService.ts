@@ -116,6 +116,13 @@ export interface SourceOperationRecord {
   readonly mode: CopyMode;
   readonly destinationEnvironmentId: string;
   readonly createdAt: number;
+  readonly scanCompletedAt?: number;
+  readonly sourceFingerprint?: string;
+  readonly freshness?: {
+    readonly checkedAt: number;
+    readonly current: boolean;
+    readonly summary?: SourceSummary;
+  };
   readonly grant: TransferGrantRecord;
   readonly state: SourceState;
   readonly selection: ReadonlyArray<FileClass> | null;
@@ -216,6 +223,28 @@ function persistsAfterClose(patch: Partial<SourceOperationRecord>): boolean {
 
 const closedStop = (cause: unknown) =>
   cause instanceof SourceTransferError && cause.code === "closed";
+
+function inventoryFingerprint(scan: FolderScan): string {
+  return sha256Hex(
+    Buffer.from(
+      JSON.stringify({
+        entries: scan.entries
+          .filter((entry) => entry.class !== "repository")
+          .map(({ path, type, size, mtimeMs, mode, target, class: fileClass }) => ({
+            path,
+            type,
+            ...(type !== "directory" ? { size, mtimeMs } : {}),
+            mode,
+            target,
+            fileClass,
+          })),
+        repositories: scan.repositories,
+        skipped: scan.skipped,
+        warnings: scan.warnings,
+      }),
+    ),
+  );
+}
 
 function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): SourceSummary {
   return {
@@ -501,6 +530,8 @@ export class SourceTransfers {
       loaded.scannedAt = this.now();
       await this.save(loaded, {
         state: "scanned",
+        scanCompletedAt: this.now(),
+        sourceFingerprint: inventoryFingerprint(scanned),
         progress: null,
         summary: summarize(withGitNotice(scanned), loaded.record.warnings),
       });
@@ -574,6 +605,37 @@ export class SourceTransfers {
           loaded.building = this.build(loaded, new Set(loaded.record.selection));
       }
     }
+  }
+
+  async checkScan(operationId: string): Promise<SourceOperationRecord | null> {
+    const loaded = await this.load(operationId);
+    if (!loaded) return null;
+    if (loaded.building || !["scanned", "ready", "committed"].includes(loaded.record.state))
+      throw new SourceTransferError(
+        409,
+        "busy",
+        "Wait for this copy to finish measuring before refreshing its scan.",
+      );
+    const original = loaded.record;
+    const scan = await scanFolder(original.folder, {
+      expandRebuildable: original.selection?.includes("rebuildable") ?? false,
+      shouldStop: () => this.closed,
+    });
+    if (loaded.record !== original || loaded.building)
+      throw new SourceTransferError(
+        409,
+        "busy",
+        "The copy changed while its scan was being checked. Refresh again.",
+      );
+    return {
+      ...original,
+      freshness: {
+        checkedAt: this.now(),
+        summary: summarize(withGitNotice(scan), original.warnings),
+        current:
+          !!original.sourceFingerprint && original.sourceFingerprint === inventoryFingerprint(scan),
+      },
+    };
   }
 
   async read(operationId: string): Promise<SourceOperationRecord | null> {
@@ -684,6 +746,8 @@ export class SourceTransfers {
         scan = await scanFolder(loaded.record.folder, listing());
       if (selection.has("rebuildable")) scan = await expandCollapsed(scan, listing());
       checkStop();
+      const sourceFingerprint = inventoryFingerprint(scan);
+      const scanCompletedAt = this.now();
       scan = await preparePortableGit(scan, this.snapshotRoot(loaded), {
         shouldStop,
         onProgress: this.progressReporter(loaded, stop, "git-snapshot"),
@@ -725,7 +789,12 @@ export class SourceTransfers {
       await writeManifest(this.manifestFile(loaded.record.operationId), { header, entries });
       loaded.scan = scan;
       this.index(loaded, header, entries);
-      await this.save(loaded, { state: "ready", summary: summarize(scan, loaded.record.warnings) });
+      await this.save(loaded, {
+        state: "ready",
+        sourceFingerprint,
+        scanCompletedAt,
+        summary: summarize(scan, loaded.record.warnings),
+      });
     } catch (cause) {
       // Stopped by shutdown: the record keeps its state, so a restart can scan again.
       // Stopped by a cancel or release: that transition records the end state.

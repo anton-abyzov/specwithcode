@@ -64,6 +64,9 @@ export const TOKENS_CONTAINER = "@container/tokens";
 /** Whether the table around a row is under 42rem wide, from its TokensScroller. */
 const NarrowTable = createContext(false);
 
+/** True inside a token table under 42rem wide. */
+export const useNarrowTable = () => useContext(NarrowTable);
+
 /**
  * A token table's sideways scroller. Under 42rem its rows that have a narrow
  * layout switch to it: the name cell spans the first line with the row's

@@ -138,6 +138,8 @@ export interface GitStep {
 }
 
 export interface Plan {
+  /** Inventory reviewed on the destination, including resolved conflict contents. */
+  readonly destinationFingerprint?: string;
   readonly rows: ReadonlyArray<PlanRow>;
   readonly actions: ReadonlyArray<FileAction>;
   readonly git: ReadonlyArray<GitStep>;

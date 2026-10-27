@@ -85,4 +85,23 @@ export function restartContinuationNote(message: { readonly id: string }): strin
   return kind === "update" ? "Resumed after update" : "Resumed after restart";
 }
 
+/**
+ * The server sends `/compact` on its own before an idle thread's prompt cache
+ * lapses (`message:idle-compact:<thread>:<time>`) and when a request
+ * overflowed the context (`context-compact:<thread>:<run>`).
+ */
+export function automaticCompactionNote(message: {
+  readonly id: string;
+  readonly createdBy?: string;
+}): string | null {
+  if (message.createdBy !== "system") return null;
+  if (message.id.startsWith("message:idle-compact:")) {
+    return "Compacting automatically before the idle thread's prompt cache expires";
+  }
+  if (message.id.startsWith("context-compact:")) {
+    return "Compacting automatically because the context was full";
+  }
+  return null;
+}
+
 export { limitFallbackPairing } from "@specweave-studio/shared/threadModelIdentity";

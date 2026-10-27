@@ -28,6 +28,7 @@ import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 import * as ServerConfig from "../../config.ts";
 import {
   normalizeAcpRegistryCommands,
+  rewriteAcpUserText,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
 } from "../../provider/acp/AcpRegistryProbe.ts";
@@ -325,6 +326,18 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
       : {}),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
     resetModelSelection: resetCopilotStartupModel,
+    // The session's own advertisement; before it has one, the instance's latest,
+    // so a new session's first turn is still rewritten.
+    rewriteUserText: (text, sessionCommands) =>
+      sessionCommands !== undefined || runtimeCoordinator === undefined
+        ? Effect.succeed(rewriteAcpUserText(text, sessionCommands, undefined))
+        : runtimeCoordinator
+            .getAvailableCommands(options.instanceId)
+            .pipe(
+              Effect.map((commands) =>
+                rewriteAcpUserText(text, undefined, Option.getOrUndefined(commands)),
+              ),
+            ),
     ...(runtimeCoordinator === undefined
       ? {}
       : {

@@ -4,6 +4,7 @@ import {
   limitContinuationKind,
   limitContinuationNote,
   restartContinuationNote,
+  automaticCompactionNote,
 } from "./runIdentity";
 import { modelLabel } from "./shellModel";
 
@@ -185,5 +186,23 @@ describe("limit fallback pairing", () => {
       limitFallbackPairing([{ id: "limit-reset:t1:r1", runId: "r2" }], runs, astra),
     ).toBeNull();
     expect(limitFallbackPairing([{ id: "m1", runId: "r1" }], runs, astra)).toBeNull();
+  });
+});
+
+describe("automaticCompactionNote", () => {
+  it("names why the server compacted, and only for its own messages", () => {
+    expect(
+      automaticCompactionNote({
+        id: "message:idle-compact:thread-1:1793009571835",
+        createdBy: "system",
+      }),
+    ).toBe("Compacting automatically before the idle thread's prompt cache expires");
+    expect(
+      automaticCompactionNote({ id: "context-compact:thread-1:run-2", createdBy: "system" }),
+    ).toBe("Compacting automatically because the context was full");
+    expect(automaticCompactionNote({ id: "message:abc", createdBy: "system" })).toBeNull();
+    expect(
+      automaticCompactionNote({ id: "message:idle-compact:thread-1:1", createdBy: "user" }),
+    ).toBeNull();
   });
 });

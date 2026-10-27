@@ -1,7 +1,7 @@
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { ConnectionMatrix, FOLDER_ONLY_NOTE } from "./ConnectionMatrix";
+import { ConnectionMatrix, FOLDER_ONLY_NOTE, PER_TOOL_NOTE } from "./ConnectionMatrix";
 import type { NativeConnectionsSnapshot } from "@specweave-studio/contracts";
 let renderer: ReactTestRenderer;
 beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
@@ -167,8 +167,15 @@ describe("connection matrix", () => {
         <ConnectionMatrix snapshot={actionable} computerUseNote={<span>permission check</span>} />,
       );
     });
+    // The note sits in the row's details, opened from the row name.
+    expect(
+      renderer.root.findAll((node) => node.props["data-testid"] === "computer-use-connection-note"),
+    ).toHaveLength(0);
+    await act(() =>
+      renderer.root.findByProps({ "aria-label": "computer-use row details" }).props.onClick(),
+    );
     const notes = renderer.root.findAll(
-      (node) => node.props["data-testid"] === "computer-use-connection-note",
+      (node) => node.type === "div" && node.props["data-testid"] === "computer-use-connection-note",
     );
     expect(notes).toHaveLength(1);
     expect(text()).toContain("permission check");
@@ -238,7 +245,9 @@ describe("connection matrix", () => {
       ],
     };
     await act(() => {
-      renderer = create(<ConnectionMatrix snapshot={grouped} onApply={vi.fn()} />);
+      renderer = create(
+        <ConnectionMatrix snapshot={grouped} onApply={vi.fn()} initialDensity="detailed" />,
+      );
     });
     const headers = renderer.root.findAll((n) => n.type === "th" && n.props.scope === "col");
     expect(headers.map((h) => h.children.join(""))).toEqual([
@@ -249,8 +258,8 @@ describe("connection matrix", () => {
       "Windsurf",
     ]);
     const groupTitles = renderer.root
-      .findAll((n) => n.type === "th" && n.props.scope === "colgroup")
-      .map((n) => n.children.join(""));
+      .findAll((n) => n.type === "button" && n.props.className === "connection-group-toggle")
+      .map((n) => n.children.filter((c) => typeof c === "string").join(""));
     expect(groupTitles).toEqual([
       "Your connections · 2",
       "From plugins · 2",
@@ -261,16 +270,27 @@ describe("connection matrix", () => {
     expect(text()).toContain("Claude Code, only in penn and 1 more folder · http");
     // The group says what a folder-only entry is and that nothing else gets it.
     expect(
-      renderer.root.findByProps({ "data-testid": "folder-only-note" }).findByType("td").children,
-    ).toEqual([FOLDER_ONLY_NOTE]);
+      renderer.root.findByProps({ "data-testid": "folder-only-note" }).findByProps({ role: "note" })
+        .props.title,
+    ).toBe(FOLDER_ONLY_NOTE);
     expect(FOLDER_ONLY_NOTE).toContain("only when it runs in that folder");
     expect(FOLDER_ONLY_NOTE).toContain("Other folders, projects and providers do not get them");
     expect(FOLDER_ONLY_NOTE).toContain("~/.claude.json");
     expect(text()).not.toMatch(/[Pp]rivate project/);
     expect(text()).toContain("Windsurf (invalid)");
-    expect(
-      renderer.root.findByProps({ "data-testid": "connection-counts" }).children.join(""),
-    ).toBe("Codex 3 · Claude Code 1 · Gemini CLI 1 · Windsurf 0");
+    // Each tool chip counts the servers enabled in it.
+    const toolChips = renderer.root
+      .findByProps({ "aria-label": "Filter by AI tool" })
+      .findAllByType("button")
+      .map((b) => b.props["aria-label"]);
+    expect(toolChips).toEqual([
+      "All tools (4)",
+      "Codex enabled (2)",
+      "Claude Code enabled (1)",
+      "Gemini CLI enabled (1)",
+      "Windsurf enabled (0)",
+    ]);
+    expect(text()).toContain(PER_TOOL_NOTE);
     // Plugin and other-project declarations are never copied between tools.
     const labels = renderer.root
       .findAll((n) => n.type === "button" && typeof n.props["aria-label"] === "string")
@@ -359,5 +379,144 @@ describe("connection matrix", () => {
     expect(byLabel("Turn off skills: Pay")).toHaveLength(1);
     expect(text()).toContain("Managed in your ChatGPT account");
     expect(byLabel("Turn off skills: Notes")).toHaveLength(0);
+  });
+  it("filters by tool, status and search, enabled first, and clears", async () => {
+    const base = { scope: "user", shadowed: false, transport: "stdio", portable: true } as const;
+    const wide: NativeConnectionsSnapshot = {
+      ...snapshot,
+      connections: [
+        {
+          ...base,
+          id: "c1",
+          name: "alpha",
+          provider: "codex",
+          sourceId: "codex-user",
+          state: "configured",
+        },
+        {
+          ...base,
+          id: "c2",
+          name: "beta",
+          provider: "codex",
+          sourceId: "codex-user",
+          state: "disabled",
+        },
+        {
+          ...base,
+          id: "k1",
+          name: "beta",
+          provider: "claude",
+          sourceId: "claude-user",
+          state: "configured",
+        },
+        {
+          ...base,
+          id: "k2",
+          name: "gamma",
+          provider: "claude",
+          sourceId: "claude-user",
+          state: "configured",
+        },
+      ],
+      otherTools: [
+        {
+          tool: "opencode",
+          status: "read",
+          connections: [{ id: "o1", name: "delta", transport: "stdio", state: "configured" }],
+        },
+      ],
+    };
+    await act(() => {
+      renderer = create(<ConnectionMatrix snapshot={wide} />);
+    });
+    const rowNames = () =>
+      renderer.root
+        .findAll((n) => n.type === "button" && n.props.className === "connection-name")
+        .map((n) => n.props.title as string);
+    const press = (label: string) =>
+      act(() =>
+        renderer.root
+          .findAll(
+            (n) => n.type === "button" && String(n.props["aria-label"]).startsWith(label),
+          )[0]!
+          .props.onClick(),
+      );
+    // beta is enabled in one tool and declared in two, so it leads.
+    expect(rowNames()).toEqual(["beta", "alpha", "delta", "gamma"]);
+    await press("Codex enabled");
+    expect(rowNames()).toEqual(["alpha", "beta"]);
+    const headers = () =>
+      renderer.root
+        .findAll((n) => n.type === "th" && n.props.scope === "col")
+        .map((h) => h.children.join(""));
+    expect(headers()).toEqual(["Connection", "Codex"]);
+    await press("Claude Code enabled");
+    await press("Missing somewhere");
+    expect(rowNames()).toEqual(["alpha", "gamma"]);
+    await press("Disabled");
+    expect(rowNames()).toEqual(["beta"]);
+    await act(() =>
+      renderer.root
+        .findByProps({ "aria-label": "Search connections" })
+        .props.onChange({ target: { value: "zzz" } }),
+    );
+    expect(text()).toContain("No connections match these filters.");
+    await act(() =>
+      renderer.root
+        .findAll((n) => n.type === "button" && n.children.includes("Clear filters"))[0]!
+        .props.onClick(),
+    );
+    expect(rowNames()).toEqual(["beta", "alpha", "delta", "gamma"]);
+    expect(headers()).toEqual(["Connection", "Codex", "Claude Code", "OpenCode"]);
+  });
+  it("copies a declaration's file and key, never its command", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await act(() => {
+      renderer = create(<ConnectionMatrix snapshot={snapshot} project />);
+    });
+    await act(() =>
+      renderer.root.findByProps({ "aria-label": "PostHog Codex details" }).props.onClick(),
+    );
+    await act(() =>
+      renderer.root
+        .findAll(
+          (n) => n.type === "button" && String(n.props["aria-label"]).startsWith("Copy location"),
+        )[0]!
+        .props.onClick(),
+    );
+    expect(writeText).toHaveBeenCalledWith(".codex/config.toml [mcp_servers.PostHog]");
+    expect(text()).toContain("Copied");
+    // A kept-aside entry is not in the tool's file, so there is no location to copy.
+    await act(() =>
+      renderer.update(
+        <ConnectionMatrix
+          snapshot={{
+            ...snapshot,
+            connections: [
+              {
+                id: "parked",
+                name: "notes",
+                provider: "claude",
+                sourceId: "claude-user",
+                scope: "user",
+                transport: "stdio",
+                state: "disabled",
+                shadowed: false,
+                parked: true,
+              },
+            ],
+          }}
+        />,
+      ),
+    );
+    await act(() =>
+      renderer.root.findByProps({ "aria-label": "notes Claude Code details" }).props.onClick(),
+    );
+    expect(
+      renderer.root.findAll(
+        (n) => n.type === "button" && String(n.props["aria-label"]).startsWith("Copy location"),
+      ),
+    ).toHaveLength(0);
   });
 });

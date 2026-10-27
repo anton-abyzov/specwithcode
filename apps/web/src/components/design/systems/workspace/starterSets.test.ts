@@ -1,9 +1,18 @@
 import type { DesignSystem } from "@specweave-studio/contracts";
+import { slideTokens } from "@specweave-studio/shared/slideLayouts";
 import { describe, expect, it } from "vite-plus/test";
 
+import weaveTokens from "../../../../../../server/src/design/systems/fixtures/weave/tokens.json.fixture?raw";
 import { contrastRatio } from "./contrast";
-import { DEFAULT_FAMILY, modeValues, starterKit, starterTokens } from "./starterSets";
+import {
+  DEFAULT_ACCENT,
+  DEFAULT_FAMILY,
+  modeValues,
+  starterKit,
+  starterTokens,
+} from "./starterSets";
 import { buildSections } from "./systemSections";
+import { TEST_SYSTEM } from "./testSystem";
 import {
   colorProblem,
   lengthProblem,
@@ -75,9 +84,28 @@ describe("starter sets", () => {
     expect(value(tokens, "color-accent", "light")).toBe("#2F6FED");
   });
 
+  it("names the chosen family font-body, serif or not, and the styles use it", () => {
+    const serif = 'ui-serif, Georgia, "Times New Roman", serif';
+    const tokens = starterTokens("typography", LIGHT_DARK, { family: serif });
+    expect(value(tokens, "font-body", "light")).toBe(serif);
+    expect(tokens.some((token) => token.name === "font-sans")).toBe(false);
+    expect(value(tokens, "type-body", "light")).toContain("var(--font-body)");
+    // Slides built from the system find it as their body face.
+    const system = {
+      ...TEST_SYSTEM,
+      tokens: tokens.map((edit) => ({
+        ...edit,
+        values: Object.fromEntries(
+          Object.entries(edit.values).map(([mode, raw]) => [mode, { raw, resolved: raw }]),
+        ),
+      })),
+    } as unknown as DesignSystem;
+    expect(slideTokens(system).body).toEqual({ token: "font-body" });
+  });
+
   it("builds a type scale on the chosen family, sizes in the first mode only", () => {
     const tokens = starterTokens("typography", LIGHT_DARK, { family: "  " });
-    expect(value(tokens, "font-sans", "light")).toBe(DEFAULT_FAMILY);
+    expect(value(tokens, "font-body", "light")).toBe(DEFAULT_FAMILY);
     const styles = tokens.filter((token) => token.type === "typography");
     expect(styles.map((token) => token.name)).toContain("type-body");
     for (const style of styles) {
@@ -114,5 +142,42 @@ describe("starter sets", () => {
     const names = starterKit(LIGHT_DARK).map((token) => token.name);
     expect(names.some((name) => /wv-|weave|harbor/i.test(name))).toBe(false);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("copies no value from the Weave sample", () => {
+    // Plain lengths and pure black or white are everyone's; anything else must be our own.
+    const common = /^(?:-?\d+(?:\.\d+)?(?:px|rem|em)?|#000000|#ffffff)$/;
+    const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, "");
+    const sample = new Set<string>();
+    const collect = (node: unknown): void => {
+      if (typeof node === "string") sample.add(normalize(node));
+      else if (Array.isArray(node)) node.forEach(collect);
+      else if (node !== null && typeof node === "object") Object.values(node).forEach(collect);
+    };
+    collect(JSON.parse(weaveTokens));
+    const copied = starterKit(LIGHT_DARK, { accent: DEFAULT_ACCENT })
+      .flatMap((token) => Object.values(token.values).map((raw) => [token.name, raw] as const))
+      .filter(([, raw]) => {
+        const value = normalize(raw);
+        if (common.test(value)) return false;
+        // A whole sample value, or a long run of one (a font stack missing its first family).
+        return [...sample].some(
+          (copy) => copy === value || (value.length >= 20 && copy.includes(value)),
+        );
+      });
+    expect(copied).toEqual([]);
+    // The check itself catches such a run: Weave's mono stack without its first family.
+    const run = normalize('ui-monospace, "SF Mono", Menlo, Consolas, monospace');
+    expect([...sample].some((copy) => copy.includes(run))).toBe(true);
+    // The two shadows also differ in shape, not only in tint.
+    const geometry = (value: string) => normalize(value).replace(/rgba?\([^)]*\)/g, "");
+    const sampleShadows = [...sample]
+      .filter((value) => value.includes("px") && value.includes("rgba("))
+      .map(geometry);
+    for (const shadow of starterTokens("shadows", LIGHT_DARK)) {
+      for (const raw of Object.values(shadow.values)) {
+        expect(sampleShadows).not.toContain(geometry(raw));
+      }
+    }
   });
 });

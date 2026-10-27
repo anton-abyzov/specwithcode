@@ -1,12 +1,22 @@
 # Connections library
 
-Open **Settings → Connections** and select an execution machine. The matrix compares MCP declarations in Codex and Claude Code configuration. Select a cell for its source, scope, other declarations and access owner. **Refresh configurations** reads the selected machine again.
+Open **Settings → Connections** and select an execution machine. Each AI tool keeps its own MCP list, so the matrix compares one row per server across Codex, Claude Code and every other tool whose configuration exists on the machine. **Refresh configurations** reads the selected machine again.
+
+## Finding a server
+
+- **Search** matches server names, plugin names and folder names.
+- **Tools** chips show how many servers each tool has enabled. Picking one narrows the table to that tool; picking more compares them; **All** shows every tool. Rows with no declaration in the shown tools drop out.
+- **Status**: Enabled, Disabled, Missing somewhere (declared in one shown tool and absent from another) and, when present, Invalid. **Clear filters** resets all three.
+- Rows are sorted enabled-first within each group (your connections, from plugins, only in one folder). Group headers collapse.
+- **Compact** (default) shows one line per cell: empty cells are a faint ring, and notes sit behind an info mark. **Detailed** shows each declaration's scope and transport and the notes inline.
+
+Select a status for that tool's source, transport, other declarations, access owner and actions; select a server name for the row's details, including the computer-use permission note. **Copy location** copies the file and key (for example `~/.codex/config.toml [mcp_servers.posthog]`), never the command, URL or secrets, which the machine does not send to the browser.
 
 Open a project's **Environment** to include its registered checkout's configuration. User declarations are shared across projects; project and private-project declarations can override them. Existing **SpecWithCode-managed connections** retain their own per-project tool grants.
 
 ## What the states mean
 
-- **Configured**: a supported command or URL is declared. This does not establish sign-in, project trust, native policy, or session access.
+- **Enabled**: a supported command or URL is declared and turned on. This does not establish sign-in, project trust, native policy, or session access.
 - **Disabled**: an explicit disable was found in the inspected configuration.
 - **Invalid declaration**: the entry has no supported transport or has an invalid structure.
 - **Not found**: no matching declaration was found in the inspected sources. **Unknown** replaces this when a source could not be read or the inventory was truncated.

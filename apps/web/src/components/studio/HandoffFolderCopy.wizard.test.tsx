@@ -939,3 +939,34 @@ it("brings back a What review once the folder summary loads on a reopen", async 
   expect(banner()).toBe("You're viewing What. The copy is at Review.");
   expect(noteText()).toBe("Picked up where you left off.");
 });
+
+it("refreshes a resumed saved scan without cancelling, reoffering or changing stored choices", async () => {
+  localStorage.setItem(
+    KEY,
+    JSON.stringify({
+      operationId: "saved",
+      environmentId: "m3",
+      mode: "copy-only",
+      targetFolder: "/home/anton/project",
+      projectId: null,
+      selection: ["tracked"],
+      planShown: true,
+    }),
+  );
+  state.handlers.copySourceStatus = ({ input }: any) => ({
+    state: "ready",
+    summary: noSecrets,
+    scanCompletedAt: 1793061000000,
+    ...(input.refresh ? { freshness: { checkedAt: 1793062000000, current: true } } : {}),
+  });
+  statuses = [copyStatus("previewed", { rows: [newRow(".")] })];
+  await mount();
+  await settle();
+  const saved = pointerNow();
+  const calls = state.calls.length;
+  await click("Refresh scan");
+  expect(pageText()).toContain("Your copy choices are unchanged");
+  expect(pointerNow()).toEqual(saved);
+  expect(state.calls.slice(calls).map(([name]) => name)).toEqual(["copySourceStatus"]);
+  expect(state.calls.at(-1)?.[1]).toMatchObject({ input: { operationId: "saved", refresh: true } });
+});

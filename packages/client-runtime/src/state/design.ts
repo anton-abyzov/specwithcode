@@ -74,6 +74,13 @@ export function createDesignAtoms<R, E>(
       label: "design:import-deck",
       tag: WS_METHODS.designImportDeck,
     }),
+    /** A host .pptx read as slides for the file viewer, stored nowhere (`designDeckPreview` capability). */
+    previewDeck: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "design:preview-deck",
+      tag: WS_METHODS.designPreviewDeck,
+      staleTimeMs: 10_000,
+      idleTtlMs: 30_000,
+    }),
     assetPut: createEnvironmentRpcCommand(runtime, {
       label: "design:asset-put",
       tag: WS_METHODS.designAssetPut,

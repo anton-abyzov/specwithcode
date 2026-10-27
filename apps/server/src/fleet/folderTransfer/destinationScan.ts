@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - the destination scan probes case sensitivity and hashes candidates.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -19,6 +20,7 @@ export interface DestinationState {
   readonly files: Array<DestinationFile>;
   readonly repositories: Array<DestinationRepository>;
   readonly caseInsensitive: boolean;
+  readonly fingerprint?: string;
 }
 
 /**
@@ -55,7 +57,8 @@ export async function scanDestination(
 ): Promise<DestinationState> {
   const caseInsensitive = await caseInsensitiveAt(target);
   const stat = await lstatOrNull(target);
-  if (!stat) return { exists: false, files: [], repositories: [], caseInsensitive };
+  if (!stat)
+    return { exists: false, files: [], repositories: [], caseInsensitive, fingerprint: "absent" };
   if (!stat.isDirectory()) throw new Error("The destination path is not a folder.");
   const scan = await scanFolder(target);
   const key = (path: string) => (caseInsensitive ? foldedPathKey(path) : path);
@@ -82,10 +85,7 @@ export async function scanDestination(
       repo: entry.repo,
       ...(entry.target !== undefined ? { target: entry.target } : {}),
     };
-    if (
-      entry.type === "file" &&
-      (sourceSize.get(key(entry.path)) === entry.size || wantedSizes.has(entry.size))
-    )
+    if (entry.type === "file" && (sourceSize.has(key(entry.path)) || wantedSizes.has(entry.size)))
       toHash.push({ index: files.length, path: entry.path });
     files.push(file);
   }
@@ -97,7 +97,25 @@ export async function scanDestination(
       // Unreadable here: compared as different, never reused.
     }
   });
+  const fingerprint = NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify({
+        entries: scan.entries
+          .filter((entry) => entry.class !== "repository")
+          .map(({ path, type, mode, size, mtimeMs, target }) => ({
+            path,
+            type,
+            mode,
+            ...(type !== "directory" ? { size, mtimeMs } : {}),
+            target,
+          })),
+        files,
+        repositories: scan.repositories,
+      }),
+    )
+    .digest("hex");
   return {
+    fingerprint,
     exists: true,
     files,
     repositories: scan.repositories.map((repo) => ({

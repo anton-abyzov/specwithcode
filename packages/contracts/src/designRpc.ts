@@ -19,6 +19,8 @@ import {
   DesignHistoryResult,
   DesignImportDeckInput,
   DesignImportDeckResult,
+  DesignPreviewDeckInput,
+  DesignPreviewDeckResult,
   DesignListInput,
   DesignListResult,
   DesignMoveInput,
@@ -49,6 +51,8 @@ export const DESIGN_RPC_METHODS = {
   designMove: "design.move",
   /** Gated by the `designDeckImport` capability; a person's action, not an agent tool. */
   designImportDeck: "design.importDeck",
+  /** Gated by the `designDeckPreview` capability: a .pptx on the host, read and not stored. */
+  designPreviewDeck: "design.previewDeck",
   designDelete: "design.delete",
   designAssetPut: "design.assetPut",
   designExport: "design.export",
@@ -114,6 +118,11 @@ export const designRpcs = [
   Rpc.make(DESIGN_RPC_METHODS.designImportDeck, {
     payload: DesignImportDeckInput,
     success: DesignImportDeckResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designPreviewDeck, {
+    payload: DesignPreviewDeckInput,
+    success: DesignPreviewDeckResult,
     error,
   }),
   Rpc.make(DESIGN_RPC_METHODS.designDelete, {

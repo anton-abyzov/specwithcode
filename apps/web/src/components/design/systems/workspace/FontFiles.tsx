@@ -5,7 +5,7 @@
  */
 import type { DesignSystemFile } from "@specweave-studio/contracts";
 import { UploadIcon } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -32,9 +32,17 @@ export function fontFiles(files: readonly DesignSystemFile[]): DesignSystemFile[
 
 export interface FontUploads {
   readonly canEdit: boolean;
+  /** Null until the system's files are listed; uploads wait for that list. */
   readonly fonts: readonly DesignSystemFile[] | null;
+  /** Why the list is missing, when listing failed; editors only, since viewers cannot upload. */
+  readonly unavailable: string | null;
   readonly progress: string | null;
-  readonly message: { readonly text: string; readonly problem: boolean } | null;
+  readonly message: {
+    readonly text: string;
+    readonly problem: boolean;
+    /** Says the list has not loaded; it goes once the list does. */
+    readonly waiting?: boolean;
+  } | null;
   /** Opens the file picker. */
   readonly pick: () => void;
   /** The hidden file input; render it once. */
@@ -58,6 +66,16 @@ export function useFontUploadState(
   const [progress, setProgress] = useState<string | null>(null);
   const [message, setMessage] = useState<FontUploads["message"]>(null);
   const listing = api.listing.data;
+  const notListed = {
+    text:
+      api.listing.error === null
+        ? "The font list hasn't loaded yet, so nothing was uploaded. Try again in a moment."
+        : `${api.listing.error} Nothing was uploaded.`,
+    problem: true,
+  };
+  useEffect(() => {
+    if (listing !== null) setMessage((current) => (current?.waiting === true ? null : current));
+  }, [listing]);
 
   const upload = async (files: File[]) => {
     const notFont = files.find((file) => !FONT_EXTENSIONS.has(extensionOf(file.name)));
@@ -66,20 +84,15 @@ export function useFontUploadState(
         text: `${notFont.name} is not a font file. Use woff2, woff, ttf or otf.`,
         problem: true,
       });
-    const stored = (listing?.files ?? []).filter((file) => file.origin === "stored");
-    const plan = planUploads(
-      files,
-      () => "fonts",
-      new Set(stored.map((file) => file.path)),
-      listing === null
-        ? null
-        : {
-            usedBytes: listing.usedBytes,
-            limitBytes: listing.limitBytes,
-            fileCount: stored.length,
-            limitFiles: listing.limitFiles,
-          },
-    );
+    // Without the list, a font of the same name would be replaced and the limits unchecked.
+    if (listing === null) return setMessage(notListed);
+    const stored = listing.files.filter((file) => file.origin === "stored");
+    const plan = planUploads(files, () => "fonts", new Set(stored.map((file) => file.path)), {
+      usedBytes: listing.usedBytes,
+      limitBytes: listing.limitBytes,
+      fileCount: stored.length,
+      limitFiles: listing.limitFiles,
+    });
     if (!plan.ok) return setMessage({ text: plan.message, problem: true });
     setMessage(null);
     const report = await uploadAll(api, plan.uploads, (done, total) =>
@@ -107,9 +120,11 @@ export function useFontUploadState(
   return {
     canEdit,
     fonts: listing === null ? null : fontFiles(listing.files),
+    unavailable: canEdit && listing === null ? api.listing.error : null,
     progress,
     message,
-    pick: () => ref.current?.click(),
+    pick: () =>
+      listing === null ? setMessage({ ...notListed, waiting: true }) : ref.current?.click(),
     input: canEdit ? (
       <input
         ref={ref}
@@ -133,18 +148,29 @@ export function useFontUploadState(
 export function UploadFontButton({
   fonts,
   variant = "outline",
+  onPick,
 }: {
   fonts: FontUploads;
   variant?: "outline" | "ghost";
+  /** Runs before the picker opens, such as opening the section the results show in. */
+  onPick?: () => void;
 }) {
   if (!fonts.canEdit) return null;
+  // Waiting for the list, the button stays reachable: pressing it says why nothing opens.
+  const waiting = fonts.fonts === null;
   return (
     <Button
       variant={variant}
       size="xs"
       disabled={fonts.progress !== null}
+      aria-disabled={waiting || undefined}
+      title={waiting ? (fonts.unavailable ?? "Loading the font list…") : undefined}
+      className={waiting ? "opacity-(--disabled-opacity)" : undefined}
       data-testid="font-upload"
-      onClick={fonts.pick}
+      onClick={() => {
+        onPick?.();
+        fonts.pick();
+      }}
     >
       <UploadIcon aria-hidden />
       Upload font
@@ -166,7 +192,13 @@ export function FontFilesList({ fonts }: { fonts: FontUploads }) {
           <UploadFontButton fonts={fonts} variant="ghost" />
         </span>
       </div>
-      {list === null ? null : list.length === 0 ? (
+      {list === null ? (
+        fonts.unavailable !== null ? (
+          <p role="alert" className={cn("pb-2 text-destructive-foreground text-sm", INSET)}>
+            {fonts.unavailable}
+          </p>
+        ) : null
+      ) : list.length === 0 ? (
         <p className={cn("pb-2 text-muted-foreground text-sm", INSET)}>No font files yet</p>
       ) : (
         <ul className="border-border/50 border-t">

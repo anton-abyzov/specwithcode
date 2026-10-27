@@ -24,6 +24,7 @@ import {
   TableHeader,
   TokensScroller,
   TokenRow,
+  useNarrowTable,
   type TokenTableProps,
 } from "./tokenRows";
 import {
@@ -172,6 +173,7 @@ function ColorCell({
   isBase: boolean;
   colorNames: readonly string[];
 }) {
+  const narrow = useNarrowTable();
   const value = modeValue(token, system.modes, mode.id);
   if (value === null)
     return (
@@ -185,6 +187,7 @@ function ColorCell({
   const alias = aliasTarget(value.raw);
   const baseName = system.modes[0]?.name ?? "the first mode";
   const contrast = tokenContrast(token, system, mode);
+  const badge = contrast === null ? null : <ContrastBadge check={contrast} modeName={mode.name} />;
   const text = value.inherited ? (
     <span className="truncate text-muted-foreground text-[13px]">Inherits {baseName}</span>
   ) : (
@@ -203,49 +206,54 @@ function ColorCell({
       data-mode={mode.id}
       data-inherited={value.inherited || undefined}
       title={value.inherited ? `Inherits ${baseName}` : undefined}
-      className="flex min-w-0 items-center gap-1"
+      className="flex min-w-0 flex-col gap-0.5"
     >
-      <div
-        className={cn(
-          FIELD,
-          canEdit
-            ? "border-input bg-background focus-within:border-ring hover:border-ring/60"
-            : "border-border/60",
-          value.inherited && "border-dashed",
-        )}
-      >
-        <Swatch color={paint} label={paint ?? value.raw} />
-        {canEdit ? (
-          <ColorField
-            name={token.name}
-            modeName={mode.name}
-            baseName={baseName}
-            isBase={isBase}
-            raw={value.inherited ? "" : value.raw}
-            placeholder={value.raw}
-            colorNames={colorNames}
-            onCommit={(raw) =>
-              void onEdit({ kind: "set-value", name: token.name, modeId: mode.id, raw })
-            }
-          >
-            {text}
-          </ColorField>
-        ) : (
-          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">{text}</span>
-        )}
-        {contrast !== null ? <ContrastBadge check={contrast} modeName={mode.name} /> : null}
-      </div>
-      {alias !== null && !value.inherited ? (
-        <button
-          type="button"
-          title={`Alias of ${alias}`}
-          aria-label={`Go to ${alias}`}
-          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => onGoTo(alias)}
+      <div className="flex min-w-0 items-center gap-1">
+        <div
+          className={cn(
+            FIELD,
+            canEdit
+              ? "border-input bg-background focus-within:border-ring hover:border-ring/60"
+              : "border-border/60",
+            value.inherited && "border-dashed",
+          )}
         >
-          <ArrowUpRightIcon aria-hidden className="size-3.5" />
-        </button>
-      ) : null}
+          <Swatch color={paint} label={paint ?? value.raw} />
+          {canEdit ? (
+            <ColorField
+              name={token.name}
+              modeName={mode.name}
+              baseName={baseName}
+              isBase={isBase}
+              inherited={value.inherited}
+              raw={value.inherited ? "" : value.raw}
+              placeholder={value.raw}
+              colorNames={colorNames}
+              onCommit={(raw) =>
+                void onEdit({ kind: "set-value", name: token.name, modeId: mode.id, raw })
+              }
+            >
+              {text}
+            </ColorField>
+          ) : (
+            <span className="flex min-w-0 flex-1 items-baseline gap-1.5">{text}</span>
+          )}
+          {narrow ? null : badge}
+        </div>
+        {alias !== null && !value.inherited ? (
+          <button
+            type="button"
+            title={`Alias of ${alias}`}
+            aria-label={`Go to ${alias}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onGoTo(alias)}
+          >
+            <ArrowUpRightIcon aria-hidden className="size-3.5" />
+          </button>
+        ) : null}
+      </div>
+      {/* A narrow column has no room beside the value: the ratio gets its own line. */}
+      {narrow && badge !== null ? <div className="flex pl-1">{badge}</div> : null}
     </div>
   );
 }
@@ -279,7 +287,7 @@ export function ContrastBadge({ check, modeName }: { check: ContrastCheck; modeN
       ) : (
         <TriangleAlertIcon aria-hidden className="size-3" />
       )}
-      <span className="@max-md/tokens:sr-only">{ratio}</span>
+      <span>{ratio}</span>
       <span className="sr-only"> contrast, {verdict}</span>
     </span>
   );
@@ -294,6 +302,7 @@ export function ColorField({
   modeName,
   baseName,
   isBase,
+  inherited = false,
   raw,
   placeholder,
   colorNames,
@@ -304,6 +313,8 @@ export function ColorField({
   modeName: string;
   baseName: string;
   isBase: boolean;
+  /** The mode shows the first mode's value; said in the trigger's name. */
+  inherited?: boolean;
   /** The mode's own value; empty while it inherits. */
   raw: string;
   placeholder: string;
@@ -341,7 +352,7 @@ export function ColorField({
           <button
             type="button"
             data-row-edit={isBase ? "" : undefined}
-            aria-label={`Edit ${name}, ${modeName}`}
+            aria-label={`Edit ${name}, ${modeName}${inherited ? `, inherits ${baseName}` : ""}`}
             className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         }

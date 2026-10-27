@@ -117,12 +117,12 @@ describe("ProviderSettingsForm helpers", () => {
       "binaryPath",
       "homePath",
       "autoCompactWindow",
-      "idleCompaction",
+      "compactBeforeCacheExpires",
       "launchArgs",
     ]);
-    expect(fields.find((field) => field.key === "idleCompaction")).toMatchObject({
+    expect(fields.find((field) => field.key === "compactBeforeCacheExpires")).toMatchObject({
       control: "switch",
-      defaultBooleanValue: true,
+      defaultBooleanValue: false,
     });
   });
 

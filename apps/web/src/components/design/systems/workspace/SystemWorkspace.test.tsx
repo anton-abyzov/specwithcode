@@ -217,6 +217,18 @@ describe("SystemWorkspace", () => {
     expect($('[data-nav-section="family-zIndex"]')!.getAttribute("aria-current")).toBe("true");
   });
 
+  it("goes to a linked section that appears after the first render", () => {
+    const noColors = {
+      ...TEST_SYSTEM,
+      tokens: TEST_SYSTEM.tokens.filter((t) => t.type !== "color"),
+    };
+    const workspace = props({ hash: "colors", canEdit: false, system: noColors });
+    render(workspace);
+    expect(sectionIds()).not.toContain("colors");
+    render({ ...workspace, system: TEST_SYSTEM });
+    expect($('[data-nav-section="colors"]')!.getAttribute("aria-current")).toBe("true");
+  });
+
   it("opens Files over the cards and goes to the section a file is shown in", async () => {
     const workspace = props();
     render(workspace);

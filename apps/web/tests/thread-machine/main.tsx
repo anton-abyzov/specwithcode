@@ -23,6 +23,7 @@ const machine = threadMachinePresentation({
   phase: unreachable ? "reconnecting" : "connected",
   error: unreachable ? "timed out" : null,
   canOperate: true,
+  handoff: "available",
 });
 
 function Fixture() {

@@ -252,6 +252,30 @@ const choosing = async (page, w) => {
     steps: bar(["done", "current", "next", "next", "next"]),
     back: true,
   });
+  NodeAssert.match(await body(), /Saved scan from/);
+  const pendingBeforeRefresh = await page.evaluate(() =>
+    localStorage.getItem("specwithcode:folder-copy:m4:source"),
+  );
+  await page.getByRole("button", { name: "Refresh scan", exact: true }).click();
+  await page.getByText("The source still matches this scan.", { exact: false }).waitFor();
+  await check("what-refreshed", { primary: "Preview on ministorm", back: true });
+  NodeAssert.equal(
+    await page.evaluate(() => localStorage.getItem("specwithcode:folder-copy:m4:source")),
+    pendingBeforeRefresh,
+    "refresh preserves the job pointer and choices",
+  );
+  await page.evaluate(() => {
+    window.__folderCopyFixture.scanCurrent = false;
+  });
+  await page.getByRole("button", { name: "Refresh scan", exact: true }).click();
+  await page.getByRole("button", { name: "Measure and compare again", exact: true }).waitFor();
+  NodeAssert.equal(await action("Preview on ministorm").isDisabled(), true);
+  await check("what-source-changed", { primary: null, back: true });
+  await page.evaluate(() => {
+    window.__folderCopyFixture.scanCurrent = true;
+  });
+  await page.getByRole("button", { name: "Refresh scan", exact: true }).click();
+  await page.getByText("The source still matches this scan.", { exact: false }).waitFor();
   NodeAssert.equal(await step("review").isDisabled(), true, "a future step is disabled");
 
   await step("where").click();

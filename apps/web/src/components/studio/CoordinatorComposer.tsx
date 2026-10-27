@@ -10,6 +10,7 @@ import { useRef, useSyncExternalStore, type ReactNode } from "react";
 
 import { composerSendButtonLabel, composerSubmissionIntentForKey } from "../../composer-logic";
 import { parseComposerAppCommand } from "../../studio/composerAppCommands";
+import { resolveLeadingSkillCommand } from "../../providerSkillSearch";
 import { ViewerThreadComposerPortal } from "../../viewerOverlayStore";
 import type { ProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { useCoordinatorSlashMenu, type CoordinatorSlashMenuInput } from "./CoordinatorSlashMenu";
@@ -43,6 +44,8 @@ export async function submitCoordinatorDraft(input: {
   readonly onAppCommand: CoordinatorSlashMenuInput["onAppCommand"];
   readonly onSend: CoordinatorDraftSend;
   readonly onError: (message: string | null) => void;
+  /** The text as the coordinator's provider should get it (a typed `/skill` as its `$` mention). */
+  readonly resolveText?: (text: string) => string;
 }): Promise<void> {
   const { composer, attached, onAppCommand, onSend, onError } = input;
   const { prompt: text, promptRevision, attachments: images, submitting } = composer.getSnapshot();
@@ -62,7 +65,10 @@ export async function submitCoordinatorDraft(input: {
   try {
     const attachments = await attached.prepare(images);
     release = attached.hold(images);
-    const sent = await onSend(text, attachments.length ? attachments : undefined);
+    const sent = await onSend(
+      input.resolveText?.(text) ?? text,
+      attachments.length ? attachments : undefined,
+    );
     release();
     composer.clearSentPrompt(promptRevision);
     attached.clearSent(images, { keepUploads: sent?.keepUploads === true });
@@ -172,7 +178,14 @@ function CoordinatorComposerForm(props: {
     attached.preparing.length > 0 ||
     (!prompt.trim() && attached.attachments.length === 0);
   const submit = () =>
-    submitCoordinatorDraft({ composer, attached, onAppCommand, onSend, onError });
+    submitCoordinatorDraft({
+      composer,
+      attached,
+      onAppCommand,
+      onSend,
+      onError,
+      resolveText: (text) => resolveLeadingSkillCommand(text, props.provider?.snapshot, props.cwd),
+    });
   return (
     <form
       className="project-composer sws-composer"

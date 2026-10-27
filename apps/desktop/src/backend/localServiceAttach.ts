@@ -56,6 +56,8 @@ export interface StudioInstallation {
   readonly serviceInstalled: boolean;
   /** The launchd job (`gui/501/com.specweave.studio.m4`) that runs the service, when recorded. */
   readonly launchdTarget?: string;
+  /** The port the service listens on, when recorded. */
+  readonly port?: number;
 }
 
 const LAUNCHD_DOMAIN = /^(?:gui|user)\/\d+$/;
@@ -113,13 +115,64 @@ export function parseStudioInstallation(
     LAUNCHD_LABEL.test(service.label)
       ? `${service.domain}/${service.label}`
       : undefined;
+  const port =
+    typeof record.port === "number" &&
+    Number.isInteger(record.port) &&
+    record.port > 0 &&
+    record.port <= 65_535
+      ? record.port
+      : undefined;
   return {
     identity: typeof record.identity === "string" ? record.identity : expected.directoryName,
     studioHome,
     stateDir,
     serviceInstalled,
     ...(launchdTarget === undefined ? {} : { launchdTarget }),
+    ...(port === undefined ? {} : { port }),
   };
+}
+
+/** An installed service as the app sees it before it would start a backend of its own. */
+export interface InstalledServiceClaim {
+  readonly stateDir: string;
+  readonly port?: number;
+}
+
+/** Ports installed services listen on; the app's own backend never takes one. */
+export function reservedServicePorts(
+  services: ReadonlyArray<InstalledServiceClaim>,
+): ReadonlySet<number> {
+  return new Set(services.flatMap((service) => (service.port === undefined ? [] : [service.port])));
+}
+
+/**
+ * Why the app must not start its own backend, or null when it may. An installed
+ * service keeps the person's projects in its own store: a backend the app starts
+ * on its default home would show an empty workspace in their place, one on the
+ * service's own home would be a second writer of that store, and one on the
+ * service's port makes launchd's restarts of the service fail with EADDRINUSE.
+ * An explicit STUDIO_HOME elsewhere (`defaultHome` false) is a deliberate
+ * separate home and only has to stay off the service's port.
+ */
+export function embeddedBackendRefusal(input: {
+  readonly services: ReadonlyArray<InstalledServiceClaim>;
+  readonly stateDir: string;
+  readonly port: number;
+  readonly defaultHome: boolean;
+}): string | null {
+  const samePort = input.services.find((service) => service.port === input.port);
+  if (samePort !== undefined) {
+    return `port ${input.port} belongs to the installed SpecWithCode service for ${samePort.stateDir}`;
+  }
+  const sameHome = input.services.find((service) => service.stateDir === input.stateDir);
+  if (sameHome !== undefined) {
+    return `the installed SpecWithCode service owns ${sameHome.stateDir}; a second server would write the same store`;
+  }
+  const elsewhere = input.defaultHome ? input.services[0] : undefined;
+  if (elsewhere !== undefined) {
+    return `the installed SpecWithCode service keeps your projects in ${elsewhere.stateDir}; a server on ${input.stateDir} would show none of them`;
+  }
+  return null;
 }
 
 /**

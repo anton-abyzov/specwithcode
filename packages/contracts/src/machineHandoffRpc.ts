@@ -24,6 +24,7 @@ import {
   FolderCopySentSecrets,
   FolderCopySentSecretsInput,
   FolderCopySourceStatus,
+  FolderCopySourceStatusInput,
   FolderCopyStartInput,
   FolderCopyStatus,
   FolderCopyUndoInput,
@@ -84,7 +85,7 @@ export const folderCopyRpcs = [
     error: copyError,
   }),
   Rpc.make(M.machineHandoffCopySourceStatus, {
-    payload: FolderCopyOperationInput,
+    payload: FolderCopySourceStatusInput,
     success: FolderCopySourceStatus,
     error: copyError,
   }),

@@ -67,6 +67,8 @@ export interface RepositoryInfo {
   readonly status: ReadonlyArray<string>;
   /** Linked worktrees of a main repository: inside the root (relative path) or outside. */
   readonly worktrees: ReadonlyArray<{ readonly path: string | null; readonly name: string }>;
+  readonly missingWorktrees?: ReadonlyArray<string>;
+  readonly worktreeRegistrationFingerprint?: string;
   /** For linked worktrees: the main repository's path relative to the root, or null outside it. */
   readonly mainRepository: string | null;
 }
@@ -245,14 +247,26 @@ async function readRepository(
     ])
   ).filter((line) => line.length > 3);
   const worktrees: Array<{ path: string | null; name: string }> = [];
+  const missingWorktrees: Array<string> = [];
+  let worktreeRegistrationFingerprint: string | undefined;
   if (kind === "main") {
     const listing = (await runGit(absolute, ["worktree", "list", "--porcelain"])).stdout;
+    worktreeRegistrationFingerprint = NodeCrypto.createHash("sha256").update(listing).digest("hex");
     const realRoot = await NodeFSP.realpath(root);
     for (const block of listing.split("\n\n")) {
       const line = block.split("\n").find((item) => item.startsWith("worktree "));
       if (!line) continue;
       const location = fromGit(line.slice("worktree ".length));
       if (location === absolute || location === (await NodeFSP.realpath(absolute))) continue;
+      // A Git registration can survive its working folder. Never call it a current folder.
+      const exists = await NodeFSP.lstat(location).catch((cause: NodeJS.ErrnoException) => {
+        if (cause.code === "ENOENT") return null;
+        throw cause;
+      });
+      if (!exists?.isDirectory()) {
+        missingWorktrees.push(NodePath.basename(location));
+        continue;
+      }
       const inside = location === realRoot || location.startsWith(`${realRoot}${NodePath.sep}`);
       worktrees.push({
         path: inside ? relativeOf(realRoot, location) : null,
@@ -287,6 +301,8 @@ async function readRepository(
       origin: originUrl,
       status,
       worktrees,
+      missingWorktrees,
+      ...(worktreeRegistrationFingerprint !== undefined ? { worktreeRegistrationFingerprint } : {}),
       mainRepository,
     },
     context: { path, absolute, tracked, ignoredFiles, ignoredDirectories },
@@ -585,6 +601,10 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
                   }
                 : read.info,
             );
+            if (read.info.missingWorktrees?.length)
+              notices.push(
+                `${read.info.path}: ${read.info.missingWorktrees.length} missing worktree registration(s), not current folders: ${read.info.missingWorktrees.join(", ")}. No registrations were removed.`,
+              );
             const outside = read.info.worktrees.filter((tree) => tree.path === null);
             if (outside.length > 0)
               notices.push(

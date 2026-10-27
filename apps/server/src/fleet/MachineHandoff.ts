@@ -40,6 +40,7 @@ import {
   type FolderCopyOperationInput,
   type FolderCopyReleaseInput,
   type FolderCopySourceStatus,
+  type FolderCopySourceStatusInput,
   type FolderCopyStartInput,
   type FolderCopyStatus,
   type FolderCopyUndoInput,
@@ -163,7 +164,7 @@ export class MachineHandoff extends Context.Service<
       input: FolderCopyOfferInput,
     ) => Effect.Effect<FolderCopyOffer, FolderCopyError>;
     readonly copySourceStatus: (
-      input: FolderCopyOperationInput,
+      input: FolderCopySourceStatusInput,
     ) => Effect.Effect<FolderCopySourceStatus, FolderCopyError>;
     readonly copySourceCancel: (
       input: FolderCopyCancelInput,
@@ -537,7 +538,9 @@ const make = Effect.gen(function* () {
       }),
     );
   const copySourceStatus: MachineHandoff["Service"]["copySourceStatus"] = (input) =>
-    attempt(() => sources.read(input.operationId)).pipe(
+    attempt(() =>
+      input.refresh ? sources.checkScan(input.operationId) : sources.read(input.operationId),
+    ).pipe(
       Effect.flatMap((record) =>
         record === null
           ? Effect.fail(new FolderCopyError({ code: "not_found" }))

@@ -40,6 +40,7 @@ export function CopyBackButton({
 /** The live stage's actions, placed by the dialog through HandoffCopyActions. */
 export function HandoffCopyFooter({
   stage,
+  sourceChanged = false,
   error,
   busy,
   working,
@@ -79,6 +80,7 @@ export function HandoffCopyFooter({
   backDisabled,
 }: {
   readonly stage: CopyStage;
+  readonly sourceChanged?: boolean;
   readonly error: string | null;
   readonly busy: boolean;
   readonly working: boolean;
@@ -153,7 +155,7 @@ export function HandoffCopyFooter({
         ))}
       {(stage === "select" || stage === "planning") && (
         <>
-          <Button disabled={busy || selection.length === 0} onClick={onPlan}>
+          <Button disabled={busy || sourceChanged || selection.length === 0} onClick={onPlan}>
             {stage === "planning"
               ? "Comparing folders…"
               : auto
@@ -169,13 +171,17 @@ export function HandoffCopyFooter({
         <>
           {replaced ? (
             <>
-              <Button disabled={busy || !!copy.disk || secretsUnconfirmed} onClick={onReplaceAll}>
+              <Button
+                disabled={busy || sourceChanged || !!copy.disk || secretsUnconfirmed}
+                onClick={onReplaceAll}
+              >
                 Replace all
               </Button>
               <Button
                 variant="outline"
                 disabled={
                   busy ||
+                  sourceChanged ||
                   !!copy.disk ||
                   (copy.totals?.decisionsNeeded ?? 1) > 0 ||
                   secretsUnconfirmed
@@ -187,7 +193,12 @@ export function HandoffCopyFooter({
             </>
           ) : (
             <Button
-              disabled={busy || (copy.totals?.decisionsNeeded ?? 1) > 0 || secretsUnconfirmed}
+              disabled={
+                busy ||
+                sourceChanged ||
+                (copy.totals?.decisionsNeeded ?? 1) > 0 ||
+                secretsUnconfirmed
+              }
               onClick={onApply}
             >
               {approveLabel}

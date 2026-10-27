@@ -841,18 +841,28 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
-    idleCompaction: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+    // Off by default: Claude asks whether to
+    // compact when the person comes back to a large idle thread. A new key:
+    // the settings panel saved the old idleCompaction default (true) into
+    // instance configs, so reading that key would keep it on unchosen.
+    compactBeforeCacheExpires: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({
-        title: "Compact idle threads",
+        title: "Compact idle threads before the cache expires",
         description:
-          "Compact a Claude thread holding 100,000 tokens or more after about 55 minutes idle, while its prompt cache is still warm, so the next message continues from a summary. Set CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS in the environment to change the minimum.",
+          "Off: when you return to a large idle thread, Claude asks whether to compact it. On: a top-level Claude thread holding 200,000 tokens or more is compacted about 55 minutes after its last turn, while its prompt cache is still warm. Subagents and delegated workers are never compacted this way. Set CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS in the environment to change the minimum (at least 100,000).",
         providerSettingsForm: { control: "switch" },
       }),
     ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "compactBeforeCacheExpires",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -2104,7 +2114,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   autoCompactWindow: Schema.optionalKey(
     TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
   ),
-  idleCompaction: Schema.optionalKey(Schema.Boolean),
+  compactBeforeCacheExpires: Schema.optionalKey(Schema.Boolean),
 });
 
 const CursorSettingsPatch = Schema.Struct({

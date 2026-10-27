@@ -60,6 +60,19 @@ try {
   await page.getByText("Codex manages native access").waitFor();
   checks.push("Native provenance and unverified session details");
   await page.screenshot({ path: NodePath.join(out, "matrix-desktop.png"), fullPage: true });
+  await page.getByLabel("Search connections").fill("no-such-server");
+  await page.getByText("No connections match these filters.").waitFor();
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await page.getByRole("button", { name: /^Codex enabled/ }).click();
+  NodeAssert.deepEqual(
+    await page
+      .locator("thead th")
+      .allInnerTexts()
+      .then((t) => t.map((x) => x.toLowerCase())),
+    ["connection", "codex"],
+  );
+  await page.getByRole("button", { name: /^All tools/ }).click();
+  checks.push("Search, tool filter and clear");
   await pickMachine(/^Remote fixture/);
   await page.getByRole("button", { name: "Remote analytics Claude Code details" }).waitFor();
   NodeAssert.equal(await page.getByRole("rowheader", { name: "PostHog" }).count(), 0);

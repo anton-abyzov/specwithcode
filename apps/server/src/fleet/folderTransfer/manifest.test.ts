@@ -11,7 +11,7 @@ import {
   EXACT_SELECTION,
   isRebuildableDirectoryName,
 } from "./classify.ts";
-import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
+import { git, makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import {
   CHUNK_SIZE,
   forEachLimited,
@@ -272,4 +272,28 @@ describe("forEachLimited", () => {
     // No worker picked up new items after the failure.
     expect(started.length).toBeLessThan(6);
   });
+});
+
+it("counts existing external folders and labels missing registrations without pruning", async () => {
+  const main = NodePath.join(base, "external-main");
+  NodeFS.mkdirSync(main);
+  git(main, "init", "-q");
+  NodeFS.writeFileSync(NodePath.join(main, "readme.txt"), "fixture");
+  git(main, "add", ".");
+  git(main, "commit", "-q", "-m", "fixture");
+  const gone = NodePath.join(base, "gone-external");
+  const present = NodePath.join(base, "present-external");
+  git(main, "worktree", "add", "-q", "-b", "gone", gone);
+  git(main, "worktree", "add", "-q", "-b", "present", present);
+  NodeFS.rmSync(gone, { recursive: true, force: true });
+  const current = await scanFolder(main);
+  expect(current.repositories[0]?.worktrees).toEqual([{ path: null, name: "present-external" }]);
+  expect(current.notices?.join(" ")).toContain(
+    "1 missing worktree registration(s), not current folders: gone-external",
+  );
+  expect(current.notices?.join(" ")).toContain("1 worktree(s) outside this folder");
+  expect(git(main, "worktree", "list", "--porcelain")).toContain(gone);
+  const added = NodePath.join(base, "new-external");
+  git(main, "worktree", "add", "-q", "-b", "added", added);
+  expect((await scanFolder(main)).repositories[0]?.worktrees).toHaveLength(2);
 });

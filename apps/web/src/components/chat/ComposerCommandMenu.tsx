@@ -1,5 +1,6 @@
 import {
-  formatProviderSkillDisplayName,
+  providerSkillDistinctDisplayName,
+  providerSkillInvocation,
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@specweave-studio/client-runtime/providerSkills";
@@ -177,8 +178,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
-  const isSlashSkill =
-    props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
+  // A skill row leads with the exact text that runs it; a provider display name
+  // that says more than the id follows, muted.
+  const skill = props.item.type === "skill" ? props.item.skill : null;
+  const skillDisplayName = skill ? providerSkillDistinctDisplayName(skill) : null;
   const pullRequestPresentation =
     props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
 
@@ -218,15 +221,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
-          {isSlashSkill ? (
-            <>
-              <span className="text-secondary-label">/skill:</span>
-              {formatProviderSkillDisplayName(isSlashSkill)}
-            </>
-          ) : (
-            props.item.label
-          )}
+          {skill ? providerSkillInvocation(skill) : props.item.label}
         </span>
+        {skillDisplayName ? (
+          <span className="min-w-0 max-w-[25%] shrink-0 truncate text-secondary-label text-xs">
+            {skillDisplayName}
+          </span>
+        ) : null}
         <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
           {props.item.description}
         </span>
@@ -263,7 +264,7 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
 };
 
 const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
-  app: "App",
+  app: "Plugin",
   repo: "Repo",
   project: "Project",
   personal: "Personal",

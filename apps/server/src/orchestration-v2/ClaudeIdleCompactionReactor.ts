@@ -30,13 +30,14 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 /**
  * Claude Code compacts an idle session itself only in its interactive
- * terminal and desktop app, behind a server flag; the SDK sessions Studio
- * runs never do. Its auto-compact waits for the window (400K in Studio), so
- * a thread left at 100-400K stays full, and the next message after the hour
- * rewrites all of it into a cold cache. This reactor does what Claude Code's
- * idle compaction does: shortly before the 1-hour prompt cache lapses, it
- * sends /compact to an idle Claude thread that is large enough, so the
- * summary is written from a warm cache and the next message starts small.
+ * terminal and desktop app, behind a server flag; the SDK sessions
+ * SpecWithCode runs never do. By default SpecWithCode leaves an idle thread alone and
+ * Claude Code asks, when the person returns to a large one, whether to
+ * compact it (the resume prompt in ClaudeAdapterV2). With
+ * compactBeforeCacheExpires on,
+ * this reactor compacts ahead of time instead: shortly before the 1-hour
+ * prompt cache lapses, it sends /compact to an idle top-level Claude thread
+ * that is large enough, so the summary is written from a warm cache.
  */
 
 /** Claude Code's 1-hour prompt cache, which SpecWithCode asks for on every thread. */
@@ -45,19 +46,26 @@ export const CLAUDE_PROMPT_CACHE_TTL_MS = 60 * 60_000;
 export const IDLE_COMPACT_AFTER_MS = 54 * 60_000;
 /** Past this the cache has lapsed or is about to; compacting gains nothing then. */
 export const IDLE_COMPACT_BEFORE_MS = 59 * 60_000;
-/**
- * Claude Code's floor for CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS, and the size
- * at which it asks to compact on resume.
- */
+/** Claude Code's floor for CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS. */
 export const IDLE_COMPACT_MIN_TOKENS = 100_000;
+/**
+ * Claude Code's default idle-compaction size. Below it a cold re-read is
+ * cheap, so compacting mostly loses context for little saving.
+ */
+export const IDLE_COMPACT_DEFAULT_MIN_TOKENS = 200_000;
+/** The cache must outlive the compaction's own request by this much. */
+const IDLE_COMPACT_CACHE_MARGIN_MS = 2 * 60_000;
 const SWEEP_SECONDS = 60;
 
-/** CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS, read the way Claude Code reads it: never below 100K. */
+/**
+ * CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS, read the way Claude Code reads it:
+ * 200K when unset, never below 100K.
+ */
 export function idleCompactMinTokens(value: string | undefined): number {
   const parsed = Number(value?.trim() || Number.NaN);
   return Number.isFinite(parsed)
     ? Math.max(IDLE_COMPACT_MIN_TOKENS, parsed)
-    : IDLE_COMPACT_MIN_TOKENS;
+    : IDLE_COMPACT_DEFAULT_MIN_TOKENS;
 }
 
 /** Whether a quiet thread's shell makes it a candidate, before its records are read. */
@@ -73,8 +81,9 @@ export function isIdleCompactionCandidate(
     | "settledAt"
     | "settledOverride"
     | "lineage"
-    | "creationSource"
     | "heldQueuedCount"
+    | "pendingBackgroundTasks"
+    | "snoozedUntil"
   >,
   now: number,
 ): boolean {
@@ -92,11 +101,13 @@ export function isIdleCompactionCandidate(
     thread.activeProviderThreadId === null ||
     thread.latestRunCompletedAt === null ||
     thread.latestRunCompletedAt === undefined ||
-    // Settled work and the provider's own subagents (Agent tool children)
-    // are rarely written to again. Delegated workers are: their coordinator
-    // sends follow-ups, so they compact like any other thread.
+    // Background work reports into the next turn; a compaction would swallow it.
+    (thread.pendingBackgroundTasks?.length ?? 0) > 0 ||
+    (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > now) ||
     (thread.settledAt !== null && thread.settledOverride !== "active") ||
-    (thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider")
+    // Subagents, delegated workers included, mostly finish and are never
+    // written to again; a follow-up that does come gets the resume prompt.
+    thread.lineage.relationshipToParent === "subagent"
   ) {
     return false;
   }
@@ -106,7 +117,9 @@ export function isIdleCompactionCandidate(
 
 /**
  * The context the provider thread holds now: the last finished turn's usage.
- * Null when the last turn was a /compact, so a compacted thread is left alone.
+ * Null when the last turn was a /compact, so a compacted thread is left alone,
+ * or when its cache will have lapsed before a compaction could read it: the
+ * last request, not the run's end, starts the cache's hour.
  */
 export function idleCompactionUsedTokens(
   providerTurns: ReadonlyArray<
@@ -114,12 +127,21 @@ export function idleCompactionUsedTokens(
   >,
   providerThreadId: string,
   lastUserText: string | undefined,
+  now: number,
 ): number | null {
   if (lastUserText?.trim().toLowerCase() === "/compact") return null;
-  const last = providerTurns
+  const usage = providerTurns
     .filter((turn) => turn.providerThreadId === providerThreadId && turn.status === "completed")
-    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-  return last?.tokenUsage?.usedTokens ?? null;
+    .toSorted((left, right) => right.ordinal - left.ordinal)[0]?.tokenUsage;
+  if (usage === undefined) return null;
+  const lastRequestAt = Date.parse(usage.updatedAt);
+  if (
+    !Number.isFinite(lastRequestAt) ||
+    lastRequestAt + CLAUDE_PROMPT_CACHE_TTL_MS - now < IDLE_COMPACT_CACHE_MARGIN_MS
+  ) {
+    return null;
+  }
+  return usage.usedTokens;
 }
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
@@ -132,7 +154,7 @@ export function claudeIdleCompactionPolicy(
   const entry = deriveProviderInstanceConfigMap(settings)[instanceId];
   if (entry === undefined || entry.driver !== "claudeAgent" || entry.enabled === false) return null;
   const decoded = decodeClaudeSettings(entry.config ?? {});
-  if (Option.isNone(decoded) || !decoded.value.idleCompaction) return null;
+  if (Option.isNone(decoded) || !decoded.value.compactBeforeCacheExpires) return null;
   const environment = mergeProviderInstanceEnvironment(entry.environment, process.env);
   // At 54 minutes a 5-minute cache is long gone: the summary would be written
   // from a cold cache and save nothing over the next message's own rewrite.
@@ -172,13 +194,14 @@ export const make = Effect.gen(function* () {
       );
       compactedAfterRun.set(thread.id, latestRunId);
       const lastUserText = records.messages.at(-1)?.text;
+      const now = yield* Clock.currentTimeMillis;
       const usedTokens = idleCompactionUsedTokens(
         records.providerTurns,
         thread.activeProviderThreadId!,
         lastUserText,
+        now,
       );
       if (usedTokens === null || usedTokens < minTokens) return;
-      const now = yield* Clock.currentTimeMillis;
       // The sweep's snapshot can be half a minute old; a message, settle or
       // archive since then means the thread is no longer idle.
       const current = yield* threads.getThreadShell(thread.id);

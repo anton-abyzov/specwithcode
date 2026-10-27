@@ -82,7 +82,11 @@ import { UserMessageExecutionOrigin, UserMessageProvenance } from "./UserMessage
 import { RelayedMessage, type RelayedMessageSource } from "../studio/RelayedMessage";
 import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
-import { limitContinuationNote, restartContinuationNote } from "../../studio/runIdentity";
+import {
+  automaticCompactionNote,
+  limitContinuationNote,
+  restartContinuationNote,
+} from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
 import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@specweave-studio/client-runtime/state/thread-execution";
@@ -2595,6 +2599,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       >
         <RotateCwIcon aria-hidden className="size-3.5" />
         {restartNote}
+      </p>
+    );
+  // The server's own /compact reads as a quiet line, never as the person's bubble.
+  const compactionNote = automaticCompactionNote(row.message);
+  if (compactionNote)
+    return (
+      <p
+        className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground"
+        role="status"
+        data-automatic-compaction
+      >
+        <MinusIcon aria-hidden className="size-3.5" />
+        {compactionNote}
       </p>
     );
   if (limitNote)

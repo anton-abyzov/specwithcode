@@ -604,12 +604,55 @@ describe("resolved historical failures", () => {
   );
 });
 
+// October 26: a Muse check failed on a provider limitation and read a red
+// "Needs review" under Idle, a request to the person in a group that is not one.
+describe("failed runs", () => {
+  const providerLimit = {
+    status: "failed",
+    lastErrorClass: "provider_error",
+  } as EnvironmentThreadShell["runtime"];
+
+  it("say what happened under Idle instead of asking for review", () => {
+    for (const runtime of [failed, providerLimit]) {
+      const row = thread({ runtime });
+      expect(threadStatusWord(row)).toBe("Run failed");
+      expect(threadTone(row)).toBe("failed");
+      expect(waitingCount([row])).toBe(0);
+      expect(
+        buildThreadPaneGroups([row], "activity")
+          .filter((g) => g.threads.length > 0)
+          .map((g) => g.group),
+      ).toEqual(["Idle"]);
+    }
+  });
+  it("keep the usage-limit wording and the person's real requests", () => {
+    const limited = {
+      status: "failed",
+      lastErrorClass: "usage_limit",
+    } as EnvironmentThreadShell["runtime"];
+    expect(threadStatusWord(thread({ runtime: limited }))).toBe("Usage limit reached");
+    const asking = thread({ runtime: failed, hasPendingApprovals: true });
+    expect(threadStatusWord(asking)).toBe("Approval requested");
+    expect(buildThreadPaneGroups([asking], "activity")[0]?.threads).toEqual([asking]);
+  });
+});
+
 describe("blocked threads", () => {
   const blocked = thread({ reportedBlocker: "Ship 1.0.20 today, or wait for the signer?" });
 
   it("names a quiet thread whose report has a blocker Blocked, waiting on you", () => {
     expect(threadStatusWord(blocked)).toBe("Blocked");
     expect(threadTone(blocked)).toBe("waiting");
+  });
+
+  it("leaves a provider-native subagent's report to its parent agent", () => {
+    const subagent = {
+      ...blocked,
+      lineage: { parentThreadId: "worker-1", relationshipToParent: "subagent" },
+      source: { creationSource: "provider" },
+    } as unknown as EnvironmentThreadShell;
+    expect(threadStatusWord(subagent)).toBeNull();
+    expect(threadTone(subagent)).toBe("idle");
   });
 
   it("drops the blocker while the thread runs again or once it is resolved", () => {

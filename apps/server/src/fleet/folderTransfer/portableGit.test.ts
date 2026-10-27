@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DEFAULT_SELECTION } from "./classify.ts";
 import { DestinationCopies } from "./destinationService.ts";
@@ -315,21 +315,26 @@ describe("portable external linked worktrees", () => {
         });
         await settle(copies, id, "previewed");
         expect((await sources.read(id))?.summary?.skipped?.worktrees).toEqual(["linked"]);
-        if (concurrent) {
-          git(scopedMain, "commit", "--allow-empty", "-qm", "new main commit during transfer");
-          // Commit via commit-tree + update-ref so staged/unstaged work is unchanged.
-          const tree = git(scopedLinked, "rev-parse", "HEAD^{tree}");
-          const commit = git(
-            scopedLinked,
-            "commit-tree",
-            tree,
-            "-p",
-            beforeLinked,
-            "-m",
-            "new linked commit during transfer",
-          );
-          git(scopedLinked, "update-ref", "refs/heads/unfinished", commit);
-        }
+        const checkScan = sources.checkScan.bind(sources);
+        vi.spyOn(sources, "checkScan").mockImplementationOnce(async (operationId) => {
+          const result = await checkScan(operationId);
+          if (concurrent) {
+            git(scopedMain, "commit", "--allow-empty", "-qm", "new main commit during transfer");
+            // Commit via commit-tree + update-ref so staged/unstaged work is unchanged.
+            const tree = git(scopedLinked, "rev-parse", "HEAD^{tree}");
+            const commit = git(
+              scopedLinked,
+              "commit-tree",
+              tree,
+              "-p",
+              beforeLinked,
+              "-m",
+              "new linked commit during transfer",
+            );
+            git(scopedLinked, "update-ref", "refs/heads/unfinished", commit);
+          }
+          return result;
+        });
         await copies.approve(id);
         const applied = await settle(copies, id, "applied");
         expect(applied.checks.filter((check) => !check.ok)).toEqual([]);

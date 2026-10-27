@@ -34,7 +34,8 @@ export const STARTER_FAMILIES: ReadonlyArray<{ readonly label: string; readonly 
 
 export const DEFAULT_FAMILY = STARTER_FAMILIES[0]!.stack;
 
-const MONO_STACK = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+const MONO_STACK =
+  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
 
 /** What each set is called in the offer, the toast and the button. */
 export const STARTER_LABELS: Record<StarterKind, string> = {
@@ -207,19 +208,26 @@ function palette(modes: DesignSystem["modes"], accentInput: string): DesignToken
   ];
 }
 
+/**
+ * The chosen family is the body face whatever its stack, so it is named by
+ * that role (not font-sans for a serif); slides read font-body as body text.
+ */
+const BODY_FAMILY = "font-body";
+
 function typeScale(modes: DesignSystem["modes"], family: string): DesignTokenEdit[] {
-  const style = (name: string, raw: string) =>
-    token("typography", `type-${name}`, "typography", firstOnly(modes, raw));
+  const name = BODY_FAMILY;
+  const style = (step: string, raw: string) =>
+    token("typography", `type-${step}`, "typography", firstOnly(modes, raw));
   return [
-    token("typography", "font-sans", "fontFamily", firstOnly(modes, family)),
+    token("typography", name, "fontFamily", firstOnly(modes, family)),
     token("typography", "font-mono", "fontFamily", firstOnly(modes, MONO_STACK)),
-    style("display", "700 48px/1.1 var(--font-sans)"),
-    style("h1", "700 32px/1.2 var(--font-sans)"),
-    style("h2", "600 24px/1.25 var(--font-sans)"),
-    style("h3", "600 20px/1.3 var(--font-sans)"),
-    style("body", "400 16px/1.5 var(--font-sans)"),
-    style("small", "400 14px/1.45 var(--font-sans)"),
-    style("caption", "500 12px/1.4 var(--font-sans)"),
+    style("display", `700 48px/1.1 var(--${name})`),
+    style("h1", `700 32px/1.2 var(--${name})`),
+    style("h2", `600 24px/1.25 var(--${name})`),
+    style("h3", `600 20px/1.3 var(--${name})`),
+    style("body", `400 16px/1.5 var(--${name})`),
+    style("small", `400 14px/1.45 var(--${name})`),
+    style("caption", `500 12px/1.4 var(--${name})`),
     style("code", "400 14px/1.5 var(--font-mono)"),
   ];
 }
@@ -269,8 +277,8 @@ export function starterTokens(
           "shadow-raised",
           "shadow",
           modeValues(modes, {
-            light: "0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.08)",
-            dark: "0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4)",
+            light: "0 1px 3px rgba(15, 23, 42, 0.1), 0 2px 8px rgba(15, 23, 42, 0.06)",
+            dark: "0 1px 3px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.35)",
           }),
           "Cards that lift off the ground.",
         ),
@@ -279,10 +287,10 @@ export function starterTokens(
           "shadow-overlay",
           "shadow",
           modeValues(modes, {
-            light: "0 12px 32px -12px rgba(16, 24, 40, 0.28)",
-            dark: "0 12px 32px -12px rgba(0, 0, 0, 0.75)",
+            light: "0 4px 6px rgba(15, 23, 42, 0.06), 0 10px 24px rgba(15, 23, 42, 0.14)",
+            dark: "0 4px 6px rgba(0, 0, 0, 0.4), 0 10px 24px rgba(0, 0, 0, 0.6)",
           }),
-          "Menus, popovers and dialogs.",
+          "Layers that float above the page: menus, popovers and dialogs.",
         ),
       ];
   }

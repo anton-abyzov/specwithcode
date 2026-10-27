@@ -2009,6 +2009,45 @@ export function setAttentionScenario(scenario: string) {
       runtime: { status: "failed", lastErrorClass: "usage_limit" },
       reportedBlocker: "Waiting for CI",
     }));
+  // October 26 screenshot: finished Claude Code subagents ending their reports
+  // with Blockers, and a Muse check that failed on a provider limitation.
+  if (scenario === "review-routing") {
+    const native = (id, parent, title, extra = {}) =>
+      child(id, parent, {
+        title,
+        source: { creationSource: "provider", pendingRuntimeRequest: null },
+        ...extra,
+      });
+    shells = [
+      shell("coord", "Project coordinator"),
+      shell("worker-1", "Usage-aware model picker", active),
+      shell("worker-2", "Schedule Mac and mobile release"),
+      shell("worker-3", "Release 1.0.35", {
+        reportedBlocker: "Ship 1.0.35 today, or wait for the SQLite fix?",
+      }),
+      shell("worker-4", "1041 design create, reuse and pickers"),
+      shell("worker-5", "Muse approval check (Accept) - 0922", {
+        runtime: { status: "failed", lastErrorClass: "provider_error" },
+      }),
+      native("child-1", "worker-1", "Close increment 1054", {
+        reportedBlocker: "You can close 1054 one of two ways.",
+      }),
+      native("child-2", "worker-2", "Code check for DB recovery path", {
+        hasPendingApprovals: true,
+        source: {
+          creationSource: "provider",
+          pendingRuntimeRequest: {
+            id: "approval-1",
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(Date.now()),
+          },
+        },
+      }),
+      native("child-4", "worker-4", "Fresh-context close review 1041", {
+        reportedBlocker: "Close 1041 now, or wait for installed acceptance?",
+      }),
+    ];
+  }
   if (scenario === "resolved")
     shells[0] = { ...shells[0], hasPendingUserInput: true, settledOverride: "settled" };
   if (scenario === "archive")

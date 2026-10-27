@@ -729,6 +729,29 @@ export const DesignImportDeckResult = Schema.Struct({
 });
 export type DesignImportDeckResult = typeof DesignImportDeckResult.Type;
 
+/** Pictures a deck preview carries, in bytes before base64; the rest are left out. */
+export const DESIGN_DECK_PREVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Reads a PowerPoint deck (.pptx) on the host for a preview, storing nothing:
+ * the slides the import would make. The path is absolute, one of the host
+ * files a thread's media opens from. Gated by the `designDeckPreview` capability.
+ */
+export const DesignPreviewDeckInput = Schema.Struct({
+  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+});
+export type DesignPreviewDeckInput = typeof DesignPreviewDeckInput.Type;
+
+export const DesignPreviewDeckResult = Schema.Struct({
+  pages: Schema.Array(DesignPage).check(Schema.isMaxLength(DESIGN_MAX_PAGES)),
+  /** Pictures by the asset name their image nodes carry, as `data:` URLs. */
+  images: Schema.Record(DesignAssetName, Schema.String),
+  /** Pictures left out because the preview's picture budget ran out. */
+  imagesOmitted: NonNegativeInt,
+  notImported: Schema.Array(DesignImportSkipped),
+});
+export type DesignPreviewDeckResult = typeof DesignPreviewDeckResult.Type;
+
 export const DesignDeleteInput = DesignAddress;
 export const DesignDeleteResult = Schema.Struct({ deleted: Schema.Boolean });
 

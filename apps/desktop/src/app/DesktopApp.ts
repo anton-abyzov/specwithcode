@@ -23,6 +23,7 @@ import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
+import { embeddedBackendRefusal, reservedServicePorts } from "../backend/localServiceAttach.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
@@ -85,10 +86,31 @@ export class DesktopLocalServiceUnresponsiveError extends Schema.TaggedError<Des
 
 export class DesktopInstalledServiceNotStartedError extends Schema.TaggedError<DesktopInstalledServiceNotStartedError>()(
   "DesktopInstalledServiceNotStartedError",
-  { stateDir: Schema.String, waitedMinutes: Schema.Int },
+  {
+    stateDir: Schema.String,
+    waitedMinutes: Schema.Int,
+    reason: Schema.optional(Schema.Literals(["timed-out", "not-running", "not-loaded"])),
+  },
 ) {
   override get message(): string {
-    return `The SpecWithCode service that holds your projects (${this.stateDir}) is installed but has not started after ${this.waitedMinutes} minutes. The app did not open an empty store in its place. Check it with \`specweave-studio triage\` or restart the service, then open the app again.`;
+    const holds = `The SpecWithCode service that holds your projects (${this.stateDir})`;
+    const fix = `The app did not open an empty store in its place. Check it with \`specweave-studio triage\` or restart the service, then retry.`;
+    if (this.reason === "not-running") {
+      return `${holds} keeps stopping right after launchd starts it. ${fix}`;
+    }
+    if (this.reason === "not-loaded") {
+      return `${holds} is installed but launchd does not have it loaded. ${fix}`;
+    }
+    return `${holds} is installed but has not started after ${this.waitedMinutes} minutes. ${fix}`;
+  }
+}
+
+export class DesktopEmbeddedBackendRefusedError extends Schema.TaggedError<DesktopEmbeddedBackendRefusedError>()(
+  "DesktopEmbeddedBackendRefusedError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return `SpecWithCode did not start its own server: ${this.reason}. Start the installed service (\`specweave-studio triage\`), then open the app again.`;
   }
 }
 
@@ -109,6 +131,9 @@ const { logInfo: logStartupInfo, logError: logStartupError } =
 
 const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
   configuredPort: Option.Option<number>,
+  // Installed services' ports: one of them free now only means the service is
+  // between restarts, and taking it would make every restart fail.
+  reservedPorts: ReadonlySet<number> = new Set(),
 ) {
   if (Option.isSome(configuredPort)) {
     return {
@@ -119,6 +144,7 @@ const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(functio
 
   const net = yield* NetService.NetService;
   for (let port = DEFAULT_DESKTOP_BACKEND_PORT; port <= MAX_TCP_PORT; port += 1) {
+    if (reservedPorts.has(port)) continue;
     let availableOnEveryHost = true;
 
     for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
@@ -194,6 +220,30 @@ export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances"
   },
 );
 
+/**
+ * Asks whether to look for the local service again: "unavailable" when no
+ * dialog could be shown (the caller then fails as before).
+ */
+const askToRetryLocalService = Effect.fn("desktop.bootstrap.askToRetryLocalService")(function* (
+  detail: string,
+) {
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const choice = yield* electronDialog
+    .showMessageBox({
+      type: "warning",
+      title: "SpecWithCode service",
+      message: "The SpecWithCode service is not responding",
+      detail,
+      buttons: ["Retry", "Quit"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    })
+    .pipe(Effect.option);
+  if (Option.isNone(choice)) return "unavailable" as const;
+  return choice.value.response === 0 ? ("retry" as const) : ("quit" as const);
+});
+
 const bootstrap = Effect.gen(function* () {
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -237,30 +287,67 @@ const bootstrap = Effect.gen(function* () {
   if (!environment.isDevelopment) {
     const localService = yield* DesktopLocalService.DesktopLocalService;
     // Waiting for a service update or start can take minutes: show that, not nothing.
-    const discovery = yield* localService.discover({
+    const discoverLocalService = localService.discover({
       onInstallWait: desktopWindow.showServiceUpdateSplash,
       onServiceStartWait: desktopWindow.showServiceStartSplash,
     });
-    if (discovery._tag === "service-not-started") {
-      return yield* new DesktopInstalledServiceNotStartedError({
-        stateDir: discovery.stateDir,
-        waitedMinutes: DesktopLocalService.SERVICE_START_WAIT_LIMIT_MINUTES,
+    let discovery = yield* discoverLocalService;
+    // A service that holds the person's projects but does not answer is never
+    // replaced by an empty workspace: say what is wrong and offer Retry until it
+    // answers or the person quits.
+    // Discovery found no live owner, but a service receipt (one written meanwhile,
+    // or a service whose process stopped between checks) still claims the
+    // person's projects: that is the same problem, not a reason to open a home.
+    const homeRefusal = Effect.gen(function* () {
+      const refusal = embeddedBackendRefusal({
+        services: yield* localService.installedServices,
+        stateDir: environment.stateDir,
+        port: 0,
+        defaultHome: localService.usesDefaultHome,
       });
-    }
-    if (discovery._tag === "unresponsive") {
-      return yield* new DesktopLocalServiceUnresponsiveError({
-        pid: discovery.runtime.pid,
-        origin: discovery.runtime.origin,
-        stateDir: discovery.stateDir,
-        ...(discovery.lowDiskFreeBytes === undefined
-          ? {}
-          : {
-              lowDisk: {
-                freeBytes: discovery.lowDiskFreeBytes,
-                onMac: environment.platform === "darwin",
-              },
-            }),
+      return refusal === null ? null : new DesktopEmbeddedBackendRefusedError({ reason: refusal });
+    });
+    while (true) {
+      const problem =
+        discovery._tag === "running"
+          ? null
+          : discovery._tag === "none"
+            ? yield* homeRefusal
+            : discovery._tag === "service-not-started"
+              ? new DesktopInstalledServiceNotStartedError({
+                  stateDir: discovery.stateDir,
+                  waitedMinutes: DesktopLocalService.SERVICE_START_WAIT_LIMIT_MINUTES,
+                  reason: discovery.reason,
+                })
+              : new DesktopLocalServiceUnresponsiveError({
+                  pid: discovery.runtime.pid,
+                  origin: discovery.runtime.origin,
+                  stateDir: discovery.stateDir,
+                  ...(discovery.lowDiskFreeBytes === undefined
+                    ? {}
+                    : {
+                        lowDisk: {
+                          freeBytes: discovery.lowDiskFreeBytes,
+                          onMac: environment.platform === "darwin",
+                        },
+                      }),
+                });
+      if (problem === null) break;
+      yield* logBootstrapWarning("the local Studio service is not available", {
+        reason: problem.message,
       });
+      if (yield* Ref.get(state.quitting)) return;
+      const answer = yield* askToRetryLocalService(problem.message);
+      if (answer === "unavailable") return yield* problem;
+      // A quit that arrived while the dialog was open wins over Retry.
+      if (yield* Ref.get(state.quitting)) return;
+      if (answer === "quit") {
+        yield* Ref.set(state.quitting, true);
+        yield* (yield* DesktopShutdown.DesktopShutdown).request;
+        yield* (yield* ElectronApp.ElectronApp).quit;
+        return;
+      }
+      discovery = yield* discoverLocalService;
     }
     if (discovery._tag === "running") {
       yield* localService.attach(discovery.service);
@@ -300,8 +387,31 @@ const bootstrap = Effect.gen(function* () {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
-  const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
+  // Never beside an installed service: not on its port, not on its home, and on
+  // the default home not at all (discovery already waited for it; this also
+  // covers a receipt written meanwhile and development builds).
+  const localServices = yield* DesktopLocalService.DesktopLocalService;
+  const installedServices = yield* localServices.installedServices;
+  const backendPortSelection = yield* resolveDesktopBackendPort(
+    environment.configuredBackendPort,
+    new Set([
+      ...reservedServicePorts(installedServices),
+      // A receipt without a port: the fleet installer's default is this one.
+      ...(installedServices.some((service) => service.port === undefined)
+        ? [DEFAULT_DESKTOP_BACKEND_PORT]
+        : []),
+    ]),
+  );
   const backendPort = backendPortSelection.port;
+  const refusal = embeddedBackendRefusal({
+    services: installedServices,
+    stateDir: environment.stateDir,
+    port: backendPort,
+    defaultHome: localServices.usesDefaultHome && !environment.isDevelopment,
+  });
+  if (refusal !== null) {
+    return yield* new DesktopEmbeddedBackendRefusedError({ reason: refusal });
+  }
   yield* logBootstrapInfo(
     backendPortSelection.selectedByScan
       ? "selected backend port via sequential scan"
@@ -345,7 +455,7 @@ const bootstrap = Effect.gen(function* () {
       yield* desktopWindow.showConnectingSplash;
     }
     // This backend quits with the app, so an app restart may stop its work first.
-    yield* (yield* DesktopLocalService.DesktopLocalService).markSpawned;
+    yield* localServices.markSpawned;
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
     yield* appActivation.start.pipe(

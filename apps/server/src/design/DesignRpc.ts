@@ -15,6 +15,7 @@ import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import { DesignService, layerWithRender, type DesignCaller } from "./DesignService.ts";
+import { previewDeck } from "./import/DeckPreview.ts";
 import { importDeck } from "./import/DesignImport.ts";
 import * as DesignSystemRpc from "./systems/DesignSystemRpc.ts";
 import { DesignSystemProposals, discardProposalsForSystem } from "./systems/DesignSystemService.ts";
@@ -76,6 +77,7 @@ export const layerRpcHandlers = (session: Pick<AuthenticatedSession, "subject" |
         [WS_METHODS.designCopy]: (input) => designs.copy(caller, input),
         [WS_METHODS.designMove]: (input) => designs.move(caller, input),
         [WS_METHODS.designImportDeck]: (input) => importDeck(designs, caller, input),
+        [WS_METHODS.designPreviewDeck]: (input) => previewDeck(input),
         [WS_METHODS.designDelete]: (input) => designs.remove(caller, input),
         [WS_METHODS.designAssetPut]: (input) => designs.putAsset(caller, input),
         [WS_METHODS.designExport]: (input) => designs.export(caller, input),

@@ -21,6 +21,9 @@ const state = vi.hoisted(() => ({
   details: new Map<string, unknown>(),
   detailReads: [] as string[],
   unreadable: new Set<string>(),
+  /** Files read as text, and the ones the host refuses as binary. */
+  reads: [] as string[],
+  binary: new Set<string>(),
 }));
 
 const overlay = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }));
@@ -165,13 +168,25 @@ vi.mock("~/components/ChatMarkdown", () => ({
 }));
 vi.mock("../files/projectFilesQueryState", () => ({
   useProjectFileQuery: (_environmentId: string, _cwd: string, path: string) =>
-    state.unreadable.has(path)
+    (state.reads.push(path), state.binary.has(path))
       ? {
           data: null,
-          error: "No such file.",
-          readError: { failure: "operation_failed", operation: "open" },
+          error: `'${path}' is not a text file, so it has no text preview.`,
+          readError: { failure: "binary_file" },
         }
-      : { data: { contents: `contents of ${path}` }, error: null, readError: null },
+      : state.unreadable.has(path)
+        ? {
+            data: null,
+            error: "No such file.",
+            readError: { failure: "operation_failed", operation: "open" },
+          }
+        : { data: { contents: `contents of ${path}` }, error: null, readError: null },
+}));
+vi.mock("../files/DeckPreview", () => ({
+  HostDeckPreview: (props: { path: string }) => <div data-host-deck={props.path} />,
+  FilePreviewCard: (props: { path: string | null; reason: string }) => (
+    <div data-file-card={props.path ?? ""}>{props.reason}</div>
+  ),
 }));
 vi.mock("../files/AttachmentFilePreview", () => ({
   ReadOnlySourcePreview: (props: { name: string }) => <pre data-source={props.name} />,
@@ -225,6 +240,8 @@ beforeEach(() => {
   state.details = new Map();
   state.detailReads = [];
   state.unreadable = new Set();
+  state.reads = [];
+  state.binary = new Set();
   state.minted = [];
   state.openExternal.mockReset();
   state.messages = [
@@ -778,4 +795,46 @@ it("lists a migrated thread's origin from the snapshot it left when its thread c
     ["links", ["link"]],
   ]);
   expect(state.checked.at(-1)?.paths).toEqual([`${CWD}/docs/handoff.md`]);
+});
+
+it("opens a deck as its slides and other binary files as cards, never as a failed text read", async () => {
+  const deck = "/Users/me/.specwithcode/m4/evidence/exports/installed-1.0.92-deck.pptx";
+  state.messages = [
+    {
+      id: "a2",
+      role: "assistant",
+      createdAt: DateTime.makeUnsafe("2026-10-15T12:00:00.000Z"),
+      text: `Deck \`${deck}\`, talk \`/tmp/out/talk.key\`, brief \`/tmp/out/brief.docx\` and blob \`/tmp/out/blob.dat\`.`,
+    },
+  ];
+  state.turnItems = [];
+  state.binary = new Set(["/tmp/out/blob.dat"]);
+  await render();
+  const cards = () =>
+    renderer!.root
+      .findAll((node) => typeof node.props["data-file-card"] === "string")
+      .map((node) => [node.props["data-file-card"], node.children.join("")]);
+
+  await act(async () => item("installed-1.0.92-deck.pptx").props.onClick());
+  expect(renderer!.root.findAll((node) => node.props["data-host-deck"] === deck)).toHaveLength(1);
+  expect(state.reads).not.toContain(deck);
+  expect(state.minted).not.toContainEqual(expect.objectContaining({ path: deck }));
+
+  for (const [name, path, reason] of [
+    ["talk.key", "/tmp/out/talk.key", "Keynote presentations have no preview here."],
+    ["brief.docx", "/tmp/out/brief.docx", "Word documents have no preview here."],
+  ] as const) {
+    await act(async () => renderer!.unmount());
+    await render();
+    await act(async () => item(name).props.onClick());
+    expect(cards()).toEqual([[path, reason]]);
+    expect(state.reads).not.toContain(path);
+  }
+
+  await act(async () => renderer!.unmount());
+  await render();
+  await act(async () => item("blob.dat").props.onClick());
+  expect(cards()).toEqual([
+    ["/tmp/out/blob.dat", "blob.dat is not a text file, and has no preview here."],
+  ]);
 });

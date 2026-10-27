@@ -339,6 +339,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.designCopy]: "design",
   [WS_METHODS.designMove]: "design",
   [WS_METHODS.designImportDeck]: "design",
+  [WS_METHODS.designPreviewDeck]: "design",
   [WS_METHODS.designDelete]: "design",
   [WS_METHODS.designAssetPut]: "design",
   [WS_METHODS.designWatch]: "design",

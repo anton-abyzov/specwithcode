@@ -40,7 +40,7 @@ const ATTENTION_LABELS: Record<AttentionKind, string> = {
   plan: "Plan ready to review",
   held: "Queued messages held",
   limited: "Usage limit reached",
-  failed: "Run needs review",
+  failed: "Run failed",
   stalled: "No recent activity",
 };
 

@@ -1,5 +1,7 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { modelLabel as threadIdentityLabel } from "../studio/shellModel";
 import { registerChatViewWindowInput } from "./chat/chatViewWindowInput";
+import { resolveLeadingSkillCommand } from "../providerSkillSearch";
 import type {
   ChatViewProps,
   TerminalLaunchContext,
@@ -27,7 +29,11 @@ import { latestWorkStep } from "../studio/coordinatorProgress";
 import { useUnreachableHosts } from "../studio/unreachableHosts";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
 import { useMachineNicknames } from "../studio/machineNickname";
-import { threadHandoffState, useHandoffModeSnapshot } from "../studio/handoffMode";
+import {
+  threadHandoffMenuState,
+  threadHandoffState,
+  useHandoffModeSnapshot,
+} from "../studio/handoffMode";
 import { useOpenThread } from "../hooks/useOpenThread";
 import { runThreadLifecycleShortcut } from "../lib/threadLifecycleShortcut";
 import { settleAfter, settleCaught } from "../lib/settle";
@@ -4929,7 +4935,25 @@ function useChatViewState(props: ChatViewProps) {
     ],
   );
   // Every sent chat names its machine; a draft picks one in DraftMachinePicker instead.
-  const threadMachine = useThreadMachine(isServerThread ? environmentId : null);
+  const machineHandoffSnapshot = useHandoffModeSnapshot(
+    isServerThread ? environmentId : null,
+  ).snapshot;
+  // The tip follows the thread menu's own gates: hidden for a personal
+  // assistant or without handoff mode, greyed out once continued.
+  const machineHandoffMenu =
+    activeThread && activeProject && !isPersonalAssistantProject(activeProject)
+      ? threadHandoffMenuState(machineHandoffSnapshot, activeThread.id, activeThread.projectId)
+      : undefined;
+  const threadMachine = useThreadMachine(
+    isServerThread ? environmentId : null,
+    activeProject && isPersonalAssistantProject(activeProject)
+      ? "private"
+      : machineHandoffMenu === undefined
+        ? "none"
+        : machineHandoffMenu.continued
+          ? "continued"
+          : "available",
+  );
   const threadPullRequests = activeThreadShell?.pullRequests ?? [];
   const manualCompactionProviderAvailable = useMemo(
     () =>
@@ -12854,7 +12878,10 @@ export default function ChatView(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      text:
+        (composerRef.current?.resolveLeadingSkillCommand(messageTextForSend) ??
+          messageTextForSend) ||
+        ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
@@ -12907,7 +12934,10 @@ export default function ChatView(props: ChatViewProps) {
         model: selection.model,
         models: provider.models,
         effort: providerState.promptEffort,
-        text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        // Each target resolves a typed `/skill` against its own provider's skills.
+        text:
+          resolveLeadingSkillCommand(messageTextForSend, provider.snapshot, gitCwd) ||
+          ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
       });
       if (composerRef.current?.validateProviderInput(text) === false) return;
       multipleTargets.push({

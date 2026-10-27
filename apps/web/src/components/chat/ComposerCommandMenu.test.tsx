@@ -55,7 +55,7 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("Switch response model for this thread");
   });
 
-  it("shows the app source for an app skill", () => {
+  it("shows the plugin source and the exact invocation for a plugin skill", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         listId="test-suggestions"
@@ -70,7 +70,7 @@ describe("ComposerCommandMenu", () => {
               scope: "user",
               enabled: true,
             },
-            label: "Browser",
+            label: "$browser",
             description: "Open and control the in-app browser",
           },
         ]}
@@ -83,14 +83,15 @@ describe("ComposerCommandMenu", () => {
       />,
     );
 
-    expect(markup).toContain("Browser");
+    expect(markup).toContain("$browser");
+    expect(markup).not.toContain(">Browser<");
     expect(markup).toContain('data-slot="badge"');
-    expect(markup).toContain(">App Skill</span>");
+    expect(markup).toContain(">Plugin Skill</span>");
     expect(markup).toContain("Open and control the in-app browser");
     expect(markup).toContain("<svg");
   });
 
-  it("shows the repo source for a slash skill", () => {
+  it("leads a slash skill with its invocation and keeps a distinct display name", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         listId="test-suggestions"
@@ -106,7 +107,7 @@ describe("ComposerCommandMenu", () => {
               scope: "repo",
               enabled: true,
             },
-            label: "/skill:ask-matt",
+            label: "$ask-matt",
             description: "Find the right skill or workflow",
           },
         ]}
@@ -119,10 +120,43 @@ describe("ComposerCommandMenu", () => {
       />,
     );
 
-    expect(markup).toContain('<span class="text-secondary-label">/skill:</span>Ask Matt');
+    expect(markup).not.toContain("/skill:");
+    expect(markup).toMatch(/>\$ask-matt<\/span>/);
+    expect(markup).not.toContain(">Ask Matt<");
     expect(markup).toContain('data-slot="badge"');
     expect(markup).toContain("lucide-folder");
     expect(markup).toContain(">Repo</span>");
     expect(markup).toContain("Find the right skill or workflow");
+  });
+  it("shows a provider display name that says more than the id, muted after the invocation", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        listId="test-suggestions"
+        items={[
+          {
+            id: "skill:codex:sw:auto",
+            type: "skill",
+            provider: ProviderDriverKind.make("codex"),
+            skill: {
+              name: "sw:auto",
+              displayName: "SpecWeave Auto",
+              path: "/Users/maria/.codex/plugins/cache/specweave/sw/3.1.14/skills/auto/SKILL.md",
+              enabled: true,
+            },
+            label: "$sw:auto",
+            description: "Run an increment unattended until done",
+          },
+        ]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="slash-command"
+        activeItemId="skill:codex:sw:auto"
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup.indexOf("$sw:auto")).toBeLessThan(markup.indexOf("SpecWeave Auto"));
+    expect(markup).toContain(">Plugin</span>");
   });
 });

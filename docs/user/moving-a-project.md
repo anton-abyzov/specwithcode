@@ -215,3 +215,9 @@ first.
 - **File names that differ only by case.** macOS folders usually treat
   `Readme.md` and `README.md` as the same file. The preview warns about each
   pair and the destination keeps the first one.
+
+### Refresh a saved copy scan
+
+Closing and reopening the dialog resumes its saved copy, including its selections and conflict choices. The scan time is shown above the counts; older scans without a timestamp say that their age is unknown. **Refresh scan** checks the current source without cancelling or applying the job. Missing worktree registrations are labelled separately and are not counted as current folders. Refresh never prunes Git registrations or deletes folders.
+
+If the source changed, choose **Measure and compare again** to explicitly replace the old comparison. The machine, folder and file classes stay selected; review conflicts again and confirm any secret files separately. Copy approval validates the current source inventory and destination comparison before transferring. A changed or unverifiable old scan is refused.

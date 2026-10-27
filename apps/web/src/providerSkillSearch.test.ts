@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ServerProviderSkill } from "@specweave-studio/contracts";
+import type { ServerProvider, ServerProviderSkill } from "@specweave-studio/contracts";
 
-import { searchProviderSkills } from "./providerSkillSearch";
+import { resolveLeadingSkillCommand, searchProviderSkills } from "./providerSkillSearch";
 
 function makeSkill(input: Partial<ServerProviderSkill> & Pick<ServerProviderSkill, "name">) {
   return {
@@ -102,5 +102,38 @@ describe("searchProviderSkills", () => {
       "/Users/matt/.codex/skills/branch-audit/SKILL.md",
       "/tmp/browser/SKILL.md",
     ]);
+  });
+});
+
+describe("resolveLeadingSkillCommand", () => {
+  const provider = {
+    skills: [
+      makeSkill({ name: "sw:do" }),
+      makeSkill({ name: "continue" }),
+      makeSkill({ name: "review" }),
+    ],
+    slashCommands: [{ name: "review" }],
+  } as unknown as ServerProvider;
+
+  it("sends a typed /skill as the mention a pick inserts", () => {
+    expect(resolveLeadingSkillCommand("/sw:do 0042", provider, "/work")).toBe("$sw:do 0042");
+  });
+
+  it("keeps app, composer and provider commands of the same name as typed", () => {
+    expect(resolveLeadingSkillCommand("/continue", provider, "/work")).toBe("/continue");
+    expect(resolveLeadingSkillCommand("/review now", provider, "/work")).toBe("/review now");
+    expect(resolveLeadingSkillCommand("/sw:do", null, "/work")).toBe("/sw:do");
+  });
+
+  it("sends a Claude skill that Claude also lists as a slash command as its mention", () => {
+    // The Claude adapter turns `$sw:do` into the final `/sw:do` block, which still
+    // runs after project context is put ahead of the message.
+    const claude = {
+      driver: "claudeAgent",
+      skills: [makeSkill({ name: "sw:do" })],
+      slashCommands: [{ name: "sw:do" }, { name: "compact" }],
+    } as unknown as ServerProvider;
+    expect(resolveLeadingSkillCommand("/sw:do 0042", claude, "/work")).toBe("$sw:do 0042");
+    expect(resolveLeadingSkillCommand("/compact", claude, "/work")).toBe("/compact");
   });
 });

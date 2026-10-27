@@ -14,6 +14,17 @@ describe("the Overview cover", () => {
     expect(coverColors({ ...TEST_SYSTEM, tokens: [] })).toEqual([]);
   });
 
+  it("draws oklch() and hsl() colors as well as hex", () => {
+    const tokens = [
+      testToken("primary", "color", "color", "oklch(0.55 0.2 260)"),
+      testToken("accent", "color", "color", "hsl(160 60% 35%)"),
+      testToken("mix", "color", "color", "color-mix(in srgb, red, blue)"),
+    ];
+    const colors = coverColors({ tokens, modes: TEST_SYSTEM.modes });
+    expect(colors).toHaveLength(2);
+    for (const color of colors) expect(color).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
   it("lays out one tile per column up to four colors, then pairs", () => {
     expect(mosaicColumns(["#1", "#2"])).toEqual([["#1"], ["#2"]]);
     expect(mosaicColumns(["#1", "#2", "#3", "#4", "#5"])).toEqual([
