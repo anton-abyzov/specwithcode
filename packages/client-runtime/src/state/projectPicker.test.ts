@@ -50,6 +50,28 @@ describe("shared web/mobile project choices", () => {
     expect(projectPickerMembers([personal], scratch, "design")).toEqual([personal]);
     expect(projectChoiceIneligibleReason(personal, scratch, "code")).toBe("not-code");
   });
+  it("keeps the app's scratch folder as No project when the scratch path is unknown", () => {
+    // A session without orchestration:operate, or before the machine's config arrives.
+    const unknown = () => null;
+    for (const root of [
+      "/Users/x/.specwithcode/m4/scratch",
+      "/Users/x/.specweave-studio/scratch/",
+      "C:\\Users\\x\\.specwithcode\\m1\\scratch",
+    ])
+      expect(projectChoiceIneligibleReason(project("scratch", root), unknown)).toBe("scratch");
+    // A check's workspace inside the scratch folder is still automated.
+    expect(
+      projectChoiceIneligibleReason(
+        project("run", "/Users/x/.specwithcode/m4/scratch/run-1/workspace"),
+        unknown,
+      ),
+    ).toBe("automated");
+    expect(projectChoiceIneligibleReason(project("app", "/work/app"), unknown)).toBeNull();
+    // A known path decides: another folder named scratch is not this machine's.
+    expect(
+      projectChoiceIneligibleReason(project("old", "/Users/x/.specwithcode/m1/scratch"), scratch),
+    ).toBe("automated");
+  });
   it("rechecks changed classification without changing the catalog", () => {
     const live = project("app", "/work/app");
     expect(projectPickerMembers([live], scratch)).toEqual([live]);

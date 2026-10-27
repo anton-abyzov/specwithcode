@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isAutomatedWorkspaceRoot, projectOrigin } from "./projectOrigin.ts";
+import { isAppScratchFolder, isAutomatedWorkspaceRoot, projectOrigin } from "./projectOrigin.ts";
 
 describe("isAutomatedWorkspaceRoot", () => {
   it.each([
@@ -64,5 +64,19 @@ describe("projectOrigin", () => {
     expect(
       projectOrigin({ workspaceRoot: "/Users/x/app", workspaceSettings: { origin: "shared" } }),
     ).toBe("user");
+  });
+});
+
+describe("isAppScratchFolder", () => {
+  it.each([
+    ["/Users/x/.specwithcode/m4/scratch", true],
+    ["/Users/x/.specwithcode/scratch/", true],
+    ["/home/x/.local/share/specweave-studio/scratch", true],
+    ["C:\\Users\\x\\.specweave-studio\\m1\\scratch", true],
+    ["/Users/x/.specwithcode/m4/scratch/run-1", false],
+    ["/Users/x/Projects/scratch", false],
+    ["/Users/x/.specwithcode/m4/projects/scratch", false],
+  ])("%s is the app's scratch folder: %s", (root, expected) => {
+    expect(isAppScratchFolder(root)).toBe(expected);
   });
 });

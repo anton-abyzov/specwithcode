@@ -250,6 +250,7 @@ describe("Turn on here on another machine", () => {
     ).toEqual({
       kind: "sign-in",
       step: 'Sign in on ministorm: open Gemini CLI setup and choose "Log in with Google". Credentials stay on each machine.',
+      action: "Sign in",
     });
     expect(
       turnOnOutcome(
@@ -277,5 +278,41 @@ describe("Turn on here on another machine", () => {
         "ministorm",
       ),
     ).toEqual({ kind: "ready" });
+  });
+
+  it("gives a remote machine the sign-in route that works from here", () => {
+    const signedOut = (driver: string, displayName: string) => ({
+      ...snapshot({ instanceId: driver, driver, displayName, status: "warning" }),
+      auth: { status: "unauthenticated" as const, label: "Log in" },
+    });
+    const gemini = signedOut("acpRegistry", "Gemini CLI");
+    expect(turnOnOutcome(gemini, "ministorm", { identity: "acp:gemini", remote: true })).toEqual({
+      kind: "sign-in",
+      step: '"Log in with Google" opens a browser on ministorm. From here: add a Gemini API key (aistudio.google.com/apikey); it stays on ministorm.',
+      action: "Add API key",
+    });
+    expect(
+      turnOnOutcome(signedOut("acpRegistry", "GitHub Copilot"), "ministorm", {
+        identity: "acp:github-copilot-cli",
+        remote: true,
+      }),
+    ).toEqual({
+      kind: "sign-in",
+      step: "Sign in from here with a GitHub device code. The sign-in stays on ministorm.",
+      action: "Sign in",
+    });
+    const grok = turnOnOutcome(signedOut("grok", "Grok"), "ministorm", {
+      identity: "driver:grok",
+      remote: true,
+    });
+    expect(grok).toMatchObject({ kind: "sign-in", action: "Add API key" });
+    expect(grok.kind === "sign-in" ? grok.step : "").toContain("XAI_API_KEY");
+    expect(grok.kind === "sign-in" ? grok.step : "").toContain("console.x.ai");
+    // This machine keeps the provider's own sign-in.
+    expect(turnOnOutcome(gemini, "this Mac", { identity: "acp:gemini", remote: false })).toEqual({
+      kind: "sign-in",
+      step: 'Sign in on this Mac: open Gemini CLI setup and choose "Log in". Credentials stay on each machine.',
+      action: "Sign in",
+    });
   });
 });

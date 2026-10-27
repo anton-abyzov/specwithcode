@@ -15,6 +15,38 @@ export function formatTime(value: string): string {
   });
 }
 
+/**
+ * A coordinator's name for this screen: the server's label, else a name this
+ * app knows for that machine (its nickname or saved connection), else a short
+ * id. The server sends the bare environment id when it knows no name.
+ */
+export function workGrantMachineLabel(
+  grant: Pick<StudioWorkGrant, "coordinatorEnvironmentId" | "machineLabel">,
+  knownName?: (environmentId: string) => string | null | undefined,
+): string {
+  const id = grant.coordinatorEnvironmentId;
+  const label = grant.machineLabel.trim();
+  if (label !== "" && label !== id) return label;
+  const known = knownName?.(id)?.trim();
+  if (known && known !== id) return known;
+  return `Machine ${id.slice(0, 8)}`;
+}
+
+/** The snapshot with every coordinator named by {@link workGrantMachineLabel}. */
+export function withReadableGrantLabels(
+  snapshot: StudioWorkGrantsSnapshot | null,
+  knownName?: (environmentId: string) => string | null | undefined,
+): StudioWorkGrantsSnapshot | null {
+  if (snapshot === null) return null;
+  return {
+    ...snapshot,
+    grants: snapshot.grants.map((grant) => {
+      const machineLabel = workGrantMachineLabel(grant, knownName);
+      return machineLabel === grant.machineLabel ? grant : { ...grant, machineLabel };
+    }),
+  };
+}
+
 type WorkGrantProjectUnavailable = NonNullable<
   StudioWorkGrantsSnapshot["projects"][number]["unavailable"]
 >;

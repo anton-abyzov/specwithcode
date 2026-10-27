@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { SnapShotSource } from "./chatAttachment.ts";
 
 /**
  * Unsent composer drafts kept by the host, so text and attachments survive a
@@ -23,6 +24,7 @@ export const ComposerDraftAttachmentMeta = Schema.Struct({
   name: Schema.String.check(Schema.isMaxLength(512)),
   mimeType: Schema.String.check(Schema.isMaxLength(200)),
   sizeBytes: Schema.Number,
+  source: Schema.optionalKey(SnapShotSource),
 });
 export type ComposerDraftAttachmentMeta = typeof ComposerDraftAttachmentMeta.Type;
 

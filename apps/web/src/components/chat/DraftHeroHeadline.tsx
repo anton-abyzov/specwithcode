@@ -175,10 +175,11 @@ export function DraftHeroHeadline({
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
   // The project that hosts threads without a project appears once, as the
-  // "No project" item, not as a project row.
+  // "No project" item, not as a project row. The shared reason also recognizes the app's
+  // scratch folder while the machine's scratch path is unknown.
   const menuEntries = projectPickerEntries.filter(
     ({ targetProject }) =>
-      !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
+      projectChoiceIneligibleReason(targetProject, scratchWorkspaceRootFor) !== "scratch",
   );
   const activeProject =
     activeProjectRef === null

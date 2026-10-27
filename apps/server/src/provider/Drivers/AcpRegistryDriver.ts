@@ -4,6 +4,7 @@ import {
   isGitHubCopilotIcon,
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
+  ProviderSetupError,
   resolveOfficialAcpRegistryIconUrl,
   TextGenerationError,
   type AcpRegistryOperationError,
@@ -16,6 +17,8 @@ import { createModelCapabilities } from "@specweave-studio/shared/model";
 import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -171,6 +174,48 @@ function retainedVersionMessage(
     ? `${running} is running; the ACP Registry lists ${availableVersion}.`
     : `${running} is running; ${availableVersion} is available. Use Install / update agent in Settings → Providers.`;
 }
+
+/**
+ * Stores an API key accepted at sign-in as a secret environment variable on
+ * this instance, so later sessions on this machine read it. The settings
+ * service moves sensitive values into the machine's secret store.
+ */
+export const saveAcpRegistryCredential = (
+  serverSettings: ServerSettings.ServerSettingsService["Service"],
+  instanceId: ProviderInstance["instanceId"],
+  credential: AcpRegistryAuth.AcpRegistryCredential,
+): Effect.Effect<void, ProviderSetupError> => {
+  const saveFailed = new ProviderSetupError({
+    instanceId,
+    operation: "save",
+    detail:
+      "The API key worked but could not be saved on this machine. The agent here now expects an API key: sign in again to save it, or choose another sign-in method.",
+  });
+  return Effect.gen(function* () {
+    const settings = yield* serverSettings.getSettings;
+    const instance = settings.providerInstances[instanceId];
+    if (!instance) return yield* saveFailed;
+    const config =
+      instance.config !== null && typeof instance.config === "object"
+        ? (instance.config as Record<string, unknown>)
+        : {};
+    yield* serverSettings.updateProviderInstance({
+      operation: "upsert",
+      instanceId,
+      instance: {
+        ...instance,
+        environment: [
+          ...(instance.environment ?? []).filter(
+            (variable) => variable.name !== credential.envName,
+          ),
+          { name: credential.envName, value: credential.value, sensitive: true },
+        ],
+        config: { ...config, authMethodId: credential.authMethodId },
+      },
+    });
+    // Settings errors can carry the written snapshot, so the cause is dropped.
+  }).pipe(Effect.mapError(() => saveFailed));
+};
 
 export function acpRegistrySnapshotReadiness(
   inspection:
@@ -556,6 +601,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         );
       }
       const crypto = yield* Crypto.Crypto;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const hostEnvironment = yield* HostProcessEnvironment;
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -844,6 +891,31 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               Effect.andThen(snapshot.refresh),
               Effect.asVoid,
             ),
+        canSaveCredential: serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.providerInstances[instanceId] !== undefined),
+          Effect.orElseSucceed(() => false),
+        ),
+        // The save rebuilds this instance; the note lets the rebuilt one
+        // confirm sign-in for the same key.
+        saveCredential: (credential) =>
+          AcpRegistryAuthenticationState.rememberVerifiedCredential({
+            cacheDir: serverConfig.providerStatusCacheDir,
+            instanceId,
+            authMethodId: credential.authMethodId,
+            envName: credential.envName,
+            value: credential.value,
+          }).pipe(
+            Effect.andThen(saveAcpRegistryCredential(serverSettings, instanceId, credential)),
+            Effect.tapError(() =>
+              AcpRegistryAuthenticationState.forgetVerifiedCredential({
+                cacheDir: serverConfig.providerStatusCacheDir,
+                instanceId,
+              }),
+            ),
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
       }).pipe(
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

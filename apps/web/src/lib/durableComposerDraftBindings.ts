@@ -220,6 +220,7 @@ const toDurable = (
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
         file: attachment.file,
+        ...(attachment.type === "image" && attachment.source ? { source: attachment.source } : {}),
       }
     : null;
 
@@ -282,6 +283,7 @@ function addRestoredAttachments(
         name: attachment.name,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
+        ...(attachment.source ? { source: attachment.source } : {}),
         previewUrl: URL.createObjectURL(file),
         file,
       });
@@ -408,6 +410,7 @@ export function useDurableCoordinatorDraft(
                 name: attachment.name,
                 mimeType: attachment.mimeType,
                 sizeBytes: attachment.sizeBytes,
+                ...(attachment.source ? { source: attachment.source } : {}),
                 previewUrl: URL.createObjectURL(file),
                 file,
               } satisfies ComposerImageAttachment)

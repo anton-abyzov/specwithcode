@@ -16,7 +16,9 @@ import {
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  saveAcpRegistryCredential,
 } from "./AcpRegistryDriver.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const identity = {
@@ -633,5 +635,59 @@ describe("acpRegistrySnapshotReadiness", () => {
         message: "Checking ACP authentication, models, and commands in the background...",
       });
     }),
+  );
+});
+
+describe("saveAcpRegistryCredential", () => {
+  const geminiId = ProviderInstanceId.make("acpRegistry_gemini");
+  it.effect("stores the API key as a sensitive variable and keeps the rest of the instance", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* saveAcpRegistryCredential(settings, geminiId, {
+        envName: "GEMINI_API_KEY",
+        value: "AIza-test-not-a-real-key",
+        authMethodId: "gemini-api-key",
+      });
+      const instance = (yield* settings.getSettings).providerInstances[geminiId];
+      expect(instance?.enabled).toBe(true);
+      expect(instance?.displayName).toBe("Gemini CLI");
+      expect(instance?.config).toEqual({ agentId: "gemini", authMethodId: "gemini-api-key" });
+      expect(instance?.environment).toEqual([
+        { name: "HTTPS_PROXY", value: "http://proxy", sensitive: false },
+        { name: "GEMINI_API_KEY", value: "AIza-test-not-a-real-key", sensitive: true },
+      ]);
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [geminiId]: {
+              driver: "acpRegistry",
+              displayName: "Gemini CLI",
+              enabled: true,
+              config: { agentId: "gemini" },
+              environment: [
+                { name: "HTTPS_PROXY", value: "http://proxy", sensitive: false },
+                { name: "GEMINI_API_KEY", value: "old-key", sensitive: true },
+              ],
+            },
+          },
+        } as never),
+      ),
+    ),
+  );
+
+  it.effect("fails without echoing the key when the instance is gone", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const error = yield* Effect.flip(
+        saveAcpRegistryCredential(settings, geminiId, {
+          envName: "GEMINI_API_KEY",
+          value: "AIza-test-not-a-real-key",
+          authMethodId: "gemini-api-key",
+        }),
+      );
+      expect(error.detail).toContain("The API key worked but could not be saved on this machine.");
+      expect(JSON.stringify(error)).not.toContain("AIza-test-not-a-real-key");
+    }).pipe(Effect.provide(ServerSettings.layerTest())),
   );
 });

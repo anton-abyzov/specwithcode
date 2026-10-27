@@ -8,8 +8,12 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { act, createElement } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
+  SnapShotCoordinator,
   beginSnapShotAnimationWhenReady,
   deliverSnapShot,
   dismissFailedSnapShot,
@@ -25,6 +29,106 @@ import {
   setSnapShotAnimationDestination,
   scheduleSnapShotAnimationDestination,
 } from "../../lib/snapShotAnimation";
+
+const routing = vi.hoisted(() => {
+  const runtime = {
+    projectKey: null as string | null,
+    search: {} as Record<string, unknown>,
+    location: { href: "/", pathname: "/" },
+    groups: [] as unknown[],
+    projects: [] as unknown[],
+    knownThread: false,
+    scratch: vi.fn(async () => null),
+    openThread: vi.fn(async () => null),
+    journal: undefined as unknown,
+    journalFails: false,
+    journalDropsSource: false,
+    listeners: new Set<(event: { type: string; id: string }) => void>(),
+  };
+  const navigate = vi.fn(async ({ href }: { href: string }) => {
+    runtime.location = { href, pathname: href.split("?")[0]! };
+  });
+  return Object.assign(runtime, {
+    router: {
+      state: {
+        get location() {
+          return runtime.location;
+        },
+      },
+      navigate,
+    },
+  });
+});
+vi.mock("@tanstack/react-router", () => ({
+  useLocation: () => routing.location,
+  useParams: () => ({ projectKey: routing.projectKey }),
+  useSearch: () => routing.search,
+  useRouter: () => routing.router,
+  useNavigate: () => routing.router.navigate,
+}));
+vi.mock("../../hooks/useHandleNewThread", () => ({
+  useHandleNewThread: () => ({
+    activeDraftThread: null,
+    activeThread: null,
+    defaultProjectRef: null,
+    handleNewThread: routing.openThread,
+    routeDraftId: null,
+    routeThreadRef: null,
+  }),
+}));
+vi.mock("../../hooks/useScratchProject", () => ({
+  useScratchProject: () => ({
+    scratchEnvironmentId: () => "snap-shot-environment",
+    startScratchThread: routing.scratch,
+  }),
+}));
+vi.mock("../../hooks/useSettings", () => ({
+  useLegacySidebarEnabled: () => false,
+  useClientSettings: (select: (s: unknown) => unknown) =>
+    select({
+      projectCoordinatorMachines: {},
+      snapShotPlaySound: false,
+      snapShotAnimations: false,
+    }),
+}));
+vi.mock("../settings/useSettingsProjectGroups", () => ({
+  useSettingsProjectGroups: () => routing.groups,
+}));
+vi.mock("../../state/environments", () => ({
+  usePrimaryEnvironmentId: () => "snap-shot-environment",
+}));
+vi.mock("../../studio/unreachableHosts", () => ({ useUnreachableHosts: () => new Set() }));
+vi.mock("../../state/entities", async (original) => ({
+  ...(await original<typeof import("../../state/entities")>()),
+  readThreadShell: () => (routing.knownThread ? { id: "worker" } : null),
+  readProjects: () => routing.projects,
+}));
+vi.mock("../../lib/durableComposerDraftBindings", () => ({
+  durableComposerDrafts: {
+    schedule: (target: unknown, snapshot: unknown) => {
+      routing.journal = { ...(target as object), snapshot };
+    },
+    journalSettled: async () => undefined,
+  },
+}));
+vi.mock("../../lib/durableComposerDraftJournal", () => ({
+  createIndexedDbDraftJournal: () => ({
+    read: async () => {
+      if (routing.journalFails) return undefined;
+      if (!routing.journalDropsSource) return routing.journal;
+      const saved = routing.journal as { snapshot: { attachments: Array<{ source?: unknown }> } };
+      return {
+        ...saved,
+        snapshot: {
+          ...saved.snapshot,
+          attachments: saved.snapshot.attachments.map(
+            ({ source: _source, ...attachment }) => attachment,
+          ),
+        },
+      };
+    },
+  }),
+}));
 
 const storage = vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -46,6 +150,19 @@ const environmentId = EnvironmentId.make("snap-shot-environment");
 const projectRef = scopeProjectRef(environmentId, ProjectId.make("snap-shot-project"));
 
 beforeEach(() => {
+  routing.projectKey = null;
+  routing.search = {};
+  routing.location = { href: "/", pathname: "/" };
+  routing.groups = [];
+  routing.projects = [];
+  routing.knownThread = false;
+  routing.journal = undefined;
+  routing.journalFails = false;
+  routing.journalDropsSource = false;
+  routing.listeners.clear();
+  routing.scratch.mockClear();
+  routing.openThread.mockClear();
+  routing.router.navigate.mockClear();
   storage.clear();
   vi.stubGlobal("localStorage", storage);
   useComposerDraftStore.setState({
@@ -400,3 +517,169 @@ it.each([projectRef, null])(
     expect(openThread).not.toHaveBeenCalled();
   },
 );
+
+const routedCapture = {
+  id: "12345678-1234-1234-1234-123456789abc",
+  name: "window.png",
+  mimeType: "image/png" as const,
+  sizeBytes: 3,
+  dataUrl: "data:image/png;base64,AQID",
+  source: {
+    kind: "snap-shot" as const,
+    capturedAt: "2026-10-27T00:42:15.142Z",
+    appName: "SpecWithCode",
+    windowTitle: "Settings",
+    accessibleText: "Snapshot settings",
+    accessibility: {
+      format: "element-tree" as const,
+      coordinateSpace: "captured-image" as const,
+      imageSize: { width: 4096, height: 2420 },
+      truncated: false,
+      root: {
+        role: "button",
+        name: "Done",
+        bounds: { x: 2456, y: 1500, width: 118, height: 64 },
+        children: [],
+      },
+    },
+  },
+};
+
+it.each([false, true])(
+  "delivers project-pane capture through Settings without creating Scratch (new navigation: %s)",
+  async (navigateElsewhere) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const win = Object.assign(new EventTarget(), {
+      localStorage: storage,
+      setTimeout,
+      clearTimeout,
+      matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) =>
+      setTimeout(() => fn(0), 0),
+    );
+    const target = scopeThreadRef(environmentId, ThreadId.make("worker"));
+    useComposerDraftStore.getState().setPrompt(target, "Keep every user word");
+    routing.knownThread = true;
+    routing.projectKey = "repo";
+    routing.search = {
+      thread: target.threadId,
+      checkout: `${environmentId}:${projectRef.projectId}`,
+    };
+    const member = { environmentId, id: projectRef.projectId, workspaceSettings: {} };
+    routing.groups = [{ projectKey: "repo", memberProjects: [member] }];
+    routing.projects = [member];
+    const priorHref = `/projects/repo?thread=worker&checkout=${environmentId}:${projectRef.projectId}`;
+    routing.location = { href: priorHref, pathname: "/projects/repo" };
+    let pending: DesktopPendingSnapShot[] = [];
+    const acknowledgeSnapShot = vi.fn(async () => undefined);
+    Object.assign(win, {
+      desktopBridge: {
+        requestSnapShotPermissions: vi.fn(),
+        getSnapShotState: vi.fn(),
+        checkSnapShotShortcut: vi.fn(),
+        setSnapShotShortcutSuppressed: vi.fn(),
+        listPendingSnapShots: async () => pending,
+        readSnapShot: async () => routedCapture,
+        acknowledgeSnapShot,
+        onSnapShotEvent: (fn: (e: { type: string; id: string }) => void) => {
+          routing.listeners.add(fn);
+          return () => routing.listeners.delete(fn);
+        },
+      },
+    });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(createElement(SnapShotCoordinator));
+      });
+      // Open Settings before the keypress, as in the user's report.
+      routing.projectKey = null;
+      routing.search = {};
+      routing.location = { href: "/settings/snap-shot", pathname: "/settings/snap-shot" };
+      await act(() => {
+        renderer!.update(createElement(SnapShotCoordinator));
+      });
+      for (const fn of routing.listeners) fn({ type: "requested", id: routedCapture.id });
+      if (navigateElsewhere) {
+        routing.projectKey = "another";
+        routing.location = { href: "/projects/another", pathname: "/projects/another" };
+        await act(() => {
+          renderer!.update(createElement(SnapShotCoordinator));
+        });
+      }
+      pending = [routedCapture];
+      await act(async () => {
+        for (const fn of routing.listeners) fn({ type: "ready", id: routedCapture.id });
+        await vi.waitFor(() => expect(acknowledgeSnapShot).toHaveBeenCalledWith(routedCapture.id));
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+      expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(
+        "Keep every user word",
+      );
+      expect(
+        useComposerDraftStore
+          .getState()
+          .getComposerDraft(target)
+          ?.images.map((i) => i.id),
+      ).toEqual([routedCapture.id]);
+      expect(routing.scratch).not.toHaveBeenCalled();
+      expect(routing.openThread).not.toHaveBeenCalled();
+      if (navigateElsewhere) expect(routing.router.navigate).not.toHaveBeenCalled();
+      else expect(routing.router.navigate).toHaveBeenCalledWith({ href: priorHref });
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  },
+);
+
+it.each([false, true])(
+  "keeps coordinator text and acknowledges only a durably saved project attachment (journal fails: %s)",
+  async (fails) => {
+    const target = { kind: "coordinator" as const, projectRef };
+    const composer = getProjectCoordinatorComposer(environmentId, projectRef.projectId);
+    composer.setPrompt("Preserve coordinator words");
+    composer.setAttachments([]);
+    routing.journalFails = fails;
+    const acknowledgeSnapShot = vi.fn(async () => undefined);
+    const bridge = {
+      readSnapShot: async () => routedCapture,
+      acknowledgeSnapShot,
+    } as unknown as DesktopSnapShotBridge;
+    if (fails)
+      await expect(deliverSnapShot(bridge, routedCapture, target)).rejects.toThrow(
+        "could not be saved to the project draft",
+      );
+    else await deliverSnapShot(bridge, routedCapture, target);
+    expect(composer.getSnapshot().prompt).toBe("Preserve coordinator words");
+    expect(composer.getSnapshot().attachments.map((a) => a.id)).toEqual([routedCapture.id]);
+    expect(
+      (routing.journal as { snapshot: { attachments: Array<{ source?: unknown }> } }).snapshot
+        .attachments[0]?.source,
+    ).toEqual(routedCapture.source);
+    expect(acknowledgeSnapShot).toHaveBeenCalledTimes(fails ? 0 : 1);
+    routing.journalFails = false;
+    await deliverSnapShot(bridge, routedCapture, target);
+    expect(composer.getSnapshot().attachments).toHaveLength(1);
+  },
+);
+
+it("does not acknowledge a journal that retained pixels but lost the captured context", async () => {
+  const target = { kind: "coordinator" as const, projectRef };
+  const composer = getProjectCoordinatorComposer(environmentId, projectRef.projectId);
+  composer.setPrompt("Preserve user words");
+  composer.setAttachments([]);
+  routing.journalDropsSource = true;
+  const acknowledgeSnapShot = vi.fn(async () => undefined);
+  const bridge = {
+    readSnapShot: async () => routedCapture,
+    acknowledgeSnapShot,
+  } as unknown as DesktopSnapShotBridge;
+  await expect(deliverSnapShot(bridge, routedCapture, target)).rejects.toThrow(
+    "could not be saved to the project draft",
+  );
+  expect(acknowledgeSnapShot).not.toHaveBeenCalled();
+  expect(composer.getSnapshot().prompt).toBe("Preserve user words");
+});

@@ -15,6 +15,7 @@ import {
   type ComposerDraftPutInput,
   type ComposerDraftPutResult,
   type ComposerDraftRecord,
+  type SnapShotSource,
 } from "@specweave-studio/contracts";
 
 export interface DurableDraftAttachment {
@@ -23,6 +24,7 @@ export interface DurableDraftAttachment {
   readonly name: string;
   readonly mimeType: string;
   readonly sizeBytes: number;
+  readonly source?: SnapShotSource;
   readonly file: Blob;
 }
 
@@ -96,7 +98,10 @@ function keepable(snapshot: DurableDraftSnapshot): DurableDraftSnapshot {
 }
 
 const signatureOf = (snapshot: DurableDraftSnapshot) =>
-  JSON.stringify([snapshot.prompt, snapshot.attachments.map((attachment) => attachment.id)]);
+  JSON.stringify([
+    snapshot.prompt,
+    snapshot.attachments.map(({ file: _file, ...metadata }) => metadata),
+  ]);
 
 async function base64Of(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -130,6 +135,7 @@ export function snapshotFromRecord(record: ComposerDraftRecord): DurableDraftSna
         name: attachment.name,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
+        ...(attachment.source ? { source: attachment.source } : {}),
         file,
       };
     }),
@@ -297,6 +303,7 @@ export function createDurableDraftSync(options: {
           name: attachment.name,
           mimeType: attachment.mimeType,
           sizeBytes: attachment.sizeBytes,
+          ...(attachment.source ? { source: attachment.source } : {}),
           ...(state.stored.has(attachment.id) && !resend.has(attachment.id)
             ? {}
             : { dataBase64: await base64Of(attachment.file) }),

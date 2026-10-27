@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
-import { makeAcpRegistryAuthenticationState } from "./AcpRegistryAuthenticationState.ts";
+import {
+  forgetVerifiedCredential,
+  makeAcpRegistryAuthenticationState,
+  rememberVerifiedCredential,
+} from "./AcpRegistryAuthenticationState.ts";
 
 const settings = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 
@@ -94,6 +98,40 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
       }
       const restored = yield* makeAcpRegistryAuthenticationState(input);
       assert.isFalse(yield* restored.get);
+    }),
+  );
+  it.effect("confirms the rebuilt instance that holds the API key verified at sign-in", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fs.makeTempDirectoryScoped();
+      const instanceId = ProviderInstanceId.make("acp_gemini");
+      const key = "AIza-verified-test-key";
+      const saved = {
+        cacheDir,
+        instanceId,
+        settings: { ...settings, agentId: "gemini", authMethodId: "gemini-api-key" },
+        environment: [{ name: "GEMINI_API_KEY", value: key, sensitive: true }],
+        processEnvironment: { HOME: "/home/test", GEMINI_API_KEY: key },
+      };
+      const note = { cacheDir, instanceId, authMethodId: "gemini-api-key" };
+      yield* rememberVerifiedCredential({ ...note, envName: "GEMINI_API_KEY", value: key });
+      for (const name of yield* fs.readDirectory(cacheDir)) {
+        assert.isFalse((yield* fs.readFileString(`${cacheDir}/${name}`)).includes(key));
+      }
+      // A different key or method does not use the note.
+      const otherKey = yield* makeAcpRegistryAuthenticationState({
+        ...saved,
+        processEnvironment: { HOME: "/home/test", GEMINI_API_KEY: "AIza-other" },
+      });
+      assert.isFalse(yield* otherKey.get);
+      const rebuilt = yield* makeAcpRegistryAuthenticationState(saved);
+      assert.isTrue(yield* rebuilt.get);
+      // The note is used once; the confirmation itself persists.
+      assert.isTrue(yield* (yield* makeAcpRegistryAuthenticationState(saved)).get);
+      yield* rememberVerifiedCredential({ ...note, envName: "GEMINI_API_KEY", value: key });
+      yield* forgetVerifiedCredential({ cacheDir, instanceId });
+      yield* (yield* makeAcpRegistryAuthenticationState(saved)).set(false);
+      assert.isFalse(yield* (yield* makeAcpRegistryAuthenticationState(saved)).get);
     }),
   );
 });

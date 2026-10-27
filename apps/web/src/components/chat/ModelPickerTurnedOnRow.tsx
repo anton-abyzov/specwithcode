@@ -72,7 +72,7 @@ export function TurnedOnRow(props: {
         <span className="min-w-0 flex-1 truncate">{provider.displayName}</span>
         {action === "sign-in" && props.onOpenSetup ? (
           <InlineButton data-model-picker-sign-in={provider.identity} onClick={props.onOpenSetup}>
-            Sign in
+            {outcome.kind === "sign-in" ? outcome.action : "Sign in"}
           </InlineButton>
         ) : null}
         {action === "retry" || action === "check-again" ? (

@@ -29,6 +29,7 @@ import {
   type MachineProviders,
   type ProviderElsewhere,
 } from "../providerQuickSetup";
+import { isThisMachineTarget } from "../connection/desktopLocal";
 import { environmentPresentations } from "../state/presentation";
 import { serverEnvironment } from "../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
@@ -64,6 +65,18 @@ const machineLabelAtom = Atom.family((environmentId: EnvironmentId) =>
   ).pipe(Atom.withLabel(`web-provider-quick-setup:label:${environmentId}`)),
 );
 
+// Remote means the chat's machine is not the one this client runs on: a phone,
+// browser or second computer opening the Mac counts as remote too. Unknown
+// machines take the remote route, whose steps work from anywhere.
+const remoteMachineAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get): boolean =>
+      !isThisMachineTarget(
+        get(environmentPresentations.presentationsAtom).get(environmentId)?.entry,
+      ),
+  ).pipe(Atom.withLabel(`web-provider-quick-setup:remote:${environmentId}`)),
+);
+
 export interface ProviderQuickSetup {
   /** Enabled registry agents here that one Install click makes usable. */
   readonly installable: ReadonlyMap<ProviderInstanceId, string>;
@@ -75,6 +88,8 @@ export interface ProviderQuickSetup {
   readonly enableHere: (provider: ProviderElsewhere) => void;
   /** The chat's machine, the one Turn on here sets providers up on. */
   readonly machineLabel?: string;
+  /** The chat's machine is not the one this app runs on, so its browser logins open elsewhere. */
+  readonly remote?: boolean;
   /** The current step of each running Turn on here, by provider identity. */
   readonly steps?: ReadonlyMap<string, TurnOnStep>;
   /** Providers turned on here this session, so their row can report the outcome. */
@@ -125,6 +140,7 @@ export function useProviderQuickSetup(input: {
   const { environmentId, entries, settings } = input;
   const others = useAtomValue(otherMachineProvidersAtom(environmentId));
   const machineLabel = useAtomValue(machineLabelAtom(environmentId));
+  const remote = useAtomValue(remoteMachineAtom(environmentId));
   const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const prepare = useAtomCommand(serverEnvironment.prepareAcpRegistryAgent, {
     reportFailure: false,
@@ -329,6 +345,7 @@ export function useProviderQuickSetup(input: {
     install,
     enableHere,
     machineLabel,
+    remote,
     steps: stepsHere,
     turnedOn,
   };

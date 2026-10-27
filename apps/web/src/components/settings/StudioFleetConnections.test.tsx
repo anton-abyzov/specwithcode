@@ -562,21 +562,29 @@ describe("workers on private machines", () => {
     expect(props.onAction).toHaveBeenCalledExactlyOnceWith("allow");
   });
 
-  it("offers Stop for allowed workers and nothing without a status", () => {
-    const onAction = vi.fn();
-    const allowed = FleetWorkersRow({
-      machine: {
-        ...withWorkers.machines[1]!,
-        workers: { ...notAllowed, status: "allowed", access: "auto" },
-      },
-      disabled: false,
-      canManage: true,
-      draft: { access: "auto", pairingCode: "" },
-      onDraftChange: vi.fn(),
-      onAction,
+  it("offers Stop in the row menu for allowed workers and nothing without a status", () => {
+    const onWorkers = vi.fn();
+    const allowedSnapshot = {
+      ...withWorkers,
+      machines: [
+        withWorkers.machines[0]!,
+        {
+          ...withWorkers.machines[1]!,
+          workers: { ...notAllowed, status: "allowed" as const, access: "auto" as const },
+        },
+      ],
+    };
+    const stop = (tree: unknown) =>
+      visitElements(tree, (element) => element.props.children === "Stop workers");
+    const tree = render({
+      snapshot: allowedSnapshot,
+      onWorkers,
+      onWorkerDraftChange: vi.fn(),
+      canManageWorkers: true,
     });
-    (button(allowed, "Stop workers")!.props.onClick as () => void)();
-    expect(onAction).toHaveBeenCalledExactlyOnceWith("stop");
+    (stop(tree)!.props.onClick as () => void)();
+    expect(onWorkers).toHaveBeenCalledExactlyOnceWith(allowedSnapshot.machines[1], "stop");
+    expect(stop(render({ onWorkers, onWorkerDraftChange: vi.fn() }))).toBeNull();
     expect(
       FleetWorkersRow({
         machine: snapshot.machines[1]!,
@@ -584,7 +592,7 @@ describe("workers on private machines", () => {
         canManage: true,
         draft: { access: "auto", pairingCode: "" },
         onDraftChange: vi.fn(),
-        onAction,
+        onAction: onWorkers,
       }),
     ).toBeNull();
   });

@@ -25,6 +25,57 @@ const hash = Effect.fn("AcpRegistryAuthenticationState.hash")(function* (value: 
   return Hex.encode(digest);
 });
 
+const decodePending = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ authMethodId: Schema.String, envName: Schema.String, digest: Schema.String }),
+  ),
+);
+const pendingPath = Effect.fn("AcpRegistryAuthenticationState.pendingPath")(function* (
+  cacheDir: string,
+  instanceId: ProviderInstanceId,
+) {
+  const path = yield* Path.Path;
+  return path.join(cacheDir, `acp-auth-pending-${yield* hash(instanceId)}.json`);
+});
+
+/**
+ * Saving a verified API key rebuilds the instance, and the rebuilt instance's
+ * binding differs from the one that verified it. This note lets the rebuilt
+ * instance confirm sign-in when its environment holds that same key. Only a
+ * digest of the key is written, and the note is removed once read.
+ */
+export const rememberVerifiedCredential = Effect.fn(
+  "AcpRegistryAuthenticationState.rememberVerifiedCredential",
+)(function* (input: {
+  readonly cacheDir: string;
+  readonly instanceId: ProviderInstanceId;
+  readonly authMethodId: string;
+  readonly envName: string;
+  readonly value: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* writeFileStringAtomically({
+    filePath: yield* pendingPath(input.cacheDir, input.instanceId),
+    contents: yield* encodeJson({
+      authMethodId: input.authMethodId,
+      envName: input.envName,
+      digest: yield* hash(input.value),
+    }).pipe(Effect.orDie),
+  }).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.ignore,
+  );
+});
+
+export const forgetVerifiedCredential = Effect.fn(
+  "AcpRegistryAuthenticationState.forgetVerifiedCredential",
+)(function* (input: { readonly cacheDir: string; readonly instanceId: ProviderInstanceId }) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.remove(yield* pendingPath(input.cacheDir, input.instanceId)).pipe(Effect.ignore);
+});
+
 /** Remember explicit sign-in success, never discovery success or the agent's credentials. */
 export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuthenticationState")(
   function* (input: {
@@ -61,7 +112,22 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
       Effect.flatMap(decodeState),
       Effect.orElseSucceed(() => undefined),
     );
-    const confirmed = yield* Ref.make(saved?.binding === binding && saved.authenticated);
+    const pendingFile = yield* pendingPath(input.cacheDir, input.instanceId);
+    const pending = yield* fs.readFileString(pendingFile).pipe(
+      Effect.flatMap(decodePending),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const pendingKey = pending ? input.processEnvironment[pending.envName] : undefined;
+    const verifiedHere =
+      pending !== undefined &&
+      pending.authMethodId === input.settings.authMethodId &&
+      pendingKey !== undefined &&
+      pendingKey.length > 0 &&
+      (yield* hash(pendingKey)) === pending.digest;
+    if (verifiedHere) yield* fs.remove(pendingFile).pipe(Effect.ignore);
+    const confirmed = yield* Ref.make(
+      verifiedHere || (saved?.binding === binding && saved.authenticated),
+    );
     const lock = yield* Semaphore.make(1);
     const persist = (authenticated: boolean) =>
       writeFileStringAtomically({
@@ -73,7 +139,8 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
         Effect.tapError(() => Effect.logWarning("Could not save ACP sign-in confirmation.")),
         Effect.ignore,
       );
-    if (saved && saved.binding !== binding) yield* persist(false);
+    if (verifiedHere) yield* persist(true);
+    else if (saved && saved.binding !== binding) yield* persist(false);
     return {
       get: Ref.get(confirmed),
       set: (authenticated: boolean) =>

@@ -3,7 +3,11 @@ import { EnvironmentId, type Project, ProjectId } from "@specweave-studio/contra
 
 import * as Effect from "effect/Effect";
 
-import { readGrantProjects, workGrantProjectChoices } from "./workGrantsSnapshot.ts";
+import {
+  coordinatorLabels,
+  readGrantProjects,
+  workGrantProjectChoices,
+} from "./workGrantsSnapshot.ts";
 
 const OWN = EnvironmentId.make("env-own");
 const M4 = EnvironmentId.make("env-m4");
@@ -109,4 +113,25 @@ describe("work grant project choices", () => {
       expect({ ...failed.flag }).toEqual({ projectsUnreadable: true });
     }),
   );
+});
+
+describe("coordinatorLabels", () => {
+  it("names a coordinator by the fleet list, else its shared nickname, else not at all", () => {
+    const labels = coordinatorLabels(
+      [
+        { environmentId: "env-m3", label: "Mac mini" },
+        { environmentId: "env-blank", label: "  " },
+      ],
+      {
+        "env-m3": { name: "M3", updatedAt: "2026-10-01T00:00:00.000Z" },
+        "env-m4": { name: "  M4   MAX ", updatedAt: "2026-10-01T00:00:00.000Z" },
+        "env-empty": { name: "", updatedAt: "2026-10-01T00:00:00.000Z" },
+      },
+    );
+    expect([...labels].toSorted()).toEqual([
+      ["env-m3", "Mac mini"],
+      ["env-m4", "M4 MAX"],
+    ]);
+    expect(coordinatorLabels([], undefined).size).toBe(0);
+  });
 });
