@@ -65,6 +65,25 @@ describe("automatic private machine connection", () => {
     ).toEqual(["m1", "m3"]);
   });
 
+  it("waits for the tailnet before pairing a machine reached only through SpecWithCode Connect", () => {
+    const viaConnect: StudioFleetSnapshot = {
+      ...snapshot,
+      machines: snapshot.machines.map((entry) =>
+        entry.id === "m1" ? { ...entry, transport: "connect" as const } : entry,
+      ),
+    };
+    const input = {
+      snapshot: viaConnect,
+      currentEnvironmentId: m4,
+      savedEnvironmentIds: none,
+      skippedEnvironmentIds: none,
+    };
+    expect(ids(fleetMachinesToAutoConnect({ ...input, attemptedEnvironmentIds: none }))).toEqual([
+      "m3",
+    ]);
+    expect(ids(fleetMachinesAwaitingReach(input))).toEqual(["m1"]);
+  });
+
   it("leaves saved, removed, already tried, offline and unconfigured machines alone", () => {
     const pick = (overrides: Partial<Parameters<typeof fleetMachinesToAutoConnect>[0]>) =>
       ids(

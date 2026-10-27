@@ -26,6 +26,8 @@ import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
+import { makeTestDpopKey } from "./dpopProof.testkit.ts";
+import { fleetRedeemSubject, FLEET_INVITE_SCOPES } from "../fleet/fleetRedemption.ts";
 
 class AuthTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.auth)
@@ -665,6 +667,231 @@ it.live("1050 delegated managers cannot change their coordinator when minting ap
         principal: { kind: "coordinator", environmentId: "approved-peer" },
         principalGeneration: 0,
       });
+    }),
+  ),
+);
+
+/** A request that came through this machine's SpecWithCode Connect tunnel. */
+const MANAGED_HOST = "prod-0123456789abcdef.spec-weave.com";
+const viaConnect = (path: string, init?: RequestInit) =>
+  new Request(`http://127.0.0.1${path}`, {
+    ...init,
+    headers: {
+      host: MANAGED_HOST,
+      "x-forwarded-proto": "https",
+      "cf-connecting-ip": "203.0.113.9",
+      ...init?.headers,
+    },
+  });
+
+/** Signs a client in through the approval page and answers its code and client id. */
+const approvedCode = (
+  handler: Handler,
+  auth: EnvironmentAuth.EnvironmentAuth["Service"],
+  coordinator: string | undefined,
+) =>
+  Effect.gen(function* () {
+    const clientId = yield* registeredClientId(handler);
+    const pairing = yield* auth.issuePairingCredential(
+      coordinator === undefined
+        ? undefined
+        : { coordinatorEnvironmentId: EnvironmentId.make(coordinator) },
+    );
+    const params = authorizeParams(clientId);
+    const approved = yield* decide(handler, params, {
+      _tag: "pairing-code",
+      access: "auto",
+      code: pairing.credential,
+    });
+    const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+    return {
+      clientId,
+      exchange: (headers?: Record<string, string>) =>
+        handler(
+          at("/oauth/mcp/token", {
+            ...form({
+              grant_type: "authorization_code",
+              code,
+              redirect_uri: params.redirect_uri,
+              client_id: clientId,
+              code_verifier: verifier,
+              resource: `${ORIGIN}/mcp`,
+            }),
+            headers: {
+              "content-type": "application/x-www-form-urlencoded",
+              ...headers,
+            },
+          }),
+        ),
+    };
+  });
+
+it.live("advertises DPoP-bound MCP grants without requiring them", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      expect(
+        yield* json<unknown>(yield* handler(at("/.well-known/oauth-protected-resource/mcp"))),
+      ).toMatchObject({
+        dpop_signing_alg_values_supported: ["ES256"],
+        dpop_bound_access_tokens_required: false,
+      });
+      expect(
+        yield* json<unknown>(yield* handler(at("/.well-known/oauth-authorization-server"))),
+      ).toMatchObject({ dpop_signing_alg_values_supported: ["ES256"] });
+    }),
+  ),
+);
+
+it.live("binds an MCP grant to the key whose proof came with the token request", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const key = makeTestDpopKey();
+      const other = makeTestDpopKey();
+      const signedIn = yield* approvedCode(handler, auth, "coordinator");
+
+      // A bad proof is refused before the code is looked at, so the code survives it.
+      const badProof = yield* signedIn.exchange({
+        dpop: key.proof({ method: "POST", url: `${ORIGIN}/oauth/elsewhere` }),
+      });
+      expect(badProof.status).toBe(400);
+      expect(yield* json<unknown>(badProof)).toMatchObject({ error: "invalid_request" });
+
+      const tokenResponse = yield* signedIn.exchange({
+        dpop: key.proof({ method: "POST", url: `${ORIGIN}/oauth/mcp/token` }),
+      });
+      expect(tokenResponse.status).toBe(200);
+      const token = yield* json<{ access_token: string; token_type: string }>(tokenResponse);
+      expect(token.token_type).toBe("DPoP");
+
+      const mcp = (headers: Record<string, string>, host: "tailnet" | "connect" = "tailnet") =>
+        Effect.flip(
+          auth.authenticateMcpClient(
+            HttpServerRequest.fromWeb(
+              host === "tailnet"
+                ? at("/mcp", { method: "POST", headers })
+                : viaConnect("/mcp", { method: "POST", headers }),
+            ),
+          ),
+        ).pipe(Effect.map((error) => error._tag));
+      const proofFor = (url: string, signer = key, accessToken = token.access_token) =>
+        signer.proof({ method: "POST", url, accessToken });
+
+      // Accepted with a fresh proof from the bound key, on either address.
+      for (const [host, url] of [
+        ["tailnet", `${ORIGIN}/mcp`],
+        ["connect", `https://${MANAGED_HOST}/mcp`],
+      ] as const) {
+        const client = yield* auth.authenticateMcpClient(
+          HttpServerRequest.fromWeb(
+            (host === "tailnet" ? at : viaConnect)("/mcp", {
+              method: "POST",
+              headers: { authorization: `DPoP ${token.access_token}`, dpop: proofFor(url) },
+            }),
+          ),
+        );
+        expect(client).toMatchObject({
+          principal: { kind: "coordinator", environmentId: "coordinator" },
+          access: "auto",
+        });
+      }
+
+      // As a plain bearer, without a proof, or with a proof that does not fit: refused.
+      expect(yield* mcp({ authorization: `Bearer ${token.access_token}` })).toBe(
+        "ServerAuthInvalidCredentialError",
+      );
+      expect(yield* mcp({ authorization: `DPoP ${token.access_token}` })).toBe(
+        "ServerAuthInvalidCredentialError",
+      );
+      const replayed = proofFor(`${ORIGIN}/mcp`);
+      yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          at("/mcp", {
+            method: "POST",
+            headers: { authorization: `DPoP ${token.access_token}`, dpop: replayed },
+          }),
+        ),
+      );
+      for (const dpop of [
+        replayed,
+        proofFor(`${ORIGIN}/elsewhere`),
+        proofFor(`https://${MANAGED_HOST}/mcp`),
+        proofFor(`${ORIGIN}/mcp`, other),
+        proofFor(`${ORIGIN}/mcp`, key, "another-token"),
+        key.proof({ method: "POST", url: `${ORIGIN}/mcp` }),
+      ])
+        expect(yield* mcp({ authorization: `DPoP ${token.access_token}`, dpop })).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+      // The rest of the environment still refuses an MCP grant, bound or not.
+      const ticket = yield* handler(
+        at("/api/auth/websocket-ticket", {
+          method: "POST",
+          headers: {
+            authorization: `DPoP ${token.access_token}`,
+            dpop: key.proof({
+              method: "POST",
+              url: `${ORIGIN}/api/auth/websocket-ticket`,
+              accessToken: token.access_token,
+            }),
+          },
+        }),
+      );
+      expect(ticket.status).toBe(401);
+    }),
+  ),
+);
+
+it.live("refuses another machine's unbound MCP grant over SpecWithCode Connect only", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const coordinator = yield* approvedCode(handler, auth, "coordinator");
+      const coordinatorToken = yield* json<{ access_token: string; token_type: string }>(
+        yield* coordinator.exchange(),
+      );
+      expect(coordinatorToken.token_type).toBe("Bearer");
+      const bearer = { authorization: `Bearer ${coordinatorToken.access_token}` };
+      expect(
+        yield* auth.authenticateMcpClient(
+          HttpServerRequest.fromWeb(at("/mcp", { headers: bearer })),
+        ),
+      ).toMatchObject({ principal: { kind: "coordinator" } });
+      expect(
+        (yield* Effect.flip(
+          auth.authenticateMcpClient(
+            HttpServerRequest.fromWeb(viaConnect("/mcp", { headers: bearer })),
+          ),
+        ))._tag,
+      ).toBe("ServerAuthInvalidCredentialError");
+
+      // An agent the owner signed in (no coordinator) keeps working over Connect.
+      const agent = yield* approvedCode(handler, auth, undefined);
+      const agentToken = yield* json<{ access_token: string }>(yield* agent.exchange());
+      const signedIn = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          viaConnect("/mcp", { headers: { authorization: `Bearer ${agentToken.access_token}` } }),
+        ),
+      );
+      expect(signedIn.principal?.kind).not.toBe("coordinator");
+    }),
+  ),
+);
+
+it.live("never spends a fleet invitation's redeem credential as an MCP approval", () =>
+  withRoutes((_handler, auth) =>
+    Effect.gen(function* () {
+      const issued = yield* auth.createPairingLink({
+        subject: fleetRedeemSubject(30),
+        principal: { kind: "coordinator", environmentId: EnvironmentId.make("coordinator") },
+        scopes: [...FLEET_INVITE_SCOPES],
+      });
+      expect(
+        yield* Effect.flip(auth.consumeMcpApprovalCode(issued.credential, "auto")),
+      ).toMatchObject({ reason: "not_a_pairing_code" });
+      // Spent by the refusal: it cannot be redeemed afterwards.
+      expect((yield* Effect.flip(auth.consumeFleetRedemption(issued.credential)))._tag).toBe(
+        "ServerAuthInvalidCredentialError",
+      );
     }),
   ),
 );

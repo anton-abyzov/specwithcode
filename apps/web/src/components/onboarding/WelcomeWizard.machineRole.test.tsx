@@ -202,6 +202,8 @@ const tailscaleRunning = {
   magicDns: true,
   platform: "darwin",
   homebrew: true,
+  // A server that knows SpecWithCode Connect, so the request names `via`.
+  connect: { linked: false, origin: null },
 };
 
 const invitation = {
@@ -233,6 +235,8 @@ it("joins existing machines: makes the line once, then opens to this machine's s
   );
   await choose("Join my existing machines");
   expect(heading()).toBe("Add this machine to your main machine");
+  expect(document.body.textContent).toContain("Either is enough.");
+  expect(document.body.textContent).not.toContain("Tailscale on both");
   expect(machineRole.onChange).not.toHaveBeenCalled();
   expect(makeLine()?.disabled).toBe(true);
   await approveMainMachine();
@@ -240,6 +244,7 @@ it("joins existing machines: makes the line once, then opens to this machine's s
   expect(mocks.invite).toHaveBeenCalledExactlyOnceWith("test-env", {
     label: "",
     coordinatorEnvironmentId: "approved-main",
+    via: "auto",
   });
   expect(line()?.value).toBe("swc-machine-synthetic-line");
   expect(machineRole.onChange).toHaveBeenCalledExactlyOnceWith("joined");

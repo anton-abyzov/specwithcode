@@ -90,8 +90,9 @@ see [Remote access](./remote-access.md#specwithcode-connect).
 curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join --coordinator '<main-machine-environment-id>'
 ```
 
-1. It sets up [Tailscale](https://tailscale.com/download) first, because for now letting a main
-   machine start work on this one needs Tailscale on both. If Tailscale is missing, it asks
+1. It sets up [Tailscale](https://tailscale.com/download) first, the route this installer uses.
+   (SpecWithCode Connect alone is also enough; see [Add a machine](./add-a-machine.md) for
+   joining without Tailscale.) If Tailscale is missing, it asks
    to install it (Tailscale's signed package on macOS, Tailscale's own installer on Linux; both
    ask for your password). If Tailscale is signed out, it opens the sign-in page in your
    browser and waits. Sign in with the account your main machine uses. Add `--yes` to install
@@ -103,7 +104,7 @@ curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download
    **Settings > Connections > Add a machine**.
 
 Later you can print a new line with `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` on its own. Every other way to
-join, the Tailscale settings both machines need and troubleshooting are in
+join, including over SpecWithCode Connect, the optional Tailscale settings and troubleshooting are in
 [Add a machine](./add-a-machine.md).
 
 ### npm
@@ -172,7 +173,7 @@ way to run a server there.
 Releases ship a server archive for Linux x64 and arm64 (`studio-<version>-linux-<arch>-<commit>.tar.gz`).
 It runs on Node.js 22.20 or later 22.x and needs no compiler. For a server-only install,
 control it from the desktop app on another computer, the web app or a phone. [Linux worker](./linux-worker.md)
-walks through install, Tailscale, the user service and pairing it with your Mac as a fleet worker.
+walks through install, the user service and pairing it with your Mac as a fleet worker.
 To only reach it from your other devices, [SpecWithCode Connect](./remote-access.md#specwithcode-connect)
 needs no Tailscale.
 

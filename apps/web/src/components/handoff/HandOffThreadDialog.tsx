@@ -139,19 +139,14 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
           </DialogPanel>
           <DialogFooter>
             {props.result ? (
-              <>
-                <Button type="button" variant="ghost" onClick={props.onCancel}>
-                  Close
-                </Button>
-                <Button type="button" onClick={props.onOpenContinuation}>
-                  Open continuation
-                </Button>
-              </>
+              <Button type="button" onClick={props.onOpenContinuation}>
+                Open continuation
+              </Button>
             ) : (
               <>
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   disabled={props.submitting}
                   onClick={props.onCancel}
                 >

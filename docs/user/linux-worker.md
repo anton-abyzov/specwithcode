@@ -11,10 +11,11 @@ work off your own computers; it does not start sessions on a provider's VMs.
 SpecWithCode does not use provider cloud sessions; a Linux VPS you rent is the
 replacement.
 
-To only open the host from your desktop app, a browser or your iPhone,
-[SpecWithCode Connect](./remote-access.md#specwithcode-connect) is enough and
-needs no Tailscale. For now, letting your Mac start work on the host also needs
-Tailscale on both, so this page sets it up.
+[SpecWithCode Connect](./remote-access.md#specwithcode-connect) is enough, with
+no Tailscale, both to open the host from your desktop app, a browser or your
+iPhone and to let your Mac start work there. This page also sets up Tailscale,
+an optional direct route your Mac tries first. To skip it, link Connect on the
+host (`specwithcode connect`) and make the line with `--via connect`.
 
 > **Use API keys on a VPS, never a subscription.** We do not recommend signing
 > Claude Code (Pro or Max) or Codex (ChatGPT) subscriptions in on Hetzner, AWS
@@ -30,8 +31,8 @@ Tailscale on both, so this page sets it up.
 
 Any Linux virtual machine you control works the same way, whoever rents it to
 you: Hetzner, Hostinger, DigitalOcean, AWS EC2, Azure, Google Cloud or a box at
-home. For now, the fleet needs the host to join your tailnet; it never looks at
-the provider. Pick an Ubuntu 24.04 or Debian 12 image on x64 or arm64 (AWS Graviton,
+home. The fleet reaches the host through your tailnet or SpecWithCode Connect;
+it never looks at the provider. Pick an Ubuntu 24.04 or Debian 12 image on x64 or arm64 (AWS Graviton,
 Hetzner CAX and Azure Dpsv5 machines are arm64).
 
 Tailscale connects outward, so the host needs no open inbound port: leave the
@@ -63,8 +64,9 @@ steps below.
   Fedora 40 or later) and a systemd user session.
 - Node.js 22.20 or a later 22.x release on that host. The archive holds
   JavaScript and the native builds for Linux; it needs no compiler.
-- The same Tailscale tailnet as your Mac, with MagicDNS. The fleet only accepts
-  private `*.ts.net` HTTPS addresses.
+- SpecWithCode Connect linked on the host, or the same Tailscale tailnet as your
+  Mac with MagicDNS, or both. The fleet accepts private `*.ts.net` HTTPS
+  addresses and SpecWithCode Connect addresses.
 - The provider CLIs you want to run there (`claude`, `codex`), using API keys
   only (see [Give the agents API keys](#give-the-agents-api-keys) and
   [Add a machine](./add-a-machine.md#keep-your-provider-accounts-safe)).
@@ -180,16 +182,17 @@ specwithcode fleet invite --coordinator '<main-machine-environment-id>'
 
 It publishes the server on `https://<host>.<tailnet>.ts.net` through Tailscale
 Serve: the address persists across restarts and is reachable only on your
-tailnet. It prints one line starting with `swc-machine-`. Treat it like a password. On
+tailnet. When Connect is linked, the line also carries the host's Connect
+address and a one-time code the Mac redeems within an hour. It prints one line starting with `swc-machine-`. Treat it like a password. On
 the Mac, run `specwithcode fleet add <that line>`, or paste it into
 **Settings > Connections > Your private machines > Add a machine**. The Mac
-checks that the worker answers at its Tailscale address before saving it; no
+checks that the worker answers at its address before saving it; no
 restart is needed. [Add a machine](./add-a-machine.md) covers the details.
 
 The worker then appears under **Your private machines**: choose **Connect
 machine** to pair this browser with it (with **Connect automatically** on, this
-happens by itself), and under **Workers** choose the most a worker there may do
-and **Allow workers**. From then on a coordinator can start work there with
+happens by itself; it needs the host's Tailscale address), and under **Workers**
+choose the most a worker there may do and **Allow workers**. From then on a coordinator can start work there with
 `studio_thread_launch {machine: "Hetzner VPS"}`, and `studio_machine_list` shows
 it as ready.
 

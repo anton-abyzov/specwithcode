@@ -13,8 +13,15 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
-import { checkIdentity, FleetError } from "../studioFleet.ts";
+import { FleetError } from "../studioFleet.ts";
 import * as FleetTargets from "./FleetTargets.ts";
+import {
+  type FleetOrigin,
+  fleetAddresses,
+  fleetAuthorization,
+  fleetMachineKey,
+  reachFleetMachine,
+} from "./fleetTransport.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 
 /**
@@ -88,6 +95,8 @@ interface Session {
   readonly client: Client;
   readonly transport: StreamableHTTPClientTransport;
   readonly accessToken: string;
+  /** The machine address this session talks to. */
+  readonly origin: string;
   identityCheckedAt: number;
   rejected: boolean;
 }
@@ -146,6 +155,7 @@ const parseFailure = (text: string | undefined) => {
 
 const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
+  const link = FleetTargets.linkOf(targets);
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
   const sessions = yield* Ref.make<ReadonlyMap<string, Session>>(new Map());
 
@@ -179,9 +189,18 @@ const make = Effect.gen(function* () {
         ? new RemoteMcpError({ reason: "not_authorized", grant: error.reason })
         : new RemoteMcpError({ reason: "unreachable", cause: error });
 
-  const verifyIdentity = (credential: FleetWorkerGrants.WorkerCredential) =>
+  /**
+   * The address the grant may use that answers as the machine (identity
+   * checked, tailnet first). A bearer grant is never taken to a Connect
+   * address. With `stale`, what is remembered for that address is dropped first, so the
+   * identity is read again and the tailnet gets its turn back.
+   */
+  const reach = (credential: FleetWorkerGrants.WorkerCredential, stale?: string) =>
     Effect.tryPromise({
-      try: () => checkIdentity(targets.fetch, credential.target),
+      try: () => {
+        if (stale !== undefined) link.book.forget(fleetMachineKey(credential.target), stale);
+        return reachFleetMachine(link, credential.target, { token: credential.accessToken });
+      },
       catch: (error) =>
         new RemoteMcpError({
           reason:
@@ -190,23 +209,38 @@ const make = Effect.gen(function* () {
               : "unreachable",
           cause: error,
         }),
-    });
+    }).pipe(Effect.map(({ origin, transport }): FleetOrigin => ({ origin, transport })));
 
-  const open = (credential: FleetWorkerGrants.WorkerCredential) =>
+  const open = (credential: FleetWorkerGrants.WorkerCredential, address: FleetOrigin) =>
     Effect.gen(function* () {
-      yield* verifyIdentity(credential);
       const now = yield* Clock.currentTimeMillis;
       const holder: { session?: Session } = {};
-      const origin = credential.target.url;
+      const origin = address.origin;
       const fetcher: typeof fetch = async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
-        // The grant only ever goes to the configured origin's /mcp.
-        if (url.origin !== origin || url.pathname !== "/mcp")
+        // The grant only ever goes to the reached address's /mcp.
+        if (url.origin !== origin || url.pathname !== "/mcp" || url.search || url.hash)
           throw new Error("Refused a request outside the machine's MCP endpoint.");
         const headers = new Headers(init?.headers);
-        headers.set("authorization", `Bearer ${credential.accessToken}`);
+        // A bearer on the tailnet, or DPoP with a fresh proof per request.
+        for (const [name, value] of Object.entries(
+          await fleetAuthorization(
+            link,
+            address,
+            init?.method ?? "GET",
+            url.toString(),
+            credential.accessToken,
+          ),
+        ))
+          headers.set(name, value);
         headers.delete("origin");
-        const response = await targets.fetch(url, { ...init, headers, redirect: "error" });
+        const response = await link
+          .fetch(url, { ...init, headers, redirect: "error" })
+          .catch((error: unknown) => {
+            // The next call checks the machine's addresses again.
+            link.book.forget(fleetMachineKey(credential.target), origin);
+            throw error;
+          });
         if (response.status === 401 && holder.session) holder.session.rejected = true;
         return capped(response);
       };
@@ -221,6 +255,7 @@ const make = Effect.gen(function* () {
         client,
         transport,
         accessToken: credential.accessToken,
+        origin,
         identityCheckedAt: now,
         rejected: false,
       };
@@ -252,15 +287,25 @@ const make = Effect.gen(function* () {
       const credential = yield* grants.credential(machineId).pipe(Effect.mapError(grantError));
       const existing = (yield* Ref.get(sessions)).get(machineId);
       const now = yield* Clock.currentTimeMillis;
-      if (existing && existing.accessToken === credential.accessToken && !existing.rejected) {
-        if (now - existing.identityCheckedAt > Duration.toMillis(IDENTITY_TTL)) {
-          yield* verifyIdentity(credential).pipe(Effect.tapError(() => forget(machineId)));
+      if (
+        existing &&
+        existing.accessToken === credential.accessToken &&
+        !existing.rejected &&
+        fleetAddresses(credential.target).some((address) => address.origin === existing.origin)
+      ) {
+        if (now - existing.identityCheckedAt <= Duration.toMillis(IDENTITY_TTL))
+          return { session: existing, credential };
+        // Every few minutes: identity again, and the tailnet first again.
+        const address = yield* reach(credential, existing.origin).pipe(
+          Effect.tapError(() => forget(machineId)),
+        );
+        if (address.origin === existing.origin) {
           existing.identityCheckedAt = now;
+          return { session: existing, credential };
         }
-        return { session: existing, credential };
       }
       if (existing) yield* forget(machineId);
-      const session = yield* open(credential);
+      const session = yield* open(credential, yield* reach(credential));
       yield* Ref.update(sessions, (current) => new Map(current).set(machineId, session));
       return { session, credential };
     });

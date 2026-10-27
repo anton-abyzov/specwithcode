@@ -17,6 +17,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
+import { DialogCloseButton } from "../ui/dialog-close-button";
 import ChatMarkdown from "../ChatMarkdown";
 import { PlanTaskClaim, usePlanClaimMachines } from "./PlanTaskClaim";
 import { randomUUID } from "../../lib/utils";
@@ -222,14 +223,7 @@ export function ProjectPlan({
                 work without a plan.
               </DialogDescription>
             </div>
-            <button
-              className="project-control"
-              onClick={close}
-              disabled={busy}
-              aria-label="Close project plan"
-            >
-              Close
-            </button>
+            <DialogCloseButton placement="inline" disabled={busy} aria-label="Close project plan" />
           </div>
           <div className="project-plan-body">
             {(error || query.error) && (

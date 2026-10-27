@@ -44,9 +44,8 @@ left as it is.
   direct private route on your tailnet.
 - `--no-tailscale` never installs it.
 
-For now, letting a main machine start work on this one also needs Tailscale on
-both. If you plan to use it as a worker, keep Tailscale or pass
-`--with-tailscale`.
+A main machine can start work on a Connect-linked machine without Tailscale.
+Pass `--with-tailscale` when you want the faster direct route for that too.
 
 ## Supported systems
 

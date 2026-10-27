@@ -533,12 +533,14 @@ function AddToMachineBody({
           )}
         </div>
       </DialogPanel>
-      <DialogFooter variant="bare">
-        <Button variant="outline" disabled={busy} onClick={close}>
-          {stage.kind === "started" ? "Close" : "Cancel"}
-        </Button>
-        {stage.kind === "setup" && primary}
-      </DialogFooter>
+      {stage.kind === "setup" && (
+        <DialogFooter variant="bare">
+          <Button variant="outline" disabled={busy} onClick={close}>
+            Cancel
+          </Button>
+          {primary}
+        </DialogFooter>
+      )}
     </>
   );
 }

@@ -9,12 +9,14 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import { join } from "./nodePath.ts";
+import { computeDpopJwkThumbprint, type DpopPublicJwk } from "@specweave-studio/shared/dpop";
+import { readFleetProofKey, tokenProofThumbprint } from "./fleet/fleetProofKey.ts";
 import { readFleetConfig } from "./studioFleet.ts";
 import {
   addFleetMachine,
   decodeFleetJoinCode,
   encodeFleetJoinCode,
-  type FleetJoin,
+  type FleetJoinV1,
   fleetMachineIdFor,
   removeFleetMachine,
   removeFleetMachineEverywhere,
@@ -30,7 +32,7 @@ const descriptor = (environmentId: string) => ({
   orchestrationProtocolVersion: 2,
   capabilities: { repositoryIdentity: true },
 });
-const invite = (overrides: Partial<FleetJoin> = {}): FleetJoin => ({
+const invite = (overrides: Partial<FleetJoinV1> = {}): FleetJoinV1 => ({
   url: "https://m1.fixture.ts.net",
   environmentId: "environment-m1",
   label: "Mac M1",
@@ -112,6 +114,52 @@ describe("machine invitations", () => {
     );
   });
 
+  it("decodes a v1 line unchanged and refuses a v1 line with a Connect address", () => {
+    const code = encodeFleetJoinCode(invite());
+    const body = JSON.parse(Buffer.from(code.slice("swc-machine-".length), "base64url").toString());
+    expect(body).toEqual({ v: 1, ...invite() });
+    expect(decodeFleetJoinCode(code)).toEqual(invite());
+    expect(() =>
+      decodeFleetJoinCode(
+        encodeFleetJoinCode(invite({ url: "https://prod-0123456789abcdef.spec-weave.com" })),
+      ),
+    ).toThrow("not a machine invitation");
+  });
+
+  it("round-trips v2 lines and checks their addresses and exact keys", () => {
+    const connect = "https://prod-0123456789abcdef.spec-weave.com";
+    const v2 = {
+      v: 2 as const,
+      url: "https://m1.fixture.ts.net",
+      connectUrl: connect,
+      environmentId: "environment-m1",
+      label: "Mac M1",
+      redeem: "synthetic-one-time-redeem",
+    };
+    expect(decodeFleetJoinCode(encodeFleetJoinCode(v2))).toEqual(v2);
+    const { connectUrl: _c, ...tailnetOnly } = v2;
+    expect(decodeFleetJoinCode(encodeFleetJoinCode(tailnetOnly))).toEqual(tailnetOnly);
+    const connectOnly = { ...tailnetOnly, url: connect };
+    expect(decodeFleetJoinCode(encodeFleetJoinCode(connectOnly))).toEqual(connectOnly);
+    const raw = (value: unknown) =>
+      `swc-machine-${Buffer.from(JSON.stringify(value)).toString("base64url")}`;
+    for (const bad of [
+      { ...v2, connectUrl: "https://prod-0123456789abcdef.spec-weave.com.evil.com" },
+      { ...v2, connectUrl: "https://relay.spec-weave.com" },
+      { ...v2, connectUrl: "https://m2.fixture.ts.net" },
+      { ...v2, url: connect, connectUrl: "https://prod-fedcba9876543210.spec-weave.com" },
+      { ...v2, url: "https://example.com" },
+      { ...v2, redeem: "has spaces" },
+      { ...v2, redeem: "" },
+      { ...v2, managementToken: "bearer" },
+      { ...v2, scopes: ["access:write"] },
+      { ...v2, v: 3 },
+    ])
+      expect(() => decodeFleetJoinCode(raw(bad)), JSON.stringify(bad)).toThrow(
+        "not a machine invitation",
+      );
+  });
+
   it("makes short unique ids from names", () => {
     expect(fleetMachineIdFor("Hetzner VPS", new Set())).toBe("hetzner-vps");
     expect(fleetMachineIdFor("Mac M1", new Set(["mac-m1"]))).toBe("mac-m1-2");
@@ -143,6 +191,159 @@ describe("adding machines to the fleet file", () => {
     ]);
     // No temp file is left behind.
     expect(await NodeFSP.readdir(baseDir)).toEqual(["studio-fleet.json"]);
+  });
+
+  describe("a v2 line with a SpecWithCode Connect address", () => {
+    const tailnet = "https://m1.fixture.ts.net";
+    const connect = "https://prod-0123456789abcdef.spec-weave.com";
+    const v2 = (overrides: Record<string, unknown> = {}) =>
+      encodeFleetJoinCode({
+        v: 2,
+        url: tailnet,
+        connectUrl: connect,
+        environmentId: "environment-m1",
+        label: "Mac M1",
+        redeem: "synthetic-one-time-redeem",
+        ...overrides,
+      } as Parameters<typeof encodeFleetJoinCode>[0]);
+    /** A Studio-shaped token whose claims bind it to `jkt`, when given. */
+    const studioToken = (jkt: string | undefined) =>
+      `${Buffer.from(JSON.stringify({ sid: "redeemed-session", ...(jkt ? { jkt } : {}) })).toString("base64url")}.synthetic-signature`;
+    const proofThumbprint = (proof: string) => {
+      const header = JSON.parse(Buffer.from(proof.split(".")[0]!, "base64url").toString()) as {
+        jwk: DpopPublicJwk;
+      };
+      return computeDpopJwkThumbprint(header.jwk);
+    };
+    /**
+     * The machine answers only on `up`; its redeem endpoint hands back a
+     * token bound to the key that signed the request (or `answer`).
+     */
+    const machine = (up: ReadonlyArray<string>, answer?: (proof: string) => Response) =>
+      vi.fn<typeof fetch>(async (url, init) => {
+        const target = new URL(String(url));
+        if (!up.includes(target.origin)) throw new TypeError("offline");
+        const headers = new Headers(init?.headers);
+        if (target.pathname === "/api/studio/fleet/invitation/redeem") {
+          const proof = headers.get("dpop") ?? "";
+          if (answer) return answer(proof);
+          return Response.json({
+            managementToken: studioToken(proofThumbprint(proof)),
+            sessionId: "redeemed-session",
+            expiresAt: "2027-10-26T00:00:00.000Z",
+          });
+        }
+        if (target.pathname === "/api/auth/session") {
+          if (!headers.get("authorization")?.startsWith("DPoP ") || !headers.get("dpop"))
+            return new Response("unauthorized", { status: 401 });
+          return Response.json(session([...AuthStandardClientScopes, AuthAccessWriteScope]));
+        }
+        return Response.json(descriptor("environment-m1"));
+      });
+
+    it("redeems over the first address that answers and stores a bound token with both addresses", async () => {
+      const baseDir = await home();
+      const f = machine([connect]);
+      const result = await addFleetMachine({
+        baseDir,
+        code: v2(),
+        link: f,
+        localEnvironmentId: "environment-primary",
+      });
+      expect(result).toMatchObject({ url: tailnet, connectUrl: connect, change: "added" });
+      const redeem = f.mock.calls.find(([url]) => String(url).endsWith("/invitation/redeem"));
+      expect(String(redeem?.[0])).toBe(`${connect}/api/studio/fleet/invitation/redeem`);
+      expect(JSON.parse(String(redeem?.[1]?.body))).toEqual({
+        credential: "synthetic-one-time-redeem",
+        coordinatorEnvironmentId: "environment-primary",
+      });
+      // Nothing sent to the Connect address carries a plain bearer.
+      for (const [url, init] of f.mock.calls)
+        if (String(url).startsWith(connect))
+          expect(new Headers(init?.headers).get("authorization") ?? "").not.toMatch(/^Bearer/);
+      const config = await readFleetConfig(baseDir);
+      expect(config?.machines[0]).toMatchObject({ url: tailnet, connectUrl: connect });
+      const key = await readFleetProofKey(baseDir);
+      expect(tokenProofThumbprint(config!.machines[0]!.managementToken!)).toBe(key?.thumbprint);
+      if (process.platform !== "win32")
+        expect((await NodeFSP.stat(join(baseDir, "studio-fleet-key.json"))).mode & 0o777).toBe(
+          0o600,
+        );
+    });
+
+    it("says a used line is used, and writes no machine", async () => {
+      const baseDir = await home();
+      const f = machine([tailnet], () => new Response("{}", { status: 401 }));
+      await expect(
+        addFleetMachine({
+          baseDir,
+          code: v2(),
+          link: f,
+          localEnvironmentId: "environment-primary",
+        }),
+      ).rejects.toThrow("already used");
+      expect(await readFleetConfig(baseDir)).toBeNull();
+    });
+
+    it("refuses a returned token not bound to this machine's key", async () => {
+      const baseDir = await home();
+      const f = machine([tailnet], () =>
+        Response.json({
+          managementToken: studioToken(undefined),
+          sessionId: "redeemed-session",
+          expiresAt: "2027-10-26T00:00:00.000Z",
+        }),
+      );
+      await expect(
+        addFleetMachine({
+          baseDir,
+          code: v2(),
+          link: f,
+          localEnvironmentId: "environment-primary",
+        }),
+      ).rejects.toThrow("Pairing is unavailable");
+      expect(await readFleetConfig(baseDir)).toBeNull();
+    });
+
+    it("finds a clashing address before the line is spent", async () => {
+      const baseDir = await home();
+      await NodeFSP.writeFile(
+        join(baseDir, "studio-fleet.json"),
+        JSON.stringify({
+          version: 1,
+          machines: [
+            {
+              id: "other",
+              label: "Other",
+              environmentId: "environment-other",
+              url: "https://other.fixture.ts.net",
+              connectUrl: connect,
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      );
+      const f = machine([tailnet, connect]);
+      await expect(
+        addFleetMachine({
+          baseDir,
+          code: v2(),
+          link: f,
+          localEnvironmentId: "environment-primary",
+        }),
+      ).rejects.toThrow("already uses this address");
+      expect(f).not.toHaveBeenCalled();
+    });
+
+    it("needs this machine's own id before anything is sent", async () => {
+      const baseDir = await home();
+      const f = machine([tailnet]);
+      await expect(addFleetMachine({ baseDir, code: v2(), link: f })).rejects.toThrow(
+        "environment ID",
+      );
+      expect(f).not.toHaveBeenCalled();
+      expect(await NodeFSP.readdir(baseDir)).toEqual([]);
+    });
   });
 
   it("moves a relayed machine to its own address and keeps its id, label and scopes", async () => {

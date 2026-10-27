@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
+import { gateRequest, recordRequestFailure } from "../auth/CredentialFailureLimiter.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { FOLDER_TRANSFER_PREFIX, MAX_REQUEST_BYTES } from "./folderTransfer/wire.ts";
 import * as MachineHandoff from "./MachineHandoff.ts";
@@ -25,6 +26,13 @@ export const layer = HttpRouter.add(
       return refusal(503, "service_updating", { "retry-after": "30" });
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) return refusal(400, "invalid_request");
+    // A guessed transfer token is refused like any other credential.
+    const blocked = yield* gateRequest(request).pipe(
+      Effect.as(undefined),
+      Effect.catch((error) => Effect.succeed(error)),
+    );
+    if (blocked !== undefined)
+      return refusal(429, "rate_limited", { "retry-after": String(blocked.retryAfterSeconds) });
     const contentLength = Number(request.headers["content-length"] ?? "0");
     if (!Number.isFinite(contentLength) || contentLength > MAX_REQUEST_BYTES)
       return refusal(413, "too_large");
@@ -48,6 +56,7 @@ export const layer = HttpRouter.add(
       authorization: request.headers["authorization"] ?? null,
       body: () => Promise.resolve(body.value),
     });
+    if (response.status === 401) yield* recordRequestFailure(request);
     return HttpServerResponse.uint8Array(response.body, {
       status: response.status,
       contentType: response.contentType,

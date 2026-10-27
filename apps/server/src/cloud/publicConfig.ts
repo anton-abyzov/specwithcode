@@ -96,6 +96,9 @@ export function resolveRelayClientTracingConfig(
     : null;
 }
 
+/** The relay URL this build was configured with, or "" when none. */
+export const buildRelayUrl = (): string => buildTimeRelayUrl;
+
 export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
   const runtimeConfig = Config.NonEmptyString("STUDIO_RELAY_URL");
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(

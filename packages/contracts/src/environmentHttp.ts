@@ -38,6 +38,8 @@ import {
   StudioWorkGrantRevokeInput,
   StudioWorkGrantRestoreInput,
   StudioWorkGrantResult,
+  StudioFleetRedeemInput,
+  StudioFleetRedeemResult,
 } from "./studioFleet.ts";
 import {
   DeviceSignInApproveInput,
@@ -362,8 +364,34 @@ export const EnvironmentHttpCommonError = Schema.Union([
 ]);
 export type EnvironmentHttpCommonError = typeof EnvironmentHttpCommonError.Type;
 
+/**
+ * Too many failed credential checks came from one client. The response
+ * carries `retry-after` with `retryAfterSeconds`; a valid credential from the
+ * same client is refused too until the block ends.
+ */
+export class EnvironmentRateLimitedError extends Schema.TaggedError<EnvironmentRateLimitedError>()(
+  "EnvironmentRateLimitedError",
+  {
+    code: Schema.Literal("rate_limited"),
+    retryAfterSeconds: Schema.Int,
+  },
+  { httpApiStatus: 429 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentRateLimitedError)(this, {
+      status: 429,
+      headers: { "retry-after": String(this.retryAfterSeconds) },
+    });
+  }
+
+  override get message(): string {
+    return `Too many failed sign-in attempts from this client. Try again in ${String(this.retryAfterSeconds)} seconds.`;
+  }
+}
+
 const EnvironmentAuthenticationErrors = [
   EnvironmentAuthInvalidError,
+  EnvironmentRateLimitedError,
   EnvironmentInternalError,
 ] as const;
 
@@ -594,7 +622,7 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.post("browserSession", "/api/auth/browser-session", {
       payload: AuthBrowserSessionRequest,
       success: AuthBrowserSessionResult,
-      error: EnvironmentSessionCreationErrors,
+      error: [...EnvironmentSessionCreationErrors, EnvironmentRateLimitedError],
     }),
   )
   .add(
@@ -602,7 +630,7 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalDpopProofHeaders,
       payload: AuthTokenExchangeRequest,
       success: AuthAccessTokenResult,
-      error: EnvironmentTokenExchangeErrors,
+      error: [...EnvironmentTokenExchangeErrors, EnvironmentRateLimitedError],
     }),
   )
   .add(
@@ -723,14 +751,16 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
     HttpApiEndpoint.post("decision", "/oauth/mcp/decision", {
       payload: AuthMcpApprovalDecisionRequest,
       success: AuthMcpApprovalRedirect,
-      error: AuthMcpApprovalError,
+      error: [AuthMcpApprovalError, EnvironmentRateLimitedError],
     }),
   )
   .add(
     HttpApiEndpoint.post("token", "/oauth/mcp/token", {
+      // A DPoP proof binds the issued token to the caller's key (RFC 9449).
+      headers: OptionalDpopProofHeaders,
       payload: AuthMcpTokenRequest,
       success: AuthMcpTokenResult,
-      error: AuthMcpTokenError,
+      error: [AuthMcpTokenError, EnvironmentRateLimitedError],
     }),
   ) {}
 
@@ -1018,6 +1048,24 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
         StudioFleetInviteError,
       ],
     }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * Spends a v2 invitation's one-time credential for a management token
+     * bound to the caller's DPoP key. No session authenticates this call: the
+     * credential is the authorization, and the proof names the key.
+     */
+    HttpApiEndpoint.post("redeemFleetInvitation", "/api/studio/fleet/invitation/redeem", {
+      headers: Schema.Struct({ dpop: Schema.String }),
+      payload: StudioFleetRedeemInput,
+      success: StudioFleetRedeemResult,
+      error: [
+        EnvironmentHttpBadRequestError,
+        EnvironmentAuthInvalidError,
+        EnvironmentRateLimitedError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }),
   )
   .add(
     HttpApiEndpoint.get("fleetTailscale", "/api/studio/fleet/tailscale", {

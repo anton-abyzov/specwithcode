@@ -151,6 +151,7 @@ import * as FleetTargets from "./fleet/FleetTargets.ts";
 import * as MachineNicknameSync from "./fleet/MachineNicknameSync.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
+import * as CredentialFailureLimiter from "./auth/CredentialFailureLimiter.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as WorkGrants from "./fleet/WorkGrants.ts";
 import * as WorkGrantRevokeSweeper from "./fleet/workGrantRevokeSweeper.ts";
@@ -907,6 +908,9 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
 ).pipe(
+  // Every route that checks a presented credential counts its failures here,
+  // so a guess at /mcp and a guess at /api share one budget per client.
+  Layer.provide(CredentialFailureLimiter.layer),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),

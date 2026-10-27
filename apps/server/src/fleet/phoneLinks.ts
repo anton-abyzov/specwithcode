@@ -29,7 +29,6 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { join } from "../nodePath.ts";
 import {
-  checkIdentity,
   FleetError,
   type FleetConfig,
   type FleetFetch,
@@ -37,6 +36,8 @@ import {
   readBoundedJson,
 } from "../studioFleet.ts";
 import * as FleetTargets from "./FleetTargets.ts";
+import { parseFleetOrigin } from "./fleetOrigin.ts";
+import { type FleetLink, fleetRequest, reachFleetMachine, toFleetLink } from "./fleetTransport.ts";
 
 /**
  * Phone fleet links (0970). A phone paired with one machine, the hub, asks it
@@ -237,8 +238,13 @@ type MintAnswer =
     }
   | { readonly ok: false; readonly problem: StudioFleetPhoneProblem };
 
+/**
+ * POSTs with the management token to the first address that answers as the
+ * machine and may carry that token (a bearer only over the tailnet). Null
+ * when none does.
+ */
 async function postJson(
-  fetcher: FleetFetch,
+  fetcher: FleetLink | FleetFetch,
   target: FleetTarget,
   path: string,
   body: unknown,
@@ -246,16 +252,13 @@ async function postJson(
   if (!target.managementToken) return null;
   let response: Response;
   try {
-    response = await fetcher(`${target.url}${path}`, {
+    ({ response } = await fleetRequest(fetcher, target, path, {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${target.managementToken}`,
-        "content-type": "application/json",
-      },
+      token: target.managementToken,
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-      redirect: "error",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    }));
   } catch {
     return null;
   }
@@ -268,7 +271,7 @@ async function postJson(
 }
 
 export async function requestPhoneCode(
-  fetcher: FleetFetch,
+  fetcher: FleetLink | FleetFetch,
   target: FleetTarget,
   body: {
     readonly hubEnvironmentId: string;
@@ -299,18 +302,21 @@ export async function requestPhoneCode(
 }
 
 export async function requestPhoneLinks(
-  fetcher: FleetFetch,
+  fetcher: FleetLink | FleetFetch,
   target: FleetTarget,
   body: { readonly hubEnvironmentId: string; readonly activeHubSessionIds: ReadonlyArray<string> },
 ): Promise<StudioFleetPhoneLinksResult | null> {
   if (!target.managementToken) return null;
+  const link = toFleetLink(fetcher);
   // The management token only goes to the machine it was made for.
-  const identified = await checkIdentity(fetcher, target).then(
+  const identified = await reachFleetMachine(link, target, {
+    token: target.managementToken,
+  }).then(
     () => true,
     () => false,
   );
   if (!identified) return null;
-  const answer = await postJson(fetcher, target, "/api/studio/fleet/phone/links", body);
+  const answer = await postJson(link, target, "/api/studio/fleet/phone/links", body);
   if (answer === null || answer.status !== 200) return null;
   const decoded = decodeLinksResult(answer.body);
   return decoded._tag === "Some" ? decoded.value : null;
@@ -336,7 +342,7 @@ const isHttpBase = (value: string) => {
 
 export async function buildPhoneRoster(input: {
   readonly config: FleetConfig | null;
-  readonly fetcher: FleetFetch;
+  readonly fetcher: FleetLink | FleetFetch;
   readonly hub: { readonly environmentId: EnvironmentId; readonly label: string };
   readonly phone: {
     readonly sessionId: string;
@@ -353,12 +359,18 @@ export async function buildPhoneRoster(input: {
     seen.add(target.environmentId);
     return true;
   });
+  const link = toFleetLink(input.fetcher);
   const machines = await Promise.all(
     targets.map(async (target): Promise<StudioFleetPhoneMachine> => {
-      const routes: Array<StudioFleetPhoneRoute> = [{ kind: "fleet", httpBaseUrl: target.url }];
+      // A phone reaches a machine directly only over the tailnet; the
+      // machine's own routes (from its mint) add anything else it offers.
+      const routes: Array<StudioFleetPhoneRoute> =
+        parseFleetOrigin(target.url)?.transport === "tailnet"
+          ? [{ kind: "fleet", httpBaseUrl: target.url }]
+          : [];
       const base = { environmentId: target.environmentId, label: target.label };
       try {
-        await checkIdentity(input.fetcher, target);
+        await reachFleetMachine(link, target);
       } catch (error) {
         return {
           ...base,
@@ -374,7 +386,7 @@ export async function buildPhoneRoster(input: {
       if (!scopes.includes(AuthOrchestrationReadScope))
         return { ...base, routes, problem: "pairing_unavailable" };
       const answer = await requestPhoneCode(
-        input.fetcher,
+        link,
         target,
         {
           hubEnvironmentId: input.hub.environmentId,
@@ -446,7 +458,7 @@ export interface PhoneSweepResult {
 export async function sweepPhoneLinks(input: {
   readonly stateDir: string;
   readonly config: FleetConfig | null;
-  readonly fetcher: FleetFetch;
+  readonly fetcher: FleetLink | FleetFetch;
   readonly hubEnvironmentId: string;
   /** This machine's active phone sessions, or null when they cannot be read. */
   readonly activePhoneSessions: () => Promise<ReadonlySet<string> | null>;
@@ -467,6 +479,7 @@ export async function sweepPhoneLinks(input: {
       (target) => known.has(target.environmentId) && Boolean(target.managementToken),
     );
     const activeIds = () => [...active].slice(0, MAX_ACTIVE_SESSIONS);
+    const link = toFleetLink(input.fetcher);
     const ask = async () =>
       new Map<string, StudioFleetPhoneLinksResult | null>(
         await Promise.all(
@@ -474,7 +487,7 @@ export async function sweepPhoneLinks(input: {
             async (target) =>
               [
                 target.environmentId,
-                await requestPhoneLinks(input.fetcher, target, {
+                await requestPhoneLinks(link, target, {
                   hubEnvironmentId: input.hubEnvironmentId,
                   activeHubSessionIds: activeIds(),
                 }),
@@ -540,7 +553,7 @@ export async function sweepPhoneLinks(input: {
  */
 export async function unlinkPhonesFrom(input: {
   readonly stateDir: string;
-  readonly fetcher: FleetFetch;
+  readonly fetcher: FleetLink | FleetFetch;
   readonly target: FleetTarget;
   readonly hubEnvironmentId: string | undefined;
 }): Promise<void> {
@@ -576,7 +589,7 @@ export const layerSweep = Layer.effectDiscard(
         sweepPhoneLinks({
           stateDir: config.stateDir,
           config: fleet,
-          fetcher: targets.fetch,
+          fetcher: FleetTargets.linkOf(targets),
           hubEnvironmentId,
           activePhoneSessions: () =>
             Effect.runPromise(

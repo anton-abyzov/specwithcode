@@ -9,6 +9,8 @@ import {
   EnvironmentId,
 } from "@specweave-studio/contracts";
 
+import { verifyDpopProof } from "@specweave-studio/shared/dpop";
+
 import type { FleetTarget } from "../studioFleet.ts";
 import {
   WORKER_GRANT_REDIRECT_URI,
@@ -17,6 +19,12 @@ import {
 } from "./workerGrantMint.ts";
 
 export const ORIGIN = "https://m1.example.ts.net";
+/** The same machine's SpecWithCode Connect address. */
+export const CONNECT_ORIGIN = "https://prod-0123456789abcdef.spec-weave.com";
+
+/** A token shaped like Studio's (`<claims>.<sig>`), bound to `jkt` when given. */
+export const studioToken = (claims: Record<string, unknown>) =>
+  `${Buffer.from(JSON.stringify({ v: 1, ...claims })).toString("base64url")}.sig`;
 export const target: FleetTarget = {
   id: "m1",
   label: "M1",
@@ -31,6 +39,7 @@ interface Call {
   readonly method: string;
   readonly redirect: RequestInit["redirect"];
   readonly authorization: string | null;
+  readonly dpop: string | null;
   readonly body: string | null;
 }
 
@@ -50,8 +59,41 @@ export function fakeMachine(
     readonly clientsStatus?: number;
     readonly renewalStatus?: number;
     readonly renewalCode?: string;
+    /** Addresses this machine answers on (default: the tailnet `ORIGIN` only). */
+    readonly origins?: ReadonlyArray<string>;
+    /** Addresses that throw like a network that is down. */
+    readonly offline?: ReadonlySet<string>;
+    /** Advertise DPoP and issue key-bound grants to token requests with a valid proof. */
+    readonly dpop?: boolean;
   } = {},
 ) {
+  const origins = overrides.origins ?? [ORIGIN];
+  /** Management tokens accepted, as `Bearer`, or as `DPoP` with a proof for the request. */
+  const managementTokens = new Set(["management-secret"]);
+  /** The proof's key thumbprint when `dpop` is a valid proof for this request (and token). */
+  const proofKey = (
+    dpop: string | null,
+    method: string,
+    url: URL,
+    accessToken?: string,
+  ): string | undefined => {
+    const checked = verifyDpopProof({
+      proof: dpop,
+      method,
+      url: url.toString(),
+      // @effect-diagnostics-next-line globalDate:off -- DPoP proofs carry wall-clock seconds.
+      nowEpochSeconds: Math.floor(Date.now() / 1000),
+      ...(accessToken === undefined ? {} : { expectedAccessToken: accessToken }),
+    });
+    return checked.ok ? checked.thumbprint : undefined;
+  };
+  const managementAuthorized = (headers: Headers, method: string, url: URL) => {
+    const authorization = headers.get("authorization") ?? "";
+    const [scheme, token = ""] = authorization.split(" ");
+    if (!managementTokens.has(token)) return false;
+    if (scheme === "Bearer") return true;
+    return scheme === "DPoP" && proofKey(headers.get("dpop"), method, url, token) !== undefined;
+  };
   const calls: Call[] = [];
   const pending = new Map<string, { challenge: string; access: string }>();
   const revokedPairings: string[] = [];
@@ -62,19 +104,23 @@ export function fakeMachine(
     const url = new URL(String(input));
     const headers = new Headers(init?.headers);
     const body = typeof init?.body === "string" ? init.body : null;
+    const method = init?.method ?? "GET";
     calls.push({
       url: url.toString(),
-      method: init?.method ?? "GET",
+      method,
       redirect: init?.redirect,
       authorization: headers.get("authorization"),
+      dpop: headers.get("dpop"),
       body,
     });
+    if (overrides.offline?.has(url.origin)) throw new TypeError("fetch failed");
     const json = (status: number, value: unknown) =>
       new Response(JSON.stringify(value), {
         status,
         headers: { "content-type": "application/json" },
       });
-    if (url.origin !== ORIGIN) return json(404, {});
+    if (!origins.includes(url.origin)) return json(404, {});
+    const here = url.origin;
     switch (url.pathname) {
       case "/.well-known/studio/environment":
         return json(200, {
@@ -88,11 +134,12 @@ export function fakeMachine(
         return overrides.protectedResourceStatus === 404
           ? json(404, {})
           : json(200, {
-              resource: overrides.resource ?? `${ORIGIN}/mcp`,
-              authorization_servers: [ORIGIN],
+              resource: overrides.resource ?? `${here}/mcp`,
+              authorization_servers: [here],
+              ...(overrides.dpop ? { dpop_signing_alg_values_supported: ["ES256"] } : {}),
             });
       case "/api/auth/pairing-token": {
-        if (headers.get("authorization") !== "Bearer management-secret") return json(401, {});
+        if (!managementAuthorized(headers, method, url)) return json(401, {});
         const request = JSON.parse(body ?? "{}");
         expect(request.scopes).toEqual([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
         return json(200, {
@@ -104,6 +151,7 @@ export function fakeMachine(
         });
       }
       case "/api/auth/pairing-links/revoke":
+        if (!managementAuthorized(headers, method, url)) return json(401, {});
         revokedPairings.push(JSON.parse(body ?? "{}").id);
         return json(200, { revoked: true });
       case "/oauth/mcp/register": {
@@ -114,14 +162,14 @@ export function fakeMachine(
       case "/oauth/mcp/decision": {
         const { authorization, decision } = JSON.parse(body ?? "{}");
         expect(authorization.code_challenge_method).toBe("S256");
-        expect(authorization.resource).toBe(`${ORIGIN}/mcp`);
+        expect(authorization.resource).toBe(`${here}/mcp`);
         if (overrides.rejectCode || decision.code !== "PAIRCODE")
           return json(400, { _tag: "AuthMcpApprovalError", message: "The code is unknown." });
         pending.set("CODE-1", { challenge: authorization.code_challenge, access: decision.access });
         const redirect = new URL(authorization.redirect_uri);
         redirect.searchParams.set("code", "CODE-1");
         redirect.searchParams.set("state", overrides.decisionState ?? authorization.state);
-        redirect.searchParams.set("iss", overrides.decisionIss ?? ORIGIN);
+        redirect.searchParams.set("iss", overrides.decisionIss ?? here);
         return json(200, { redirectTo: redirect.toString() });
       }
       case "/oauth/mcp/token": {
@@ -133,17 +181,27 @@ export function fakeMachine(
         if (overrides.tokenStatus !== undefined) return json(overrides.tokenStatus, {});
         if (!found || digest !== found.challenge)
           return json(400, { error: "invalid_grant", error_description: "bad" });
+        const jkt =
+          overrides.dpop && headers.get("dpop") !== null
+            ? proofKey(headers.get("dpop"), method, url)
+            : undefined;
+        if (headers.get("dpop") !== null && overrides.dpop && jkt === undefined)
+          return json(400, { error: "invalid_request", error_description: "bad proof" });
         issued += 1;
         return json(200, {
-          access_token: overrides.sessionTokens
-            ? `${Buffer.from(JSON.stringify({ v: 1, sid: `sid-${issued}` })).toString("base64url")}.sig`
-            : `mcp-token-${found.access}-${issued}`,
-          token_type: "Bearer",
+          access_token:
+            jkt !== undefined
+              ? studioToken({ sid: `sid-${issued}`, jkt })
+              : overrides.sessionTokens
+                ? studioToken({ sid: `sid-${issued}` })
+                : `mcp-token-${found.access}-${issued}`,
+          token_type: jkt !== undefined ? "DPoP" : "Bearer",
           expires_in: 30 * 24 * 3600,
           scope: "orchestration:read orchestration:operate",
         });
       }
       case "/api/auth/clients":
+        if (!managementAuthorized(headers, method, url)) return json(401, {});
         if (overrides.clientsStatus !== undefined)
           return json(overrides.clientsStatus, { code: "insufficient_scope" });
         return json(200, [
@@ -167,10 +225,11 @@ export function fakeMachine(
           },
         ]);
       case "/api/auth/clients/revoke":
+        if (!managementAuthorized(headers, method, url)) return json(401, {});
         revokedSessions.push(JSON.parse(body ?? "{}").sessionId);
         return json(200, { revoked: true });
       case "/api/auth/worker-grants/renew": {
-        if (headers.get("authorization") !== "Bearer management-secret") return json(401, {});
+        if (!managementAuthorized(headers, method, url)) return json(401, {});
         const request = JSON.parse(body ?? "{}");
         expect(request.coordinatorEnvironmentId).toBe("env-m4");
         expect(request.environmentId).toBe("env-m1");
@@ -180,8 +239,15 @@ export function fakeMachine(
         if (!sid) return json(400, { code: "grant_invalid" });
         if (revokedSessions.includes(sid)) return json(409, { code: "grant_revoked" });
         renewed += 1;
+        const previous = JSON.parse(
+          Buffer.from(String(request.accessToken).split(".")[0] ?? "", "base64url").toString(),
+        ) as { jkt?: string };
         return json(200, {
-          accessToken: `${Buffer.from(JSON.stringify({ v: 1, sid, renewal: renewed })).toString("base64url")}.sig`,
+          accessToken: studioToken({
+            sid,
+            renewal: renewed,
+            ...(previous.jkt ? { jkt: previous.jkt } : {}),
+          }),
           expiresAt: "2070-01-01T00:00:00.000Z",
         });
       }
@@ -191,6 +257,8 @@ export function fakeMachine(
   }) as typeof fetch;
   return {
     fetcher,
+    /** Accepts one more management token, as one minted by a v2 invitation. */
+    acceptManagementToken: (token: string) => managementTokens.add(token),
     calls,
     revokedPairings,
     revokedSessions,

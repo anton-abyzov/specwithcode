@@ -97,6 +97,8 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
     environment: {
       ...process.env,
       PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      // Preparation links commands into ~/.local/bin; keep that inside the test.
+      HOME: path.join(rootDirectory, "home"),
       FAKE_NPM_LOG: logPath,
       FAKE_NPM_PREFIX: path.join(rootDirectory, "external-npm-global"),
       FAKE_NPM_MANIFEST: encodeUnknownJson({
@@ -133,6 +135,7 @@ const makeFakeUvToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeUvToolcha
     environment: {
       ...process.env,
       PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      HOME: path.join(rootDirectory, "home"),
       FAKE_UV_LOG: logPath,
       FAKE_UV_BIN: path.join(rootDirectory, "external-uv-bin"),
       FAKE_UV_EXECUTABLE: executablePath,
@@ -503,7 +506,7 @@ describe("AcpRegistrySupport", () => {
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
         }).pipe(Effect.provideService(HostProcessEnvironment, environment));
-        yield* resolver.prepare({ agentId: "grok-build" });
+        const prepared = yield* resolver.prepare({ agentId: "grok-build" });
         const resolved = yield* resolver.resolve(
           settings({ agentId: "grok-build" }),
           "/workspace",
@@ -521,6 +524,8 @@ describe("AcpRegistrySupport", () => {
         expect(resolved.spawn.command).toBe(
           yield* fs.realPath(path.join(managedHome, "bin", "grok")),
         );
+        // Turn on here points the built-in Grok at this binary, not the npm wrapper.
+        expect(prepared.executablePath).toBe(resolved.spawn.command);
         expect(resolved.spawn.args).toEqual(["--no-auto-update", "agent", "stdio"]);
         expect(resolved.spawn.env).toMatchObject({
           HOME: originalHome,
@@ -1201,6 +1206,214 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  itOnLinuxHost("keeps a prepared package ready when npm moves to a new per-shell link", () => {
+    const agent = {
+      ...makeAgent({ npx: { package: "@google/gemini-cli@1.2.3", args: ["--acp"] } }),
+      id: "gemini",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-multishell-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      // fnm puts /run/user/<uid>/fnm_multishells/<pid>_<ts>/bin on PATH: a new
+      // link to the same node folder for every shell, so for every restart.
+      const linkedEnvironment = (shell: string) =>
+        Effect.gen(function* () {
+          const link = `${cacheDir}/multishells/${shell}`;
+          yield* fileSystem.makeDirectory(`${cacheDir}/multishells`, { recursive: true });
+          yield* fileSystem.symlink(`${cacheDir}/fake-node`, link);
+          return {
+            ...toolchain.environment,
+            PATH: `${link}/bin:${process.env.PATH ?? ""}`,
+            FAKE_NPM_PACKAGE: "@google/gemini-cli",
+            FAKE_NPM_EXECUTABLE_NAME: "gemini",
+            FAKE_NPM_MANIFEST: encodeUnknownJson({
+              name: "@google/gemini-cli",
+              version: "1.2.3",
+              bin: { gemini: "dist/index.js" },
+            }),
+          } satisfies NodeJS.ProcessEnv;
+        });
+      const catalogFrom = (environment: NodeJS.ProcessEnv) =>
+        AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+
+      const first = yield* linkedEnvironment("100_1");
+      const prepared = yield* (yield* catalogFrom(first)).prepare({ agentId: "gemini" });
+      expect(prepared.executablePath).toBe(`${cacheDir}/tools/gemini/1.2.3/npm/bin/gemini`);
+
+      yield* fileSystem.remove(`${cacheDir}/multishells/100_1`);
+      const second = yield* linkedEnvironment("200_2");
+      const inspected = yield* (yield* catalogFrom(second)).inspect(
+        settings({ agentId: "gemini" }),
+        second,
+      );
+      expect(inspected).toMatchObject({ status: "ready", agentId: "gemini" });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  itOnLinuxHost(
+    "links a prepared command into ~/.local/bin without replacing the user's own",
+    () => {
+      const agent = makeAgent({ npx: { package: "@example/acp@1.2.3", args: ["--stdio"] } });
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-acp-registry-user-command-",
+        });
+        const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+        const catalogFor = (home: string) =>
+          AcpRegistrySupport.makeAcpRegistryCatalog({
+            cacheDir,
+            toolsDir: `${cacheDir}/tools`,
+            registryUrl,
+          }).pipe(
+            Effect.provideService(HostProcessEnvironment, { ...toolchain.environment, HOME: home }),
+          );
+
+        const home = `${cacheDir}/home`;
+        yield* (yield* catalogFor(home)).prepare({ agentId: agent.id });
+        const link = `${home}/.local/bin/example-agent`;
+        expect(yield* fileSystem.readLink(link)).toBe(toolchain.executablePath);
+
+        // A link left by an older version moves to the new install.
+        yield* fileSystem.remove(link);
+        yield* fileSystem.symlink(
+          `${cacheDir}/tools/example-agent/1.0.0/npm/bin/example-agent`,
+          link,
+        );
+        yield* (yield* catalogFor(home)).prepare({ agentId: agent.id });
+        expect(yield* fileSystem.readLink(link)).toBe(toolchain.executablePath);
+
+        const ownHome = `${cacheDir}/own-home`;
+        const own = `${ownHome}/.local/bin/example-agent`;
+        yield* fileSystem.makeDirectory(`${ownHome}/.local/bin`, { recursive: true });
+        yield* fileSystem.writeFileString(own, "#!/bin/sh\necho mine\n");
+        yield* (yield* catalogFor(ownHome)).prepare({ agentId: agent.id });
+        expect(yield* fileSystem.readFileString(own)).toBe("#!/bin/sh\necho mine\n");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+          ),
+        ),
+      );
+    },
+  );
+
+  itOnLinuxHost("carries a receipt keyed by the old link path over to the real folder", () => {
+    const agent = {
+      ...makeAgent({ npx: { package: "@google/gemini-cli@1.2.3", args: ["--acp"] } }),
+      id: "gemini",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-legacy-receipt-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const link = `${cacheDir}/node-link`;
+      yield* fileSystem.symlink(`${cacheDir}/fake-node`, link);
+      const environment = {
+        ...toolchain.environment,
+        PATH: `${link}/bin:${process.env.PATH ?? ""}`,
+        FAKE_NPM_PACKAGE: "@google/gemini-cli",
+        FAKE_NPM_EXECUTABLE_NAME: "gemini",
+        FAKE_NPM_MANIFEST: encodeUnknownJson({
+          name: "@google/gemini-cli",
+          version: "1.2.3",
+          bin: { gemini: "dist/index.js" },
+        }),
+      } satisfies NodeJS.ProcessEnv;
+      const catalog = AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      yield* (yield* catalog).prepare({ agentId: "gemini" });
+
+      // Rewrite the receipt the way an earlier release stored it: named and
+      // keyed by the link path npm was found through.
+      const receipts = `${cacheDir}/acp-registry/package-installs`;
+      const [current] = yield* fileSystem.readDirectory(receipts);
+      const receipt = JSON.parse(yield* fileSystem.readFileString(`${receipts}/${current}`));
+      yield* fileSystem.remove(`${receipts}/${current}`);
+      const digest = yield* Effect.promise(() =>
+        globalThis.crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(`npx\0${link}/bin/npm`),
+        ),
+      );
+      const legacyKey = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")
+        .slice(0, 16);
+      yield* fileSystem.writeFileString(
+        `${receipts}/gemini-${legacyKey}.json`,
+        JSON.stringify({ ...receipt, managerPath: `${link}/bin/npm` }),
+      );
+
+      const inspected = yield* (yield* catalog).inspect(
+        settings({ agentId: "gemini" }),
+        environment,
+      );
+      expect(inspected).toMatchObject({ status: "ready", agentId: "gemini" });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  itOnLinuxHost("does not shadow a command the machine already has on PATH", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3", args: ["--stdio"] } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-no-shadow-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const userBin = `${cacheDir}/usr-bin`;
+      yield* fileSystem.makeDirectory(userBin, { recursive: true });
+      yield* fileSystem.writeFileString(`${userBin}/example-agent`, "#!/bin/sh\n");
+      yield* fileSystem.chmod(`${userBin}/example-agent`, 0o755);
+      const environment = {
+        ...toolchain.environment,
+        PATH: `${toolchain.environment.PATH}:${userBin}`,
+      };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      yield* resolver.prepare({ agentId: agent.id });
+      expect(yield* fileSystem.exists(`${environment.HOME}/.local/bin/example-agent`)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   itOnLinuxHost("installs into Studio home package recipes during preparation", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3", args: ["--stdio"] } });
     const requests: string[] = [];
@@ -1222,6 +1435,7 @@ describe("AcpRegistrySupport", () => {
         version: "1.2.3",
         distribution: "npx",
         prepared: true,
+        executablePath: toolchain.executablePath,
       });
       expect(yield* fileSystem.exists(toolchain.executablePath)).toBe(true);
       expect(yield* fileSystem.exists(toolchain.environment.FAKE_NPM_PREFIX)).toBe(false);

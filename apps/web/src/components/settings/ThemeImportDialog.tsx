@@ -497,17 +497,17 @@ export function ThemeImportDialog({
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" onClick={() => resolveConflicts("update")}>
-                      Update existing
+                    <Button size="sm" variant="outline" onClick={() => setConflicts(null)}>
+                      Back
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
+                      Cancel
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => resolveConflicts("copy")}>
                       Keep both
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setConflicts(null)}>
-                      Back
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-                      Cancel
+                    <Button size="sm" onClick={() => resolveConflicts("update")}>
+                      Update existing
                     </Button>
                   </div>
                 </div>
@@ -537,7 +537,7 @@ export function ThemeImportDialog({
                     them at the modal bottom would read as a modal-scoped action when
                     the dialog also has the search and conflict views. */}
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                  <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                  <Button variant="outline" onClick={() => onOpenChange(false)}>
                     Cancel
                   </Button>
                   <Button disabled={!json.trim() || isReading} onClick={handleSubmit}>

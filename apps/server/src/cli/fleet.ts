@@ -1,15 +1,18 @@
 /**
- * `specweave-studio fleet` - add your other machines over Tailscale.
+ * `specweave-studio fleet` - add your other machines over Tailscale or
+ * SpecWithCode Connect.
  *
  * `fleet invite` runs on the machine to add: it publishes the running server
- * on that machine's own Tailscale name (Serve, never Funnel) and prints one
- * line holding its address, its environment id and a management token. `fleet
- * add <line>` runs on the primary machine and writes it into
- * `studio-fleet.json` after the address answers as that machine. Running both
- * again moves a machine to a new address and renews its token.
+ * on that machine's own Tailscale name (Serve, never Funnel) and/or names its
+ * SpecWithCode Connect address, and prints one line for the primary. A
+ * Tailscale-only line holds a management token; a line with a Connect address
+ * holds a one-time credential the primary redeems for a token bound to its
+ * own fleet key. `fleet add <line>` runs on the primary machine and writes it
+ * into `studio-fleet.json` after the address answers as that machine. Running
+ * both again moves a machine to a new address and renews its token.
  *
- * Machines reach each other by their own Tailscale names, so none of them
- * depends on another being on the same network.
+ * Machines reach each other by their own addresses, so none of them depends
+ * on another being on the same network.
  */
 import { EnvironmentId, PortSchema } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
@@ -27,6 +30,7 @@ import { resolveBaseDir } from "../os-jank.ts";
 import { secretsSentTo } from "../fleet/folderTransfer/secretsReport.ts";
 import { unlinkPhonesFrom } from "../fleet/phoneLinks.ts";
 import { join } from "../nodePath.ts";
+import { makeFleetLink } from "../fleet/fleetTransport.ts";
 import { discoverFleet, FleetError, readFleetConfig } from "../studioFleet.ts";
 import {
   addFleetMachine,
@@ -37,7 +41,7 @@ import {
 } from "../studioFleetJoin.ts";
 import { invokedCliName } from "./cliName.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
-import { fleetInviteLabel } from "../studioFleetInvite.ts";
+import { type FleetInviteVia, fleetInviteLabel } from "../studioFleetInvite.ts";
 import {
   bearerHeaders,
   liveServiceClient,
@@ -99,6 +103,7 @@ export const inviteThroughRunningService = Effect.fn("cli.fleet.invite")(functio
   readonly label: string | undefined;
   readonly ttl: Duration.Duration | undefined;
   readonly servePort: number;
+  readonly via?: FleetInviteVia | undefined;
 }) {
   if (input.servePort !== DEFAULT_TAILSCALE_SERVE_PORT) {
     return yield* new LiveServiceUnsupportedError({
@@ -122,6 +127,7 @@ export const inviteThroughRunningService = Effect.fn("cli.fleet.invite")(functio
         coordinatorEnvironmentId: input.coordinatorEnvironmentId,
         ...(input.label === undefined ? {} : { label: input.label.slice(0, 80) }),
         ...(days === undefined ? {} : { days }),
+        ...(input.via === undefined ? {} : { via: input.via }),
       },
     });
   }).pipe(Effect.mapError(liveServiceRequestError(origin, "make the invitation")));
@@ -151,9 +157,15 @@ const inviteCommand = Command.make("invite", {
     Flag.withDescription("HTTPS port on this machine's Tailscale name. Default 443."),
     Flag.withDefault(DEFAULT_TAILSCALE_SERVE_PORT),
   ),
+  via: Flag.Literals("via", ["auto", "tailscale", "connect"]).pipe(
+    Flag.withDescription(
+      "Which address the line carries: `tailscale`, `connect` (SpecWithCode Connect), or `auto` (both when both work). Default auto.",
+    ),
+    Flag.withDefault("auto" as const),
+  ),
 }).pipe(
   Command.withDescription(
-    "On a machine to add: publish this server on its Tailscale name and print a line for `fleet add` on your primary machine.",
+    "On a machine to add: publish this server on its Tailscale name or SpecWithCode Connect address and print a line for `fleet add` on your primary machine.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -167,12 +179,29 @@ const inviteCommand = Command.make("invite", {
         label: Option.getOrUndefined(flags.label),
         ttl: Option.getOrUndefined(flags.ttl),
         servePort: flags.tailscaleServePort,
+        via: flags.via,
       });
+      const descriptor = target.descriptor;
       const { code, url } = invitation;
-      const label = fleetInviteLabel(Option.getOrUndefined(flags.label), target.descriptor.label);
+      const label = fleetInviteLabel(Option.getOrUndefined(flags.label), descriptor.label);
+      const where = invitation.connectUrl
+        ? `${url} (private to your tailnet) and ${invitation.connectUrl} (SpecWithCode Connect)`
+        : invitation.sessionId
+          ? `${url} (private to your tailnet)`
+          : `${url} (SpecWithCode Connect)`;
+      const revoke = invitation.sessionId
+        ? `Revoke it with \`${cliName()} auth session revoke ${invitation.sessionId}\`.`
+        : `Use it within an hour, by ${invitation.redeemBy ?? "then"}; it works once, and anyone who sees it first can use it from the internet. Revoke it unused with \`${cliName()} auth pairing revoke ${invitation.pairingId ?? "<id>"}\`.`;
+      // A v2 line (no session id) needs a main machine from this release on.
+      const compatibility = invitation.sessionId
+        ? []
+        : [
+            "",
+            `Note: a main machine on an older SpecWithCode does not accept this line. Update it, or run \`${cliName()} fleet invite --via tailscale\` for a Tailscale-only line.`,
+          ];
       yield* Console.log(
         [
-          `${label || "This machine"} is published at ${url} (private to your tailnet).`,
+          `${label || "This machine"} is published at ${where}.`,
           "",
           "On your primary machine, run:",
           "",
@@ -182,7 +211,8 @@ const inviteCommand = Command.make("invite", {
           "",
           code,
           "",
-          `It works until ${invitation.expiresAt}. Treat it like a password: it lets the primary pair with this machine. Revoke it with \`${cliName()} auth session revoke ${invitation.sessionId}\`.`,
+          `It works until ${invitation.expiresAt}. Treat it like a password: it lets the primary pair with this machine. ${revoke}`,
+          ...compatibility,
           "",
         ].join("\n"),
       );
@@ -209,6 +239,13 @@ const addCommand = Command.make("add", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const baseDir = yield* resolveFleetBaseDir(flags.baseDir);
+      // A line with a SpecWithCode Connect address is redeemed for this machine's id.
+      const localEnvironmentId = yield* discoverPairTarget(
+        Option.getOrUndefined(flags.baseDir),
+      ).pipe(
+        Effect.map((target) => target.descriptor.environmentId as string),
+        Effect.orElseSucceed(() => undefined),
+      );
       const added = yield* Effect.tryPromise({
         try: () =>
           addFleetMachine({
@@ -216,6 +253,8 @@ const addCommand = Command.make("add", {
             code: flags.code,
             id: Option.getOrUndefined(flags.id),
             label: Option.getOrUndefined(flags.label),
+            link: makeFleetLink({ fetch: globalThis.fetch, baseDir }),
+            localEnvironmentId,
           }),
         catch: fleetFailure,
       });
@@ -267,12 +306,16 @@ const listCommand = Command.make("list", { baseDir: baseDirFlag }).pipe(
         );
         return;
       }
-      const snapshot = yield* Effect.promise(() => discoverFleet(config, undefined));
+      const snapshot = yield* Effect.promise(() =>
+        discoverFleet(config, undefined, makeFleetLink({ fetch: globalThis.fetch, baseDir })),
+      );
+      const via = (transport: string | undefined) =>
+        transport === "connect" ? "via Connect" : transport === "tailnet" ? "via Tailscale" : "-";
       yield* Console.log(
         [
           ...snapshot.machines.map(
             (machine) =>
-              `${machine.id}\t${machine.label}\t${machine.url}\t${machine.status}${machine.pairingConfigured ? "" : "\tno management token"}`,
+              `${machine.id}\t${machine.label}\t${machine.url}${machine.connectUrl ? ` ${machine.connectUrl}` : ""}\t${machine.status}\t${via(machine.transport)}${machine.pairingConfigured ? "" : "\tno management token"}`,
           ),
           ...skipped,
           "",
@@ -301,18 +344,19 @@ const removeCommand = Command.make("remove", {
         Effect.map((target) => target.descriptor.environmentId as string),
         Effect.orElseSucceed(() => undefined),
       );
+      const link = makeFleetLink({ fetch: globalThis.fetch, baseDir });
       const removed = yield* Effect.tryPromise({
         try: () =>
           removeFleetMachineEverywhere({
             baseDir,
             machine: flags.machine,
-            fetcher: globalThis.fetch,
+            fetcher: link,
             revokeWorkerAccess: (target) =>
-              revokeWorkerAccessByLabel(globalThis.fetch, target, localEnvironmentId),
+              revokeWorkerAccessByLabel(link, target, localEnvironmentId),
             unlinkPhones: (target) =>
               unlinkPhonesFrom({
                 stateDir: join(baseDir, "userdata"),
-                fetcher: globalThis.fetch,
+                fetcher: link,
                 target,
                 hubEnvironmentId: localEnvironmentId,
               }),
@@ -353,7 +397,7 @@ export function fleetRemoveSummary(removed: FleetRemoveResult, cli: string): str
 
 export const fleetCommand = Command.make("fleet").pipe(
   Command.withDescription(
-    "Add your other machines over Tailscale so coordinators here can start work on them.",
+    "Add your other machines over Tailscale or SpecWithCode Connect so coordinators here can start work on them.",
   ),
   Command.withSubcommands([inviteCommand, addCommand, listCommand, removeCommand]),
 );

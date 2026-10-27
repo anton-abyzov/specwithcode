@@ -253,6 +253,133 @@ describe("model picker one-click setup", () => {
   });
 });
 
+describe("model picker Turn on here outcome", () => {
+  const geminiId = ProviderInstanceId.make("acpRegistry_gemini");
+  const gemini = {
+    identity: "acp:gemini",
+    driverKind: ProviderDriverKind.make("acpRegistry"),
+    displayName: "Gemini CLI",
+    agentId: "gemini",
+    entry: ready,
+    machineLabels: ["Anton's MacBook"],
+  };
+  const geminiHere = (snapshot: Partial<(typeof ready)["snapshot"]>) =>
+    deriveProviderInstanceEntries([
+      {
+        ...ready.snapshot,
+        instanceId: geminiId,
+        displayName: "Gemini CLI",
+        ...snapshot,
+      },
+    ])[0]!;
+  const setupFor = (overrides: Record<string, unknown> = {}) => ({
+    installable: new Map(),
+    elsewhere: [],
+    canManage: true,
+    pending: new Set<string>(),
+    errors: new Map<string, string>(),
+    install: vi.fn(),
+    enableHere: vi.fn(),
+    machineLabel: "ministorm",
+    turnedOn: [{ provider: gemini, instanceId: geminiId }],
+    ...overrides,
+  });
+  const row = () => container.querySelector("[data-model-picker-turned-on='acp:gemini']");
+
+  it("shows the running step on the machine instead of dropping the row", async () => {
+    await mount({
+      quickSetup: setupFor({
+        pending: new Set(["acp:gemini"]),
+        steps: new Map([["acp:gemini", "installing"]]),
+      }),
+    });
+    expect(container.textContent).toContain("Turned on on ministorm");
+    expect(row()?.getAttribute("data-turn-on-state")).toBe("running");
+    expect(row()?.textContent).toContain("Installing…");
+  });
+
+  it("says which sign-in the machine needs and opens that machine's setup", async () => {
+    const onOpenProviderSetup = vi.fn();
+    const { calls } = await mount({
+      instanceEntries: [
+        ready,
+        geminiHere({
+          status: "warning",
+          auth: { status: "unauthenticated", type: "agent", label: "Log in with Google" },
+        }),
+      ],
+      onOpenProviderSetup,
+      quickSetup: setupFor(),
+    });
+    expect(row()?.getAttribute("data-turn-on-state")).toBe("sign-in");
+    expect(row()?.textContent).toContain(
+      'Sign in on ministorm: open Gemini CLI setup and choose "Log in with Google".',
+    );
+    await act(async () => button("Sign in")!.click());
+    expect(calls).toContain("close");
+    expect(onOpenProviderSetup).toHaveBeenCalledWith(geminiId);
+  });
+
+  it("shows the real error with a retry", async () => {
+    const setup = setupFor({
+      errors: new Map([
+        ["acp:gemini", "ACP executable 'npm' is not available on this environment's PATH."],
+      ]),
+    });
+    await mount({ quickSetup: setup });
+    expect(row()?.textContent).toContain("'npm' is not available");
+    await act(async () => button("Retry")!.click());
+    expect(setup.enableHere).toHaveBeenCalledWith(gemini);
+  });
+
+  it("drops the row once the provider is turned off again, leaving one offer", async () => {
+    await mount({
+      instanceEntries: [ready, { ...geminiHere({ enabled: false }), enabled: false }],
+      quickSetup: setupFor({ elsewhere: [gemini] }),
+    });
+    expect(row()).toBeNull();
+    expect(container.querySelectorAll("[data-model-picker-enable-here='acp:gemini']")).toHaveLength(
+      1,
+    );
+  });
+
+  it("offers Check again when the machine has not reported the provider yet", async () => {
+    const setup = setupFor({
+      turnedOn: [{ provider: gemini, instanceId: geminiId }],
+      errors: new Map(),
+    });
+    await mount({
+      instanceEntries: [ready, geminiHere({ status: "warning", auth: { status: "unknown" } })],
+      quickSetup: setup,
+    });
+    await act(async () => button("Check again")!.click());
+    expect(setup.enableHere).toHaveBeenCalledWith(gemini);
+  });
+
+  it("reports a provider that is ready once it lists models", async () => {
+    await mount({
+      instanceEntries: [
+        ready,
+        geminiHere({
+          status: "ready",
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "gemini-4",
+              name: "Gemini 4",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+          ],
+        }),
+      ],
+      quickSetup: setupFor(),
+    });
+    expect(row()?.getAttribute("data-turn-on-state")).toBe("ready");
+    expect(button("Sign in")).toBeUndefined();
+  });
+});
+
 describe("model picker when the chosen provider can't run here", () => {
   it("lists ready providers' models under the unprepared one instead of an empty picker", async () => {
     const codexId = ProviderInstanceId.make("codex");

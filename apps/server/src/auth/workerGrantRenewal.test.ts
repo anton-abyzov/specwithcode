@@ -115,6 +115,47 @@ it.layer(NodeServices.layer)("worker grant renewal", (it) => {
       }).pipe(Effect.provide(layerAuth)),
   );
 
+  it.effect("renews a proof-bound grant as itself: same key, same method", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const original = yield* sessions.issue({
+        ...originalInput,
+        method: "dpop-access-token",
+        proofKeyThumbprint: "coordinator-key",
+      });
+      yield* TestClock.adjust("2 seconds");
+      const renewed = yield* sessions.renewWorkerGrant(request(original.token));
+      expect(claimsOf(renewed.accessToken)).toEqual({
+        ...claimsOf(original.token),
+        exp: renewed.expiresAt.epochMilliseconds,
+      });
+      expect(claimsOf(renewed.accessToken)).toMatchObject({
+        method: "dpop-access-token",
+        jkt: "coordinator-key",
+      });
+      const verified = yield* sessions.verify(renewed.accessToken);
+      expect(verified.method).toBe("dpop-access-token");
+      expect(verified.proofKeyThumbprint).toBe("coordinator-key");
+      expect(
+        Option.getOrThrow(yield* repository.getById({ sessionId: original.sessionId })).method,
+      ).toBe("dpop-access-token");
+      // Dropping the key from a proof-bound grant is a forgery, not a renewal.
+      expect(
+        yield* Effect.flip(
+          sessions.renewWorkerGrant(request(yield* signClaims(original.token, { jkt: undefined }))),
+        ),
+      ).toMatchObject({ code: "grant_invalid" });
+      expect(
+        yield* Effect.flip(
+          sessions.renewWorkerGrant(
+            request(yield* signClaims(original.token, { method: "bearer-access-token" })),
+          ),
+        ),
+      ).toMatchObject({ code: "grant_invalid" });
+    }).pipe(Effect.provide(layerAuth)),
+  );
+
   it.effect("publishes the recovered row to already subscribed access observers", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -275,6 +316,8 @@ it.layer(NodeServices.layer)("worker grant renewal", (it) => {
           yield* signClaims(original.token, { method: "dpop-access-token" }),
           yield* signClaims(original.token, { jkt: "proof-binding" }),
           yield* signClaims(original.token, { jkt: "" }),
+          // A bearer row never renews into a proof-bound grant.
+          yield* signClaims(original.token, { method: "dpop-access-token", jkt: "proof-binding" }),
           yield* signClaims(original.token, { scopes: ["orchestration:read"] }),
           yield* signClaims(original.token, { scopes: [...originalInput.scopes, "access:write"] }),
           yield* signClaims(original.token, {

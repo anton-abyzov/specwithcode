@@ -231,6 +231,7 @@ export function linkEnvironmentToCloudWithPreference(
           environmentCredential: link.environmentCredential,
           cloudMintPublicKey: link.cloudMintPublicKey,
           endpointRuntime: link.endpointRuntime,
+          endpoint: link.endpoint,
         },
       })
       .pipe(

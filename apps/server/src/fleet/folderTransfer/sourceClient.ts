@@ -1,4 +1,5 @@
 // @effect-diagnostics globalTimers:off - plain async client shared by the destination worker and tests.
+import { parseFleetOrigin } from "../fleetOrigin.ts";
 import type { ManifestEntry, ManifestHeader } from "./manifest.ts";
 import { readManifestBytes } from "./manifest.ts";
 import { decodeFrames, FOLDER_TRANSFER_PREFIX, type ChunkFrame } from "./wire.ts";
@@ -23,7 +24,8 @@ export class SourceClientError extends Error {
 
 /**
  * The destination reaches the source only over the source's private HTTPS name
- * on the tailnet (`*.ts.net`). Loopback is accepted only when the destination's
+ * on the tailnet (`*.ts.net`) or its SpecWithCode Connect address, by the same
+ * rule as the fleet file. Loopback is accepted only when the destination's
  * operator set STUDIO_FOLDER_TRANSFER_ALLOW_LOOPBACK for isolated tests.
  */
 export function checkSourceUrl(value: string, allowLoopback: boolean): URL {
@@ -33,14 +35,14 @@ export function checkSourceUrl(value: string, allowLoopback: boolean): URL {
   } catch {
     throw new SourceClientError("unsupported_url");
   }
-  const tailnet =
-    url.protocol === "https:" && /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.ts\.net$/i.test(url.hostname);
+  if (url.username || url.password || url.search || url.hash)
+    throw new SourceClientError("unsupported_url");
+  const fleet = parseFleetOrigin(url.origin) !== null;
   const loopback =
     allowLoopback &&
     url.protocol === "http:" &&
     (url.hostname === "127.0.0.1" || url.hostname === "localhost");
-  if ((!tailnet && !loopback) || url.username || url.password || url.search || url.hash)
-    throw new SourceClientError("unsupported_url");
+  if (!fleet && !loopback) throw new SourceClientError("unsupported_url");
   return new URL(url.origin);
 }
 
@@ -48,6 +50,19 @@ const RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 
 export interface SourceClientOptions {
   readonly baseUrl: string;
+  /**
+   * A second address of the same source (its SpecWithCode Connect address),
+   * checked by the same rule. A network failure or 5xx moves to the other
+   * address; a 4xx is final on either.
+   */
+  readonly fallbackBaseUrl?: string | undefined;
+  /**
+   * The source machine's environment id. The fallback address is used only
+   * after its `/.well-known/studio/environment` answers with this id, so the
+   * transfer token never goes to another machine's address; without it the
+   * fallback is ignored.
+   */
+  readonly expectedEnvironmentId?: string | undefined;
   readonly operationId: string;
   readonly token: string;
   readonly allowLoopback?: boolean;
@@ -61,7 +76,11 @@ export interface SourceClientOptions {
 }
 
 export class SourceClient {
-  private readonly base: URL;
+  private readonly bases: ReadonlyArray<URL>;
+  /** The address in use: the last one that answered. */
+  private current = 0;
+  /** Addresses proven to answer as the source machine; the primary is the offer's own. */
+  private readonly verified = new Set<number>([0]);
   private readonly fetcher: typeof globalThis.fetch;
   private readonly sleep: (ms: number) => Promise<void>;
 
@@ -69,28 +88,42 @@ export class SourceClient {
 
   constructor(options: SourceClientOptions) {
     this.options = options;
-    this.base = checkSourceUrl(options.baseUrl, options.allowLoopback ?? false);
+    const primary = checkSourceUrl(options.baseUrl, options.allowLoopback ?? false);
+    const fallback =
+      options.fallbackBaseUrl === undefined
+        ? undefined
+        : checkSourceUrl(options.fallbackBaseUrl, options.allowLoopback ?? false);
+    this.bases =
+      fallback === undefined ||
+      fallback.origin === primary.origin ||
+      options.expectedEnvironmentId === undefined
+        ? [primary]
+        : [primary, fallback];
     this.fetcher = options.fetch ?? globalThis.fetch;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  /** Retries network failures and 5xx answers; 4xx answers are final. */
+  /**
+   * Retries network failures and 5xx answers; 4xx answers are final. With a
+   * second address, a failure first moves to the other address at once (each
+   * address once per request), then retries alternate with the usual backoff.
+   */
   private async request(
     method: "GET" | "POST",
     action: string,
     body?: unknown,
     timeoutMs = 120_000,
   ): Promise<Response> {
-    const url = new URL(
-      `${FOLDER_TRANSFER_PREFIX}/${this.options.operationId}/${action}`,
-      this.base,
-    );
+    const path = `${FOLDER_TRANSFER_PREFIX}/${this.options.operationId}/${action}`;
     const limit = Math.min(timeoutMs, this.options.timeoutMs ?? timeoutMs);
     const retries = this.options.retry === false ? 0 : RETRY_DELAYS_MS.length;
-    for (let attempt = 0; ; attempt += 1) {
+    const tried = new Set([this.current]);
+    for (let attempt = 0; ;) {
       this.options.signal?.throwIfAborted();
+      const url = new URL(path, this.bases[this.current]);
       let response: Response | null = null;
       try {
+        if (!(await this.proven(this.current))) throw new Error("unproven address");
         response = await this.fetcher(url, {
           method,
           redirect: "error",
@@ -104,7 +137,7 @@ export class SourceClient {
             : AbortSignal.timeout(limit),
         });
       } catch (cause) {
-        if (this.options.signal?.aborted) throw cause;
+        if (this.options.signal?.aborted || cause instanceof SourceClientError) throw cause;
         response = null;
       }
       if (response && response.status < 500) {
@@ -113,9 +146,45 @@ export class SourceClient {
           throw new SourceClientError("outdated_source", 404);
         return response;
       }
+      if (this.bases.length > 1) {
+        this.current = (this.current + 1) % this.bases.length;
+        if (!tried.has(this.current)) {
+          tried.add(this.current);
+          continue;
+        }
+      }
       if (attempt >= retries) throw new SourceClientError("unreachable", response?.status ?? null);
       await this.sleep(RETRY_DELAYS_MS[attempt]!);
+      attempt += 1;
     }
+  }
+
+  /**
+   * Whether address `index` answers as the source machine, checked once before
+   * the token is first sent there. A different machine is final.
+   */
+  private async proven(index: number): Promise<boolean> {
+    if (this.verified.has(index)) return true;
+    const response = await this.fetcher(
+      new URL("/.well-known/studio/environment", this.bases[index]),
+      {
+        method: "GET",
+        redirect: "error",
+        signal: this.options.signal
+          ? AbortSignal.any([this.options.signal, AbortSignal.timeout(10_000)])
+          : AbortSignal.timeout(10_000),
+      },
+    ).catch(() => null);
+    if (response === null || !response.ok) {
+      await response?.body?.cancel().catch(() => undefined);
+      return false;
+    }
+    const body = (await response.json().catch(() => null)) as { environmentId?: unknown } | null;
+    if (typeof body?.environmentId !== "string") return false;
+    if (body.environmentId !== this.options.expectedEnvironmentId)
+      throw new SourceClientError("wrong_machine");
+    this.verified.add(index);
+    return true;
   }
 
   private async json<T>(response: Response): Promise<T> {

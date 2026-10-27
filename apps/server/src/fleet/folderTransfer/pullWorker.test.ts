@@ -85,6 +85,92 @@ describe("source routes", () => {
     expect(checkSourceUrl("https://m4max.tail1234.ts.net:8443/x", false).origin).toBe(
       "https://m4max.tail1234.ts.net:8443",
     );
+    expect(checkSourceUrl("https://prod-0123456789abcdef.spec-weave.com/x", false).origin).toBe(
+      "https://prod-0123456789abcdef.spec-weave.com",
+    );
+    for (const lookalike of [
+      "https://relay.spec-weave.com",
+      "https://prod-0123456789abcdef.spec-weave.com.evil.com",
+      "https://a.prod-0123456789abcdef.spec-weave.com",
+      "https://prod-0123456789abcdef.spec-weave.com:8443",
+      "http://prod-0123456789abcdef.spec-weave.com",
+      "https://prod-0123456789abcdef.spec-weave.com/?token=1",
+    ])
+      expect(() => checkSourceUrl(lookalike, false), lookalike).toThrow(SourceClientError);
+  });
+
+  it("moves to the Connect address when the tailnet address does not answer", async () => {
+    const tailnet = "https://m4max.tail1234.ts.net";
+    const seen: string[] = [];
+    const identity = (environmentId: string) =>
+      (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const url = new URL(String(input));
+        seen.push(`${url.origin}${url.pathname.startsWith("/.well-known") ? " identity" : ""}`);
+        if (url.origin === tailnet) throw new TypeError("fetch failed");
+        if (url.pathname === "/.well-known/studio/environment")
+          return Response.json({ environmentId });
+        // @effect-diagnostics-next-line globalFetch:off -- the stub forwards to the real local test server.
+        return fetch(input, init);
+      }) as typeof fetch;
+    const fallback = new URL(served.url).origin;
+    const viaFallback = client({
+      baseUrl: tailnet,
+      fallbackBaseUrl: served.url,
+      expectedEnvironmentId: "env-source",
+      fetch: identity("env-source"),
+    });
+    expect((await viaFallback.hello("env-source")).environmentId).toBe("env-source");
+    // The address that answered stays in use for the next call; its identity is checked once.
+    await viaFallback.hello("env-source");
+    expect(seen).toEqual([tailnet, `${fallback} identity`, fallback, fallback]);
+
+    // The token never goes to a fallback that answers as another machine.
+    seen.length = 0;
+    await expect(
+      client({
+        baseUrl: tailnet,
+        fallbackBaseUrl: served.url,
+        expectedEnvironmentId: "env-source",
+        fetch: identity("env-other"),
+      }).hello("env-source"),
+    ).rejects.toMatchObject({ code: "wrong_machine" });
+    expect(seen).toEqual([tailnet, `${fallback} identity`]);
+
+    // Without the source's id there is nothing to check it against: no fallback.
+    seen.length = 0;
+    await expect(
+      client({
+        baseUrl: tailnet,
+        fallbackBaseUrl: served.url,
+        fetch: identity("env-source"),
+        sleep: async () => undefined,
+      }).hello("env-source"),
+    ).rejects.toMatchObject({ code: "unreachable" });
+    expect(seen.every((entry) => entry === tailnet)).toBe(true);
+  });
+
+  it("treats a refusal on the first address as final and checks the fallback address", async () => {
+    const tailnet = "https://m4max.tail1234.ts.net";
+    const seen: string[] = [];
+    const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+      seen.push(new URL(String(input)).origin);
+      return new Response("no", { status: 401 });
+    }) as typeof fetch;
+    await expect(
+      client({
+        baseUrl: tailnet,
+        fallbackBaseUrl: served.url,
+        expectedEnvironmentId: "env-source",
+        fetch: fetcher,
+      }).hello("env-source"),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+    expect(seen).toEqual([tailnet]);
+    expect(() =>
+      client({
+        baseUrl: tailnet,
+        fallbackBaseUrl: "https://prod-0123456789abcdef.spec-weave.com.evil.com",
+      }),
+    ).toThrow(expect.objectContaining({ code: "unsupported_url" }));
   });
 
   it("serves only the selection: no secrets, no rebuildable files", () => {

@@ -215,9 +215,9 @@ attached yet. Wait two minutes and try again before reading the deploy log.
    the phone's list with no Tailscale or VPN, on cellular too.
 5. Restart the Mac app, then check the phone again. The Mac should come back within two minutes.
 
-Connect covers reaching a Mac from your other devices. It does not yet carry worker delegation: a main
-machine starting work on another Mac, managing it or copying folders to it still uses that Mac's
-Tailscale (ts.net) address, so those features need Tailscale on both machines.
+Connect covers reaching a Mac from your other devices and worker delegation: a main machine starting
+work on another Mac, managing it or copying folders to it tries that Mac's Tailscale (ts.net) address
+first and falls back to its Connect address. Tailscale on both machines is optional.
 
 ## 9. A week later
 

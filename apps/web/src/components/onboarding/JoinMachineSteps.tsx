@@ -45,9 +45,8 @@ export function MachineRoleStep({
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">Join my existing machines</span>
             <span className="block text-xs font-normal text-muted-foreground">
-              This {machineNoun} only does work for a main machine elsewhere. For now, that needs
-              Tailscale on both. Your app and phone can reach it through SpecWithCode Connect
-              without Tailscale.
+              This {machineNoun} only does work for a main machine elsewhere. It works over
+              SpecWithCode Connect; Tailscale is optional.
             </span>
           </span>
           <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -92,9 +91,9 @@ export function JoinMachineStep({
   readonly onJoined: () => void;
   readonly onDone: () => void;
 }) {
-  const controller = useFleetInvite(environmentId);
   const allowed = canManage && environmentId !== null;
   const readiness = useTailscaleReadiness(environmentId, { enabled: allowed });
+  const controller = useFleetInvite(environmentId, readiness.status?.connect !== undefined);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "invitation line" });
   return (
     <>
@@ -102,9 +101,9 @@ export function JoinMachineStep({
         Add this {machineNoun} to your main machine
       </h1>
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        For now, letting a main machine start work on this one also needs Tailscale on both. The app
-        checks that Tailscale is installed and signed in here, then publishes this {machineNoun} on
-        its private Tailscale name and makes one line for your main machine.
+        The app makes one line for your main machine. It carries this {machineNoun}&apos;s
+        SpecWithCode Connect address when Connect is linked, and its private Tailscale name when
+        Tailscale is signed in here. Either is enough.
       </p>
       <div className="mt-5 space-y-3">
         {controller.invitation ? null : (

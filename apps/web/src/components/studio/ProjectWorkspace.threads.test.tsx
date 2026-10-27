@@ -372,7 +372,11 @@ describe("the coordinator stays in the main column", () => {
       expect(container.querySelector("#project-prompt")).not.toBeNull();
       expect(nativeThread("worker")?.closest('[data-project-pane="threads"]')).not.toBeNull();
       expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(true);
-      await click("Close review");
+      await act(async () =>
+        document
+          .querySelector<HTMLButtonElement>('[role="dialog"] [data-slot="dialog-close"]')!
+          .click(),
+      );
       expect(nativeThread("coord")).toBeNull();
       expect(nativeThread("worker")).not.toBeNull();
       expect(document.activeElement).toBe(chip);

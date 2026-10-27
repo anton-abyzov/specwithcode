@@ -128,8 +128,8 @@ These follow [security.md](security.md) where it covers the desktop:
 
 - The embedded server stays on loopback. Reach other devices through
   SpecWithCode Connect (**Settings → Connections → SpecWithCode Connect**), not
-  the `0.0.0.0` exposure mode. Tailscale Serve is optional; it is still
-  required today for worker delegation and folder copy.
+  the `0.0.0.0` exposure mode. Tailscale Serve is optional, as a direct
+  route tried first for worker delegation and folder copy.
 - The connection catalog is encrypted with the OS secure store (Keychain on
   macOS) and kept in the SpecWithCode state folder, never in web storage.
 - The CLIProxyAPI management key and provider tokens stay server-side; the

@@ -595,11 +595,6 @@ export function ProjectMachinesSettings({
               </ul>
             ) : null}
           </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setReview(null)}>
-              Done
-            </Button>
-          </DialogFooter>
         </DialogPopup>
       </Dialog>
     </SettingsSection>

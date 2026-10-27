@@ -809,6 +809,8 @@ describe("Tailscale on the machine to invite", () => {
         magicDns: false,
         platform: "linux",
         homebrew: false,
+        // No secret store here, so this machine is not linked to Connect.
+        connect: { linked: false, origin: null },
       });
       tailscale.status = JSON.stringify({ BackendState: "NeedsLogin" });
       expect(await (await owner.tailscaleStatus()).json()).toMatchObject({

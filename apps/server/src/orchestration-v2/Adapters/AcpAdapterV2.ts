@@ -129,7 +129,7 @@ import {
   backgroundWorkNotification,
 } from "../Notification.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
-import { limitReplyTurnFailure } from "./acpLimitReply.ts";
+import { limitReplyTurnFailure, usageLimitErrorFailure } from "./acpLimitReply.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   decideToolItemPersist,
@@ -7516,14 +7516,27 @@ export function makeAcpAdapterV2(
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
+                    const failure =
+                      flavor.promptFailure?.(Cause.squash(cause)) ??
+                      makeProviderFailure({
+                        cause: Cause.squash(cause),
+                        class: "provider_error",
+                      });
+                    // An agent that rejects the prompt with its quota notice
+                    // stopped on a usage limit, so the limit fallback moves on.
+                    const limitError =
+                      failure.class === "provider_error"
+                        ? usageLimitErrorFailure(
+                            failure.message,
+                            flavor.specweaveTool === "copilot"
+                              ? DateTime.toEpochMillis(yield* DateTime.now)
+                              : null,
+                          )
+                        : null;
                     yield* finalizeTurn(
                       context,
                       context.interrupted ? "interrupted" : "failed",
-                      flavor.promptFailure?.(Cause.squash(cause)) ??
-                        makeProviderFailure({
-                          cause: Cause.squash(cause),
-                          class: "provider_error",
-                        }),
+                      limitError ?? failure,
                     ).pipe(
                       Effect.andThen(
                         Effect.logWarning("orchestration-v2.acp-prompt-failed", {

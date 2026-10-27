@@ -31,6 +31,8 @@ export function PhoneSetupDialog(props: {
   readonly onCopyCode: () => void;
 }) {
   const { address, code } = props;
+  const showAccessSetup = props.hasAccessControls && address === null;
+  const showPairing = address !== null && props.canPair;
   let instructions: ReactNode;
   if (address === null) {
     instructions = (
@@ -136,27 +138,26 @@ export function PhoneSetupDialog(props: {
             </p>
           </div>
         </DialogPanel>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => props.onOpenChange(false)}>
-            Close
-          </Button>
-          {props.hasAccessControls && address === null ? (
-            <Button onClick={props.onShowAccessSettings}>Set up Tailscale HTTPS</Button>
-          ) : null}
-          {address !== null && props.canPair ? (
-            code?.status === "ready" ? (
-              <Button onClick={props.onCopyCode}>Copy pairing link</Button>
-            ) : (
-              <Button disabled={props.isCreating} onClick={props.onGenerate}>
-                {props.isCreating
-                  ? "Creating…"
-                  : code === null
-                    ? "Generate pairing code"
-                    : "Generate new code"}
-              </Button>
-            )
-          ) : null}
-        </DialogFooter>
+        {showAccessSetup || showPairing ? (
+          <DialogFooter>
+            {showAccessSetup ? (
+              <Button onClick={props.onShowAccessSettings}>Set up Tailscale HTTPS</Button>
+            ) : null}
+            {showPairing ? (
+              code?.status === "ready" ? (
+                <Button onClick={props.onCopyCode}>Copy pairing link</Button>
+              ) : (
+                <Button disabled={props.isCreating} onClick={props.onGenerate}>
+                  {props.isCreating
+                    ? "Creating…"
+                    : code === null
+                      ? "Generate pairing code"
+                      : "Generate new code"}
+                </Button>
+              )
+            ) : null}
+          </DialogFooter>
+        ) : null}
       </DialogPopup>
     </Dialog>
   );

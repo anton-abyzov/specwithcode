@@ -6,6 +6,7 @@ import {
   LIVE_ACTIVITY_QUIET_MS,
   formatActivityDuration,
   isQuiet,
+  liveActivityRunId,
   runLiveSignal,
   liveStepStartedAtMs,
   toolCallCountLabel,
@@ -93,4 +94,31 @@ it("formats short durations and counts", () => {
   expect(formatActivityDuration(72 * 60_000)).toBe("1h 12m");
   expect(toolCallCountLabel(1)).toBe("1 call");
   expect(toolCallCountLabel(14)).toBe("14 calls");
+});
+
+describe("liveActivityRunId", () => {
+  it("reads the running run, or the latest one while it has not ended", () => {
+    const latest = { runId: "run-2", status: "starting" };
+    expect(liveActivityRunId({ isWorking: true, runningRunId: run, latestRun: latest })).toBe(run);
+    expect(liveActivityRunId({ isWorking: true, runningRunId: null, latestRun: latest })).toBe(
+      "run-2",
+    );
+    expect(liveActivityRunId({ isWorking: false, runningRunId: run, latestRun: latest })).toBe(
+      null,
+    );
+  });
+
+  it("reads nothing from a finished turn while a new send has no run yet", () => {
+    // A resend held while the host finishes an update: the last run ended 19h ago.
+    for (const status of ["completed", "failed", "interrupted", "cancelled", "rolled_back"])
+      expect(
+        liveActivityRunId({
+          isWorking: true,
+          runningRunId: null,
+          latestRun: { runId: "run-3", status },
+        }),
+        status,
+      ).toBe(null);
+    expect(liveActivityRunId({ isWorking: true, runningRunId: null, latestRun: null })).toBe(null);
+  });
 });

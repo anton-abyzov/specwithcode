@@ -21,8 +21,6 @@ import {
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
-  DpopFailureReason,
-  type DpopFailureReason as DpopFailureReasonType,
 } from "@specweave-studio/contracts";
 import { encodeOAuthScope } from "@specweave-studio/shared/oauthScope";
 import * as Context from "effect/Context";
@@ -32,7 +30,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
@@ -49,6 +46,12 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { arrivedOverConnect } from "./CredentialFailureLimiter.ts";
+import {
+  isFleetRedeemSubject,
+  parseFleetRedeemSubject,
+  withinFleetInviteScopes,
+} from "../fleet/fleetRedemption.ts";
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
@@ -68,7 +71,8 @@ export interface IssuedPairingLink {
 export interface IssuedBearerSession {
   readonly sessionId: AuthSessionId;
   readonly token: string;
-  readonly method: "bearer-access-token";
+  /** `dpop-access-token` when issued bound to a proof key: it then works only with a DPoP proof. */
+  readonly method: "bearer-access-token" | "dpop-access-token";
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
   readonly client: AuthClientMetadata;
@@ -85,6 +89,8 @@ export interface IssuedBearerSession {
  * holds `orchestration:operate` and carries its runtime-mode ceiling.
  */
 export const MCP_CLIENT_SUBJECT = "mcp-client";
+/** The subject of the management token a fleet invitation hands another machine. */
+export const FLEET_INVITATION_SUBJECT = "fleet-invitation";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export const mcpClientScopes = (
@@ -109,376 +115,31 @@ export interface AuthenticatedSession extends PrincipalApproval {
   readonly expiresAt?: DateTime.DateTime;
 }
 
-const serverAuthInternalErrorContext = {
-  cause: Schema.Defect(),
-};
-
-export class ServerAuthBootstrapCredentialValidationError extends Schema.TaggedError<ServerAuthBootstrapCredentialValidationError>()(
-  "ServerAuthBootstrapCredentialValidationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to validate bootstrap credential.";
-  }
-}
-
-export class ServerAuthSessionCredentialValidationError extends Schema.TaggedError<ServerAuthSessionCredentialValidationError>()(
-  "ServerAuthSessionCredentialValidationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to validate session credential.";
-  }
-}
-
-export class ServerAuthAuthenticatedSessionIssueError extends Schema.TaggedError<ServerAuthAuthenticatedSessionIssueError>()(
-  "ServerAuthAuthenticatedSessionIssueError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to issue authenticated session.";
-  }
-}
-
-export class ServerAuthAuthenticatedAccessTokenIssueError extends Schema.TaggedError<ServerAuthAuthenticatedAccessTokenIssueError>()(
-  "ServerAuthAuthenticatedAccessTokenIssueError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to issue authenticated access token.";
-  }
-}
-
-export class ServerAuthPairingLinkCreationError extends Schema.TaggedError<ServerAuthPairingLinkCreationError>()(
-  "ServerAuthPairingLinkCreationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to create pairing link.";
-  }
-}
-
-export class ServerAuthPairingLinksListError extends Schema.TaggedError<ServerAuthPairingLinksListError>()(
-  "ServerAuthPairingLinksListError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to list pairing links.";
-  }
-}
-
-export class ServerAuthPairingLinkRevocationError extends Schema.TaggedError<ServerAuthPairingLinkRevocationError>()(
-  "ServerAuthPairingLinkRevocationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to revoke pairing link.";
-  }
-}
-
-export class ServerAuthSessionTokenIssueError extends Schema.TaggedError<ServerAuthSessionTokenIssueError>()(
-  "ServerAuthSessionTokenIssueError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to issue session token.";
-  }
-}
-
-export class ServerAuthSessionsListError extends Schema.TaggedError<ServerAuthSessionsListError>()(
-  "ServerAuthSessionsListError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to list sessions.";
-  }
-}
-
-export class ServerAuthSessionRevocationError extends Schema.TaggedError<ServerAuthSessionRevocationError>()(
-  "ServerAuthSessionRevocationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to revoke session.";
-  }
-}
-
-export class ServerAuthOtherSessionsRevocationError extends Schema.TaggedError<ServerAuthOtherSessionsRevocationError>()(
-  "ServerAuthOtherSessionsRevocationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to revoke other sessions.";
-  }
-}
-
-export class ServerAuthWebSocketTokenIssueError extends Schema.TaggedError<ServerAuthWebSocketTokenIssueError>()(
-  "ServerAuthWebSocketTokenIssueError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to issue websocket token.";
-  }
-}
-
-export class ServerAuthDpopReplayStateRecordError extends Schema.TaggedError<ServerAuthDpopReplayStateRecordError>()(
-  "ServerAuthDpopReplayStateRecordError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to record DPoP proof replay state.";
-  }
-}
-
-export class ServerAuthDpopReplayKeyCalculationError extends Schema.TaggedError<ServerAuthDpopReplayKeyCalculationError>()(
-  "ServerAuthDpopReplayKeyCalculationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to calculate DPoP replay key.";
-  }
-}
-
-export class ServerAuthLinkedCloudAccountVerificationError extends Schema.TaggedError<ServerAuthLinkedCloudAccountVerificationError>()(
-  "ServerAuthLinkedCloudAccountVerificationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Could not verify the linked cloud account.";
-  }
-}
-
-export class ServerAuthLinkedCloudAccountReadError extends Schema.TaggedError<ServerAuthLinkedCloudAccountReadError>()(
-  "ServerAuthLinkedCloudAccountReadError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Could not read the linked cloud account.";
-  }
-}
-
-export class ServerAuthLinkedCloudAccountMissingError extends Schema.TaggedError<ServerAuthLinkedCloudAccountMissingError>()(
-  "ServerAuthLinkedCloudAccountMissingError",
-  {},
-) {
-  override get message(): string {
-    return "Cloud linked user is not installed for this environment.";
-  }
-}
-
-export class ServerAuthCloudLinkJwtSigningError extends Schema.TaggedError<ServerAuthCloudLinkJwtSigningError>()(
-  "ServerAuthCloudLinkJwtSigningError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to sign cloud link JWT.";
-  }
-}
-
-export class ServerAuthCloudMintPublicKeyMissingError extends Schema.TaggedError<ServerAuthCloudMintPublicKeyMissingError>()(
-  "ServerAuthCloudMintPublicKeyMissingError",
-  {},
-) {
-  override get message(): string {
-    return "Cloud mint public key is not installed for this environment.";
-  }
-}
-
-export class ServerAuthCloudRelayIssuerMissingError extends Schema.TaggedError<ServerAuthCloudRelayIssuerMissingError>()(
-  "ServerAuthCloudRelayIssuerMissingError",
-  {},
-) {
-  override get message(): string {
-    return "Cloud relay issuer is not installed for this environment.";
-  }
-}
-
-export class ServerAuthCloudHealthJwtSigningError extends Schema.TaggedError<ServerAuthCloudHealthJwtSigningError>()(
-  "ServerAuthCloudHealthJwtSigningError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to sign cloud health JWT.";
-  }
-}
-
-export class ServerAuthCloudMintJwtSigningError extends Schema.TaggedError<ServerAuthCloudMintJwtSigningError>()(
-  "ServerAuthCloudMintJwtSigningError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to sign cloud mint JWT.";
-  }
-}
-
-export const ServerAuthInternalError = Schema.Union([
-  ServerAuthBootstrapCredentialValidationError,
-  ServerAuthSessionCredentialValidationError,
-  ServerAuthAuthenticatedSessionIssueError,
+export * from "./EnvironmentAuthErrors.ts";
+import {
   ServerAuthAuthenticatedAccessTokenIssueError,
+  ServerAuthAuthenticatedSessionIssueError,
+  ServerAuthBootstrapCredentialValidationError,
+  ServerAuthForbiddenOperationError,
+  ServerAuthInvalidCredentialError,
+  ServerAuthMcpApprovalCodeError,
+  ServerAuthMissingCredentialError,
+  ServerAuthOtherSessionsRevocationError,
   ServerAuthPairingLinkCreationError,
-  ServerAuthPairingLinksListError,
   ServerAuthPairingLinkRevocationError,
+  ServerAuthPairingLinksListError,
+  ServerAuthScopeNotGrantedError,
+  ServerAuthSessionCredentialValidationError,
+  ServerAuthSessionRevocationError,
   ServerAuthSessionTokenIssueError,
   ServerAuthSessionsListError,
-  ServerAuthSessionRevocationError,
-  ServerAuthOtherSessionsRevocationError,
   ServerAuthWebSocketTokenIssueError,
-  ServerAuthDpopReplayStateRecordError,
-  ServerAuthDpopReplayKeyCalculationError,
-  ServerAuthLinkedCloudAccountVerificationError,
-  ServerAuthLinkedCloudAccountReadError,
-  ServerAuthLinkedCloudAccountMissingError,
-  ServerAuthCloudLinkJwtSigningError,
-  ServerAuthCloudMintPublicKeyMissingError,
-  ServerAuthCloudRelayIssuerMissingError,
-  ServerAuthCloudHealthJwtSigningError,
-  ServerAuthCloudMintJwtSigningError,
-]);
-export type ServerAuthInternalError = typeof ServerAuthInternalError.Type;
-export const isServerAuthInternalError = Schema.is(ServerAuthInternalError);
-
-export class ServerAuthMissingCredentialError extends Schema.TaggedError<ServerAuthMissingCredentialError>()(
-  "ServerAuthMissingCredentialError",
-  {},
-) {
-  override get message(): string {
-    return "Server authentication credential is missing.";
-  }
-}
-
-export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerAuthInvalidCredentialError>()(
-  "ServerAuthInvalidCredentialError",
-  {
-    diagnostic: Schema.optional(Schema.String),
-    dpopFailureReason: Schema.optionalKey(DpopFailureReason),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return this.diagnostic === "device_reapproval_required"
-      ? "Approve this device again in SpecWithCode."
-      : "Server authentication credential is invalid.";
-  }
-}
-
-export const ServerAuthCredentialError = Schema.Union([
-  ServerAuthMissingCredentialError,
-  ServerAuthInvalidCredentialError,
-]);
-export type ServerAuthCredentialError = typeof ServerAuthCredentialError.Type;
-export const isServerAuthCredentialError = Schema.is(ServerAuthCredentialError);
-export const serverAuthCredentialReason = (
-  error: ServerAuthCredentialError,
-): "missing_credential" | "invalid_credential" | "device_reapproval_required" =>
-  error._tag === "ServerAuthMissingCredentialError"
-    ? "missing_credential"
-    : error.diagnostic === "device_reapproval_required"
-      ? "device_reapproval_required"
-      : "invalid_credential";
-
-export const serverAuthDpopFailureReason = (
-  error: ServerAuthCredentialError,
-): DpopFailureReasonType | undefined =>
-  error._tag === "ServerAuthInvalidCredentialError" ? error.dpopFailureReason : undefined;
-
-export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthInvalidScopeError>()(
-  "ServerAuthInvalidScopeError",
-  {},
-) {
-  override get message(): string {
-    return "The requested authentication scope is invalid.";
-  }
-}
-
-export class ServerAuthScopeNotGrantedError extends Schema.TaggedError<ServerAuthScopeNotGrantedError>()(
-  "ServerAuthScopeNotGrantedError",
-  {},
-) {
-  override get message(): string {
-    return "The requested authentication scope was not granted.";
-  }
-}
-
-export const ServerAuthInvalidRequestError = Schema.Union([
-  ServerAuthInvalidScopeError,
-  ServerAuthScopeNotGrantedError,
-]);
-export type ServerAuthInvalidRequestError = typeof ServerAuthInvalidRequestError.Type;
-export const isServerAuthInvalidRequestError = Schema.is(ServerAuthInvalidRequestError);
-export const serverAuthInvalidRequestReason = (
-  error: ServerAuthInvalidRequestError,
-): "invalid_scope" | "scope_not_granted" =>
-  error._tag === "ServerAuthInvalidScopeError" ? "invalid_scope" : "scope_not_granted";
-
-export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAuthMcpApprovalCodeError>()(
-  "ServerAuthMcpApprovalCodeError",
-  {
-    reason: Schema.Literals([
-      "unknown_or_used",
-      "not_a_pairing_code",
-      "insufficient_scope",
-      "reapproval_required",
-    ]),
-  },
-) {
-  override get message(): string {
-    return this.reason === "reapproval_required"
-      ? "Approve this device again with a new pairing code from this machine."
-      : this.reason === "insufficient_scope"
-        ? "That pairing code cannot grant this access, and it is now used up. Create one with the standard scopes, or choose Read only with a new code."
-        : this.reason === "not_a_pairing_code"
-          ? "That is not a one-time pairing code."
-          : "That pairing code is unknown, expired, or already used.";
-  }
-}
-
-export class ServerAuthForbiddenOperationError extends Schema.TaggedError<ServerAuthForbiddenOperationError>()(
-  "ServerAuthForbiddenOperationError",
-  {},
-) {
-  override get message(): string {
-    return "The current authentication session cannot revoke itself.";
-  }
-}
+  isServerAuthCredentialError,
+  serverAuthCredentialReason,
+  type ServerAuthCredentialError,
+  type ServerAuthInternalError,
+  type ServerAuthInvalidRequestError,
+} from "./EnvironmentAuthErrors.ts";
 
 export class EnvironmentAuth extends Context.Service<
   EnvironmentAuth,
@@ -498,6 +159,10 @@ export class EnvironmentAuth extends Context.Service<
       credential: string,
       requestMetadata: AuthClientMetadata,
       previousSessionToken?: string,
+      options?: {
+        /** The request came through SpecWithCode Connect (see `refuseUnboundCoordinatorGrant`). */
+        readonly overConnect?: boolean;
+      },
     ) => Effect.Effect<
       {
         readonly response: AuthBrowserSessionResult;
@@ -513,6 +178,8 @@ export class EnvironmentAuth extends Context.Service<
       requestMetadata: AuthClientMetadata,
       input?: {
         readonly proofKeyThumbprint?: string;
+        /** The request came through SpecWithCode Connect (see `refuseUnboundCoordinatorGrant`). */
+        readonly overConnect?: boolean;
       },
     ) => Effect.Effect<
       AuthAccessTokenResult,
@@ -543,13 +210,34 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly issueSession: (input?: {
       readonly principal?: AuthPrincipal;
+      readonly principalGeneration?: number | undefined;
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly label?: string;
+      /** Binds the token to this DPoP key: it is then accepted only with a proof from it. */
+      readonly proofKeyThumbprint?: string;
+      /** Where the session was requested from, shown in this machine's client list. */
+      readonly ipAddress?: string;
       /** No row: lives in this process only (SessionStore `issue` `inMemory`). */
       readonly inMemory?: boolean;
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
+    /**
+     * Spends a v2 fleet invitation's one-time credential. Only a grant this
+     * server minted for a fleet invitation qualifies: subject
+     * `fleet-invitation-redeem:<days>`, a coordinator principal and no scope
+     * beyond the invitation's. Anything else is spent and refused.
+     */
+    readonly consumeFleetRedemption: (credential: string) => Effect.Effect<
+      {
+        readonly principal: Extract<AuthPrincipal, { readonly kind: "coordinator" }>;
+        readonly principalGeneration?: number | undefined;
+        readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+        readonly label?: string;
+        readonly days: number;
+      },
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
+    >;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
       ServerAuthInternalError
@@ -602,7 +290,11 @@ export class EnvironmentAuth extends Context.Service<
     readonly issueStartupPairingUrl: (
       baseUrl: string,
     ) => Effect.Effect<string, ServerAuthInternalError>;
-    /** Only bearer `mcp-client` sessions; never cookies or proof-bound tokens. */
+    /**
+     * Only `mcp-client` sessions: a bearer one with `Bearer`, or a proof-bound
+     * one with `DPoP` and a valid proof. Never cookies. A bearer grant held by
+     * another machine is refused over SpecWithCode Connect.
+     */
     readonly authenticateMcpClient: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -612,8 +304,14 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly client: AuthClientMetadata;
+      /** Binds the grant to this DPoP key (`token_type: "DPoP"`). */
+      readonly proofKeyThumbprint?: string;
     }) => Effect.Effect<
-      { readonly token: string; readonly expiresAt: DateTime.DateTime },
+      {
+        readonly token: string;
+        readonly expiresAt: DateTime.DateTime;
+        readonly tokenType: "Bearer" | "DPoP";
+      },
       ServerAuthInternalError
     >;
     /**
@@ -629,6 +327,14 @@ export class EnvironmentAuth extends Context.Service<
       { readonly principal?: AuthPrincipal; readonly principalGeneration?: number | undefined },
       ServerAuthMcpApprovalCodeError | ServerAuthInternalError
     >;
+    /**
+     * Checks the request's `dpop` proof (method, URL, time window, single use)
+     * and answers its key thumbprint. For endpoints that bind what they issue
+     * to the caller's key.
+     */
+    readonly verifyRequestProof: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<string, ServerAuthInvalidCredentialError | ServerAuthInternalError>;
     /** A browser cookie session only; a bearer header never counts as one. */
     readonly authenticateBrowserSession: (
       request: HttpServerRequest.HttpServerRequest,
@@ -839,6 +545,26 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        // Anything acting for another machine of the fleet (a management
+        // token, or a session or cookie paired from one) is unbound here: a
+        // long-lived bearer is never accepted from the internet-facing
+        // Connect address, only from the tailnet.
+        if (session.principal?.kind === "coordinator" && arrivedOverConnect(request)) {
+          return Effect.logWarning(
+            "Rejected an unbound fleet machine credential over SpecWithCode Connect.",
+          ).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ServerAuthInvalidCredentialError({
+                  diagnostic:
+                    session.subject === FLEET_INVITATION_SUBJECT
+                      ? "This management token works only over Tailscale. Invite this machine again to use SpecWithCode Connect."
+                      : "This credential works only over Tailscale.",
+                }),
+              ),
+            ),
+          );
+        }
         return Effect.succeed(session);
       }),
       Effect.map((session) => ({
@@ -916,9 +642,57 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 
+  /**
+   * A fleet invitation's redeem credential buys only a proof-bound management
+   * token through `consumeFleetRedemption`. Every other exchange spends it and
+   * refuses, so a leaked line never yields a bearer or a browser session.
+   */
+  const refuseFleetRedeemGrant = (grant: { readonly subject: string }) =>
+    isFleetRedeemSubject(grant.subject)
+      ? Effect.logWarning(
+          "Refused a fleet invitation credential outside its redeem endpoint.",
+        ).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ServerAuthInvalidCredentialError({
+                diagnostic: "This credential can only be redeemed by the machine it was made for.",
+              }),
+            ),
+          ),
+        )
+      : Effect.void;
+
+  /**
+   * A pairing code minted for another machine of the fleet (coordinator
+   * principal) crosses Cloudflare when that machine uses the Connect address.
+   * Over Connect it may only become a proof-bound token, never a bearer or a
+   * cookie: whoever saw the code at the TLS terminator holds no key. The code
+   * is already spent when this refuses.
+   */
+  const refuseUnboundCoordinatorGrant = (
+    grant: { readonly principal?: AuthPrincipal | undefined },
+    options: { readonly overConnect?: boolean; readonly proofKeyThumbprint?: string } | undefined,
+  ) =>
+    grant.principal?.kind === "coordinator" &&
+    options?.overConnect === true &&
+    options.proofKeyThumbprint === undefined
+      ? Effect.logWarning(
+          "Refused an unbound exchange of a fleet machine's pairing code over SpecWithCode Connect.",
+        ).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ServerAuthInvalidCredentialError({
+                diagnostic:
+                  "Over SpecWithCode Connect this code works only with a DPoP proof. Use Tailscale, or pair again.",
+              }),
+            ),
+          ),
+        )
+      : Effect.void;
+
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = Effect.fn(
     "EnvironmentAuth.createBrowserSession",
-  )(function* (credential, requestMetadata, previousSessionToken) {
+  )(function* (credential, requestMetadata, previousSessionToken, options) {
     if (devAuth?.matches(credential)) {
       return yield* sessions.verify(credential).pipe(
         mapSessionVerificationErrors,
@@ -953,6 +727,8 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    yield* refuseFleetRedeemGrant(grant);
+    yield* refuseUnboundCoordinatorGrant(grant, options);
     if (
       grant.method === "one-time-token" &&
       !grant.principal &&
@@ -1036,6 +812,8 @@ export const make = Effect.gen(function* () {
       }).pipe(
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
+            yield* refuseFleetRedeemGrant(grant);
+            yield* refuseUnboundCoordinatorGrant(grant, input);
             if (
               grant.method === "one-time-token" &&
               !grant.principal &&
@@ -1184,11 +962,15 @@ export const make = Effect.gen(function* () {
     sessions
       .issue({
         subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
-        ...(input?.principal ? { principal: input.principal } : {}),
-        method: "bearer-access-token",
+        ...(input?.principal
+          ? { principal: input.principal, principalGeneration: input.principalGeneration }
+          : {}),
+        method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+        ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         scopes: input?.scopes ?? AuthAdministrativeScopes,
         client: {
           ...(input?.label ? { label: input.label } : {}),
+          ...(input?.ipAddress ? { ipAddress: input.ipAddress } : {}),
           deviceType: "bot",
         },
         ...(input?.ttl ? { ttl: input.ttl } : {}),
@@ -1200,7 +982,7 @@ export const make = Effect.gen(function* () {
             ({
               sessionId: issued.sessionId,
               token: issued.token,
-              method: "bearer-access-token",
+              method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
               scopes: issued.scopes,
               subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
               client: issued.client,
@@ -1210,6 +992,37 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
         Effect.withSpan("EnvironmentAuth.issueSession"),
       );
+
+  const consumeFleetRedemption: EnvironmentAuth["Service"]["consumeFleetRedemption"] = (
+    credential,
+  ) =>
+    bootstrapCredentials.consume(credential).pipe(
+      Effect.mapError(toBootstrapExchangeError),
+      Effect.flatMap((grant) => {
+        const days = parseFleetRedeemSubject(grant.subject);
+        const principal = grant.principal;
+        // Checked after the grant is spent: a wrong credential is burned either way.
+        return grant.method === "one-time-token" &&
+          days !== null &&
+          principal?.kind === "coordinator" &&
+          withinFleetInviteScopes(grant.scopes)
+          ? Effect.succeed({
+              principal,
+              ...(grant.principalGeneration !== undefined
+                ? { principalGeneration: grant.principalGeneration }
+                : {}),
+              scopes: grant.scopes,
+              ...(grant.label ? { label: grant.label } : {}),
+              days,
+            })
+          : Effect.fail(
+              new ServerAuthInvalidCredentialError({
+                diagnostic: "Not a fleet invitation credential.",
+              }),
+            );
+      }),
+      Effect.withSpan("EnvironmentAuth.consumeFleetRedemption"),
+    );
 
   const listSessions: EnvironmentAuth["Service"]["listSessions"] = () =>
     sessions.listActive().pipe(
@@ -1372,25 +1185,48 @@ export const make = Effect.gen(function* () {
     });
 
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
-    const token = parseBearerToken(request);
+    const bearer = parseBearerToken(request);
+    const dpop = bearer === null ? parseDpopToken(request) : null;
+    const token = bearer ?? dpop;
     if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
+    const refuse = (diagnostic: string) =>
+      Effect.fail(new ServerAuthInvalidCredentialError({ diagnostic }));
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
-      Effect.flatMap((session) =>
-        session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
-          ? Effect.succeed({
-              sessionId: session.sessionId,
-              ...principalApproval(session),
-              label: session.client.label ?? "MCP client",
-              access: session.scopes.includes(AuthOrchestrationOperateScope)
-                ? (session.runtimeModeCeiling ?? "approval-required")
-                : "read-only",
-            } satisfies McpClientSession)
-          : Effect.fail(
-              new ServerAuthInvalidCredentialError({
-                diagnostic: "Only MCP client sessions are accepted here.",
-              }),
-            ),
+      Effect.flatMap((session) => {
+        if (session.subject !== MCP_CLIENT_SUBJECT)
+          return refuse("Only MCP client sessions are accepted here.");
+        if (bearer !== null) {
+          if (session.method !== "bearer-access-token" || session.proofKeyThumbprint)
+            return refuse("A proof-bound MCP grant needs DPoP authorization.");
+          // Another machine's unbound grant is a 30-day bearer: over the
+          // internet-facing Connect address it must be proof-bound.
+          if (session.principal?.kind === "coordinator" && arrivedOverConnect(request))
+            return refuse("This machine's grant works only over Tailscale here.");
+          return Effect.succeed(session);
+        }
+        if (session.method !== "dpop-access-token" || !session.proofKeyThumbprint)
+          return refuse("DPoP authorization requires a proof-bound MCP grant.");
+        return verifyRequestDpopProof({
+          request,
+          expectedThumbprint: session.proofKeyThumbprint,
+          expectedAccessToken: token,
+        }).pipe(
+          Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.as(session),
+        );
+      }),
+      Effect.map(
+        (session) =>
+          ({
+            sessionId: session.sessionId,
+            ...principalApproval(session),
+            label: session.client.label ?? "MCP client",
+            access: session.scopes.includes(AuthOrchestrationOperateScope)
+              ? (session.runtimeModeCeiling ?? "approval-required")
+              : "read-only",
+          }) satisfies McpClientSession,
       ),
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
     );
@@ -1401,14 +1237,19 @@ export const make = Effect.gen(function* () {
       .issue({
         ...principalApproval(input),
         subject: MCP_CLIENT_SUBJECT,
-        method: "bearer-access-token",
+        method: input.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+        ...(input.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         scopes: mcpClientScopes(input.access),
         ttl: MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         client: { ...input.client, label: input.label, deviceType: "bot" },
       })
       .pipe(
-        Effect.map((issued) => ({ token: issued.token, expiresAt: issued.expiresAt })),
+        Effect.map((issued) => ({
+          token: issued.token,
+          expiresAt: issued.expiresAt,
+          tokenType: input.proofKeyThumbprint ? ("DPoP" as const) : ("Bearer" as const),
+        })),
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
         Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
       );
@@ -1443,13 +1284,15 @@ export const make = Effect.gen(function* () {
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       }),
       Effect.flatMap((grant) =>
-        grant.method === "one-time-token" && !grant.principal
-          ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "reapproval_required" }))
-          : grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
-            ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
-            : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
-              ? Effect.succeed(principalApproval(grant))
-              : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
+        isFleetRedeemSubject(grant.subject)
+          ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
+          : grant.method === "one-time-token" && !grant.principal
+            ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "reapproval_required" }))
+            : grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
+              ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
+              : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
+                ? Effect.succeed(principalApproval(grant))
+                : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
@@ -1473,6 +1316,7 @@ export const make = Effect.gen(function* () {
     listPairingLinks,
     revokePairingLink,
     issueSession,
+    consumeFleetRedemption,
     listSessions,
     revokeSession,
     revokeOtherSessionsExcept,
@@ -1487,6 +1331,12 @@ export const make = Effect.gen(function* () {
     authenticateMcpClient,
     issueMcpClientSession,
     consumeMcpApprovalCode,
+    verifyRequestProof: (request) =>
+      verifyRequestDpopProof({ request }).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.withSpan("EnvironmentAuth.verifyRequestProof"),
+      ),
     authenticateBrowserSession,
   });
 });

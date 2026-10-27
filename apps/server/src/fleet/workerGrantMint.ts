@@ -7,13 +7,16 @@ import {
 } from "@specweave-studio/contracts";
 import type { StudioFleetWorkerAccess } from "@specweave-studio/contracts/studioFleet";
 
+import { type FleetFetch, FleetError, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
+import type { FleetProofKey } from "./fleetProofKey.ts";
+import { tokenProofThumbprint } from "./fleetProofKey.ts";
 import {
-  checkIdentity,
-  type FleetFetch,
-  FleetError,
-  type FleetTarget,
-  readBoundedJson,
-} from "../studioFleet.ts";
+  type FleetLink,
+  type FleetOrigin,
+  fleetAuthorization,
+  reachFleetMachine,
+  toFleetLink,
+} from "./fleetTransport.ts";
 import { WORKER_CLIENT_LABEL_PREFIX } from "./workGrantPolicy.ts";
 
 /**
@@ -26,6 +29,13 @@ import { WORKER_CLIENT_LABEL_PREFIX } from "./workGrantPolicy.ts";
  *
  * Nothing here follows a redirect. The approval answer names where the code
  * would go; it is parsed, never fetched.
+ *
+ * Every step runs against one address of the machine, the first that answers
+ * as it (tailnet first, then SpecWithCode Connect), and the grant is bound to
+ * that address's `/mcp`. When the machine supports DPoP and this machine holds
+ * a fleet proof key, the grant is bound to that key, so it works over either
+ * address. Over Connect a key-bound grant is required: a bearer grant is never
+ * minted, renewed or sent there.
  */
 
 /** Registered for the record only; the code is read from the answer, never delivered. */
@@ -63,7 +73,17 @@ export interface MintedWorkerGrant {
   readonly accessToken: string;
   readonly expiresAt: string;
   readonly resource: string;
+  /** The address the grant was minted or renewed on. */
+  readonly origin: string;
 }
+
+/** How calls reach the machine: a fleet link, or a bare fetch (`fetcher`, the older name). */
+export type WorkerGrantLink =
+  | { readonly link: FleetLink | FleetFetch; readonly fetcher?: undefined }
+  | { readonly fetcher: FleetLink | FleetFetch; readonly link?: undefined };
+
+const linkFrom = (input: WorkerGrantLink): FleetLink =>
+  toFleetLink((input.link ?? input.fetcher) as FleetLink | FleetFetch);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,28 +96,45 @@ interface Answer {
   readonly body: unknown;
 }
 
+/**
+ * One call to `path` on `address`. With `token` the authorization header is
+ * the one that address allows (bearer on the tailnet, DPoP for a bound token);
+ * a token that may not go there is never sent.
+ */
 async function request(
-  fetcher: FleetFetch,
-  url: string,
-  init: RequestInit & { readonly form?: Record<string, string>; readonly json?: unknown } = {},
+  link: FleetLink,
+  address: FleetOrigin,
+  path: string,
+  init: Omit<RequestInit, "headers"> & {
+    readonly headers?: Record<string, string>;
+    readonly form?: Record<string, string>;
+    readonly json?: unknown;
+    readonly token?: string | undefined;
+  } = {},
 ): Promise<Answer> {
-  const { form, json, ...rest } = init;
+  const { form, json, token, headers: extra, ...rest } = init;
+  const url = `${address.origin}${path}`;
+  let authorization: Record<string, string> = {};
+  if (token !== undefined) {
+    try {
+      authorization = await fleetAuthorization(link, address, rest.method ?? "GET", url, token);
+    } catch {
+      throw new WorkerGrantMintError("pairing_unavailable");
+    }
+  }
+  const headers: Record<string, string> = {
+    ...extra,
+    ...authorization,
+    ...(json === undefined ? {} : { "content-type": "application/json" }),
+    ...(form === undefined ? {} : { "content-type": "application/x-www-form-urlencoded" }),
+  };
   let response: Response;
   try {
-    response = await fetcher(url, {
+    response = await link.fetch(url, {
       ...rest,
-      ...(json === undefined
-        ? {}
-        : {
-            body: JSON.stringify(json),
-            headers: { ...rest.headers, "content-type": "application/json" },
-          }),
-      ...(form === undefined
-        ? {}
-        : {
-            body: new URLSearchParams(form).toString(),
-            headers: { ...rest.headers, "content-type": "application/x-www-form-urlencoded" },
-          }),
+      ...(json === undefined ? {} : { body: JSON.stringify(json) }),
+      ...(form === undefined ? {} : { body: new URLSearchParams(form).toString() }),
+      headers,
       redirect: "error",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -113,29 +150,53 @@ async function request(
   return { status: response.status, body };
 }
 
-/** Steps 1 and 2: the pinned identity, then the MCP resource it publishes. */
-async function verifyMachine(fetcher: FleetFetch, target: FleetTarget) {
+/**
+ * Step 1: the first address that answers as the pinned machine. With `token`,
+ * only addresses that token may be sent to are tried.
+ */
+async function reach(
+  link: FleetLink,
+  target: FleetTarget,
+  token: string | undefined,
+): Promise<FleetOrigin> {
   try {
-    await checkIdentity(fetcher, target);
-  } catch (error) {
-    throw new WorkerGrantMintError(
-      error instanceof FleetError && error.kind === "identity-mismatch"
-        ? "identity_mismatch"
-        : "unreachable",
+    const { origin, transport } = await reachFleetMachine(
+      link,
+      target,
+      token === undefined ? {} : { token },
     );
+    return { origin, transport };
+  } catch (error) {
+    if (error instanceof FleetError && error.kind === "identity-mismatch")
+      throw new WorkerGrantMintError("identity_mismatch");
+    // Only a Connect address answers and the management token there is not
+    // bound to this machine's key: the machine needs a new invitation.
+    if (
+      error instanceof FleetError &&
+      (error.kind === "connect-unbound" || error.kind === "connect-key-missing")
+    )
+      throw new WorkerGrantMintError("pairing_unavailable");
+    throw new WorkerGrantMintError("unreachable");
   }
-  const resource = `${target.url}/mcp`;
-  const metadata = await request(fetcher, `${target.url}/.well-known/oauth-protected-resource/mcp`);
+}
+
+/** Step 2: the MCP resource the address publishes, and whether it takes DPoP grants. */
+async function verifyMachine(link: FleetLink, address: FleetOrigin) {
+  const resource = `${address.origin}/mcp`;
+  const metadata = await request(link, address, "/.well-known/oauth-protected-resource/mcp");
   if (metadata.status === 404) throw new WorkerGrantMintError("unsupported");
   if (metadata.status !== 200 || !isRecord(metadata.body))
     throw new WorkerGrantMintError("unreachable");
   if (metadata.body.resource !== resource) throw new WorkerGrantMintError("route_mismatch");
-  return resource;
+  const algorithms = metadata.body.dpop_signing_alg_values_supported;
+  const dpop = Array.isArray(algorithms) && algorithms.includes("ES256");
+  return { resource, dpop };
 }
 
 /** Step 3: a single-use pairing code, minted with the machine's management token. */
 async function mintPairingCode(
-  fetcher: FleetFetch,
+  link: FleetLink,
+  address: FleetOrigin,
   target: FleetTarget,
   label: string,
 ): Promise<{ readonly id: string; readonly code: string }> {
@@ -144,9 +205,9 @@ async function mintPairingCode(
     !WORKER_GRANT_SCOPES.every((scope) => target.scopes.includes(scope))
   )
     throw new WorkerGrantMintError("pairing_unavailable");
-  const answer = await request(fetcher, `${target.url}/api/auth/pairing-token`, {
+  const answer = await request(link, address, "/api/auth/pairing-token", {
     method: "POST",
-    headers: { authorization: `Bearer ${target.managementToken}` },
+    token: target.managementToken,
     json: { label, scopes: WORKER_GRANT_SCOPES },
   });
   if (
@@ -160,27 +221,34 @@ async function mintPairingCode(
 }
 
 /** Best effort: an unused pairing code should not outlive a failed sign-in. */
-async function revokePairing(fetcher: FleetFetch, target: FleetTarget, id: string) {
+async function revokePairing(
+  link: FleetLink,
+  address: FleetOrigin,
+  target: FleetTarget,
+  id: string,
+) {
   if (!target.managementToken) return;
-  await request(fetcher, `${target.url}/api/auth/pairing-links/revoke`, {
+  await request(link, address, "/api/auth/pairing-links/revoke", {
     method: "POST",
-    headers: { authorization: `Bearer ${target.managementToken}` },
+    token: target.managementToken,
     json: { id },
   }).catch(() => undefined);
 }
 
 /** Steps 4 to 6: register, approve with the pairing code, exchange the code. */
 async function signIn(input: {
-  readonly fetcher: FleetFetch;
-  readonly target: FleetTarget;
+  readonly link: FleetLink;
+  readonly address: FleetOrigin;
+  /** Binds the grant to this key (DPoP) when set. */
+  readonly key: FleetProofKey | null;
   readonly resource: string;
   readonly clientName: string;
   readonly access: StudioFleetWorkerAccess;
   readonly pairingCode: string;
   readonly now: () => number;
 }): Promise<MintedWorkerGrant> {
-  const { fetcher, target } = input;
-  const registered = await request(fetcher, `${target.url}/oauth/mcp/register`, {
+  const { link, address, key } = input;
+  const registered = await request(link, address, "/oauth/mcp/register", {
     method: "POST",
     json: { client_name: input.clientName, redirect_uris: [WORKER_GRANT_REDIRECT_URI] },
   });
@@ -194,7 +262,7 @@ async function signIn(input: {
   const verifier = base64Url(randomBytes(48));
   const challenge = base64Url(sha256([verifier]));
   const state = base64Url(randomBytes(24));
-  const decision = await request(fetcher, `${target.url}/oauth/mcp/decision`, {
+  const decision = await request(link, address, "/oauth/mcp/decision", {
     method: "POST",
     json: {
       authorization: {
@@ -222,14 +290,22 @@ async function signIn(input: {
   if (
     `${redirect.origin}${redirect.pathname}` !== WORKER_GRANT_REDIRECT_URI ||
     params.get("state") !== state ||
-    params.get("iss") !== target.url
+    params.get("iss") !== address.origin
   )
     throw new WorkerGrantMintError("route_mismatch");
   const code = params.get("code");
   if (params.get("error") !== null || code === null || code.length === 0)
     throw new WorkerGrantMintError("pairing_code_rejected");
-  const token = await request(fetcher, `${target.url}/oauth/mcp/token`, {
+  const tokenPath = "/oauth/mcp/token";
+  const token = await request(link, address, tokenPath, {
     method: "POST",
+    ...(key === null
+      ? {}
+      : {
+          headers: {
+            dpop: await key.proof({ method: "POST", url: `${address.origin}${tokenPath}` }),
+          },
+        }),
     form: {
       grant_type: "authorization_code",
       code,
@@ -243,16 +319,24 @@ async function signIn(input: {
     token.status !== 200 ||
     !isRecord(token.body) ||
     !isText(token.body.access_token) ||
-    token.body.token_type !== "Bearer" ||
     typeof token.body.expires_in !== "number" ||
     !Number.isFinite(token.body.expires_in) ||
     token.body.expires_in <= 0
   )
     throw new WorkerGrantMintError("pairing_code_rejected");
+  // A bound grant must name this machine's key; a bearer must not be bound.
+  if (
+    key === null
+      ? token.body.token_type !== "Bearer"
+      : token.body.token_type !== "DPoP" ||
+        tokenProofThumbprint(token.body.access_token) !== key.thumbprint
+  )
+    throw new WorkerGrantMintError(key === null ? "pairing_code_rejected" : "unsupported");
   return {
     accessToken: token.body.access_token,
     expiresAt: DateTime.formatIso(DateTime.makeUnsafe(input.now() + token.body.expires_in * 1000)),
     resource: input.resource,
+    origin: address.origin,
   };
 }
 
@@ -261,32 +345,51 @@ async function signIn(input: {
  * approval; otherwise the machine's management token mints a single-use code,
  * which is revoked if the sign-in then fails.
  */
-export async function mintWorkerGrant(input: {
-  readonly fetcher: FleetFetch;
-  readonly target: FleetTarget;
-  readonly access: StudioFleetWorkerAccess;
-  readonly clientName: string;
-  readonly pairingCode?: string | undefined;
-  readonly now?: () => number;
-}): Promise<MintedWorkerGrant> {
+export async function mintWorkerGrant(
+  input: WorkerGrantLink & {
+    readonly target: FleetTarget;
+    readonly access: StudioFleetWorkerAccess;
+    readonly clientName: string;
+    readonly pairingCode?: string | undefined;
+    readonly now?: () => number;
+  },
+): Promise<MintedWorkerGrant> {
   const now = input.now ?? Date.now;
-  const resource = await verifyMachine(input.fetcher, input.target);
-  const pairing =
-    input.pairingCode === undefined
-      ? await mintPairingCode(input.fetcher, input.target, input.clientName)
-      : { id: undefined, code: input.pairingCode };
+  const link = linkFrom(input);
+  const usesManagementToken = input.pairingCode === undefined;
+  const address = await reach(
+    link,
+    input.target,
+    usesManagementToken ? input.target.managementToken : undefined,
+  );
+  const machine = await verifyMachine(link, address);
+  // Bind the grant only for a machine that has (or is reached on) a Connect
+  // address: a tailnet-only machine keeps a bearer grant, as before, so it
+  // never depends on Serve's forwarded Host matching the proof's URL and
+  // writes no replay marker per call.
+  const wantsBinding = address.transport === "connect" || input.target.connectUrl !== undefined;
+  const key = machine.dpop && wantsBinding ? await link.proofKey().catch(() => null) : null;
+  // Over Connect only a key-bound grant may be minted; refuse before any code exists.
+  if (address.transport === "connect") {
+    if (!machine.dpop) throw new WorkerGrantMintError("unsupported");
+    if (key === null) throw new WorkerGrantMintError("pairing_unavailable");
+  }
+  const pairing = usesManagementToken
+    ? await mintPairingCode(link, address, input.target, input.clientName)
+    : { id: undefined, code: input.pairingCode as string };
   try {
     return await signIn({
-      fetcher: input.fetcher,
-      target: input.target,
-      resource,
+      link,
+      address,
+      key,
+      resource: machine.resource,
       clientName: input.clientName,
       access: input.access,
       pairingCode: pairing.code,
       now,
     });
   } catch (error) {
-    if (pairing.id !== undefined) await revokePairing(input.fetcher, input.target, pairing.id);
+    if (pairing.id !== undefined) await revokePairing(link, address, input.target, pairing.id);
     throw error;
   }
 }
@@ -304,21 +407,28 @@ export class WorkerGrantRenewError extends Error {
 }
 
 /** Extends the same destination session. Never exchanges a pairing code or mints a replacement. */
-export async function renewWorkerGrant(input: {
-  readonly fetcher: FleetFetch;
-  readonly target: FleetTarget;
-  readonly accessToken: string;
-  readonly coordinatorEnvironmentId: string;
-  readonly now?: () => number;
-}): Promise<MintedWorkerGrant> {
-  const { fetcher, target } = input;
+export async function renewWorkerGrant(
+  input: WorkerGrantLink & {
+    readonly target: FleetTarget;
+    readonly accessToken: string;
+    readonly coordinatorEnvironmentId: string;
+    readonly now?: () => number;
+  },
+): Promise<MintedWorkerGrant> {
+  const { target } = input;
+  const link = linkFrom(input);
   if (!canRenewWorkerGrant(target)) throw new WorkerGrantRenewError("pairing_unavailable");
   const sessionId = sessionIdOfToken(input.accessToken);
   if (!sessionId) throw new WorkerGrantRenewError("invalid");
-  const resource = await verifyMachine(fetcher, target);
-  const answer = await request(fetcher, `${target.url}/api/auth/worker-grants/renew`, {
+  const binding = tokenProofThumbprint(input.accessToken);
+  const address = await reach(link, target, target.managementToken);
+  // The grant itself travels in the body: an unbound one never crosses Connect.
+  if (address.transport === "connect" && binding === undefined)
+    throw new WorkerGrantRenewError("unreachable");
+  const { resource } = await verifyMachine(link, address);
+  const answer = await request(link, address, "/api/auth/worker-grants/renew", {
     method: "POST",
-    headers: { authorization: `Bearer ${target.managementToken}` },
+    token: target.managementToken,
     json: {
       accessToken: input.accessToken,
       coordinatorEnvironmentId: input.coordinatorEnvironmentId,
@@ -339,10 +449,16 @@ export async function renewWorkerGrant(input: {
     !isText(answer.body.expiresAt, 64) ||
     !Number.isFinite(Date.parse(answer.body.expiresAt)) ||
     Date.parse(answer.body.expiresAt) <= (input.now ?? Date.now)() ||
-    sessionIdOfToken(answer.body.accessToken) !== sessionId
+    sessionIdOfToken(answer.body.accessToken) !== sessionId ||
+    tokenProofThumbprint(answer.body.accessToken) !== binding
   )
     throw new WorkerGrantRenewError("unreachable");
-  return { accessToken: answer.body.accessToken, expiresAt: answer.body.expiresAt, resource };
+  return {
+    accessToken: answer.body.accessToken,
+    expiresAt: answer.body.expiresAt,
+    resource,
+    origin: address.origin,
+  };
 }
 
 /** The label a worker grant is minted under on the other machine, as its client list shows it. */
@@ -370,24 +486,32 @@ export function sessionIdOfToken(token: string): string | undefined {
  * `keepNewest` and no id is known, is the grant just minted and is spared.
  * `complete` is true only when every revoke this attempted went through.
  */
-export async function revokeWorkerSessions(input: {
-  readonly fetcher: FleetFetch;
-  readonly target: FleetTarget;
-  readonly clientName: string;
-  readonly keepNewest: boolean;
-  readonly sessionIds?: ReadonlyArray<string>;
-  readonly keepSessionId?: string | undefined;
-}): Promise<{ readonly revoked: number; readonly complete: boolean; readonly swept: boolean }> {
-  const { fetcher, target } = input;
-  if (!target.managementToken) return { revoked: 0, complete: false, swept: false };
-  const headers = { authorization: `Bearer ${target.managementToken}` };
+export async function revokeWorkerSessions(
+  input: WorkerGrantLink & {
+    readonly target: FleetTarget;
+    readonly clientName: string;
+    readonly keepNewest: boolean;
+    readonly sessionIds?: ReadonlyArray<string>;
+    readonly keepSessionId?: string | undefined;
+  },
+): Promise<{ readonly revoked: number; readonly complete: boolean; readonly swept: boolean }> {
+  const { target } = input;
+  const token = target.managementToken;
+  if (!token) return { revoked: 0, complete: false, swept: false };
+  const link = linkFrom(input);
   const done = new Set<string>();
   let failed = false;
+  let address: FleetOrigin;
+  try {
+    address = await reach(link, target, token);
+  } catch {
+    return { revoked: 0, complete: false, swept: false };
+  }
   const revoke = async (sessionId: string) => {
     if (done.has(sessionId) || sessionId === input.keepSessionId) return;
-    const answer = await request(fetcher, `${target.url}/api/auth/clients/revoke`, {
+    const answer = await request(link, address, "/api/auth/clients/revoke", {
       method: "POST",
-      headers,
+      token,
       json: { sessionId },
     });
     if (answer.status === 200) done.add(sessionId);
@@ -396,7 +520,7 @@ export async function revokeWorkerSessions(input: {
   // Never throws: a machine that drops off mid-revoke is reported as an incomplete revoke.
   try {
     for (const sessionId of input.sessionIds ?? []) await revoke(sessionId);
-    const listed = await request(fetcher, `${target.url}/api/auth/clients`, { headers });
+    const listed = await request(link, address, "/api/auth/clients", { token });
     if (listed.status === 403) return { revoked: done.size, complete: !failed, swept: false };
     if (listed.status !== 200 || !Array.isArray(listed.body))
       return { revoked: done.size, complete: false, swept: false };

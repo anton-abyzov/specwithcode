@@ -4,6 +4,14 @@ import * as Schema from "effect/Schema";
 import { constants } from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - stat and read must use the same atomically no-follow-opened descriptor.
 import { lstat, open } from "node:fs/promises";
+import { parseFleetOrigin } from "./fleet/fleetOrigin.ts";
+import { tokenProofThumbprint } from "./fleet/fleetProofKey.ts";
+import {
+  type FleetLink,
+  fleetRequest,
+  reachFleetMachine,
+  toFleetLink,
+} from "./fleet/fleetTransport.ts";
 import { join } from "./nodePath.ts";
 import {
   AuthAccessWriteScope,
@@ -25,7 +33,10 @@ export interface FleetTarget {
   readonly id: string;
   readonly label: string;
   readonly environmentId: EnvironmentId;
+  /** Primary address: a tailnet origin, or a Connect origin when the machine has no tailnet. */
   readonly url: string;
+  /** Optional SpecWithCode Connect origin, only beside a tailnet `url`. */
+  readonly connectUrl?: string;
   readonly managementToken?: string;
   readonly scopes: AuthGrantScopes;
 }
@@ -48,7 +59,10 @@ export class FleetError extends Error {
     | "pairing-unavailable"
     | "invitation-limited"
     | "reapproval-required"
-    | "forbidden";
+    | "forbidden"
+    | "connect-unbound"
+    | "connect-key-missing"
+    | "connect-browser-unsupported";
   constructor(kind: FleetError["kind"]) {
     super(
       {
@@ -64,6 +78,12 @@ export class FleetError extends Error {
         "reapproval-required":
           "That machine no longer accepts the invitation saved here: its update asks every machine that manages it to be approved again. On that machine, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine.",
         forbidden: "This connection cannot pair with that machine.",
+        "connect-unbound":
+          "This machine answers only through SpecWithCode Connect, and the invitation saved here works only over Tailscale. On that machine choose Invite this machine again and add the new line here.",
+        "connect-key-missing":
+          "This machine's fleet key is missing or unreadable, so the invitation saved for that machine cannot be used. On that machine choose Invite this machine again and add the new line here.",
+        "connect-browser-unsupported":
+          "That machine answers only through SpecWithCode Connect right now, and opening it in this window needs Tailscale. Work you send to it still goes through.",
       }[kind],
     );
     this.kind = kind;
@@ -94,32 +114,29 @@ function parseFleetTarget(m: unknown, allowConnectFrom: unknown): FleetTarget {
     throw new FleetEntryError(reason);
   };
   if (!record(m)) return invalid("the entry is not an object.");
-  if (!keys(m, ["id", "label", "environmentId", "url", "managementToken", "scopes"]))
+  if (!keys(m, ["id", "label", "environmentId", "url", "connectUrl", "managementToken", "scopes"]))
     return invalid("the entry has an unknown key.");
   if (!text(m.id, 48) || !/^[a-z0-9][a-z0-9-]*$/.test(m.id))
     return invalid("id must be lowercase letters, digits and dashes.");
   if (!text(m.label, 80)) return invalid("label is missing or malformed.");
   if (!text(m.environmentId, 150)) return invalid("environmentId is missing or malformed.");
   if (!text(m.url, 300)) return invalid("url is missing or malformed.");
-  let url: URL;
-  try {
-    url = new URL(m.url);
-  } catch {
-    return invalid("url is not a valid address.");
-  }
-  // Restrict even operator-configured relays to private Tailscale HTTPS origins.
-  if (
-    url.protocol !== "https:" ||
-    !/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.ts\.net$/i.test(url.hostname) ||
-    url.username ||
-    url.password ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash
-  )
+  // Even operator-configured machines are reached only over a private Tailscale
+  // HTTPS name or a SpecWithCode Connect managed endpoint.
+  const primary = parseFleetOrigin(m.url);
+  if (primary === null)
     return invalid(
-      "url must be a private https://<name>.ts.net address with no path, query or credentials.",
+      "url must be a private https://<name>.ts.net address or a SpecWithCode Connect address, with no path, query or credentials.",
     );
+  let connectUrl: string | undefined;
+  if (m.connectUrl !== undefined) {
+    const connect = text(m.connectUrl, 300) ? parseFleetOrigin(m.connectUrl) : null;
+    if (connect === null || connect.transport !== "connect")
+      return invalid("connectUrl must be a SpecWithCode Connect address with no path or query.");
+    if (primary.transport !== "tailnet")
+      return invalid("connectUrl is allowed only when url is a Tailscale address.");
+    connectUrl = connect.origin;
+  }
   if (
     m.managementToken !== undefined &&
     (!text(m.managementToken, 8192) || /\s/.test(m.managementToken))
@@ -143,7 +160,8 @@ function parseFleetTarget(m: unknown, allowConnectFrom: unknown): FleetTarget {
     id: m.id,
     label: m.label,
     environmentId: EnvironmentId.make(m.environmentId),
-    url: url.origin,
+    url: primary.origin,
+    ...(connectUrl === undefined ? {} : { connectUrl }),
     scopes,
     ...(m.managementToken === undefined ? {} : { managementToken: m.managementToken }),
   };
@@ -189,11 +207,17 @@ export function parseFleetConfig(raw: unknown, options: { tolerant?: boolean } =
       });
       return;
     }
-    if (ids.has(target.id) || envs.has(target.environmentId) || urls.has(target.url))
+    const origins =
+      target.connectUrl === undefined ? [target.url] : [target.url, target.connectUrl];
+    if (
+      ids.has(target.id) ||
+      envs.has(target.environmentId) ||
+      origins.some((origin) => urls.has(origin))
+    )
       return invalid();
     ids.add(target.id);
     envs.add(target.environmentId);
-    urls.add(target.url);
+    for (const origin of origins) urls.add(origin);
     machines.push(target);
   });
   return {
@@ -301,6 +325,11 @@ export async function checkIdentity(
     throw new FleetError("identity-mismatch");
   return decoded.value;
 }
+/** A machine as the management calls reach it: its addresses, pinned id and token. */
+export type FleetManaged = Pick<FleetTarget, "url" | "connectUrl" | "environmentId"> & {
+  readonly managementToken: string;
+};
+
 /**
  * The scopes a machine's management token holds there, read from its own
  * session endpoint. Pairing there can only hand out scopes the token holds,
@@ -308,17 +337,23 @@ export async function checkIdentity(
  * the machine does not say (an older server); a rejected token fails.
  */
 export async function readManagementScopes(
-  fetcher: FleetFetch,
-  target: Pick<FleetTarget, "url"> & { readonly managementToken: string },
+  link: FleetLink | FleetFetch,
+  target: FleetManaged,
 ): Promise<ReadonlySet<string> | null> {
   let response: Response;
   try {
-    response = await fetcher(`${target.url}/api/auth/session`, {
-      headers: { authorization: `Bearer ${target.managementToken}` },
-      redirect: "error",
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch {
+    ({ response } = await fleetRequest(link, target, "/api/auth/session", {
+      token: target.managementToken,
+      idempotent: true,
+    }));
+  } catch (error) {
+    if (
+      error instanceof FleetError &&
+      (error.kind === "connect-unbound" ||
+        error.kind === "connect-key-missing" ||
+        error.kind === "identity-mismatch")
+    )
+      throw error;
     throw new FleetError("unreachable");
   }
   if (response.status === 401 || response.status === 403) {
@@ -342,20 +377,25 @@ export async function readManagementScopes(
 
 /** Throws when the token cannot hand out every scope a connection asks for. */
 export async function assertManagementTokenCanPair(
-  fetcher: FleetFetch,
-  target: Pick<FleetTarget, "url"> & { readonly managementToken: string },
+  link: FleetLink | FleetFetch,
+  target: FleetManaged,
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ): Promise<void> {
-  const granted = await readManagementScopes(fetcher, target);
+  const granted = await readManagementScopes(link, target);
   if (granted !== null && !scopes.every((scope) => granted.has(scope)))
     throw new FleetError("invitation-limited");
 }
 
+/** Whether a saved management token is a plain bearer or bound to this machine's fleet key. */
+export const managementBindingOf = (token: string): "bearer" | "proof" =>
+  tokenProofThumbprint(token) === undefined ? "bearer" : "proof";
+
 export async function discoverFleet(
   config: FleetConfig | null,
   host: string | undefined,
-  fetcher: FleetFetch = fetch,
+  fetcher: FleetLink | FleetFetch = fetch,
 ): Promise<StudioFleetSnapshot> {
+  const link = toFleetLink(fetcher);
   return {
     configured: config !== null,
     connectPermission: fleetConnectPermission(config),
@@ -367,8 +407,11 @@ export async function discoverFleet(
         let status: "reachable" | "unreachable" | "identity-mismatch" = "reachable";
         // The name the machine gives itself; a relayed address does not show it.
         let machineName: string | undefined;
+        let transport: "tailnet" | "connect" | undefined;
         try {
-          machineName = (await checkIdentity(fetcher, target)).label;
+          const address = await reachFleetMachine(link, target);
+          transport = address.transport;
+          machineName = address.machineName;
         } catch (error) {
           status =
             error instanceof FleetError && error.kind === "identity-mismatch"
@@ -380,6 +423,11 @@ export async function discoverFleet(
           label: target.label,
           environmentId: target.environmentId,
           url: target.url,
+          ...(target.connectUrl === undefined ? {} : { connectUrl: target.connectUrl }),
+          ...(transport === undefined ? {} : { transport }),
+          ...(target.managementToken
+            ? { managementBinding: managementBindingOf(target.managementToken) }
+            : {}),
           status,
           pairingConfigured: Boolean(target.managementToken),
           ...(machineName === undefined ? {} : { machineName }),
@@ -400,8 +448,9 @@ export async function connectFleet(
   config: FleetConfig | null,
   id: string,
   callerScopes: ReadonlySet<AuthEnvironmentScope>,
-  fetcher: FleetFetch = fetch,
+  fetcher: FleetLink | FleetFetch = fetch,
 ): Promise<StudioFleetConnectResult> {
+  const link = toFleetLink(fetcher);
   if (
     !callerScopes.has(fleetConnectPermission(config)) ||
     !callerScopes.has(AuthOrchestrationReadScope)
@@ -412,25 +461,37 @@ export async function connectFleet(
   const scopes = target.scopes.filter((scope) => callerScopes.has(scope));
   if (!scopes.includes(AuthOrchestrationReadScope)) throw new FleetError("forbidden");
   if (!target.managementToken) throw new FleetError("pairing-unavailable");
-  await checkIdentity(fetcher, target);
+  const managed = { ...target, managementToken: target.managementToken };
+  // Never forwards the token before an address answers as this machine.
+  const address = await reachFleetMachine(link, target, { token: target.managementToken });
+  // The browser turns this code into a plain bearer or cookie, which must
+  // never live on the internet-facing Connect address (the worker refuses
+  // it there too). Pairing waits for the tailnet.
+  if (address.transport !== "tailnet") throw new FleetError("connect-browser-unsupported");
   let result: unknown;
+  let host = address.origin;
   try {
-    result = await jsonRequest(fetcher, target, "/api/auth/pairing-token", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${target.managementToken}`,
-        "content-type": "application/json",
+    const { response, address: used } = await fleetRequest(
+      link,
+      target,
+      "/api/auth/pairing-token",
+      {
+        method: "POST",
+        token: target.managementToken,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "Private fleet browser", scopes }),
       },
-      body: JSON.stringify({ label: "Private fleet browser", scopes }),
-    });
+    );
+    if (!response.ok || used.transport !== "tailnet") {
+      await response.body?.cancel().catch(() => undefined);
+      throw new FleetError("unreachable");
+    }
+    host = used.origin;
+    result = await readBoundedJson(response);
   } catch {
     // Name the cause when the token itself is too narrow: re-adding the
     // same line will never work, a new invitation will.
-    await assertManagementTokenCanPair(
-      fetcher,
-      { url: target.url, managementToken: target.managementToken },
-      scopes,
-    );
+    await assertManagementTokenCanPair(link, managed, scopes);
     throw new FleetError("pairing-unavailable");
   }
   if (
@@ -443,7 +504,7 @@ export async function connectFleet(
     throw new FleetError("pairing-unavailable");
   return {
     environmentId: target.environmentId,
-    host: target.url,
+    host,
     pairingCode: result.credential,
     expiresAt: result.expiresAt,
     scopes,

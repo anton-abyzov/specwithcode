@@ -331,7 +331,7 @@ export function NewDesignDialog({
                 />
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   className="sm:me-auto"
                   disabled={busy}
                   data-testid="import-pptx"

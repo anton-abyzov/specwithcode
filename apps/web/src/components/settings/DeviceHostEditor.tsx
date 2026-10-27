@@ -211,7 +211,7 @@ export function DeviceHostEditor({
           </div>
         </DialogPanel>
         <DialogFooter>
-          <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={busy || checking || !valid || !draft.label.trim()}>

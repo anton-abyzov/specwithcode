@@ -15,7 +15,15 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import type { FleetConfig, FleetTarget } from "../studioFleet.ts";
-import { fakeMachine, target } from "./fleetMachine.testkit.ts";
+import {
+  CONNECT_ORIGIN,
+  fakeMachine,
+  ORIGIN,
+  studioToken,
+  target,
+} from "./fleetMachine.testkit.ts";
+import { loadOrCreateFleetProofKey, tokenProofThumbprint } from "./fleetProofKey.ts";
+import { type FleetLink, makeFleetLink } from "./fleetTransport.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 
@@ -25,6 +33,7 @@ const makeLayer = (input: {
   readonly machine: ReturnType<typeof fakeMachine>;
   readonly target?: FleetTarget;
   readonly logs?: string[];
+  readonly link?: FleetLink;
 }) => {
   const config: FleetConfig = { version: 1, machines: [input.target ?? target] };
   const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "studio-fleet-grants-" });
@@ -33,6 +42,7 @@ const makeLayer = (input: {
       Layer.succeed(FleetTargets.FleetTargets, {
         load: Effect.succeed(config),
         fetch: input.machine.fetcher,
+        ...(input.link ? { link: input.link } : {}),
       }),
     ),
     Layer.provideMerge(ServerSecretStore.layer),
@@ -596,4 +606,98 @@ describe("FleetWorkerGrants", () => {
       expect(error.reason).toBe("unknown_machine");
     }).pipe(Effect.provide(makeLayer({ machine })));
   });
+});
+
+describe("FleetWorkerGrants over SpecWithCode Connect", () => {
+  /** A machine on both addresses with DPoP, and this server's key and bound management token. */
+  const connectSetup = async () => {
+    const offline = new Set<string>();
+    const machine = fakeMachine({
+      origins: [ORIGIN, CONNECT_ORIGIN],
+      offline,
+      dpop: true,
+      sessionTokens: true,
+    });
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(process.cwd(), ".studio-grants-key-"));
+    const key = await loadOrCreateFleetProofKey(baseDir);
+    const managementToken = studioToken({ sid: "management", jkt: key.thumbprint });
+    machine.acceptManagementToken(managementToken);
+    const link = makeFleetLink({ fetch: machine.fetcher, baseDir });
+    const bound: FleetTarget = { ...target, connectUrl: CONNECT_ORIGIN, managementToken };
+    return {
+      machine,
+      offline,
+      key,
+      link,
+      layer: makeLayer({ machine, target: bound, link }),
+      cleanup: () => NodeFS.rmSync(baseDir, { recursive: true, force: true }),
+    };
+  };
+
+  it.effect("keeps a grant minted on the tailnet when only the Connect address answers", () =>
+    Effect.gen(function* () {
+      const setup = yield* Effect.promise(connectSetup);
+      yield* Effect.gen(function* () {
+        yield* setNow(NOW);
+        const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+        yield* grants.allow({ machineId: "m1", access: "auto" });
+        const minted = yield* grants.credential("m1");
+        expect(tokenProofThumbprint(minted.accessToken)).toBe(setup.key.thumbprint);
+        setup.offline.add(ORIGIN);
+        const later = yield* grants.credential("m1");
+        expect(later.accessToken).toBe(minted.accessToken);
+        expect(setup.machine.issued()).toBe(1);
+      }).pipe(Effect.provide(setup.layer), Effect.ensuring(Effect.sync(setup.cleanup)));
+    }),
+  );
+
+  it.effect("binds an unbound grant once when the tailnet is down, and revokes the old one", () =>
+    Effect.gen(function* () {
+      const setup = yield* Effect.promise(connectSetup);
+      yield* Effect.gen(function* () {
+        yield* setNow(NOW);
+        const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+        yield* grants.allow({ machineId: "m1", access: "auto-accept-edits" });
+        // A grant from before this server had a key: a plain bearer.
+        yield* changeStoredGrant({ accessToken: studioToken({ sid: "old-bearer" }) });
+        setup.offline.add(ORIGIN);
+        // A call that found the tailnet down forgets it, as the MCP client and handoff calls do.
+        setup.link.book.forget(String(target.environmentId), ORIGIN);
+        yield* setNow(NOW + Duration.toMillis(Duration.minutes(2)));
+        const upgraded = yield* grants.credential("m1");
+        expect(tokenProofThumbprint(upgraded.accessToken)).toBe(setup.key.thumbprint);
+        expect(upgraded.access).toBe("auto-accept-edits");
+        expect(setup.machine.issued()).toBe(2);
+        expect(setup.machine.revokedSessions).toContain("old-bearer");
+        // The new grant was minted on the Connect address with no bearer sent there.
+        const overConnect = setup.machine.calls.filter((call) =>
+          call.url.startsWith(CONNECT_ORIGIN),
+        );
+        expect(overConnect.length).toBeGreaterThan(0);
+        expect(overConnect.some((call) => call.authorization?.startsWith("Bearer ") === true)).toBe(
+          false,
+        );
+        // At most once a minute: an unbound grant again right away is left alone.
+        yield* changeStoredGrant({ accessToken: studioToken({ sid: "another-bearer" }) });
+        yield* grants.credential("m1");
+        expect(setup.machine.issued()).toBe(2);
+      }).pipe(Effect.provide(setup.layer), Effect.ensuring(Effect.sync(setup.cleanup)));
+    }),
+  );
+
+  it.effect("leaves an unbound grant alone while the tailnet answers", () =>
+    Effect.gen(function* () {
+      const setup = yield* Effect.promise(connectSetup);
+      yield* Effect.gen(function* () {
+        yield* setNow(NOW);
+        const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+        yield* grants.allow({ machineId: "m1", access: "auto" });
+        const bearer = studioToken({ sid: "old-bearer" });
+        yield* changeStoredGrant({ accessToken: bearer });
+        yield* setNow(NOW + Duration.toMillis(Duration.minutes(2)));
+        expect((yield* grants.credential("m1")).accessToken).toBe(bearer);
+        expect(setup.machine.issued()).toBe(1);
+      }).pipe(Effect.provide(setup.layer), Effect.ensuring(Effect.sync(setup.cleanup)));
+    }),
+  );
 });

@@ -290,11 +290,33 @@ export function undoResult(
   };
 }
 
+/**
+ * Where a destination may pull a folder from this machine: its private
+ * tailnet HTTPS address when it has one, and its SpecWithCode Connect address.
+ * The first is the primary; the Connect address is the fallback, or the only
+ * address on a machine without Tailscale. Null when it has neither.
+ */
+export function sourceAddresses(input: {
+  readonly endpoints: ReadonlyArray<{ readonly kind: string; readonly httpBaseUrl: string }>;
+  readonly connectOrigin: string | null;
+}): { readonly sourceUrl: string; readonly sourceConnectUrl?: string } | null {
+  const tailnet = input.endpoints.find(
+    (endpoint) => endpoint.kind === "tailnet" && endpoint.httpBaseUrl.startsWith("https://"),
+  )?.httpBaseUrl;
+  const connect = input.connectOrigin ?? undefined;
+  if (tailnet !== undefined)
+    return connect === undefined
+      ? { sourceUrl: tailnet }
+      : { sourceUrl: tailnet, sourceConnectUrl: connect };
+  return connect === undefined ? null : { sourceUrl: connect };
+}
+
 export function offerResult(input: {
   readonly record: SourceOperationRecord;
   readonly token: string;
   readonly sourceEnvironmentId: string;
   readonly sourceUrl: string;
+  readonly sourceConnectUrl?: string | undefined;
   readonly sourceMachine: string;
   readonly title: string;
 }): FolderCopyOffer {
@@ -305,6 +327,7 @@ export function offerResult(input: {
     sourceEnvironmentId: EnvironmentId.make(input.sourceEnvironmentId),
     sourceProjectId: ProjectId.make(input.record.projectId),
     sourceUrl: input.sourceUrl,
+    ...(input.sourceConnectUrl === undefined ? {} : { sourceConnectUrl: input.sourceConnectUrl }),
     sourceMachine: text(input.sourceMachine, 200),
     token: input.token,
     title: text(input.title, 1000),

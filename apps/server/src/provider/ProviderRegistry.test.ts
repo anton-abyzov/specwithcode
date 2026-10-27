@@ -427,6 +427,7 @@ it.layer(
             name: "GPT Live Codex",
             isCustom: false,
             capabilities: codexModelCapabilities,
+            billing: "subscription",
           },
         ]);
         assert.deepStrictEqual(status.skills, [
@@ -3050,7 +3051,10 @@ it.layer(
             ]);
             assert.strictEqual(cursorProvider?.enabled, false);
             assert.strictEqual(cursorProvider?.status, "disabled");
-            assert.strictEqual(cursorProvider?.message, "Cursor is disabled in SpecWithCode settings.");
+            assert.strictEqual(
+              cursorProvider?.message,
+              "Cursor is disabled in SpecWithCode settings.",
+            );
             assert.strictEqual(cursorSpawned, false);
           }).pipe(Effect.provide(runtimeServices));
         }),

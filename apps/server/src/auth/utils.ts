@@ -7,6 +7,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
 import * as NodeCrypto from "node:crypto";
 import * as Base64Url from "effect/encoding/Base64Url";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "studio_session";
@@ -194,6 +195,16 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
   };
 
   return normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
+}
+
+/** The peer address of the connection a request arrived on (no `::ffff:` prefix). */
+export function requestRemoteAddress(
+  request: HttpServerRequest.HttpServerRequest,
+): string | undefined {
+  return (
+    normalizeIpAddress(Option.getOrUndefined(request.remoteAddress)) ??
+    readRemoteAddressFromSource(request.source)
+  );
 }
 
 export function deriveAuthClientMetadata(input: {

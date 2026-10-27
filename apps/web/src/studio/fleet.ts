@@ -29,7 +29,7 @@ import type {
   StudioWorkGrant,
   StudioWorkGrantUpdateInput,
 } from "@specweave-studio/contracts/studioFleet";
-import { revokeServerClientSession } from "../environments/primary";
+import { revokeServerClientSession, revokeServerPairingLink } from "../environments/primary";
 import {
   requestFleet,
   requestFleetAdd,
@@ -319,6 +319,8 @@ export async function inviteStudioFleetMachine(
     readonly coordinatorEnvironmentId: EnvironmentId;
     readonly label?: string;
     readonly days?: number;
+    /** Which address the line carries; absent asks for the original Tailscale-only line. */
+    readonly via?: "auto" | "tailscale" | "connect";
   },
 ): Promise<StudioFleetInviteResult> {
   const prepared = readPreparedConnection(environmentId);
@@ -338,6 +340,7 @@ export async function inviteStudioFleetMachine(
       coordinatorEnvironmentId: input.coordinatorEnvironmentId,
       ...(label ? { label } : {}),
       ...(input.days !== undefined ? { days: input.days } : {}),
+      ...(input.via !== undefined ? { via: input.via } : {}),
     }),
   );
   const result = await executeAtomQuery(appAtomRegistry, action, {
@@ -376,11 +379,16 @@ export async function inviteStudioFleetMachine(
   return result.value;
 }
 
-/** Revokes an invitation's management credential on this machine. */
+/**
+ * Revokes an invitation's credential on this machine: the management session
+ * a Tailscale-only line holds, or the one-time credential of a line with a
+ * SpecWithCode Connect address.
+ */
 export async function revokeStudioFleetInvitation(
-  sessionId: StudioFleetInviteResult["sessionId"],
+  invitation: Pick<StudioFleetInviteResult, "sessionId" | "pairingId">,
 ): Promise<void> {
-  await revokeServerClientSession(sessionId);
+  if (invitation.sessionId) await revokeServerClientSession(invitation.sessionId);
+  else if (invitation.pairingId) await revokeServerPairingLink(invitation.pairingId);
 }
 
 function preparedForInvite(environmentId: EnvironmentId) {

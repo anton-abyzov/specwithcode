@@ -21,6 +21,7 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  EnvironmentRateLimitedError,
 } from "@specweave-studio/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@specweave-studio/contracts";
 import { parseOAuthScope } from "@specweave-studio/shared/oauthScope";
@@ -47,6 +48,46 @@ import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/trac
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { browserCookieAttributes } from "./browserCookiePolicy.ts";
+import {
+  arrivedOverConnect,
+  countsAsCredentialGuess,
+  type CredentialRateLimited,
+  gateRequest,
+  recordRequestFailure,
+} from "./CredentialFailureLimiter.ts";
+
+/** 429 with `retry-after`: HttpApi encodes the error body, the header is added here. */
+export const failEnvironmentRateLimited = (error: CredentialRateLimited) =>
+  HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(
+      HttpServerResponse.setHeader(response, "retry-after", String(error.retryAfterSeconds)),
+    ),
+  ).pipe(
+    Effect.andThen(
+      Effect.fail(
+        new EnvironmentRateLimitedError({
+          code: "rate_limited",
+          retryAfterSeconds: error.retryAfterSeconds,
+        }),
+      ),
+    ),
+  );
+const failRateLimited = failEnvironmentRateLimited;
+
+/**
+ * Counts a presented credential that failed. A missing one is not a guess,
+ * nor is a genuine one that has expired or been revoked.
+ */
+const recordInvalidCredential =
+  (request: HttpServerRequest.HttpServerRequest) => (error: unknown) =>
+    countsAsCredentialGuess(error) ? recordRequestFailure(request) : Effect.void;
+
+/** For long-lived credentials: refuses a blocked client, else counts the guess. */
+const gateAndRecordInvalidCredential =
+  (request: HttpServerRequest.HttpServerRequest) => (error: unknown) =>
+    countsAsCredentialGuess(error)
+      ? gateRequest(request).pipe(Effect.andThen(recordRequestFailure(request)))
+      : Effect.void;
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -369,6 +410,11 @@ export const layerAuthenticatedAuth = Layer.effect(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const startTime = yield* Clock.currentTimeNanos;
         const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
+          // Verify first: a genuine credential is never held back, so clients
+          // sharing an egress address cannot lock the owner's machines out.
+          // Only failed checks are gated and counted.
+          Effect.tapError(gateAndRecordInvalidCredential(request)),
+          Effect.catchTag("CredentialRateLimited", failRateLimited),
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
@@ -440,19 +486,23 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
+            yield* gateRequest(request).pipe(Effect.catch(failRateLimited));
             const previousCredential = EnvironmentAuth.selectRequestCredential(
               request,
               sessions.cookieName,
               sessions.findLegacyCookie,
             );
-            const result = yield* serverAuth.createBrowserSession(
-              args.payload.credential,
-              deriveAuthClientMetadata({ request }),
-              previousCredential?.source === "cookie" ||
-                previousCredential?.source === "legacy-cookie"
-                ? previousCredential.token
-                : undefined,
-            );
+            const result = yield* serverAuth
+              .createBrowserSession(
+                args.payload.credential,
+                deriveAuthClientMetadata({ request }),
+                previousCredential?.source === "cookie" ||
+                  previousCredential?.source === "legacy-cookie"
+                  ? previousCredential.token
+                  : undefined,
+                { overConnect: arrivedOverConnect(request) },
+              )
+              .pipe(Effect.tapError(recordInvalidCredential(request)));
             const cookieName = result.cookieName ?? sessions.cookieName;
             const selectedCookie = yield* Effect.fromResult(
               Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
@@ -491,6 +541,7 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
+            yield* gateRequest(request).pipe(Effect.catch(failRateLimited));
             const requestedScopes =
               args.payload.scope === undefined
                 ? undefined
@@ -500,6 +551,7 @@ export const layer = HttpApiBuilder.group(
             }
             const proofKeyThumbprint = args.headers.dpop
               ? yield* verifyRequestDpopProof({ request }).pipe(
+                  Effect.tapError(recordInvalidCredential(request)),
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
                     appendDpopChallengeHeader.pipe(
                       Effect.andThen(
@@ -516,21 +568,26 @@ export const layer = HttpApiBuilder.group(
                 )
               : undefined;
             yield* appendCredentialResponseHeaders;
-            return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-              args.payload.subject_token,
-              requestedScopes,
-              deriveAuthClientMetadata({
-                request,
-                presented: {
-                  ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
-                  ...(args.payload.client_device_type
-                    ? { deviceType: args.payload.client_device_type }
-                    : {}),
-                  ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+            return yield* serverAuth
+              .exchangeBootstrapCredentialForAccessToken(
+                args.payload.subject_token,
+                requestedScopes,
+                deriveAuthClientMetadata({
+                  request,
+                  presented: {
+                    ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
+                    ...(args.payload.client_device_type
+                      ? { deviceType: args.payload.client_device_type }
+                      : {}),
+                    ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+                  },
+                }),
+                {
+                  ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
+                  overConnect: arrivedOverConnect(request),
                 },
-              }),
-              proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
-            );
+              )
+              .pipe(Effect.tapError(recordInvalidCredential(request)));
           },
           traceRelayRequest,
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>

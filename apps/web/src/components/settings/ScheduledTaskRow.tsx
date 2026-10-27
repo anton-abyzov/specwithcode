@@ -34,7 +34,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Dialog,
-  DialogClose,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -362,7 +361,6 @@ function WebhookDeliveriesDialog({
               Refresh
             </Button>
           )}
-          <DialogClose render={<Button size="sm" />}>Done</DialogClose>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

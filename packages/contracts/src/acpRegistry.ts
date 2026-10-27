@@ -138,6 +138,8 @@ export const AcpRegistryPrepareResult = Schema.Struct({
   version: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
   distribution: AcpRegistryDistribution,
   prepared: Schema.Literal(true),
+  /** The installed command, for package distributions. Absent from older servers. */
+  executablePath: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(4096))),
 });
 export type AcpRegistryPrepareResult = typeof AcpRegistryPrepareResult.Type;
 

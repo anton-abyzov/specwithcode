@@ -1192,7 +1192,6 @@ function BackgroundActivityAdvancedDialog({
           >
             Reset all
           </Button>
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

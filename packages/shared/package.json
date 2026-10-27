@@ -275,6 +275,10 @@
       "types": "./src/relayAuth.ts",
       "import": "./src/relayAuth.ts"
     },
+    "./managedEndpoint": {
+      "types": "./src/managedEndpoint.ts",
+      "import": "./src/managedEndpoint.ts"
+    },
     "./relayUrl": {
       "types": "./src/relayUrl.ts",
       "import": "./src/relayUrl.ts"

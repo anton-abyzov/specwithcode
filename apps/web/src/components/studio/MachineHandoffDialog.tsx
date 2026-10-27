@@ -342,9 +342,6 @@ export function MachineHandoffDialog({
                 className="min-w-0 flex-1"
                 data-slot="copy-actions-outlet"
               />
-              <Button variant="outline" disabled={locked} onClick={() => onOpenChange(false)}>
-                Close
-              </Button>
             </>
           ) : complete ? (
             <Button
@@ -355,9 +352,6 @@ export function MachineHandoffDialog({
             </Button>
           ) : (
             <>
-              <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
-                Close
-              </Button>
               {preview && onBack && (
                 <Button variant="outline" disabled={busy} onClick={onBack}>
                   Back

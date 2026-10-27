@@ -17,7 +17,6 @@ import { Button } from "../../ui/button";
 import {
   Dialog,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -474,11 +473,6 @@ export function NewDesignSystemDialog({
             <DescribePanel />
           )}
         </DialogPanel>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
-        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );

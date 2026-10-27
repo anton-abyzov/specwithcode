@@ -74,7 +74,8 @@ export type CreateReplacingActiveAuthSessionInput =
 export const RenewWorkerAuthSessionInput = Schema.Struct({
   sessionId: AuthSessionId,
   subject: Schema.Literal("mcp-client"),
-  method: Schema.Literal("bearer-access-token"),
+  // A proof-bound worker grant renews as itself: the method never changes.
+  method: Schema.Literals(["bearer-access-token", "dpop-access-token"]),
   scopes: AuthEnvironmentScopes,
   principal: AuthPrincipal,
   issuedAt: Schema.DateTimeUtcFromString,

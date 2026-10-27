@@ -12,6 +12,8 @@ import {
   oneClickInstallAgentId,
   planEnableHere,
   providersOnOtherMachines,
+  turnOnOutcome,
+  withInstalledBinary,
 } from "./providerQuickSetup";
 
 type Settings = Pick<ServerSettings, "providerInstances" | "providers">;
@@ -166,5 +168,114 @@ describe("planEnableHere", () => {
         config: { agentId: "github-copilot-cli", distribution: "auto" },
       },
     });
+  });
+});
+
+describe("Turn on here on another machine", () => {
+  it("names a new registry instance plainly, not after settings it does not copy", () => {
+    const [vertexGemini] = providersOnOtherMachines({
+      here: [],
+      others: [
+        {
+          ...m4,
+          entries: entries(
+            [
+              snapshot({
+                instanceId: "acpRegistry_gemini",
+                driver: "acpRegistry",
+                displayName: "Gemini CLI (Vertex AI)",
+              }),
+            ],
+            {
+              providers: {},
+              providerInstances: {
+                acpRegistry_gemini: {
+                  driver: "acpRegistry",
+                  enabled: true,
+                  displayName: "Gemini CLI (Vertex AI)",
+                  environment: [{ name: "GOOGLE_CLOUD_PROJECT", value: "p", sensitive: false }],
+                  config: { agentId: "gemini", distribution: "auto", authMethodId: "vertex-ai" },
+                },
+              },
+            } as unknown as Settings,
+          ),
+        },
+      ],
+    });
+    const plan = planEnableHere(vertexGemini!, {
+      providers: {},
+      providerInstances: {},
+    } as unknown as Settings);
+    expect(plan.instance).toEqual({
+      driver: "acpRegistry",
+      enabled: true,
+      displayName: "Gemini CLI",
+      config: { agentId: "gemini", distribution: "auto" },
+    });
+    expect(plan.prepareAgentId).toBe("gemini");
+  });
+
+  it("points a built-in driver at the CLI a registry package installed here", () => {
+    expect(
+      withInstalledBinary(
+        { driver: ProviderDriverKind.make("grok"), enabled: true, config: { customModels: [] } },
+        "/home/anton/.specwithcode/ministorm/tools/grok-build/1.0.70/npm/bin/grok",
+      ),
+    ).toEqual({
+      driver: "grok",
+      enabled: true,
+      config: {
+        customModels: [],
+        binaryPath: "/home/anton/.specwithcode/ministorm/tools/grok-build/1.0.70/npm/bin/grok",
+      },
+    });
+  });
+
+  it("reads what the provider still needs on this machine", () => {
+    const base = snapshot({
+      instanceId: "acpRegistry_gemini",
+      driver: "acpRegistry",
+      displayName: "Gemini CLI",
+    });
+    expect(turnOnOutcome(undefined, "ministorm")).toEqual({ kind: "checking" });
+    expect(
+      turnOnOutcome(
+        {
+          ...base,
+          status: "warning",
+          auth: { status: "unauthenticated", label: "Log in with Google" },
+        },
+        "ministorm",
+      ),
+    ).toEqual({
+      kind: "sign-in",
+      step: 'Sign in on ministorm: open Gemini CLI setup and choose "Log in with Google". Credentials stay on each machine.',
+    });
+    expect(
+      turnOnOutcome(
+        {
+          ...base,
+          installed: false,
+          status: "warning",
+          message: "Refresh Providers after installing Muse Code and signing in with muse.",
+        },
+        "ministorm",
+      ),
+    ).toEqual({
+      kind: "not-installed",
+      message: "Refresh Providers after installing Muse Code and signing in with muse.",
+    });
+    expect(turnOnOutcome({ ...base, models: [] }, "ministorm").kind).toBe("unavailable");
+    expect(
+      turnOnOutcome(
+        {
+          ...base,
+          models: [
+            { slug: "m", name: "M", isCustom: false, capabilities: { optionDescriptors: [] } },
+          ],
+        },
+        "ministorm",
+      ),
+    ).toEqual({ kind: "ready" });
   });
 });

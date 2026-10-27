@@ -254,7 +254,7 @@ export function PageMenu({
               />
             </DialogPanel>
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setRenaming(false)}>
+              <Button type="button" variant="outline" onClick={() => setRenaming(false)}>
                 Cancel
               </Button>
               <Button type="submit">Rename</Button>

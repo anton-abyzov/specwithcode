@@ -18,8 +18,10 @@ import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import type { FleetTarget } from "../studioFleet.ts";
+import { FleetError, type FleetTarget } from "../studioFleet.ts";
 import * as FleetTargets from "./FleetTargets.ts";
+import { tokenProofThumbprint } from "./fleetProofKey.ts";
+import { fleetAddresses, reachFleetMachine } from "./fleetTransport.ts";
 import {
   canRenewWorkerGrant,
   mintWorkerGrant,
@@ -128,6 +130,7 @@ export class FleetWorkerGrants extends Context.Service<
 
 const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
+  const link = FleetTargets.linkOf(targets);
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const localEnvironmentId = yield* environment.getEnvironmentId;
@@ -150,7 +153,14 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  /** A stored grant counts only while it names the machine as configured now. */
+  /** Whether `origin` is one of the machine's configured addresses. */
+  const isAddressOf = (target: FleetTarget, origin: string) =>
+    fleetAddresses(target).some((address) => address.origin === origin);
+
+  /**
+   * A stored grant counts only while it names the machine as configured now:
+   * minted on one of its addresses, for that address's `/mcp`.
+   */
   const readGrant = (target: FleetTarget) =>
     secrets.get(secretName(target.id)).pipe(
       Effect.map((bytes) =>
@@ -159,9 +169,9 @@ const make = Effect.gen(function* () {
             (grant) =>
               grant.machineId === target.id &&
               grant.environmentId === target.environmentId &&
-              grant.origin === target.url &&
+              isAddressOf(target, grant.origin) &&
               Number.isFinite(Date.parse(grant.expiresAt)) &&
-              grant.resource === `${target.url}/mcp` &&
+              grant.resource === `${grant.origin}/mcp` &&
               grant.clientLabel === clientName &&
               (grant.v === 1 || grant.coordinatorEnvironmentId === localEnvironmentId),
           ),
@@ -238,9 +248,7 @@ const make = Effect.gen(function* () {
       readonly keepSessionId?: string | undefined;
     },
   ) =>
-    Effect.tryPromise(() =>
-      revokeWorkerSessions({ fetcher: targets.fetch, target, clientName, ...options }),
-    ).pipe(
+    Effect.tryPromise(() => revokeWorkerSessions({ link, target, clientName, ...options })).pipe(
       Effect.orElseSucceed(() => ({ revoked: 0, complete: false, swept: false })),
       Effect.tap((result) =>
         result.complete || !target.managementToken
@@ -263,7 +271,7 @@ const make = Effect.gen(function* () {
       const minted = yield* Effect.tryPromise({
         try: () =>
           mintWorkerGrant({
-            fetcher: targets.fetch,
+            link,
             target,
             access,
             clientName,
@@ -288,7 +296,7 @@ const make = Effect.gen(function* () {
         ongoingConsent: canRenewWorkerGrant(target),
         machineId: target.id,
         environmentId: target.environmentId,
-        origin: target.url,
+        origin: minted.success.origin,
         resource: minted.success.resource,
         accessToken: minted.success.accessToken,
         expiresAt: minted.success.expiresAt,
@@ -331,7 +339,7 @@ const make = Effect.gen(function* () {
       const renewed = yield* Effect.tryPromise({
         try: () =>
           renewWorkerGrant({
-            fetcher: targets.fetch,
+            link,
             target,
             accessToken: grant.accessToken,
             coordinatorEnvironmentId: localEnvironmentId,
@@ -375,7 +383,7 @@ const make = Effect.gen(function* () {
               (grant) =>
                 grant.machineId === target.id &&
                 grant.environmentId === target.environmentId &&
-                grant.origin !== target.url &&
+                !isAddressOf(target, grant.origin) &&
                 grant.status === "active" &&
                 grant.clientLabel === clientName &&
                 (grant.v === 1 || grant.coordinatorEnvironmentId === localEnvironmentId),
@@ -393,6 +401,46 @@ const make = Effect.gen(function* () {
       yield* Ref.update(lastMint, (current) => new Map(current).set(target.id, now));
       if (yield* mintAndStore(target, moved.access, undefined))
         yield* Effect.logInfo("Moved worker access to a fleet machine's new address.", {
+          machineId: target.id,
+        });
+    });
+
+  /**
+   * An unbound (bearer) grant cannot cross SpecWithCode Connect. When the
+   * machine's tailnet address no longer answers but it has a Connect address,
+   * and this server's management token there is bound to its fleet key, the
+   * grant is minted again bound to that key, with the same access and only
+   * under the consent already given; the old session is revoked. At most once
+   * a minute per machine. Called only under the machine lock.
+   */
+  const upgradeBinding = (target: FleetTarget, grant: StoredGrant | undefined) =>
+    Effect.gen(function* () {
+      if (
+        grant === undefined ||
+        grant.v !== 2 ||
+        !grant.ongoingConsent ||
+        grant.status !== "active" ||
+        tokenProofThumbprint(grant.accessToken) !== undefined ||
+        !canRenewWorkerGrant(target) ||
+        tokenProofThumbprint(target.managementToken ?? "") === undefined ||
+        !fleetAddresses(target).some((address) => address.transport === "connect")
+      )
+        return;
+      const now = yield* Clock.currentTimeMillis;
+      if (!(Date.parse(grant.expiresAt) > now)) return;
+      const previous = (yield* Ref.get(lastMint)).get(target.id);
+      if (previous !== undefined && now - previous < Duration.toMillis(MINT_INTERVAL)) return;
+      // The bearer grant still works wherever an address it may use answers.
+      const blocked = yield* Effect.promise(() =>
+        reachFleetMachine(link, target, { token: grant.accessToken }).then(
+          () => false,
+          (error: unknown) => error instanceof FleetError && error.kind === "connect-unbound",
+        ),
+      );
+      if (!blocked) return;
+      yield* Ref.update(lastMint, (current) => new Map(current).set(target.id, now));
+      if (yield* mintAndStore(target, grant.access, undefined))
+        yield* Effect.logInfo("Bound a fleet machine's worker access to this server's key.", {
           machineId: target.id,
         });
     });
@@ -448,6 +496,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* carryToNewAddress(target);
           yield* renewIfDue(target, yield* readGrant(target));
+          yield* upgradeBinding(target, yield* readGrant(target));
           const grant = yield* readGrant(target);
           if (grant === undefined)
             return yield* new FleetWorkerGrantError({ reason: "not_allowed" });
@@ -497,6 +546,7 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* carryToNewAddress(target);
             yield* renewIfDue(target, yield* readGrant(target));
+            yield* upgradeBinding(target, yield* readGrant(target));
           }),
         )
         .pipe(

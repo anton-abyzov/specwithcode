@@ -8,19 +8,17 @@ import {
 } from "@specweave-studio/client-runtime/work-log/item-detail";
 import ChatView from "../ChatView";
 import { useThreadProjection, useThreadStatus } from "../../state/entities";
-import { Button } from "../ui/button";
 import { useTurnItemDetail } from "../../state/queries";
 import { ToolCodePanel } from "../chat/toolOutputPresentation";
 import {
   Dialog,
-  DialogClose,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { DialogCloseButton } from "../ui/dialog-close-button";
 import {
   ProjectMessageRoutingContext,
   type ProjectMessageRouting,
@@ -77,13 +75,15 @@ export function ProjectCoordinatorDetails({
     >
       <DialogPopup
         className="max-w-2xl"
+        // The corner X is rendered below so it can take focus when there is nothing to act on.
         showCloseButton={false}
-        // The request's own action first; Close only when there is nothing to act on.
+        // The request's own action first; the X only when there is nothing to act on.
         initialFocus={() =>
           (view === "requests" ? firstRequestAction(panel.current) : null) ?? close.current
         }
         finalFocus={previous}
       >
+        <DialogCloseButton ref={close} />
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
@@ -143,11 +143,6 @@ export function ProjectCoordinatorDetails({
             </div>
           )}
         </DialogPanel>
-        <DialogFooter>
-          <DialogClose render={<Button ref={close} variant="outline" size="sm" />}>
-            Close {view === "activity" ? "activity" : "review"}
-          </DialogClose>
-        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );

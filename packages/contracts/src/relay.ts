@@ -236,6 +236,12 @@ export const RelayEnvironmentConfigRequest = Schema.Struct({
   environmentCredential: Schema.String,
   cloudMintPublicKey: Schema.String,
   endpointRuntime: Schema.NullOr(RelayManagedEndpointRuntimeConfig),
+  /**
+   * The managed endpoint the relay assigned, as the client received it with the
+   * link. Optional: older clients omit it. The environment keeps it as its
+   * SpecWithCode Connect origin only when the hostname hash matches its own link.
+   */
+  endpoint: Schema.optional(RelayManagedEndpoint),
 });
 export type RelayEnvironmentConfigRequest = typeof RelayEnvironmentConfigRequest.Type;
 

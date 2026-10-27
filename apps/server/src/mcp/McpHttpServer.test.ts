@@ -1014,11 +1014,16 @@ it.effect("admits provider and OAuth client credentials and points only clients 
             authenticate: (request) =>
               request.headers.authorization === "Bearer legacy-device.credential"
                 ? Effect.fail(new McpHttpServer.McpDeviceReapprovalRequired({}))
-                : Effect.succeed(
-                    request.headers.authorization === `Bearer ${clientToken}`
-                      ? clientScope
-                      : undefined,
-                  ),
+                : request.headers.authorization === "Bearer expired-grant.signature"
+                  ? Effect.fail(new McpHttpServer.McpCredentialStale({}))
+                  : Effect.succeed(
+                      request.headers.authorization === `Bearer ${clientToken}` ||
+                        // A proof-bound grant: the authenticator checks the proof itself.
+                        (request.headers.authorization === "DPoP bound-grant.signature" &&
+                          request.headers.dpop === "fresh-proof")
+                        ? clientScope
+                        : undefined,
+                    ),
           }),
         ),
       );
@@ -1078,6 +1083,45 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       const deadProvider = yield* call("deadProviderToken");
       expect(deadProvider.status).toBe(401);
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
+
+      // Another machine's proof-bound grant reaches the OAuth client
+      // authenticator, never the provider registry.
+      const initializeWith = (headers: Record<string, string>) =>
+        httpClient.post("/mcp", {
+          headers: { accept: "application/json, text/event-stream", ...headers },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        });
+      expect(
+        (yield* initializeWith({
+          authorization: "DPoP bound-grant.signature",
+          dpop: "fresh-proof",
+        })).status,
+      ).toBe(200);
+      const unproven = yield* initializeWith({ authorization: "DPoP bound-grant.signature" });
+      expect(unproven.status).toBe(401);
+      expect(unproven.headers["www-authenticate"]).toContain('error="invalid_token"');
+
+      // Guesses that arrive through the Connect tunnel are counted per client.
+      const guess = (ip: string, token = "guessed.token") =>
+        initializeWith({ authorization: `Bearer ${token}`, "cf-connecting-ip": ip });
+      for (let attempt = 0; attempt < 30; attempt += 1)
+        expect((yield* guess("198.51.100.7")).status).toBe(401);
+      const blocked = yield* guess("198.51.100.7");
+      expect(blocked.status).toBe(429);
+      expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
+      // A genuine grant from the same address is never held back, so a
+      // neighbour behind the same egress cannot lock a machine out.
+      expect((yield* guess("198.51.100.7", clientToken)).status).toBe(200);
+      expect((yield* guess("198.51.100.8", clientToken)).status).toBe(200);
+
+      // An expired grant this server signed is stale, not a guess: a machine
+      // polling with it never locks itself out.
+      for (let attempt = 0; attempt < 31; attempt += 1)
+        expect((yield* guess("198.51.100.9", "expired-grant.signature")).status).toBe(401);
+      expect((yield* guess("198.51.100.9")).status).toBe(401);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

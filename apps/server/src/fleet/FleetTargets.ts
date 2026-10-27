@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import { type FleetConfig, type FleetFetch, readFleetConfig } from "../studioFleet.ts";
+import { type FleetLink, makeFleetLink, toFleetLink } from "./fleetTransport.ts";
 
 export class FleetConfigReadError extends Schema.TaggedError<FleetConfigReadError>()(
   "FleetConfigReadError",
@@ -19,14 +20,20 @@ export class FleetConfigReadError extends Schema.TaggedError<FleetConfigReadErro
 /**
  * The other machines this server may reach, and how it reaches them. In
  * production they come only from the owner's `studio-fleet.json` (private
- * Tailscale HTTPS origins with a pinned environment id); requests can only
- * name a configured machine. Tests supply their own targets and fetch here.
+ * Tailscale HTTPS origins or SpecWithCode Connect addresses, with a pinned
+ * environment id); requests can only name a configured machine. Tests supply
+ * their own targets and fetch here.
  */
 export class FleetTargets extends Context.Service<
   FleetTargets,
   {
     readonly load: Effect.Effect<FleetConfig | null, FleetConfigReadError>;
     readonly fetch: FleetFetch;
+    /**
+     * The same fetch with this machine's fleet proof key and one address book
+     * for the process. Absent in tests that supply only `fetch`; use `linkOf`.
+     */
+    readonly link?: FleetLink;
   }
 >()("specweave-studio/fleet/FleetTargets") {}
 
@@ -41,6 +48,11 @@ export const layer = Layer.effect(
         catch: (cause) => new FleetConfigReadError({ cause }),
       }),
       fetch,
+      link: makeFleetLink({ fetch, baseDir: config.baseDir }),
     });
   }),
 );
+
+/** The targets' link, or one made from their fetch. */
+export const linkOf = (targets: { readonly fetch: FleetFetch; readonly link?: FleetLink }) =>
+  targets.link ?? toFleetLink(targets.fetch);

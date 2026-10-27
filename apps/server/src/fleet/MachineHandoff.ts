@@ -67,6 +67,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as DirectEndpoints from "../environment/DirectEndpoints.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { readConnectOrigin } from "../cloud/config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
@@ -81,6 +83,7 @@ import {
   attempt,
   copyStatus,
   offerResult,
+  sourceAddresses,
   sentSecretsResult,
   sourceStatus,
   undoResult,
@@ -377,6 +380,7 @@ const make = Effect.gen(function* () {
   // Folder copy: the source serves the folder, the destination pulls it. Both
   // halves keep their private records under the handoff store.
   const directEndpoints = yield* Effect.serviceOption(DirectEndpoints.DirectEndpoints);
+  const secretStore = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const asCopyError = (cause: MachineHandoffError) =>
     new FolderCopyError({
@@ -449,15 +453,17 @@ const make = Effect.gen(function* () {
   );
   // Interrupted copies continue (or replay their Apply journal) once the service is up.
   yield* Effect.promise(() => copies.resume().catch(() => undefined)).pipe(Effect.forkScoped);
-  const privateUrl = Effect.gen(function* () {
-    if (Option.isNone(directEndpoints))
-      return yield* new FolderCopyError({ code: "no_private_url" });
-    const endpoints = yield* directEndpoints.value.resolve();
-    const tailnet = endpoints.find(
-      (endpoint) => endpoint.kind === "tailnet" && endpoint.httpBaseUrl.startsWith("https://"),
-    );
-    if (!tailnet) return yield* new FolderCopyError({ code: "no_private_url" });
-    return tailnet.httpBaseUrl;
+  // The tailnet address first, the SpecWithCode Connect address as the fallback.
+  const sourceAddressesNow = Effect.gen(function* () {
+    const endpoints = Option.isSome(directEndpoints) ? yield* directEndpoints.value.resolve() : [];
+    const connectOrigin = Option.isSome(secretStore)
+      ? yield* readConnectOrigin.pipe(
+          Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore.value),
+          Effect.provideService(ServerEnvironment.ServerEnvironment, environment),
+        )
+      : null;
+    const addresses = sourceAddresses({ endpoints, connectOrigin });
+    return addresses ?? (yield* new FolderCopyError({ code: "no_private_url" }));
   });
   const destinationStatus = (record: FolderDestinationRecord) =>
     attempt(() => copies.readPlan(record.operationId)).pipe(
@@ -507,7 +513,7 @@ const make = Effect.gen(function* () {
               : Effect.fail(asCopyError(cause)),
           ),
         );
-        const sourceUrl = yield* privateUrl;
+        const { sourceUrl, sourceConnectUrl } = yield* sourceAddressesNow;
         const sourceMachine = yield* ownMachineName(sourceEnvironmentId);
         const offered = yield* attempt(() =>
           sources.offer({
@@ -524,6 +530,7 @@ const make = Effect.gen(function* () {
           ...offered,
           sourceEnvironmentId,
           sourceUrl,
+          sourceConnectUrl,
           sourceMachine,
           title: current.workspaceSettings?.logicalProject?.title ?? current.title,
         });
@@ -589,6 +596,9 @@ const make = Effect.gen(function* () {
         copies.start({
           operationId: input.operationId,
           sourceUrl: input.sourceUrl,
+          ...(input.sourceConnectUrl !== undefined
+            ? { sourceConnectUrl: input.sourceConnectUrl }
+            : {}),
           token: input.token,
           sourceEnvironmentId: input.sourceEnvironmentId,
           sourceProjectId: input.sourceProjectId,

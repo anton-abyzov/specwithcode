@@ -20,7 +20,6 @@ import { Button } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -30,9 +29,10 @@ import { Input } from "../ui/input";
 
 /**
  * The in-app `specwithcode fleet invite`: this machine publishes itself on its
- * own Tailscale name and shows one line to paste on the main machine. The
- * line is a credential, so it lives only in this component's state and is
- * dropped as soon as the person leaves.
+ * own Tailscale name and/or names its SpecWithCode Connect address, and shows
+ * one line to paste on the main machine. The line is a credential, so it
+ * lives only in this component's state and is dropped as soon as the person
+ * leaves.
  */
 
 export type FleetInviteReason = FleetInviteFailure["reason"];
@@ -64,11 +64,33 @@ export function fleetInviteProblemTitle(reason: FleetInviteReason): string {
       return "Tailscale needs an administrator";
     case "tailscale_sign_in_failed":
       return "Could not start signing in";
+    case "connect_not_linked":
+      return "SpecWithCode Connect is not linked";
+    case "connect_unreachable":
+      return "SpecWithCode Connect is not answering";
     case "permission":
       return "Manage access required";
     case "unknown":
       return "Could not make the line";
   }
+}
+
+/** Where the main machine will reach this one, as the line says. */
+export function fleetInviteAddresses(
+  invitation: Pick<StudioFleetInviteResult, "url" | "connectUrl" | "sessionId">,
+): string {
+  const host = (value: string) => {
+    try {
+      return new URL(value).host;
+    } catch {
+      return value;
+    }
+  };
+  if (invitation.connectUrl)
+    return `Reached at ${host(invitation.url)} over Tailscale, or ${host(invitation.connectUrl)} over SpecWithCode Connect.`;
+  return invitation.sessionId
+    ? `Reached at ${host(invitation.url)} over Tailscale.`
+    : `Reached at ${host(invitation.url)} over SpecWithCode Connect.`;
 }
 
 /** "valid for 365 days, until Oct 18, 2027" in the viewer's own date format. */
@@ -96,7 +118,15 @@ export interface FleetInviteController {
   readonly reset: () => void;
 }
 
-export function useFleetInvite(environmentId: EnvironmentId | null): FleetInviteController {
+/**
+ * `connectAware`: the server reported a SpecWithCode Connect status, so it
+ * understands `via`. An older server rejects that field, and gets the
+ * original Tailscale-only request instead.
+ */
+export function useFleetInvite(
+  environmentId: EnvironmentId | null,
+  connectAware = false,
+): FleetInviteController {
   const [name, setName] = useState("");
   const [coordinatorEnvironmentId, setCoordinatorEnvironmentId] = useState("");
   const [pending, setPending] = useState<"create" | "revoke" | null>(null);
@@ -112,6 +142,8 @@ export function useFleetInvite(environmentId: EnvironmentId | null): FleetInvite
       const made = await inviteStudioFleetMachine(environmentId, {
         label: name,
         coordinatorEnvironmentId: EnvironmentId.make(coordinatorEnvironmentId.trim()),
+        // Tailscale, SpecWithCode Connect, or both: whatever works here.
+        ...(connectAware ? { via: "auto" as const } : {}),
       });
       setInvitation(made);
       return made;
@@ -131,7 +163,7 @@ export function useFleetInvite(environmentId: EnvironmentId | null): FleetInvite
     setPending("revoke");
     setProblem(null);
     try {
-      await revokeStudioFleetInvitation(invitation.sessionId);
+      await revokeStudioFleetInvitation(invitation);
       setInvitation(null);
       setRevoked(true);
     } catch {
@@ -197,7 +229,7 @@ export function FleetInvitePanel({
   readonly copied: boolean;
   readonly onCopy: (code: string) => void;
   readonly createLabel?: string;
-  /** Tailscale is not ready here yet, so making the line would fail. */
+  /** Neither Tailscale nor SpecWithCode Connect is ready here, so making the line would fail. */
   readonly blocked?: boolean;
 }) {
   const { name, setName, pending, invitation, revoked, problem } = controller;
@@ -230,7 +262,9 @@ export function FleetInvitePanel({
             Paste this line on your main machine under Settings &gt; Connections &gt; Add a machine.
             It works like a password, so only paste it there, and it is{" "}
             {fleetInviteValidity(invitation.expiresAt)}.
+            {invitation.redeemBy ? " Use it within an hour; it works once." : null}
           </p>
+          <p className="text-xs text-muted-foreground">{fleetInviteAddresses(invitation)}</p>
           <div>
             <Button
               size="xs"
@@ -358,19 +392,14 @@ export function tailscaleReadinessView(
           title: "Could not check Tailscale",
           description: "The app tries again on its own.",
         }
-      : {
-          ...none,
-          kind: "checking",
-          title: "Checking whether Tailscale is ready on this machine…",
-          description: "",
-        };
+      : { ...none, kind: "checking", title: "Checking Tailscale…", description: "" };
   switch (status.state) {
     case "not_installed":
       return {
         kind: "not_installed",
         title: "Tailscale is not installed",
         description:
-          "For a main machine to start work here, install Tailscale on this machine, open it and sign in. This updates on its own once it is installed.",
+          "Install Tailscale on this machine, open it and sign in. This updates on its own once it is installed.",
         action: "install",
         downloadUrl: tailscaleDownloadUrl(status.platform),
         brewCommand:
@@ -421,7 +450,7 @@ export interface TailscaleReadiness {
 /**
  * Whether a failed status read means the check itself failed. Right after a
  * page load the connection is still starting, which reads as missing access;
- * that stays on checking and the next look settles it.
+ * that stays "Checking Tailscale…" and the next look settles it.
  */
 export function countsAsTailscaleCheckFailure(failure: unknown): boolean {
   return !(failure instanceof FleetInviteFailure && failure.reason === "permission");
@@ -500,7 +529,8 @@ export function useTailscaleReadiness(
     status,
     failed,
     ready,
-    blocksInvite: !ready && !(failed && status === null),
+    // A line can carry this machine's SpecWithCode Connect address instead.
+    blocksInvite: !ready && !(failed && status === null) && !status?.connect?.linked,
     signingIn,
     loginUrl,
     problem,
@@ -524,6 +554,12 @@ export function TailscaleReadinessNotice({
 }) {
   const view = tailscaleReadinessView(readiness.status, readiness.failed);
   if (view.kind === "ready") return null;
+  if (view.kind !== "checking" && readiness.status?.connect?.linked)
+    return (
+      <p role="status" className="text-xs text-muted-foreground">
+        Tailscale is off here, so the line uses SpecWithCode Connect.
+      </p>
+    );
   if (view.kind === "checking")
     return (
       <p role="status" className="text-xs text-muted-foreground">
@@ -618,7 +654,7 @@ export function FleetInviteDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly readiness: TailscaleReadiness;
 }) {
-  const controller = useFleetInvite(environmentId);
+  const controller = useFleetInvite(environmentId, readiness.status?.connect !== undefined);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "invitation line" });
   return (
     <Dialog
@@ -632,11 +668,8 @@ export function FleetInviteDialog({
         <DialogHeader>
           <DialogTitle>Invite this machine to another one</DialogTitle>
           <DialogDescription>
-            Your main machine can then start work here. For now, letting a main machine start work
-            on this one also needs Tailscale on both, signed in to the same tailnet. This publishes
-            the app here on this machine&apos;s private Tailscale name, never on the public
-            internet. Your app and phone can already reach this machine through SpecWithCode Connect
-            without Tailscale.
+            Your main machine can then start work here. It reaches this machine over Tailscale (its
+            private name, never the public internet) or SpecWithCode Connect, whichever works here.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -656,18 +689,6 @@ export function FleetInviteDialog({
             blocked={readiness.blocksInvite}
           />
         </DialogPanel>
-        <DialogFooter variant="bare">
-          <Button
-            variant="outline"
-            disabled={controller.pending !== null}
-            onClick={() => {
-              controller.reset();
-              onOpenChange(false);
-            }}
-          >
-            {controller.invitation ? "Done" : "Cancel"}
-          </Button>
-        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
@@ -676,9 +697,7 @@ export function FleetInviteDialog({
 /**
  * Beside Invite this machine: Tailscale's state here, with Install or Sign in
  * when it is not ready, and the dialog the button opens. One check serves
- * both; it looks again sooner while the dialog is open. Only a main machine
- * starting work here needs Tailscale; SpecWithCode Connect reaches this
- * machine without it.
+ * both; it looks again sooner while the dialog is open.
  */
 export function FleetInviteArea({
   environmentId,
