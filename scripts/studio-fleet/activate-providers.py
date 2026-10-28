@@ -17,6 +17,7 @@ import re
 import shlex
 import subprocess
 import uuid
+from release_check import FINDER_FILES
 from update import atomic, rows_snapshot
 import studio_paths
 
@@ -80,6 +81,8 @@ def verify_provider_release(manifest, home):
     actual, actual_directories = set(), set()
     for path in release.rglob('*'):
         relative = str(path.relative_to(release))
+        if path.name in FINDER_FILES and path.is_file() and not path.is_symlink():
+            continue  # Finder's view settings; a link of the name is still an extra file.
         if path.is_symlink() or path.is_file():
             actual.add(relative)
         elif path.is_dir():

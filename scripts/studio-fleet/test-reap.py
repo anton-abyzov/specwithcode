@@ -501,6 +501,64 @@ class UpdateReapMode(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, 'symlink' if 'link' in name else update.HOLD_REFUSAL):
                     self.held()
 
+    def carried(self):
+        """M4, 2026-10-28: the helper restarted the held service (pid 4242) at 20:02 for REQUEST;
+        the new service (5151) holds itself again for it until the old hold's end."""
+        (self.own / 'updates/database-restart.json').write_text(json.dumps({
+            'schemaVersion': 1, 'servicePid': 4242, 'restartedAt': '2026-10-12T20:02:00+00:00',
+            'request': REQUEST, 'installRunId': 'run-1', 'until': '2026-10-12T20:15:00+00:00'}))
+        self.service['runtime'] = {'pid': 5151, 'startedAt': '2026-10-12T20:02:40.000Z'}
+        self.hold(pid=5151, startedAt='2026-10-12T20:02:20.000Z', expiresAt='2026-10-12T20:15:00.000Z',
+                  request=REQUEST)
+
+    def test_a_hold_carried_across_a_database_restart_may_be_reaped(self):
+        self.carried()
+        self.assertEqual(update.assert_held(self.service, REQUEST, self.now),
+                         datetime.datetime(2026, 10, 12, 20, 2, 20, tzinfo=datetime.timezone.utc))
+        # The held gate settle accepts it too.
+        (self.own / 'userdata').mkdir()
+        (self.own / 'userdata/server-runtime.json').write_text(json.dumps(self.service['runtime']))
+        now = self.now
+
+        class Frozen(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now
+        clock = mock.Mock(datetime=Frozen, timezone=datetime.timezone)
+        with mock.patch.object(sys.modules['update_service'], 'datetime', clock):
+            self.assertEqual(update.gate_settle(self.own, self.home, 5151, 30), ('held', sys.modules['update_service'].HELD_GATE_SETTLE_SECONDS))
+
+    def test_a_carried_hold_that_does_not_match_the_restart_and_request_is_refused(self):
+        def edit(name, **values):
+            path = self.own / 'updates' / name
+            path.write_text(json.dumps(dict(json.loads(path.read_text()), **values)))
+        cases = {
+            'hold for another request': lambda: edit('hold.json', request='2026-10-12T20:00:30.000Z'),
+            'restart for another request': lambda: edit('database-restart.json', request='2026-10-12T20:00:30.000Z'),
+            'asked again since': lambda: self.settings(installMode='force', installRequestedAt='2026-10-12T20:03:00.000Z'),
+            'cancelled': lambda: self.settings(installMode='force', installRequestedAt=REQUEST,
+                                               installCancelledAt='2026-10-12T20:03:00Z'),
+            'not forced': lambda: self.settings(installMode='normal', installRequestedAt=REQUEST),
+            'expired': lambda: edit('hold.json', expiresAt='2026-10-12T20:04:00.000Z'),
+            'ends after the old hold': lambda: edit('hold.json', expiresAt='2026-10-12T20:20:00.000Z'),
+            'no restart marker': lambda: (self.own / 'updates/database-restart.json').unlink(),
+            'restart without a request': lambda: (self.own / 'updates/database-restart.json').write_text(json.dumps(
+                {'schemaVersion': 1, 'servicePid': 4242, 'restartedAt': '2026-10-12T20:02:00+00:00'})),
+            'restart of this very process': lambda: edit('database-restart.json', servicePid=5151),
+            'request after the restart': lambda: edit('database-restart.json', restartedAt='2026-10-12T20:00:30+00:00'),
+            'hold from before the restart': lambda: edit('hold.json', startedAt='2026-10-12T20:01:50.000Z'),
+            'process from before the restart': lambda: self.service['runtime'].__setitem__(
+                'startedAt', '2026-10-12T20:01:59.000Z'),
+            'another process': lambda: edit('hold.json', pid=6161),
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                self.setUp()
+                self.carried()
+                change()
+                with self.assertRaisesRegex(AssertionError, update.HOLD_REFUSAL):
+                    self.held()
+
     def test_reap_checks_the_service_and_its_hold_then_stops_its_descendants(self):
         calls = []
 

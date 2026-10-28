@@ -68,6 +68,33 @@ function isAbort(error: unknown): boolean {
   );
 }
 
+/** Rejects with an AbortError as soon as the signal aborts, even if the work never settles. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** The same transcription failure this many times in a row means it will not recover. */
+export const VOICE_CALL_REPEATED_FAILURE_LIMIT = 2;
+
+/** Busy, slow or too-long recordings clear on their own; they never end a call. */
+function isPassingFailure(message: string): boolean {
+  return /try again|too long|getting ready/i.test(message);
+}
+
 function describe(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
 }
@@ -85,6 +112,8 @@ export class VoiceCallController {
   private playbackAbort: AbortController | null = null;
   /** The newest utterance owns the call's phase; an older turn that outlives it stays quiet. */
   private turn = 0;
+  /** The last transcription failure and how many times in a row it happened. */
+  private transcribeFailure: { message: string; count: number } | null = null;
 
   constructor(dependencies: VoiceCallDependencies) {
     this.dependencies = dependencies;
@@ -138,6 +167,7 @@ export class VoiceCallController {
   }
 
   private teardown(): void {
+    this.transcribeFailure = null;
     this.callAbort?.abort();
     this.callAbort = null;
     this.playbackAbort?.abort();
@@ -189,9 +219,21 @@ export class VoiceCallController {
       heard = (await this.dependencies.transcribe(wav, signal)).trim();
     } catch (error) {
       if (superseded() || isAbort(error)) return;
-      this.resumeListening(describe(error, "Could not understand that. Try again."));
+      const message = describe(error, "Could not understand that. Try again.");
+      const count =
+        this.transcribeFailure?.message === message ? this.transcribeFailure.count + 1 : 1;
+      this.transcribeFailure = { message, count };
+      if (count >= VOICE_CALL_REPEATED_FAILURE_LIMIT && !isPassingFailure(message)) {
+        // A setting or a missing speech model fails every utterance the same
+        // way; end the call with the reason instead of listening forever.
+        this.teardown();
+        this.setState({ phase: "error", error: message, notice: null });
+        return;
+      }
+      this.resumeListening(message);
       return;
     }
+    this.transcribeFailure = null;
     if (superseded()) return;
     if (heard.length === 0) {
       this.resumeListening(null);
@@ -222,7 +264,11 @@ export class VoiceCallController {
     this.detector?.reset();
     this.setState({ phase: "speaking", spoken });
     try {
-      const audio = await this.dependencies.synthesize(spoken, playbackAbort.signal);
+      // Stop and barge-in cut a reply off while its audio is still being made, too.
+      const audio = await untilAborted(
+        this.dependencies.synthesize(spoken, playbackAbort.signal),
+        playbackAbort.signal,
+      );
       if (!playbackAbort.signal.aborted && !superseded()) {
         await this.dependencies.play(audio, playbackAbort.signal);
       }

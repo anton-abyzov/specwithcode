@@ -12,6 +12,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
+import { ConnectRouteReconciler } from "./ConnectRouteReconciler";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 export function deactivateManagedRelayAuthentication(): void {
@@ -104,5 +105,12 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
   useEffect(() => () => deactivateManagedRelayAuthentication(), []);
 
-  return children;
+  return (
+    <>
+      {children}
+      {isLoaded && isSignedIn && userId ? (
+        <ConnectRouteReconciler key={userId} accountId={userId} />
+      ) : null}
+    </>
+  );
 }

@@ -13,6 +13,7 @@ import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialo
 import { Button } from "../ui/button";
 import { Tip } from "./shell/Tip";
 import { playCallAudio } from "../../studio/voiceCallAudio";
+import { canHostVoiceCall } from "../../studio/voiceCallSupport";
 
 let legacyImport: Promise<void> | null = null;
 
@@ -120,7 +121,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
       setApiKey("");
     };
   }, [open, bridge]);
-  if (!bridge?.synthesizeVoice) return null;
+  if (!bridge?.synthesizeVoice || !canHostVoiceCall(bridge)) return null;
   const save = async () => {
     if (environmentId === null) return;
     const key = apiKey.trim();

@@ -1,4 +1,7 @@
-import { managedRelaySessionAtom, setManagedRelaySession } from "@specweave-studio/client-runtime/relay";
+import {
+  managedRelaySessionAtom,
+  setManagedRelaySession,
+} from "@specweave-studio/client-runtime/relay";
 import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -16,6 +19,10 @@ vi.mock("../lib/runtime", () => ({
   runtime: {
     runPromiseExit: vi.fn(),
   },
+}));
+
+vi.mock("./ConnectRouteReconciler", () => ({
+  ConnectRouteReconciler: () => null,
 }));
 
 vi.mock("../connection/catalog", () => ({

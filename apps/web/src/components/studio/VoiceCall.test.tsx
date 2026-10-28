@@ -88,7 +88,23 @@ it("a fresh user can use free macOS speech with no ElevenLabs key, after consent
   expect(call.state.phase).toBe("listening");
 });
 
-it("disables the call on unsupported desktop platforms with a reason", async () => {
+it.each(["win32", "linux"])("shows no call controls in the %s app", async (platform) => {
+  bridge.getClientPlatform = () => platform;
+  await mount();
+  expect(call.available).toBe(false);
+  expect(container.querySelector('[aria-label="Start voice call"]')).toBeNull();
+  expect(container.textContent).not.toContain("Voice settings");
+  expect(bridge.getVoiceStatus).not.toHaveBeenCalled();
+});
+
+it("shows the call in the macOS app", async () => {
+  bridge.getClientPlatform = () => "darwin";
+  await mount();
+  expect(call.available).toBe(true);
+  expect(container.querySelector('[aria-label="Start voice call"]')).not.toBeNull();
+});
+
+it("disables the call with a reason when an older desktop build reports no platform", async () => {
   vi.mocked(bridge.getVoiceStatus!).mockResolvedValue({
     ...ready,
     supported: false,

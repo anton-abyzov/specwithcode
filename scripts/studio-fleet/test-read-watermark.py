@@ -3,6 +3,7 @@
 (one long-lived writer connection), and read only through the watermark's read-only connection.
 Any commit, replaced file, checkpoint, VACUUM or reconnect must answer "changed"; a pure read
 must not, or the watermark would never let a re-read go."""
+import importlib.util
 import os
 import pathlib
 import random
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import live_database
 import read_delta
@@ -333,6 +335,63 @@ class ServiceLockTests(unittest.TestCase):
         self.assertEqual(mark['generation'], first_mark['generation'] + 1)
         self.assertTrue(watermark.unchanged(mark))
         self.stop(second)
+
+
+class NoRepeatedFullReadAfterADeltaMiss(unittest.TestCase):
+    """A held install whose prestate re-read missed (the held service appended an event while the
+    release staged) reads the whole database once more, for the prestate check. A heartbeat after
+    it then re-reads only what committed since that read before the stop, never the whole database
+    a second time (1.0.104: 195 s, then 109 s more), and a protected change after it still refuses."""
+
+    def live(self):
+        if not has_dbstat():
+            self.skipTest('No dbstat in this SQLite (read_delta needs it)')
+        spec = importlib.util.spec_from_file_location('read_watermark_delta_tests', pathlib.Path(__file__).with_name('test-update-read-delta.py'))
+        loaded = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(loaded)
+        case = loaded.ApplyWithALiveService('run')
+        self.update = loaded.update  # The update module the harness patches and runs.
+        self.addCleanup(case.doCleanups)
+        return case
+
+    def held(self, case, commit):
+        """case.held with `commit` made as the install gate settles, after the prestate read."""
+        real = self.update.gate_settle
+        def settle(*args):
+            commit()
+            return real(*args)
+        with patch.object(self.update, 'gate_settle', side_effect=settle):
+            return case.held()
+
+    def test_a_heartbeat_after_the_prestate_full_read_is_read_against_it(self):
+        case = self.live()
+        reads, result, marked, events = self.held(case, lambda: case.writer.heartbeat())
+        self.assertEqual(reads, [False, False, True])  # The before-read, the prestate check, after the restart.
+        positions = [value for kind, value in events if kind == 'position']
+        rereads = [value for kind, value in events if kind == 'reread']
+        self.assertEqual(len(positions), 3)
+        self.assertIs(rereads[-1], positions[1])  # Against the prestate read, not the before-read.
+        self.assertEqual([miss['against'] for miss in result['readDeltaMisses']], ['expected'])
+        self.assertEqual(result['readDeltaMisses'][0]['reason'], 'pages-outside-auth')
+        self.assertIn('deltaRead', result['timings'])
+        self.assertTrue(marked['confirmed'])  # Nothing committed after the gate's re-read.
+
+    def test_a_protected_change_after_the_prestate_full_read_still_refuses(self):
+        case = self.live()
+        def change():
+            case.writer.commit(("UPDATE projection_projects SET title='changed before the stop'",))
+            case.writer.heartbeat()
+        with self.assertRaisesRegex(AssertionError, 'Native work changed before restart'):
+            self.held(case, change)
+        self.assertEqual(case.fixture.restart_calls, [])
+
+
+def has_dbstat():
+    try:
+        sqlite3.connect(':memory:').execute('SELECT count(*) FROM dbstat').fetchall()
+        return True
+    except sqlite3.Error:
+        return False
 
 
 if __name__ == '__main__':

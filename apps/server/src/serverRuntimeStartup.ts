@@ -398,6 +398,36 @@ export function resumeAfterHoldReleases<E, R>(input: {
   );
 }
 
+/**
+ * Whether startup takes the update gate path, and what it waits for there.
+ * Held (an install gate, or a hold carried across the helper's database
+ * restart, see `carriedHoldFor`): no turn resumes and no agent starts. M4,
+ * 2026-10-28: a service the helper restarted while held saw neither, resumed
+ * the interrupted turn, started three Codex clients and the install never
+ * applied. An open install request alone never gates: a normal-mode request,
+ * or a forced one whose hold was not carried, starts as before. Once gated, the
+ * wait ends when the service is neither held nor gated and no install request
+ * is open.
+ */
+export function startupUpdateGate(input: {
+  readonly isHeld: Effect.Effect<boolean>;
+  readonly awaitReleased: Effect.Effect<void>;
+  readonly installRequestOpen: Effect.Effect<boolean>;
+  readonly pollMs?: number;
+}): Effect.Effect<{ readonly held: boolean; readonly awaitReleased: Effect.Effect<void> }> {
+  const pollMs = input.pollMs ?? HOLD_RELEASE_POLL_MS;
+  const awaitReleased = Effect.gen(function* () {
+    while (true) {
+      yield* input.awaitReleased;
+      if (!(yield* input.installRequestOpen)) return;
+      yield* Effect.sleep(Duration.millis(pollMs));
+    }
+  });
+  return Effect.gen(function* () {
+    return { held: yield* input.isHeld, awaitReleased } as const;
+  });
+}
+
 export function runOrderedV2StartupPhases<
   Import,
   Recovery,
@@ -564,9 +594,16 @@ const make = (options?: StartupOptions) =>
           },
         });
       }
-      const heldForUpdate = yield* updateHold.isHeld;
+      const startupGate = yield* startupUpdateGate({
+        isHeld: updateHold.isHeld,
+        awaitReleased: updateHold.awaitReleased,
+        installRequestOpen: Option.isSome(holdService)
+          ? holdService.value.installRequestOpen
+          : Effect.succeed(false),
+      });
+      const heldForUpdate = startupGate.held;
       if (heldForUpdate) {
-        yield* Effect.logInfo("Starting behind an update install gate; deferring update resume");
+        yield* Effect.logInfo("Starting behind an update hold or gate; deferring update resume");
       }
       const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
         importLegacyShells: runStartupPhase(
@@ -591,7 +628,7 @@ const make = (options?: StartupOptions) =>
                   "orchestration-v2.recovery.resume-after-update",
                   providerRuntimeRecovery.resumeAfterUpdate,
                 ),
-                awaitReleased: updateHold.awaitReleased,
+                awaitReleased: startupGate.awaitReleased,
                 onWorkerStartFailure: (cause) => {
                   const error = new ServerRuntimeStartupError({
                     mode: serverConfig.mode,

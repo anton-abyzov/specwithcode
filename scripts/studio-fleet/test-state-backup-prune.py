@@ -127,6 +127,13 @@ class StateBackupPrune(updater_base.ApplyRecovery):
   (self.output.parent/'update-0.0.9-20261001T000000Z.json').write_text(json.dumps({'rollback':'held-new-release-state-restore-failed','stateBackup':str(old[0]/'statev2.sqlite')}))
   self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[1].name])
   self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[0].name,old[2].name,new.name]))
+ def test_finder_view_files_do_not_keep_a_copy_but_other_extras_and_links_do(self):
+  old=self.old_copies(4);new=self.verified_receipt(old)
+  (old[0]/'.DS_Store').write_bytes(b'Bud1');(old[1]/'notes.txt').write_text('added')
+  os.symlink('statev2.sqlite',old[2]/'.DS_Store')  # A link is never Finder's.
+  for folder in old[:3]:os.utime(folder,(time.time()-DAY,)*2)
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[0].name])
+  self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[1].name,old[2].name,old[3].name,new.name]))
 class Spawn(unittest.TestCase):
  def setUp(self):
   # spawn never waits for its child to exit (it runs on after the helper): no warning for that here.

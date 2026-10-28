@@ -41,6 +41,13 @@ commits into the database file, then `launchctl kickstart` without -k. A service
 exit in time is left running and is tried again after RESTART_EVERY. On M4, 2026-10-20, the
 service ran on a deleted log from 2:52 PM and other readers later saw "database disk image is
 malformed"; `kickstart -k` there could have dropped commits only that log held.
+
+A held service keeps its hold across the restart (restart_marker). On M4, 2026-10-28, the
+marker held only the pid and time: the restarted service started unheld, resumed the interrupted
+turn and started three Codex clients, and every reap refused because the new process held
+nothing. The marker now carries the forced request, its installRunId and the old hold's end; the
+restarted service holds itself again for that request until then (ServiceUpdateHold.ts), and
+update_service.assert_held accepts that carried hold.
 """
 import datetime
 import json
@@ -52,7 +59,7 @@ import uuid
 import idle_agents
 
 CODE = 'restart-needed'
-MARKER = 'database-restart.json'  # The last restart: service pid and time, for RESTART_EVERY.
+MARKER = 'database-restart.json'  # The last restart: service pid and time, for RESTART_EVERY; a held one's request.
 QUIET_MARKER = 'database-restart-quiet.json'  # idle_agents.observe's record for the quiet window.
 RESTART_EVERY = datetime.timedelta(minutes=30)
 # How long a service with a deleted log gets to close its database after SIGTERM. Closing writes
@@ -91,6 +98,21 @@ def restart_wait(marker, service_pid, now):
     if restarted is None or restarted > now + idle_agents.FUTURE_SKEW:
         return 0
     return max(0, int((restarted + RESTART_EVERY - now).total_seconds()))
+
+
+def restart_marker(service_pid, now, request, config, hold):
+    """The MARKER for a restart of `service_pid` at `now`. For a service held for the forced
+    `request`, it also carries that request, config.json's installRunId and `until`, the hold's
+    expiresAt (never later): the restarted service holds itself again for that request until
+    then (ServiceUpdateHold.ts, carried hold), and update_service.assert_held accepts that hold.
+    A hold whose end cannot be read carries nothing."""
+    marker = {'schemaVersion': 1, 'servicePid': service_pid, 'restartedAt': now.isoformat()}
+    until = idle_agents.utc((hold or {}).get('expiresAt'))
+    if request and until is not None and now < until:
+        run_id = config.get('installRunId')
+        marker.update(request=request, installRunId=run_id if isinstance(run_id, str) else None,
+                      until=until.isoformat())
+    return marker
 
 
 def other_openers(paths, own_pids, timeout, attempts=2):
@@ -224,7 +246,8 @@ def restart_refusal(u, identity, error, report=None, now=None, serving=None):
     receipts.mkdir(mode=0o700, exist_ok=True)
     try:
         # Written first, so a restart that fails part way still counts against RESTART_EVERY.
-        u._write_private(marker_path, (json.dumps({'schemaVersion': 1, 'servicePid': pid, 'restartedAt': now.isoformat()}) + '\n').encode())
+        u._write_private(marker_path, (json.dumps(restart_marker(pid, now, held and request, config,
+                                                                 idle_agents.read_json(updates / 'hold.json'))) + '\n').encode())
         if os.path.lexists(str(quiet_path)):
             quiet_path.unlink()
         if reason == 'detached':

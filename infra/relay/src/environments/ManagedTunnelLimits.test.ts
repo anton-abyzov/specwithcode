@@ -59,9 +59,9 @@ describe("ManagedTunnelLimits", () => {
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 
-  it.effect("rejects provisioning at the default limit of 3", () => {
+  it.effect("rejects provisioning at the default limit of 5", () => {
     const fakeDb = makeFakeDb({
-      countRows: Effect.succeed([{ activeTunnels: 3 }]),
+      countRows: Effect.succeed([{ activeTunnels: 5 }]),
     });
 
     return Effect.gen(function* () {
@@ -74,8 +74,8 @@ describe("ManagedTunnelLimits", () => {
         _tag: "ManagedTunnelLimitExceeded",
         userId: "user-1",
         environmentId: "environment-1",
-        maxTunnels: 3,
-        activeTunnels: 3,
+        maxTunnels: 5,
+        activeTunnels: 5,
       });
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });

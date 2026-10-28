@@ -166,30 +166,38 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_COMPUTER_USE_CHANNEL, undefined),
       }
     : {}),
-  listLocalVoices: () => ipcRenderer.invoke(IpcChannels.VOICE_LIST_LOCAL_CHANNEL),
-  readLegacyVoicePreferences: () => ipcRenderer.invoke(IpcChannels.VOICE_READ_LEGACY_CHANNEL),
-  forgetLegacyVoicePreferences: () => ipcRenderer.invoke(IpcChannels.VOICE_FORGET_LEGACY_CHANNEL),
-  previewLocalVoice: async (input) => {
-    const result = await ipcRenderer.invoke(IpcChannels.VOICE_PREVIEW_LOCAL_CHANNEL, input);
-    if (!result.ok) throw new Error(result.error);
-    return result.audio;
-  },
-  getVoiceStatus: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_STATUS_CHANNEL),
-  requestVoiceAccess: () => ipcRenderer.invoke(IpcChannels.VOICE_REQUEST_ACCESS_CHANNEL),
-  setVoiceCallActive: (state) =>
-    ipcRenderer.invoke(IpcChannels.VOICE_SET_CALL_ACTIVE_CHANNEL, state),
-  transcribeVoice: async (input) => {
-    const result = await ipcRenderer.invoke(IpcChannels.VOICE_TRANSCRIBE_CHANNEL, input);
-    if (result?.ok !== true) throw new Error(result?.error ?? "Could not transcribe.");
-    return result.text;
-  },
-  synthesizeVoice: async (input) => {
-    const result = await ipcRenderer.invoke(IpcChannels.VOICE_SYNTHESIZE_CHANNEL, input);
-    if (result?.ok !== true) throw new Error(result?.error ?? "Could not read the reply aloud.");
-    return result.audio;
-  },
-  openMicrophoneSettings: () =>
-    ipcRenderer.invoke(IpcChannels.VOICE_OPEN_MICROPHONE_SETTINGS_CHANNEL),
+  // Voice calls run on a macOS speech helper; other platforms get no voice bridge,
+  // so the app shows no call controls there.
+  ...(clientPlatform === "darwin"
+    ? {
+        listLocalVoices: () => ipcRenderer.invoke(IpcChannels.VOICE_LIST_LOCAL_CHANNEL),
+        readLegacyVoicePreferences: () => ipcRenderer.invoke(IpcChannels.VOICE_READ_LEGACY_CHANNEL),
+        forgetLegacyVoicePreferences: () =>
+          ipcRenderer.invoke(IpcChannels.VOICE_FORGET_LEGACY_CHANNEL),
+        previewLocalVoice: async (input) => {
+          const result = await ipcRenderer.invoke(IpcChannels.VOICE_PREVIEW_LOCAL_CHANNEL, input);
+          if (!result.ok) throw new Error(result.error);
+          return result.audio;
+        },
+        getVoiceStatus: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_STATUS_CHANNEL),
+        requestVoiceAccess: () => ipcRenderer.invoke(IpcChannels.VOICE_REQUEST_ACCESS_CHANNEL),
+        setVoiceCallActive: (state) =>
+          ipcRenderer.invoke(IpcChannels.VOICE_SET_CALL_ACTIVE_CHANNEL, state),
+        transcribeVoice: async (input) => {
+          const result = await ipcRenderer.invoke(IpcChannels.VOICE_TRANSCRIBE_CHANNEL, input);
+          if (result?.ok !== true) throw new Error(result?.error ?? "Could not transcribe.");
+          return result.text;
+        },
+        synthesizeVoice: async (input) => {
+          const result = await ipcRenderer.invoke(IpcChannels.VOICE_SYNTHESIZE_CHANNEL, input);
+          if (result?.ok !== true)
+            throw new Error(result?.error ?? "Could not read the reply aloud.");
+          return result.audio;
+        },
+        openMicrophoneSettings: () =>
+          ipcRenderer.invoke(IpcChannels.VOICE_OPEN_MICROPHONE_SETTINGS_CHANNEL),
+      }
+    : {}),
   getNotificationOwner: () =>
     ipcRenderer.sendSync(IpcChannels.GET_NOTIFICATION_OWNER_CHANNEL) !== false,
   onNotificationOwnerChange: (listener) => {

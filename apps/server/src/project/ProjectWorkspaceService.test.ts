@@ -505,6 +505,31 @@ it("keeps the coordinator role to what tools and code do not already say", () =>
   // About 1,100 tokens; it was about 1,850 before the role moved into tools and code.
   assert.isAtMost(coordinator.length, 4_500);
 });
+it("asks a coordinator for an increment on every launch only in a SpecWeave project", () => {
+  const settings = {
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    coordinatorThreadId: ThreadId.make("c"),
+  };
+  const text = (specweave: boolean | undefined, threadId = "c") =>
+    Workspace.projectContextText({
+      projectId: "p",
+      threadId,
+      settings,
+      files: [],
+      index: "",
+      specweave,
+    }).split("\nGoal:\n")[0]!;
+  const line = "This project plans its work in SpecWeave: pass increment on every launch";
+  assert.include(text(true), line);
+  assert.include(text(true), '"none" for questions, reviews and small fixes');
+  assert.include(text(true), "[NNNN](<specPath>)");
+  assert.notInclude(text(false), line);
+  assert.notInclude(text(undefined), line);
+  // Workers get no coordinator line.
+  assert.notInclude(text(true, "w"), line);
+  // One line on top of the plain role's budget.
+  assert.isAtMost(text(true).length - text(false).length, 300);
+});
 it("keeps the worker and personal coordinator roles within their budgets", () => {
   const settings = {
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,

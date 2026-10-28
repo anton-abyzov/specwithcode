@@ -26,6 +26,15 @@
  * leftover processes only beneath the process this file names, and only for a
  * request made during this hold. The file is removed when the hold ends.
  *
+ * One hold outlives its process: when the helper restarts a service held for a
+ * forced request because it lost its database locks (`database_restart.py`),
+ * it records that request, its run and the hold's end in
+ * `updates/database-restart.json`. The restarted service holds itself again
+ * for that request at startup (`carriedHoldFor`) while the request is still
+ * open and the old hold's time has not run out, and never past it. Its
+ * `hold.json` then names the request, which `update_service.assert_held`
+ * accepts for that request only.
+ *
  * @module ServiceUpdateHold
  */
 import {
@@ -134,7 +143,81 @@ export const holdMarkerContent = (hold: ServiceUpdateHoldState, pid: number) => 
   holdId: hold.holdId,
   startedAt: DateTime.formatIso(DateTime.makeUnsafe(hold.startedAtMs)),
   expiresAt: DateTime.formatIso(DateTime.makeUnsafe(hold.expiresAtMs)),
+  ...(hold.request === undefined ? {} : { request: hold.request }),
 });
+
+/**
+ * `updates/database-restart.json`, written by the update helper before it
+ * restarts the service (`database_restart.py` restart_marker): the restarted
+ * pid and when, and for a held service the forced request (`request:`), its
+ * `installRunId:` and the old hold's end (`until:`).
+ */
+export const DATABASE_RESTART_MARKER_FILE = "database-restart.json";
+
+const decodeRestartMarker = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      servicePid: Schema.optional(Schema.Unknown),
+      restartedAt: Schema.optional(Schema.Unknown),
+      request: Schema.optional(Schema.Unknown),
+      installRunId: Schema.optional(Schema.Unknown),
+      until: Schema.optional(Schema.Unknown),
+    }),
+  ),
+);
+
+/** What startup reads to decide on a carried hold, each file as decoded JSON. */
+export interface CarriedHoldInput {
+  readonly marker: {
+    readonly servicePid?: unknown;
+    readonly restartedAt?: unknown;
+    readonly request?: unknown;
+    readonly installRunId?: unknown;
+    readonly until?: unknown;
+  };
+  readonly config: {
+    readonly installMode?: unknown;
+    readonly installRequestedAt?: unknown;
+    readonly installCancelledAt?: unknown;
+    readonly installHoldUntil?: unknown;
+    readonly installRunId?: unknown;
+  };
+  /** `state.json` handledInstallRequestAt. */
+  readonly handledInstallRequestAt: unknown;
+  readonly pid: number;
+  readonly nowMs: number;
+}
+
+/**
+ * The hold a restarted service takes at startup for the forced request the
+ * helper restarted it under, or null. Only when the marker names another pid,
+ * a restart at or before now, a request that `config.json` still asks to
+ * force-install with the same run and has not cancelled, that the agent has
+ * not finished with and whose `installHoldUntil` is ahead, and an `until` still
+ * ahead. The hold ends at `until`: the old hold's end, never later.
+ */
+export function carriedHoldFor(
+  input: CarriedHoldInput,
+): { readonly request: string; readonly requestedAtMs: number; readonly untilMs: number } | null {
+  const { marker, config, nowMs } = input;
+  const request = marker.request;
+  if (typeof request !== "string" || request !== config.installRequestedAt) return null;
+  if (config.installMode !== "force" || input.handledInstallRequestAt === request) return null;
+  if (typeof marker.servicePid !== "number" || marker.servicePid === input.pid) return null;
+  if ((marker.installRunId ?? null) !== (config.installRunId ?? null)) return null;
+  const requestedAtMs = epochMillis(request);
+  const restartedAtMs = epochMillis(marker.restartedAt);
+  const untilMs = epochMillis(marker.until);
+  if (requestedAtMs === null || restartedAtMs === null || untilMs === null) return null;
+  if (requestedAtMs > restartedAtMs || restartedAtMs > nowMs || nowMs >= untilMs) return null;
+  if (config.installCancelledAt !== undefined && config.installCancelledAt !== null) {
+    const cancelledAtMs = epochMillis(config.installCancelledAt);
+    if (cancelledAtMs === null || cancelledAtMs > requestedAtMs) return null;
+  }
+  const holdUntilMs = epochMillis(config.installHoldUntil);
+  if (holdUntilMs !== null && holdUntilMs <= nowMs) return null;
+  return { request, requestedAtMs, untilMs };
+}
 
 export interface ServiceUpdateHoldState {
   readonly holdId: string;
@@ -142,6 +225,8 @@ export interface ServiceUpdateHoldState {
   readonly expiresAtMs: number;
   /** Who asked for the hold (`acquire`'s reason): "install" or "app-restart". */
   readonly reason?: string;
+  /** A hold carried across a database restart: the forced request it holds for. */
+  readonly request?: string;
 }
 
 export interface ServiceUpdateHoldShape {
@@ -375,6 +460,8 @@ const decodeAgentConfig = Schema.decodeUnknownOption(
       installRequestedAt: Schema.optional(Schema.Unknown),
       installMode: Schema.optional(Schema.Unknown),
       installHoldUntil: Schema.optional(Schema.Unknown),
+      installCancelledAt: Schema.optional(Schema.Unknown),
+      installRunId: Schema.optional(Schema.Unknown),
     }),
   ),
 );
@@ -386,6 +473,8 @@ export interface ServiceUpdateHoldOptions {
   readonly agentConfigPath?: string;
   /** Where the hold is recorded for the update helper; `hold.json` beside the state by default. */
   readonly holdMarkerPath?: string;
+  /** The helper's restart marker; `database-restart.json` beside the state by default. */
+  readonly restartMarkerPath?: string;
   readonly pollMs?: number;
   /** Overrides `HOLD_MAX_MS`, for tests. */
   readonly maxMs?: number;
@@ -454,6 +543,8 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
           readonly reason: string;
           /** With no install request by then (and an idle agent) the hold ends. */
           readonly requestDueAtMs: number;
+          /** A carried hold: when its request was made; it never moves past its end. */
+          readonly carriedFromMs?: number;
         }
       >
     >(Option.none());
@@ -500,6 +591,57 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       Effect.flatMap(Ref.get(state), (held) => (Option.isSome(held) ? removeMarker : Effect.void)),
     );
 
+    // Read before anything can start: a service the helper restarted while it was held for a
+    // forced request holds itself again for that request, up to the old hold's end.
+    const readDecoded = <A>(file: string, decode: (input: string) => Option.Option<A>) =>
+      fileSystem.readFileString(file).pipe(
+        Effect.map(decode),
+        Effect.orElseSucceed(() => Option.none<A>()),
+      );
+    const restartMarker = yield* readDecoded(
+      options.restartMarkerPath ??
+        path.join(path.dirname(options.agentStatePath), DATABASE_RESTART_MARKER_FILE),
+      decodeRestartMarker,
+    );
+    if (Option.isSome(restartMarker) && restartMarker.value.request !== undefined) {
+      const config = yield* readDecoded(agentConfigPath, decodeAgentConfig);
+      const agent = yield* readDecoded(options.agentStatePath, decodeAgentState);
+      const now = yield* Clock.currentTimeMillis;
+      const carried = Option.isSome(config)
+        ? carriedHoldFor({
+            marker: restartMarker.value,
+            config: config.value,
+            handledInstallRequestAt: Option.getOrUndefined(agent)?.handledInstallRequestAt,
+            pid: process.pid,
+            nowMs: now,
+          })
+        : null;
+      if (carried === null) {
+        yield* Effect.logInfo("service-update.hold.not-carried", {
+          request: String(restartMarker.value.request),
+        });
+      } else {
+        const value = {
+          holdId: `service-update-hold:${now}:${(holds += 1)}`,
+          startedAtMs: now,
+          expiresAtMs: carried.untilMs,
+          released: yield* Deferred.make<void>(),
+          reason: "install",
+          // A cancel clears the request: the hold then ends like any without one.
+          requestDueAtMs: Math.min(carried.untilMs, now + noRequestMs),
+          request: carried.request,
+          carriedFromMs: carried.requestedAtMs,
+        };
+        yield* Ref.set(state, Option.some(value));
+        yield* writeMarker(value);
+        yield* Effect.logWarning("service-update.hold.carried", {
+          holdId: value.holdId,
+          request: carried.request,
+          untilMs: carried.untilMs,
+        });
+      }
+    }
+
     const release = (reason: string) =>
       Effect.gen(function* () {
         const previous = yield* Ref.getAndSet(state, Option.none());
@@ -525,9 +667,15 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
     const current = Effect.gen(function* () {
       const held = yield* Ref.get(state);
       if (Option.isNone(held)) return Option.none<ServiceUpdateHoldState>();
-      const { holdId, startedAtMs, expiresAtMs, reason } = held.value;
+      const { holdId, startedAtMs, expiresAtMs, reason, request } = held.value;
       if ((yield* Clock.currentTimeMillis) < expiresAtMs) {
-        return Option.some({ holdId, startedAtMs, expiresAtMs, reason });
+        return Option.some({
+          holdId,
+          startedAtMs,
+          expiresAtMs,
+          reason,
+          ...(request === undefined ? {} : { request }),
+        });
       }
       yield* release("expired");
       return Option.none<ServiceUpdateHoldState>();
@@ -548,8 +696,16 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
           if (Option.isSome(held) && held.value.reason === "install" && reason === "app-restart")
             return [held.value, held] as const;
           // A repeated "Update now" asks the agent again: older requests no longer count.
+          // A carried hold taken again is an ordinary one: it no longer names the old request.
           const value = Option.isSome(held)
-            ? { ...held.value, startedAtMs: now, expiresAtMs, reason, requestDueAtMs }
+            ? {
+                holdId: held.value.holdId,
+                released: held.value.released,
+                startedAtMs: now,
+                expiresAtMs,
+                reason,
+                requestDueAtMs,
+              }
             : {
                 holdId: `service-update-hold:${now}:${(holds += 1)}`,
                 startedAtMs: now,
@@ -655,11 +811,17 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       if (Option.isNone(held)) return;
       const reading = yield* readAgentState;
       if (Option.isNone(reading)) return;
+      // A carried hold's request came before it began: it counts from the request.
+      const carriedFromMs = Option.match(yield* Ref.get(state), {
+        onNone: () => undefined,
+        onSome: (value) => (value.holdId === held.value.holdId ? value.carriedFromMs : undefined),
+      });
+      const sinceMs = carriedFromMs ?? held.value.startedAtMs;
       // A hold nobody asked the agent to install for (an app restart that did
       // not take the service down, a closed window) would refuse work until its
       // time runs out. Once the request had time to arrive, end it.
       if (
-        !hasRequestSince(reading.value, held.value.startedAtMs) &&
+        !hasRequestSince(reading.value, sinceMs) &&
         !(AGENT_BUSY_STATUSES as ReadonlyArray<unknown>).includes(reading.value.status)
       ) {
         const now = yield* Clock.currentTimeMillis;
@@ -681,14 +843,15 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       }
       const verdict = agentVerdictForHold({
         reading: reading.value,
-        startedAtMs: held.value.startedAtMs,
+        startedAtMs: sinceMs,
         ...(options.maxMs === undefined ? {} : { maxMs: options.maxMs }),
       });
       if (verdict.type === "settled") {
         yield* release(`agent-${verdict.status}`);
         return;
       }
-      if (verdict.type !== "busy") return;
+      // A carried hold ends at the old hold's end, never later.
+      if (verdict.type !== "busy" || carriedFromMs !== undefined) return;
       // The agent does not rewrite its state during a long snapshot or install,
       // so the hold stays a few polls ahead while it is on this request.
       const now = yield* Clock.currentTimeMillis;

@@ -26,6 +26,17 @@ try {
     await page.screenshot({ path: `${out}/${mode}.png` });
     checks.push({ mode, disabled: true, reason: await page.locator("#readiness").textContent() });
   }
+  for (const mode of ["windows", "browser"]) {
+    await page.goto(`http://127.0.0.1:18422/?mode=${mode}`);
+    await page.locator("#readiness").waitFor();
+    await page.waitForFunction(
+      () => document.querySelector("#readiness").textContent !== "Checking voice support…",
+    );
+    assert.equal(await page.getByRole("button", { name: "Start voice call" }).count(), 0, mode);
+    assert.equal(await page.evaluate(() => document.body.dataset.microphone ?? null), null);
+    await page.screenshot({ path: `${out}/${mode}.png` });
+    checks.push({ mode, callControls: false });
+  }
   await page.goto("http://127.0.0.1:18422/?mode=fresh");
   await page.getByRole("button", { name: "Start voice call" }).click();
   await page.getByRole("alertdialog").waitFor();
