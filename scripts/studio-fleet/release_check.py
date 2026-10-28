@@ -59,6 +59,12 @@ def release_manifest(release):
     return manifest
 
 
+# Finder writes .DS_Store into any folder a person opens in it (M4's installed release on
+# 2026-10-27, which refused every update until removed). Regular files of that name hold only view
+# settings, nothing runs or reads them, so they are not part of a release; a link of that name is.
+FINDER_FILES = frozenset({'.DS_Store'})
+
+
 def _listing(release):
     """{path relative to `release`: os.DirEntry} of every file and link beneath it. Links are listed,
     never followed, so a file reached through a linked folder is not listed at all. One scandir per
@@ -110,7 +116,9 @@ def release_verified(release):
             hashed = True
             with open(found.path, 'rb') as handle:
                 assert _sha256(handle.read()) == entry['sha256']
-    assert set(listed) == declared | {'studio-manifest.json'}
+    unlisted = {path for path in set(listed) - declared - {'studio-manifest.json'}
+                if not (listed[path].name in FINDER_FILES and not listed[path].is_symlink())}
+    assert not unlisted, 'The installed release has %d files its manifest does not list' % len(unlisted)
     if hashed:
         _VERIFIED[(folder.st_dev, folder.st_ino)] = {'sealed': sealed, 'files': identities}
     return manifest

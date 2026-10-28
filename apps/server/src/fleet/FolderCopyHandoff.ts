@@ -224,11 +224,22 @@ export function copyStatus(record: DestinationRecord, plan: Plan | null): Folder
     title: text(record.title, 1000),
     selection: record.selection,
     mirror: record.mirror,
-    state: record.state,
-    failedStep: record.failedStep,
-    error: record.error
-      ? { code: record.error.code, message: text(record.error.message, 4000) }
-      : null,
+    state: record.undoIncomplete ? "failed" : record.state,
+    failedStep: record.undoIncomplete
+      ? record.failedStep === "applying"
+        ? "applying"
+        : "applied"
+      : record.failedStep,
+    ...(record.undoIncomplete !== undefined ? { undoIncomplete: record.undoIncomplete } : {}),
+    error:
+      record.undoIncomplete && !record.error?.message.startsWith("Undo")
+        ? {
+            code: "copy_failed",
+            message: "Undo was interrupted. Retry Undo to finish restoring the original files.",
+          }
+        : record.error
+          ? { code: record.error.code, message: text(record.error.message, 4000) }
+          : null,
     progress: record.progress,
     disk: record.disk,
     rows: plan ? plan.rows.map(row) : [],
@@ -297,7 +308,7 @@ export function undoResult(
       detail: text(item.detail, 4000),
     })),
     edited: preview.edited,
-    undone: result !== null,
+    undone: result !== null && result.problems.length === 0,
     kept: result ? [...result.kept, ...result.movedToBackup] : [],
     problems: result ? result.problems.map((problem) => text(problem, 4000)) : [],
   };

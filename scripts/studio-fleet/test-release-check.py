@@ -84,6 +84,16 @@ class ReleaseVerified(unittest.TestCase):
   (release/'extra.js').unlink();release_check.release_verified(release)
   os.unlink(release/'lib'/'first');os.symlink('chunk-01.bin',release/'lib'/'first')
   self.assertRaises(AssertionError,release_check.release_verified,release)
+ def test_finder_view_files_are_ignored_but_other_extras_and_links_are_refused(self):
+  # Finder left .DS_Store in M4's installed release on 2026-10-27 and every update was refused.
+  (self.release/'.DS_Store').write_bytes(b'Bud1');(self.release/'lib'/'.DS_Store').write_bytes(b'Bud1')
+  release_check.release_verified(self.release)
+  (self.release/'notes.txt').write_text('added')
+  with self.assertRaises(AssertionError) as refused:release_check.release_verified(self.release)
+  self.assertEqual(str(refused.exception),'The installed release has 1 files its manifest does not list')
+  (self.release/'notes.txt').unlink();(self.release/'lib'/'.DS_Store').unlink()
+  os.symlink('chunk-01.bin',self.release/'lib'/'.DS_Store')  # A link is never Finder's.
+  self.assertRaises(AssertionError,release_check.release_verified,self.release)
  def test_a_changed_manifest_is_hashed_again(self):
   release_check.release_verified(self.release)
   manifest=json.loads((self.release/'studio-manifest.json').read_text())

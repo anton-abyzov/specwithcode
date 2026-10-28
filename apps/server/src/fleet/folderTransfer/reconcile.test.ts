@@ -481,3 +481,32 @@ describe("files outside repositories", () => {
     expect(replaced.actions.map((action) => action.path)).toEqual(["svc/a.ts"]);
   });
 });
+
+it("zero actions for an occupied nested path mean an unanswered repository choice, not empty source inventory", () => {
+  const input = {
+    repositories: [sourceRepo("."), sourceRepo("repos/app")],
+    entries: [file("repos/app/notes.md", "source", { repo: "repos/app", class: "untracked" })],
+    destination: {
+      files: [here("repos/app/local.md", "destination", { repo: null, class: "untracked" })],
+      repositories: [destinationRepo(".")],
+    },
+  };
+  const unresolved = plan(input);
+  expect(row(unresolved, repoRowId("repos/app"))).toMatchObject({
+    filesToMove: 0,
+    needsDecision: true,
+    decision: null,
+    status: "conflict",
+    detail:
+      "Files already occupy this path; the destination scan did not identify a repository here.",
+  });
+  expect(unresolved.actions).toEqual([]);
+  expect(planReady(unresolved)).toBe(false);
+  const take = plan({ ...input, decisions: { [repoRowId("repos/app")]: "take-theirs" } });
+  expect(row(take, repoRowId("repos/app")).filesToMove).toBe(1);
+  expect(take.actions.map((action) => action.path)).toContain("repos/app/notes.md");
+  expect(step(take, "repos/app").kind).toBe("replace");
+  const keep = plan({ ...input, decisions: { [repoRowId("repos/app")]: "keep-mine" } });
+  expect(keep.actions).toEqual([]);
+  expect(row(keep, repoRowId("repos/app")).decision).toBe("keep-mine");
+});

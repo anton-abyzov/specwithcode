@@ -117,6 +117,8 @@ export interface DestinationRecord {
   readonly requestedProjectId: string | null;
   /** When the Apply backups were discarded; Undo is no longer possible after it. */
   readonly backupsDiscardedAt?: string;
+  /** Undo started but has not finished. Preserve original backups until it succeeds. */
+  readonly undoIncomplete?: boolean;
   /** Secret files received after Apply: paths and sizes, never contents. */
   readonly secrets?: ReadonlyArray<ReceivedSecret>;
   /** Every approved secret file was received (or the source offered none). */
@@ -598,28 +600,30 @@ export class DestinationCopies {
 
   /** Retries a copy that stopped during Apply; the journal skips finished steps. */
   async retry(operationId: string): Promise<DestinationRecord> {
-    const record = await this.require(operationId);
-    if (record.state === "failed" && record.failedStep === "applied") {
-      // Files are in place; only the source commit or the registration failed.
-      this.claim(operationId);
-      try {
+    // Reserve before reading: Undo may otherwise complete while an earlier read
+    // is in flight, leaving Retry to dispatch from obsolete recovery state.
+    this.claim(operationId);
+    try {
+      const record = await this.require(operationId);
+      if (record.undoIncomplete)
+        throw new CopyError(
+          "refused",
+          "Undo did not finish. Retry Undo to restore the original files.",
+        );
+      if (record.state === "failed" && record.failedStep === "applied") {
+        // Files are in place; only the source commit or the registration failed.
         const applied = await this.update(operationId, { state: "applied", error: null });
         this.background(operationId, "applied", () => this.finish(applied));
         return applied;
-      } finally {
-        this.claimed.delete(operationId);
       }
-    }
-    if (record.state !== "failed")
-      throw new CopyError("refused", "Only a failed copy can be retried.");
-    if (record.failedStep !== "applying")
-      // Before Apply the source has let the copy go and nothing changed here: copy again.
-      throw new CopyError(
-        "refused",
-        "Nothing was changed on this machine. Start the copy again from the source.",
-      );
-    this.claim(operationId);
-    try {
+      if (record.state !== "failed")
+        throw new CopyError("refused", "Only a failed copy can be retried.");
+      if (record.failedStep !== "applying")
+        // Before Apply the source has let the copy go and nothing changed here: copy again.
+        throw new CopyError(
+          "refused",
+          "Nothing was changed on this machine. Start the copy again from the source.",
+        );
       const next = await this.update(operationId, { state: "applying", error: null });
       this.background(operationId, "applying", (signal) => this.apply(next, signal));
       return next;
@@ -671,7 +675,10 @@ export class DestinationCopies {
     // A commit whose every reply was lost: the source finished, this record never heard.
     // Ask before removing anything; a committed copy is finished here, not undone.
     const probe = record.committed ? null : await this.sourceState(record);
-    if (probe === "committed") {
+    // Once restoration has started, its durable recovery marker wins over a
+    // late commit reply. Finishing/registering now would publish mixed originals
+    // and copied files instead of completing Undo.
+    if (probe === "committed" && !record.undoIncomplete) {
       const applied = await this.update(operationId, {
         state: "applied",
         committed: true,
@@ -686,6 +693,9 @@ export class DestinationCopies {
       journalFile: paths.journal,
     });
     if (preview.edited > 0 && !force) return { record, result: null, preview };
+    // Persist before restoring anything: a crash or partial failure must not let
+    // retention discard an original that still needs restoring.
+    await this.update(operationId, { undoIncomplete: true });
     const keptSecrets = await removeReceivedSecrets(record.targetFolder, record.secrets ?? []);
     const result = await undoApply({
       targetRoot: record.targetFolder,
@@ -693,6 +703,17 @@ export class DestinationCopies {
       journalFile: paths.journal,
       force,
     });
+    if (result.problems.length > 0) {
+      const next = await this.update(operationId, {
+        state: "failed",
+        failedStep: record.failedStep === "applying" ? "applying" : "applied",
+        error: {
+          code: "copy_failed",
+          message: `Undo did not finish. Retry Undo after resolving these problems: ${result.problems.join(" ")}`,
+        },
+      });
+      return { record: next, result, preview };
+    }
     // An uncommitted copy still holds the source: give it back, so a held coordinator stays there.
     // When the source refuses or cannot be reached, the person must end it there.
     // An unreachable source was already retried by the question above.
@@ -708,6 +729,7 @@ export class DestinationCopies {
             );
     const next = await this.update(operationId, {
       state: "undone",
+      undoIncomplete: false,
       error: sourceError
         ? { code: sourceError.code, message: undoneButHeldMessage(record, sourceError.code) }
         : null,
@@ -741,15 +763,25 @@ export class DestinationCopies {
     const retention = this.hooks.backupRetentionMs ?? BACKUP_RETENTION_MS;
     const now = this.hooks.now?.() ?? new Date();
     const discarded: Array<string> = [];
-    for (const record of await this.list()) {
-      if (record.backupsDiscardedAt !== undefined || this.running.has(record.operationId)) continue;
-      if (record.state !== "applied" && record.state !== "undone" && record.state !== "failed")
-        continue;
-      // An unreadable updatedAt is never old enough: the backups stay.
-      if (!olderThan(Date.parse(record.updatedAt), retention, now.getTime())) continue;
-      await discardApplyBackups(this.paths(record.operationId).backups);
-      await this.update(record.operationId, { backupsDiscardedAt: now.toISOString() });
-      discarded.push(record.operationId);
+    for (const saved of await this.list()) {
+      const op = saved.operationId;
+      if (this.running.has(op) || this.claimed.has(op)) continue;
+      // Retention and Undo share ownership, not just a snapshot of eligibility.
+      // Reserve before re-reading and hold through deletion and its durable marker.
+      this.claim(op);
+      try {
+        const record = await this.require(op);
+        if (record.backupsDiscardedAt !== undefined || record.undoIncomplete) continue;
+        if (record.state !== "applied" && record.state !== "undone" && record.state !== "failed")
+          continue;
+        // An unreadable updatedAt is never old enough: the backups stay.
+        if (!olderThan(Date.parse(record.updatedAt), retention, now.getTime())) continue;
+        await discardApplyBackups(this.paths(op).backups);
+        await this.update(op, { backupsDiscardedAt: now.toISOString() });
+        discarded.push(op);
+      } finally {
+        this.claimed.delete(op);
+      }
     }
     return discarded;
   }
@@ -796,29 +828,57 @@ export class DestinationCopies {
   async resume(): Promise<void> {
     this.startKeepalive();
     await this.discardExpiredBackups().catch(() => undefined);
-    for (const record of await this.list()) {
-      const op = record.operationId;
-      switch (record.state) {
-        case "planned":
-        case "scanning":
-          this.background(op, "scanning", (signal) =>
-            record.state === "planned" ? this.preview(record, signal) : this.replan(record, signal),
-          );
-          break;
-        case "approved":
-        case "transferring":
-        case "verifying":
-          this.background(op, "transferring", (signal) => this.transfer(record, signal));
-          break;
-        case "applying":
-          this.background(op, "applying", (signal) => this.apply(record, signal));
-          break;
-        case "applied":
-          if (!record.committed || record.projectId === null)
-            this.background(op, "applied", () => this.finish(record));
-          break;
-        default:
-          break;
+    for (const saved of await this.list()) {
+      const op = saved.operationId;
+      if (this.running.has(op) || this.claimed.has(op)) continue;
+      // Reserve before re-reading: a foreground Undo cannot start between this
+      // read and dispatch, and a stale startup snapshot cannot restart Apply.
+      this.claim(op);
+      try {
+        const record = await this.require(op);
+        if (record.undoIncomplete) {
+          await this.update(op, {
+            state: "failed",
+            failedStep:
+              record.failedStep === "applying" || record.state === "applying"
+                ? "applying"
+                : "applied",
+            error: record.error?.message.startsWith("Undo")
+              ? record.error
+              : {
+                  code: "copy_failed",
+                  message:
+                    "Undo was interrupted. Retry Undo to finish restoring the original files.",
+                },
+          });
+          continue;
+        }
+        switch (record.state) {
+          case "planned":
+          case "scanning":
+            this.background(op, "scanning", (signal) =>
+              record.state === "planned"
+                ? this.preview(record, signal)
+                : this.replan(record, signal),
+            );
+            break;
+          case "approved":
+          case "transferring":
+          case "verifying":
+            this.background(op, "transferring", (signal) => this.transfer(record, signal));
+            break;
+          case "applying":
+            this.background(op, "applying", (signal) => this.apply(record, signal));
+            break;
+          case "applied":
+            if (!record.committed || record.projectId === null)
+              this.background(op, "applied", () => this.finish(record));
+            break;
+          default:
+            break;
+        }
+      } finally {
+        this.claimed.delete(op);
       }
     }
   }

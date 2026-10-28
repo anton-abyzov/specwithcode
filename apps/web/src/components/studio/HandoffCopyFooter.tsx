@@ -72,6 +72,8 @@ export function HandoffCopyFooter({
   onCopyAgain,
   onRetry,
   onUndo,
+  onEndSourceHold,
+  sourceDropped,
   onTransfer,
   onOpen,
   onLink,
@@ -108,6 +110,8 @@ export function HandoffCopyFooter({
   readonly onMeasure: () => void;
   readonly onPlan: () => void;
   readonly onStop: () => void;
+  readonly onEndSourceHold: () => void;
+  readonly sourceDropped: boolean;
   readonly onReplaceAll: () => void;
   readonly onApply: () => void;
   readonly onCopyAgain: () => void;
@@ -235,6 +239,8 @@ export function HandoffCopyFooter({
           onRetry={onRetry}
           onCancel={onStop}
           onUndo={onUndo}
+          onEndSourceHold={onEndSourceHold}
+          sourceDropped={sourceDropped}
         />
       )}
       {stage === "done" && copy && copy.projectId && machine && (

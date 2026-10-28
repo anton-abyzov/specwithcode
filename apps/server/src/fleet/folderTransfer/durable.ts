@@ -63,6 +63,7 @@ export async function readJson<T>(file: string): Promise<T | null> {
  */
 export class JsonLog<T> {
   private handle: NodeFSP.FileHandle | null = null;
+  private opening: Promise<NodeFSP.FileHandle> | null = null;
   private pending = 0;
   readonly file: string;
   constructor(file: string) {
@@ -91,10 +92,49 @@ export class JsonLog<T> {
   }
 
   async append(value: T, sync = false): Promise<void> {
-    this.handle ??= await NodeFSP.open(this.file, "a", 0o600);
-    await this.handle.appendFile(`${JSON.stringify(value)}\n`);
+    const handle = await this.appendHandle();
+    await handle.appendFile(`${JSON.stringify(value)}\n`);
     this.pending += 1;
     if (sync) await this.sync();
+  }
+
+  private async appendHandle(): Promise<NodeFSP.FileHandle> {
+    if (this.handle) return this.handle;
+    const opening = (this.opening ??= (async () => {
+      // Windows append handles cannot truncate a torn tail (EPERM). Repair
+      // with ordinary read/write access, close it, then use an append handle
+      // for all journal writes. The shared opening promise fences this phase.
+      const handle = await NodeFSP.open(
+        this.file,
+        NodeFS.constants.O_CREAT | NodeFS.constants.O_RDWR,
+        0o600,
+      );
+      try {
+        const bytes = await handle.readFile();
+        if (bytes.length > 0 && bytes[bytes.length - 1] !== 10) {
+          const boundary = bytes.lastIndexOf(10) + 1;
+          let complete = false;
+          try {
+            JSON.parse(bytes.subarray(boundary).toString("utf8"));
+            complete = true;
+          } catch {
+            /* torn final record */
+          }
+          if (complete) await handle.appendFile("\n");
+          else await handle.truncate(boundary);
+          await handle.sync();
+        }
+      } finally {
+        await handle.close();
+      }
+      return NodeFSP.open(this.file, "a", 0o600);
+    })());
+    try {
+      this.handle = await opening;
+      return this.handle;
+    } finally {
+      if (this.opening === opening) this.opening = null;
+    }
   }
 
   async sync(): Promise<void> {

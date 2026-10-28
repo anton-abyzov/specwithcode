@@ -88,6 +88,7 @@ function verifyIndex(directory) {
     const path = join(directory, name),
       stat = lstatSync(path);
     if (stat.isDirectory()) verifyIndex(path);
+    else if (name === ".DS_Store" && stat.isFile()) continue; // Finder metadata in a runtime dir
     else
       assert.ok(
         path === join(root, "studio-manifest.json") || indexed.has(path.slice(root.length + 1)),

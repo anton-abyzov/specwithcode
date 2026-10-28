@@ -193,7 +193,7 @@ with installation_lock(home, create=True):
             assert path.is_file() and not path.is_symlink()
             assert hashlib.sha256(path.read_bytes()).hexdigest() == entry['sha256'], 'Existing release hash differs'
     actual_files = {str(path.relative_to(release)) for path in release.rglob('*')
-                    if path.is_file() or path.is_symlink()}
+                    if path.is_symlink() or (path.is_file() and path.name != '.DS_Store')}  # Finder's view settings.
     assert actual_files == {entry['path'] for entry in manifest['files']} | {'studio-manifest.json'}, 'Unindexed existing release file'
     studio_home.mkdir(parents=True, mode=0o700)
     state.mkdir(mode=0o700)

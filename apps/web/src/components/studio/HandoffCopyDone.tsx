@@ -213,6 +213,7 @@ function CopyProblems({
  */
 export const copyHeld = (copy: FolderCopyStatus | null): boolean =>
   copy !== null &&
+  !copy.undoIncomplete &&
   copy.state === "failed" &&
   copy.failedStep === "applied" &&
   copy.error?.code === "checks_failed";
@@ -348,6 +349,12 @@ export function HandoffCopyFailed({
           : (copy.error?.message ?? "The copy stopped.")}
         {failedBeforeApply ? ` Nothing in ${copy.targetFolder} changed.` : ""}
       </p>
+      {copy.undoIncomplete && (
+        <p>
+          Retry Undo to finish restoring this folder.{" "}
+          {!copy.committed && "Ending the source hold keeps Undo recovery available here."}
+        </p>
+      )}
     </div>
   );
 }
@@ -362,6 +369,8 @@ export function HandoffCopyFailedActions({
   onRetry,
   onCancel,
   onUndo,
+  onEndSourceHold,
+  sourceDropped = false,
 }: {
   readonly copy: FolderCopyStatus;
   readonly busy: boolean;
@@ -371,7 +380,23 @@ export function HandoffCopyFailedActions({
   readonly onRetry: () => void;
   readonly onCancel: () => void;
   readonly onUndo: (force: boolean, previewOnly: boolean) => void;
+  readonly onEndSourceHold: () => void;
+  readonly sourceDropped?: boolean;
 }) {
+  if (copy.undoIncomplete)
+    return (
+      <>
+        <CopyUndoButton busy={busy} undoPreview={undoPreview} onUndo={onUndo} />
+        {!copy.committed && !sourceDropped && (
+          <Button variant="outline" disabled={busy} onClick={onEndSourceHold}>
+            End source hold
+          </Button>
+        )}
+        {sourceDropped && (
+          <p role="status">The source hold ended. Undo recovery remains available here.</p>
+        )}
+      </>
+    );
   if (copyHeld(copy))
     return (
       <HandoffCopyHeldActions

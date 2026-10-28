@@ -192,6 +192,10 @@ export function CopyPlanPreview({
   readonly hideWarnings?: boolean;
 }) {
   const totals = status.totals;
+  const folderChoices = status.rows.filter(
+    (row) => row.choices.length > 0 && row.decision === null,
+  ).length;
+  const fileChoices = Math.max(0, (totals?.decisionsNeeded ?? 0) - folderChoices);
   const current = repositories ?? planRepositoryChoices(status.rows);
   // A repository left out stays listed, so it can be taken back.
   const rows = !onlyChanges
@@ -216,10 +220,14 @@ export function CopyPlanPreview({
       )}
       {totals && (
         <p data-slot="copy-preview-totals" className={replanning ? "opacity-60" : undefined}>
+          {totals.decisionsNeeded > 0 ? "Planned so far: " : "Planned: "}
           {totals.filesToMove.toLocaleString()} files, {formatBytes(totals.bytesToMove)} to copy
           {totals.bytesPresent > 0 && `, ${formatBytes(totals.bytesPresent)} already here`}.
           {totals.decisionsNeeded > 0 &&
-            ` ${totals.decisionsNeeded} ${totals.decisionsNeeded === 1 ? "choice needs" : "choices need"} an answer before Apply.`}
+            ` Choose for ${[folderChoices > 0 ? `${folderChoices} ${folderChoices === 1 ? "folder" : "folders"}` : "", fileChoices > 0 ? `${fileChoices} ${fileChoices === 1 ? "file" : "files"}` : ""].filter(Boolean).join(" and ")} before copying. Counts update after your choices.`}
+          {totals.filesToMove === 0 &&
+            totals.decisionsNeeded === 0 &&
+            " Repository content may still arrive through Git; this is not a repository size."}
         </p>
       )}
       <ul className="space-y-2">
@@ -495,8 +503,27 @@ function CopyRow({
                 "Copied again once the comparison updates."
               ) : (
                 <>
-                  {row.filesToMove.toLocaleString()} files, {formatBytes(row.bytesToMove)} to copy
-                  {row.bytesPresent > 0 && `, ${formatBytes(row.bytesPresent)} already here`}
+                  {stale ? (
+                    "Updating the copy plan…"
+                  ) : row.choices.length > 0 && row.decision === null ? (
+                    "Choose a version to calculate files and size."
+                  ) : row.filesToMove === 0 && row.bytesToMove === 0 ? (
+                    open > 0 || (row.moreConflicts > 0 && row.needsDecision) ? (
+                      "File transfers depend on the conflict choices below."
+                    ) : row.decision === "keep-mine" ? (
+                      "Destination version kept; no source files planned for this folder."
+                    ) : row.kind === "repository" ? (
+                      "No separate file transfers planned. Repository changes may still be applied through Git."
+                    ) : (
+                      "No file transfers planned for this group."
+                    )
+                  ) : (
+                    <>
+                      {row.filesToMove.toLocaleString()} files, {formatBytes(row.bytesToMove)}{" "}
+                      planned to copy
+                      {row.bytesPresent > 0 && `, ${formatBytes(row.bytesPresent)} already here`}
+                    </>
+                  )}
                   {row.detail && <span className="block">{row.detail}</span>}
                 </>
               )}
@@ -537,11 +564,14 @@ function CopyRow({
         </RadioGroup>
       )}
       {row.conflicts.length > 0 && (
-        <details className="text-xs" open={open > 0}>
-          <summary className="cursor-pointer">
+        <div className="space-y-2 text-xs" data-slot="copy-file-conflicts">
+          <p>
             {row.conflicts.length + row.moreConflicts} files differ on both machines
             {open > 0 ? `, ${open}${row.moreConflicts > 0 ? "+" : ""} undecided` : ""}
-          </summary>
+          </p>
+          <p className="text-muted-foreground">
+            Choose once for this group, or review individual files. Nothing is chosen automatically.
+          </p>
           {shared.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2" data-slot="copy-conflicts-all">
               {shared.map((choice) => (
@@ -557,36 +587,43 @@ function CopyRow({
               ))}
             </div>
           )}
-          <ul className="mt-2 space-y-2">
-            {row.conflicts.map((conflict) => (
-              <li key={conflict.id} className="space-y-1">
-                <span className="block break-all">
-                  {conflict.path}
-                  {conflict.reason === "type-differs" && " (a different kind of item here)"}
-                </span>
-                <RadioGroup
-                  aria-label={`Choice for ${conflict.path}`}
-                  value={conflict.decision ?? ""}
-                  onValueChange={(value) => onDecide({ [conflict.id]: value as FolderCopyChoice })}
-                  disabled={disabled}
-                  className="flex flex-wrap gap-3"
-                >
-                  {conflict.choices.map((choice) => (
-                    <label key={choice} className="flex cursor-pointer items-center gap-1.5">
-                      <Radio value={choice} />
-                      {choiceText(choice, machines)}
-                    </label>
-                  ))}
-                </RadioGroup>
-              </li>
-            ))}
-          </ul>
+          <details data-slot="copy-conflict-details">
+            <summary className="cursor-pointer">
+              Review individual files ({row.conflicts.length + row.moreConflicts})
+            </summary>
+            <ul className="mt-2 space-y-2">
+              {row.conflicts.map((conflict) => (
+                <li key={conflict.id} className="space-y-1">
+                  <span className="block break-all">
+                    {conflict.path}
+                    {conflict.reason === "type-differs" && " (a different kind of item here)"}
+                  </span>
+                  <RadioGroup
+                    aria-label={`Choice for ${conflict.path}`}
+                    value={conflict.decision ?? ""}
+                    onValueChange={(value) =>
+                      onDecide({ [conflict.id]: value as FolderCopyChoice })
+                    }
+                    disabled={disabled}
+                    className="flex flex-wrap gap-3"
+                  >
+                    {conflict.choices.map((choice) => (
+                      <label key={choice} className="flex cursor-pointer items-center gap-1.5">
+                        <Radio value={choice} />
+                        {choiceText(choice, machines)}
+                      </label>
+                    ))}
+                  </RadioGroup>
+                </li>
+              ))}
+            </ul>
+          </details>
           {row.moreConflicts > 0 && (
             <p className="mt-2 text-muted-foreground">
               {row.moreConflicts} more not listed; use an “All” choice to answer them.
             </p>
           )}
-        </details>
+        </div>
       )}
     </li>
   );

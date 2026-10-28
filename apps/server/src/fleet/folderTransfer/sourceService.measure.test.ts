@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - disposable state folders and bounded polling.
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -15,6 +16,8 @@ vi.mock("./manifest.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./manifest.ts")>();
   return { ...actual, scanFolder: vi.fn(actual.scanFolder) };
 });
+
+vi.mock("node:fs/promises", async (original) => ({ ...(await original<typeof NodeFSP>()) }));
 
 const folders: Array<string> = [];
 afterEach(() => {
@@ -269,4 +272,76 @@ describe("measuring a folder", () => {
       dirtyCount: 1,
     });
   });
+});
+
+it("waits for a published ready manifest to finish persisting before checking freshness", async () => {
+  const { folder, state } = project(false);
+  const actual = await vi.importActual<typeof import("./manifest.ts")>("./manifest.ts");
+  vi.mocked(Manifest.scanFolder).mockImplementation(actual.scanFolder);
+  const sources = new SourceTransfers(state);
+  const offered = await offer(sources, folder);
+  const loaded = await sources.authorize(operationId, offered.token);
+  await loaded.building;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const open = NodeFSP.open;
+  const handles: Array<{ mockRestore(): void }> = [];
+  const spy = vi.spyOn(NodeFSP, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    const path = String(args[0]);
+    if (path.startsWith(state) && path.endsWith(".tmp")) {
+      const sync = handle.sync.bind(handle);
+      handles.push(
+        vi.spyOn(handle, "sync").mockImplementation(async () => {
+          const record = JSON.parse(await NodeFSP.readFile(path, "utf8")) as { state?: string };
+          if (record.state === "ready") {
+            entered();
+            await held;
+          }
+          return sync();
+        }),
+      );
+    }
+    return handle;
+  });
+  let checking: Promise<unknown> | undefined;
+  try {
+    await sources.requestManifest(loaded, DEFAULT_SELECTION);
+    await waiting;
+    expect(loaded.record.state).toBe("ready");
+    expect((await sources.manifest(loaded)).ready).toBe(true);
+    let settled = false;
+    checking = sources.checkScan(operationId).then(
+      (record) => {
+        settled = true;
+        return record;
+      },
+      (cause: unknown) => {
+        settled = true;
+        throw cause;
+      },
+    );
+    // Observe rejection too so the failing baseline has no unhandled promise.
+    const outcome = checking.then(
+      (record) => ({ record }),
+      (error: unknown) => ({ error }),
+    );
+    await sleep(10);
+    expect(settled).toBe(false);
+    release();
+    expect(await outcome).toMatchObject({ record: { freshness: { current: true } } });
+  } finally {
+    release();
+    await loaded.building;
+    await checking?.catch(() => undefined);
+    handles.forEach((handle) => handle.mockRestore());
+    spy.mockRestore();
+    await sources.close();
+  }
 });
