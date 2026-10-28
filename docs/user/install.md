@@ -12,6 +12,12 @@ launch SpecWithCode and configure providers afterwards.
 
 ## Desktop app
 
+Public desktop installers support macOS 13 or later on Apple silicon, Windows 10 and 11
+on x64, and Linux x64 with glibc. Choose your platform below. There is no Intel Mac desktop build.
+The desktop app starts the local service for you.
+
+### macOS
+
 Download [SpecWithCode-arm64.dmg](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg),
 the latest release, and drag SpecWithCode to Applications. It runs on Apple
 silicon Macs with macOS 13 or later. Releases are signed with an Apple Developer ID and notarized,
@@ -21,7 +27,7 @@ There is no Intel Mac build.
 ### Windows
 
 Download `SpecWithCode-<version>-x64.exe` from the
-[latest release](https://github.com/anton-abyzov/specwithcode/releases/latest) and run it. It
+[verified Windows/Linux release](https://github.com/anton-abyzov/specwithcode/releases/tag/v1.0.94) and run it. It
 installs for your user only, so it needs no administrator, into
 `%LOCALAPPDATA%\Programs\studio`, and adds Start menu and desktop shortcuts. It runs on
 64-bit Windows 10 and 11. For a silent install, run it with `/S`.
@@ -33,7 +39,7 @@ SHA-256 in `SHA256SUMS-windows-linux`; check a download with
 
 ### Linux
 
-Download one of these from the [latest release](https://github.com/anton-abyzov/specwithcode/releases/latest)
+Download one of these from the [verified Windows/Linux release](https://github.com/anton-abyzov/specwithcode/releases/tag/v1.0.94)
 (x64, glibc):
 
 - `SpecWithCode-<version>-amd64.deb` for Debian and Ubuntu:
@@ -173,7 +179,7 @@ way to run a server there.
 Releases ship a server archive for Linux x64 and arm64 (`studio-<version>-linux-<arch>-<commit>.tar.gz`).
 It runs on Node.js 22.20 or later 22.x and needs no compiler. For a server-only install,
 control it from the desktop app on another computer, the web app or a phone. [Linux worker](./linux-worker.md)
-walks through install, the user service and pairing it with your Mac as a fleet worker.
+walks through install, the user service and pairing it with your main computer as a fleet worker.
 To only reach it from your other devices, [SpecWithCode Connect](./remote-access.md#specwithcode-connect)
 needs no Tailscale.
 
