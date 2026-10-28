@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -13,7 +13,12 @@ import {
 } from "@specweave-studio/shared/hostProcess";
 
 import { nodeBundleLauncherScript } from "../cloud/pinnedRuntime.ts";
-import { repointLauncher, resolveLaunchedAs, resolveLauncherPath } from "./update.ts";
+import {
+  ifIdleRestart,
+  repointLauncher,
+  resolveLaunchedAs,
+  resolveLauncherPath,
+} from "./update.ts";
 
 const hostPlatform = process.platform === "win32" ? "win32" : "linux";
 const pathDelimiter = hostPlatform === "win32" ? ";" : ":";
@@ -165,4 +170,67 @@ it.layer(NodeServices.layer)("specweave-studio update launcher", (it) => {
         assert.equal(yield* fs.readLink(onPath), newLauncher);
       }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
+});
+
+describe("update --if-idle", () => {
+  const answer = (result: {
+    idle: boolean;
+    held?: boolean;
+    holdToken?: string;
+    openTerminals?: number;
+    blockers?: Array<{ kind: "run"; count: number }>;
+  }) =>
+    Option.some(
+      Option.some({
+        idle: result.idle,
+        held: result.held,
+        holdToken: result.holdToken,
+        blockers: (result.blockers ?? []).map((blocker) => ({
+          ...blocker,
+          projectId: null,
+          threadId: null,
+          threadTitle: null,
+        })),
+        stoppedThreads: 0,
+        openTerminals: result.openTerminals ?? 0,
+      } as never),
+    );
+
+  it("restarts only under a hold the service took, or with no service running", () => {
+    assert.deepStrictEqual(ifIdleRestart(answer({ idle: true, held: true, holdToken: "owned" })), {
+      held: true,
+      holdToken: "owned",
+    });
+    assert.deepStrictEqual(ifIdleRestart(Option.some(Option.none())), { held: false });
+  });
+
+  it("refuses an inconsistent idle lease reply with running terminals", () => {
+    const result = ifIdleRestart(
+      answer({ idle: true, held: true, holdToken: "owned", openTerminals: 1 }),
+    );
+    assert.equal(result.held, false);
+    assert.match(result.notRestarted ?? "", /1 open terminals/);
+  });
+
+  it("keeps a busy, unreachable or older service running", () => {
+    assert.match(
+      ifIdleRestart(answer({ idle: false, held: false, blockers: [{ kind: "run", count: 2 }] }))
+        .notRestarted ?? "",
+      /still running 2 run/,
+    );
+    assert.match(
+      ifIdleRestart(answer({ idle: true })).notRestarted ?? "",
+      /predates update --if-idle/,
+    );
+    assert.match(ifIdleRestart(Option.none()).notRestarted ?? "", /could not be asked/);
+    // Old services report an existing foreign hold but do not acknowledge lease ownership.
+    for (const idle of [true, false]) {
+      assert.equal(ifIdleRestart(answer({ idle, held: true })).held, false);
+      assert.equal(ifIdleRestart(answer({ idle, held: true, holdToken: "" })).held, false);
+    }
+    assert.equal(
+      ifIdleRestart(answer({ idle: false, held: true, holdToken: "owned" })).held,
+      false,
+    );
+  });
 });

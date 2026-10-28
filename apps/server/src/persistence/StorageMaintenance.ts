@@ -233,6 +233,17 @@ export interface StorageMaintenanceOptions {
   readonly pagePause?: Duration.Input;
 }
 
+/** After 25 ms of work, rest nine times its duration, outside the connection lock. */
+export const makeCompactionPacer = Effect.gen(function* () {
+  let sliceStarted = yield* Clock.monotonicTimeNanos;
+  return Effect.gen(function* () {
+    const elapsed = (yield* Clock.monotonicTimeNanos) - sliceStarted;
+    if (elapsed < 25_000_000n) return;
+    yield* Effect.sleep((Number(elapsed) / 1_000_000) * 9);
+    sliceStarted = yield* Clock.monotonicTimeNanos;
+  });
+});
+
 export const make = (options: StorageMaintenanceOptions) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -357,7 +368,10 @@ export const make = (options: StorageMaintenanceOptions) =>
             Option.isNone(state) ||
             now - epochOf(state.value.fullPassAt) >= fullPassIntervalMs;
           const startedAt = yield* Clock.currentTimeMillis;
+          const betweenPages = yield* makeCompactionPacer;
           const compaction = yield* maintenance.compactEventStoreWith({
+            betweenPages,
+            pageSize: 50,
             sinceSequence: full || Option.isNone(state) ? 0 : state.value.throughSequence,
             shouldContinue: gate.check,
             mayDelete: gate.mayDelete,

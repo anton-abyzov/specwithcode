@@ -293,9 +293,22 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       : toPersistenceSqlError(sqlOperation)(cause);
 }
 
+const promptAnchorKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
+  const promptAnchors = new Map<string, number>();
+  const replayPayload = sql`CASE
+    WHEN orchestration_events.event_type IN ('subagent.updated', 'turn-item.updated')
+      AND json_type(orchestration_events.payload_json, '$.promptSequence') = 'integer'
+    THEN json_set(
+      json_remove(orchestration_events.payload_json, '$.promptSequence'), '$.prompt',
+      (SELECT json_extract(anchor.payload_json, '$.prompt')
+       FROM orchestration_events AS anchor
+       WHERE anchor.sequence = json_extract(orchestration_events.payload_json, '$.promptSequence'))
+    )
+    ELSE orchestration_events.payload_json END`;
 
   const appendProjectEventRow = SqlSchema.findOne({
     Request: AppendProjectEventRequestSchema,
@@ -400,7 +413,7 @@ const makeEventStore = Effect.gen(function* () {
         stream_id,
         event_type,
         occurred_at,
-        payload_json,
+        ${replayPayload} AS payload_json,
         metadata_json,
         application_event_version,
         causation_event_id,
@@ -443,7 +456,32 @@ const makeEventStore = Effect.gen(function* () {
       (event) =>
         Effect.gen(function* () {
           const encoded = yield* encodeV2EventJson(event);
-          const rows = yield* sql<{ readonly sequence: number }>`
+          const subagent =
+            encoded.type === "subagent.updated"
+              ? encoded.payload
+              : encoded.type === "turn-item.updated" && encoded.payload.type === "subagent"
+                ? encoded.payload
+                : undefined;
+          const promptKey =
+            subagent === undefined
+              ? undefined
+              : promptAnchorKey([event.threadId, event.type, subagent.id]);
+          const anchor = promptKey === undefined ? undefined : promptAnchors.get(promptKey);
+          const payloadJson = yield* encodeJson(encoded.payload);
+          // Validate the hint inside the insert: a rolled-back transaction may have reused its sequence.
+          const storedPayload =
+            anchor === undefined || subagent === undefined
+              ? sql`${payloadJson}`
+              : sql`CASE WHEN EXISTS (
+                SELECT 1 FROM orchestration_events
+                WHERE sequence = ${anchor} AND application_event_version = 2
+                  AND event_type = ${event.type} AND stream_id = ${event.threadId}
+                  AND json_extract(payload_json, '$.id') = ${subagent.id}
+                  AND json_type(payload_json, '$.promptSequence') IS NULL
+                  AND json_extract(payload_json, '$.prompt') = ${subagent.prompt}
+              ) THEN json_set(${payloadJson}, '$.prompt', '', '$.promptSequence', CAST(${anchor} AS INTEGER))
+              ELSE ${payloadJson} END`;
+          const rows = yield* sql<{ readonly sequence: number; readonly full_prompt: number }>`
             INSERT INTO orchestration_events (
               event_id,
               aggregate_kind,
@@ -477,12 +515,24 @@ const makeEventStore = Effect.gen(function* () {
               NULL,
               ${input.commandId ?? null},
               ${event.rawEventId === undefined ? "server" : "provider"},
-              ${yield* encodeJson(encoded.payload)},
+              ${storedPayload},
               ${yield* encodeJson(metadataForV2Event(event))},
               2
             )
-            RETURNING sequence
+            RETURNING sequence, json_type(payload_json, '$.promptSequence') IS NULL AS full_prompt
           `;
+          const row = rows[0];
+          if (promptKey !== undefined && row !== undefined) {
+            promptAnchors.delete(promptKey);
+            promptAnchors.set(
+              promptKey,
+              anchor === undefined || row.full_prompt === 1 ? row.sequence : anchor,
+            );
+            if (promptAnchors.size > 4096) {
+              const oldest = promptAnchors.keys().next().value;
+              if (oldest !== undefined) promptAnchors.delete(oldest);
+            }
+          }
           return yield* decodeV2StoredEvent({
             sequence: rows[0]?.sequence,
             commandId: input.commandId ?? null,
@@ -558,7 +608,7 @@ const makeEventStore = Effect.gen(function* () {
         COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes",
         COALESCE(MAX(event_type = 'thread.created'), 0) AS "hasCreateEvent"
       FROM (
-        SELECT payload_json, event_type
+        SELECT ${replayPayload} AS payload_json, event_type
         FROM orchestration_events
         WHERE aggregate_kind = 'thread'
           AND stream_id = ${input.threadId}
@@ -581,7 +631,7 @@ const makeEventStore = Effect.gen(function* () {
     sql<{ readonly eventCount: number; readonly rawPayloadBytes: number }>`
       SELECT
         COUNT(*) AS "eventCount",
-        COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes"
+        COALESCE(SUM(octet_length(${replayPayload})), 0) AS "rawPayloadBytes"
       FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence}

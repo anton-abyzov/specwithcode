@@ -133,7 +133,7 @@ describe("an open thread's header", () => {
     // Focus order follows the row: back, then the thread's controls left to right.
     expect([...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual([
       "Back to project threads",
-      "2 subagents",
+      "2 subagents, 2 completed",
       "Show: Folded steps",
       "Resolve thread",
       "Thread actions",

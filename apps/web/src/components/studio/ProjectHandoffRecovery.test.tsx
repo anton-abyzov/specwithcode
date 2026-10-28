@@ -78,7 +78,11 @@ const render = (knownMembers = members) =>
       <ProjectHandoffRecovery scopes={[scope] as never} members={knownMembers as never} />,
     ),
   );
-const retry = () => act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+const finishButton = () =>
+  [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent === "Finish move",
+  );
+const retry = () => act(async () => finishButton()!.click());
 
 it("recovers from authoritative source ownership without a browser retry pointer", async () => {
   await render();
@@ -99,7 +103,7 @@ it("recovers from authoritative source ownership without a browser retry pointer
     coordinatorThreadId: "next-coordinator",
     digest: bundle.digest,
   });
-  expect(container.textContent).toContain("Handoff confirmed");
+  expect(container.textContent).toContain("Move finished on both machines.");
 });
 
 it("keeps an unavailable source discoverable using the original pointer and does not invoke either host", async () => {
@@ -107,7 +111,7 @@ it("keeps an unavailable source discoverable using the original pointer and does
   state.offline.add("m4");
   await render([]);
   expect(container.textContent).toContain("Reconnect m4");
-  expect(container.querySelector<HTMLButtonElement>("button")?.disabled).toBe(true);
+  expect(finishButton()?.disabled).toBe(true);
   expect(state.prepare).not.toHaveBeenCalled();
   expect(state.receive).not.toHaveBeenCalled();
   expect(localStorage.getItem(key)).not.toBeNull();
@@ -131,7 +135,7 @@ it("retries the same published operation after an ambiguous launch, then acknowl
     environmentId: "m1",
     input: { projectId: "original-anchor", operationId, mode: "start", bundle },
   });
-  expect(container.textContent).toContain("Handoff confirmed");
+  expect(container.textContent).toContain("Move finished on both machines.");
 });
 
 it("requires the original review when a retry pointer only refers to an unpublished preview", async () => {
@@ -141,7 +145,10 @@ it("requires the original review when a retry pointer only refers to an unpublis
   });
   await render();
   await retry();
-  expect(container.textContent).toContain("has not published its checkpoint");
+  expect(container.textContent).toMatch(
+    /This move isn.t ready to finish yet\. Open Move on .+ to continue it\./,
+  );
+  expect(container.textContent).not.toContain("checkpoint");
   expect(state.receive).not.toHaveBeenCalled();
   expect(state.prepare).toHaveBeenCalledTimes(1);
 });
@@ -160,7 +167,7 @@ it("preserves the saved operation when the source cannot read it, then recovers 
   );
   expect(localStorage.getItem(key)).toBe(pointer);
   expect(state.receive).not.toHaveBeenCalled();
-  expect(container.querySelector<HTMLButtonElement>("button")?.disabled).toBe(false);
+  expect(finishButton()?.disabled).toBe(false);
   await retry();
   expect(state.prepare.mock.calls[1]?.[0]).toEqual(state.prepare.mock.calls[0]?.[0]);
   expect(state.receive).toHaveBeenCalledWith({
@@ -172,6 +179,24 @@ it("preserves the saved operation when the source cannot read it, then recovers 
     }),
   });
   expect(state.receive).toHaveBeenCalledTimes(1);
-  expect(container.textContent).toContain("Handoff confirmed");
+  expect(container.textContent).toContain("Move finished on both machines.");
   expect(localStorage.getItem(key)).toBeNull();
+});
+
+it("names the project and destination, keeps the operation in Details, and asks to reconnect only when the source is not ready", async () => {
+  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:original-anchor" }));
+  await render([{ ...members[0]!, title: "SpecWeave" }] as never);
+  expect(container.textContent).toContain("Finish moving SpecWeave to m1");
+  expect(container.textContent).toContain("The move stopped partway. m4 won’t restart on its own.");
+  expect(container.textContent).not.toContain("Reconnect");
+  const details = [...container.querySelectorAll("button")].find(
+    (b) => b.textContent === "Details",
+  )!;
+  expect(container.textContent).not.toContain(operationId);
+  await act(async () => details.click());
+  expect(container.textContent).toContain(`Operation ${operationId}`);
+  state.offline.add("m4");
+  await render([{ ...members[0]!, title: "SpecWeave" }] as never);
+  expect(container.textContent?.match(/Reconnect m4/g)).toHaveLength(1);
+  expect(finishButton()?.disabled).toBe(true);
 });

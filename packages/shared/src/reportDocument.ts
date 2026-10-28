@@ -317,3 +317,47 @@ function openingClause(plain: string): string {
   const end = CLAUSE_END.exec(plain);
   return (end === null ? plain : plain.slice(0, end.index)).trim();
 }
+
+/** Explicit dependency waits are informational, never a request for the reader. */
+export type ReportWaitReason =
+  | "Waiting for CI"
+  | "Waiting for review"
+  | "Waiting for PR merge"
+  | "Waiting for subagents";
+
+export function reportWaitReason(text: string): ReportWaitReason | null {
+  // Only the final prose paragraph describes the current disposition. Do not
+  // infer a wait from an old quote, a code sample or an evidence inventory.
+  const prose =
+    text
+      .replace(/```[\s\S]*?```/g, "")
+      .split(/\n\s*\n/)
+      .at(-1)
+      ?.trim() ?? "";
+  if (
+    /^>|\?|\b(?:you|your|anton|approve|approval|permission|decision|sign[ -]?in|license|credential)\b/i.test(
+      prose,
+    )
+  )
+    return null;
+  const plain = prose.replace(/[*_`]/g, "");
+  const wait =
+    /(?:^|[.!]\s+)(?:(?:blockers?|blocked)\s*:\s*)?(?:now\s+)?(?:waiting (?:on|for)|wait for|blocked (?:on|by))\s+(.+)/i.exec(
+      plain,
+    );
+  if (!wait) return null;
+  const dependency = wait[1]!;
+  if (/^(?:the\s+)?(?:CI|checks?|builds?|tests?)(?:\b|$)/i.test(dependency))
+    return "Waiting for CI";
+  if (/^(?:a\s+|the\s+|fresh\s+)*(?:review|reviewer)(?:\b|$)/i.test(dependency))
+    return "Waiting for review";
+  if (
+    /^(?:(?:the|a)\s+)?(?:PRs?|pull requests?)(?:\b|$)|^(?:the\s+)?merge\b|^#[0-9]+.*\bmerg/i.test(
+      dependency,
+    )
+  )
+    return "Waiting for PR merge";
+  if (/^(?:the\s+|my\s+)?(?:subagents?|agents?|workers?)(?:\b|$)/i.test(dependency))
+    return "Waiting for subagents";
+  return null;
+}

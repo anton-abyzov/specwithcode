@@ -188,6 +188,8 @@ export class DesktopWindow extends Context.Service<
     readonly dispatchSnapShotEvent: (
       event: DesktopSnapShotEvent,
     ) => Effect.Effect<void, DesktopWindowError>;
+    readonly snapShotOwner: (id: string) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    readonly forgetSnapShotOwner: (id: string) => Effect.Effect<void>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
     // embedded preview WebContentsView (or DevTools) focused they zoom the
@@ -481,6 +483,8 @@ export const make = Effect.gen(function* () {
   const readDisplayBounds = readConnectedDisplays.pipe(
     Effect.map((displays) => displays.map((display) => display.bounds)),
   );
+
+  let lastFocusedCaptureWindow: Electron.BrowserWindow | undefined;
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
     spec: AppWindowSpec,
@@ -852,6 +856,9 @@ export const make = Effect.gen(function* () {
       if (input.type === "gestureScrollEnd") window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL);
     });
 
+    window.on("focus", () => {
+      lastFocusedCaptureWindow = window;
+    });
     window.on("page-title-updated", (event) => {
       event.preventDefault();
       window.setTitle(title);
@@ -1314,26 +1321,52 @@ export const make = Effect.gen(function* () {
     return yield* electronWindow.main;
   });
 
+  // The app window a capture belongs to: the focused app window, else the app
+  // window the user last worked in (the capture shortcut fires while another
+  // app has focus), else the main window.
+  const captureAppWindow = Effect.gen(function* () {
+    const focused = yield* focusedMainWindow;
+    const windows = yield* electronWindow.appWindows;
+    if (Option.isSome(focused) && windows.includes(focused.value) && focused.value.isFocused()) {
+      lastFocusedCaptureWindow = focused.value;
+      return focused;
+    }
+    if (
+      lastFocusedCaptureWindow &&
+      windows.includes(lastFocusedCaptureWindow) &&
+      !lastFocusedCaptureWindow.isDestroyed()
+    ) {
+      return Option.some(lastFocusedCaptureWindow);
+    }
+    return yield* electronWindow.main;
+  });
+
+  const snapShotWindows = new Map<string, Electron.BrowserWindow>();
+
   const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
     channel: string,
     payload: unknown,
     {
       reveal = true,
       target = "main",
+      pinnedWindow,
     }: {
       readonly reveal?: boolean;
+      readonly pinnedWindow?: Electron.BrowserWindow;
       // Without a reveal the event goes to the main window, unless it belongs
       // to whichever app window the user is working in.
       readonly target?: "main" | "focused-app";
     } = {},
   ) {
-    const existingWindow = yield* target === "focused-app"
-      ? reveal
-        ? focusedMainWindow
-        : focusedAppWindow
-      : reveal
-        ? currentMainWindow
-        : electronWindow.main;
+    const existingWindow = yield* pinnedWindow
+      ? Effect.succeedSome(pinnedWindow)
+      : target === "focused-app"
+        ? reveal
+          ? focusedMainWindow
+          : focusedAppWindow
+        : reveal
+          ? currentMainWindow
+          : electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
     const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
     if (targetWindow.isDestroyed()) return;
@@ -1357,7 +1390,7 @@ export const make = Effect.gen(function* () {
     ensureMain,
     revealOrCreateMain,
     prepareCaptureReveal: Effect.gen(function* () {
-      const existingWindow = yield* currentMainWindow;
+      const existingWindow = yield* captureAppWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.prepareReveal(existingWindow.value);
       }
@@ -1414,10 +1447,25 @@ export const make = Effect.gen(function* () {
         event: event.type,
         captureId: "id" in event ? (event.id ?? null) : null,
       });
+      const id = "id" in event ? event.id : undefined;
+      if (id && (event.type === "requested" || !snapShotWindows.has(id))) {
+        const owner = yield* captureAppWindow;
+        if (Option.isSome(owner)) snapShotWindows.set(id, owner.value);
+      }
+      const owner = id ? snapShotWindows.get(id) : undefined;
+      // A destroyed originating window must never fall back to another conversation.
+      if (owner?.isDestroyed()) return;
       yield* dispatchRendererEvent(SNAP_SHOT_EVENT_CHANNEL, event, {
         reveal: event.type === "started",
+        target: "focused-app",
+        ...(owner ? { pinnedWindow: owner } : {}),
       });
     }),
+    snapShotOwner: (id) => Effect.sync(() => Option.fromUndefinedOr(snapShotWindows.get(id))),
+    forgetSnapShotOwner: (id) =>
+      Effect.sync(() => {
+        snapShotWindows.delete(id);
+      }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
       const window = yield* focusedMainWindow;

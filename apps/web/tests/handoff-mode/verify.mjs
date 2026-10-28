@@ -39,13 +39,19 @@ const browser = await chromium.launch({
 const errors = [];
 const shots = [];
 const cases = [
-  ["badges", "Handoff ready · M3 unreachable"],
+  ["badges", "M3 is offline"],
   ["thread-check", "Minis: no .env.local"],
-  ["thread-done", "Continued on Minis."],
+  ["thread-done", "continues on Minis."],
+  ["thread-switch", "Switch and continue"],
   ["machine", "Minis: no .env.local"],
   ["machine-done", "Open on Minis"],
-  // 0969 AC-10: the switcher's "Migrate threads…" scopes the dialog to one project.
-  ["migrate", "The coordinator stays where it is."],
+  // 0969 AC-10: the switcher's "Move M4's running threads…" scopes the dialog to one project.
+  ["migrate", "atlas's coordinator stays on M4."],
+  ["resume", "Resume all threads on this Mac?"],
+  // 1121: one machine default; projects are set on their own page.
+  ["settings", "Keep threads ready to move"],
+  ["settings-overrides", "Old app (archived): Off"],
+  ["project", "Keep this project's threads ready to move"],
 ];
 try {
   const page = await browser.newPage({ reducedMotion: "reduce", deviceScaleFactor: 2 });
@@ -65,17 +71,16 @@ try {
       shots.push(path);
     }
   }
-  // A failed check keeps the thread here: Hand off stays disabled until the checks pass.
+  // A failed check keeps the thread here: Move stays disabled until the checks pass.
   await page.goto(`${origin}/?view=thread-check`);
-  NodeAssert.equal(
-    await page.getByRole("button", { name: "Hand off to Minis" }).isDisabled(),
-    true,
-  );
+  NodeAssert.equal(await page.getByRole("button", { name: "Move to Minis" }).isDisabled(), true);
   await page.goto(`${origin}/?view=thread-ready`);
-  NodeAssert.equal(
-    await page.getByRole("button", { name: "Hand off to Minis" }).isDisabled(),
-    false,
-  );
+  NodeAssert.equal(await page.getByRole("button", { name: "Move to Minis" }).isDisabled(), false);
+  // No per-project list, no automated or archived groups, no inert auto-continue row.
+  await page.goto(`${origin}/?view=settings`);
+  await page.getByText("Keep threads ready to move").first().waitFor();
+  for (const gone of ["Show automated", "Show archived", "Continue automatically"])
+    NodeAssert.equal(await page.getByText(gone).count(), 0, gone);
   NodeAssert.deepEqual(errors, []);
 } finally {
   await browser.close();

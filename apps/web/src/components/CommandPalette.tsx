@@ -2600,8 +2600,16 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push({
     kind: "action",
     value: "action:handoff-machine",
-    searchTerms: ["hand off", "handoff", "machine", "move threads", "sleep", "close laptop"],
-    title: "Hand off this machine…",
+    searchTerms: [
+      "move running threads",
+      "hand off",
+      "handoff",
+      "machine",
+      "move threads",
+      "sleep",
+      "close laptop",
+    ],
+    title: "Move running threads to another machine…",
     icon: <ArrowRightLeftIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       requestHandOffMachine();

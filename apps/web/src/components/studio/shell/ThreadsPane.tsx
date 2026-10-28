@@ -86,6 +86,7 @@ const FOLDED_STORAGE_KEY = "studio:project-threads-folded:v1";
 const FoldedSchema = Schema.Array(Schema.String);
 const EMPTY_GROUP_COPY: Partial<Record<ProjectThreadGroup, string>> = {
   "Waiting on you": "No decisions or replies requested.",
+  Waiting: "No dependency waits.",
 };
 
 /** The one pull request a row has room for: the open one, else the latest. */
@@ -519,7 +520,9 @@ export function ThreadsPane({
                     // A subagent's question puts its parent here; the row says which one.
                     const attentionWord = threadAttentionWord(thread, props.attention);
                     const tone = attentionWord
-                      ? "waiting"
+                      ? group === "Waiting"
+                        ? "idle"
+                        : "waiting"
                       : subagentsWorking > 0 && ownTone === "idle"
                         ? "working"
                         : ownTone;
@@ -538,7 +541,12 @@ export function ThreadsPane({
                     // names only a more specific state, such as "Answer needed".
                     const statusWord =
                       attentionWord ??
-                      withRunningSubagents(threadStatusWord(thread, hostOffline), subagentsWorking);
+                      (settled && subagentsWorking > 0
+                        ? `${subagentsWorking} ${subagentsWorking === 1 ? "subagent" : "subagents"} working`
+                        : withRunningSubagents(
+                            threadStatusWord(thread, hostOffline),
+                            subagentsWorking,
+                          ));
                     const rowStatus = statusWord === group ? null : statusWord;
                     const location = threadLocation({
                       summary: thread.source,
@@ -558,178 +566,233 @@ export function ThreadsPane({
                       thread.planProgress,
                     );
                     return (
-                      <article
-                        className="sws-thread-row project-thread-card"
-                        key={`${thread.environmentId}:${thread.id}`}
-                        data-tone={tone}
-                        data-attention={attentionWord ? "" : undefined}
-                        data-thread-id={thread.id}
-                        data-thread-environment={thread.environmentId}
-                      >
-                        <button
-                          type="button"
-                          className="sws-thread-open"
-                          onClick={() => props.onOpen(thread.id, thread.environmentId)}
+                      <div key={`${thread.environmentId}:${thread.id}`}>
+                        <article
+                          className="sws-thread-row project-thread-card"
+                          data-tone={tone}
+                          data-attention={group === "Waiting on you" ? "" : undefined}
+                          data-thread-id={thread.id}
+                          data-thread-environment={thread.environmentId}
                         >
-                          <span
-                            className="sws-dot"
-                            data-tone={showDot ? tone : "none"}
-                            aria-hidden
-                          />
-                          <span className="sws-thread-text">
-                            <strong>{thread.title || "Untitled thread"}</strong>
-                            <span className="sws-thread-meta">
-                              <span className="sws-thread-meta-lead">
-                                {rowStatus
-                                  ? (() => {
-                                      const blocker = threadAttentionNote(thread);
-                                      const word = (
-                                        <span className="sws-thread-status" data-tone={tone}>
-                                          {rowStatus}
-                                        </span>
-                                      );
-                                      // Blocked says on hover what the report asks of the reader.
-                                      return blocker ? (
-                                        <Tip label={blocker} side="top">
-                                          {word}
-                                        </Tip>
-                                      ) : (
-                                        word
-                                      );
-                                    })()
-                                  : null}
-                                <ThreadModelBadge
-                                  thread={thread}
-                                  entries={
-                                    entriesByEnvironment.get(thread.environmentId) ?? new Map()
-                                  }
-                                />
-                              </span>
-                              <span className="sws-thread-meta-rest">
-                                {plan ? <PlanProgressChip plan={plan} /> : null}
-                                {unplannedNoticeShown && isUnplanned(thread) ? (
-                                  <UnplannedThreadChip
-                                    canAct={
-                                      props.canChangeThread
-                                        ? props.canChangeThread(thread)
-                                        : props.canChange
-                                    }
-                                  />
-                                ) : null}
-                                {pullRequest ? (
-                                  <span className="sws-thread-pr" data-state={pullRequest.state}>
-                                    <pullRequest.Icon
-                                      aria-hidden
-                                      className={pullRequest.toneClassName}
-                                    />
-                                    <span className="sr-only">Pull request </span>#
-                                    {pullRequest.number}
-                                    <span className="sr-only">, {pullRequest.label}</span>
-                                  </span>
-                                ) : null}
-                                {machine ? (
-                                  <Tooltip>
-                                    <TooltipTrigger
-                                      render={
-                                        <span
-                                          className="sws-thread-machine"
-                                          data-execution={machine.state}
-                                          data-moved={machine.moved || undefined}
-                                        />
-                                      }
-                                    >
-                                      {machine.state === "unknown" ? (
-                                        <WifiOffIcon aria-hidden />
-                                      ) : (
-                                        <LaptopIcon aria-hidden />
-                                      )}
-                                      <span className="sr-only">{machine.description}</span>
-                                      <span aria-hidden>{machine.label}</span>
-                                    </TooltipTrigger>
-                                    <TooltipPopup side="bottom">{machine.description}</TooltipPopup>
-                                  </Tooltip>
-                                ) : null}
-                                <HandoffRowBadge
-                                  environmentId={thread.environmentId}
-                                  threadId={thread.id}
-                                  localEnvironmentId={props.environmentId}
-                                  hostOffline={hostOffline}
-                                />
-                                {thread.runtime?.lastError ? (
-                                  <span className="sws-thread-error">
-                                    {thread.runtime.lastError}
-                                  </span>
-                                ) : null}
-                              </span>
-                            </span>
-                          </span>
-                          <span className="sr-only">
-                            , {THREAD_TONE_LABELS[tone]}, {label.full}, updated
-                          </span>
-                          <time className="sws-thread-age" dateTime={sessionStateSince(thread)}>
-                            {compactAge(sessionStateSince(thread), now)}
-                          </time>
-                        </button>
-                        {(() => {
-                          const bound = props.designsByThread?.get(thread.id);
-                          if (!bound || bound.ref.owner.kind !== "project") return null;
-                          const owner = {
-                            kind: "project",
-                            projectId: bound.ref.owner.projectId,
-                          } as const;
-                          return (
-                            <Tip label={`Open the design ${bound.title || "Untitled"}`}>
-                              <button
-                                type="button"
-                                className="sws-thread-handoff-action sws-thread-design-action"
-                                data-testid="thread-design-pill"
-                                onClick={() =>
-                                  void router.navigate(designRoute(owner, bound.ref.designId))
-                                }
-                              >
-                                <PaletteIcon aria-hidden />
-                                Design
-                              </button>
-                            </Tip>
-                          );
-                        })()}
-                        <HandoffRowAction
-                          environmentId={thread.environmentId}
-                          threadId={thread.id}
-                          localEnvironmentId={props.environmentId}
-                          hostOffline={hostOffline}
-                          canOperate={
-                            props.canChangeThread ? props.canChangeThread(thread) : props.canChange
-                          }
-                          onOpenThread={(threadId, environmentId) =>
-                            props.onOpen(threadId, environmentId)
-                          }
-                        />
-                        <Tip label={`${action} ${thread.title}`}>
                           <button
                             type="button"
-                            className="sws-thread-action"
-                            disabled={
-                              props.canChangeThread
-                                ? !props.canChangeThread(thread)
-                                : !props.canChange
-                            }
-                            aria-label={action}
-                            onClick={() => {
-                              // Show where it went, so the same row can undo it.
-                              if (action === "Resolve") setGroupFolded("Resolved", false);
-                              props.onToggleResolved(thread);
-                            }}
+                            className="sws-thread-open"
+                            onClick={() => props.onOpen(thread.id, thread.environmentId)}
                           >
-                            {settled || archived ? (
-                              <RotateCcwIcon aria-hidden />
-                            ) : (
-                              <CheckIcon aria-hidden />
-                            )}
-                            <span>{action}</span>
+                            <span
+                              className="sws-dot"
+                              data-tone={showDot ? tone : "none"}
+                              aria-hidden
+                            />
+                            <span className="sws-thread-text">
+                              <strong>{thread.title || "Untitled thread"}</strong>
+                              <span className="sws-thread-meta">
+                                <span className="sws-thread-meta-lead">
+                                  {rowStatus
+                                    ? (() => {
+                                        const blocker = threadAttentionNote(thread);
+                                        const word = (
+                                          <span
+                                            className="sws-thread-status"
+                                            data-tone={tone}
+                                            style={
+                                              group === "Waiting"
+                                                ? { color: "var(--muted-foreground)" }
+                                                : undefined
+                                            }
+                                          >
+                                            {rowStatus}
+                                          </span>
+                                        );
+                                        // Blocked says on hover what the report asks of the reader.
+                                        return blocker ? (
+                                          <Tip label={blocker} side="top">
+                                            {word}
+                                          </Tip>
+                                        ) : (
+                                          word
+                                        );
+                                      })()
+                                    : null}
+                                  <ThreadModelBadge
+                                    thread={thread}
+                                    entries={
+                                      entriesByEnvironment.get(thread.environmentId) ?? new Map()
+                                    }
+                                  />
+                                </span>
+                                <span className="sws-thread-meta-rest">
+                                  {plan ? <PlanProgressChip plan={plan} /> : null}
+                                  {unplannedNoticeShown && isUnplanned(thread) ? (
+                                    <UnplannedThreadChip
+                                      canAct={
+                                        props.canChangeThread
+                                          ? props.canChangeThread(thread)
+                                          : props.canChange
+                                      }
+                                    />
+                                  ) : null}
+                                  {pullRequest ? (
+                                    <span className="sws-thread-pr" data-state={pullRequest.state}>
+                                      <pullRequest.Icon
+                                        aria-hidden
+                                        className={pullRequest.toneClassName}
+                                      />
+                                      <span className="sr-only">Pull request </span>#
+                                      {pullRequest.number}
+                                      <span className="sr-only">, {pullRequest.label}</span>
+                                    </span>
+                                  ) : null}
+                                  {machine ? (
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        render={
+                                          <span
+                                            className="sws-thread-machine"
+                                            data-execution={machine.state}
+                                            data-moved={machine.moved || undefined}
+                                          />
+                                        }
+                                      >
+                                        {machine.state === "unknown" ? (
+                                          <WifiOffIcon aria-hidden />
+                                        ) : (
+                                          <LaptopIcon aria-hidden />
+                                        )}
+                                        <span className="sr-only">{machine.description}</span>
+                                        <span aria-hidden>{machine.label}</span>
+                                      </TooltipTrigger>
+                                      <TooltipPopup side="bottom">
+                                        {machine.description}
+                                      </TooltipPopup>
+                                    </Tooltip>
+                                  ) : null}
+                                  <HandoffRowBadge
+                                    environmentId={thread.environmentId}
+                                    threadId={thread.id}
+                                    localEnvironmentId={props.environmentId}
+                                    hostOffline={hostOffline}
+                                  />
+                                  {thread.runtime?.lastError ? (
+                                    <span className="sws-thread-error">
+                                      {thread.runtime.lastError}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </span>
+                            </span>
+                            <span className="sr-only">
+                              ,{" "}
+                              {group === "Waiting"
+                                ? "Waiting on dependencies"
+                                : THREAD_TONE_LABELS[tone]}
+                              , {label.full}, updated
+                            </span>
+                            <time className="sws-thread-age" dateTime={sessionStateSince(thread)}>
+                              {compactAge(sessionStateSince(thread), now)}
+                            </time>
                           </button>
-                        </Tip>
-                      </article>
+                          {(() => {
+                            const bound = props.designsByThread?.get(thread.id);
+                            if (!bound || bound.ref.owner.kind !== "project") return null;
+                            const owner = {
+                              kind: "project",
+                              projectId: bound.ref.owner.projectId,
+                            } as const;
+                            return (
+                              <Tip label={`Open the design ${bound.title || "Untitled"}`}>
+                                <button
+                                  type="button"
+                                  className="sws-thread-design-action"
+                                  data-testid="thread-design-pill"
+                                  onClick={() =>
+                                    void router.navigate(designRoute(owner, bound.ref.designId))
+                                  }
+                                >
+                                  <PaletteIcon aria-hidden />
+                                  Design
+                                </button>
+                              </Tip>
+                            );
+                          })()}
+                          <HandoffRowAction
+                            environmentId={thread.environmentId}
+                            threadId={thread.id}
+                            localEnvironmentId={props.environmentId}
+                            hostOffline={hostOffline}
+                            canOperate={
+                              props.canChangeThread
+                                ? props.canChangeThread(thread)
+                                : props.canChange
+                            }
+                            onOpenThread={(threadId, environmentId) =>
+                              props.onOpen(threadId, environmentId)
+                            }
+                          />
+                          <Tip label={`${action} ${thread.title}`}>
+                            <button
+                              type="button"
+                              className="sws-thread-action"
+                              disabled={
+                                props.canChangeThread
+                                  ? !props.canChangeThread(thread)
+                                  : !props.canChange
+                              }
+                              aria-label={action}
+                              onClick={() => {
+                                // Show where it went, so the same row can undo it.
+                                if (action === "Resolve") setGroupFolded("Resolved", false);
+                                props.onToggleResolved(thread);
+                              }}
+                            >
+                              {settled || archived ? (
+                                <RotateCcwIcon aria-hidden />
+                              ) : (
+                                <CheckIcon aria-hidden />
+                              )}
+                              <span>{action}</span>
+                            </button>
+                          </Tip>
+                        </article>
+                        {(() => {
+                          const root = props.attention?.roots.find(
+                            (root) =>
+                              root.thread.id === thread.id &&
+                              root.thread.environmentId === thread.environmentId,
+                          );
+                          const children =
+                            root?.actions.filter((action) => action.threadId !== thread.id) ?? [];
+                          if (!children.length) return null;
+                          return (
+                            <details className="w-full px-4 pb-2 text-xs" data-attention-requests>
+                              <summary className="cursor-pointer">
+                                {children.length} {children.length === 1 ? "request" : "requests"}{" "}
+                                from subagents
+                              </summary>
+                              <ul>
+                                {children.map((request) => (
+                                  <li key={request.key}>
+                                    <button
+                                      type="button"
+                                      className="py-1 text-left underline"
+                                      data-request-id={request.requestId}
+                                      onClick={() =>
+                                        (props.onOpenAction ?? props.onOpen)(
+                                          request.threadId as ThreadId,
+                                          request.environmentId as EnvironmentId,
+                                        )
+                                      }
+                                    >
+                                      {attentionActionWord(request.reason)} ·{" "}
+                                      {request.title || "Subagent"}. Open request
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          );
+                        })()}
+                      </div>
                     );
                   })}
                 </div>

@@ -256,6 +256,7 @@ export function ProjectThreadHeader(props: {
         />
         {/* Outside the chip row, which clips as the panel narrows: subagents stay reachable. */}
         <SubagentsChip
+          key={`${thread.environmentId}:${thread.id}`}
           environmentId={thread.environmentId}
           entries={props.subagents}
           onPeek={props.onPeekSubagent}

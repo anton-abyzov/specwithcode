@@ -102,6 +102,8 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
           prepareCaptureReveal: Effect.void,
           dispatchMenuAction: () => Effect.die("unexpected menu action"),
           dispatchSnapShotEvent: () => Effect.void,
+          snapShotOwner: () => Effect.succeedNone,
+          forgetSnapShotOwner: () => Effect.void,
           zoomMain: () => Effect.die("unexpected zoom"),
           syncAppearance: Effect.void,
         } satisfies DesktopWindow.DesktopWindow["Service"]),

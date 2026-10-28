@@ -9,9 +9,12 @@ import type { ThreadId } from "@specweave-studio/contracts";
 import { BotIcon, ChevronRightIcon, WorkflowIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useNowMinute } from "../../../hooks/useNowMinute";
 import { useThreadProjection } from "../../../state/entities";
 import {
   firstLine,
+  groupSubagentPopupEntries,
+  workingSubagentEntryCount,
   isSubagentEntryActive,
   subagentEntryLabel,
   subagentStatusTone,
@@ -53,10 +56,14 @@ export function useThreadSubagents(input: {
     });
     // Workflows are this thread's own work too: they list here, never as threads.
     const workflows = threadWorkflowEntries({
+      parentThreadId: threadId,
       turnItems: turnItems ?? [],
-      pendingBackgroundTasks: (providerThreads ?? []).flatMap(
-        (providerThread) => providerThread.pendingBackgroundTasks ?? [],
-      ),
+      pendingBackgroundTasks: (providerThreads ?? [])
+        .filter(
+          (providerThread) =>
+            providerThread.appThreadId == null || providerThread.appThreadId === threadId,
+        )
+        .flatMap((providerThread) => providerThread.pendingBackgroundTasks ?? []),
     });
     return workflows.length === 0
       ? subagents.length === 0
@@ -81,13 +88,38 @@ export function SubagentsChip(props: {
   readonly onPeek: (threadId: ThreadId) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const now = Date.parse(`${useNowMinute()}:00Z`);
+  const grouped = groupSubagentPopupEntries(props.entries, now);
   const entriesByEnvironment = useProviderEntriesByEnvironment();
   const providerEntries = entriesByEnvironment.get(props.environmentId);
   const total = props.entries.length;
   // A subagent blocked on the person is waiting, not working.
-  const running = props.entries.filter(
-    (entry) => isSubagentEntryActive(entry) && entry.awaitingPerson === undefined,
-  ).length;
+  const running = workingSubagentEntryCount(props.entries);
+  const summary = [
+    running > 0 ? `${running} working` : null,
+    ...(
+      [
+        ["pending", "queued"],
+        ["waiting", "waiting on work"],
+        ["completed", "completed"],
+        ["failed", "failed"],
+        ["cancelled", "stopped"],
+        ["interrupted", "interrupted"],
+        ["unknown", "unknown"],
+      ] as const
+    ).map(([status, label]) => {
+      const count = props.entries.filter(
+        (entry) =>
+          entry.status === status && (status !== "waiting" || entry.awaitingPerson === undefined),
+      ).length;
+      return count > 0 ? `${count} ${label}` : null;
+    }),
+    props.entries.some((entry) => entry.awaitingPerson !== undefined)
+      ? `${props.entries.filter((entry) => entry.awaitingPerson !== undefined).length} need your input`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   if (total === 0) return null;
   const workflows = props.entries.filter((entry) => entry.kind === "workflow").length;
   const agents = total - workflows;
@@ -97,7 +129,7 @@ export function SubagentsChip(props: {
       <PopoverTrigger
         className="sws-chip sws-subagents-chip"
         data-running={running > 0 ? "true" : undefined}
-        aria-label={running > 0 ? `${noun}, ${running} working` : noun}
+        aria-label={summary ? `${noun}, ${summary}` : noun}
       >
         <BotIcon aria-hidden />
         {total}
@@ -110,75 +142,98 @@ export function SubagentsChip(props: {
         <div className="sws-subagents-popover">
           <header>
             <strong>{noun}</strong>
-            {running > 0 ? <span>{running} working</span> : null}
+            {summary ? <span>{summary}</span> : null}
           </header>
-          <ul aria-label="Subagents">
-            {props.entries.map((entry) => {
-              const tone = subagentStatusTone(entry.status);
-              const line =
-                firstLine(entry.result) ??
-                (isSubagentEntryActive(entry) ? firstLine(entry.prompt) : null);
-              const providerEntry =
-                entry.providerInstanceId === null
-                  ? null
-                  : (providerEntries?.get(entry.providerInstanceId) ?? null);
-              const body = (
-                <>
-                  <span className="sws-dot" data-tone={tone} aria-hidden />
-                  <span className="sws-subagent-text">
-                    <span className="sws-subagent-title">{entry.title}</span>
-                    <span className="sws-subagent-meta">
-                      {entry.kind === "workflow" ? (
-                        <span className="sws-subagent-kind">
-                          <WorkflowIcon aria-hidden className="size-3" /> Workflow
+          <p className="sws-subagents-scope">
+            This thread’s subtree · all runs. Recent: last 30 minutes.
+          </p>
+          <div className="sws-subagents-sections">
+            {(["current", "history"] as const).map((section) => {
+              const entries = grouped[section];
+              const rows = (
+                <ul aria-label={section === "current" ? "Subagents" : "Subagent history"}>
+                  {entries.map((entry) => {
+                    const tone = subagentStatusTone(entry.status);
+                    const line =
+                      firstLine(entry.result) ??
+                      (isSubagentEntryActive(entry) ? firstLine(entry.prompt) : null);
+                    const providerEntry =
+                      entry.providerInstanceId === null
+                        ? null
+                        : (providerEntries?.get(entry.providerInstanceId) ?? null);
+                    const body = (
+                      <>
+                        <span className="sws-dot" data-tone={tone} aria-hidden />
+                        <span className="sws-subagent-text">
+                          <span className="sws-subagent-title">{entry.title}</span>
+                          <span className="sws-subagent-meta">
+                            {entry.kind === "workflow" ? (
+                              <span className="sws-subagent-kind">
+                                <WorkflowIcon aria-hidden className="size-3" /> Workflow
+                              </span>
+                            ) : null}
+                            <span data-tone={tone}>{subagentEntryLabel(entry)}</span>
+                            {entry.providerInstanceId && entry.model ? (
+                              <ModelBadge
+                                entry={providerEntry}
+                                instanceId={entry.providerInstanceId}
+                                model={entry.model}
+                              />
+                            ) : null}
+                            {/* An unreachable child's clock would only count since it was last heard. */}
+                            {entry.startedAt && entry.status !== "unknown" ? (
+                              <AgentElapsed
+                                agent={{
+                                  status: entry.status,
+                                  startedAt: entry.startedAt,
+                                  completedAt: entry.completedAt,
+                                }}
+                              />
+                            ) : null}
+                          </span>
+                          {line ? <span className="sws-subagent-result">{line}</span> : null}
                         </span>
-                      ) : null}
-                      <span data-tone={tone}>{subagentEntryLabel(entry)}</span>
-                      {entry.providerInstanceId && entry.model ? (
-                        <ModelBadge
-                          entry={providerEntry}
-                          instanceId={entry.providerInstanceId}
-                          model={entry.model}
-                        />
-                      ) : null}
-                      {/* An unreachable child's clock would only count since it was last heard. */}
-                      {entry.startedAt && entry.status !== "unknown" ? (
-                        <AgentElapsed
-                          agent={{
-                            status: entry.status,
-                            startedAt: entry.startedAt,
-                            completedAt: entry.completedAt,
-                          }}
-                        />
-                      ) : null}
-                    </span>
-                    {line ? <span className="sws-subagent-result">{line}</span> : null}
-                  </span>
-                  {entry.childThreadId ? (
-                    <ChevronRightIcon aria-hidden className="sws-subagent-open" />
-                  ) : null}
-                </>
+                        {entry.childThreadId ? (
+                          <ChevronRightIcon aria-hidden className="sws-subagent-open" />
+                        ) : null}
+                      </>
+                    );
+                    return (
+                      <li key={entry.key} style={{ paddingInlineStart: entry.depth * 14 }}>
+                        {entry.childThreadId ? (
+                          <button
+                            type="button"
+                            className="sws-subagent-row"
+                            onClick={() => {
+                              setOpen(false);
+                              props.onPeek(entry.childThreadId!);
+                            }}
+                          >
+                            {body}
+                          </button>
+                        ) : (
+                          <div className="sws-subagent-row">{body}</div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               );
-              return (
-                <li key={entry.key} style={{ paddingInlineStart: entry.depth * 14 }}>
-                  {entry.childThreadId ? (
-                    <button
-                      type="button"
-                      className="sws-subagent-row"
-                      onClick={() => {
-                        setOpen(false);
-                        props.onPeek(entry.childThreadId!);
-                      }}
-                    >
-                      {body}
-                    </button>
-                  ) : (
-                    <div className="sws-subagent-row">{body}</div>
-                  )}
-                </li>
+              return section === "history" ? (
+                entries.length > 0 ? (
+                  <details key={section} data-subagent-history>
+                    <summary>History · {entries.length}</summary>
+                    {rows}
+                  </details>
+                ) : null
+              ) : (
+                <section key={section} aria-label="Current and recent subagents">
+                  <h3>Current and recent · {entries.length}</h3>
+                  {entries.length ? rows : <p>No current or recent work.</p>}
+                </section>
               );
             })}
-          </ul>
+          </div>
         </div>
       </PopoverPopup>
     </Popover>

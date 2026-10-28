@@ -1,6 +1,9 @@
 /**
- * A project's worktrees around its deletion: what each holds before the
- * person confirms, and the guarded removal they confirmed afterwards.
+ * A project's worktrees around deleting it, or deleting all its threads: what
+ * each holds before the person confirms, and the guarded removal they confirmed
+ * afterwards. A folder any live thread records is kept; for "Delete all
+ * threads" the coordinator and its subagent threads are not owners, so a folder
+ * they record shows as in use.
  *
  * Only folders the project's threads recorded are candidates, and only ones
  * inside the managed worktree folders. Removal goes through the same guard as
@@ -9,9 +12,11 @@
  * the paths they named. Branches are never deleted.
  */
 import {
+  staysWithProjectCoordinator,
   type ProjectId,
   type ProjectWorktree,
   type ProjectWorktrees,
+  type ProjectWorktreesInput,
   ProjectWorktreesError,
   type ProjectWorktreesRemoval,
   type ProjectWorktreesRemoveInput,
@@ -30,20 +35,25 @@ import {
   type WorktreeBindings,
   worktreeOwnersOf,
 } from "../git/worktreeOwnership.ts";
-import { onlyDependencyIgnores } from "../orphanWorktrees.ts";
+import { onlyDependencyIgnores, onlyRebuildableUntracked } from "../orphanWorktrees.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as Settings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
 
-const decodeThreadWorktree = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      worktreePath: Schema.NullOr(Schema.String),
-      branch: Schema.optional(Schema.NullOr(Schema.String)),
-    }),
+const ThreadWorktree = Schema.Struct({
+  worktreePath: Schema.NullOr(Schema.String),
+  branch: Schema.optional(Schema.NullOr(Schema.String)),
+  lineage: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        parentThreadId: Schema.NullOr(Schema.String),
+        relationshipToParent: Schema.NullOr(Schema.String),
+      }),
+    ),
   ),
-);
+});
+const decodeThreadWorktree = Schema.decodeUnknownEffect(Schema.fromJsonString(ThreadWorktree));
 
 const isProjectWorktreesError = Schema.is(ProjectWorktreesError);
 
@@ -75,6 +85,8 @@ interface Candidate {
   readonly path: string;
   readonly branch: string | null;
   readonly threadIds: ReadonlyArray<string>;
+  /** Threads recording it that are not deleted. */
+  readonly liveThreadIds: ReadonlyArray<string>;
 }
 
 export const make = Effect.gen(function* () {
@@ -110,8 +122,13 @@ export const make = Effect.gen(function* () {
   const readProject = Effect.fn("ProjectWorktreeCleanup.readProject")(function* (
     projectId: ProjectId,
   ) {
-    const rows = yield* sql<{ workspaceRoot: string; deletedAt: string | null }>`
-      SELECT workspace_root AS "workspaceRoot", deleted_at AS "deletedAt"
+    const rows = yield* sql<{
+      workspaceRoot: string;
+      deletedAt: string | null;
+      coordinatorThreadId: string | null;
+    }>`
+      SELECT workspace_root AS "workspaceRoot", deleted_at AS "deletedAt",
+        json_extract(workspace_settings_json, '$.coordinatorThreadId') AS "coordinatorThreadId"
       FROM projection_projects WHERE project_id = ${projectId}
     `;
     const row = rows[0];
@@ -119,30 +136,57 @@ export const make = Effect.gen(function* () {
     return row;
   });
 
-  /** Every folder the project's threads recorded, deleted threads included. */
+  /**
+   * Every folder the project's threads recorded, deleted threads included. When
+   * only the threads of a live project go, the coordinator and its subagent
+   * threads stay, so they are not owners and a folder they record is in use.
+   */
   const readCandidates = Effect.fn("ProjectWorktreeCleanup.readCandidates")(function* (
     projectId: ProjectId,
+    project: { readonly deletedAt: string | null; readonly coordinatorThreadId: string | null },
+    threadsOnly: boolean,
   ) {
-    const rows = yield* sql<{ threadId: string; payload: string }>`
-      SELECT thread_id AS "threadId", payload_json AS "payload"
+    const rows = yield* sql<{ threadId: string; payload: string; deletedAt: string | null }>`
+      SELECT thread_id AS "threadId", payload_json AS "payload", deleted_at AS "deletedAt"
       FROM orchestration_v2_projection_threads WHERE project_id = ${projectId}
     `;
-    const groups = new Map<string, { branch: string | null; threadIds: Array<string> }>();
-    for (const row of rows) {
-      const thread = yield* decodeThreadWorktree(row.payload).pipe(
-        Effect.orElseSucceed(() => null),
+    const threads = new Map<string, typeof ThreadWorktree.Type | null>();
+    for (const row of rows)
+      threads.set(
+        row.threadId,
+        yield* decodeThreadWorktree(row.payload).pipe(Effect.orElseSucceed(() => null)),
       );
-      if (thread === null || thread.worktreePath === null) continue;
+    const coordinatorOf = {
+      id: projectId,
+      workspaceSettings: { coordinatorThreadId: project.coordinatorThreadId },
+    };
+    const stays = (threadId: string) =>
+      threadsOnly &&
+      project.deletedAt === null &&
+      staysWithProjectCoordinator(
+        threadId,
+        threads.get(threadId)?.lineage,
+        coordinatorOf,
+        (id) => threads.get(id)?.lineage,
+      );
+    const groups = new Map<
+      string,
+      { branch: string | null; threadIds: Array<string>; liveThreadIds: Array<string> }
+    >();
+    for (const row of rows) {
+      const thread = threads.get(row.threadId);
+      if (thread == null || thread.worktreePath === null || stays(row.threadId)) continue;
       const key = path.resolve(thread.worktreePath);
-      const group = groups.get(key) ?? { branch: thread.branch ?? null, threadIds: [] };
+      const group = groups.get(key) ?? {
+        branch: thread.branch ?? null,
+        threadIds: [],
+        liveThreadIds: [],
+      };
       group.threadIds.push(row.threadId);
+      if (row.deletedAt === null) group.liveThreadIds.push(row.threadId);
       groups.set(key, group);
     }
-    return [...groups].map(([key, group]): Candidate => ({
-      path: key,
-      branch: group.branch,
-      threadIds: group.threadIds,
-    }));
+    return [...groups].map(([key, group]): Candidate => ({ path: key, ...group }));
   });
 
   const readManagedRoots = Effect.gen(function* () {
@@ -203,7 +247,7 @@ export const make = Effect.gen(function* () {
     if (otherThread !== undefined)
       return keep(
         "in_use",
-        `The thread "${otherThread.title ?? otherThread.threadId}" in another project uses it, so it is kept.`,
+        `The thread "${otherThread.title ?? otherThread.threadId}" uses it and is not being deleted, so it is kept.`,
       );
     if (owners.sessions.some((session) => session.threadId === null || !own.has(session.threadId)))
       return keep("in_use", "An agent session outside this project uses it, so it is kept.");
@@ -232,7 +276,7 @@ export const make = Effect.gen(function* () {
     const hasLocalChanges =
       status.hasWorkingTreeChanges ||
       untracked.stdoutTruncated ||
-      untracked.stdout !== "" ||
+      !onlyRebuildableUntracked(untracked.stdout) ||
       ignored.stdoutTruncated ||
       !onlyDependencyIgnores(ignored.stdout);
     const ahead = yield* git
@@ -259,11 +303,9 @@ export const make = Effect.gen(function* () {
     } satisfies ProjectWorktree;
   });
 
-  const read = Effect.fn("ProjectWorktreeCleanup.read")(function* (input: {
-    readonly projectId: ProjectId;
-  }) {
+  const read = Effect.fn("ProjectWorktreeCleanup.read")(function* (input: ProjectWorktreesInput) {
     const project = yield* readProject(input.projectId);
-    const candidates = yield* readCandidates(input.projectId);
+    const candidates = yield* readCandidates(input.projectId, project, input.threadsOnly === true);
     const existing = yield* Effect.filter(candidates, (candidate) =>
       fs.exists(candidate.path).pipe(Effect.orElseSucceed(() => false)),
     );
@@ -306,11 +348,10 @@ export const make = Effect.gen(function* () {
     input: ProjectWorktreesRemoveInput,
   ) {
     const project = yield* readProject(input.projectId);
-    // Live threads may still be bound; only a deleted project's folders are released.
-    if (project.deletedAt === null)
-      return yield* fail("Delete the project before removing its worktrees.");
     const candidates = new Map(
-      (yield* readCandidates(input.projectId)).map((candidate) => [candidate.path, candidate]),
+      (yield* readCandidates(input.projectId, project, input.threadsOnly === true)).map(
+        (candidate) => [candidate.path, candidate],
+      ),
     );
     const discard = new Set(input.discardLocalChanges.map((entry) => path.resolve(entry)));
     const roots = yield* readManagedRoots;
@@ -319,8 +360,17 @@ export const make = Effect.gen(function* () {
     const kept: Array<{ path: string; reason: string }> = [];
     // One at a time: Git serializes worktree changes per repository anyway.
     for (const requested of new Set(input.paths.map((entry) => path.resolve(entry)))) {
-      if (!candidates.has(requested)) {
+      const candidate = candidates.get(requested);
+      if (candidate === undefined) {
         kept.push({ path: requested, reason: "It is not a worktree of this project." });
+        continue;
+      }
+      // Only folders whose threads are all deleted are released; the guard checks this again.
+      if (candidate.liveThreadIds.length > 0) {
+        kept.push({
+          path: requested,
+          reason: "A thread that is not deleted still uses it. Delete its threads first.",
+        });
         continue;
       }
       if (!(yield* fs.exists(requested).pipe(Effect.orElseSucceed(() => true)))) {
@@ -339,7 +389,7 @@ export const make = Effect.gen(function* () {
       const outcome = yield* gitWorkflow
         .removeWorktree(
           { cwd: project.workspaceRoot, path: requested },
-          { projectDeletion: { discardLocalChanges: discard.has(requested) } },
+          { confirmedDeletion: { discardLocalChanges: discard.has(requested) } },
         )
         .pipe(
           Effect.as(null),
@@ -374,7 +424,7 @@ export const make = Effect.gen(function* () {
       );
 
   return {
-    read: (input: { readonly projectId: ProjectId }) =>
+    read: (input: ProjectWorktreesInput) =>
       read(input).pipe(readable("The project's worktrees could not be read.")),
     remove: (input: ProjectWorktreesRemoveInput) =>
       remove(input).pipe(readable("The project's worktrees could not be removed.")),

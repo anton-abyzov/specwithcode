@@ -57,6 +57,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
+import * as NodeCrypto from "../nodeCrypto.ts";
 import * as UpdateInstallGate from "./UpdateInstallGate.ts";
 
 export { SERVICE_UPDATE_IN_PROGRESS_MESSAGE, SERVICE_UPDATE_VERIFYING_MESSAGE };
@@ -225,6 +226,8 @@ export interface ServiceUpdateHoldState {
   readonly expiresAtMs: number;
   /** Who asked for the hold (`acquire`'s reason): "install" or "app-restart". */
   readonly reason?: string;
+  /** Present only for a conditional restart owned by one caller. */
+  readonly leaseToken?: string | undefined;
   /** A hold carried across a database restart: the forced request it holds for. */
   readonly request?: string;
 }
@@ -244,6 +247,20 @@ export interface ServiceUpdateHoldShape {
      */
     readonly draining?: boolean;
   }) => Effect.Effect<ServiceUpdateHoldState>;
+  /** Atomically closes admission only when no other hold or install gate exists. */
+  readonly acquireIfUnheld: (ttlMs: number) => Effect.Effect<Option.Option<ServiceUpdateHoldState>>;
+  /** Extends only this caller's still-live conditional lease. */
+  readonly confirmLease: (
+    token: string,
+    ttlMs: number,
+  ) => Effect.Effect<Option.Option<ServiceUpdateHoldState>>;
+  readonly releaseLease: (token: string, reason: string) => Effect.Effect<boolean>;
+  /** Registers admitted work through its commit; unrelated threads can still run concurrently. */
+  readonly withAdmission: <A, E, R>(
+    action: string,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ServiceUpdateInProgressError, R>;
+  readonly awaitAdmissions: Effect.Effect<void>;
   /** Ends the hold; false when none was held. */
   readonly release: (reason: string) => Effect.Effect<boolean>;
   /**
@@ -538,18 +555,19 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       }
       return until !== null && (yield* Clock.currentTimeMillis) < until;
     });
-    const state = yield* Ref.make<
-      Option.Option<
-        ServiceUpdateHoldState & {
-          readonly released: Deferred.Deferred<void>;
-          readonly reason: string;
-          /** With no install request by then (and an idle agent) the hold ends. */
-          readonly requestDueAtMs: number;
-          /** A carried hold: when its request was made; it never moves past its end. */
-          readonly carriedFromMs?: number;
-        }
-      >
-    >(Option.none());
+    type HeldState = ServiceUpdateHoldState & {
+      readonly released: Deferred.Deferred<void>;
+      readonly reason: string;
+      /** With no install request by then (and an idle agent) the hold ends. */
+      readonly requestDueAtMs: number;
+      /** A carried hold: when its request was made; it never moves past its end. */
+      readonly carriedFromMs?: number;
+    };
+    const state = yield* Ref.make<Option.Option<HeldState>>(Option.none());
+    const admissionLock = yield* Semaphore.make(1);
+    let admissions = 0;
+    let admissionsDone = yield* Deferred.make<void>();
+    yield* Deferred.succeed(admissionsDone, undefined);
     let holds = 0;
     const releases = yield* Ref.make(0);
     // Commands refused under the current hold: the first is logged, the rest counted.
@@ -581,16 +599,20 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         ),
       );
     const removeMarker = markerLock.withPermits(1)(
-      fileSystem
-        .remove(holdMarkerPath, { force: true })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logDebug("service-update.hold.marker-remove-failed", { cause }),
-          ),
+      Effect.gen(function* () {
+        if (Option.isSome(yield* Ref.get(state))) return;
+        yield* fileSystem.remove(holdMarkerPath, { force: true });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logDebug("service-update.hold.marker-remove-failed", { cause }),
         ),
+      ),
     );
     yield* Effect.addFinalizer(() =>
-      Effect.flatMap(Ref.get(state), (held) => (Option.isSome(held) ? removeMarker : Effect.void)),
+      Effect.gen(function* () {
+        yield* Ref.set(state, Option.none());
+        yield* removeMarker;
+      }),
     );
 
     // Read before anything can start: a service the helper restarted while it was held for a
@@ -644,9 +666,15 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       }
     }
 
-    const release = (reason: string) =>
+    const releaseMatching = (reason: string, matches: (hold: ServiceUpdateHoldState) => boolean) =>
       Effect.gen(function* () {
-        const previous = yield* Ref.getAndSet(state, Option.none());
+        const previous = yield* Ref.modify(
+          state,
+          (held): readonly [Option.Option<HeldState>, Option.Option<HeldState>] =>
+            Option.isSome(held) && matches(held.value)
+              ? ([held, Option.none()] as const)
+              : ([Option.none(), held] as const),
+        );
         if (Option.isNone(previous)) return false;
         yield* removeMarker;
         yield* Deferred.succeed(previous.value.released, undefined);
@@ -666,24 +694,32 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         return true;
       });
 
-    const current = Effect.gen(function* () {
+    const release = (reason: string) => releaseMatching(reason, () => true);
+    const releaseLease = (token: string, reason: string) =>
+      releaseMatching(reason, (held) => held.leaseToken === token);
+
+    const current: Effect.Effect<Option.Option<ServiceUpdateHoldState>> = Effect.gen(function* () {
       const held = yield* Ref.get(state);
       if (Option.isNone(held)) return Option.none<ServiceUpdateHoldState>();
-      const { holdId, startedAtMs, expiresAtMs, reason, request } = held.value;
+      const { holdId, startedAtMs, expiresAtMs, reason, leaseToken, request } = held.value;
       if ((yield* Clock.currentTimeMillis) < expiresAtMs) {
         return Option.some({
           holdId,
           startedAtMs,
           expiresAtMs,
           reason,
+          leaseToken,
           ...(request === undefined ? {} : { request }),
         });
       }
-      yield* release("expired");
+      yield* releaseMatching(
+        "expired",
+        (latest) => latest.holdId === holdId && latest.expiresAtMs === expiresAtMs,
+      );
       return Option.none<ServiceUpdateHoldState>();
     });
 
-    const acquire: ServiceUpdateHoldShape["acquire"] = (input) =>
+    const acquireUnfenced: ServiceUpdateHoldShape["acquire"] = (input) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         const ttlMs = input?.ttlMs ?? HOLD_TTL_MS;
@@ -692,32 +728,41 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         const requestDueAtMs = input?.draining === true ? expiresAtMs : now + noRequestMs;
         const existing = yield* current;
         const released = yield* Deferred.make<void>();
-        const next = yield* Ref.modify(state, (held) => {
-          // An app restart's drain must not cut short, or orphan the request
-          // of, an install hold already under way: that hold stays as it is.
-          if (Option.isSome(held) && held.value.reason === "install" && reason === "app-restart")
-            return [held.value, held] as const;
-          // A repeated "Update now" asks the agent again: older requests no longer count.
-          // A carried hold taken again is an ordinary one: it no longer names the old request.
-          const value = Option.isSome(held)
-            ? {
-                holdId: held.value.holdId,
-                released: held.value.released,
-                startedAtMs: now,
-                expiresAtMs,
-                reason,
-                requestDueAtMs,
-              }
-            : {
-                holdId: `service-update-hold:${now}:${(holds += 1)}`,
-                startedAtMs: now,
-                expiresAtMs,
-                released,
-                reason,
-                requestDueAtMs,
-              };
-          return [value, Option.some(value)] as const;
-        });
+        const next = yield* Ref.modify(
+          state,
+          (held): readonly [HeldState, Option.Option<HeldState>] => {
+            // An app restart's drain must not cut short, or orphan the request
+            // of, an install hold already under way: that hold stays as it is.
+            if (
+              Option.isSome(held) &&
+              held.value.reason === "install" &&
+              held.value.leaseToken === undefined &&
+              reason === "app-restart"
+            )
+              return [held.value, held] as const;
+            // A repeated "Update now" asks the agent again: older requests no longer count.
+            // A carried hold taken again is an ordinary one: it no longer names the old request,
+            // and no caller's lease owns it any more.
+            const value: HeldState = Option.isSome(held)
+              ? {
+                  holdId: held.value.holdId,
+                  released: held.value.released,
+                  startedAtMs: now,
+                  expiresAtMs,
+                  reason,
+                  requestDueAtMs,
+                }
+              : {
+                  holdId: `service-update-hold:${now}:${(holds += 1)}`,
+                  startedAtMs: now,
+                  expiresAtMs,
+                  released,
+                  reason,
+                  requestDueAtMs,
+                };
+            return [value, Option.some(value)] as const;
+          },
+        );
         yield* writeMarker({
           holdId: next.holdId,
           startedAtMs: next.startedAtMs,
@@ -737,6 +782,68 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
           reason: next.reason,
         };
       });
+
+    const acquire: ServiceUpdateHoldShape["acquire"] = (input) =>
+      admissionLock.withPermits(1)(acquireUnfenced(input));
+    const acquireIfUnheld: ServiceUpdateHoldShape["acquireIfUnheld"] = (ttlMs) =>
+      admissionLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (Option.isSome(yield* current) || (yield* installGated)) return Option.none();
+          const leaseToken = NodeCrypto.randomBytes(32).toString("hex");
+          const next = yield* acquireUnfenced({ ttlMs, reason: "install", draining: true });
+          yield* Ref.update(state, (held) =>
+            Option.map(held, (value) => ({ ...value, leaseToken })),
+          );
+          return Option.some({ ...next, leaseToken });
+        }),
+      );
+    const confirmLease: ServiceUpdateHoldShape["confirmLease"] = (token, ttlMs) =>
+      admissionLock.withPermits(1)(
+        Effect.gen(function* () {
+          const held = yield* current;
+          if (Option.isNone(held) || held.value.leaseToken !== token || (yield* installGated))
+            return Option.none();
+          const now = yield* Clock.currentTimeMillis;
+          const expiresAtMs = now + ttlMs;
+          const next = yield* Ref.modify(
+            state,
+            (value): readonly [Option.Option<ServiceUpdateHoldState>, Option.Option<HeldState>] => {
+              if (
+                Option.isNone(value) ||
+                value.value.leaseToken !== token ||
+                value.value.expiresAtMs <= now
+              )
+                return [Option.none<ServiceUpdateHoldState>(), value] as const;
+              const extended = { ...value.value, expiresAtMs, requestDueAtMs: expiresAtMs };
+              return [Option.some(extended), Option.some(extended)] as const;
+            },
+          );
+          if (Option.isSome(next)) yield* writeMarker(next.value);
+          return next;
+        }),
+      );
+    const withAdmission: ServiceUpdateHoldShape["withAdmission"] = (action, effect) =>
+      Effect.acquireUseRelease(
+        admissionLock.withPermits(1)(
+          Effect.gen(function* () {
+            const held = Option.isSome(yield* current);
+            const gated = !held && (yield* installGated);
+            if (held || gated) {
+              yield* recordRefusal(action);
+              return yield* new ServiceUpdateInProgressError({ action, verifying: gated });
+            }
+            if (admissions === 0) admissionsDone = yield* Deferred.make<void>();
+            admissions += 1;
+          }),
+        ),
+        () => effect,
+        () =>
+          Effect.gen(function* () {
+            admissions -= 1;
+            if (admissions === 0) yield* Deferred.succeed(admissionsDone, undefined);
+          }),
+      );
+    const awaitAdmissions = Effect.suspend(() => Deferred.await(admissionsDone));
 
     const awaitReleased: Effect.Effect<void> = Effect.gen(function* () {
       while (true) {
@@ -884,6 +991,11 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
 
     return ServiceUpdateHold.of({
       acquire,
+      acquireIfUnheld,
+      confirmLease,
+      releaseLease,
+      withAdmission,
+      awaitAdmissions,
       release,
       releaseCount: Ref.get(releases),
       recordRefusal,
@@ -922,6 +1034,7 @@ export const layer = Layer.effect(
 
 /** The hold as seen by a service that may be built without one (tests, tools). */
 export interface ServiceUpdateHoldView {
+  readonly admit: ServiceUpdateHoldShape["withAdmission"];
   readonly isHeld: Effect.Effect<boolean>;
   readonly awaitReleased: Effect.Effect<void>;
   /** Fails with `ServiceUpdateInProgressError` while held. */
@@ -934,12 +1047,14 @@ const viewOf = (hold: Option.Option<ServiceUpdateHoldShape>): ServiceUpdateHoldV
       isHeld: Effect.succeed(false),
       awaitReleased: Effect.void,
       refuse: () => Effect.void,
+      admit: (_action, effect) => effect,
     };
   }
   const { isHeld, awaitReleased, current, installGated, recordRefusal } = hold.value;
   return {
     isHeld,
     awaitReleased,
+    admit: hold.value.withAdmission,
     refuse: (action) =>
       Effect.gen(function* () {
         if (Option.isSome(yield* current)) {

@@ -21,6 +21,7 @@ import { AddTokenDialog } from "./AddTokenDialog";
 import { AssetsSection } from "./AssetsSection";
 import { ColorTable } from "./ColorTable";
 import { AddComponentDialog, ComponentsSection } from "./ComponentsSection";
+import { useKitFonts } from "./kitFonts";
 import { FilesBrowser } from "./FilesBrowser";
 import { NameValueTable, type ValueCheck } from "./NameValueTable";
 import { OverviewSection } from "./OverviewSection";
@@ -144,6 +145,7 @@ function prefersReducedMotion() {
 
 export function SystemWorkspace(props: SystemWorkspaceProps) {
   const { system, onHashChange } = props;
+  useKitFonts({ environmentId: props.environmentId, owner: props.owner, system });
   const editable = props.canEdit && !props.conflict;
   const fonts = useFontUploads({
     environmentId: props.environmentId,
@@ -626,7 +628,14 @@ function SectionBody(
     return system.components.length === 0 ? (
       <Empty {...props} text={EMPTY_TEXT.components} section={section} />
     ) : (
-      <ComponentsSection system={system} canEdit={props.editable} onEdit={props.onEdit} />
+      <ComponentsSection
+        environmentId={props.environmentId}
+        owner={props.owner}
+        system={system}
+        canEdit={props.editable}
+        onEdit={props.onEdit}
+        onChanged={props.onChanged}
+      />
     );
   if (!isTokenSection(section)) return null;
   if (section.kind === "typography")

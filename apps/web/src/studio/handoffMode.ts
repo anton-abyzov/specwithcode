@@ -14,7 +14,7 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@specweave-studio/contracts";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -248,6 +248,43 @@ export function useHandoffModeSnapshot(environmentId: EnvironmentId | null): Han
   );
 }
 
+/** Several machines' snapshots at once, keyed by machine; one poll each, shared like the hook above. */
+export function useHandoffModeSnapshots(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyMap<EnvironmentId, HandoffModeSnapshot | null> {
+  const key = [...new Set(environmentIds)].toSorted().join("\n");
+  const subscribeTo = useCallback(
+    (listener: () => void) => {
+      const offs = (key === "" ? [] : (key.split("\n") as EnvironmentId[])).map((id) =>
+        subscribe(id, listener),
+      );
+      return () => offs.forEach((off) => off());
+    },
+    [key],
+  );
+  const last = useRef<{
+    key: string;
+    views: ReadonlyArray<HandoffModeView>;
+    value: ReadonlyMap<EnvironmentId, HandoffModeSnapshot | null>;
+  } | null>(null);
+  const read = () => {
+    const ids = key === "" ? [] : (key.split("\n") as EnvironmentId[]);
+    const views = ids.map((id) => store.entry(id).view);
+    const previous = last.current;
+    if (
+      previous &&
+      previous.key === key &&
+      previous.views.length === views.length &&
+      previous.views.every((view, index) => view === views[index])
+    )
+      return previous.value;
+    const value = new Map(ids.map((id, index) => [id, views[index]!.snapshot] as const));
+    last.current = { key, views, value };
+    return value;
+  };
+  return useSyncExternalStore(subscribeTo, read, read);
+}
+
 /** Test hook: seeds or clears a machine's snapshot without a server. */
 export function seedHandoffModeSnapshot(
   environmentId: EnvironmentId,
@@ -268,12 +305,16 @@ export type HandoffBadgeView =
   | {
       readonly kind: "continued";
       readonly label: string;
+      /** The machine the thread moved to, by nickname. */
+      readonly machine: string;
       readonly environmentId: EnvironmentId;
       readonly threadId: ThreadId;
     }
   | {
       readonly kind: "source-unreachable";
       readonly label: string;
+      /** The machine that stopped answering, by nickname. */
+      readonly machine: string;
       readonly replica: HandoffIncomingReplica;
     }
   | { readonly kind: "paused"; readonly label: string };
@@ -302,20 +343,21 @@ export function handoffBadgeFor(
     const machine = name(state.continuedOn.environmentId, state.continuedOn.machineLabel);
     return {
       kind: "continued",
-      label: `Continued on ${machine}`,
+      label: `Moved to ${machine}`,
+      machine,
       environmentId: state.continuedOn.environmentId,
       threadId: state.continuedOn.threadId,
     };
   }
   if (snapshot.pausedSince !== null && (state.effectiveMode === "on" || state.badge === "paused"))
-    return { kind: "paused", label: "Paused" };
+    return { kind: "paused", label: "Paused after sleep" };
   switch (state.badge) {
     case "ready":
-      return { kind: "ready", label: "Handoff ready" };
+      return { kind: "ready", label: "Ready to move" };
     case "behind":
       return {
         kind: "behind",
-        label: "Checkpoint behind",
+        label: "Syncing",
         detail:
           state.replicas
             .filter((replica) => replica.state !== "current")
@@ -328,9 +370,9 @@ export function handoffBadgeFor(
             .join("; ") || null,
       };
     case "handing-off":
-      return { kind: "handing-off", label: "Handing off…" };
+      return { kind: "handing-off", label: "Moving…" };
     case "paused":
-      return { kind: "paused", label: "Paused" };
+      return { kind: "paused", label: "Paused after sleep" };
     default:
       return null;
   }
@@ -352,14 +394,30 @@ export function incomingReplicaFor(
   );
 }
 
-/** "Handoff ready · M4 unreachable" for a checkpoint whose source stopped answering. */
+/** "M4 is offline" for a checkpoint whose source stopped answering. */
 export function unreachableBadgeFor(
   replica: HandoffIncomingReplica | null,
   name: Name,
 ): HandoffBadgeView | null {
   if (!replica || !replica.sourceUnreachable) return null;
   const machine = name(replica.sourceEnvironmentId, replica.sourceLabel);
-  return { kind: "source-unreachable", label: `Handoff ready · ${machine} unreachable`, replica };
+  return { kind: "source-unreachable", label: `${machine} is offline`, machine, replica };
+}
+
+/**
+ * What "Continue here" says when the server refuses. A lease the source renewed
+ * moments ago reads as plain advice; the server's own words stay underneath.
+ */
+export function continueHereFailure(
+  error: string,
+  machine: string,
+): { readonly title: string; readonly description: string } {
+  if (/renewed this thread's lease/i.test(error))
+    return {
+      title: `${machine} was active moments ago. Try again in a minute.`,
+      description: error,
+    };
+  return { title: "Couldn't continue here", description: error };
 }
 
 /** Whether the thread's composer must stay read-only: another machine continues it. */
@@ -367,7 +425,7 @@ export function isHandoffReadOnly(snapshot: HandoffModeSnapshot | null, threadId
   return threadHandoffState(snapshot, threadId)?.continuedOn != null;
 }
 
-/** Running threads in handoff mode, the ones "Hand off this machine…" can move. */
+/** Running threads kept ready to move, the ones "Move running threads…" can move. */
 export function handoffMachineCandidates(
   snapshot: HandoffModeSnapshot | null,
   isRunning: (threadId: ThreadId) => boolean = () => false,

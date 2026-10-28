@@ -10,6 +10,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -840,6 +841,9 @@ describe("hold views", () => {
 });
 
 describe("orchestrator admission while held", () => {
+  let admissionPause:
+    | { entered: Deferred.Deferred<void>; resume: Deferred.Deferred<void> }
+    | undefined;
   const instanceId = ProviderInstanceId.make("codex");
   const adapter = {
     instanceId,
@@ -852,7 +856,27 @@ describe("orchestrator admission while held", () => {
   const layerDatabase = fixtureProjectDatabase([projectId]);
   const layerHold = Layer.effect(
     Hold.ServiceUpdateHold,
-    Hold.makeWithOptions({ agentStatePath: missingStatePath }),
+    Hold.makeWithOptions({ agentStatePath: missingStatePath }).pipe(
+      Effect.map(
+        (hold) =>
+          ({
+            ...hold,
+            withAdmission: (action, effect) =>
+              hold.withAdmission(
+                action,
+                Effect.gen(function* () {
+                  const pause = action === "message.dispatch" ? admissionPause : undefined;
+                  if (pause !== undefined) {
+                    admissionPause = undefined;
+                    yield* Deferred.succeed(pause.entered, undefined);
+                    yield* Deferred.await(pause.resume);
+                  }
+                  return yield* effect;
+                }),
+              ),
+          }) satisfies Hold.ServiceUpdateHoldShape,
+      ),
+    ),
   ).pipe(Layer.provide(NodeServices.layer));
   const layerTest = Layer.mergeAll(
     layerDatabase,
@@ -929,6 +953,58 @@ describe("orchestrator admission while held", () => {
       yield* hold.release("cancelled");
       yield* orchestrator.dispatch(message("released"));
     }).pipe(Effect.provide(layerTest)),
+  );
+  it.effect(
+    "fences a real dispatch delayed after admission until its starting run is committed",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const hold = yield* Hold.ServiceUpdateHold;
+        const threadId = ThreadId.make("thread:late-before-update");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-late-update"),
+          threadId,
+          projectId,
+          title: "Late",
+          modelSelection: { instanceId, model: "gpt-5.1-codex" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const entered = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        admissionPause = { entered, resume };
+        const message = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("late-update-message"),
+            threadId,
+            messageId: MessageId.make("late-update-message"),
+            text: "Admitted before hold",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        assert.isTrue(Option.isSome(yield* hold.acquireIfUnheld(120_000)));
+        const fence = yield* hold.awaitAdmissions.pipe(Effect.forkScoped);
+        assert.isUndefined(fence.pollUnsafe());
+        assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 0);
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(message);
+        yield* Fiber.join(fence);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.status,
+          "starting",
+        );
+        assert.isTrue(yield* hold.isHeld);
+      }).pipe(Effect.provide(layerTest)),
   );
 });
 
@@ -1035,4 +1111,70 @@ describe("automaticInstallUnderway", () => {
     for (const status of ["up-to-date", "error", "manual-required", "available", undefined])
       expect(Hold.automaticInstallUnderway({ status })).toBe(false);
   });
+});
+
+describe("conditional restart ownership and admission", () => {
+  it.effect("grants one lease to concurrent callers and never releases a foreign hold", () =>
+    Effect.gen(function* () {
+      const hold = yield* holdAt(missingStatePath);
+      const attempts = yield* Effect.all(
+        [hold.acquireIfUnheld(120_000), hold.acquireIfUnheld(120_000)],
+        { concurrency: "unbounded" },
+      );
+      const leases = attempts.filter(Option.isSome);
+      assert.equal(leases.length, 1);
+      const token = leases[0]!.value.leaseToken!;
+      assert.isFalse(yield* hold.releaseLease("foreign", "busy"));
+      assert.isTrue(yield* hold.isHeld);
+      assert.isTrue(Option.isSome(yield* hold.confirmLease(token, 120_000)));
+      yield* hold.acquire({ reason: "app-restart" });
+      assert.isTrue(Option.isNone(yield* hold.confirmLease(token, 120_000)));
+      assert.isFalse(yield* hold.releaseLease(token, "aborted"));
+      assert.isTrue(yield* hold.isHeld);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses to revive an expired lease", () =>
+    Effect.gen(function* () {
+      const hold = yield* holdAt(missingStatePath);
+      const lease = yield* hold.acquireIfUnheld(10);
+      assert.isTrue(Option.isSome(lease));
+      if (Option.isNone(lease)) return;
+      yield* TestClock.adjust(Duration.millis(11));
+      assert.isTrue(Option.isNone(yield* hold.confirmLease(lease.value.leaseToken!, 120_000)));
+      assert.isFalse(yield* hold.isHeld);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("waits for admitted persistence and refuses new work while the lease is live", () =>
+    Effect.gen(function* () {
+      const hold = yield* holdAt(missingStatePath);
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const committed = yield* Deferred.make<void>();
+      const command = yield* hold
+        .withAdmission(
+          "message.dispatch",
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(resume);
+            yield* Deferred.succeed(committed, undefined);
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      const lease = yield* hold.acquireIfUnheld(120_000);
+      assert.isTrue(Option.isSome(lease));
+      const fenced = yield* hold.awaitAdmissions.pipe(
+        Effect.andThen(Deferred.isDone(committed)),
+        Effect.forkScoped,
+      );
+      assert.isUndefined(fenced.pollUnsafe());
+      const refused = yield* Effect.flip(hold.withAdmission("message.dispatch", Effect.void));
+      assert.equal(refused._tag, "ServiceUpdateInProgressError");
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(command);
+      assert.isTrue(yield* Fiber.join(fenced));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

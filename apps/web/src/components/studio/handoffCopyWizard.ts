@@ -1,15 +1,11 @@
-import type {
-  FolderCopyMode,
-  FolderCopySourceSummary,
-  FolderCopyStatus,
-} from "@specweave-studio/contracts";
+import type { FolderCopyMode, FolderCopyStatus } from "@specweave-studio/contracts";
 import { copyProblem } from "./handoffCopyNotices";
 import type { CopyStage } from "./handoffCopySteps";
 
 /**
- * The folder copy as a wizard: fixed steps per mode, which of them the copy is at, which
- * earlier ones can be looked at again, and where a reopened dialog lands. Pure: the
- * component owns the state, this only answers questions about it.
+ * The folder copy as a wizard: fixed steps per mode, which of them the copy is at, and
+ * what a reopened dialog says happened while it was closed. Pure: the component owns the
+ * state, this only answers questions about it.
  */
 export type CopyStepId = "where" | "what" | "review" | "copy" | "transfer" | "done";
 
@@ -92,125 +88,6 @@ export function stepTone(
   return null;
 }
 
-/** Destination states that carry a compared plan. */
-const PLANNED: ReadonlySet<FolderCopyStatus["state"]> = new Set([
-  "previewed",
-  "approved",
-  "transferring",
-  "verifying",
-  "applying",
-  "applied",
-  "undone",
-]);
-
-export interface RevisitInput {
-  readonly summary: FolderCopySourceSummary | null;
-  readonly copy: Pick<FolderCopyStatus, "state" | "rows"> | null;
-  readonly contextTransferred: boolean;
-}
-
-/**
- * Whether an earlier step has what its review shows: Where always, What once measured,
- * Review once compared, Copy once there is a copy, Transfer once context moved.
- */
-export function canRevisit(id: CopyStepId, { summary, copy, contextTransferred }: RevisitInput) {
-  switch (id) {
-    case "where":
-      return true;
-    case "what":
-      return summary !== null;
-    case "review":
-      return copy !== null && (copy.rows.length > 0 || PLANNED.has(copy.state));
-    case "copy":
-      return copy !== null;
-    case "transfer":
-      return contextTransferred;
-    case "done":
-      // Done is the last step: it is only ever live, never behind the copy.
-      return false;
-  }
-}
-
-export type CopyEditAction =
-  | "change-where"
-  | "save-folder"
-  | "rechoose"
-  | "start-new-with-settings";
-
-export interface EditInput {
-  readonly stage: CopyStage;
-  readonly copy: Pick<FolderCopyStatus, "state"> | null;
-  readonly failedBeforeApply: boolean;
-  readonly transferRecovery: boolean;
-}
-
-/**
- * Nothing is written to the destination yet: the same stages where Cancel copy is offered.
- * Changing anything here costs a measure or a compare, never files on the destination.
- */
-export function beforeApply({
-  stage,
-  copy,
-  failedBeforeApply,
-}: Omit<EditInput, "transferRecovery">) {
-  switch (stage) {
-    case "scanning":
-    case "select":
-    case "planning":
-    case "preview":
-      return true;
-    case "copying":
-      return copy?.state !== "applying" && copy?.state !== "applied";
-    case "failed":
-      return failedBeforeApply;
-    default:
-      return false;
-  }
-}
-
-/**
- * The one change a review of `id` offers, or null. Before Apply, Where cancels the copy
- * (or only saves the folder while choosing, since the destination has not started) and
- * What measures again. After Apply the copy is read-only; Where can start a new copy with
- * the same settings once it finished or was undone, unless a coordinator transfer needs
- * recovering. A copy that failed or is held after Apply offers none: dropping it would
- * orphan a partly applied folder, so Retry or Undo on the live step come first.
- */
-export function editActionFor(id: CopyStepId, input: EditInput): CopyEditAction | null {
-  const { stage } = input;
-  if (beforeApply(input)) {
-    if (id === "where") return stage === "select" ? "save-folder" : "change-where";
-    // What is live while measuring and choosing; it is only reviewed from later steps.
-    if (id === "what" && stage !== "scanning" && stage !== "select") return "rechoose";
-    return null;
-  }
-  const settled = stage === "done" || stage === "undone";
-  if (id === "where" && settled && !input.transferRecovery) return "start-new-with-settings";
-  return null;
-}
-
-/**
- * Where a reopened dialog lands, once the destination answered. The step that was on
- * screen comes back when the copy is still where it was; anything that moved on while the
- * window was closed shows live with a note. A failure, a held move or an Undo is always
- * shown live. A pointer saved before steps were remembered behaves as before.
- */
-export function restoredView(input: {
-  readonly viewed: CopyStepId | undefined;
-  readonly seen: CopyStepId | undefined;
-  readonly live: CopyStepId;
-  readonly stage: CopyStage;
-  readonly revisitable: (id: CopyStepId) => boolean;
-}): { readonly view: CopyStepId | null; readonly note: boolean } {
-  const { viewed, seen, live, stage } = input;
-  if (seen === undefined) return { view: null, note: false };
-  const movedOn = isStepAfter(live, seen);
-  if (movedOn || stage === "failed" || stage === "undone") return { view: null, note: movedOn };
-  if (viewed !== undefined && isStepAfter(live, viewed) && input.revisitable(viewed))
-    return { view: viewed, note: false };
-  return { view: null, note: false };
-}
-
 /** "42% copied", from the destination's progress; null before it counts bytes. */
 function copiedShare(copy: Pick<FolderCopyStatus, "progress"> | null) {
   const progress = copy?.progress;
@@ -261,7 +138,7 @@ export function resumeNote(input: {
     }
     case "done":
       return live === "transfer"
-        ? "The files finished copying while the window was closed. Coordinator context has not transferred yet."
+        ? "The files finished copying while the window was closed. The coordinator has not moved yet."
         : "This copy finished while the window was closed.";
     case "undone":
       return copy?.state === "cancelled"

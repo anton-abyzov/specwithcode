@@ -11,6 +11,9 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { chooseCoordinatorView } from "../../studio/projectCoordinatorMachine";
 import type { ProjectWorkspaceSearch } from "../../studio/projectPaneThreads";
 
+/** Explicit user commands may focus a conversation after their input event. */
+export const SNAP_SHOT_CONVERSATION_FOCUS_EVENT = "snap-shot-conversation-focus";
+
 export type SnapShotTarget =
   | DraftId
   | ScopedThreadRef

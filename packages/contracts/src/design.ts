@@ -485,6 +485,22 @@ export const DesignComponentProp = Schema.Struct({
   optional: Schema.Boolean,
 });
 
+/** One story of a built component preview, as a section of its preview file. */
+export const DESIGN_PREVIEW_STORY_ATTRIBUTE = "data-swc-story";
+
+export const DesignSystemPreviews = Schema.Struct({
+  /** The stored stylesheet every preview loads (the kit's built CSS, fonts and images inlined). */
+  stylesheetFile: Schema.String.check(Schema.isMaxLength(300)),
+  builtAt: Schema.String,
+  rendered: NonNegativeInt,
+  total: NonNegativeInt,
+  /** What the last build could not do, in plain words, so it shows after a confirm too. */
+  problems: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isMaxLength(500))).check(Schema.isMaxLength(20)),
+  ),
+});
+export type DesignSystemPreviews = typeof DesignSystemPreviews.Type;
+
 export const DesignSystemComponent = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   name: Schema.String.check(Schema.isMaxLength(200)),
@@ -499,6 +515,13 @@ export const DesignSystemComponent = Schema.Struct({
   stories: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isMaxLength(200)))),
   /** Static HTML the canvas renders for an instance, using the system's CSS. */
   previewHtml: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64 * 1024))),
+  /**
+   * A stored file (`previews/…html`) rendered from the kit's own stories, one
+   * section per story. Built by the server from code; never written by edits.
+   */
+  previewFile: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(300))),
+  /** Why a built preview is missing for this component (no story rendered, needs props…). */
+  previewNote: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
   provenance: DesignProvenance,
 });
 export type DesignSystemComponent = typeof DesignSystemComponent.Type;
@@ -524,6 +547,8 @@ export const DesignSystem = Schema.Struct({
   components: Schema.Array(DesignSystemComponent).check(Schema.isMaxLength(5_000)),
   /** CSS the canvas loads for component previews (a copy of the system's own stylesheet). */
   stylesheet: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(1024 * 1024))),
+  /** The last preview build: its stylesheet file and how many components it rendered. */
+  previews: Schema.optionalKey(DesignSystemPreviews),
   sources: Schema.Array(DesignSystemSource),
   /** The owner's system this one derives from, for example the app theme from Weave. */
   derivedFrom: Schema.optionalKey(DesignSystemLineage),

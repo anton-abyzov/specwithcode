@@ -10,6 +10,8 @@ import {
   DesignSystemProposalsInput,
   DesignSystemProposalsResult,
   DesignSystemProposeInput,
+  DesignSystemRebuildPreviewsInput,
+  DesignSystemRebuildPreviewsResult,
   DesignSystemRescanInput,
   DesignSystemRescanResult,
   DesignSystemScanInput,
@@ -25,6 +27,7 @@ export const DESIGN_SYSTEM_IMPORT_RPC_METHODS = {
   designSystemConfirm: "designSystem.confirm",
   designSystemDiscard: "designSystem.discard",
   designSystemRescan: "designSystem.rescan",
+  designSystemRebuildPreviews: "designSystem.rebuildPreviews",
   designSystemFigmaStatus: "designSystem.figmaStatus",
 } as const;
 
@@ -64,6 +67,11 @@ export const designSystemImportRpcs = [
   Rpc.make(DESIGN_SYSTEM_IMPORT_RPC_METHODS.designSystemRescan, {
     payload: DesignSystemRescanInput,
     success: DesignSystemRescanResult,
+    error,
+  }),
+  Rpc.make(DESIGN_SYSTEM_IMPORT_RPC_METHODS.designSystemRebuildPreviews, {
+    payload: DesignSystemRebuildPreviewsInput,
+    success: DesignSystemRebuildPreviewsResult,
     error,
   }),
   Rpc.make(DESIGN_SYSTEM_IMPORT_RPC_METHODS.designSystemFigmaStatus, {

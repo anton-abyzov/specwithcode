@@ -74,13 +74,19 @@ const fixture = Effect.gen(function* () {
   const shared = yield* addWorktree(managed, "shared");
   const outside = yield* addWorktree(root, "outside");
 
-  yield* sql`CREATE TABLE projection_projects (project_id TEXT, workspace_root TEXT, deleted_at TEXT)`;
+  yield* sql`CREATE TABLE projection_projects (project_id TEXT, workspace_root TEXT, deleted_at TEXT, workspace_settings_json TEXT)`;
   yield* sql`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, project_id TEXT, payload_json TEXT, deleted_at TEXT, archived_at TEXT)`;
   yield* sql`CREATE TABLE orchestration_v2_effect_outbox (thread_id TEXT, status TEXT)`;
   yield* sql`CREATE TABLE orchestration_v2_projection_provider_sessions (payload_json TEXT, status TEXT, thread_id TEXT)`;
-  yield* sql`INSERT INTO projection_projects VALUES (${project}, ${repo}, NULL), (${otherProject}, ${path.join(root, "other")}, NULL)`;
-  const thread = (id: string, projectId: string, worktreePath: string, branch: string) =>
-    sql`INSERT INTO orchestration_v2_projection_threads VALUES (${id}, ${projectId}, ${JSON.stringify({ worktreePath, branch, projectId, title: id })}, NULL, NULL)`;
+  yield* sql`INSERT INTO projection_projects VALUES (${project}, ${repo}, NULL, ${JSON.stringify({ coordinatorThreadId: "t-coordinator" })}), (${otherProject}, ${path.join(root, "other")}, NULL, NULL)`;
+  const thread = (
+    id: string,
+    projectId: string,
+    worktreePath: string,
+    branch: string,
+    parentThreadId: string | null = null,
+  ) =>
+    sql`INSERT INTO orchestration_v2_projection_threads VALUES (${id}, ${projectId}, ${JSON.stringify({ worktreePath, branch, projectId, title: id, lineage: { parentThreadId, relationshipToParent: parentThreadId === null ? null : "subagent", rootThreadId: parentThreadId ?? id } })}, NULL, NULL)`;
   yield* thread("t-clean", project, clean, "clean");
   yield* thread("t-clean-2", project, clean, "clean");
   yield* thread("t-dirty", project, dirty, "dirty");
@@ -88,6 +94,12 @@ const fixture = Effect.gen(function* () {
   yield* thread("t-foreign", otherProject, shared, "shared");
   yield* thread("t-outside", project, outside, "outside");
   yield* thread("t-gone", project, path.join(managed, "gone"), "gone");
+  const coordinated = yield* addWorktree(managed, "coordinated");
+  yield* thread("t-coordinator", project, coordinated, "coordinated");
+  yield* thread("t-coordinated", project, coordinated, "coordinated");
+  // A subagent inside the coordinator stays with it.
+  const helper = yield* addWorktree(managed, "helper");
+  yield* thread("t-helper", project, helper, "helper", "t-coordinator");
 
   const guard = yield* makeWorktreeRemovalGuard.pipe(Effect.provide(terminals));
   const cleanup = yield* ProjectWorktreeCleanup.make.pipe(
@@ -104,10 +116,13 @@ const fixture = Effect.gen(function* () {
     yield* sql`UPDATE projection_projects SET deleted_at = '2026-10-28T00:00:00Z' WHERE project_id = ${project}`;
     yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-10-28T00:00:00Z' WHERE project_id = ${project}`;
   });
+  // Deleting all threads keeps the project and its coordinator.
+  const deleteThreads = sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-10-28T00:00:00Z' WHERE project_id = ${project} AND thread_id NOT IN ('t-coordinator', 't-helper')`;
   const useAsProjectFolder = (folder: string) =>
     sql`UPDATE projection_projects SET workspace_root = ${folder} WHERE project_id = ${project}`;
   return {
     fs,
+    path,
     run,
     repo,
     clean,
@@ -115,7 +130,10 @@ const fixture = Effect.gen(function* () {
     shared,
     outside,
     cleanup,
+    coordinated,
+    helper,
     deleteProject,
+    deleteThreads,
     useAsProjectFolder,
   };
 });
@@ -126,7 +144,7 @@ describe("project worktree cleanup with real Git", () => {
       const f = yield* fixture;
       const { worktrees } = yield* f.cleanup.read({ projectId: project });
       const byPath = new Map(worktrees.map((entry) => [entry.path, entry]));
-      expect(worktrees).toHaveLength(4);
+      expect(worktrees).toHaveLength(6);
       expect(byPath.get(f.clean)).toMatchObject({
         status: "removable",
         branch: "clean",
@@ -135,21 +153,60 @@ describe("project worktree cleanup with real Git", () => {
         localCommits: 2,
         detail: null,
       });
-      expect(byPath.get(f.clean)?.sizeBytes).toBeGreaterThan(0);
+      if (process.platform === "win32") {
+        expect(byPath.get(f.clean)?.sizeBytes).toBeNull();
+      } else {
+        expect(byPath.get(f.clean)?.sizeBytes).toBeGreaterThan(0);
+      }
       expect(byPath.get(f.dirty)).toMatchObject({ status: "local_changes", localCommits: 1 });
       expect(byPath.get(f.shared)).toMatchObject({ status: "in_use" });
       expect(byPath.get(f.outside)).toMatchObject({ status: "not_removable" });
+      // Deleting the project takes the coordinator too.
+      expect(byPath.get(f.coordinated)).toMatchObject({ status: "removable", threadCount: 2 });
     }).pipe(Effect.provide(baseLayer)),
   );
 
-  it.effect("refuses to remove worktrees of a project that still exists", () =>
+  it.effect("leaves the coordinator and its subagents out when only the threads go", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
-      const error = yield* f.cleanup
-        .remove({ projectId: project, paths: [f.clean], discardLocalChanges: [] })
-        .pipe(Effect.flip);
-      expect(error.message).toContain("Delete the project");
+      const { worktrees } = yield* f.cleanup.read({ projectId: project, threadsOnly: true });
+      const byPath = new Map(worktrees.map((entry) => [entry.path, entry]));
+      expect(byPath.get(f.coordinated)).toMatchObject({ status: "in_use", threadCount: 1 });
+      expect(byPath.has(f.helper)).toBe(false);
+      expect(byPath.get(f.clean)).toMatchObject({ status: "removable" });
+    }).pipe(Effect.provide(baseLayer)),
+  );
+
+  it.effect("keeps worktrees that a live thread of a live project still records", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const result = yield* f.cleanup.remove({
+        projectId: project,
+        paths: [f.clean],
+        discardLocalChanges: [],
+      });
+      expect(result.removed).toEqual([]);
+      expect(result.kept[0]!.reason).toContain("Delete its threads first");
       expect(yield* f.fs.exists(f.clean)).toBe(true);
+    }).pipe(Effect.provide(baseLayer)),
+  );
+
+  it.effect("removes deleted threads' worktrees of a live project, never the coordinator's", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.deleteThreads;
+      const result = yield* f.cleanup.remove({
+        projectId: project,
+        paths: [f.clean, f.coordinated, f.helper],
+        discardLocalChanges: [],
+        threadsOnly: true,
+      });
+      expect(result.removed).toEqual([f.clean]);
+      expect(result.kept.map((entry) => entry.path)).toEqual([f.coordinated, f.helper]);
+      expect(yield* f.fs.exists(f.clean)).toBe(false);
+      expect(yield* f.fs.exists(f.coordinated)).toBe(true);
+      expect(yield* f.fs.exists(f.helper)).toBe(true);
+      expect((yield* f.run(f.repo, ["rev-parse", "--verify", "clean"])).exitCode).toBe(0);
     }).pipe(Effect.provide(baseLayer)),
   );
 
@@ -161,7 +218,7 @@ describe("project worktree cleanup with real Git", () => {
         yield* f.deleteProject;
         const first = yield* f.cleanup.remove({
           projectId: project,
-          paths: [f.clean, f.dirty, f.shared, f.outside, "/not/this/project"],
+          paths: [f.clean, f.dirty, f.shared, f.outside, f.path.resolve("/not/this/project")],
           discardLocalChanges: [],
         });
         expect(first.removed).toEqual([f.clean]);
@@ -169,7 +226,7 @@ describe("project worktree cleanup with real Git", () => {
           f.dirty,
           f.shared,
           f.outside,
-          "/not/this/project",
+          f.path.resolve("/not/this/project"),
         ]);
         expect(first.kept[0]!.reason).toContain("local changes");
         expect(yield* f.fs.exists(f.clean)).toBe(false);

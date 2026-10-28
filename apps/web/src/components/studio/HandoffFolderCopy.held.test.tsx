@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { HandoffFolderCopy } from "./HandoffFolderCopy";
 import { DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
+import { isDisabled, openMore } from "./HandoffFolderCopy.testkit";
 
 // Held moves, Move anyway and Undo: what the screen says always matches its buttons.
 const state = vi.hoisted(() => ({
@@ -96,9 +97,10 @@ const labels = () =>
     node.textContent?.trim(),
   );
 const button = (label: string) => {
-  const element = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-    (node) => node.textContent?.trim() === label,
-  );
+  const element = [
+    ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+  ].find((node) => node.textContent?.trim() === label);
   if (!element) throw new Error(`Missing button ${label}: ${container.textContent}`);
   return element;
 };
@@ -221,17 +223,17 @@ it("shows the server's held message verbatim beside the differences", async () =
   await mount();
   const held = container.querySelector('[data-slot="copy-held"]');
   expect(held?.querySelector('[data-slot="copy-server-message"]')?.textContent).toBe(HELD_MESSAGE);
-  expect(problemsText()).toContain("the coordinator stayed on M4");
+  expect(problemsText()).toContain("so the coordinator stayed here");
 });
 
 it("keeps the Move anyway wording after the transfer clears the pointer", async () => {
   reopenMove();
   await mount();
   await click("Move anyway");
-  expect(container.textContent).toContain("The coordinator continues on M3");
+  expect(container.textContent).toContain("The coordinator now runs on M3.");
   expect(pointerNow()).toBeNull();
   expect(problemsText()).toContain(
-    "You chose Move anyway, so coordinator context transferred with these differences.",
+    "You chose Move anyway, so the coordinator moved with these differences.",
   );
   expect(problemsText()).not.toContain("Copy again");
   expect(labels()).not.toContain("Copy again");
@@ -250,15 +252,16 @@ it("drops Move anyway when the source changed, and a reopen still offers Copy ag
   expect(problemsText()).toContain("Copy again: it compares first");
   expect(problemsText()).not.toContain("Move anyway");
   expect(labels()).toContain("Copy again");
-  expect(labels()).not.toContain("Transfer coordinator context");
+  expect(labels()).not.toContain("Move coordinator now");
 
   statuses = [committedAnyway()];
   await remount();
   expect(problemsText()).toContain("Copy again: it compares first");
   expect(problemsText()).not.toContain("Move anyway");
   expect(labels()).toContain("Copy again");
-  expect(labels()).not.toContain("Transfer coordinator context");
-  expect(button("Start a new copy").disabled).toBe(false);
+  expect(labels()).not.toContain("Move coordinator now");
+  await openMore();
+  expect(isDisabled(button("Start a new copy"))).toBe(false);
   expectCopyAgainMatchesButton();
 });
 

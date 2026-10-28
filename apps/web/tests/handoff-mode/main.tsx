@@ -1,15 +1,23 @@
+import { DEFAULT_HANDOFF_CONFIG } from "@specweave-studio/contracts";
 import type {
   EnvironmentId,
+  ProjectId,
   HandoffMachineRun,
   HandoffPreflightResult,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { createRoot } from "react-dom/client";
 
-import { HandoffBadgeActions, HandoffBadgeChip } from "../../src/components/handoff/HandoffBadge";
+import {
+  HandoffBadgeActions,
+  HandoffBadgeChip,
+  ResumeMachineDialogView,
+} from "../../src/components/handoff/HandoffBadge";
 import { HandOffMachineDialogView } from "../../src/components/handoff/HandOffMachineDialog";
 import type { HandoffDestination } from "../../src/components/handoff/HandoffResults";
 import { HandOffThreadDialogView } from "../../src/components/handoff/HandOffThreadDialog";
+import { HandoffModeSettingsView } from "../../src/components/settings/HandoffModeSettings";
+import { ProjectHandoffModeSettingsView } from "../../src/components/settings/ProjectHandoffModeSettings";
 import type { HandoffBadgeView } from "../../src/studio/handoffMode";
 import "./fixture.css";
 
@@ -33,24 +41,25 @@ const rows: Array<{ title: string; model: string; badge: HandoffBadgeView }> = [
   {
     title: "Fix the release build",
     model: "Opus 5.5",
-    badge: { kind: "ready", label: "Handoff ready" },
+    badge: { kind: "ready", label: "Ready to move" },
   },
   {
     title: "Migrate settings storage",
     model: "Sonnet 5.5",
-    badge: { kind: "behind", label: "Checkpoint behind", detail: "Minis: retrying" },
+    badge: { kind: "behind", label: "Syncing", detail: "Minis: retrying" },
   },
   {
     title: "Write the release notes",
     model: "Opus 5.5",
-    badge: { kind: "handing-off", label: "Handing off…" },
+    badge: { kind: "handing-off", label: "Moving…" },
   },
   {
     title: "Phone pairing review",
     model: "Opus 5.5",
     badge: {
       kind: "continued",
-      label: "Continued on Minis",
+      label: "Moved to Minis",
+      machine: "Minis",
       environmentId: MINIS,
       threadId: tid("t-9"),
     },
@@ -60,11 +69,16 @@ const rows: Array<{ title: string; model: string; badge: HandoffBadgeView }> = [
     model: "Opus 5.5",
     badge: {
       kind: "source-unreachable",
-      label: "Handoff ready · M3 unreachable",
+      label: "M3 is offline",
+      machine: "M3",
       replica: { sourceEnvironmentId: M3, sourceThreadId: tid("t-5") } as never,
     },
   },
-  { title: "Sleep handoff flush", model: "Sonnet 5.5", badge: { kind: "paused", label: "Paused" } },
+  {
+    title: "Sleep handoff flush",
+    model: "Sonnet 5.5",
+    badge: { kind: "paused", label: "Paused after sleep" },
+  },
 ];
 
 function Badges() {
@@ -78,19 +92,20 @@ function Badges() {
               <strong>{row.title}</strong>
               <span className="sws-thread-meta">
                 <span>{row.model}</span>
-                <HandoffBadgeChip badge={row.badge} />
+                <HandoffBadgeChip badge={row.badge} className="sws-thread-handoff-chip" />
               </span>
             </span>
             <time className="sws-thread-age">4m</time>
           </button>
           {row.badge.kind === "source-unreachable" || row.badge.kind === "paused" ? (
-            <HandoffBadgeActions
-              badge={row.badge}
-              environmentId={M4}
-              localEnvironmentId={M4}
-              onOpenThread={noop}
-              className="sws-thread-handoff-action"
-            />
+            <span className="sws-thread-handoff-action">
+              <HandoffBadgeActions
+                badge={row.badge}
+                environmentId={M4}
+                localEnvironmentId={M4}
+                onOpenThread={noop}
+              />
+            </span>
           ) : null}
         </article>
       ))}
@@ -136,13 +151,16 @@ function ModelPickerStub() {
 
 function ThreadDialog() {
   const done = view === "thread-done";
-  const ok = view === "thread-ready";
+  const ok = view === "thread-ready" || view === "thread-switch";
+  const switching = view === "thread-switch";
   return (
     <HandOffThreadDialogView
+      mode={switching ? "switch-model" : "move"}
       title="Fix the release build"
       destinations={destinations}
-      destinationId={MINIS}
+      destinationId={switching ? M4 : MINIS}
       onDestination={noop}
+      modelSummary="Claude · Opus 5.5"
       modelPicker={<ModelPickerStub />}
       preflight={{
         state: "done",
@@ -241,11 +259,72 @@ function MachineDialog() {
   );
 }
 
+function ResumeConfirm() {
+  return <ResumeMachineDialogView open onOpenChange={noop} onConfirm={noop} />;
+}
+
+const snapshot = (
+  environmentId: EnvironmentId,
+  projectModes: Record<string, "on" | "off"> = {},
+) => ({
+  environmentId,
+  machineLabel: "M4",
+  config: { ...DEFAULT_HANDOFF_CONFIG, sleepTarget: M3 },
+  projectModes,
+  threads: [],
+  incoming: [],
+  pausedSince: null,
+  machineRun: null,
+});
+
+// Settings > Machines: one default, overrides listed only when a project has one.
+function MachineSettings() {
+  return (
+    <HandoffModeSettingsView
+      snapshot={snapshot(M4)}
+      destinations={destinations.filter((item) => item.state !== "this-machine")}
+      overrides={
+        view === "settings-overrides"
+          ? [
+              { id: "p1" as ProjectId, title: "EasyChamp", mode: "on" },
+              { id: "p2" as ProjectId, title: "Old app", archived: true, mode: "off" },
+            ]
+          : []
+      }
+      pending={false}
+      error={null}
+      onConfig={noop}
+      onProjectMode={noop}
+      onHandOffMachine={noop}
+    />
+  );
+}
+
+// Settings > Project: one choice for the project across its machines.
+function ProjectSettings() {
+  return (
+    <ProjectHandoffModeSettingsView
+      members={[
+        { environmentId: M4, id: "p1" as ProjectId, snapshot: snapshot(M4, { p1: "on" }) },
+        { environmentId: MINIS, id: "p9" as ProjectId, snapshot: snapshot(MINIS, { p9: "on" }) },
+      ]}
+      linked
+      label={(id) => (id === M4 ? "M4" : "Minis")}
+      pending={false}
+      error={null}
+      onChange={noop}
+    />
+  );
+}
+
 function Fixture() {
   return (
     <main className="min-h-screen bg-background p-4 text-foreground" data-testid="fixture">
       {view === "badges" ? <Badges /> : null}
       {view.startsWith("thread") ? <ThreadDialog /> : null}
+      {view === "resume" ? <ResumeConfirm /> : null}
+      {view.startsWith("settings") ? <MachineSettings /> : null}
+      {view === "project" ? <ProjectSettings /> : null}
       {view.startsWith("machine") || view === "migrate" ? <MachineDialog /> : null}
     </main>
   );

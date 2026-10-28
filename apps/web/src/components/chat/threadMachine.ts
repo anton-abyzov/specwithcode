@@ -15,7 +15,7 @@ import { useEnvironmentScope } from "~/state/session";
 
 /**
  * The machine a sent chat runs on, as the chat itself shows it. The label is
- * not a picker: a chat is moved only by "Hand off to…" in its thread menu,
+ * not a picker: a chat is moved only by "Move to another machine…" in its thread menu,
  * which continues it on the other machine and leaves this copy read-only, so
  * one label covers every turn, command, file and terminal in it.
  */
@@ -37,7 +37,7 @@ const OS_LABELS: Record<ExecutionEnvironmentPlatformOs, string | null> = {
 };
 
 /**
- * "available": the menu has an enabled "Hand off to…". "continued": it is
+ * "available": the menu has an enabled "Move to another machine…". "continued": it is
  * greyed out because the chat already continued elsewhere. "private": a
  * personal assistant's chat, which never leaves its machine. "none": the
  * machine has no handoff mode, or its state is not known yet.
@@ -45,9 +45,8 @@ const OS_LABELS: Record<ExecutionEnvironmentPlatformOs, string | null> = {
 export type ThreadMachineHandoff = "available" | "continued" | "private" | "none";
 
 const HANDOFF_TIPS: Record<ThreadMachineHandoff, string> = {
-  available:
-    " To move it, choose Hand off to… from the thread's menu: click its title or ⋯, or right-click it in the sidebar.",
-  continued: " It already continued on another machine, so this copy stays here.",
+  available: " To move it, use ⋯ › Move to another machine.",
+  continued: " It already moved to another machine, so this copy stays here to read.",
   private: " A personal assistant's chats stay on their machine.",
   none: "",
 };
@@ -61,7 +60,7 @@ export function threadMachinePresentation(input: {
   readonly phase: Parameters<typeof machineStatus>[0]["phase"];
   readonly error: string | null;
   readonly canOperate: boolean;
-  /** How the thread's own menu offers "Hand off to…" now; the tip says no more than that. */
+  /** How the thread's own menu offers "Move to another machine…" now; the tip says no more than that. */
   readonly handoff: ThreadMachineHandoff;
 }): ThreadMachine {
   const os = input.os ? OS_LABELS[input.os] : null;
@@ -84,15 +83,17 @@ export function threadMachinePresentation(input: {
         : status.retryable
           ? "Can't reach"
           : status.text;
+  // The menu greys out "Move to another machine…" for a viewer who cannot operate the machine.
+  const handoff = input.handoff === "available" && !input.canOperate ? "none" : input.handoff;
   return {
     kind: input.kind,
     label: input.name,
     tip:
-      `Runs on ${where}${facts ? ` (${facts})` : ""}. ` +
-      "Its commands, files and terminal are on that machine." +
+      `Runs on ${where}${facts ? ` (${facts})` : ""}.` +
+      // Where the move is offered, the tip says how to move it instead of what lives there.
+      (handoff === "available" ? "" : " Its commands, files and terminal are on that machine.") +
       (unreachable ? ` ${status.text}.` : "") +
-      // The menu greys out "Hand off to…" for a viewer who cannot operate the machine.
-      HANDOFF_TIPS[input.handoff === "available" && !input.canOperate ? "none" : input.handoff],
+      HANDOFF_TIPS[handoff],
     warning,
   };
 }

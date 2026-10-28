@@ -71,6 +71,21 @@ export const ServerPrepareServiceUpdateInput = Schema.Struct({
    * the update helper snapshots it. Older services ignore it.
    */
   hold: Schema.optional(Schema.Boolean),
+  /**
+   * With `hold` and without `stopWork`: hold the service only when nothing runs, and stop
+   * nothing. The hold is taken only when no other hold is in place, it closes admission at
+   * once, and the look waits for commands already past admission; when something runs it is
+   * released again. Only a hold taken for this call answers with `holdToken`.
+   * `specweave-studio update --if-idle` sends it right before it restarts the service. Older
+   * services ignore it and never answer with `holdToken`.
+   */
+  ifIdle: Schema.optional(Schema.Boolean),
+  /**
+   * The `holdToken` an if-idle hold answered with. With `ifIdle`: confirm and extend that hold,
+   * only while it is still this caller's and nothing runs. With `releaseHold`: release that hold
+   * only, never another caller's.
+   */
+  holdToken: Schema.optional(Schema.String),
   /** Cancels the update hold and lets work start again. Ignores `stopWork`. */
   releaseHold: Schema.optional(Schema.Boolean),
   /**
@@ -102,6 +117,11 @@ export const ServerPrepareServiceUpdateResult = Schema.Struct({
    * would let work start again just before the app quits. Older services omit it.
    */
   holdReason: Schema.optional(ServiceUpdatePrepareReason),
+  /**
+   * With `ifIdle`: identifies the hold taken (or confirmed) for this call, present only then.
+   * Older services omit it, and a caller must not treat their `held` as its own.
+   */
+  holdToken: Schema.optional(Schema.String),
   /** Turns this call interrupted; the person can continue each by hand after the update. */
   interruptedRuns: Schema.optional(NonNegativeInt),
   /** Terminals that are open now, or that this call closed when it stops work. */

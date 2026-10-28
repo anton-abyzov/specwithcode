@@ -19,6 +19,7 @@ import { PROVISION_RPC_METHODS } from "./provision.ts";
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.voiceSynthesize]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnvironmentImport]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsThreadsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.nativeConnectionsRead]: AuthFilesystemReadScope,
   [WS_METHODS.browserBridgeStatus]: AuthFilesystemReadScope,
   // Both start Claude Code's browser server, a local process.
@@ -127,6 +128,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.designSystemFigmaStatus]: AuthFilesystemReadScope,
   [WS_METHODS.designSystemConfirm]: AuthFilesystemWriteScope,
   [WS_METHODS.designSystemDiscard]: AuthFilesystemWriteScope,
+  // Runs the kit's own code in a child process and stores the previews it renders.
+  [WS_METHODS.designSystemRebuildPreviews]: AuthFilesystemWriteScope,
   // Hand editing: files and source reads need read; every change needs write.
   [WS_METHODS.designSystemFiles]: AuthFilesystemReadScope,
   [WS_METHODS.designSystemFileRead]: AuthFilesystemReadScope,

@@ -45,7 +45,9 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import {
   linkedWorktreeGitDir,
+  newestReflogEntryMs,
   onlyDependencyIgnores,
+  onlyRebuildableUntracked,
   ORPHAN_SWEEP_INTERVAL_MS,
   ORPHAN_WORKTREE_IDLE_MS,
   orphanWorktreeRemovable,
@@ -330,14 +332,9 @@ export const make = Effect.gen(function* () {
           maxOutputBytes: 64 * 1024,
         });
         // Ignored files can contain secrets or local datasets. Dependency installs
-        // are reproducible; every other ignored path prevents automatic removal.
-        if (
-          ignored.stdoutTruncated ||
-          ignored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
+        // and build output are reproducible; every other ignored path prevents
+        // automatic removal.
+        if (ignored.stdoutTruncated || !onlyDependencyIgnores(ignored.stdout)) return;
         // status.showUntrackedFiles=no hides new files from the status check.
         if (!(yield* untrackedNone(worktreePath))) return;
         const old =
@@ -438,13 +435,7 @@ export const make = Effect.gen(function* () {
           args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
           maxOutputBytes: 64 * 1024,
         });
-        if (
-          finalIgnored.stdoutTruncated ||
-          finalIgnored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
+        if (finalIgnored.stdoutTruncated || !onlyDependencyIgnores(finalIgnored.stdout)) return;
         if (!(yield* untrackedNone(worktreePath))) return;
         const current = resolveWorktreeCleanup(
           yield* settingsService.getSettings,
@@ -500,7 +491,9 @@ export const make = Effect.gen(function* () {
         args: ["ls-files", "--others", "--exclude-standard", "--directory", "-z"],
         maxOutputBytes: 4096,
       })
-      .pipe(Effect.map((result) => !result.stdoutTruncated && result.stdout === ""));
+      .pipe(
+        Effect.map((result) => !result.stdoutTruncated && onlyRebuildableUntracked(result.stdout)),
+      );
 
   // Commits the worktree's own HEAD reflog reaches that no remote or local branch
   // holds: removing the worktree deletes that reflog, and with it the only reference.
@@ -563,11 +556,13 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.provideContext(services));
   });
 
-  // Newest of the folder, its top-level entries (dependencies aside) and its
-  // HEAD and reflog: a checkout, commit or new file all count as activity.
-  // Null when the folder or its HEAD can't be read, so an unreadable folder is
-  // never idle. A missing reflog or top-level entry has no reading: stat follows
-  // symlinks, so a dangling `.env -> ../shared/.env` reads as NotFound.
+  // Newest of its top-level files (dependencies and Finder's .DS_Store aside),
+  // its HEAD and its newest reflog entry: a checkout, commit or new file all count
+  // as activity. The folder's own mtime and the reflog file's mtime do not: Finder
+  // and `git gc` rewrite them in every worktree at once. Null when the folder or its
+  // HEAD can't be read, so an unreadable folder is never idle. A missing reflog or
+  // top-level entry has no reading: stat follows symlinks, so a dangling
+  // `.env -> ../shared/.env` reads as NotFound.
   const lastActivityAt = Effect.fn("StorageCleanup.lastActivityAt")(function* (
     worktreePath: string,
     gitDir: string,
@@ -575,27 +570,33 @@ export const make = Effect.gen(function* () {
     const names = yield* fs.readDirectory(worktreePath).pipe(Effect.option);
     if (Option.isNone(names)) return null;
     const head = path.join(gitDir, "HEAD");
-    const reflog = path.join(gitDir, "logs", "HEAD");
     const targets = [
-      worktreePath,
       head,
-      reflog,
       ...names.value
-        .filter((name) => name !== "node_modules" && name !== ".git")
+        .filter((name) => name !== "node_modules" && name !== ".git" && name !== ".DS_Store")
         .map((name) => path.join(worktreePath, name)),
     ];
     let newest: number | null = null;
     for (const target of targets) {
       const stat = yield* fs.stat(target).pipe(Effect.result);
       if (Result.isFailure(stat)) {
-        const required = target === worktreePath || target === head;
-        if (!required && stat.failure.reason._tag === "NotFound") continue;
+        if (target !== head && stat.failure.reason._tag === "NotFound") continue;
         return null;
       }
+      // A directory's mtime moves whenever anything inside it, Finder included,
+      // adds or renames a file; changes in it reach git status instead.
+      if (target !== head && stat.success.type === "Directory") continue;
       const modified = Option.getOrNull(stat.success.mtime)?.getTime() ?? null;
       if (modified === null || !Number.isFinite(modified)) return null;
       newest = newest === null ? modified : Math.max(newest, modified);
     }
+    const reflog = yield* fs.readFileString(path.join(gitDir, "logs", "HEAD")).pipe(Effect.result);
+    if (Result.isSuccess(reflog)) {
+      const entry = newestReflogEntryMs(reflog.success);
+      // An expired reflog is empty; one that can't be parsed is no reading.
+      if (entry === null && reflog.success.trim() !== "") return null;
+      if (entry !== null) newest = newest === null ? entry : Math.max(newest, entry);
+    } else if (reflog.failure.reason._tag !== "NotFound") return null;
     return newest;
   });
 

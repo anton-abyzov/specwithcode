@@ -277,19 +277,31 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.map(toSnapshot));
 
-  /** A personal assistant's threads never get handoff mode: they stay on their machine. */
-  const refuseMachinePrivate = (projectId: ProjectId) =>
+  /**
+   * A personal assistant's threads never get handoff mode: they stay on their machine.
+   * A project that is not on this machine has nothing to set (its id belongs to another one).
+   */
+  const refuseMachinePrivate = (projectId: ProjectId, mustExist = false) =>
     projects.getById(projectId).pipe(
       Effect.orElseSucceed(() => Option.none()),
       Effect.flatMap((project) =>
-        Option.isSome(project) && isPersonalAssistantProject(project.value.workspaceSettings)
-          ? Effect.fail(
-              new HandoffModeError({
-                code: "invalid",
-                message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
-              }),
-            )
-          : Effect.void,
+        Option.isNone(project)
+          ? mustExist
+            ? Effect.fail(
+                new HandoffModeError({
+                  code: "invalid",
+                  message: "That project is not on this machine.",
+                }),
+              )
+            : Effect.void
+          : isPersonalAssistantProject(project.value.workspaceSettings)
+            ? Effect.fail(
+                new HandoffModeError({
+                  code: "invalid",
+                  message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+                }),
+              )
+            : Effect.void,
       ),
     );
 
@@ -311,7 +323,7 @@ export const make = Effect.gen(function* () {
     readonly projectId: ProjectId;
     readonly mode: HandoffDocument["config"]["defaultMode"] | null;
   }) =>
-    (input.mode === "on" ? refuseMachinePrivate(input.projectId) : Effect.void).pipe(
+    (input.mode === null ? Effect.void : refuseMachinePrivate(input.projectId, true)).pipe(
       Effect.andThen(
         store.update((document) => {
           const projectModes = { ...document.projectModes };
@@ -472,11 +484,6 @@ export const make = Effect.gen(function* () {
               createdAt,
               modelSelection: shell.modelSelection,
             });
-      const pushedToOrigin = document.config.pushToOrigin
-        ? yield* Effect.promise(() =>
-            pushCheckpointRef(written.root, written.ref).catch(() => false),
-          )
-        : false;
       const children: Array<HandoffChildDisposition> = [];
       const seen = new Set<ThreadId>();
       const visit = (id: ThreadId, depth: number): Effect.Effect<void, HandoffModeError> =>
@@ -577,7 +584,8 @@ export const make = Effect.gen(function* () {
         requiredSecretPaths: [...written.requiredSecretPaths],
         transcriptMessageCount: messages.length,
         note,
-        pushedToOrigin,
+        // Set once the background push below lands; moves never wait for it.
+        pushedToOrigin: false,
         epoch: record.lease?.epoch ?? 0,
         latestRunId: shell.latestRunId,
         turnKey: shell.latestRunId === null ? null : threadTurnKey(threadId, shell.latestRunId),
@@ -598,6 +606,24 @@ export const make = Effect.gen(function* () {
         checkpoint,
         lastError: null,
       }));
+      // The origin backup is never read by a move, so it runs outside the thread
+      // lock, and a move or sleep (reason "handoff") skips it.
+      if (document.config.pushToOrigin && reason !== "handoff")
+        yield* Effect.promise(() =>
+          pushCheckpointRef(written.root, written.ref).catch(() => false),
+        ).pipe(
+          Effect.flatMap((pushed) =>
+            pushed
+              ? updateThread(threadId, shell.projectId, (current) =>
+                  current.checkpoint?.sequence === checkpoint.sequence
+                    ? { ...current, checkpoint: { ...current.checkpoint, pushedToOrigin: true } }
+                    : current,
+                )
+              : Effect.void,
+          ),
+          Effect.ignore,
+          Effect.forkDetach,
+        );
       return checkpoint;
     });
 

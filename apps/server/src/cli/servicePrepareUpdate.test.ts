@@ -225,6 +225,7 @@ describe("service prepare-update input", () => {
   const flags = {
     stopWork: false,
     hold: false,
+    ifIdle: false,
     releaseHold: false,
     reason: Option.none(),
   } as const;
@@ -245,6 +246,11 @@ describe("service prepare-update input", () => {
         releaseHold: true,
       });
       assert.deepStrictEqual(yield* prepareInputFromFlags(flags), { stopWork: false });
+      assert.deepStrictEqual(yield* prepareInputFromFlags({ ...flags, hold: true, ifIdle: true }), {
+        stopWork: false,
+        hold: true,
+        ifIdle: true,
+      });
     }),
   );
 
@@ -254,6 +260,9 @@ describe("service prepare-update input", () => {
         { ...flags, hold: true },
         { ...flags, releaseHold: true, stopWork: true },
         { ...flags, releaseHold: true, hold: true, stopWork: true },
+        // --if-idle stops nothing and needs --hold.
+        { ...flags, ifIdle: true },
+        { ...flags, ifIdle: true, hold: true, stopWork: true },
       ]) {
         const error = yield* prepareInputFromFlags(bad).pipe(Effect.flip);
         assert.equal(error._tag, "ServicePrepareUpdateUsageError");

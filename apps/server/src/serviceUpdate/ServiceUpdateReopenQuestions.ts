@@ -1,3 +1,4 @@
+import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAttention";
 /**
  * Records what a forced "Update now" is about to close, and asks it again once
  * the update is over (increment 0991, owner decision D-03).
@@ -386,6 +387,9 @@ export const makeReopener = Effect.gen(function* () {
       // A later drain that closes one still open records it afresh.
       if (request !== undefined && !ClosedQuestions.wasClosed(request))
         return { type: "skipped", reason: `request-${request.status}` } as const;
+      if (answeredRuntimeRequestCopy({ id: entry.requestId }, runtimeRequests))
+        return { type: "skipped", reason: "request-family-answered" } as const;
+
       // A turn not known when it was recorded (its thread could not be read):
       // the thread's latest turn asks again.
       const run =

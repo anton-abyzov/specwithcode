@@ -5,13 +5,18 @@ import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { describe, expect } from "vite-plus/test";
 
+import * as ProcessRunner from "../processRunner.ts";
+import { ifIdleRestart } from "../cli/update.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -671,6 +676,72 @@ it.live("a failed drain lets work start again", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// `specweave-studio update --if-idle`: a Linux worker has no update agent, and the hold must not
+// stop the work it finds.
+const noAgentHold = () =>
+  Hold.makeWithOptions({ agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json" });
+
+it.live("an if-idle hold holds an idle service, stopping nothing, without an update agent", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    const fixture = newFixture(false, { hold });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const result = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
+        assert.isTrue(result.idle);
+        assert.isTrue(result.held);
+        assert.isTrue(yield* hold.isHeld);
+        assert.deepEqual(fixture.dispatched, []);
+        const current = yield* hold.current;
+        assert.isTrue(current._tag === "Some");
+        if (current._tag === "Some") {
+          // The lease is renewed after the blocker read, not dated before that I/O.
+          assert.isAtLeast(
+            current.value.expiresAtMs - current.value.startedAtMs,
+            Preparation.IF_IDLE_HOLD_TTL_MS,
+          );
+          assert.equal(current.value.expiresAtMs, Date.parse(result.holdUntil!));
+          assert.isAtMost(
+            current.value.expiresAtMs - (yield* Clock.currentTimeMillis),
+            Preparation.IF_IDLE_HOLD_TTL_MS,
+          );
+        }
+        // A hold already in place is not this caller's: not reported as its own, not released.
+        const again = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
+        assert.isFalse(again.held);
+        assert.isTrue(yield* hold.isHeld);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("an if-idle hold leaves a busy service running and unheld", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    const fixture = newFixture(false, { hold });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'running', 'p-1')`;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const result = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
+        assert.isFalse(result.idle);
+        assert.isFalse(result.held);
+        assert.isFalse(yield* hold.isHeld);
+        assert.deepEqual(
+          result.blockers.map((blocker) => [blocker.kind, blocker.threadTitle]),
+          [["run", "Fix login"]],
+        );
+        // Nothing was stopped.
+        assert.deepEqual(fixture.dispatched, []);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.live("tells a thread its rollback was cancelled and leaves a running checkpoint", () => {
   const fixture = newFixture(true);
   return run(
@@ -825,4 +896,216 @@ it.live("a held drain cancels a message queued after its single round", () =>
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("if-idle waits for an admitted command to persist and reports its work as busy", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    const fixture = newFixture(false, { hold });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const entered = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const command = yield* hold
+          .withAdmission(
+            "message.dispatch",
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(resume);
+              yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('late', 't1', 'starting', 'p-1')`;
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        const preparing = yield* preparation
+          .prepare({ stopWork: false, hold: true, ifIdle: true })
+          .pipe(Effect.forkScoped);
+        // Wait for the real hold acquisition, not a sleep based on the old poll duration.
+        yield* Effect.gen(function* () {
+          while (!(yield* hold.isHeld)) yield* Effect.yieldNow;
+        });
+        assert.isUndefined(preparing.pollUnsafe());
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(command);
+        const result = yield* Fiber.join(preparing);
+        assert.isFalse(result.idle);
+        assert.isFalse(result.held);
+        assert.isFalse(yield* hold.isHeld);
+        assert.deepEqual(fixture.dispatched, []);
+      }).pipe(Effect.scoped),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("if-idle confirmation and cancellation act only on the matching lease", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    yield* run(
+      newFixture(false, { hold }),
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const lease = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
+        assert.isTrue(typeof lease.holdToken === "string");
+        const wrong = yield* preparation.prepare({
+          stopWork: false,
+          hold: true,
+          ifIdle: true,
+          holdToken: "foreign",
+        });
+        assert.isFalse(wrong.held);
+        yield* preparation.prepare({ stopWork: false, releaseHold: true, holdToken: "foreign" });
+        assert.isTrue(yield* hold.isHeld);
+        const renewed = yield* preparation.prepare({
+          stopWork: false,
+          hold: true,
+          ifIdle: true,
+          holdToken: lease.holdToken!,
+        });
+        assert.isTrue(renewed.held);
+        assert.equal(renewed.holdToken, lease.holdToken);
+        yield* preparation.prepare({
+          stopWork: false,
+          releaseHold: true,
+          holdToken: lease.holdToken!,
+        });
+        assert.isFalse(yield* hold.isHeld);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("cancelling an if-idle request waiting for admission releases only its lease", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    yield* run(
+      newFixture(false, { hold }),
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const entered = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const command = yield* hold
+          .withAdmission(
+            "message.dispatch",
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        const preparing = yield* preparation
+          .prepare({ stopWork: false, hold: true, ifIdle: true })
+          .pipe(Effect.forkScoped);
+        while (!(yield* hold.isHeld)) yield* Effect.yieldNow;
+        yield* Fiber.interrupt(preparing);
+        assert.isFalse(yield* hold.isHeld);
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(command);
+      }).pipe(Effect.scoped),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live.each(["open", "restart", "attach"] as const)(
+  "if-idle waits for an admitted terminal %s to register and refuses without closing it",
+  (operation) =>
+    Effect.gen(function* () {
+      const hold = yield* noAgentHold();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "if-idle-terminal-" });
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let killed = false;
+      let spawned = false;
+      const manager = yield* TerminalManager.makeWithOptions({
+        logsDir: path.join(dir, "logs"),
+        processKillGraceMs: 1,
+        ptyAdapter: {
+          spawn: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(resume);
+              spawned = true;
+              return {
+                pid: 2147483646,
+                write: () => {},
+                resize: () => {},
+                kill: () => {
+                  killed = true;
+                },
+                onData: () => () => {},
+                onExit: () => () => {},
+              };
+            }),
+        },
+      }).pipe(Effect.provideService(Hold.ServiceUpdateHold, hold));
+      const input = {
+        threadId: "terminal",
+        terminalId: "default",
+        cwd: dir,
+        cols: 100,
+        rows: 24,
+      };
+      const opening = yield* (
+        operation === "attach"
+          ? manager.attachStream(input, () => Effect.void)
+          : operation === "restart"
+            ? manager.restart(input)
+            : manager.open(input)
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* run(
+        newFixture(false, { hold }),
+        Effect.gen(function* () {
+          const preparation = yield* Preparation.makeWithTimings(fast).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(TerminalManager.TerminalManager, manager),
+                Layer.succeed(Hold.ServiceUpdateHold, hold),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+                Layer.mock(Cleanup.ServiceUpdateCleanup)({}),
+              ),
+            ),
+          );
+          const preparing = yield* preparation
+            .prepare({ stopWork: false, hold: true, ifIdle: true })
+            .pipe(Effect.forkScoped);
+          while (!(yield* hold.isHeld)) yield* Effect.yieldNow;
+          assert.isFalse(spawned);
+          assert.isUndefined(preparing.pollUnsafe());
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(opening);
+          const result = yield* Fiber.join(preparing);
+          assert.equal(result.openTerminals, 1);
+          assert.isFalse(result.idle);
+          assert.isFalse(result.held);
+          assert.isFalse(ifIdleRestart(Option.some(Option.some(result))).held);
+          assert.isFalse(yield* hold.isHeld);
+          assert.isFalse(killed);
+          // A terminal already running also refuses both acquisition and final confirmation.
+          const again = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
+          assert.isFalse(again.held);
+          const lease = yield* hold.acquireIfUnheld(Preparation.IF_IDLE_HOLD_TTL_MS);
+          assert.isTrue(Option.isSome(lease));
+          if (Option.isSome(lease)) {
+            const final = yield* preparation.prepare({
+              stopWork: false,
+              hold: true,
+              ifIdle: true,
+              holdToken: lease.value.leaseToken!,
+            });
+            assert.isFalse(final.held);
+            assert.isFalse(final.idle);
+            assert.equal(final.openTerminals, 1);
+          }
+          assert.equal(yield* manager.countOpen, 1);
+          assert.isFalse(killed);
+        }).pipe(Effect.scoped),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
 );

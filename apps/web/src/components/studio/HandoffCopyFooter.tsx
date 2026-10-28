@@ -11,28 +11,45 @@ import { HandoffCopyActions } from "./HandoffCopyActions";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopyDoneActions, HandoffCopyFailedActions } from "./HandoffCopyDone";
 import type { CopyStage } from "./handoffCopySteps";
-import { CloseOrCancelHint } from "./HandoffCopyGuide";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useProjectMoveDialog } from "./ProjectMoveOptions";
 
-/**
- * Looks at the step before, never acts on the copy. It is the first button with mr-auto, so
- * it keeps the far left while the step's actions sit right.
- */
-export function CopyBackButton({
+/** Screen 1: Cancel closes the dialog, the primary starts (and with file types, stops to choose). */
+function SetupActions({
   disabled,
-  onBack,
+  label,
+  onStart,
 }: {
   readonly disabled: boolean;
-  readonly onBack: () => void;
+  readonly label: string;
+  readonly onStart: () => void;
+}) {
+  const close = useProjectMoveDialog()?.close ?? null;
+  return (
+    <>
+      <Button disabled={disabled} onClick={onStart}>
+        {label}
+      </Button>
+      {close && (
+        <Button variant="outline" onClick={close}>
+          Cancel
+        </Button>
+      )}
+    </>
+  );
+}
+
+/** The leading ghost while a copy works or waits: stops it before anything is applied. */
+function StopCopyButton({
+  disabled,
+  onStop,
+}: {
+  readonly disabled: boolean;
+  readonly onStop: () => void;
 }) {
   return (
-    <Button
-      variant="ghost"
-      data-slot="copy-back"
-      className="mr-auto"
-      disabled={disabled}
-      onClick={onBack}
-    >
-      Back
+    <Button variant="ghost" data-leading disabled={disabled} onClick={onStop}>
+      Stop copy
     </Button>
   );
 }
@@ -50,7 +67,6 @@ export function HandoffCopyFooter({
   mode,
   targetLabel,
   auto,
-  chooseFirst,
   selection,
   setupBlocked,
   replaced,
@@ -78,8 +94,7 @@ export function HandoffCopyFooter({
   onOpen,
   onLink,
   onStartNew,
-  onBack,
-  backDisabled,
+  onChangeSetup,
 }: {
   readonly stage: CopyStage;
   readonly sourceChanged?: boolean;
@@ -122,13 +137,9 @@ export function HandoffCopyFooter({
   readonly onOpen: () => void;
   readonly onLink: () => void;
   readonly onStartNew: () => void;
-  /** Null on Where, which has no step before it. */
-  readonly onBack: (() => void) | null;
-  readonly backDisabled: boolean;
+  /** Review's way back: stops this copy and opens the setup with its choices. */
+  readonly onChangeSetup: () => void;
 }) {
-  const cancelShown =
-    stage === "scanning" ||
-    (stage === "copying" && copy !== null && copy.state !== "applying" && copy.state !== "applied");
   return (
     <HandoffCopyActions>
       {error && (
@@ -139,50 +150,33 @@ export function HandoffCopyFooter({
           {error}
         </p>
       )}
-      {/* First, with mr-auto: Back keeps the left edge while the step's actions sit right. */}
-      {onBack && <CopyBackButton disabled={backDisabled} onBack={onBack} />}
-      {cancelShown && <CloseOrCancelHint />}
-      {stage === "scanning" && (
-        <Button variant="outline" onClick={onCancelMeasure}>
-          Cancel copy
-        </Button>
-      )}
+      {stage === "scanning" && <StopCopyButton disabled={false} onStop={onCancelMeasure} />}
       {stage === "setup" &&
         (pending ? (
           <Button disabled={busy} onClick={() => onResume(pending)}>
             Check the copy again
           </Button>
         ) : (
-          <Button disabled={busy || setupBlocked} onClick={onMeasure}>
-            {chooseFirst ? "Measure the folder" : `Copy to ${targetLabel}`}
-          </Button>
+          <SetupActions
+            disabled={busy || setupBlocked}
+            label={`${mode === "copy-and-move" ? "Move" : "Copy"} to ${targetLabel}`}
+            onStart={onMeasure}
+          />
         ))}
+      {stage === "select" && (
+        <Button disabled={busy || sourceChanged || selection.length === 0} onClick={onPlan}>
+          {auto ? `Copy to ${targetLabel}` : `Preview on ${targetLabel}`}
+        </Button>
+      )}
+      {/* While comparing, the run is busy: Stop copy waits for the compare to settle. */}
       {(stage === "select" || stage === "planning") && (
-        <>
-          <Button disabled={busy || sourceChanged || selection.length === 0} onClick={onPlan}>
-            {stage === "planning"
-              ? "Comparing folders…"
-              : auto
-                ? `Copy to ${targetLabel}`
-                : `Preview on ${targetLabel}`}
-          </Button>
-          <Button variant="outline" disabled={busy} onClick={onStop}>
-            Cancel copy
-          </Button>
-        </>
+        <StopCopyButton disabled={busy} onStop={onStop} />
       )}
       {stage === "preview" && copy && (
         <>
           {replaced ? (
             <>
               <Button
-                disabled={busy || sourceChanged || !!copy.disk || secretsUnconfirmed}
-                onClick={onReplaceAll}
-              >
-                Replace all
-              </Button>
-              <Button
-                variant="outline"
                 disabled={
                   busy ||
                   sourceChanged ||
@@ -192,7 +186,14 @@ export function HandoffCopyFooter({
                 }
                 onClick={onApply}
               >
-                Copy with these choices
+                Copy with my choices
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy || sourceChanged || !!copy.disk || secretsUnconfirmed}
+                onClick={onReplaceAll}
+              >
+                Replace everything
               </Button>
             </>
           ) : (
@@ -208,26 +209,26 @@ export function HandoffCopyFooter({
               {approveLabel}
             </Button>
           )}
-          <Button variant="outline" disabled={busy} onClick={onStop}>
-            Cancel copy
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  data-leading
+                  aria-description="Stops this copy and goes back"
+                  disabled={busy}
+                  onClick={onChangeSetup}
+                />
+              }
+            >
+              Change setup
+            </TooltipTrigger>
+            <TooltipPopup>Stops this copy and goes back</TooltipPopup>
+          </Tooltip>
         </>
       )}
-      {(stage === "copying" || stage === "moving") && (
-        <>
-          <Button disabled>
-            {stage === "moving"
-              ? "Transferring context…"
-              : copy?.state === "applying"
-                ? "Applying files…"
-                : "Copying files…"}
-          </Button>
-          {stage === "copying" && copy && copy.state !== "applying" && copy.state !== "applied" && (
-            <Button variant="outline" disabled={working} onClick={onStop}>
-              Cancel copy
-            </Button>
-          )}
-        </>
+      {stage === "copying" && copy && copy.state !== "applying" && copy.state !== "applied" && (
+        <StopCopyButton disabled={working} onStop={onStop} />
       )}
       {stage === "failed" && copy && (
         <HandoffCopyFailedActions
@@ -250,6 +251,7 @@ export function HandoffCopyFooter({
           busy={busy}
           targetLabel={targetLabel}
           copyAgain={copyAgain}
+          canCopyAgain={pending !== null}
           canTransfer={mode === "copy-and-move" && !contextTransferred}
           canUndo={mode === "copy-only" && pending !== null}
           undoPreview={undoPreview}

@@ -4,6 +4,7 @@ import type {
   HandoffPreflightResult,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { CheckIcon, XIcon } from "lucide-react";
 
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
@@ -12,11 +13,15 @@ export interface HandoffDestination {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly state: "reachable" | "offline" | "this-machine";
+  /** Why it can't be chosen, or what it needs first: "Offline", "Not connected", "Needs an update". */
+  readonly reason?: string | null;
 }
 
 export function destinationText(destination: HandoffDestination): string {
   if (destination.state === "this-machine") return `${destination.label} (this machine)`;
-  return destination.state === "offline" ? `${destination.label} (offline)` : destination.label;
+  return destination.state === "offline"
+    ? `${destination.label} (${(destination.reason ?? "Offline").toLowerCase()})`
+    : destination.label;
 }
 
 export function HandoffDestinationSelect(props: {
@@ -98,41 +103,72 @@ export function versionFailureNamesDestination(
   );
 }
 
-/** One thread's preflight verdict, then what happens to its run. */
-export function preflightSummary(result: HandoffPreflightResult): string {
-  if (!result.ok) return "Stays here: a check failed.";
+/**
+ * One thread's preflight verdict, then what happens to its run. `here` is the
+ * same-machine model switch: the thread stays put, so nothing runs "there".
+ */
+export function preflightSummary(
+  result: HandoffPreflightResult,
+  machine = "That machine",
+  here = false,
+): string {
+  if (here) {
+    if (!result.ok) return "Can't switch yet:";
+    return result.resume
+      ? "Ready. The current turn keeps running."
+      : "Ready. It will wait for your next message.";
+  }
+  if (!result.ok) return `${machine} can't take it yet:`;
   return result.resume
-    ? "Ready. Its turn continues there."
-    : "Ready. It moves without starting a turn.";
+    ? "Ready. The current turn keeps running there."
+    : "Ready. It will wait there for your next message.";
 }
 
-export function HandoffPreflightPanel({ preflight }: { preflight: PreflightView }) {
+/** The check line: checking, ready, or the destination's own failure text under a short lead. */
+export function HandoffPreflightPanel({
+  preflight,
+  machine = "the other machine",
+  here = false,
+}: {
+  preflight: PreflightView;
+  /** The destination's name, for "Checking Minis…" and "Couldn't reach Minis: …". */
+  machine?: string;
+  /** The thread stays on this machine (switch model), so the copy drops "there". */
+  here?: boolean;
+}) {
   switch (preflight.state) {
     case "idle":
       return null;
     case "checking":
       return (
         <p role="status" className="text-xs text-muted-foreground">
-          Checking the destination…
+          {`Checking ${machine}…`}
         </p>
       );
     case "error":
       return (
         <p role="alert" className="text-xs text-destructive-foreground">
-          {`Couldn't check: ${preflight.message}`}
+          {`Couldn't reach ${machine}: ${preflight.message}`}
         </p>
       );
     case "done":
       return (
-        <div className="flex flex-col gap-2" aria-label="Destination checks">
+        <div className="flex flex-col gap-2" role="status" aria-label="Destination checks">
           {preflight.results.map((result) => (
             <div key={result.threadId} className="flex flex-col gap-1">
               <p
                 className={
-                  result.ok ? "text-xs text-foreground" : "text-xs text-destructive-foreground"
+                  result.ok
+                    ? "flex items-center gap-1.5 text-xs text-foreground"
+                    : "flex items-center gap-1.5 text-xs text-destructive-foreground"
                 }
               >
-                {preflightSummary(result)}
+                {result.ok ? (
+                  <CheckIcon className="size-3.5 shrink-0 text-success-foreground" aria-hidden />
+                ) : (
+                  <XIcon className="size-3.5 shrink-0" aria-hidden />
+                )}
+                {preflightSummary(result, capitalize(machine), here)}
               </p>
               <HandoffPreflightFailures result={result} />
             </div>
@@ -140,6 +176,10 @@ export function HandoffPreflightPanel({ preflight }: { preflight: PreflightView 
         </div>
       );
   }
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 const OUTCOME_TEXT = { moved: "Moved", stayed: "Stayed", skipped: "Skipped" } as const;
@@ -152,9 +192,13 @@ export function HandoffMachineResults(props: {
 }) {
   const { run } = props;
   if (run.results.length === 0)
-    return <p className="text-sm text-muted-foreground">No running thread was in handoff mode.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        Nothing was running here that's set to keep ready to move.
+      </p>
+    );
   return (
-    <ul className="flex flex-col gap-2" aria-label="Handoff results">
+    <ul className="flex flex-col gap-2" aria-label="Results">
       {run.results.map((result) => (
         <li
           key={result.threadId}
@@ -192,8 +236,8 @@ export function HandoffMachineResults(props: {
           {result.outcome === "moved" ? (
             <span className="text-xs text-muted-foreground">
               {result.resumed
-                ? `Its turn continues on ${props.destinationName}.`
-                : `It waits on ${props.destinationName}; no turn was running.`}
+                ? `The current turn keeps running on ${props.destinationName}.`
+                : `It waits on ${props.destinationName} for your next message.`}
             </span>
           ) : result.detail ? (
             <span className="text-xs text-muted-foreground">{result.detail}</span>

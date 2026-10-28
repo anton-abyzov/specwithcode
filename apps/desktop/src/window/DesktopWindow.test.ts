@@ -105,6 +105,7 @@ function makeFakeBrowserWindow() {
     getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     isDestroyed: vi.fn(() => false),
+    isFocused: vi.fn(() => true),
     isFullScreen: vi.fn(() => false),
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
@@ -236,6 +237,8 @@ function layerTest(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
+  readonly focusedWindow?: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
+  readonly appWindows?: readonly Electron.BrowserWindow[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -285,13 +288,15 @@ function layerTest(input: {
       ),
     main: Ref.get(input.mainWindow),
     currentMainOrFirst: Ref.get(input.mainWindow),
-    focusedMainOrFirst: Ref.get(input.mainWindow),
+    focusedMainOrFirst: Ref.get(input.focusedWindow ?? input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
     registerSecondary: () => Effect.void,
-    appWindows: Effect.map(Ref.get(input.mainWindow), (window) =>
-      Option.isSome(window) ? [window.value] : [],
-    ),
+    appWindows: input.appWindows
+      ? Effect.succeed(input.appWindows)
+      : Effect.map(Ref.get(input.mainWindow), (window) =>
+          Option.isSome(window) ? [window.value] : [],
+        ),
     appWindowForWebContents: () => Ref.get(input.mainWindow),
     prepareReveal: () => Effect.succeed(false),
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
@@ -1736,6 +1741,57 @@ describe("DesktopWindow", () => {
         assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
       }).pipe(Effect.provide(scenario.layer));
     }),
+  );
+
+  it.effect(
+    "pins capture lifecycle to its project window across focus changes and window closure",
+    () =>
+      Effect.gen(function* () {
+        const main = makeFakeBrowserWindow();
+        const project = makeFakeBrowserWindow();
+        const mainWindow = yield* Ref.make(Option.some(main.window));
+        const focusedWindow = yield* Ref.make(Option.some(project.window));
+        const createCount = yield* Ref.make(0);
+        const revealed: Electron.BrowserWindow[] = [];
+        const layer = layerTest({
+          window: main.window,
+          mainWindow,
+          focusedWindow,
+          createCount,
+          appWindows: [main.window, project.window],
+          onReveal: (window) => {
+            revealed.push(window);
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* DesktopWindow.DesktopWindow;
+          yield* service.dispatchSnapShotEvent({ type: "requested", id: captureOne });
+          yield* Ref.set(focusedWindow, Option.some(main.window));
+          yield* service.dispatchSnapShotEvent({ type: "started", id: captureOne });
+          yield* service.dispatchSnapShotEvent({ type: "ready", id: captureOne });
+          assert.deepEqual(main.send.mock.calls, []);
+          assert.deepEqual(
+            project.send.mock.calls.map((call) => call[1]),
+            [
+              { type: "requested", id: captureOne },
+              { type: "started", id: captureOne },
+              { type: "ready", id: captureOne },
+            ],
+          );
+          assert.deepEqual(revealed, [project.window]);
+          assert.equal(Option.getOrNull(yield* service.snapShotOwner(captureOne)), project.window);
+          // Capturing another app keeps the project window most recently used.
+          main.window.isFocused = () => false;
+          yield* service.dispatchSnapShotEvent({ type: "requested", id: captureTwo });
+          assert.equal(Option.getOrNull(yield* service.snapShotOwner(captureTwo)), project.window);
+          project.window.isDestroyed = () => true;
+          yield* service.dispatchSnapShotEvent({ type: "ready", id: captureOne });
+          assert.deepEqual(main.send.mock.calls, []);
+          assert.equal(project.send.mock.calls.length, 4);
+          yield* service.forgetSnapShotOwner(captureOne);
+          assert(Option.isNone(yield* service.snapShotOwner(captureOne)));
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("delivers capture completion and late errors without taking focus back", () =>

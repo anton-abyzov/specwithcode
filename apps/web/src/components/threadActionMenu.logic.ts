@@ -1,5 +1,5 @@
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
-import type { ContextMenuItem } from "@specweave-studio/contracts";
+import type { ContextMenuItem, HandoffModeSnapshot, ProjectId } from "@specweave-studio/contracts";
 import type { SnoozePreset } from "@specweave-studio/client-runtime/state/thread-settled";
 
 /**
@@ -35,6 +35,7 @@ export type ThreadActionMenuId =
   | "handoff-mode:off"
   | "handoff-mode"
   | "hand-off"
+  | "switch-model"
   | "archive"
   | "delete";
 
@@ -89,6 +90,46 @@ export function buildDraftActionMenuItems(options: {
   ];
 }
 
+/** What a thread's "Keep ready to move" Default resolves to, and which setting decides it. */
+export interface ThreadHandoffInherited {
+  readonly mode: "on" | "off";
+  readonly from: "project" | "settings";
+}
+
+/** The value Default takes for a thread in this project: the project's own setting, else the app's. */
+export function threadHandoffInherited(
+  snapshot: HandoffModeSnapshot | null,
+  projectId: ProjectId,
+): ThreadHandoffInherited | undefined {
+  if (!snapshot) return undefined;
+  const project = snapshot.projectModes[projectId];
+  return project !== undefined
+    ? { mode: project, from: "project" }
+    : { mode: snapshot.config.defaultMode, from: "settings" };
+}
+
+/** Adds what Default resolves to onto a thread's handoff menu state. */
+export function withInheritedHandoff(
+  handoff: ThreadActionMenuState["handoff"],
+  inherited: ThreadHandoffInherited | undefined,
+): ThreadActionMenuState["handoff"] {
+  return handoff && inherited ? { ...handoff, inherited } : handoff;
+}
+
+/** "Default (On, from project)", or the plain words when the source is unknown. */
+export function threadHandoffDefaultLabel(
+  handoff: NonNullable<ThreadActionMenuState["handoff"]>,
+): string {
+  const inherited =
+    handoff.inherited ??
+    (handoff.mode === "inherit" ? { mode: handoff.effective, from: null } : null);
+  if (!inherited) return "Default (project or app setting)";
+  const value = inherited.mode === "on" ? "On" : "Off";
+  return inherited.from === null
+    ? `Default (${value})`
+    : `Default (${value}, from ${inherited.from === "project" ? "project" : "settings"})`;
+}
+
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly branch: string | null;
@@ -132,14 +173,17 @@ export interface ThreadActionMenuState {
    */
   readonly moveToProjectBlockedReason?: string | null | undefined;
   /**
-   * The thread's handoff mode setting and what it resolves to; undefined where
-   * the server has no handoff mode. `continued` disables "Hand off to…".
+   * The thread's "Keep ready to move" setting and what it resolves to;
+   * undefined where the server has no handoff mode. `continued` disables
+   * "Move to another machine…" and "Switch model and continue…". `inherited`
+   * is what Default resolves to and where that value comes from.
    */
   readonly handoff?:
     | {
         readonly mode: "inherit" | "on" | "off";
         readonly effective: "on" | "off";
         readonly continued: boolean;
+        readonly inherited?: ThreadHandoffInherited | undefined;
       }
     | undefined;
   readonly supports: {
@@ -328,14 +372,26 @@ export function buildThreadActionMenuItems(
     ...(state.handoff
       ? [
           {
-            id: "handoff-mode" as const,
-            label: "Handoff mode",
-            icon: "arrow-right-left",
+            id: "hand-off" as const,
+            label: "Move to another machine…",
+            icon: "laptop",
             separatorBefore: true,
+            disabled: state.handoff.continued,
+          },
+          {
+            id: "switch-model" as const,
+            label: "Switch model and continue…",
+            icon: "refresh-cw",
+            disabled: state.handoff.continued,
+          },
+          {
+            id: "handoff-mode" as const,
+            label: "Keep ready to move",
+            icon: "arrow-right-left",
             children: [
               {
                 id: "handoff-mode:inherit" as const,
-                label: `Default (${state.handoff.mode === "inherit" ? (state.handoff.effective === "on" ? "On" : "Off") : "project or app setting"})`,
+                label: threadHandoffDefaultLabel(state.handoff),
                 checked: state.handoff.mode === "inherit",
               },
               { id: "handoff-mode:on" as const, label: "On", checked: state.handoff.mode === "on" },
@@ -345,12 +401,6 @@ export function buildThreadActionMenuItems(
                 checked: state.handoff.mode === "off",
               },
             ],
-          },
-          {
-            id: "hand-off" as const,
-            label: "Hand off to…",
-            icon: "laptop",
-            disabled: state.handoff.continued,
           },
         ]
       : []),

@@ -20,24 +20,23 @@ describe("threadMachinePresentation", () => {
     expect(machine.label).toBe("linuxbox");
     expect(machine.warning).toBeNull();
     expect(machine.tip).toBe(
-      "Runs on linuxbox (Linux). Its commands, files and terminal are on that machine." +
-        " To move it, choose Hand off to… from the thread's menu: click its title or ⋯, or right-click it in the sidebar.",
+      "Runs on linuxbox (Linux). To move it, use ⋯ › Move to another machine.",
     );
   });
 
   it("says a personal assistant's chat stays on its machine", () => {
     const machine = threadMachinePresentation({ ...base, handoff: "private" });
-    expect(machine.tip).not.toContain("Hand off");
+    expect(machine.tip).not.toContain("Move to another machine");
     expect(machine.tip).toContain("A personal assistant's chats stay on their machine.");
   });
 
   it("does not offer a handoff the menu greys out or lacks", () => {
     const continued = threadMachinePresentation({ ...base, handoff: "continued" });
-    expect(continued.tip).not.toContain("Hand off");
-    expect(continued.tip).toContain("It already continued on another machine");
+    expect(continued.tip).not.toContain("Move to another machine");
+    expect(continued.tip).toContain("It already moved to another machine");
     expect(
       threadMachinePresentation({ ...base, handoff: "available", canOperate: false }).tip,
-    ).not.toContain("Hand off");
+    ).toBe("Runs on linuxbox (Linux). Its commands, files and terminal are on that machine.");
     expect(threadMachinePresentation({ ...base, handoff: "none" }).tip).toBe(
       "Runs on linuxbox (Linux). Its commands, files and terminal are on that machine.",
     );

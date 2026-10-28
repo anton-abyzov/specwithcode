@@ -187,8 +187,26 @@ const settings = {
   autoResume: true,
 };
 const memory = {
-  files: [{ name: "MEMORY.md", revision: 3, updatedAt: "2026-10-09T00:00:00Z", byteLength: 128 }],
-  totalBytes: 128,
+  files: [
+    { name: "MEMORY.md", revision: 3, updatedAt: "2026-10-09T00:00:00Z", byteLength: 128 },
+    ...[
+      "agent-memory.sw-sw-closer.reference_build_and_deploy_traps.md",
+      "agent-memory.sw-sw-pm.MEMORY.md",
+      "ai-assistant-state.md",
+      "decision_provider_per_thread.md",
+      "feedback_report_timing.md",
+      "project_0997_staff_own_dues_merged_2026_10_27.md",
+      "project_connect_fraud_watch_2026_10_28.md",
+      "reference_florida_elite_actions_corrected_2026_10_28.md",
+      "skill-memory.docs-writer.md",
+    ].map((name, i) => ({
+      name,
+      revision: 1 + (i % 3),
+      updatedAt: `2026-10-${String(10 + i * 2).padStart(2, "0")}T12:00:00Z`,
+      byteLength: 900 + i * 410,
+    })),
+  ],
+  totalBytes: 21_000,
 };
 const totals = {
   inputTokens: 40000,
@@ -732,6 +750,27 @@ const fixtureSubagents = subagentsFixture
       },
     ]
   : [];
+if (subagentsFixture && new URLSearchParams(location.search).has("popup-history")) {
+  shells.push(
+    ...Array.from({ length: 14 }, (_, i) =>
+      shell(`old-review-${i}`, `Historical review ${i + 1}`, {
+        lineage: subagentOf("warn"),
+        source: {
+          creationSource: "provider",
+          nativeSubagentStatus: "completed",
+          pendingRuntimeRequest: null,
+        },
+        latestRun: { status: "completed", completedAt: "2026-10-20T12:00:00Z" },
+      }),
+    ),
+  );
+  shells.push(
+    shell("unrelated-child", "Unrelated thread child", {
+      lineage: subagentOf("polish"),
+      runtime: { status: "running" },
+    }),
+  );
+}
 const historyFixture = new URLSearchParams(window.location.search).has("history");
 let historyShells = historyFixture
   ? [
@@ -1139,7 +1178,10 @@ window.__streamUpdate = (id, text) => {
   streamMessages = streamMessages.map((m) => (m.id === id ? { ...m, text, updatedAt: at } : m));
   publishStream();
 };
+let attentionCoordinatorProjection = null;
 const fixtureThreadProjection = (ref) => {
+  if (ref?.threadId === "coord" && attentionCoordinatorProjection)
+    return attentionCoordinatorProjection;
   // The fixture mode never changes on a page, so the hook order is stable.
   if (streamFixture) return useSyncExternalStore(subscribeStream, () => streamProjection);
   if (fallbackFixture) return { projection: fallbackProjection };
@@ -1166,7 +1208,7 @@ export const useThreadProjection = (ref) => {
   return { ...result, projection: withRequests.get(projection) };
 };
 export const useThreadHistory = () => ({ hasMoreHistory: switchFixture, loading: false });
-export const useThreadStatus = () => "ready";
+export const useThreadStatus = () => "live";
 export const useEnvironment = (environmentId) => ({
   label: memberProjects.length > 1 ? machineLabels[environmentId] : "Development Mac",
   connection: { phase: "connected" },
@@ -1249,8 +1291,11 @@ export const useEnvironmentQuery = (q) => ({
         ? { connections }
         : q?.kind === "memory"
           ? {
-              name: "MEMORY.md",
-              content: "Use independent providers per thread. Decisions stay in this project.",
+              name: q.name ?? "MEMORY.md",
+              content:
+                q.name && q.name !== "MEMORY.md"
+                  ? `# ${q.name}\n\nRecorded during the project review.\n\n- Keep one file per subject.\n- Update it instead of adding a dated copy.`
+                  : "Use independent providers per thread. Decisions stay in this project.",
               revision: 3,
               byteLength: 128,
             }
@@ -1357,6 +1402,11 @@ export const useAtomCommand = (command) => async (args) => {
   if (command === "knowledgeSearch")
     return { _tag: "Success", value: knowledgeSearchResult(args.input.query) };
   if (command === knowledgeReindex) return { _tag: "Success", value: knowledgeStatus("indexing") };
+  if (command === "memoryFetch")
+    return {
+      _tag: "Success",
+      value: { name: args.input.name, content: `# ${args.input.name}\n`, revision: 1 },
+    };
   if (command === "threadReportSave") {
     const key = reportKey(args.input.threadId, args.input.text);
     if (!savedReports.some((report) => report.key === key)) {
@@ -1398,12 +1448,17 @@ export const useAtomCommand = (command) => async (args) => {
             "in_use",
             900_000_000,
             0,
-            'The thread "Docs refresh" in another project uses it, so it is kept.',
+            'The thread "Docs refresh" uses it and is not being deleted, so it is kept.',
           ),
         ],
       },
     };
   }
+  if (command === "threadsDelete")
+    return {
+      _tag: "Success",
+      value: { projectId: args.input.projectId, deletedThreadIds: ["thread-a", "thread-b"] },
+    };
   if (command === "worktreesRemove")
     return {
       _tag: "Success",
@@ -1496,11 +1551,12 @@ export const projectWorkspace = withFallback({
   threadReports: () => ({ kind: "threadReports" }),
   threadIncrementProgress: () => ({ kind: "threadIncrementProgress" }),
   threadReportSave: "threadReportSave",
-  memoryRead: () => ({ kind: "memory" }),
+  memoryRead: (args) => ({ kind: "memory", name: args?.input?.name }),
   usage: () => ({ kind: "usage" }),
   send: "send",
   memoryWrite: "memoryWrite",
   memoryDelete: "memoryDelete",
+  memoryFetch: "memoryFetch",
   knowledge: () => ({ kind: "knowledge" }),
   knowledgeSearch: "knowledgeSearch",
   knowledgeReindex,
@@ -1512,6 +1568,7 @@ export const projectEnvironment = withFallback({
   changeFolder: "changeFolder",
   worktreesRead: "worktreesRead",
   worktreesRemove: "worktreesRemove",
+  threadsDelete: "threadsDelete",
 });
 // Voice settings and file menus read the host's config; the fixture's host has none loaded.
 const noServerConfig = Atom.make(null);
@@ -1713,6 +1770,12 @@ export function MarkdownFixture({ text, renderContextReference, renderThreadLink
   );
 }
 
+export const refreshArchivedThreadsForEnvironment = (environmentId: string) => {
+  (window as unknown as { __projectCalls: unknown[] }).__projectCalls.push({
+    command: "refreshArchived",
+    args: environmentId,
+  });
+};
 export const useArchivedThreadSnapshots = () => {
   const history = useSyncExternalStore(subscribeShells, () => historyShells);
   return {
@@ -2009,7 +2072,10 @@ export const attentionShellAtom = Atom.make({
   status: "live",
   error: Option.none(),
 });
-export const environmentShell = { stateValueAtom: () => attentionShellAtom };
+export const environmentShell = {
+  stateValueAtom: () => attentionShellAtom,
+  stateAtom: () => attentionShellAtom,
+};
 export const allEnvironmentProjectSnapshotsReadyAtom = Atom.make(true);
 export const allEnvironmentShellsBootstrappedAtom = Atom.make(true);
 export const attentionFixtureProject = {
@@ -2029,7 +2095,71 @@ export function setAttentionScenario(scenario: string) {
     child("child-4", "worker-4", active),
     child("child-5", "worker-5", active),
   ];
+  attentionCoordinatorProjection = null;
+  if (scenario === "coordinator-worker") {
+    const now = DateTime.makeUnsafe("2026-10-27T12:00:00Z");
+    attentionCoordinatorProjection = {
+      projection: {
+        ...baseThreadProjection().projection,
+        updatedAt: now,
+        thread: { id: "coord" },
+        runtimeRequests: [
+          {
+            id: `${"update-reopen:".repeat(10)}ask-user:relay`,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+          },
+        ],
+        turnItems: [
+          {
+            id: "old-question-card",
+            type: "user_input_request",
+            threadId: "coord",
+            requestId: `${"update-reopen:".repeat(10)}ask-user:relay`,
+            responseMode: "message",
+            status: "waiting",
+            runId: "old-run",
+            ordinal: 1,
+            questions: [
+              {
+                id: "q1",
+                header: "Owner relay",
+                question: "Can you relay the existing owner request?",
+                options: [
+                  {
+                    label: "Relay through existing coordinator",
+                    description: "Keep the current owner",
+                  },
+                ],
+                allowCustomAnswer: true,
+              },
+            ],
+          },
+        ],
+      },
+    };
+    shells[0] = { ...shells[0], hasPendingUserInput: true };
+    shells[1] = { ...shells[1], runtime: null, hasPendingUserInput: true };
+  }
   if (scenario === "coordinator") shells[0] = { ...shells[0], hasPendingUserInput: true };
+  if (scenario === "disk-answer")
+    shells = [
+      shell("coord", "Project coordinator"),
+      shell("worker-1", "Complete project work and disk audit", {
+        hasPendingUserInput: true,
+        source: {
+          creationSource: "mcp",
+          pendingRuntimeRequest: { id: "0748-recipient", kind: "user_input", createdAt: null },
+        },
+      }),
+      child("old-review", "worker-1", {
+        title: "Review 0734 and 0850 closure",
+        reportedBlocker: "For 0734 AC-US6-04, do you waive it?",
+        source: { creationSource: "mcp", pendingRuntimeRequest: null },
+      }),
+    ];
   if (scenario === "children")
     shells = shells.map((s) =>
       s.id.startsWith("child-")
@@ -2060,7 +2190,12 @@ export function setAttentionScenario(scenario: string) {
     const native = (id, parent, title, extra = {}) =>
       child(id, parent, {
         title,
-        source: { creationSource: "provider", pendingRuntimeRequest: null },
+        source: {
+          creationSource: "provider",
+          pendingRuntimeRequest: null,
+          nativeSubagentStatus: "completed",
+          nativeSubagentCompletedAt: DateTime.makeUnsafe("2026-10-27T00:00:00Z"),
+        },
         ...extra,
       });
     shells = [
@@ -2074,7 +2209,22 @@ export function setAttentionScenario(scenario: string) {
       shell("worker-5", "Muse approval check (Accept) - 0922", {
         runtime: { status: "failed", lastErrorClass: "provider_error" },
       }),
+      shell("wait-ci", "Rethink SpecWeave skills and DDD · 1093", {
+        reportedWait: "Waiting for CI",
+      }),
+      shell("wait-review", "Independent review", {
+        reportedBlocker: "Waiting for a fresh review of #899",
+      }),
+      shell("wait-merge", "Release dependency", { reportedWait: "Waiting for PR merge" }),
+      shell("wait-child", "Parent awaiting worker", {
+        runtime: { status: "waiting" },
+        source: {
+          activeWork: { waitThreadId: "child", label: "Review" },
+          pendingRuntimeRequest: null,
+        },
+      }),
       native("child-1", "worker-1", "Close increment 1054", {
+        runtime: { status: "waiting" },
         reportedBlocker: "You can close 1054 one of two ways.",
       }),
       native("child-2", "worker-2", "Code check for DB recovery path", {
@@ -2091,8 +2241,16 @@ export function setAttentionScenario(scenario: string) {
       native("child-4", "worker-4", "Fresh-context close review 1041", {
         reportedBlocker: "Close 1041 now, or wait for installed acceptance?",
       }),
+      // October 27: a worker's delegate_task review from October 21.
+      shell("worker-6", "Complete project work and disk audit"),
+      child("child-6", "worker-6", {
+        title: "Review 0734 and 0850 closure",
+        source: { creationSource: "mcp", pendingRuntimeRequest: null },
+        reportedBlocker: "Both increments should be blocked. Close them, or fix first?",
+      }),
     ];
   }
+  if (scenario === "resolved-child") shells[4] = { ...shells[4], settledOverride: "settled" };
   if (scenario === "resolved")
     shells[0] = { ...shells[0], hasPendingUserInput: true, settledOverride: "settled" };
   if (scenario === "archive")
@@ -2113,3 +2271,9 @@ export const shellEnvironment = fixtureAnything("shellEnvironment");
 
 export const attentionRemoteAtom = Atom.make({ workers: [], complete: true });
 export const projectRemoteAttentionAtom = () => attentionRemoteAtom;
+
+// Test-only shell updates model acknowledged host events without issuing commands.
+export function updateAttentionThread(id: string, changes: Record<string, unknown>) {
+  shells = shells.map((thread) => (thread.id === id ? { ...thread, ...changes } : thread));
+  shellListeners.forEach((notify) => notify());
+}

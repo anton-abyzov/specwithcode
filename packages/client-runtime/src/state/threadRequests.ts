@@ -1,3 +1,4 @@
+import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAttention";
 import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
@@ -118,13 +119,33 @@ function pendingFileChange(
   };
 }
 
+/** A legacy bounded cache may have kept the pending entity but lost its card. */
+export function pendingQuestionsNeedHydration(projection: RequestProjection): boolean {
+  return projection.runtimeRequests.some(
+    (request) =>
+      request.kind === "user_input" &&
+      request.status === "pending" &&
+      !answeredRuntimeRequestCopy(request, projection.runtimeRequests) &&
+      !projection.turnItems.some(
+        (item) =>
+          item.type === "user_input_request" &&
+          item.threadId === projection.thread.id &&
+          item.requestId === request.id,
+      ),
+  );
+}
+
 /** Joins pending request entities to the request items that carry display data. */
 export function derivePendingThreadRequests(projection: RequestProjection): PendingThreadRequests {
   const approvals: ThreadPendingApproval[] = [];
   const userInputs: ThreadPendingUserInput[] = [];
 
   for (const request of projection.runtimeRequests) {
-    if (request.status !== "pending") continue;
+    if (
+      request.status !== "pending" ||
+      answeredRuntimeRequestCopy(request, projection.runtimeRequests)
+    )
+      continue;
     const responseCapability = request.responseCapability.type;
     if (request.kind === "user_input") {
       const item = projection.turnItems.findLast(

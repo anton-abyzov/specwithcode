@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   linkedWorktreeGitDir,
+  newestReflogEntryMs,
   onlyDependencyIgnores,
+  onlyRebuildableUntracked,
   ORPHAN_WORKTREE_IDLE_MS,
   orphanWorktreeRemovable,
   type OrphanWorktreeFacts,
@@ -60,6 +62,47 @@ describe("orphan worktree removal", () => {
     expect(onlyDependencyIgnores("node_modules/\0apps/web/node_modules/\0")).toBe(true);
     expect(onlyDependencyIgnores("node_modules/\0.env\0")).toBe(false);
     expect(onlyDependencyIgnores(".cache/\0")).toBe(false);
+    // A pnpm workspace link, Finder files, build info and hook shims rebuild.
+    expect(
+      onlyDependencyIgnores(
+        "node_modules\0.DS_Store\0.repos/ref/.DS_Store\0apps/desktop/tsconfig.tsbuildinfo\0.vite-hooks/_/\0",
+      ),
+    ).toBe(true);
+    expect(onlyDependencyIgnores(".DS_Store\0.env.local\0")).toBe(false);
+    expect(onlyDependencyIgnores("data/.DS_Store.bak\0")).toBe(false);
+    // A file ignored inside a tracked build or coverage folder is listed by itself.
+    expect(onlyDependencyIgnores("build/.env.prod\0")).toBe(false);
+    for (const folder of [
+      "build",
+      "dist",
+      "coverage",
+      ".generated",
+      ".turbo",
+      ".vite",
+      ".docusaurus",
+    ])
+      expect(onlyDependencyIgnores(`${folder}/\0`)).toBe(false);
+    expect(onlyDependencyIgnores("reports/x/coverage/a.log\0")).toBe(false);
+    expect(onlyDependencyIgnores(".vite-hooks/pre-push\0")).toBe(false);
+  });
+
+  it("treats only the hook installer's folder as safe untracked output", () => {
+    expect(onlyRebuildableUntracked("")).toBe(true);
+    expect(onlyRebuildableUntracked(".vite-hooks/_/\0")).toBe(true);
+    expect(onlyRebuildableUntracked(".vite-hooks/_/\0notes.md\0")).toBe(false);
+    expect(onlyRebuildableUntracked("apps/.vite-hooks/\0")).toBe(false);
+    expect(onlyRebuildableUntracked(".vite-hooks/pre-push\0")).toBe(false);
+  });
+
+  it("reads the newest reflog entry's own time, not the file's", () => {
+    const zero = "0".repeat(40);
+    const reflog = `${zero} ${"a".repeat(40)} Dev <d@example.invalid> 1793059439 -0400\tcommit: one\n${"a".repeat(40)} ${"b".repeat(40)} Dev <d@example.invalid> 1793160038 +0000\tcheckout: moving\n`;
+    expect(newestReflogEntryMs(reflog)).toBe(1793160038000);
+    expect(
+      newestReflogEntryMs(`${zero} ${"c".repeat(40)} Dev <d@example.invalid> 1793170000 +0000\n`),
+    ).toBe(1793170000000);
+    expect(newestReflogEntryMs("")).toBeNull();
+    expect(newestReflogEntryMs("garbage\n")).toBeNull();
   });
 
   it("reads the gitdir of a linked worktree only", () => {

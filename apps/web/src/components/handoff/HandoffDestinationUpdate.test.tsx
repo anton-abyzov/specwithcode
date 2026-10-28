@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type {
   EnvironmentId,
   HandoffPreflightFailure,
@@ -5,6 +6,8 @@ import type {
   ServerConfig,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -17,15 +20,33 @@ vi.mock("../../branding", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../branding")>()),
   APP_VERSION: "1.0.70",
 }));
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: { readonly kind: string }) =>
-    atom.kind === "update"
-      ? state.update
-      : {
-          _tag: "Success",
-          value: { authenticated: true, scopes: ["environment:maintain"] },
-        },
-}));
+// The update state is a subscribable store, as the real atom is: a memoized row
+// re-renders only when the store notifies it.
+const updates = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
+const setUpdate = (next: unknown) => {
+  state.update = next;
+  for (const listener of updates.listeners) listener();
+};
+vi.mock("@effect/atom-react", async () => {
+  const React = await import("react");
+  const subscribe = (listener: () => void) => {
+    updates.listeners.add(listener);
+    return () => updates.listeners.delete(listener);
+  };
+  return {
+    useAtomValue: (atom: { readonly kind: string }) =>
+      atom.kind === "update"
+        ? React.useSyncExternalStore(
+            subscribe,
+            () => state.update,
+            () => state.update,
+          )
+        : {
+            _tag: "Success",
+            value: { authenticated: true, scopes: ["environment:maintain"] },
+          },
+  };
+});
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     updateStateAtom: (id: string) => ({ kind: "update", id }),
@@ -43,7 +64,7 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 vi.mock("../../state/entities", () => ({ useServerConfigs: () => state.configs }));
 
-import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
+import { HandoffDestinationUpdate, updateFinished } from "./HandoffDestinationUpdate";
 
 const MINIS = "env-minis" as EnvironmentId;
 
@@ -96,6 +117,7 @@ describe("HandoffDestinationUpdate", () => {
   it("offers to update the destination when its version check names it, once", () => {
     const html = render([result([updateMinis]), result([updateMinis])]);
     expect(html.match(/data-testid="handoff-destination-update"/g)).toHaveLength(1);
+    expect(html).toContain("Minis needs an update first.");
     expect(html).toContain("Update Minis");
   });
 
@@ -133,5 +155,47 @@ describe("HandoffDestinationUpdate", () => {
     expect(render([result([updateMinis])])).toContain(
       "Update the desktop app on that machine to update this server.",
     );
+  });
+
+  it("checks again by itself once the update finishes, and only then", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const onUpdated = vi.fn();
+    const root = createRoot(document.createElement("div"));
+    const show = () =>
+      act(async () =>
+        root.render(
+          <HandoffDestinationUpdate
+            environmentId={MINIS}
+            label="Minis"
+            results={[result([updateMinis])]}
+            onUpdated={onUpdated}
+          />,
+        ),
+      );
+    await show();
+    expect(onUpdated).not.toHaveBeenCalled();
+    await act(async () =>
+      setUpdate({
+        status: "running",
+        stage: "installing",
+        fromVersion: "1.0.66",
+        targetVersion: "1.0.70",
+      }),
+    );
+    await show();
+    expect(onUpdated).not.toHaveBeenCalled();
+    await act(async () => setUpdate({ status: "idle" }));
+    await show();
+    expect(onUpdated).toHaveBeenCalledTimes(1);
+    await show();
+    expect(onUpdated).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it("does not count a failed update as finished", () => {
+    expect(updateFinished("running", "idle")).toBe(true);
+    expect(updateFinished("running", "failed")).toBe(false);
+    expect(updateFinished(null, "idle")).toBe(false);
+    expect(updateFinished("failed", "idle")).toBe(false);
   });
 });

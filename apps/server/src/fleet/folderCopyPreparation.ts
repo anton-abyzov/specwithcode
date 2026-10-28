@@ -25,7 +25,7 @@ import type { SourceTransfers } from "./folderTransfer/sourceService.ts";
 const isHandoffError = Schema.is(MachineHandoffError);
 
 export const ACTIVE_COPY_WARNING =
-  "Work is still running in this folder. You can copy now, but files may change during the copy and later edits are not included. Transferring coordinator context waits until this work stops.";
+  "Work is still running here. Files that change during the copy won't be included, and the project moves once that work stops.";
 
 export const makeProjectIdleCheck =
   (sql: SqlClient.SqlClient, fs: FileSystem.FileSystem, path: Path.Path) =>

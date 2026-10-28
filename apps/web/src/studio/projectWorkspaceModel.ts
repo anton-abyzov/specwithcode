@@ -2,6 +2,7 @@ import { classifyProjectActions } from "@specweave-studio/shared/projectAttentio
 import {
   observeProjectThread,
   reportsToParentAgent,
+  threadDependencyWait,
 } from "@specweave-studio/client-runtime/state/projectAttention";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
@@ -21,6 +22,7 @@ import {
 export const PROJECT_THREAD_GROUPS = [
   "Waiting on you",
   "Working",
+  "Waiting",
   "Unavailable",
   "Idle",
   "Resolved",
@@ -35,7 +37,7 @@ export type ProjectThreadGroup = (typeof PROJECT_THREAD_GROUPS)[number];
  */
 export function threadBlocker(thread: EnvironmentThreadShell): string | null {
   if (!thread.reportedBlocker || thread.archivedAt !== null) return null;
-  if (reportsToParentAgent(thread)) return null;
+  if (reportsToParentAgent(thread) || threadDependencyWait(thread)) return null;
   if (thread.settledOverride === "settled" || threadRuntimeIsActive(thread.runtime)) return null;
   return thread.reportedBlocker;
 }
@@ -71,10 +73,11 @@ export function projectThreadGroup(
   if (thread.archivedAt !== null) return "Resolved";
   if (hostOffline) return thread.settledOverride === "settled" ? "Resolved" : "Unavailable";
   if (classifyProjectActions(observeProjectThread(thread)).length > 0) return "Waiting on you";
-  if (threadRuntimeIsActive(thread.runtime)) return "Working";
   // Undelivered messages outrank a resolved mark: nothing else will start them.
   if (threadHeldQueue(thread) !== null) return "Waiting on you";
   if (thread.settledOverride === "settled") return "Resolved";
+  if (threadDependencyWait(thread)) return "Waiting";
+  if (threadRuntimeIsActive(thread.runtime)) return "Working";
   return "Idle";
 }
 

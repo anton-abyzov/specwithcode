@@ -61,9 +61,9 @@ try {
     await popover.waitFor();
     const rows = await popover.locator(".sws-subagent-title").allInnerTexts();
     NodeAssert.deepEqual(rows, [
-      "Bulk thread slash command",
       "REA Claude desktop artifacts",
       "Grep the app bundle",
+      "Bulk thread slash command",
     ]);
     NodeAssert.match(await popover.innerText(), /postMessage bridge/);
     await page.waitForTimeout(200);

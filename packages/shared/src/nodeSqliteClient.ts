@@ -5,6 +5,8 @@
  * @module SqliteClient
  */
 import * as NodeSqlite from "node:sqlite";
+import { Buffer } from "node:buffer";
+import { types as nodeTypes } from "node:util";
 
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
@@ -155,6 +157,37 @@ const reportStatementDuration = (
   });
 };
 
+// Native statements retain their bound values. Do not cache payloads above 64 KiB.
+const largeBindings = (params: ReadonlyArray<unknown>): boolean => {
+  try {
+    let bytes = 0;
+    const size = (value: unknown): number =>
+      typeof value === "string"
+        ? Buffer.byteLength(value, "utf8")
+        : ArrayBuffer.isView(value) || nodeTypes.isAnyArrayBuffer(value)
+          ? value.byteLength
+          : 0;
+    for (const value of params) {
+      if (
+        value !== null &&
+        (typeof value === "object" || typeof value === "function") &&
+        !ArrayBuffer.isView(value) &&
+        !nodeTypes.isAnyArrayBuffer(value)
+      ) {
+        for (const property of Object.values(Object.getOwnPropertyDescriptors(value))) {
+          if (!property.enumerable) continue;
+          if (!("value" in property)) return true;
+          bytes += size(property.value);
+        }
+      } else bytes += size(value);
+      if (bytes > 64 * 1024) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+};
+
 const make = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
 ): Effect.fn.Return<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
@@ -233,6 +266,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
         Exit.isSuccess(exit) ? (options.prepareCacheTTL ?? Duration.minutes(10)) : Duration.zero,
     });
 
+    const statementFor = (sql: string, params: ReadonlyArray<unknown>) =>
+      largeBindings(params) ? prepare(sql) : Cache.get(prepareCache, sql);
+
     const runStatement = (
       statement: NodeSqlite.StatementSync,
       params: ReadonlyArray<unknown>,
@@ -277,7 +313,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       });
 
     const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
+      Effect.flatMap(statementFor(sql, params), (s) => runStatement(s, params, raw));
 
     const runStatementValues = (
       statement: NodeSqlite.StatementSync,
@@ -288,6 +324,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
         (statement) =>
           Effect.suspend(() => {
             const startedAt = performance.now();
+            statement.setReadBigInts(
+              Boolean(Context.get(Fiber.getCurrent()!.context, Client.SafeIntegers)),
+            );
             let rows: ReadonlyArray<ReadonlyArray<unknown>>;
             try {
               if (hasRows(statement)) {
@@ -342,7 +381,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       );
 
     const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (statement) =>
+      Effect.flatMap(statementFor(sql, params), (statement) =>
         runStatementValues(statement, params),
       );
 

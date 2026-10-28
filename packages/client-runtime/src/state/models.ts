@@ -93,14 +93,27 @@ const TERMINAL_SUBAGENT_STATUSES: ReadonlySet<string> = new Set([
  * running with no live turn and no ended run of its own was cut off.
  */
 export function subagentExecutionStatus(input: {
-  readonly record?: Pick<OrchestrationV2Subagent, "status"> | null | undefined;
+  readonly record?:
+    | (Pick<OrchestrationV2Subagent, "status"> &
+        Partial<Pick<OrchestrationV2Subagent, "completedAt">>)
+    | null
+    | undefined;
   readonly thread?: SubagentThreadShell | null | undefined;
   /** The parent's shell: a provider-native child works only inside its parent's session. */
   readonly parent?: NativeChildParent | null | undefined;
   readonly unreachable?: ReadonlySet<string> | undefined;
 }): SubagentExecutionStatus {
-  const record = input.record?.status ?? null;
-  if (record !== null && TERMINAL_SUBAGENT_STATUSES.has(record)) return record;
+  const record = input.record?.status ?? input.thread?.source?.nativeSubagentStatus ?? null;
+  const receiptAt = input.record?.completedAt ?? input.thread?.source?.nativeSubagentCompletedAt;
+  const ended = DateTime.isDateTime(receiptAt)
+    ? DateTime.toEpochMillis(receiptAt)
+    : Date.parse(String(receiptAt));
+  const started = Date.parse(
+    input.thread?.runtime?.activityStartedAt ?? input.thread?.latestRun?.startedAt ?? "",
+  );
+  const resumedAfterReceipt = Number.isFinite(ended) && Number.isFinite(started) && started > ended;
+  if (record !== null && TERMINAL_SUBAGENT_STATUSES.has(record) && !resumedAfterReceipt)
+    return record;
   const thread = input.thread ?? null;
   if (thread === null) return record ?? "pending";
   const machine = thread.executionMachineId ?? thread.environmentId;
@@ -110,8 +123,12 @@ export function subagentExecutionStatus(input: {
     input.unreachable?.has(machine) === true
   )
     return "unknown";
-  if (threadRuntimeIsActive(thread.runtime) && !nativeChildOutlivedParent(thread, input.parent))
+  if (threadRuntimeIsActive(thread.runtime) && !nativeChildOutlivedParent(thread, input.parent)) {
+    if (thread.runtime?.status === "waiting") return "waiting";
+    if (["queued", "preparing", "starting"].includes(thread.runtime?.status ?? ""))
+      return "pending";
     return record !== null && isOrchestrationV2WorkActive(record) ? record : "running";
+  }
   const run = thread.latestRun?.status;
   if (run === "failed" || run === "cancelled" || run === "interrupted") return run;
   if (run !== undefined && terminalRunStatus(run)) return "completed";
@@ -210,6 +227,7 @@ export interface EnvironmentThreadShell {
   readonly hasActionableProposedPlan: boolean;
   /** What the thread's last report says stops the work; null when nothing does. */
   readonly reportedBlocker?: string | null;
+  readonly reportedWait?: string | null;
   /** Queued messages held until someone resumes or discards them; absent when none. */
   readonly heldQueuedCount?: number;
   /** Where the agent's newest todo list stands; null without one. */
@@ -427,6 +445,7 @@ export function presentThreadShell(
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     reportedBlocker: thread.reportedBlocker ?? null,
+    reportedWait: thread.reportedWait ?? null,
     ...(thread.heldQueuedCount ? { heldQueuedCount: thread.heldQueuedCount } : {}),
     planProgress: thread.planProgress ?? null,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
@@ -533,6 +552,7 @@ export function threadAwaitingPerson(
     readonly source?: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest"> | undefined;
   },
 ): { readonly kind: RunAwaitingPerson; readonly sinceMs: number } | null {
+  if (thread.source?.pendingRuntimeRequest === null) return null;
   const request = thread.source?.pendingRuntimeRequest ?? null;
   const createdAt: unknown = request?.createdAt;
   const sinceMs = DateTime.isDateTime(createdAt)

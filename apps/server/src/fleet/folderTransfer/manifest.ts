@@ -496,6 +496,12 @@ function skippedWorktreesNotice(
   return `${paths.length} linked worktree(s) inside this folder are not copied: ${nameSome(paths)}. Their committed branches are copied with the main repository; uncommitted changes in them stay on this machine.${changes}${unchecked}${strandedText}`;
 }
 
+/** At most five names, then how many more, so a long list stays one readable line. */
+function namesPreview(names: ReadonlyArray<string>, shown = 5): string {
+  if (names.length <= shown) return names.join(", ");
+  return `${names.slice(0, shown).join(", ")} and ${names.length - shown} more`;
+}
+
 /**
  * Lists the folder without following any link: every entry's path, type, mode,
  * size and mtime, each file's class, and each repository's refs, status and
@@ -608,7 +614,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
             const outside = read.info.worktrees.filter((tree) => tree.path === null);
             if (outside.length > 0)
               notices.push(
-                `${read.info.path}: ${outside.length} worktree(s) outside this folder are not copied: ${outside.map((tree) => tree.name).join(", ")}. Copy those working folders separately to preserve their uncommitted changes.`,
+                `${read.info.path}: ${outside.length} worktree(s) outside this folder are not copied: ${namesPreview(outside.map((tree) => tree.name))}. Their committed branches come along with the repository; copy a working folder separately only to keep its uncommitted changes.`,
               );
             scope = [...repos, read.context];
           }

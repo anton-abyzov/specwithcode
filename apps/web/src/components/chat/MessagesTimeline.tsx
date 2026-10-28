@@ -3520,7 +3520,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
       };
     case "handoff":
       return {
-        label: "Context handoff",
+        label: "Switched model",
         detail:
           item.summary ??
           `${item.fromProviderInstanceIds.join(", ")} → ${item.toProviderInstanceId}`,

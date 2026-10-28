@@ -1,3 +1,4 @@
+import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAttention";
 import {
   limitFallbackPairing,
   threadModelIdentity,
@@ -10,7 +11,7 @@ import {
   usageLimitRunPresentedAsLatest,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@specweave-studio/shared/threadPullRequests";
-import { reportBlocker } from "@specweave-studio/shared/reportDocument";
+import { reportBlocker, reportWaitReason } from "@specweave-studio/shared/reportDocument";
 import type {
   ModelSelection,
   OrchestrationV2AppThread,
@@ -1118,6 +1119,8 @@ type ShellThreadRow = {
   readonly blocking_run_started_at: string | null;
   readonly blocking_run_completed_at: string | null;
   readonly blocking_failure_payload_json: string | null;
+  readonly native_subagent_status: OrchestrationV2Subagent["status"] | null;
+  readonly native_subagent_completed_at: string | null;
   readonly pending_request_payload_json: string | null;
   readonly pending_secret_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
@@ -1585,6 +1588,7 @@ function runlessSubagentActivity(projection: OrchestrationV2ThreadProjection): {
 
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  nativeSubagent: Pick<OrchestrationV2Subagent, "status" | "completedAt"> | null = null,
 ): OrchestrationV2ThreadShell {
   const providerSession =
     projection.providerSessions
@@ -1611,7 +1615,11 @@ export function threadShellFromProjection(
   const liveRunIds = new Set(projection.runs.filter(isActivityRunForShell).map((run) => run.id));
   const pendingRuntimeRequest =
     projection.runtimeRequests
-      .filter((request) => request.status === "pending")
+      .filter(
+        (request) =>
+          request.status === "pending" &&
+          !answeredRuntimeRequestCopy(request, projection.runtimeRequests),
+      )
       .toSorted(
         (left, right) =>
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
@@ -1743,6 +1751,8 @@ export function threadShellFromProjection(
       providerSession?.lastError ?? null,
       latestRun?.status ?? null,
     ),
+    nativeSubagentStatus: nativeSubagent?.status ?? null,
+    nativeSubagentCompletedAt: nativeSubagent?.completedAt ?? null,
     pendingRuntimeRequest:
       pendingRuntimeRequest === null
         ? null
@@ -1762,6 +1772,15 @@ export function threadShellFromProjection(
     ),
     planProgress: summarizeTodoPlanPayload(latestTodoPlan(projection)),
     reportedBlocker: shellReportedBlocker({
+      text: latestAssistantMessage?.text ?? null,
+      reportedAt:
+        latestAssistantMessage === null
+          ? null
+          : DateTime.formatIso(latestAssistantMessage.updatedAt),
+      latestUserMessageAt:
+        latestUserMessage === null ? null : DateTime.formatIso(latestUserMessage.updatedAt),
+    }),
+    reportedWait: shellReportedWait({
       text: latestAssistantMessage?.text ?? null,
       reportedAt:
         latestAssistantMessage === null
@@ -1888,6 +1907,9 @@ type ShellThreadState = {
   readonly hasActionableProposedPlan: boolean;
   readonly planProgress: OrchestrationV2ThreadShell["planProgress"];
   readonly reportedBlocker: string | null;
+  readonly reportedWait: string | null;
+  readonly nativeSubagentStatus: OrchestrationV2ThreadShell["nativeSubagentStatus"];
+  readonly nativeSubagentCompletedAt: OrchestrationV2ThreadShell["nativeSubagentCompletedAt"];
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
@@ -1929,6 +1951,20 @@ function todoPlanProgressFromJson(json: string | null): OrchestrationV2ThreadShe
  * The blocker the thread's last report names, until someone writes to the
  * thread after it: a reply or a follow-up is the answer the report waited for.
  */
+function shellReportedWait(input: {
+  readonly text: string | null;
+  readonly reportedAt: string | null;
+  readonly latestUserMessageAt: string | null;
+}): string | null {
+  if (input.text === null || input.reportedAt === null) return null;
+  if (
+    input.latestUserMessageAt !== null &&
+    Date.parse(input.latestUserMessageAt) >= Date.parse(input.reportedAt)
+  )
+    return null;
+  return reportWaitReason(input.text);
+}
+
 function shellReportedBlocker(input: {
   readonly text: string | null;
   readonly reportedAt: string | null;
@@ -2108,6 +2144,9 @@ function shellFromState(input: {
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
     planProgress: input.state.planProgress,
     reportedBlocker: input.state.reportedBlocker,
+    reportedWait: input.state.reportedWait,
+    nativeSubagentStatus: input.state.nativeSubagentStatus,
+    nativeSubagentCompletedAt: input.state.nativeSubagentCompletedAt,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
     providerInstanceHistory: input.state.providerInstanceHistory,
     goal: input.state.goal,
@@ -3226,6 +3265,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     AND request.type = 'run_interrupt_request'
                     AND request.turn_item_id NOT IN (SELECT turn_item_id FROM selected)
                   UNION
+                  -- Pending controls are live dependencies, even when an update
+                  -- restored their card at an old run ordinal outside this page.
+                  SELECT card.payload_json, card.ordinal, card.turn_item_id, 1
+                  FROM orchestration_v2_projection_runtime_requests AS pending
+                  INNER JOIN orchestration_v2_projection_turn_items AS card
+                    ON card.thread_id = pending.thread_id
+                    AND json_extract(card.payload_json, '$.requestId') = pending.runtime_request_id
+                  WHERE pending.thread_id = ${threadId} AND pending.status = 'pending'
+                    AND card.type IN ('user_input_request', 'approval_request')
+                    AND card.turn_item_id NOT IN (SELECT turn_item_id FROM selected)
+                  UNION
                   SELECT latest.payload_json, latest.ordinal, latest.turn_item_id, 0
                   FROM (
                     SELECT payload_json, ordinal, turn_item_id
@@ -3503,7 +3553,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','waiting')
                 OR node_id IN (SELECT value FROM json_each(${cohortNodeIds}))
-                OR provider_turn_id IN (SELECT value FROM json_each(${cohortProviderTurnIds})))
+                OR provider_turn_id IN (SELECT value FROM json_each(${cohortProviderTurnIds}))
+                -- Keep answer receipts for restored request families too. The
+                -- same predicate drives shells and detailed request controls.
+                OR EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_runtime_requests pending
+                  WHERE pending.thread_id = ${threadId} AND pending.status = 'pending'
+                    AND REPLACE(REPLACE(pending.runtime_request_id, 'update-reopen:', ''), 'update-reopen-approval:', '') = REPLACE(REPLACE(orchestration_v2_projection_runtime_requests.runtime_request_id, 'update-reopen:', ''), 'update-reopen-approval:', '')
+                ))
             ORDER BY created_at ASC, runtime_request_id ASC
           `,
           fields !== undefined && !fields.includes("messages")
@@ -5823,10 +5880,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS blocking_failure_payload_json,
               (
+                SELECT child.status FROM orchestration_v2_projection_subagents child
+                WHERE child.child_thread_id = t.thread_id AND child.origin = 'provider_native'
+                ORDER BY child.updated_at DESC, child.subagent_id DESC LIMIT 1
+              ) AS native_subagent_status,
+              (
+                SELECT child.completed_at FROM orchestration_v2_projection_subagents child
+                WHERE child.child_thread_id = t.thread_id AND child.origin = 'provider_native'
+                ORDER BY child.updated_at DESC, child.subagent_id DESC LIMIT 1
+              ) AS native_subagent_completed_at,
+              (
                 SELECT request.payload_json
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
+                  AND (request.runtime_request_id NOT LIKE 'update-reopen%' OR NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runtime_requests answered
+                    WHERE answered.thread_id = request.thread_id AND answered.status = 'resolved'
+                      AND REPLACE(REPLACE(answered.runtime_request_id, 'update-reopen:', ''), 'update-reopen-approval:', '') = REPLACE(REPLACE(request.runtime_request_id, 'update-reopen:', ''), 'update-reopen-approval:', '')
+                      AND (json_extract(answered.payload_json, '$.decision') IS NOT NULL AND json_extract(answered.payload_json, '$.decision') <> 'cancel'
+                        OR json_extract(answered.payload_json, '$.answers') NOT IN ('{}', 'null') AND json_extract(answered.payload_json, '$.answers') IS NOT NULL)
+                  ))
                 ORDER BY request.created_at DESC, request.runtime_request_id DESC
                 LIMIT 1
               ) AS pending_request_payload_json,
@@ -6408,6 +6482,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             reportedAt: row.latest_assistant_message_at,
             latestUserMessageAt: row.latest_user_message_at,
           }),
+          nativeSubagentStatus: row.native_subagent_status,
+          nativeSubagentCompletedAt:
+            row.native_subagent_completed_at === null
+              ? null
+              : DateTime.makeUnsafe(row.native_subagent_completed_at),
+          reportedWait: shellReportedWait({
+            text: row.latest_assistant_text,
+            reportedAt: row.latest_assistant_message_at,
+            latestUserMessageAt: row.latest_user_message_at,
+          }),
           pendingBackgroundTasks,
           providerInstanceHistory: providerInstanceHistoryForShell({
             threadId: thread.id,
@@ -6753,7 +6837,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           const shells = yield* Effect.forEach(
             selectedThreadIds.toSorted((left, right) => String(left).localeCompare(String(right))),
             (threadId) =>
-              service.getThreadProjection(threadId).pipe(Effect.map(threadShellFromProjection)),
+              service
+                .getThreadProjection(threadId)
+                .pipe(
+                  Effect.map((projection) =>
+                    threadShellFromProjection(
+                      projection,
+                      existing
+                        .get(projection.thread.lineage.parentThreadId as ThreadId)
+                        ?.subagents.find(
+                          (agent) =>
+                            agent.childThreadId === threadId && agent.origin === "provider_native",
+                        ) ?? null,
+                    ),
+                  ),
+                ),
           );
           const visible = shells.filter((thread) => thread.deletedAt === null);
           return {
@@ -6771,7 +6869,19 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           const shell = yield* service
             .getThreadProjection(threadId)
-            .pipe(Effect.map(threadShellFromProjection));
+            .pipe(
+              Effect.map((projection) =>
+                threadShellFromProjection(
+                  projection,
+                  existing
+                    .get(projection.thread.lineage.parentThreadId as ThreadId)
+                    ?.subagents.find(
+                      (agent) =>
+                        agent.childThreadId === threadId && agent.origin === "provider_native",
+                    ) ?? null,
+                ),
+              ),
+            );
           return shell.deletedAt === null ? shell : null;
         }),
       getThreadSummaries: (projectId, threadIds) =>

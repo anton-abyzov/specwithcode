@@ -1125,6 +1125,7 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
       const input = yield* prepareInputFromFlags({
         stopWork: true,
         hold: true,
+        ifIdle: false,
         releaseHold: false,
         reason: Option.some("install"),
       });

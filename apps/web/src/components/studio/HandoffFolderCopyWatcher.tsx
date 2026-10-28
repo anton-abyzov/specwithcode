@@ -39,7 +39,9 @@ import { copyProblem, groupCopyNotices, skippedWorktreeParts } from "./handoffCo
 const WATCH_MS = 2000;
 /** A one-click copy that cannot start after this many tries stops and says so. */
 const START_ATTEMPTS = 3;
-const REOPEN = "Open Continue on another machine";
+/** The toast's way back: the project's Move dialog resumes the copy. */
+const reopenText = (projectName: string | undefined) =>
+  `Open Move ${projectName?.trim() || "project"}`;
 
 function unwrap<A, E>(result: AtomCommandResult<A, E>): A {
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -74,6 +76,7 @@ function leftBehind(
 }
 
 function announceCopy(
+  REOPEN: string,
   status: FolderCopyStatus,
   machine: string,
   summary: FolderCopySourceSummary | null,
@@ -118,7 +121,7 @@ function announceCopy(
       type: "success",
       title:
         status.mode === "copy-and-move"
-          ? `Files are copied to ${machine}. ${REOPEN} to transfer coordinator context.`
+          ? `Files are copied to ${machine}. ${REOPEN} to move the coordinator.`
           : `Copy to ${machine} is done. ${REOPEN} to finish setting it up.`,
       ...(left ? { description: left } : {}),
     });
@@ -147,6 +150,7 @@ export function HandoffFolderCopyWatcher({
   environmentId,
   projectId,
   machineLabel,
+  projectName,
   sourceLabel = "this machine",
   onOpenDialog,
   restored = false,
@@ -155,6 +159,8 @@ export function HandoffFolderCopyWatcher({
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly machineLabel: (environmentId: string) => string;
+  /** The project's name, for the toast's "Open Move {project}". */
+  readonly projectName?: string | undefined;
   /** This machine's name, for what stayed here after the copy. */
   readonly sourceLabel?: string;
   /** Opens the handoff dialog, which resumes this copy; a warning toast's action calls it. */
@@ -164,6 +170,7 @@ export function HandoffFolderCopyWatcher({
   /** Called once the watcher stops watching. */
   readonly onDone?: () => void;
 }) {
+  const REOPEN = reopenText(projectName);
   const status = useAtomCommand(machineHandoff.copyStatus, { reportFailure: false });
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
   const offerCopy = useAtomCommand(machineHandoff.copyOffer, { reportFailure: false });
@@ -293,7 +300,14 @@ export function HandoffFolderCopyWatcher({
         const summary = destination.value.state === "applied" ? await readSummary() : null;
         if (stopped) return false;
         const open = latest.current.onOpenDialog ?? copyOpener(activityKey);
-        announceCopy(destination.value, machine, summary, sourceLabel, open ? () => open() : null);
+        announceCopy(
+          REOPEN,
+          destination.value,
+          machine,
+          summary,
+          sourceLabel,
+          open ? () => open() : null,
+        );
         return false;
       }
       // An unreachable destination may come back; keep watching, unless only restored.

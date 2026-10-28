@@ -181,7 +181,7 @@ import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { remarkDisplayDates } from "../markdown-display-dates";
 import { remarkBareDomainLinks } from "../markdown-bare-domains";
 import { remarkPreserveWindowsPathText } from "../markdown-windows-paths";
-import { MarkdownTable } from "./MarkdownTable";
+import { InsideMarkdownTable, MarkdownTable } from "./MarkdownTable";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { exactCopyText, exactPathText } from "../exactClipboardText";
 import { MarkdownPathList } from "./chat/MarkdownPathList";
@@ -3567,6 +3567,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
       ChatMarkdownRendererContext,
     );
+    const insideTable = use(InsideMarkdownTable);
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
@@ -3591,6 +3592,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
           fileLinkMeta,
           `\`${codeText}\``,
           inlineCodeFilePathCandidate(codeText) ?? codeText.trim(),
+        );
+      }
+      // Each word is one box, so a report table can wrap a command at its
+      // spaces without splitting a path at a dash or slash. Find still reads
+      // the boxes as one run of text.
+      if (insideTable && typeof children === "string") {
+        return (
+          <code {...props} className={className} data-path-wrap="">
+            {children.split(/(\s+)/u).map((part, index) =>
+              part === "" || /^\s+$/u.test(part) ? (
+                part
+              ) : (
+                <span key={index} className="chat-markdown-code-word">
+                  {part}
+                </span>
+              ),
+            )}
+          </code>
         );
       }
     }
@@ -3732,8 +3751,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;
   },
-  th: function MarkdownTableHeader({ node: _node, scope, ...props }) {
-    return <th {...props} scope={scope ?? "col"} />;
+  // A cell's content is one box, so a report can give long text a readable
+  // width (index.css); elsewhere the box is display: contents.
+  th: function MarkdownTableHeader({ node: _node, scope, children, ...props }) {
+    return (
+      <th {...props} scope={scope ?? "col"}>
+        <span className="chat-markdown-cell">{children}</span>
+      </th>
+    );
+  },
+  td: function MarkdownTableCell({ node: _node, children, ...props }) {
+    return (
+      <td {...props}>
+        <span className="chat-markdown-cell">{children}</span>
+      </td>
+    );
   },
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;

@@ -6,10 +6,17 @@ import { MachineHandoffDialog } from "../../src/components/studio/MachineHandoff
 import "../machine-handoff/fixture.css";
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
+const MACHINES = [
+  { id: "m1" as never, label: "Anton’s MacBook Pro M1Max (190)", unavailable: null },
+  { id: "m3" as never, label: "Anton’s MacBook Pro", unavailable: null },
+  { id: "linux" as never, label: "ministorm", unavailable: null },
+];
 function Fixture() {
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [intent, setIntent] = useState<"move" | "copy">("copy");
+  const [doneOn, setDoneOn] = useState<string | null>(null);
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       {/* Reopening remounts the copy flow, as closing and reopening the real dialog does. */}
@@ -28,8 +35,10 @@ function Fixture() {
         onSelect={() => {}}
         method="copy"
         onMethodChange={() => {}}
+        intent={intent}
         copyBusy={busy}
         copyLocked={locked}
+        copyDoneOn={doneOn}
         copyFlow={
           <HandoffFolderCopy
             project={
@@ -44,14 +53,20 @@ function Fixture() {
             coordinatorId={"coordinator" as never}
             sourceLabel="MacBook M4"
             method="copy"
-            machines={[
-              { id: "m1" as never, label: "Anton’s MacBook Pro M1Max (190)", unavailable: null },
-              { id: "m3" as never, label: "Anton’s MacBook Pro", unavailable: null },
-              { id: "linux" as never, label: "ministorm", unavailable: null },
-            ]}
+            machines={MACHINES}
             preferredMachine={"linux" as never}
             savedFolder={() => null}
             canMove
+            defaultMode="copy-only"
+            onChoicesChange={({ mode, machine, done }) => {
+              setIntent(mode === "copy-and-move" ? "move" : "copy");
+              // As the real dialog does: the title says where a finished copy is.
+              setDoneOn(
+                done && machine
+                  ? (MACHINES.find((item) => item.id === machine)?.label ?? null)
+                  : null,
+              );
+            }}
             onBusyChange={setBusy}
             onCloseLockChange={setLocked}
             onOpenProject={() => {}}

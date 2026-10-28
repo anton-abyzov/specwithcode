@@ -139,10 +139,13 @@ export function threadMoveBanner(
     };
     if (movedTo.kind === "handoff") {
       const machine = machineOf(thread, movedTo.environmentId, movedTo.machineLabel);
-      const readOnly = "This thread is read-only now; its work goes on there.";
+      const readOnly =
+        machine === null
+          ? "You can read it here. New messages go to the new thread."
+          : `You can read it here. New messages go to ${machine}.`;
       return {
         id: `${MOVED_TO}${thread.id}`,
-        title: machine === null ? "Continued in a new thread" : `Continued on ${machine}`,
+        title: machine === null ? "Continued in a new thread" : `Moved to ${machine}`,
         description:
           movedTo.note === undefined ? readOnly : `${sentence(movedTo.note)} ${readOnly}`,
         actionLabel: machine === null ? "Open new thread" : `Open on ${machine}`,
@@ -192,7 +195,10 @@ export function threadMoveBanner(
         : null;
   if (origin === null) return null;
   const machine = machineOf(thread, origin.environmentId, origin.label);
-  const carried = "Its files and a handoff note came from the last checkpoint there.";
+  const carried =
+    machine === null
+      ? "Its conversation and file changes came from the original thread's last sync."
+      : `Its conversation and file changes came from ${machine}'s last sync.`;
   return {
     id: `thread-moved-from:${thread.id}`,
     title:

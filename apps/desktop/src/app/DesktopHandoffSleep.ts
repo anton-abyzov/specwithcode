@@ -9,7 +9,7 @@ import type * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts"
 
 /** Asks the renderer to hand this Mac's running threads to the sleep target. */
 export const HANDOFF_SLEEP_ACTION = DESKTOP_HANDOFF_SLEEP_ACTION;
-/** Opens "Hand off this machine…" in the main window. */
+/** Opens "Move running threads" in the main window. */
 export const HANDOFF_MACHINE_ACTION = DESKTOP_HANDOFF_MACHINE_ACTION;
 
 /**

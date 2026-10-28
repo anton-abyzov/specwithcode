@@ -128,7 +128,7 @@ export function V2LifecycleRow(props: {
     const { from: fromEndpoints, to } = resolveHandoffEndpoints(item, props.runs);
     return (
       <TimelineSystemDivider
-        label="Context handoff"
+        label="Switched model"
         icon={ArrowRightLeftIcon}
         showDetailSeparator={false}
         tone={item.status === "failed" ? "danger" : "neutral"}

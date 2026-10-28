@@ -1,6 +1,6 @@
 import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -387,4 +387,68 @@ it.effect("also logs slow statements that fail, marked as failed", () =>
       ],
     );
   }),
+);
+
+it.effect("uses uncached statements for large bindings without invoking named getters twice", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const instances: NodeSqlite.StatementSync[] = [];
+    const original = NodeSqlite.StatementSync.prototype.all;
+    const spy = vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+      this: NodeSqlite.StatementSync,
+      ...args
+    ) {
+      instances.push(this);
+      return original.apply(this, args);
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+    const small = new Set<NodeSqlite.StatementSync>();
+    const large = new Set<NodeSqlite.StatementSync>();
+    for (const value of [
+      "small",
+      "x".repeat(65537),
+      "界".repeat(30000),
+      new Uint8Array(65537),
+      new ArrayBuffer(65537),
+      "small",
+    ]) {
+      const length =
+        typeof value === "string"
+          ? value.length
+          : value instanceof ArrayBuffer
+            ? null
+            : value.byteLength;
+      const query = sql`SELECT length(${value}) AS n`;
+      assert.deepEqual(yield* query, [{ n: length }]);
+      assert.deepEqual(yield* query.values, [[length]]);
+      for (const instance of instances.splice(0)) (value === "small" ? small : large).add(instance);
+    }
+    assert.equal(small.size, 1);
+    assert.equal(large.size, 8);
+    for (const instance of large) assert.isFalse(small.has(instance));
+    let reads = 0;
+    assert.deepEqual(
+      yield* sql.unsafe("SELECT $value AS n", [
+        {
+          get $value() {
+            return ++reads;
+          },
+        },
+      ]),
+      [{ n: 1 }],
+    );
+    assert.equal(reads, 1);
+    const named = { $value: "x".repeat(65537) };
+    const a = yield* sql.unsafe("SELECT length($value) AS n", [named]);
+    const b = yield* sql.unsafe("SELECT length($value) AS n", [named]);
+    assert.deepEqual(a, b);
+    assert.notStrictEqual(instances.at(-1), instances.at(-2));
+    for (const value of ["small", "x".repeat(65537)]) {
+      const values = sql`SELECT 1 AS id, length(${value}) AS n`.values;
+      assert.deepEqual(yield* values.pipe(Effect.provideService(SqlClient.SafeIntegers, true)), [
+        [1n, BigInt(value.length)],
+      ]);
+      assert.deepEqual(yield* values, [[1, value.length]]);
+    }
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );

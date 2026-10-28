@@ -249,6 +249,7 @@ it.layer(layerTest)("event store compaction", (it) => {
       assert.deepEqual(summary.deletedByType, {
         "node.updated": 32,
         "message.updated": 8,
+        "turn-item.updated": 12,
         "thread.visited": 18,
         "thread.metadata-updated": 6,
       });

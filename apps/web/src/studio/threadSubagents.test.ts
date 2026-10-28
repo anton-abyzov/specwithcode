@@ -5,6 +5,8 @@ import { logicalProjectThreads, requestExecutionLabel } from "./projectDomain";
 import { buildThreadPaneGroups } from "./shellModel";
 import {
   isNestedSubagentThread,
+  groupSubagentPopupEntries,
+  type SubagentEntry,
   listedRunningSubagents,
   runningSubagentCount,
   workingSubagentEntryCount,
@@ -12,6 +14,7 @@ import {
   subagentHostThread,
   subagentStatusTone,
   threadSubagentEntries,
+  threadWorkflowEntries,
   withRunningSubagents,
 } from "./threadSubagents";
 
@@ -404,4 +407,143 @@ describe("compact turn duration", () => {
     expect(compactDuration(120 * 60_000)).toBe("2h");
     expect(compactDuration(null)).toBeNull();
   });
+});
+
+it("does not count queued, dependency waiting, completed or unknown children as working", () => {
+  const entries = [
+    "pending",
+    "waiting",
+    "completed",
+    "unknown",
+    "failed",
+    "cancelled",
+    "interrupted",
+    "running",
+  ].map((status) => ({ status, key: status }));
+  expect(workingSubagentEntryCount(entries as never)).toBe(1);
+});
+
+it("uses a parent's terminal receipt in a child shell while the parent keeps working", () => {
+  const parent = shell("parent", COORDINATOR, { runtime: { status: "running" } as never });
+  const child = shell("finished", "parent", {
+    runtime: { status: "running" } as never,
+    source: {
+      creationSource: "provider",
+      nativeSubagentStatus: "completed",
+      pendingRuntimeRequest: null,
+    } as never,
+  });
+  const entries = threadSubagentEntries({ parent, shells: [parent, child], projected: [] });
+  expect(entries[0]?.status).toBe("completed");
+  expect(runningSubagentCount([parent, child], parent)).toBe(0);
+});
+
+it("keeps a native child's newer execution visible after an old terminal receipt", () => {
+  const parent = shell("parent", COORDINATOR, { runtime: { status: "running" } as never });
+  const child = shell("resumed", "parent", {
+    runtime: { status: "running", activityStartedAt: "2026-10-27T10:00:00Z" } as never,
+    source: {
+      creationSource: "provider",
+      nativeSubagentStatus: "completed",
+      nativeSubagentCompletedAt: "2026-10-27T09:00:00Z",
+      pendingRuntimeRequest: null,
+    } as never,
+  });
+  expect(runningSubagentCount([parent, child], parent)).toBe(1);
+});
+
+it("excludes other-thread projection records and duplicate child identities", () => {
+  const worker = shell("worker", null);
+  const own = shell("own", "worker");
+  const other = shell("other", "different");
+  const record = (id: string, childThreadId: string | null, threadId = "worker") => ({
+    id,
+    childThreadId,
+    threadId,
+    title: id,
+    prompt: "",
+    status: "completed",
+    origin: "provider_native",
+    providerInstanceId: "codex",
+    model: null,
+    result: null,
+    startedAt: null,
+    completedAt: null,
+  });
+  const entries = threadSubagentEntries({
+    parent: worker,
+    shells: [worker, own, other],
+    projected: [
+      record("own-record", "own"),
+      record("foreign", "other", "different"),
+      record("conflicting", "other"),
+      record("unloaded", "new"),
+      record("duplicate", "new"),
+      record("runless", null),
+      record("runless", null),
+    ] as never,
+  });
+  expect(entries.map((e) => e.key)).toEqual(["own", "unloaded", "runless"]);
+});
+
+it("keeps completed ancestors above active descendants and collapses only older whole branches", () => {
+  const make = (key: string, status: string, depth = 0, extra = {}) =>
+    ({
+      key,
+      title: key,
+      childThreadId: key,
+      status,
+      depth,
+      completedAt: null,
+      startedAt: null,
+      ...extra,
+    }) as SubagentEntry;
+  const now = Date.parse("2026-10-27T15:00:00Z");
+  const input = [
+    make("old", "completed"),
+    make("done-parent", "completed"),
+    make("live-child", "running", 1),
+    make("old-sibling", "completed", 1),
+    make("unknown", "unknown"),
+    make("recent", "completed", 0, { completedAt: "2026-10-27T14:50:00Z" }),
+    make("question", "waiting", 0, { awaitingPerson: "answer" }),
+  ];
+  const grouped = groupSubagentPopupEntries(input, now);
+  expect(grouped.current.map((e) => e.key)).toEqual([
+    "question",
+    "done-parent",
+    "live-child",
+    "old-sibling",
+    "unknown",
+    "recent",
+  ]);
+  expect(grouped.history.map((e) => e.key)).toEqual(["old"]);
+  expect(new Set([...grouped.current, ...grouped.history].map((e) => e.key)).size).toBe(
+    input.length,
+  );
+  const finished = input.map((e) =>
+    e.key === "live-child" ? { ...e, status: "completed", completedAt: "2026-10-27T15:00:00Z" } : e,
+  ) as never;
+  expect(
+    groupSubagentPopupEntries(finished, now + 31 * 60_000).history.map((e) => e.key),
+  ).toContain("done-parent");
+});
+
+it("does not import inherited workflow records into this thread's popup", () => {
+  const item = (threadId: string, id: string) => ({
+    threadId,
+    id,
+    type: "dynamic_tool",
+    toolName: "mcp__workflow",
+    input: { name: id },
+    status: "completed",
+    updatedAt: null,
+    startedAt: null,
+  });
+  const entries = threadWorkflowEntries({
+    parentThreadId: "current",
+    turnItems: [item("other", "foreign"), item("current", "own")] as never,
+    pendingBackgroundTasks: [],
+  });
+  expect(entries.map((e) => e.title)).toEqual(["own"]);
 });

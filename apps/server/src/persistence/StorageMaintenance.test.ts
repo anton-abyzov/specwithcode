@@ -13,6 +13,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -380,3 +381,22 @@ it.layer(NodeServices.layer)("storage maintenance reclaim", (it) => {
       ),
   );
 });
+
+it.effect("paces background work at ten percent duty and resets after resting", () =>
+  Effect.gen(function* () {
+    const pause = yield* StorageMaintenance.makeCompactionPacer;
+    const start = yield* Clock.currentTimeMillis;
+    yield* pause;
+    assert.equal(yield* Clock.currentTimeMillis, start);
+    yield* TestClock.adjust("30 millis");
+    const fiber = yield* Effect.forkChild(pause);
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("269 millis");
+    assert.isUndefined(fiber.pollUnsafe());
+    yield* TestClock.adjust("1 millis");
+    yield* Fiber.join(fiber);
+    assert.equal(yield* Clock.currentTimeMillis, start + 300);
+    yield* pause;
+    assert.equal(yield* Clock.currentTimeMillis, start + 300);
+  }),
+);

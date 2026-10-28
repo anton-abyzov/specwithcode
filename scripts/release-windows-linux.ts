@@ -13,7 +13,9 @@
  *   node release-windows-linux.ts sums --dir DIR
  *   node release-windows-linux.ts check-public --rules FILE --dir DIR
  *   node release-windows-linux.ts plan-upload --version X.Y.Z --dir DIR --existing FILE [--replace]
+ *   node release-windows-linux.ts release-state --version X.Y.Z --repo OWNER/REPO
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -294,6 +296,169 @@ export function planUpload(input: {
   return { upload: [...input.localNames].sort(), problems };
 }
 
+export interface PublishedAsset {
+  readonly name: string;
+  /** GitHub's `sha256:<hex>`; null when GitHub has not computed it. */
+  readonly digest: string | null;
+  /** GitHub's upload state: "uploaded" once the whole file is there. */
+  readonly state: string;
+}
+
+export interface AttachState {
+  /** "complete": every asset, consistent; "absent": none of this workflow's; "broken": anything else. */
+  readonly state: "complete" | "absent" | "broken";
+  readonly problems: ReadonlyArray<string>;
+}
+
+/** `<sha256>  <name>` lines as formatSums writes them. */
+export function parseSums(text: string): Map<string, string> {
+  const sums = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    if (line === "") continue;
+    const match = /^([0-9a-f]{64}) {2}(\S+)$/.exec(line);
+    if (match === null || sums.has(match[2]!))
+      throw new Error(`malformed line in ${WINDOWS_LINUX_SUMS}: ${line}`);
+    sums.set(match[2]!, match[1]!);
+  }
+  if (sums.size === 0) throw new Error(`${WINDOWS_LINUX_SUMS} is empty`);
+  return sums;
+}
+
+/**
+ * Whether a published release holds a finished, consistent attach of this workflow: every installer,
+ * CLI archive, feed and the checksum file, fully uploaded, each one's GitHub digest the one the
+ * release's own checksum file names, and each feed for this version listing only files on the
+ * release. The checksum file and the feeds were written by one run that checked the feeds against
+ * the installers (feedProblems), so digests matching the checksum file tie the feeds to the
+ * installers on the release. A replace stopped after the payload and before the feeds leaves the
+ * old feeds, whose digests then differ from the new checksum file. `texts` holds the published
+ * checksum file and feeds, by name.
+ */
+export function attachState(input: {
+  readonly version: string;
+  readonly assets: ReadonlyArray<PublishedAsset>;
+  readonly texts: ReadonlyMap<string, string>;
+  readonly draft?: boolean;
+  readonly prerelease?: boolean;
+}): AttachState {
+  if (input.draft === true || input.prerelease === true)
+    return {
+      state: "broken",
+      problems: ["stable release must be published, not draft or prerelease"],
+    };
+  const ours = input.assets.filter(
+    (asset) =>
+      asset.name === WINDOWS_LINUX_SUMS || isWindowsLinuxAssetName(asset.name, input.version),
+  );
+  if (ours.length === 0) return { state: "absent", problems: [] };
+  const byName = new Map(ours.map((asset) => [asset.name, asset]));
+  const required = [
+    ...requiredAssetNames("win", input.version),
+    ...requiredAssetNames("linux", input.version),
+    WINDOWS_LINUX_SUMS,
+  ];
+  const problems: string[] = [];
+  for (const name of required) if (!byName.has(name)) problems.push(`${name} is missing`);
+  for (const asset of ours) {
+    if (asset.state !== "uploaded") problems.push(`${asset.name} is ${asset.state}, not uploaded`);
+  }
+  const sumsText = input.texts.get(WINDOWS_LINUX_SUMS);
+  if (byName.has(WINDOWS_LINUX_SUMS) && sumsText === undefined) {
+    problems.push(`${WINDOWS_LINUX_SUMS} could not be read`);
+  } else if (sumsText !== undefined) {
+    let sums = new Map<string, string>();
+    try {
+      sums = parseSums(sumsText);
+    } catch (error) {
+      problems.push(error instanceof Error ? error.message : String(error));
+    }
+    for (const asset of ours) {
+      if (asset.name === WINDOWS_LINUX_SUMS) continue;
+      const want = sums.get(asset.name);
+      if (want === undefined) problems.push(`${asset.name} is not in ${WINDOWS_LINUX_SUMS}`);
+      else if (asset.digest !== `sha256:${want}`) {
+        problems.push(
+          `${asset.name} is ${asset.digest ?? "without a digest"} on the release; ${WINDOWS_LINUX_SUMS} says sha256:${want}`,
+        );
+      }
+    }
+    for (const name of sums.keys()) {
+      if (!byName.has(name))
+        problems.push(`${WINDOWS_LINUX_SUMS} lists ${name}, which the release lacks`);
+    }
+  }
+  for (const platform of ["win", "linux"] as const) {
+    const name = feedManifestName(platform);
+    const text = input.texts.get(name);
+    if (!byName.has(name)) continue;
+    if (text === undefined) {
+      problems.push(`${name} could not be read`);
+      continue;
+    }
+    try {
+      const manifest = parseFeedManifest(text);
+      if (manifest.version !== input.version)
+        problems.push(`${name} is for ${manifest.version}, not ${input.version}`);
+      for (const file of manifest.files) {
+        if (!byName.has(file.url))
+          problems.push(`${name} lists ${file.url}, which the release lacks`);
+      }
+    } catch (error) {
+      problems.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { state: problems.length === 0 ? "complete" : "broken", problems };
+}
+
+/** The release's assets and the text of its checksum file and feeds, through `gh`; none for no release. */
+function readPublishedRelease(repo: string, version: string) {
+  const gh = (args: ReadonlyArray<string>) =>
+    NodeChildProcess.execFileSync("gh", args, {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  let body: string;
+  try {
+    body = gh(["api", `repos/${repo}/releases/tags/v${version}`]);
+  } catch (error) {
+    const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+    if (/HTTP 404|Not Found/.test(stderr)) return { assets: [], texts: new Map<string, string>() };
+    throw new Error(
+      `could not read v${version} on ${repo}: ${stderr.trim().split("\n").at(-1) ?? ""}`,
+      { cause: error },
+    );
+  }
+  const release = JSON.parse(body) as {
+    draft: boolean;
+    prerelease: boolean;
+    assets?: Array<{ id: number; name: string; digest?: string | null; state: string }>;
+  };
+  if (typeof release.draft !== "boolean" || typeof release.prerelease !== "boolean")
+    throw new Error(`v${version} on ${repo} has no release visibility/channel metadata`);
+  const listed = release.assets ?? [];
+  const assets = listed.map((asset) => ({
+    name: asset.name,
+    digest: asset.digest ?? null,
+    state: asset.state,
+  }));
+  const texts = new Map<string, string>();
+  for (const asset of listed) {
+    if (asset.name !== WINDOWS_LINUX_SUMS && !asset.name.endsWith(".yml")) continue;
+    if (asset.name === "latest-mac.yml") continue;
+    texts.set(
+      asset.name,
+      gh([
+        "api",
+        "-H",
+        "Accept: application/octet-stream",
+        `repos/${repo}/releases/assets/${asset.id}`,
+      ]),
+    );
+  }
+  return { assets, texts, draft: release.draft, prerelease: release.prerelease };
+}
+
 // ---------------------------------------------------------------- command line
 
 function hashFile(
@@ -442,6 +607,30 @@ function main(argv: ReadonlyArray<string>): void {
       if (plan.problems.length > 0) fail(plan.problems);
       process.stdout.write(plan.upload.map((name) => `${name}\n`).join(""));
       return;
+    }
+    // Exit 0 when the release holds a complete, consistent attach, 3 when it holds none of it,
+    // 4 when it holds part of one or an inconsistent one (listed, with how to repair it).
+    case "release-state": {
+      const version = args.one("version");
+      const repo = args.one("repo");
+      const release = readPublishedRelease(repo, version);
+      const result = attachState({ version, ...release });
+      if (result.state === "complete") {
+        console.log(
+          `v${version} on ${repo} has every Windows and Linux asset, matching ${WINDOWS_LINUX_SUMS}.`,
+        );
+        return;
+      }
+      if (result.state === "absent") {
+        console.log(`v${version} on ${repo} has no Windows or Linux assets yet.`);
+        process.exit(3);
+      }
+      for (const problem of result.problems)
+        console.log(`::error::v${version} on ${repo}: ${problem}`);
+      console.log(
+        `::error::Repair it: run Release Windows and Linux by hand with version=${version}, dry_run=false and replace=true.`,
+      );
+      process.exit(4);
     }
     default:
       throw new Error(

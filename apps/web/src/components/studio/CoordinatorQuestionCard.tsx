@@ -1,3 +1,4 @@
+import { SNAP_SHOT_CONVERSATION_FOCUS_EVENT } from "../desktop/snapShotTarget";
 import type { EnvironmentId, ScopedThreadRef } from "@specweave-studio/contracts";
 import { MessageSquareTextIcon, PlusIcon } from "lucide-react";
 import { useCallback, useId, useRef, useState, useSyncExternalStore } from "react";
@@ -31,6 +32,7 @@ export const COORDINATOR_PROMPT_ID = "project-prompt";
 export function focusCoordinatorPrompt(): boolean {
   const prompt = document.getElementById(COORDINATOR_PROMPT_ID);
   if (!(prompt instanceof HTMLTextAreaElement) || prompt.disabled) return false;
+  prompt.dispatchEvent(new Event(SNAP_SHOT_CONVERSATION_FOCUS_EVENT, { bubbles: true }));
   prompt.focus();
   prompt.setSelectionRange(prompt.value.length, prompt.value.length);
   return true;

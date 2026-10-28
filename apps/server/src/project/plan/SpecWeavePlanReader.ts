@@ -13,7 +13,8 @@ import {
 } from "../../../../../packages/contracts/src/projectPlan.ts";
 import { exposesProtectedRealPath } from "../ProjectEnvironmentPaths.ts";
 
-const META_EVENTS = new Set(["note", "session", "handoff", "pickup"]);
+// AC waivers are read by the criteria presentation, never folded as task events.
+const META_EVENTS = new Set(["note", "session", "handoff", "pickup", "accept-skip"]);
 const LedgerEntry = Schema.Struct({
   t: Schema.String.check(Schema.isMaxLength(64)),
   e: Schema.Literals([
@@ -26,6 +27,7 @@ const LedgerEntry = Schema.Struct({
     "session",
     "handoff",
     "pickup",
+    "accept-skip",
   ]),
   by: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(500)),
   at: Schema.String.check(Schema.isMaxLength(64)),

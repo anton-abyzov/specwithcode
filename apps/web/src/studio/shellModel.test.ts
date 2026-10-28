@@ -448,6 +448,7 @@ describe("a project's Threads pane", () => {
     ).toEqual([
       ["Waiting on you", ["ask"]],
       ["Working", ["busy"]],
+      ["Waiting", []],
       ["Unavailable", []],
       ["Idle", ["idle-new", "idle-old"]],
       ["Resolved", ["done", "stored"]],
@@ -457,6 +458,7 @@ describe("a project's Threads pane", () => {
     expect(buildThreadPaneGroups([thread()], "activity").map((g) => g.group)).toEqual([
       "Waiting on you",
       "Working",
+      "Waiting",
       "Unavailable",
       "Idle",
       "Resolved",
@@ -562,7 +564,7 @@ describe("a project's Threads pane", () => {
       "Answer needed · 1048 fresh review",
     );
     expect(threadAttentionWord(parent, attention([action("a", "One"), action("b", "Two")]))).toBe(
-      "2 subagents waiting",
+      "2 subagents need your input",
     );
     // The thread's own question is said by its own status word.
     expect(threadAttentionWord(parent, attention([action("parent", "Worker")]))).toBeNull();
@@ -655,6 +657,18 @@ describe("blocked threads", () => {
     expect(threadTone(subagent)).toBe("idle");
   });
 
+  it("leaves a worker's delegated child report to the worker, not a coordinator worker's", () => {
+    const child = (parentThreadId: string) =>
+      ({
+        ...blocked,
+        lineage: { parentThreadId, relationshipToParent: "subagent" },
+        source: { creationSource: "mcp" },
+      }) as unknown as EnvironmentThreadShell;
+    expect(threadStatusWord(child("worker-1"))).toBeNull();
+    expect(threadStatusWord(child("project-coordinator:project-1"))).toBe("Blocked");
+    expect(threadTone(child("project-coordinator:project-1"))).toBe("waiting");
+  });
+
   it("drops the blocker while the thread runs again or once it is resolved", () => {
     expect(threadStatusWord({ ...blocked, runtime: running })).toBe("Working");
     expect(threadTone({ ...blocked, settledOverride: "settled" })).toBe("resolved");
@@ -727,4 +741,102 @@ describe("threads on an unreachable host", () => {
     expect(threadStatusWord(blocked, false)).toBe("Blocked");
     expect(waitingCount([blocked], new Set())).toBe(1);
   });
+});
+
+describe("dependency waiting", () => {
+  it.each([
+    "Waiting for CI",
+    "Waiting for review",
+    "Waiting for PR merge",
+    "Waiting for subagents",
+  ])("keeps %s separate from user attention", (reason) => {
+    const row = thread({ reportedBlocker: reason });
+    expect(
+      buildThreadPaneGroups([row], "activity").find((g) => g.group === "Waiting")?.threads,
+    ).toEqual([row]);
+    expect(waitingCount([row])).toBe(0);
+    expect(threadStatusWord(row)).toBe(reason);
+    expect(threadTone(row)).toBe("idle");
+  });
+  it("a real pending permission outranks a dependency", () => {
+    const row = thread({ reportedWait: "Waiting for CI", hasPendingApprovals: true });
+    expect(buildThreadPaneGroups([row], "activity")[0]?.threads).toEqual([row]);
+    expect(threadStatusWord(row)).toBe("Approval requested");
+  });
+  it("an answered request's authoritative null suppresses stale legacy row flags", () => {
+    const row = thread({
+      hasPendingUserInput: true,
+      source: { pendingRuntimeRequest: null },
+      reportedWait: "Waiting for CI",
+    } as unknown as ThreadOverrides);
+    expect(waitingCount([row])).toBe(0);
+    expect(threadStatusWord(row)).toBe("Waiting for CI");
+  });
+});
+
+it("a working parent's child dependency cannot replace its own working status", () => {
+  const parent = thread({ runtime: running });
+  const attention = {
+    roots: [
+      {
+        thread: parent,
+        freshness: "live",
+        actions: [],
+        working: true,
+        waits: ["Waiting for review"],
+      },
+    ],
+    count: 0,
+    working: 1,
+    complete: true,
+    staleCount: 0,
+    label: "0 waiting on you",
+  } as never;
+  expect(threadAttentionWord(parent, attention)).toBeNull();
+  expect(threadTone(parent)).toBe("working");
+});
+
+it("explains coordinator inclusion in the same total used by project badges", () => {
+  const attention = {
+    roots: [
+      { coordinator: true, actions: [{}] },
+      { coordinator: false, actions: [{}] },
+    ],
+    count: 2,
+    working: 0,
+    complete: true,
+    staleCount: 0,
+    label: "2 waiting on you",
+  } as never;
+  expect(threadsSummary([], 0, undefined, undefined, attention)).toBe(
+    "2 waiting on you (1 coordinator, 1 worker).",
+  );
+  const answered = {
+    ...(attention as unknown as Record<string, unknown>),
+    roots: [
+      { coordinator: true, actions: [] },
+      { coordinator: false, actions: [{}] },
+    ],
+    count: 1,
+    label: "1 waiting on you",
+  } as never;
+  expect(threadsSummary([], 0, undefined, undefined, answered)).toBe("1 waiting on you.");
+});
+
+it("keeps resolved parents resolved despite stale own runtime or live child counts", () => {
+  const resolved = thread({ settledOverride: "settled", runtime: running });
+  const children = new Map([["host-1:worker-1", 1]]);
+  const attention = {
+    roots: [{ thread: resolved, freshness: "live", actions: [], working: true, waits: [] }],
+  } as never;
+  for (const hosts of [undefined, new Set(["host-1"])]) {
+    expect(
+      buildThreadPaneGroups([resolved], "activity", "", children, hosts, attention).find(
+        (group) => group.group === "Resolved",
+      )?.threads,
+    ).toEqual([resolved]);
+  }
+  expect(threadTone(resolved)).toBe("resolved");
+  expect(threadStatusWord(resolved)).toBeNull();
+  expect(threadsSummary([resolved], 0, undefined, children)).not.toContain("working");
 });

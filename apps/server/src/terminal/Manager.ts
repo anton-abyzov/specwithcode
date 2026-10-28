@@ -2465,23 +2465,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   /**
-   * A new shell waits while the service is held for an update; reusing a running
-   * one does not. Checked before the thread lock, so the drain can close
-   * terminals meanwhile.
+   * Register the entire spawn-capable operation before taking the thread lock.
+   * A hold waits for admitted shells to register; later opens wait outside the
+   * lock so an explicit drain can still close terminals. Retrying admission is
+   * atomic with hold acquisition, unlike checking isHeld before the operation.
    */
-  const awaitSpawnAllowed = (
-    threadId: string,
-    terminalId: string,
-    options?: { readonly restarting?: boolean },
-  ) =>
-    Effect.gen(function* () {
-      if (!(yield* updateHold.isHeld)) return;
-      if (options?.restarting !== true) {
-        const existing = yield* getSession(threadId, terminalId);
-        if (Option.isSome(existing) && existing.value.status === "running") return;
-      }
-      yield* updateHold.awaitReleased;
-    });
+  const withSpawnAdmission = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    updateHold.admit("terminal.spawn", effect).pipe(
+      Effect.catchTags({
+        ServiceUpdateInProgressError: () =>
+          updateHold.awaitReleased.pipe(
+            Effect.andThen(Effect.suspend(() => withSpawnAdmission(effect))),
+          ),
+      }),
+    );
 
   const closeSession = Effect.fn("terminal.closeSession")(function* (
     threadId: string,
@@ -2822,12 +2819,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
-    awaitSpawnAllowed(input.threadId, input.terminalId).pipe(
-      Effect.andThen(
-        withThreadLock(
-          input.threadId,
-          resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
-        ),
+    withSpawnAdmission(
+      withThreadLock(
+        input.threadId,
+        resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
       ),
     );
 
@@ -2975,13 +2970,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   };
 
   const attachStream: TerminalManager["Service"]["attachStream"] = (input, listener) =>
-    streamSession(
-      input,
-      awaitSpawnAllowed(input.threadId, input.terminalId).pipe(
-        Effect.andThen(openOrAttachForStream(input)),
-      ),
-      listener,
-    );
+    streamSession(input, withSpawnAdmission(openOrAttachForStream(input)), listener);
 
   const observeStream: TerminalManager["Service"]["observeStream"] = (input, listener) =>
     streamSession(
@@ -3220,9 +3209,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
   const restart: TerminalManager["Service"]["restart"] = (input) =>
-    awaitSpawnAllowed(input.threadId, input.terminalId, { restarting: true }).pipe(
-      Effect.andThen(restartLocked(input)),
-    );
+    withSpawnAdmission(restartLocked(input));
 
   const restartLocked = (input: TerminalRestartInput) =>
     withThreadLock(

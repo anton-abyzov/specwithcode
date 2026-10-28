@@ -4,45 +4,57 @@ import { MachineHandoffDialog } from "../../src/components/studio/MachineHandoff
 import "./fixture.css";
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
+const DESTINATIONS = [
+  {
+    key: "m1",
+    environmentId: "m1",
+    label: "Mac mini M1",
+    folder: "/Users/you/Projects/sw-easychamp-fleet",
+    unavailable: null,
+  },
+  {
+    key: "m3",
+    environmentId: "m3",
+    label: "MacBook Air M3",
+    folder: "/Users/you/Projects/sw-easychamp",
+    unavailable: null,
+  },
+];
+const MACHINES = [
+  { value: "m1", label: "Mac mini M1", tone: "ready" as const },
+  { value: "m3", label: "MacBook Air M3", tone: "ready" as const },
+  {
+    value: "offline",
+    label: "Offline machine",
+    tone: "off" as const,
+    reason: "Connect this machine first.",
+    disabled: true,
+  },
+];
 function Fixture() {
   const [open, setOpen] = useState(true);
-  const [selected, setSelected] = useState("m1");
+  const [machine, setMachine] = useState("m1");
   const [consent, setConsent] = useState(false);
   const [phase, setPhase] = useState<"choose" | "review" | "complete">("choose");
   const [opened, setOpened] = useState(false);
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       <h1 className="text-lg font-medium">EasyChamp</h1>
-      <p className="text-sm text-muted-foreground">Machine handoff interaction preview</p>
-      <button onClick={() => setOpen(true)}>Handoff</button>
+      <p className="text-sm text-muted-foreground">Move project interaction preview</p>
+      <button onClick={() => setOpen(true)}>Move project</button>
       {opened && <p role="status">Destination coordinator opened</p>}
       <MachineHandoffDialog
         open={open}
         onOpenChange={setOpen}
         sourceLabel="MacBook Pro M4"
         projectTitle="EasyChamp"
-        selected={selected}
-        onSelect={setSelected}
-        destinations={[
-          {
-            key: "m1",
-            label: "Mac mini M1",
-            folder: "/Users/you/Projects/sw-easychamp-fleet",
-            unavailable: null,
-          },
-          {
-            key: "m3",
-            label: "MacBook Air M3",
-            folder: "/Users/you/Projects/sw-easychamp",
-            unavailable: null,
-          },
-          {
-            key: "offline",
-            label: "Offline machine",
-            folder: "/Projects/sw-easychamp",
-            unavailable: "Connect this machine first.",
-          },
-        ]}
+        machines={MACHINES}
+        machine={machine}
+        onMachineChange={setMachine}
+        // One saved folder per machine: the folder follows the chosen machine.
+        selected={machine}
+        onSelect={setMachine}
+        destinations={DESTINATIONS}
         preview={
           phase === "choose"
             ? null
@@ -63,10 +75,14 @@ function Fixture() {
         onConsent={setConsent}
         error={
           params.has("error")
-            ? "The destination checkout has local changes. Commit or save them, then retry this handoff."
+            ? "The destination checkout has local changes. Commit or save them, then try the move again."
             : null
         }
         onReview={() => setPhase("review")}
+        onBack={() => {
+          setConsent(false);
+          setPhase("choose");
+        }}
         onContinue={() => setPhase("complete")}
         onOpenDestination={() => {
           setOpened(true);

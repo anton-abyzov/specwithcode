@@ -8,7 +8,10 @@ import {
   setThreadHandoffMode,
   threadHandoffMenuState,
 } from "../studio/handoffMode";
-import { requestHandOffThread } from "../components/handoff/HandOffThreadDialog";
+import {
+  requestHandOffThread,
+  requestSwitchModel,
+} from "../components/handoff/HandOffThreadDialog";
 import { threadMoveBlockedReason } from "../components/threadMove.logic";
 import {
   type AtomCommandResult,
@@ -30,6 +33,8 @@ import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  threadHandoffInherited,
+  withInheritedHandoff,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -211,7 +216,10 @@ export function useThreadActionMenu(input: {
           // A personal assistant's threads stay on their machine: no handoff items.
           handoff: isPersonalAssistantProject(menuProject)
             ? undefined
-            : threadHandoffMenuState(handoffSnapshot, thread.id, thread.projectId),
+            : withInheritedHandoff(
+                threadHandoffMenuState(handoffSnapshot, thread.id, thread.projectId),
+                threadHandoffInherited(handoffSnapshot, thread.projectId),
+              ),
           supports,
           snoozePresets,
         });
@@ -379,11 +387,15 @@ export function useThreadActionMenu(input: {
               threadRef.threadId,
               action.slice("handoff-mode:".length) as "inherit" | "on" | "off",
             );
-            if (!result.ok) failureToast("Couldn't change handoff mode", new Error(result.error));
+            if (!result.ok)
+              failureToast("Couldn't change Keep ready to move", new Error(result.error));
             return;
           }
           case "hand-off":
             requestHandOffThread(threadRef);
+            return;
+          case "switch-model":
+            requestSwitchModel(threadRef);
             return;
           case "move-to-project":
             await requestThreadMove(threadRef);

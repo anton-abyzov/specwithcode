@@ -590,3 +590,139 @@ it.effect.each([
       assert.deepEqual(yield* blockerOf(), [null, null]);
     }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: latest dependency report is summarized and clears on follow-up", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("dependency-report");
+    yield* createRun(threadId);
+    const message = (id: string, role: "user" | "assistant", text: string, at: DateTime.Utc) =>
+      store.apply({
+        id: EventId.make(`event:dependency:${id}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: at,
+        payload: {
+          createdBy: role === "user" ? "user" : "agent",
+          creationSource: role === "user" ? "web" : "provider",
+          id: MessageId.make(`message:dependency:${id}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role,
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+      });
+    yield* message(
+      "report",
+      "assistant",
+      "Now waiting on CI for #886, #198 and #890; I'll merge each once green.",
+      DateTime.subtract(now, { hours: 2 }),
+    );
+    const before = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId);
+    assert.strictEqual(before?.reportedWait, "Waiting for CI");
+    assert.isNull(before?.reportedBlocker);
+    yield* message("followup", "user", "The checks finished", DateTime.subtract(now, { hours: 1 }));
+    const after = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId);
+    assert.isNull(after?.reportedWait);
+    yield* message("done", "assistant", "Merged and completed.", now);
+    const completed = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId);
+    assert.isNull(completed?.reportedWait);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)(
+  "%s: answered decisions suppress reopened copies but not different questions",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* createThread("answered-request-copies");
+      yield* createRun(threadId);
+      const request = (
+        id: string,
+        status: "pending" | "resolved" | "cancelled",
+        answers?: Record<string, string>,
+      ) =>
+        store.apply({
+          id: EventId.make(`event:answered-copy:${id}`),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make(id),
+            nodeId: NodeId.make(`node:${id}`),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status,
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: status === "pending" ? null : now,
+            ...(answers ? { answers } : {}),
+          },
+        });
+      yield* request("decision", "resolved", { q1: "Accept both" });
+      yield* request("update-reopen:update-reopen:decision", "pending");
+      const answered = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId);
+      assert.isNull(answered?.pendingRuntimeRequest);
+      yield* request("different-decision", "pending");
+      const different = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId);
+      assert.strictEqual(different?.pendingRuntimeRequest?.id, "different-decision");
+    }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: a native child's terminal receipt reaches collapsed shell rows", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("parent-with-terminal-child");
+    const child = yield* createThread("terminal-native-child", {
+      creationSource: "provider",
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const runId = yield* createRun(parent, "running");
+    yield* store.apply({
+      id: EventId.make("event:terminal-native-receipt"),
+      type: "subagent.updated",
+      threadId: parent,
+      runId,
+      occurredAt: now,
+      payload: {
+        id: NodeId.make("native-receipt"),
+        threadId: parent,
+        runId,
+        parentNodeId: NodeId.make("parent-node"),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: child,
+        nativeTaskRef: null,
+        prompt: "Review",
+        title: "Finished review",
+        model: null,
+        status: "completed",
+        result: "Done",
+        startedAt: old,
+        completedAt: now,
+        updatedAt: now,
+      },
+    });
+    const row = (yield* store.getShellSnapshot()).threads.find((thread) => thread.id === child);
+    assert.strictEqual(row?.nativeSubagentStatus, "completed");
+    assert.strictEqual((yield* store.getThreadShell(child))?.nativeSubagentStatus, "completed");
+  }).pipe(Effect.provide(testLayer)),
+);

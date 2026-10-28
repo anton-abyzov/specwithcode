@@ -23,6 +23,7 @@ export const layerRpcHandlers = (caller: DesignSystemCaller) =>
         [WS_METHODS.designSystemConfirm]: (input) => systems.confirm(caller, input),
         [WS_METHODS.designSystemDiscard]: (input) => systems.discard(caller, input.proposalId),
         [WS_METHODS.designSystemRescan]: (input) => systems.rescan(caller, input),
+        [WS_METHODS.designSystemRebuildPreviews]: (input) => systems.rebuildPreviews(caller, input),
         [WS_METHODS.designSystemFigmaStatus]: () => systems.figmaStatus(),
         // Behind the `designSystemEditing` capability.
         [WS_METHODS.designSystemCreate]: (input) => editing.create(caller, input),

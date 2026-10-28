@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  LimitHandoffCandidate,
   LimitHandoffCandidatesResult,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -8,41 +9,93 @@ import { useEffect, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { limitHandoff } from "../../studio/limitHandoff";
+import { requestHandOffThread } from "../handoff/HandOffThreadDialog";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const REFRESH_MS = 30_000;
 
+/** The order machines are tried in, as one sentence. */
+export function limitHandoffOrderText(result: LimitHandoffCandidatesResult): string {
+  return result.order === "other-machine-first"
+    ? "Other machines are tried before this machine's models."
+    : "This machine's models are tried before other machines.";
+}
+
 /**
- * The limit banner's machine targets: which paired machine takes the thread,
- * or why each one can't ("Minis: same Claude account as M4").
+ * The tooltip of "Move to {machine}": the order machines are tried in, then
+ * each machine's verdict ("Minis: same Claude account as M4").
  */
-export function LimitHandoffCandidateList({ result }: { result: LimitHandoffCandidatesResult }) {
+export function limitHandoffOrderTip(result: LimitHandoffCandidatesResult): string {
+  return [
+    limitHandoffOrderText(result),
+    ...result.candidates.map((candidate) => candidate.text),
+  ].join("\n");
+}
+
+/**
+ * The limit banner's machine target: one "Move to {machine}" button for the
+ * first machine that can take the thread, which opens the thread's move
+ * dialog on that machine with the model its verdict was for. Why the others
+ * can't, and the order they are tried in, sit in the button's tooltip (it
+ * opens on hover and on keyboard focus); when none can, the banner says why
+ * the thread waits and lists each machine's verdict in plain view.
+ */
+export function LimitHandoffCandidateList({
+  result,
+  onMove,
+}: {
+  result: LimitHandoffCandidatesResult;
+  onMove: (candidate: LimitHandoffCandidate) => void;
+}) {
   if (result.candidates.length === 0) return null;
-  const order =
-    result.order === "other-machine-first"
-      ? "Other machines are tried before this machine's models."
-      : "This machine's models are tried before other machines.";
-  return (
-    <div className="flex basis-full flex-col gap-1 text-xs" aria-label="Other machines">
-      <span className="text-muted-foreground">
-        {result.available
-          ? `Other machines. ${order}`
-          : "Other machines. This server can't move threads to another machine yet."}
-      </span>
-      <ol className="flex flex-col gap-0.5">
-        {result.candidates.map((candidate, index) => (
-          <li
-            key={`${candidate.environmentId}:${candidate.modelSelection.instanceId}:${candidate.modelSelection.model}`}
-            className={candidate.eligible ? "text-foreground" : "text-muted-foreground"}
-          >
-            {`${index + 1}. ${candidate.text}`}
-          </li>
-        ))}
-      </ol>
-      {result.waiting ? (
+  if (!result.available) {
+    return (
+      <p className="basis-full text-xs text-muted-foreground">
+        This server can't move threads to another machine yet.
+      </p>
+    );
+  }
+  const best = result.candidates.find((candidate) => candidate.eligible) ?? null;
+  if (!best) {
+    return (
+      <div className="flex basis-full flex-col gap-1 text-xs" aria-label="Other machines">
         <p role="status" className="text-muted-foreground">
-          {result.waiting}
+          {result.waiting ?? "No other machine can take this thread now."}
         </p>
-      ) : null}
+        <ul
+          className="flex flex-col gap-0.5 text-muted-foreground"
+          data-slot="limit-handoff-verdicts"
+        >
+          {result.candidates.map((candidate) => (
+            <li key={candidate.environmentId}>{candidate.text}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex basis-full flex-wrap items-center gap-2 text-xs"
+      aria-label="Other machines"
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="xs"
+              variant="outline"
+              className="max-w-full min-w-0"
+              onClick={() => onMove(best)}
+            >
+              <span className="truncate">{`Move to ${best.machineLabel}`}</span>
+            </Button>
+          }
+        />
+        <TooltipPopup side="bottom" className="whitespace-pre-line">
+          {limitHandoffOrderTip(result)}
+        </TooltipPopup>
+      </Tooltip>
     </div>
   );
 }
@@ -78,8 +131,22 @@ export function LimitHandoffCandidates({
       window.clearInterval(timer);
     };
   }, [candidates, environmentId, threadId]);
-  if (result) return <LimitHandoffCandidateList result={result} />;
+  if (result)
+    return (
+      <LimitHandoffCandidateList
+        result={result}
+        onMove={(candidate) =>
+          requestHandOffThread(
+            { environmentId, threadId },
+            {
+              destinationEnvironmentId: candidate.environmentId,
+              modelSelection: candidate.modelSelection,
+            },
+          )
+        }
+      />
+    );
   return error ? (
-    <p className="basis-full text-xs text-muted-foreground">{`Other machines: ${error}`}</p>
+    <p className="basis-full text-xs text-muted-foreground">{`Couldn't check other machines: ${error}`}</p>
   ) : null;
 }

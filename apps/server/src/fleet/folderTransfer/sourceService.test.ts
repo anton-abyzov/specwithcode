@@ -35,6 +35,7 @@ async function snapshot(
   commit = true,
   hooks: ConstructorParameters<typeof SourceTransfers>[1] = {},
   files: Readonly<Record<string, string>> = {},
+  prepare: (folder: string, base: string) => void = () => {},
 ) {
   const base = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-copy-snapshot-")),
@@ -64,6 +65,7 @@ async function snapshot(
       "initial",
     ]);
   }
+  prepare(folder, base);
   const sources = new SourceTransfers(state, hooks);
   const offered = await sources.offer({
     operationId,
@@ -85,6 +87,28 @@ async function snapshot(
   if (commit) await sources.commit(loaded);
   return { sources, folder, state, repo, loaded, token: offered.token };
 }
+
+describe("the copy preview summary", () => {
+  it("counts only links whose target leaves the folder", async () => {
+    const { sources } = await snapshot(false, false, {}, {}, (folder, base) => {
+      NodeFS.mkdirSync(NodePath.join(folder, "shared"));
+      NodeFS.mkdirSync(NodePath.join(folder, "nested"));
+      NodeFS.mkdirSync(NodePath.join(base, "elsewhere"));
+      NodeFS.symlinkSync(
+        NodePath.join(folder, "shared"),
+        NodePath.join(folder, "nested", "absolute-in"),
+      );
+      NodeFS.symlinkSync(
+        NodePath.join(folder, "nested"),
+        NodePath.join(folder, "shared", "absolute-in"),
+      );
+      NodeFS.symlinkSync("../shared", NodePath.join(folder, "nested", "relative-in"));
+      NodeFS.symlinkSync("../../elsewhere", NodePath.join(folder, "nested", "relative-out"));
+      NodeFS.symlinkSync(NodePath.join(base, "elsewhere"), NodePath.join(folder, "absolute-out"));
+    });
+    expect((await sources.read(operationId))?.summary?.linksOutside).toBe(2);
+  });
+});
 
 describe("a completed copy before coordinator context transfer", () => {
   it.live("retains the activity warning in the status, manifest and restarted source", () =>

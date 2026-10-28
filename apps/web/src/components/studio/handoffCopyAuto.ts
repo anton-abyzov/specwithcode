@@ -232,7 +232,7 @@ export function replaceAllDecisions(
 /** "3 secret-like files (.env and similar) stayed on M4. …", or null when none stayed. */
 export function secretsLeftText(count: number, sourceLabel: string): string | null {
   if (count <= 0) return null;
-  return `${count.toLocaleString()} secret-like ${count === 1 ? "file" : "files"} (.env and similar) stayed on ${sourceLabel}. Copy them yourself, or run the copy again with Choose what to copy to send them.`;
+  return `${count.toLocaleString()} secret-like ${count === 1 ? "file" : "files"} (.env and similar) stayed on ${sourceLabel}. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.`;
 }
 
 /** Secret-like files measured on the source that were not sent with this copy. */

@@ -93,7 +93,7 @@ export function OrchestratorSwitcher({
   onMove: ((key: string) => void) | null;
   onStart: ((key: string) => void) | null;
   onAllowWorkers: (() => void) | null;
-  /** Opens "Migrate threads…" for the viewed machine's threads; null while it is offline. */
+  /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
   onMigrate?: (() => void) | null;
 }) {
   // Switch views only after the menu popup has left the DOM: the page being
@@ -232,7 +232,9 @@ export function OrchestratorSwitcher({
           }}
         >
           <ArrowRightLeftIcon aria-hidden />
-          {onMigrate ? `Migrate ${label}'s threads…` : `Migrate threads… (${label} unreachable)`}
+          {onMigrate
+            ? `Move ${label}'s running threads…`
+            : `Move ${label}'s running threads… (${label} offline)`}
         </MenuItem>
         {onAllowWorkers ? (
           <MenuItem onClick={onAllowWorkers}>

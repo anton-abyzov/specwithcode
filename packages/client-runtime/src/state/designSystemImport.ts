@@ -55,5 +55,9 @@ export function createDesignSystemImportAtoms<R, E>(
       label: "design-system:rescan",
       tag: WS_METHODS.designSystemRescan,
     }),
+    rebuildPreviews: createEnvironmentRpcCommand(runtime, {
+      label: "design-system:rebuild-previews",
+      tag: WS_METHODS.designSystemRebuildPreviews,
+    }),
   };
 }

@@ -1,3 +1,4 @@
+import { pendingQuestionsNeedHydration } from "./threadRequests.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
@@ -983,7 +984,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
         yield* Ref.set(resumingLive, false);
 
-        while (Option.isNone(current.data)) {
+        // An old bounded cache can resume at a current sequence while its
+        // pending question's display card is absent. Refresh that read model
+        // once per subscription too, without dropping its existing data.
+        while (Option.isNone(current.data) || pendingQuestionsNeedHydration(current.data.value)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({

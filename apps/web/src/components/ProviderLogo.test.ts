@@ -24,6 +24,9 @@ describe("providerBrandFor", () => {
         acpRegistryIconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/qwen-code.svg",
       }),
     ).toBe("qwen");
+    expect(providerBrandFor({ driverKind: "acpRegistry", acpRegistryAgentId: "opencode-v2" })).toBe(
+      "opencode",
+    );
     // A local command whose agent id was cleared keeps the generic mark.
     expect(providerBrandFor({ driverKind: "acpRegistry" })).toBeNull();
     // Icon URLs off the official CDN are ignored.

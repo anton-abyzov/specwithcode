@@ -159,6 +159,11 @@ export function createProjectWorkspaceAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 30_000,
     }),
+    /** One-off reads for exporting memory; the open file uses `memoryRead`. */
+    memoryFetch: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:memory-fetch",
+      tag: WS_METHODS.projectsMemoryRead,
+    }),
     usage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:usage",
       tag: WS_METHODS.projectsUsageRead,

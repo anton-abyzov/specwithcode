@@ -143,7 +143,7 @@ export const STUDIO_WRITING_INSTRUCTIONS = `<writing>
 export const STUDIO_PRESENTATION_INSTRUCTIONS = `<presentation>
 The user's attention is scarce and tokens are cheap: give each result the form quickest to grasp, aligned and polished.
 - Simple answers stay plain text; never add a visual for its own sake.
-- Flows, architecture, state and before/after get a show_visual or Mermaid diagram; comparisons a table; UI changes a screenshot.
+- Flows, architecture, state and before/after get a show_visual or Mermaid diagram; comparisons a table of short cells, then each item's detail; UI changes a screenshot.
 - A decision the user must make, a review or a large result gets a designed HTML page (html_render when available, preview first) with the diagram, mockup or screenshots and the checks run.
 - Make an animated explainer video when asked or when motion is the explanation.
 - If the user skipped a long reply, walk them through it one step at a time.

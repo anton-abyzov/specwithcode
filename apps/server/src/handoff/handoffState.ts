@@ -352,7 +352,7 @@ export function mergeSideEffects(
 /**
  * continued: this copy is fenced. handing-off: a transfer is in flight.
  * paused: woke after a fence and no peer answered. ready: the latest
- * checkpoint reached every replica (or origin when there are none). behind:
+ * checkpoint reached every replica; no badge while no other machine holds one. behind:
  * a checkpoint exists but has not reached them yet.
  */
 export function deriveHandoffBadge(input: {
@@ -367,7 +367,8 @@ export function deriveHandoffBadge(input: {
   if (input.paused) return "paused";
   const checkpoint = record.checkpoint;
   if (checkpoint === null) return null;
-  if (record.replicas.length === 0) return checkpoint.pushedToOrigin ? "ready" : "behind";
+  // No other machine holds a copy, so none can continue it; an origin backup does not count.
+  if (record.replicas.length === 0) return null;
   const allCurrent = record.replicas.every(
     (replica) =>
       replica.state === "current" &&

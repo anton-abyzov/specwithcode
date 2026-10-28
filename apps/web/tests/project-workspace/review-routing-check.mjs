@@ -33,6 +33,19 @@ try {
     if (width < 768) await page.getByRole("button", { name: /^Overview,/ }).click();
     await page.locator('[data-group="Idle"] .sws-thread-row').first().waitFor();
     const waiting = await rowsIn(page, "Waiting on you");
+    const dependencies = await rowsIn(page, "Waiting");
+    assert.equal(dependencies.length, 4, JSON.stringify(dependencies));
+    for (const reason of [
+      "Waiting for CI",
+      "Waiting for review",
+      "Waiting for PR merge",
+      "Waiting for subagents",
+    ])
+      assert.ok(
+        dependencies.some((row) => row.includes(reason)),
+        reason,
+      );
+    assert.ok(dependencies.every((row) => !/Answer needed|Blocked/.test(row)));
     const working = await rowsIn(page, "Working");
     const idle = await rowsIn(page, "Idle");
     // Real requests: a subagent's pending approval and a worker's own report blocker.
@@ -43,9 +56,11 @@ try {
     assert.equal(working.length, 1, JSON.stringify(working));
     assert.match(working[0], /Usage-aware model picker/);
     assert.doesNotMatch(working[0], /Answer needed|Close increment 1054/);
-    // A quiet parent of a finished subagent report and the failed Muse run are Idle.
-    assert.equal(idle.length, 2, JSON.stringify(idle));
+    // Quiet parents of finished child reports (native and delegate_task) and the
+    // failed Muse run are Idle.
+    assert.equal(idle.length, 3, JSON.stringify(idle));
     assert.ok(idle.some((row) => /1041 design create/.test(row) && !/Answer needed/.test(row)));
+    assert.ok(idle.some((row) => /disk audit/.test(row) && !/Answer needed/.test(row)));
     const muse = idle.find((row) => row.includes("Muse approval check"));
     assert.match(muse, /Run failed/);
     assert.doesNotMatch(muse, /Needs review/);
@@ -67,7 +82,7 @@ try {
       );
       const file = path.join(output, `review-routing-${width}-${theme}.png`);
       await page.screenshot({ path: file, fullPage: true });
-      receipts.push({ width, theme, waiting, working, idle, screenshot: file });
+      receipts.push({ width, theme, waiting, dependencies, working, idle, screenshot: file });
     }
     assert.deepEqual(errors, []);
     await page.close();

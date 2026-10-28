@@ -20,8 +20,12 @@ import {
 
 import { cn } from "~/lib/utils";
 
-export const CRITERION_LABEL: Record<ThreadIncrementCriterionState, string> = {
+type CriterionPresentationState = ThreadIncrementCriterionState | "mixed" | "skipped-accepted";
+
+export const CRITERION_LABEL: Record<CriterionPresentationState, string> = {
   verified: "verified",
+  mixed: "Mixed acceptance",
+  "skipped-accepted": "Skipped (accepted)",
   evidenced: "evidence, not verified",
   declared: "declared only",
   skipped: "skipped",
@@ -30,8 +34,10 @@ export const CRITERION_LABEL: Record<ThreadIncrementCriterionState, string> = {
   unknown: "unknown",
 };
 
-const ORDER: ReadonlyArray<ThreadIncrementCriterionState> = [
+const ORDER: ReadonlyArray<CriterionPresentationState> = [
   "verified",
+  "mixed",
+  "skipped-accepted",
   "evidenced",
   "declared",
   "skipped",
@@ -41,13 +47,17 @@ const ORDER: ReadonlyArray<ThreadIncrementCriterionState> = [
 ];
 
 /** A server that predates per-AC states sends only `met`; that is a declaration at most. */
-export function criterionState(criterion: ThreadIncrementCriterion): ThreadIncrementCriterionState {
+export function criterionState(criterion: ThreadIncrementCriterion): CriterionPresentationState {
+  // A waiver never hides an unfinished sibling requirement or unreadable ledger.
+  if (criterion.state === "open" || criterion.state === "unknown") return criterion.state;
+  if (criterion.acceptance === "mixed" || criterion.acceptance === "skipped-accepted")
+    return criterion.acceptance;
   return criterion.state ?? (criterion.met ? "declared" : "open");
 }
 
 /** "2 verified · 1 open · 1 no task", strongest first, zero counts left out. */
 export function criteriaSummary(criteria: ReadonlyArray<ThreadIncrementCriterion>): string {
-  const counts = new Map<ThreadIncrementCriterionState, number>();
+  const counts = new Map<CriterionPresentationState, number>();
   for (const criterion of criteria) {
     const state = criterionState(criterion);
     counts.set(state, (counts.get(state) ?? 0) + 1);
@@ -57,7 +67,7 @@ export function criteriaSummary(criteria: ReadonlyArray<ThreadIncrementCriterion
     .join(" · ");
 }
 
-function CriterionIcon({ state }: { state: ThreadIncrementCriterionState }) {
+function CriterionIcon({ state }: { state: CriterionPresentationState }) {
   const base = "mt-0.5 size-4 shrink-0";
   switch (state) {
     case "verified":
@@ -66,6 +76,8 @@ function CriterionIcon({ state }: { state: ThreadIncrementCriterionState }) {
       return <CircleCheckIcon aria-hidden className={cn(base, "text-foreground/70")} />;
     case "declared":
       return <CircleDotIcon aria-hidden className={cn(base, "text-muted-foreground")} />;
+    case "mixed":
+    case "skipped-accepted":
     case "skipped":
       return <CircleSlashIcon aria-hidden className={cn(base, "text-muted-foreground")} />;
     case "uncovered":
@@ -75,6 +87,16 @@ function CriterionIcon({ state }: { state: ThreadIncrementCriterionState }) {
     default:
       return <CircleDashedIcon aria-hidden className={cn(base, "text-muted-foreground")} />;
   }
+}
+
+/** A date-only authorization is a calendar date, not midnight in the reader's timezone. */
+export function formatAcceptanceDate(value: string): string {
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    ...(/^\d{4}-\d{2}-\d{2}$/.test(value) ? { timeZone: "UTC" } : {}),
+  });
 }
 
 function CriterionRow({ criterion }: { criterion: ThreadIncrementCriterion }) {
@@ -111,6 +133,35 @@ function CriterionRow({ criterion }: { criterion: ThreadIncrementCriterion }) {
           ) : null}
         </span>
       </div>
+      {(criterion.waivers?.length ?? 0) > 0 ? (
+        <details className="ms-6 mt-1 text-xs text-muted-foreground" data-accepted-skips>
+          <summary className="cursor-pointer">
+            {criterion.waivers!.length} accepted{" "}
+            {criterion.waivers!.length === 1 ? "skip" : "skips"}
+            {state === "open" ? "; other requirements remain open" : ""}
+          </summary>
+          <ul className="mt-1 space-y-2">
+            {criterion.waivers!.map((waiver) => (
+              <li key={waiver.check.toLowerCase()}>
+                <strong className="font-medium text-foreground">{waiver.check}</strong>
+                <p>{waiver.reason}</p>
+                <p>
+                  Accepted by {waiver.acceptedBy} ·{" "}
+                  <time dateTime={waiver.acceptedAt}>
+                    {formatAcceptanceDate(waiver.acceptedAt)}
+                  </time>
+                </p>
+                <p className="whitespace-pre-wrap wrap-anywhere">
+                  Authorization: {waiver.authorization}
+                </p>
+                <p className="wrap-anywhere">
+                  Recorded by {waiver.by} · {waiver.at}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </li>
   );
 }

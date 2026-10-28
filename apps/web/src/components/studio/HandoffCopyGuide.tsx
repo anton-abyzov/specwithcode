@@ -2,7 +2,11 @@ import type { ReactNode } from "react";
 import { CheckIcon, TriangleAlertIcon } from "lucide-react";
 import { hasNotCopied, type CopyNotices } from "./handoffCopyNotices";
 import type { CopyStepId, CopyStepTone } from "./handoffCopyWizard";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { FolderCopyStatus } from "@specweave-studio/contracts";
+import { cn } from "../../lib/utils";
+import { copiedProjectFolder, type HandoffFolderMethod } from "../../studio/folderCopy";
+import type { PendingCopy } from "./handoffFolderCopyPending";
+import { methodLabel } from "./ProjectMoveOptions";
 import { Button } from "../ui/button";
 import { HandoffCopyActions } from "./HandoffCopyActions";
 
@@ -11,8 +15,8 @@ export interface CopyStepItem {
   readonly label: string;
   /** Relative to the live step: behind it, on it, or still ahead. */
   readonly state: "done" | "current" | "next";
-  /** Skipped by a one-click copy: chosen automatically, still open to look at. */
-  readonly auto: boolean;
+  /** Not a screen in this run: a one-click copy chooses files and skips an empty Review. */
+  readonly skipped: boolean;
   readonly tone: CopyStepTone | null;
 }
 
@@ -29,75 +33,62 @@ const TONE_CLASSES: Readonly<Record<CopyStepTone, string>> = {
 };
 
 /**
- * Where › What › Review › Copy › Done, with Transfer for a move. Steps the copy has passed
- * are buttons that open a read-only look at them; the step text stays the bare label.
+ * Where › Copy › Done, with only the steps this run shows: What when the person chooses
+ * files first, Review when there is something to review, Transfer for a move. Labels wrap
+ * rather than truncate. It only shows progress: what was chosen is in Your choices.
  */
-export function CopyStepLine({
-  steps,
-  viewing = null,
-  onStepChange,
-  isStepDisabled,
-}: {
-  readonly steps: ReadonlyArray<CopyStepItem>;
-  /** The earlier step on screen instead of the live one; null shows the live step. */
-  readonly viewing?: CopyStepId | null;
-  readonly onStepChange?: (id: CopyStepId) => void;
-  readonly isStepDisabled?: (id: CopyStepId) => boolean;
-}) {
+export function CopyStepLine({ steps }: { readonly steps: ReadonlyArray<CopyStepItem> }) {
+  // Measuring and comparing in one click are part of copying: a skipped live step hands
+  // "current" to the next step shown.
+  const live = steps.findIndex((step) => step.state === "current");
+  const shown = steps
+    .map((step, index) =>
+      step.skipped ||
+      live < 0 ||
+      index <= live ||
+      steps.slice(live, index).some((before) => !before.skipped)
+        ? step
+        : { ...step, state: "current" as const },
+    )
+    .filter((step) => !step.skipped);
   return (
     <ol
-      className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
-      aria-label="Copy steps"
+      className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs"
+      aria-label="Steps"
       data-slot="copy-steps"
     >
-      {steps.map((step, index) => {
+      {shown.map((step, index) => {
         const current = step.state === "current";
-        const shown = step.id === viewing;
-        // What the tooltip says; the visible text stays the bare label.
-        const note = [step.auto ? "chosen automatically" : null, step.tone && TONE_NAMES[step.tone]]
-          .filter((part) => !!part)
-          .join(", ");
-        const extra = [note, shown ? "on screen" : null].filter((part) => !!part).join(", ");
-        const props = {
-          "data-slot": "copy-step",
-          "data-step-id": step.id,
-          "data-state": step.state,
-          "data-auto": step.auto ? "true" : undefined,
-          "data-tone": step.tone ?? undefined,
-          "data-viewing": shown ? "true" : undefined,
-          "aria-current": current ? ("step" as const) : undefined,
-          "aria-label": extra ? `${step.label}, ${extra}` : undefined,
-          onClick: () => onStepChange?.(step.id),
-          className: `-mx-1 inline-flex items-center gap-1 rounded px-1 outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:cursor-pointer enabled:hover:text-foreground enabled:hover:underline ${current ? "font-medium" : ""} ${shown ? "underline underline-offset-4" : ""} ${step.tone ? TONE_CLASSES[step.tone] : current || shown ? "text-foreground" : ""}`,
-        };
-        const disabled = !onStepChange || (isStepDisabled?.(step.id) ?? false);
-        const content = (
-          <>
-            {step.tone ? (
-              <TriangleAlertIcon className="size-3" aria-hidden />
-            ) : (
-              step.state === "done" && <CheckIcon className="size-3" aria-hidden />
-            )}
-            {step.label}
-          </>
-        );
         return (
           <li key={step.id} className="flex items-center gap-1.5">
-            {index > 0 && <span aria-hidden>›</span>}
-            {note ? (
-              <Tooltip>
-                <TooltipTrigger render={<button type="button" disabled={disabled} />} {...props}>
-                  {content}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  {step.label}: {note}
-                </TooltipPopup>
-              </Tooltip>
-            ) : (
-              <button type="button" disabled={disabled} {...props}>
-                {content}
-              </button>
+            {index > 0 && (
+              <span className="text-muted-foreground" aria-hidden>
+                ›
+              </span>
             )}
+            <span
+              data-slot="copy-step"
+              data-step-id={step.id}
+              data-state={step.state}
+              data-tone={step.tone ?? undefined}
+              aria-current={current ? "step" : undefined}
+              className={cn(
+                "inline-flex items-center gap-1 whitespace-nowrap",
+                step.tone
+                  ? `font-medium ${TONE_CLASSES[step.tone]}`
+                  : current
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground",
+              )}
+            >
+              {step.tone ? (
+                <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />
+              ) : (
+                step.state === "done" && <CheckIcon className="size-3 shrink-0" aria-hidden />
+              )}
+              <span data-slot="copy-step-label">{step.label}</span>
+              {step.tone && <span className="sr-only">, {TONE_NAMES[step.tone]}</span>}
+            </span>
           </li>
         );
       })}
@@ -105,22 +96,64 @@ export function CopyStepLine({
   );
 }
 
-/** Says an earlier step is on screen for looking only, and where the copy really is. */
-export function CopyViewingBanner({
-  viewing,
-  live,
+/**
+ * What this copy was started with, and the one way to change it: a link that says what
+ * changing costs. Null `onChange` hides the link, after Apply or where the footer has it.
+ */
+export function CopyChoicesSummary({
+  pending,
+  copy,
+  sourceRoot,
+  targetLabel,
+  method,
+  changeDisabled,
+  onChange,
 }: {
-  readonly viewing: string;
-  readonly live: string;
+  readonly pending: PendingCopy;
+  readonly copy: FolderCopyStatus | null;
+  /** The folder copied from, when neither the copy nor the pointer names it. */
+  readonly sourceRoot: string;
+  readonly targetLabel: string;
+  readonly method: HandoffFolderMethod;
+  readonly changeDisabled: boolean;
+  readonly onChange: (() => void) | null;
 }) {
+  const source = copy?.copyRoot ?? pending.copyRoot ?? sourceRoot;
+  const target = copy?.targetFolder ?? pending.targetFolder;
+  const projectFolder =
+    copy?.projectFolder ??
+    copiedProjectFolder(target, copy?.projectRelativePath ?? pending.projectRelativePath);
   return (
-    <p
-      role="status"
-      className="rounded-lg border bg-muted/40 px-3 py-2 text-sm"
-      data-slot="copy-viewing"
-    >
-      You're viewing {viewing}. The copy is at {live}.
-    </p>
+    <div className="space-y-1 rounded-lg border px-3 py-2 text-xs" data-slot="copy-choices">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <p className="text-sm font-medium">Your choices</p>
+        {onChange && (
+          <Button
+            variant="link"
+            size="xs"
+            data-slot="copy-change"
+            disabled={changeDisabled}
+            onClick={onChange}
+          >
+            Change (stops this copy)
+          </Button>
+        )}
+      </div>
+      <p className="wrap-anywhere" data-slot="copy-scope-mapping">
+        {pending.mode === "copy-and-move" ? "Move" : "Copy"} to {targetLabel}:{" "}
+        <span className="font-mono">{target}</span>
+        <span className="block text-muted-foreground">
+          From <span className="font-mono">{source}</span>
+          {target !== projectFolder && (
+            <>
+              {" "}
+              · project folder <span className="font-mono">{projectFolder}</span>
+            </>
+          )}
+        </span>
+      </p>
+      <p className="text-muted-foreground">{methodLabel(method)}</p>
+    </div>
   );
 }
 
@@ -189,12 +222,20 @@ export function CopyCheckingStep({
   );
 }
 
-/** One plain sentence above the buttons saying what the next click or wait does. */
+/** One plain sentence above the buttons, for the few stages that need it. */
 export function CopyNextStep({ children }: { readonly children: ReactNode }) {
   return (
-    <p className="text-sm" data-slot="copy-next">
-      <span className="font-medium">What happens next: </span>
+    <p className="text-sm text-muted-foreground" data-slot="copy-next">
       {children}
+    </p>
+  );
+}
+
+/** The helper under the progress line: a working copy carries on with the window closed. */
+export function CopyWorkingHint() {
+  return (
+    <p className="text-xs text-muted-foreground" data-slot="copy-close-hint">
+      You can close this window. We&rsquo;ll notify you when it&rsquo;s done.
     </p>
   );
 }
@@ -400,14 +441,5 @@ export function CopyNoticesBlock({
         </p>
       ))}
     </div>
-  );
-}
-
-/** The helper that explains the two ways out while a copy runs. */
-export function CloseOrCancelHint() {
-  return (
-    <p className="basis-full text-xs text-muted-foreground" data-slot="copy-close-hint">
-      Close keeps the copy going; Cancel copy stops it.
-    </p>
   );
 }

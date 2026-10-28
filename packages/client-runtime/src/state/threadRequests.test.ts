@@ -13,7 +13,11 @@ import {
 import { TRANSPORT_TRUNCATION_MARKER } from "@specweave-studio/shared/toolOutput";
 import { describe, expect, it } from "vite-plus/test";
 import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
-import { createQuestionHistoryProjector, derivePendingThreadRequests } from "./threadRequests.ts";
+import {
+  createQuestionHistoryProjector,
+  derivePendingThreadRequests,
+  pendingQuestionsNeedHydration,
+} from "./threadRequests.ts";
 
 const requestId = RuntimeRequestId.make("async-question");
 const nodeId = NodeId.make("async-question-node");
@@ -417,4 +421,90 @@ describe("pending file approval display details", () => {
       true,
     );
   });
+});
+
+it("keeps answered restored copies out of current cards without hiding a different question", () => {
+  const original = projection.runtimeRequests[0]!;
+  const item = projection.turnItems[0]!;
+  const restoredId = RuntimeRequestId.make(`update-reopen:update-reopen:${original.id}`);
+  const restored = { ...original, id: restoredId };
+  const answered = {
+    ...original,
+    status: "resolved" as const,
+    resolvedAt: v2Now,
+    answers: { next: "Accept both" },
+  };
+  const pending = derivePendingThreadRequests({
+    ...projection,
+    runtimeRequests: [answered, restored],
+    turnItems: [{ ...item, requestId: restoredId } as never],
+  });
+  expect(pending.userInputs).toEqual([]);
+  const different = derivePendingThreadRequests({
+    ...projection,
+    runtimeRequests: [answered, restored, { ...original, id: RuntimeRequestId.make("different") }],
+    turnItems: [
+      { ...item, requestId: restoredId } as never,
+      {
+        ...item,
+        id: TurnItemId.make("different-item"),
+        requestId: RuntimeRequestId.make("different"),
+      } as never,
+    ],
+  });
+  expect(different.userInputs.map((request) => request.requestId)).toEqual(["different"]);
+});
+
+it("preserves a ten-times-restored legacy question after update cancellations", () => {
+  const original = "ask-user:owner-relay";
+  const restored = RuntimeRequestId.make(`${"update-reopen:".repeat(10)}${original}`);
+  const canceled = Array.from({ length: 10 }, (_, n) => ({
+    ...projection.runtimeRequests[0]!,
+    id: RuntimeRequestId.make(`${"update-reopen:".repeat(n)}${original}`),
+    status: "resolved" as const,
+    decision: "cancel" as const,
+    resolvedAt: v2Now,
+  }));
+  const pending = { ...projection.runtimeRequests[0]!, id: restored };
+  const card = {
+    ...projection.turnItems[0]!,
+    requestId: restored,
+    ordinal: 687000029,
+    questions: [
+      {
+        id: "q1",
+        header: "Owner relay",
+        question: "Can you relay the existing owner's review request?",
+        options: [],
+        allowCustomAnswer: true,
+      },
+    ],
+  } as OrchestrationV2ThreadProjection["turnItems"][number];
+  const current = { ...projection, runtimeRequests: [...canceled, pending], turnItems: [card] };
+  expect(
+    derivePendingThreadRequests(current).userInputs.map((r) => ({
+      id: r.requestId,
+      text: r.questions[0]?.question,
+    })),
+  ).toEqual([{ id: restored, text: "Can you relay the existing owner's review request?" }]);
+  expect(pendingQuestionsNeedHydration(current)).toBe(false);
+  expect(pendingQuestionsNeedHydration({ ...current, turnItems: [] })).toBe(true);
+  // Exactly the installed failure: a pending entity without its paged-out
+  // display card yields no renderer-eligible question. It must be retained.
+  expect(derivePendingThreadRequests({ ...current, turnItems: [] }).userInputs).toEqual([]);
+  const { decision: _decision, ...resolved } = canceled[0]!;
+  const answered = { ...resolved, answers: { q1: "Already relayed" } };
+  expect(
+    pendingQuestionsNeedHydration({
+      ...current,
+      turnItems: [],
+      runtimeRequests: [...canceled.map((r) => (r.id === answered.id ? answered : r)), pending],
+    }),
+  ).toBe(false);
+  expect(
+    derivePendingThreadRequests({
+      ...current,
+      runtimeRequests: [...canceled.map((r) => (r.id === answered.id ? answered : r)), pending],
+    }).userInputs,
+  ).toEqual([]);
 });

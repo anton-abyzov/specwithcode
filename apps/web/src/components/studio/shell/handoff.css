@@ -1,65 +1,87 @@
-/* Handoff mode badges. "Handoff ready" carries the accent color; the rest stay quiet. */
+/* Move-between-machines badges. "Ready to move" carries the accent color; "Syncing",
+   "Paused after sleep" and "{M} is offline" carry the warning tone, so a glance tells a
+   healthy thread from one that needs attention. */
 .sws-handoff-badge {
   flex: none;
   white-space: nowrap;
 }
-.sws-handoff-badge[data-handoff="ready"],
-.sws-handoff-badge[data-handoff="source-unreachable"] {
+.sws-handoff-badge[data-handoff="ready"] {
   border-color: color-mix(in srgb, var(--primary) 45%, transparent);
   color: var(--primary);
 }
 .sws-handoff-badge[data-handoff="behind"],
-.sws-handoff-badge[data-handoff="paused"] {
+.sws-handoff-badge[data-handoff="paused"],
+.sws-handoff-badge[data-handoff="source-unreachable"] {
+  border-color: color-mix(in srgb, var(--warning-foreground, var(--border)) 40%, transparent);
   color: var(--warning-foreground, var(--muted-foreground));
 }
-/* Inside a row's meta line the chip reads as text, like the PR and machine pills. */
-.sws-thread-meta > .sws-handoff-badge {
-  height: auto;
-  padding: 0;
-  border: 0;
-  font-size: inherit;
+/* In a row's meta line the status is its own small pill, set apart from the model name
+   before it, never run together with it ("Opus 5.5Ready to move"). */
+.sws-thread-handoff-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 14px;
 }
-button.sws-handoff-action {
-  color: var(--foreground);
+.sws-thread-meta-rest > .sws-thread-handoff-chip {
+  height: 16px;
+  margin-top: 1px;
 }
-/* A row's one-click action sits before the hover-only Resolve, never under it. */
+/* The line's dot separator would land inside the pill; the pill's own border and gap
+   already set it apart. */
+.sws-thread-meta-rest > .sws-thread-handoff-chip::before {
+  display: none;
+}
+/* A row's one-click action (an outline Button) sits after the open button and stays put. */
 .sws-thread-handoff-action {
+  flex: none;
+  align-self: center;
+  margin-right: 8px;
+}
+/* A row with its own action keeps Resolve after it, in the row's flow, as its icon, so
+   hovering slides nothing: the action never moves and the age stays visible. The row's
+   text keeps its width either way. */
+.sws-thread-row.sws-thread-row:has(> :is(.sws-thread-handoff-action, .sws-thread-design-action))
+  > .sws-thread-action {
+  position: static;
+  translate: none;
+  align-self: center;
+  margin-right: 6px;
+}
+.sws-thread-row.sws-thread-row:has(> :is(.sws-thread-handoff-action, .sws-thread-design-action))
+  > .sws-thread-action
+  span {
+  display: none;
+}
+.sws-thread-row.sws-thread-row:has(> :is(.sws-thread-handoff-action, .sws-thread-design-action))
+  .sws-thread-age {
+  visibility: visible;
+}
+.sws-thread-row.sws-thread-row:has(> :is(.sws-thread-handoff-action, .sws-thread-design-action))
+  .sws-thread-text {
+  --sws-row-action-reserve: 0px;
+}
+/* A thread bound to a design links back to it; quieter than a handoff action. */
+.sws-thread-design-action {
   flex: none;
   align-self: center;
   margin-right: 8px;
   height: 24px;
   padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--card);
   font-size: 12px;
   font-weight: 500;
-  color: var(--primary);
   cursor: pointer;
-}
-.sws-thread-handoff-action:disabled {
-  cursor: not-allowed;
-  color: var(--muted-foreground);
-}
-/* On hover it steps aside for Resolve over the row's end, where the age hides and the
-   line keeps its hover reserve (shell.css), so the row's text keeps its width and its
-   model fit (rowModelFit.ts) stays put. A narrow list's Resolve is its icon alone. */
-@media (hover: hover) {
-  .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-handoff-action {
-    translate: -88px 0;
-  }
-  @container threadlist (width < 420px) {
-    .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-handoff-action {
-      translate: -40px 0;
-    }
-  }
-}
-/* A thread bound to a design links back to it; quieter than a handoff action. */
-.sws-thread-design-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border-color: var(--border);
   color: var(--muted-foreground);
   transition:
     color 120ms var(--ease-out-quint, ease-out),

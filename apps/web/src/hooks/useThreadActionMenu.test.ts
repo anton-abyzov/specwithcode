@@ -36,7 +36,10 @@ function recordEffect(action: string) {
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("../components/ThreadMoveDialog", () => ({ requestThreadMove: vi.fn() }));
-vi.mock("../components/handoff/HandOffThreadDialog", () => ({ requestHandOffThread: vi.fn() }));
+vi.mock("../components/handoff/HandOffThreadDialog", () => ({
+  requestHandOffThread: vi.fn(() => recordEffect("hand-off")),
+  requestSwitchModel: vi.fn(() => recordEffect("switch-model")),
+}));
 vi.mock("../studio/handoffMode", () => ({
   readHandoffModeSnapshot: () => null,
   setThreadHandoffMode: vi.fn(),
@@ -226,6 +229,29 @@ describe("thread menu permissions", () => {
     createMenu().openMenu(position);
     await state.completed.promise;
     expect(state.effects).toEqual([effect]);
+  });
+});
+
+describe("thread menu machine moves", () => {
+  it.each([
+    ["hand-off", "hand-off"],
+    ["switch-model", "switch-model"],
+  ] as const)("%s opens its dialog for the thread", async (action, effect) => {
+    state.granted.add("secondary");
+    state.show.mockResolvedValue(action);
+    createMenu().openMenu(position);
+    await state.completed.promise;
+    expect(state.effects).toEqual([effect]);
+  });
+
+  it("does not open the model switch without task permission", async () => {
+    const choice = deferred<ThreadActionMenuId | null>();
+    state.show.mockReturnValue(choice.promise);
+    createMenu().openMenu(position);
+    choice.resolve("switch-model");
+    await choice.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.effects).toEqual([]);
   });
 });
 

@@ -457,3 +457,60 @@ it.layer(NodeServices.layer)("readSpecweaveProgress", (it) => {
     }),
   );
 });
+
+plainIt(
+  "folds first complete accepted-skip per case-insensitive AC/check without AC task cards",
+  () => {
+    const tasks = parseSpecweaveSpec(SPEC).tasks;
+    const waiver = {
+      t: "ac-03",
+      e: "accept-skip",
+      by: "worker",
+      at: hoursAgo(2),
+      check: "Wonder-Full",
+      reason: "No license",
+      acceptedBy: "Anton",
+      acceptedAt: hoursAgo(3),
+      authorization: "User message: accept this skip",
+    };
+    const taskEvent = ledgerLine({
+      t: "T-01",
+      e: "done",
+      by: "worker",
+      at: hoursAgo(4),
+      evidence: "verified-output",
+    });
+    const ledger = [
+      taskEvent,
+      JSON.stringify({ ...waiver, at: hoursAgo(5), reason: "" }),
+      JSON.stringify({
+        ...waiver,
+        t: "AC-03",
+        check: "wonder-full",
+        at: hoursAgo(1),
+        reason: "Later duplicate",
+      }),
+      JSON.stringify(waiver),
+    ].join("\n");
+    const result = foldSpecweaveLedger(tasks, ledger, NOW);
+    assert.deepEqual(result.tasks, foldSpecweaveLedger(tasks, taskEvent, NOW).tasks);
+    assert.lengthOf(result.acceptedSkips, 1);
+    assert.deepEqual(result.acceptedSkips[0], {
+      ac: "AC-03",
+      check: waiver.check,
+      reason: waiver.reason,
+      acceptedBy: waiver.acceptedBy,
+      acceptedAt: waiver.acceptedAt,
+      authorization: waiver.authorization,
+      by: waiver.by,
+      at: waiver.at,
+    });
+    assert.isFalse(result.cards.some((card) => card.id.toUpperCase() === "AC-03"));
+    const bad = foldSpecweaveLedger(
+      tasks,
+      JSON.stringify({ ...waiver, acceptedAt: "not a date" }),
+      NOW,
+    );
+    assert.lengthOf(bad.acceptedSkips, 0);
+  },
+);

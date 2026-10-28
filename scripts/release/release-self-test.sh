@@ -23,7 +23,8 @@
 # once its whole process group is gone), server-wait waits for a suite still running and names
 # only its own run's flakes, and every retry is in retries.jsonl and the timing table. And the
 # desktop stage: it waits for the app's own update (its swap, or Squirrel.Mac's ShipIt) and moves
-# aside, without a snapshot, an app on the release that fails its signature check.
+# aside, without a snapshot, an app on the release that fails its signature check. And the Linux
+# workers last (fleet-linux, after merge), skipped with --ci, whose failure only warns.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -226,7 +227,7 @@ check 'argument errors write nothing' test -z "$(find "$ARGS_HOME" -mindepth 1 -
 DRY_HOME="$WORK/dry-home"
 mkdir -p "$DRY_HOME"
 STUB_ENV=(HOME="$DRY_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV=)
-EXPECTED_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge"
+EXPECTED_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
 dry_ok() {
   run 0 9.9.9 --dry-run || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_ORDER" ] || return 1
@@ -237,7 +238,8 @@ dry_ok() {
     has 'electron-check: (in ' && has 'sums-check: python3 -B' && has 'fetch-sums-private: gh release download v9.9.9' &&
     has "verify-sums --dir $DRY_HOME/.specwithcode/release-staging/9.9.9/prev --digests" &&
     has 'fleet-feed: stop unless v9.9.9 is published on anton-abyzov/specwithcode' &&
-    has 'public-identity: (in ' && has 'same-sums-public: stop unless' || return 1
+    has 'public-identity: (in ' && has 'same-sums-public: stop unless' &&
+    has 'fleet-linux: (in ' && has 'linux_rollout.py --version 9.9.9' || return 1
   run 0 9.9.9 --dry-run --no-project-migrations || return 1
   lacks 'allow-project-migrations' && has '--arg=--allow-existing-browser-heartbeat'
 }
@@ -247,9 +249,10 @@ CI_ORDER="preflight trees prev bump candidate stage1 server build bundle sign he
 dry_ci_ok() {
   run 0 9.9.9 --dry-run --ci || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$CI_ORDER" ] &&
-    has 'fleet-m4, desktop, fleet-workers: skipped (--ci)' && lacks 'fleet_rollout.py' && lacks 'osascript'
+    has 'fleet-m4, desktop, fleet-workers: skipped (--ci)' && lacks 'fleet_rollout.py' && lacks 'osascript' &&
+    has '= fleet-linux: skipped (--ci)' && lacks 'fleet-linux: (in '
 }
-check '--ci leaves out quit-desktop, the fleet stages and the desktop swap' dry_ci_ok
+check '--ci leaves out quit-desktop, the fleet stages (Linux too) and the desktop swap' dry_ci_ok
 
 # ---------------------------------------------------------------- a release that fails at sign, then resumes
 
@@ -336,27 +339,40 @@ finish_ok() {
   for v in 1.0.9 1.0.8 1.0.6 1.0.5; do printf '{}\n' > "$STAGING/$v/release.json"; done
   : > "$STAGING/1.0.9/markers/merge" && : > "$STAGING/1.0.8/markers/merge" && : > "$STAGING/1.0.7/markers/merge"
   : > "$STAGING/1.0.5/markers/publish-public"
+  # A candidate replaced on --resume left its folders beside the one about to publish.
+  mkdir -p "$STAGE/assets-aaaaaaaaaaaa" "$STAGE/runtime-linux-x64-aaaaaaaaaaaa" "$STAGE/google-verify-aaaaaaaaaaaa"
   run 0 1.2.0 --resume || return 1
   has 'SpecWithCode 1.2.0 is released.' && has 'Stage timings for 1.2.0, compared with 1.1.0' || return 1
-  [ "$(stages_after "$BEFORE")" = "publish-private publish-public fleet-m4 desktop fleet-workers merge " ] || return 1
+  [ "$(stages_after "$BEFORE")" = "publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux " ] || return 1
   local order
   order="$(awk -F '\t' -v from="$BEFORE" 'NR > from { printf "%s ", $2 }' "$STUB_LOG")"
   case "$order" in
-    *fetch-sums-private*check-sums-private*publish-private*public-untag*mirror-publish*fetch-sums-public*check-sums-public*publish-public*fleet-m4*desktop-grants-before*desktop-install*desktop-signature*desktop-grants*desktop-open*fleet-workers*pr-merge*) ;;
+    *fetch-sums-private*check-sums-private*publish-private*public-untag*mirror-publish*fetch-sums-public*check-sums-public*publish-public*fleet-m4*desktop-grants-before*desktop-install*desktop-signature*desktop-grants*desktop-open*fleet-workers*pr-merge*fleet-linux*) ;;
     *) return 1 ;;
   esac
   grep -q 'fleet_rollout.py --version 1.2.0 --only m4 --hold-minutes 15' "$STUB_LOG" &&
+    grep -qF "$(printf 'fleet-linux\tfleet-linux\tpython3 -B scripts/studio-fleet/linux_rollout.py --version 1.2.0')" "$STUB_LOG" &&
     grep -q 'publish.mjs --public .* --ref '"$SHA_B"' --tag --push' "$STUB_LOG" &&
     [ "$(cat "$STAGE/published.sha")" = "$SHA_B" ]
 }
-check 'publish private, then public, then M4, the desktop app, M1 and M3, and merge' finish_ok
+check 'publish private, then public, then M4, the desktop app, M1 and M3, merge, then the Linux workers' finish_ok
 # The finished run above had older staging folders beside it (made before it ran).
+# They go right after publish-public, so a fleet host failing later cannot keep them.
 staging_pruned() {
-  grep -qF "$(printf 'merge\tstaging-prune\trm -rf %s/1.0.9' "$STAGING")" "$STUB_LOG" &&
-    grep -qF "$(printf 'merge\tstaging-prune\trm -rf %s/1.0.5' "$STAGING")" "$STUB_LOG" &&
+  grep -qF "$(printf 'publish-public\tstaging-prune\trm -rf %s/1.0.9' "$STAGING")" "$STUB_LOG" &&
+    grep -qF "$(printf 'publish-public\tstaging-prune\trm -rf %s/1.0.5' "$STAGING")" "$STUB_LOG" &&
     ! grep -F 'staging-prune' "$STUB_LOG" | grep -qE '/(1\.0\.[678]|1\.1\.0|1\.2\.0|notes)$'
 }
-check 'a finished release removes merged or public staging folders older than the previous one, never a locked, resumable or foreign one' staging_pruned
+check 'a published release removes merged or public staging folders older than the previous one, never a locked, resumable or foreign one' staging_pruned
+candidates_pruned() {
+  local sha12 name
+  sha12="$(printf '%s' "$SHA_B" | cut -c1-12)"
+  for name in assets-aaaaaaaaaaaa runtime-linux-x64-aaaaaaaaaaaa google-verify-aaaaaaaaaaaa; do
+    grep -qF "$(printf 'staging-prune\trm -rf %s/%s' "$STAGE" "$name")" "$STUB_LOG" || return 1
+  done
+  ! grep -F 'staging-prune' "$STUB_LOG" | grep -qF -- "-$sha12"
+}
+check 'a published release removes the folders of candidates it replaced, never the published one' candidates_pruned
 uploads_ok() {
   awk -F '\t' '$2 == "upload-private"' "$STUB_LOG" | grep -q 'SpecWithCode-1.2.0-arm64.dmg' &&
     ! awk -F '\t' '$2 == "upload-private"' "$STUB_LOG" | grep -q '/SpecWithCode-arm64.dmg' &&
@@ -548,7 +564,7 @@ stub_set RELEASE_STUB_OUTPUT=
 BEFORE="$(lines)"
 old_order_finish_ok() {
   run 0 1.4.0 --resume || return 1
-  [ "$(stages_after "$BEFORE")" = "fleet-workers merge " ] && has 'SpecWithCode 1.4.0 is released.'
+  [ "$(stages_after "$BEFORE")" = "fleet-workers merge fleet-linux " ] && has 'SpecWithCode 1.4.0 is released.'
 }
 check '... and then finishes with M1 and M3 and merge' old_order_finish_ok
 
@@ -1157,6 +1173,22 @@ merge_failure_ok() {
     ! awk -F '\t' '$2 == "pr-merge"' "$STUB_LOG" | grep -q .
 }
 check 'a failed pull request stops the merge stage before it merges' merge_failure_ok
+stub_set RELEASE_STUB_FAIL=
+
+# A Linux worker never fails or delays the macOS release: fleet-linux runs after merge, and its
+# failure is a warning; the release still finishes and the stage is not retried by --resume.
+LX="$WORK/linux-fail"
+make_machine "$LX"
+use_machine "$LX" 1.5.1
+stub_set RELEASE_STUB_FAIL=fleet-linux:fleet-linux
+linux_failure_ok() {
+  run 0 1.5.1 || return 1
+  has 'WARNING: fleet-linux: not every Linux worker runs 1.5.1' && has 'linux_rollout.py --version 1.5.1' &&
+    has 'SpecWithCode 1.5.1 is released.' && [ -f "$STAGE/markers/merge" ] && [ -f "$STAGE/markers/fleet-linux" ] || return 1
+  [ "$(awk -F '\t' '$2 == "pr-merge" { print NR }' "$STUB_LOG")" -lt \
+    "$(awk -F '\t' '$2 == "fleet-linux" { print NR; exit }' "$STUB_LOG")" ]
+}
+check 'a failed Linux worker update warns after merge and the release still finishes' linux_failure_ok
 stub_set RELEASE_STUB_FAIL=
 
 tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }

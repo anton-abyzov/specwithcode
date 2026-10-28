@@ -514,6 +514,18 @@ export function buildBoundedThreadProjection(input: {
     ),
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
+  const pendingIds = new Set(
+    controlProjection.runtimeRequests
+      .filter((request) => request.status === "pending")
+      .map((request) => String(request.id)),
+  );
+  const pendingControlItems = controlProjection.turnItems.filter(
+    (item) =>
+      item.threadId === threadId &&
+      (item.type === "user_input_request" || item.type === "approval_request") &&
+      pendingIds.has(String(item.requestId)),
+  );
+  const pendingControlIds = new Set(pendingControlItems.map((item) => String(item.id)));
 
   // Reserve bytes for small interrupt-request dependencies that may sit outside
   // the recent window but are required for visibility of results inside it.
@@ -522,7 +534,7 @@ export function buildBoundedThreadProjection(input: {
     // uses this reserve so the final contribution stays under the cap.
     let reserve = 0;
     for (const item of controlProjection.turnItems) {
-      if (item.type === "run_interrupt_request") {
+      if (item.type === "run_interrupt_request" || pendingControlIds.has(String(item.id))) {
         reserve += bytesOfJson(item);
       }
     }
@@ -580,7 +592,7 @@ export function buildBoundedThreadProjection(input: {
   for (const item of windowTurnItems) {
     turnItemById.set(String(item.id), item);
   }
-  for (const item of dependencyTurnItems) {
+  for (const item of [...dependencyTurnItems, ...pendingControlItems]) {
     turnItemById.set(String(item.id), item);
   }
   const turnItems = [...turnItemById.values()];

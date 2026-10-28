@@ -67,6 +67,7 @@ function makeFakeWindow(id: number) {
     getBounds: vi.fn(() => bounds),
     getNormalBounds: vi.fn(() => bounds),
     isDestroyed: vi.fn(() => destroyed),
+    isFocused: vi.fn(() => true),
     isFullScreen: vi.fn(() => false),
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
@@ -414,7 +415,7 @@ describe("DesktopWindow project windows", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("sends capture events to the main window while a project window has focus", () => {
+  it.effect("sends capture events to the project window that has focus", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const desktopWindow = yield* openMain;
@@ -425,9 +426,9 @@ describe("DesktopWindow project windows", () => {
       yield* desktopWindow.dispatchSnapShotEvent({ type: "started" } as never);
 
       const [mainFake, projectFake] = harness.created;
-      assert.equal(mainFake?.raw.webContents.send.mock.calls.length, 1);
-      assert.equal(projectFake?.raw.webContents.send.mock.calls.length, 0);
-      assert.deepEqual(harness.revealed, [mainFake?.window]);
+      assert.equal(mainFake?.raw.webContents.send.mock.calls.length, 0);
+      assert.equal(projectFake?.raw.webContents.send.mock.calls.length, 1);
+      assert.deepEqual(harness.revealed, [projectFake?.window]);
     }).pipe(Effect.provide(harness.layer));
   });
 

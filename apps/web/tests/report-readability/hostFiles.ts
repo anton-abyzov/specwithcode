@@ -79,11 +79,85 @@ const LONG_TOKENS = [
   "",
 ].join("\n");
 
+/**
+ * A dense comparison the way the October 27 skills report was written: five
+ * prose-heavy columns of identifiers, then a two-column table, a table of
+ * values that cannot wrap and two columns of commands.
+ */
+const COMPARISON = [
+  "# Which planning skill runs when",
+  "",
+  "Short answer: two separate skills, and neither runs when a project is created.",
+  "",
+  "## Skills",
+  "",
+  "| Skill | What it is | State in 3.1.14 | When it runs | Where results live |",
+  "| --- | --- | --- | --- | --- |",
+  "| Old `sw:grill` | A relentless code-review gate that ran before `sw:done` | **Deleted** in 2.0.0 (`51e280c05`, September 2). The `grill` config key is dead | Never | Replaced by the fresh-context `sw-review`; the only hard close gate is `specweave verify` |",
+  "| `sw-brainstorm` | The earlier decision interview | **Retired** in 3.1.0 (#2078) and removed from projects on update | Never | Its decide step moved into `sw-increment` and `sw-grill-me` |",
+  `| \`sw-grill-me\` | A relentless planning interview: it asks in rounds until every decision is settled | **Core** since 3.1.14; optional from 3.1.0 | When you ask, or when \`planning.deepInterview: deep\` is set | The spec's decisions section, beside [release-result.md](${DOCS}/release-result.md) |`,
+  "",
+  "## Checks",
+  "",
+  "| Check | Result |",
+  "| --- | --- |",
+  "| Installed skills | Both are present in the global CLI and in the project, with the same contents |",
+  "| Project creation | Neither skill runs; creation only writes the folder layout |",
+  "",
+  "## Values",
+  "",
+  "| Item | Value | Note |",
+  "| --- | --- | --- |",
+  `| Registry digest | \`${DIGEST}\` | Read from the registry |`,
+  "| Run | https://github.com/example-org/example-console/actions/runs/39541888053/job/112233445566778899 | Passed |",
+  "",
+  "## Commands",
+  "",
+  "| Check | Command |",
+  "| --- | --- |",
+  "| Readability | `node apps/web/tests/report-readability/verify.mjs --measure-only` |",
+  "| Instructions | `node node_modules/vite-plus/bin/vp test run RuntimeInstructions.test.ts` |",
+  "",
+].join("\n");
+
+/**
+ * The table from the October 27 home cleanup report (screenshot 8465dc78),
+ * sanitized: the same four columns, cell lengths and inline-code paths, which
+ * render as file chips, with the home folder moved to /Users/example.
+ */
+const MOVES = [
+  "# Home cleanup and remaining work",
+  "",
+  "A full recursive home size is deliberately not claimed: live application databases, provider state, cloud placeholders and protected archives were excluded.",
+  "",
+  "## Verified actions in this batch",
+  "",
+  "| Original path | Destination | Bytes | Reason |",
+  "|---|---|---:|---|",
+  ...[
+    ["concert_v2_workflow.js", "Projects/experiments/concert-2026-06-13", "14,951"],
+    ["concert_v3_workflow.js", "Projects/experiments/concert-2026-06-13", "16,862"],
+    ["concert_video_research.js", "Projects/experiments/concert-2026-06-13", "4,376"],
+    ["fable5-stream-script.md", "Projects/experiments/fable5-stream-2026-06-09", "15,289"],
+    ["obs-bundle.sh", "scripts/obs", "3,038"],
+    ["obs_auto_switch_back.py", "scripts/obs", "3,144"],
+    ["n8n-start.sh", "scripts/n8n", "195"],
+  ].map(
+    ([name, folder, bytes]) =>
+      `| \`/Users/example/${name}\` | \`/Users/example/${folder}/${name}\` | ${bytes} | Group related scripts; retain original compatibility path |`,
+  ),
+  "",
+  "Receipts are in the evidence folder.",
+  "",
+].join("\n");
+
 export const FIXTURE_DOCS = {
   statements: `${DOCS}/release-result.md`,
   wrapped: `${DOCS}/notes.md`,
   structured: `${DOCS}/structured.md`,
   longTokens: `${DOCS}/long-values.md`,
+  comparison: `${DOCS}/skills-comparison.md`,
+  moves: `${DOCS}/home-cleanup.md`,
 } as const;
 
 export const HOST_FILES = new Map<string, string>([
@@ -91,6 +165,8 @@ export const HOST_FILES = new Map<string, string>([
   [FIXTURE_DOCS.wrapped, WRAPPED],
   [FIXTURE_DOCS.structured, STRUCTURED],
   [FIXTURE_DOCS.longTokens, LONG_TOKENS],
+  [FIXTURE_DOCS.comparison, COMPARISON],
+  [FIXTURE_DOCS.moves, MOVES],
 ]);
 
 /** The names directly in `folder`, or null when the host has no such folder. */

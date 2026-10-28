@@ -14,6 +14,9 @@ import {
   ProjectFolderCheck,
   ProjectFolderCheckError,
   ProjectFolderCheckInput,
+  ProjectThreadsDeleteError,
+  ProjectThreadsDeleteInput,
+  ProjectThreadsDeletion,
   ProjectWorktrees,
   ProjectWorktreesError,
   ProjectWorktreesInput,
@@ -92,6 +95,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsFolderCheck: "projects.folderCheck",
   projectsWorktreesRead: "projects.worktreesRead",
   projectsWorktreesRemove: "projects.worktreesRemove",
+  projectsThreadsDelete: "projects.threadsDelete",
   projectsPlanRead: "projects.planRead",
   projectsPlanAuthorityRead: "projects.planAuthorityRead",
   projectsPlanReplace: "projects.planReplace",
@@ -302,6 +306,12 @@ export const projectPlanningRpcs = [
     payload: ProjectWorktreesRemoveInput,
     success: ProjectWorktreesRemoval,
     error: Schema.Union([ProjectWorktreesError, EnvironmentAuthorizationError]),
+  }),
+  // Every thread but the coordinator; the project and its memory stay.
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadsDelete, {
+    payload: ProjectThreadsDeleteInput,
+    success: ProjectThreadsDeletion,
+    error: Schema.Union([ProjectThreadsDeleteError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementProgressRead, {
     payload: ThreadIncrementProgressInput,

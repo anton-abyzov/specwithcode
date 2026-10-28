@@ -166,7 +166,7 @@ describe("handoff recovery after the active coordinator moves", () => {
       expect(container.querySelector("[data-handoff-recovery]")).not.toBeNull();
       failAcknowledgment = false;
       await retry();
-      expect(container.textContent).toContain("Handoff confirmed on the source and destination");
+      expect(container.textContent).toContain("Move finished on both machines.");
       expect(localStorage.getItem(storageKey)).toBeNull();
       expect(state.send.mock.calls.filter(([call]) => call.input.mode === "start")).toHaveLength(0);
       const acknowledgments = state.send.mock.calls

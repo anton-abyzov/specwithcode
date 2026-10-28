@@ -1,10 +1,14 @@
 // Synthetic data only: no server, account, provider or store.
-import type { ThreadIncrementProgress } from "@specweave-studio/contracts";
+import type {
+  ThreadIncrementCriterion,
+  ThreadIncrementProgress,
+} from "@specweave-studio/contracts";
 import { summarizeTodoPlanPayload } from "@specweave-studio/shared/planProgress";
 import { FolderOpenIcon } from "lucide-react";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import { ThreadPlanCriteria, criteriaSummary } from "../../src/components/chat/ThreadPlanCriteria";
 import { ThreadPlanCard } from "../../src/components/chat/ThreadPlanCard";
 import { TimelineSystemDivider } from "../../src/components/chat/TimelineSystemDivider";
 import { PlanProgressChip } from "../../src/components/studio/PlanProgressChip";
@@ -153,12 +157,88 @@ const unplannedThreadIds: ReadonlySet<string> = new Set([
   ...(anotherUnplanned ? ["thread-export-timeout"] : []),
 ]);
 
+const acceptedWaiver = {
+  check: "wonder-full-shown-when-entitled",
+  reason: "No Wonder Full license. Installation and the entitlement check cannot be tested.",
+  acceptedBy: "Anton",
+  acceptedAt: "2026-10-27T12:00:00Z",
+  authorization: "User accepted skipping the named Wonder Full entitlement check.",
+  by: "worker",
+  at: "2026-10-27T12:01:00Z",
+};
+const acceptedCriteria: ThreadIncrementCriterion[] = [
+  {
+    id: "AC-01",
+    text: "Accept approval was observed",
+    met: true,
+    state: "verified",
+    acceptance: "met",
+    waivers: [],
+  },
+  {
+    id: "AC-02",
+    text: "Decline approval was not observed",
+    met: true,
+    state: "evidenced",
+    acceptance: "met",
+    waivers: [],
+  },
+  {
+    id: "AC-03",
+    text: "Wonder Full is shown when entitled",
+    met: true,
+    state: "evidenced",
+    acceptance: "mixed",
+    waivers: [acceptedWaiver],
+  },
+  {
+    id: "AC-04",
+    text: "An unavailable optional check is accepted",
+    met: false,
+    state: "skipped",
+    acceptance: "skipped-accepted",
+    waivers: [{ ...acceptedWaiver, check: "optional-entitlement-check" }],
+  },
+  {
+    id: "AC-05",
+    text: "Another requirement still needs verification",
+    met: false,
+    state: "open",
+    acceptance: "open",
+    waivers: [{ ...acceptedWaiver, check: "unavailable-device-check" }],
+  },
+  {
+    id: "AC-06",
+    text: "An ordinary scope skip has no acceptance waiver",
+    met: true,
+    state: "skipped",
+    acceptance: "open",
+    waivers: [],
+  },
+];
+
 function Fixture() {
   const [unplannedOnly, setUnplannedOnly] = useState(false);
   // The real per-project setting and acknowledgments, saved in this page's
   // localStorage. `?another=1` adds a thread the notice has not counted yet.
   const notice = useUnplannedNotice("env-fixture", "project-fixture", unplannedThreadIds);
   const noticeShown = notice.shown;
+  if (new URLSearchParams(location.search).has("accepted-skips"))
+    return (
+      <main className="mx-auto min-h-screen max-w-3xl space-y-5 p-6" data-accepted-skip-fixture>
+        <header className="space-y-2">
+          <h1 className="text-xl font-semibold">Acceptance evidence</h1>
+          <p className="text-sm text-muted-foreground">
+            Accepted skips apply to named checks. They are separate from verified evidence.
+          </p>
+          <p className="text-xs text-muted-foreground" data-criteria-summary>
+            {criteriaSummary(acceptedCriteria)}
+          </p>
+        </header>
+        <ThreadPlanCriteria criteria={acceptedCriteria} />
+      </main>
+    );
+
   return (
     <main className="mx-auto min-h-screen max-w-3xl space-y-8 p-6">
       <section data-testid="increment-card" className="space-y-1.5">

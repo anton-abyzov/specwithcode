@@ -376,8 +376,9 @@ describe("storage cleanup keeps folders of open threads", () => {
 
 describe("storage cleanup removes finished worktrees no thread records", () => {
   /**
-   * Backdates the folder, its entries and its HEAD files past the idle day, and
-   * sets the test clock to the file system's time, which idle checks compare.
+   * Backdates the folder, its entries, its HEAD files and the times inside its
+   * reflog past the idle day, and sets the test clock to the file system's
+   * time, which idle checks compare.
    */
   const age = Effect.fn("test.age")(function* (
     f: Effect.Success<typeof cleanupFixture>,
@@ -396,6 +397,14 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
       ];
       // Numbers are seconds here, as in Node's fs.utimes.
       const old = (now - 2 * DAY_MS) / 1000;
+      const reflog = f.path.join(gitDir, "logs", "HEAD");
+      if (yield* f.fs.exists(reflog)) {
+        const entries = yield* f.fs.readFileString(reflog);
+        yield* f.fs.writeFileString(
+          reflog,
+          entries.replace(/ \d+ ([+-]\d{4})\t/g, ` ${Math.floor(old)} $1\t`),
+        );
+      }
       for (const target of targets) yield* f.fs.utimes(target, old, old);
     }
     yield* TestClock.setTime(now);
@@ -424,6 +433,51 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
         expect((yield* f.run(f.repo, ["rev-parse", "--verify", "agent-finished"])).exitCode).toBe(
           0,
         );
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "removes an idle worktree touched by Finder and git gc, keeping hidden build data",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          ".DS_Store\n*.tsbuildinfo\nbuild/\n.env\n",
+        );
+        const touched = yield* f.addWorktree("agent-touched");
+        const secret = yield* f.addWorktree("agent-secret");
+        const hiddenSecret = yield* f.addWorktree("agent-hidden-secret");
+        yield* age(f, [touched, secret, hiddenSecret]);
+        const gitDir = (yield* f.run(touched, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+        // Fresh Finder and gc mtimes do not constitute work. Build info is safe
+        // ignored content, but its file mtime must still satisfy the idle gate.
+        yield* f.fs.writeFileString(f.path.join(touched, ".DS_Store"), "finder");
+        const now = (yield* Clock.currentTimeMillis) / 1000;
+        yield* f.fs.utimes(f.path.join(gitDir, "logs", "HEAD"), now, now);
+        yield* f.fs.writeFileString(f.path.join(touched, "app.tsbuildinfo"), "built");
+        const oldBuild = now - (2 * DAY_MS) / 1000;
+        yield* f.fs.utimes(f.path.join(touched, "app.tsbuildinfo"), oldBuild, oldBuild);
+        // An ignored file outside the allowlist still keeps the folder.
+        yield* f.fs.writeFileString(f.path.join(secret, ".env"), "TOKEN=x\n");
+        // Git collapses this entire ignored folder to build/, hiding the secret.
+        yield* f.fs.makeDirectory(f.path.join(hiddenSecret, "build"));
+        const hiddenFile = f.path.join(hiddenSecret, "build", ".env.prod");
+        yield* f.fs.writeFileString(hiddenFile, "TOKEN=keep\n");
+        expect(
+          (yield* f.run(hiddenSecret, [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+          ])).stdout,
+        ).toBe("build/\0");
+        yield* f.sweep;
+        expect(f.removed).toEqual([touched]);
+        expect(yield* f.fs.exists(secret)).toBe(true);
+        expect(yield* f.fs.readFileString(hiddenFile)).toBe("TOKEN=keep\n");
       }).pipe(Effect.provide(cleanupLayer)),
   );
 

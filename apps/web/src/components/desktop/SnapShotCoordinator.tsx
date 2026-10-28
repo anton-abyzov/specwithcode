@@ -18,6 +18,7 @@ import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorCo
 import { durableComposerDrafts } from "../../lib/durableComposerDraftBindings";
 import { createIndexedDbDraftJournal } from "../../lib/durableComposerDraftJournal";
 import {
+  SNAP_SHOT_CONVERSATION_FOCUS_EVENT,
   isCoordinatorSnapShotTarget,
   resolveProjectSnapShotTarget,
   sameSnapShotTarget,
@@ -340,6 +341,15 @@ export function SnapShotCoordinator() {
         unreachable,
       })
     : null;
+  const coordinatorTarget = projectKey
+    ? resolveProjectSnapShotTarget({
+        group: groups.find((group) => group.projectKey === projectKey),
+        search: search.checkout ? { checkout: search.checkout } : {},
+        lastViewed: lastViewed[projectKey],
+        primaryEnvironmentId,
+        unreachable,
+      })
+    : null;
   const routeThreadRef =
     legacyRouteThreadRef ??
     (projectTarget &&
@@ -365,7 +375,21 @@ export function SnapShotCoordinator() {
   const soundedCaptureIdsRef = useRef(new Set<string>());
   const pendingAnimationStartsRef = useRef(new Set<string>());
 
-  const currentTarget = routeThreadRef ?? routeDraftId ?? projectTarget;
+  // Window-local and scoped to the conversation route. Settings keeps the last
+  // destination, while another project, checkout or thread invalidates pane focus.
+  const conversationKey = JSON.stringify([
+    projectKey,
+    coordinatorTarget,
+    routeThreadRef,
+    routeDraftId,
+  ]);
+  const focusedTargetRef = useRef<{ key: string; target: CaptureTarget } | null>(null);
+  if (projectKey && focusedTargetRef.current?.key !== conversationKey) {
+    focusedTargetRef.current = null;
+  }
+  const focusedTarget =
+    focusedTargetRef.current?.key === conversationKey ? focusedTargetRef.current.target : null;
+  const currentTarget = focusedTarget ?? routeThreadRef ?? routeDraftId ?? projectTarget;
   const currentTargetRef = useRef<CaptureTarget | null>(currentTarget);
   currentTargetRef.current = currentTarget;
   if (projectKey && !currentTarget) {
@@ -376,6 +400,49 @@ export function SnapShotCoordinator() {
     lastTargetRef.current = currentTarget;
     lastTargetHrefRef.current = location.href;
   }
+
+  useEffect(() => {
+    if (!projectKey) return;
+    const rememberPane = (event: Event) => {
+      const element = event.target as Element | null;
+      const pane = element?.closest?.("[data-project-pane]")?.getAttribute("data-project-pane");
+      const target =
+        pane === "coordinator" ? coordinatorTarget : pane === "threads" ? routeThreadRef : null;
+      if (!target) return;
+      focusedTargetRef.current = { key: conversationKey, target };
+      currentTargetRef.current = target;
+      lastTargetRef.current = target;
+      lastTargetHrefRef.current = location.href;
+    };
+    // Pointer selection and keyboard input express conversation intent. Background
+    // renders and programmatic autofocus must not select the other pane.
+    let tabNavigation = false;
+    let tabReset: ReturnType<typeof setTimeout> | undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      rememberPane(event);
+      tabNavigation = event.key === "Tab" || event.key === "F6";
+      clearTimeout(tabReset);
+      // Browser Tab focus changes occur after keydown, before the next task.
+      tabReset = setTimeout(() => {
+        tabNavigation = false;
+      }, 0);
+    };
+    const onFocus = (event: FocusEvent) => {
+      if (tabNavigation) rememberPane(event);
+      tabNavigation = false;
+    };
+    document.addEventListener(SNAP_SHOT_CONVERSATION_FOCUS_EVENT, rememberPane, true);
+    document.addEventListener("pointerdown", rememberPane, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("focusin", onFocus, true);
+    return () => {
+      document.removeEventListener(SNAP_SHOT_CONVERSATION_FOCUS_EVENT, rememberPane, true);
+      document.removeEventListener("pointerdown", rememberPane, true);
+      clearTimeout(tabReset);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("focusin", onFocus, true);
+    };
+  }, [conversationKey, projectKey, coordinatorTarget, routeThreadRef, location.href]);
 
   const resolveTarget = useCallback(async (): Promise<CaptureTarget | null> => {
     if (projectKey && !currentTarget) return null;
