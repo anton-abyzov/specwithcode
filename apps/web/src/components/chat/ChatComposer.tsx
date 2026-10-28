@@ -2274,9 +2274,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     key: string;
     notBefore: number;
   } | null>(null);
+  // Per thread: opening a thread checks again for skills installed outside
+  // the app. The server scans only a snapshot older than a minute.
   const workspaceRefreshScopeKey =
     gitCwd && selectedProviderEntry
-      ? `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}`
+      ? `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}:${activeThreadId ?? ""}`
       : null;
   const workspaceSlashCommandsPending =
     selectedProviderStatus?.workspaceSnapshots?.some(
@@ -2310,8 +2312,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hadWorkspaceSnapshotRef.current = hasWorkspaceSnapshot;
   }, [gitCwd, selectedProviderStatus]);
   useEffect(() => {
-    if (!gitCwd || !selectedProviderEntry) return;
-    const key = `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}`;
+    const key = workspaceRefreshScopeKey;
+    if (!key || !gitCwd || !selectedProviderEntry) return;
     const hasWorkspaceSnapshot = hasCompleteProviderWorkspaceSnapshot(
       selectedProviderStatus,
       gitCwd,
@@ -2320,6 +2322,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (hasWorkspaceSnapshot) {
       workspaceRefreshKeyRef.current = key;
       setWorkspaceRefreshRetry(null);
+      void refreshProviders({
+        environmentId,
+        input: { instanceId: selectedProviderEntry.instanceId, cwd: gitCwd },
+      });
       return;
     }
     const retry = workspaceRefreshRetry;
@@ -2356,6 +2362,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     refreshProviders,
     selectedProviderEntry,
     workspaceRefreshRetry,
+    workspaceRefreshScopeKey,
   ]);
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],

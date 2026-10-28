@@ -1815,6 +1815,26 @@ it.layer(
             [latestSkills],
           );
 
+          // A skill installed outside the app appears once the snapshot is a
+          // minute old, without a fresh scan or cache invalidation.
+          const outsideSkills = [
+            ...latestSkills,
+            { name: "outside", path: "/workspace/outside/SKILL.md", enabled: true },
+          ];
+          yield* Ref.set(scopedResult, { ...scopedProvider, skills: outsideSkills });
+          const callsBeforeAging = yield* Ref.get(snapshotCalls);
+          const invalidationsBeforeAging = yield* Ref.get(cacheInvalidations);
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          assert.strictEqual(yield* Ref.get(snapshotCalls), callsBeforeAging);
+          yield* TestClock.adjust("61 seconds");
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          assert.strictEqual(yield* Ref.get(snapshotCalls), callsBeforeAging + 1);
+          assert.strictEqual(yield* Ref.get(cacheInvalidations), invalidationsBeforeAging);
+          assert.deepStrictEqual(
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+            [outsideSkills],
+          );
+
           yield* Ref.set(instancesRef, [rebuiltInstance]);
           yield* PubSub.publish(registryChanges, undefined);
           let rebuilt = yield* registry.getProviders;
