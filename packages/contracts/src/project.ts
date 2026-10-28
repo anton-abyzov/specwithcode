@@ -382,6 +382,67 @@ export class ProjectFolderCheckError extends Schema.TaggedError<ProjectFolderChe
   { message: Schema.String },
 ) {}
 
+export const ProjectWorktreesInput = Schema.Struct({ projectId: ProjectId });
+export type ProjectWorktreesInput = typeof ProjectWorktreesInput.Type;
+
+/**
+ * What removing one of a project's worktrees would do. `local_changes` folders
+ * hold uncommitted, untracked or ignored files that removal discards; `in_use`
+ * and `not_removable` folders are always kept.
+ */
+export const ProjectWorktreeStatus = Schema.Literals([
+  "removable",
+  "local_changes",
+  "in_use",
+  "not_removable",
+]);
+export type ProjectWorktreeStatus = typeof ProjectWorktreeStatus.Type;
+
+export const ProjectWorktree = Schema.Struct({
+  path: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  threadCount: NonNegativeInt,
+  /** Null when the size could not be measured in time. */
+  sizeBytes: Schema.NullOr(NonNegativeInt),
+  /** Commits on HEAD that no remote has. The branch keeps them after removal. */
+  localCommits: Schema.NullOr(NonNegativeInt),
+  status: ProjectWorktreeStatus,
+  /** Why the folder is kept, or what removing it discards. */
+  detail: Schema.NullOr(Schema.String),
+});
+export type ProjectWorktree = typeof ProjectWorktree.Type;
+
+/** The existing worktrees that a project's threads, live or deleted, recorded. */
+export const ProjectWorktrees = Schema.Struct({
+  projectId: ProjectId,
+  worktrees: Schema.Array(ProjectWorktree),
+});
+export type ProjectWorktrees = typeof ProjectWorktrees.Type;
+
+/**
+ * Remove worktrees of a deleted project. Only paths its threads recorded are
+ * touched; `discardLocalChanges` names the ones the person agreed to lose
+ * uncommitted files in. Branches are always kept.
+ */
+export const ProjectWorktreesRemoveInput = Schema.Struct({
+  projectId: ProjectId,
+  paths: Schema.Array(TrimmedNonEmptyString),
+  discardLocalChanges: Schema.Array(TrimmedNonEmptyString),
+});
+export type ProjectWorktreesRemoveInput = typeof ProjectWorktreesRemoveInput.Type;
+
+export const ProjectWorktreesRemoval = Schema.Struct({
+  projectId: ProjectId,
+  removed: Schema.Array(Schema.String),
+  kept: Schema.Array(Schema.Struct({ path: Schema.String, reason: Schema.String })),
+});
+export type ProjectWorktreesRemoval = typeof ProjectWorktreesRemoval.Type;
+
+export class ProjectWorktreesError extends Schema.TaggedError<ProjectWorktreesError>()(
+  "ProjectWorktreesError",
+  { message: Schema.String },
+) {}
+
 export class ProjectMutationError extends Schema.TaggedError<ProjectMutationError>()(
   "ProjectMutationError",
   {

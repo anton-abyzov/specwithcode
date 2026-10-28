@@ -11,6 +11,8 @@ import {
 const state = vi.hoisted(() => ({
   update: vi.fn(),
   remove: vi.fn(),
+  worktreesRead: vi.fn(),
+  worktreesRemove: vi.fn(),
   write: vi.fn(),
   deleteMemory: vi.fn(),
   close: vi.fn(),
@@ -68,7 +70,12 @@ vi.mock("../../state/environments", () => ({
   }),
 }));
 vi.mock("../../state/projects", () => ({
-  projectEnvironment: { update: "update", delete: "remove" },
+  projectEnvironment: {
+    update: "update",
+    delete: "remove",
+    worktreesRead: "worktreesRead",
+    worktreesRemove: "worktreesRemove",
+  },
 }));
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: {
@@ -252,6 +259,14 @@ beforeEach(() => {
     value: { ...state.environment, revision: 8 },
   });
   state.remove.mockResolvedValue({ _tag: "Success", value: {} });
+  state.worktreesRead.mockResolvedValue({
+    _tag: "Success",
+    value: { projectId: "project", worktrees: [] },
+  });
+  state.worktreesRemove.mockResolvedValue({
+    _tag: "Success",
+    value: { projectId: "project", removed: [], kept: [] },
+  });
   state.write.mockResolvedValue({ _tag: "Success", value: { ...state.file, revision: 4 } });
   container = document.createElement("div");
   document.body.append(container);
@@ -541,6 +556,57 @@ describe("project settings and memory", () => {
       input: { projectId: "project", force: true, confirmationTitle: "Atlas" },
     });
     expect(state.deleted).toHaveBeenCalledOnce();
+  });
+  it("offers the project's worktrees and removes only the confirmed ones after deletion", async () => {
+    const worktree = (path: string, status: string, sizeBytes: number) => ({
+      path,
+      branch: path.split("/").pop(),
+      threadCount: 1,
+      sizeBytes,
+      localCommits: 0,
+      status,
+      detail: status === "removable" ? null : "Kept.",
+    });
+    state.worktreesRead.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        projectId: "project",
+        worktrees: [
+          worktree("/wt/clean", "removable", 6_000_000_000),
+          worktree("/wt/dirty", "local_changes", 1_000_000_000),
+          worktree("/wt/shared", "in_use", 2_000_000_000),
+        ],
+      },
+    });
+    state.worktreesRemove.mockResolvedValue({
+      _tag: "Success",
+      value: { projectId: "project", removed: ["/wt/clean"], kept: [] },
+    });
+    await render();
+    expect(state.worktreesRead).not.toHaveBeenCalled();
+    await input('[aria-label="Confirm project deletion"]', "Atlas");
+    expect(state.worktreesRead).toHaveBeenCalledWith({
+      environmentId: "host",
+      input: { projectId: "project" },
+    });
+    const text = container.textContent ?? "";
+    expect(text).toContain("Also delete 1 worktree (6.0 GB)");
+    expect(text).toContain(
+      "Also delete 1 worktree (1.0 GB) with uncommitted files. Those files are lost.",
+    );
+    expect(text).toContain("1 worktree will be kept");
+    const clean = container.querySelector('[aria-label="Also delete clean worktrees"]')!;
+    const dirty = container.querySelector(
+      '[aria-label="Also delete worktrees with uncommitted files"]',
+    )!;
+    expect(clean.getAttribute("aria-checked")).toBe("true");
+    expect(dirty.getAttribute("aria-checked")).toBe("false");
+    await click("Delete project and threads");
+    expect(state.remove).toHaveBeenCalledOnce();
+    expect(state.worktreesRemove).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "host",
+      input: { projectId: "project", paths: ["/wt/clean"], discardLocalChanges: [] },
+    });
   });
   it("keeps an edited memory file across tab switches and guards closing", async () => {
     await render("memory");

@@ -452,7 +452,7 @@ async function lapses() {
     ...agent,
     status: "error",
     message: SERVICE_REQUEST_EXPIRED,
-    updatedAt: iso(Date.now()),
+    updatedAt: iso(Date.now() + 500),
     pendingInstall: null,
   });
 }

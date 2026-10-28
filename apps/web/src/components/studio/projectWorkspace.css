@@ -998,7 +998,7 @@
   & p {
     margin: 6px 0;
   }
-  & label {
+  & > label {
     display: flex;
     flex-direction: column;
     gap: 8px;

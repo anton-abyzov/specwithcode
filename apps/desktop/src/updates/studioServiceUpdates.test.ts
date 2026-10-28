@@ -816,6 +816,58 @@ describe("studioServiceUpdates", () => {
       expect(
         pending(forced(), state({ status: "installing", handledInstallRequestAt: at })),
       ).toMatchObject({ handled: true, mode: "force" });
+      expect(
+        pending(
+          forced(),
+          state({ status: "installing", handledInstallRequestAt: at, downloadedVersion: "0.2.0" }),
+        ),
+      ).toMatchObject({ handled: true, version: "0.2.0" });
+    });
+
+    it("drops a request it took up once the agent installs another version on its own", () => {
+      // The request for 0.2.0 was installed two days ago and stays in the
+      // config; the agent now installs 0.3.0, which no request asked for.
+      const ownInstall = state({
+        status: "installing",
+        handledInstallRequestAt: at,
+        installedVersion: "0.2.0",
+        downloadedVersion: "0.3.0",
+      });
+      expect(pending(forced(), ownInstall, atMs + 2 * 24 * 60 * 60_000)).toBe(null);
+      // A request tied to no version may be the one it installs.
+      expect(pending(forced({ installRequest: null }), ownInstall)).toMatchObject({
+        handled: true,
+        version: null,
+      });
+    });
+
+    it("keeps a request not taken up while the agent installs, past its lapse", () => {
+      // Written again just as the agent took the earlier one up: no pass
+      // starts to let it lapse before that install ends.
+      const installing = state({
+        status: "installing",
+        handledInstallRequestAt: "2026-10-20T04:02:30.000Z",
+        downloadedVersion: "0.2.0",
+      });
+      expect(pending(forced(), installing, atMs + 20 * 60_000)).toMatchObject({
+        handled: false,
+        version: "0.2.0",
+      });
+      expect(
+        pending(
+          forced({ installMode: "normal", installHoldUntil: null }),
+          installing,
+          atMs + SERVICE_INSTALL_REQUEST_TTL_MS + 1,
+        ),
+      ).toMatchObject({ handled: false, mode: "normal" });
+      // Once the install ends, it lapses as before.
+      expect(
+        pending(
+          forced(),
+          state({ status: "installed", handledInstallRequestAt: "2026-10-20T04:02:30.000Z" }),
+          atMs + 20 * 60_000,
+        ),
+      ).toBe(null);
     });
 
     it("drops a request the agent finished, cancelled or let lapse", () => {

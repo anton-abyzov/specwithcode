@@ -20,6 +20,7 @@ import {
   AuthPreviewOperateScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
   AuthTerminalReadScope,
@@ -70,6 +71,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsEnvironmentImportPreview]: AuthOrchestrationReadScope,
   // The check walks the folder and reports its checkouts and planning roots.
   [WS_METHODS.projectsFolderCheck]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsWorktreesRead]: AuthFilesystemReadScope,
+  // Same scope as vcs.removeWorktree: it removes checkouts.
+  [WS_METHODS.projectsWorktreesRemove]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsWorkspaceRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsStarterSuggestions]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsConnectionsRead]: AuthOrchestrationReadScope,

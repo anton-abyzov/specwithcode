@@ -1061,6 +1061,127 @@ describe("Update now when answers and presses cross", () => {
       ).toBeGreaterThanOrEqual(2);
     });
 
+    /**
+     * The desktop reports the newest request as it does: one the agent took up
+     * only while it installs that request's version, and one it did not take
+     * up, tied to its version, while the agent installs (no request lapses
+     * then) or until 10 minutes after it was written or its hold ends, if later.
+     */
+    function reportAsDesktop(): { takeUp: () => void } {
+      let handledAt: string | null = null;
+      bridge.getServiceUpdateState.mockImplementation(async () => {
+        const request = pending;
+        if (request === null) return { ...agent, pendingInstall: null };
+        const handled = request.requestedAt === handledAt;
+        const installing = agent.status === "installing";
+        const servedUntil = Math.max(
+          Date.parse(request.requestedAt) + 10 * 60_000,
+          Date.parse(request.holdUntil ?? ""),
+        );
+        const installsIt = (agent.downloadedVersion ?? request.version) === request.version;
+        const reportsIt = handled
+          ? installing && installsIt
+          : installing || Date.now() <= servedUntil;
+        return { ...agent, pendingInstall: reportsIt ? { ...request, handled } : null };
+      });
+      return { takeUp: () => void (handledAt = pending?.requestedAt ?? null) };
+    }
+
+    /** Update now for both; the agent stays quiet while it snapshots the held work. */
+    async function pressWhileAgentIsQuiet(): Promise<{ takeUp: () => void }> {
+      const desktop = reportAsDesktop();
+      agent = { ...serviceWaiting, updatedAt: new Date(Date.now() - 60_000).toISOString() };
+      state.service = serviceWaiting;
+      render();
+      await click();
+      expect(calls).toEqual(STOP_AND_INSTALL);
+      return desktop;
+    }
+
+    /** The agent takes the request up and begins installing. */
+    function agentBeginsInstalling(desktop: { takeUp: () => void }) {
+      desktop.takeUp();
+      agent = { ...serviceWaiting, status: "installing", updatedAt: new Date().toISOString() };
+    }
+
+    /** It begins installing just as the look that asks it again (30 s on) answers. */
+    async function agentInstallsAsItIsAskedAgain() {
+      const pressedAt = Date.now();
+      const desktop = await pressWhileAgentIsQuiet();
+      state.prepare.mockImplementation(
+        async (value: { input: ServerPrepareServiceUpdateInput }) => {
+          calls.push(prepareCall(value.input));
+          if (value.input.stopWork) return { _tag: "Success", value: { ...prepared, held: true } };
+          if (agent.status !== "installing" && Date.now() - pressedAt >= 30_000) {
+            agentBeginsInstalling(desktop);
+          }
+          return { _tag: "Success", value: checked };
+        },
+      );
+      calls.length = 0;
+      await advance(32_000);
+      expect(label()).toBe("Installing…");
+    }
+
+    /** The install runs past the request's 15-minute hold, then the service runs 0.2.5. */
+    async function longInstallEnds() {
+      await advance(16 * 60_000);
+      agent = {
+        ...serviceWaiting,
+        status: "installed",
+        installedVersion: "0.2.5",
+        updatedAt: new Date().toISOString(),
+      };
+      await advance(2_000);
+      await advance(2_000);
+    }
+
+    it("that begins installing as it is asked again keeps the app's install through a long install", async () => {
+      await agentInstallsAsItIsAskedAgain();
+      await longInstallEnds();
+      expect(calls).toContain("installUpdate:0.2.5");
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("that takes the request up between the read that asks it again and the write keeps the app's install through a long install", async () => {
+      const pressedAt = Date.now();
+      const desktop = await pressWhileAgentIsQuiet();
+      bridge.installServiceUpdate.mockImplementation(async (options) => {
+        if (agent.status !== "installing" && Date.now() - pressedAt >= 30_000) {
+          agentBeginsInstalling(desktop);
+        }
+        return installService(options);
+      });
+      calls.length = 0;
+      await advance(34_000);
+      expect(calls.filter((call) => call.startsWith("installServiceUpdate"))).toEqual([
+        "installServiceUpdate:force",
+      ]);
+      expect(label()).toBe("Installing…");
+      await longInstallEnds();
+      expect(calls).toContain("installUpdate:0.2.5");
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("that begins installing as it is asked again is not asked for that request again", async () => {
+      await agentInstallsAsItIsAskedAgain();
+      await advance(60_000);
+      expect(calls.filter((call) => call.startsWith("installServiceUpdate"))).toEqual([]);
+      expect(label()).toBe("Installing…");
+    });
+
+    it("that begins installing before it is asked again keeps the app's install through a long install", async () => {
+      const desktop = await pressWhileAgentIsQuiet();
+      await advance(20_000);
+      agentBeginsInstalling(desktop);
+      await advance(2_000);
+      expect(label()).toBe("Installing…");
+      calls.length = 0;
+      await longInstallEnds();
+      expect(calls.filter((call) => call.startsWith("installServiceUpdate"))).toEqual([]);
+      expect(calls).toContain("installUpdate:0.2.5");
+    });
+
     it("with a request pending is looked at again after a reload with no answer", async () => {
       agent = { ...upToDate(), pendingInstall: pendingForce(Date.now() - 10_000) };
       state.service = agent;

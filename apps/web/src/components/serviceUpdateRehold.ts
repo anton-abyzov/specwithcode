@@ -163,7 +163,8 @@ async function releaseEndedHold(): Promise<void> {
  * the release. That answers the unheld request: the window holds the work and
  * asks again (see holdOnceAgentHasRelease), and the refusal stands only once
  * that hold is refused too, or when the agent wrote it after the request was
- * asked again under the hold.
+ * asked again under the hold (not in the very millisecond it was asked: the
+ * agent had not read it then).
  */
 export function refusedBeforeHeld(agent: StudioServiceUpdateState | null): boolean {
   if (!hold.refused || hold.refusedAgain || !flow.asks() || flow.cancelling()) return false;
@@ -171,7 +172,7 @@ export function refusedBeforeHeld(agent: StudioServiceUpdateState | null): boole
     return false;
   }
   const written = writtenAt(agent) ?? Number.POSITIVE_INFINITY;
-  return written < (hold.askedUnderHoldAt ?? Number.POSITIVE_INFINITY);
+  return written <= (hold.askedUnderHoldAt ?? Number.POSITIVE_INFINITY);
 }
 
 /**
@@ -362,16 +363,30 @@ async function requestAgain(
   }
   if (agent !== null && !hasPendingRequest(agent)) {
     // The agent's own answer (it let the request lapse, or failed) is left to
-    // the next read; so is a hold that ran out.
-    const answered = advanceServiceUpdateProgress(progress, agent, Date.now());
-    if (isWaitingPhase(answered) && Date.now() < (progress.holdUntil ?? Number.POSITIVE_INFINITY)) {
+    // the next read; so is a hold that ran out. A refusal its pass wrote
+    // before another window's Cancel is no such answer (see
+    // refusedAfterWithdrawal): the attempt ends then too.
+    const now = Date.now();
+    const answered = advanceServiceUpdateProgress(progress, agent, now);
+    const withdrawn =
+      (isWaitingPhase(answered) && now < (progress.holdUntil ?? Number.POSITIVE_INFINITY)) ||
+      refusedAfterWithdrawal(agent, progress, now);
+    if (withdrawn) {
       flow.endAttempt();
       void releaseStrayHold(prepared);
     }
     return;
   }
-  // What the agent writes from now on answers the request asked under the hold.
-  if (hold.seen) hold.askedUnderHoldAt ??= Date.now();
+  // The agent already installs for it, as no read had shown yet: written
+  // again, the request is one the install never took up, left for the
+  // agent's next pass to answer. The next read shows the install.
+  if (advanceServiceUpdateProgress(progress, agent, Date.now()).phase === "installing") return;
+  // What the agent writes from now on answers the request asked under the hold;
+  // a reload from now on knows it was asked.
+  if (hold.seen && hold.askedUnderHoldAt === null) {
+    hold.askedUnderHoldAt = Date.now();
+    flow.rememberOwnRequest();
+  }
   await flow.sendInstallRequest().catch(() => null);
 }
 

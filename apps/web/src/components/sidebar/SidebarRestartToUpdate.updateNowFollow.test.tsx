@@ -663,7 +663,13 @@ describe("Update now followed across a reload and other windows", () => {
         FOLLOW_UP_KEY,
         JSON.stringify({ appVersion: "0.2.5", serviceVersion: "0.2.5", at: Date.now() - 60_000 }),
       );
-      agent = { ...serviceWaiting, status: "installing", updatedAt: new Date().toISOString() };
+      // The agent installs for the press: the desktop reports its request, taken up.
+      agent = {
+        ...serviceWaiting,
+        status: "installing",
+        updatedAt: new Date().toISOString(),
+        pendingInstall: { ...pendingForce(Date.now() - 60_000), handled: true },
+      };
       state.service = agent;
       // The service restarts into its new version: each look takes a second and gets no answer.
       let answering = false;
@@ -769,7 +775,13 @@ describe("Update now followed across a reload and other windows", () => {
       render();
       await advance(2_000);
       expect(store.has(FOLLOW_UP_KEY)).toBe(true);
-      agent = { ...serviceWaiting, status: "installing", updatedAt: new Date().toISOString() };
+      // The pass installs for the request: the desktop reports it again, taken up.
+      agent = {
+        ...serviceWaiting,
+        status: "installing",
+        updatedAt: new Date().toISOString(),
+        pendingInstall: { ...pendingForce(pressedAt), handled: true },
+      };
       state.service = agent;
       rerender();
       await advance(0);

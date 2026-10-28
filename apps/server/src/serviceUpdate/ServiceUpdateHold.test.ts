@@ -101,6 +101,8 @@ describe("agentVerdictForHold", () => {
       expect(verdict({ status })).toEqual({ type: "settled", status });
       // Written before the request: not about it.
       expect(verdict({ status, updatedAtMs: startedAtMs + 30_000 })).toEqual({ type: "none" });
+      // Nor in its own millisecond: the agent had not read it yet.
+      expect(verdict({ status, updatedAtMs: Date.parse(requested) })).toEqual({ type: "none" });
     }
   });
 

@@ -38,7 +38,8 @@ The **Release macOS** workflow (`.github/workflows/release-macos.yml`, run by ha
 version) runs `release.sh --ci` on a Mac runner, so a release needs neither the M4 nor anyone at
 it. `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers` and
 `desktop`: each host's update agent installs the release from the public feed on its next hourly
-check, and `fleet_rollout.py --version <v>` on the M4 asks them at once. The workflow writes
+check, and `fleet_rollout.py --version <v>` on the M4 asks them at once and then updates the M1
+and M3 apps ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)). The workflow writes
 release.env, the certificate, the notarization key, the Google pair and the mirror rules from
 repository secrets into the runner's temp folder and deletes them at the end; its header lists the
 secret names. It runs on GitHub's `macos-15` unless the repository variable
@@ -75,7 +76,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                   | once                    |
 | fleet-m4        | `fleet_rollout.py --only m4`: drains and holds M4 as Update now does, then a forced 15-minute request                  | once                    |
 | desktop         | record grants, rollback copy, swap the app in `/Applications`, check its signature, grants and version, open it        | once                    |
-| fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way                                             | once                    |
+| fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way, then each one's desktop app                | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
 
 Preflight checks each file and value exists without printing any. The candidate stage fails when
@@ -88,6 +89,9 @@ they cannot see a release that is only private. Releases up to 1.0.39 ran the fl
 published public by hand; a staging folder from that order resumes at its first unmarked stage.
 
 The desktop app is swapped right after M4 installs, before M1 and M3 (up to 1.0.41 it came last).
+The M1 and M3 apps follow their own services in fleet-workers. Before that step existed only the
+M4 app was updated: on October 21, 2026 the services ran 1.0.68 while the M3 app was 1.0.65 and
+the M1 app 1.0.48, and the release was reported done.
 From 1.0.41 the app manages the M4 service: opened against an older M4 it writes its own
 normal-mode install request, which can replace fleet-m4's forced one, so it never opens before M4
 runs the release. And M1 or M3 failing no longer leaves the Mac without its app (1.0.39 and 1.0.41
@@ -163,7 +167,10 @@ receipt; that host stays on its old version. Before each request or check the ho
 update agent its release ships when its own agent is older (`docs/studio/updates.md`), and the rollout
 says so in a line, such as `m1: installed the update agent its release ships over an older one`; a host
 that could not install it still gets the request, which the agent it has handles. A worker that stops
-on an unexpected error fails the rollout with its host's name instead of dropping out of the results. When publish-public's push failed after `publish.mjs`
+on an unexpected error fails the rollout with its host's name instead of dropping out of the results.
+A worker whose app could not be updated fails fleet-workers once every service is done, and
+`--resume` runs the stage again: the services are already on the release, so only the apps are
+retried ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)). When publish-public's push failed after `publish.mjs`
 tagged, `--resume` drops the tag left in the public clone, since the remote has none.
 
 ### What keeps a release from failing late
@@ -205,7 +212,9 @@ command that refreshes the recorded shard weights from its reports.
 ### By hand
 
 `fleet_rollout.py --version <v> --dry-run` prints the rollout order and commands, with the
-`service prepare-update` command that drains and holds M4 first (`--no-hold` skips it). A rollout
+`service prepare-update` command that drains and holds M4 first (`--no-hold` skips it), and under
+`desktopApps` the ssh command for each worker's app and where the zip's sha256 will come from
+(`null` with `--no-desktop-apps`); it fetches nothing and contacts no host. A rollout
 never asks M4 for a forced install it could not hold: an unheld request stops no running work and
 leaves `update.py --reap` nothing it may stop, so a busy M4 waits for quiet and fails its guarded
 checks as new work starts. When M4's installed release predates the command (it first shipped in
@@ -223,6 +232,8 @@ cannot install a release on its own, copy the assets to `<studio root>/release-s
 on that host and run `/usr/bin/python3 -B scripts/studio-fleet/remote_update.py --identity <id>
 --version <v> --runtime <runtime archive> --helpers <helpers archive>`; it checks the staged files,
 backs up the database through `live_database.py` and runs the release's own `update.py`.
+A worker's app alone is updated by hand with the commands in
+[desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3).
 
 ## Versions
 
@@ -331,6 +342,86 @@ Never install the desktop app by hand by trashing the installed bundle and then 
 three-file `SpecWithCode.app`, so macOS refused to open it ("in the Trash"). Run the desktop stage,
 or follow the same order: unpack elsewhere on the volume, `codesign --verify --deep --strict`, then
 rename.
+
+## Desktop apps on M1 and M3
+
+`fleet_rollout.py` updates `/Applications/SpecWithCode.app` on each worker once it has confirmed
+that worker's service on the version, whether this run installed it or it already ran it. M4's app
+is the desktop stage's. The step uses the same pinned fleet ssh as the service request: it streams
+`scripts/studio-fleet/desktop_app_update_remote.sh` to the worker's `/bin/bash -s`, with the
+version, the zip's sha256 and the public repository in a preamble. Each value is checked before it
+reaches a shell (digits and dots, 64 hex digits, owner/name) and again on the worker.
+
+The sha256 is the zip's line in the release's `SHA256SUMS`, found the way the desktop stage finds
+its zip: `<staging root>/<version>/published.sha` names the published candidate, and its
+`assets-<sha12>/SHA256SUMS` is the file publish-private and publish-public checked against both
+releases. A rollout run on its own for a release with no staging folder on this Mac (a `--ci`
+release, or one pruned) reads `SHA256SUMS` from the public release instead. On the worker the
+script follows the desktop stage's order:
+
+1. Repairs a run cut short: an unpack folder left behind is removed, and
+   `SpecWithCode.app.release-old` goes back when nothing took its place, or to the Trash when the
+   new app did.
+2. Waits while the app's own update runs (its Squirrel `ShipIt`, or an unsigned build's swap), and
+   stops when the installed app is already the version and passes the checks of step 4. A copy of
+   the version that fails one (an ad hoc build, say) is replaced like an older one. Squirrel.Mac
+   starts `ShipIt` as soon as the app has staged an update, and that `ShipIt` waits for the app to
+   quit: while the app runs, the script does not wait for it here but lets it install at the quit
+   of step 5. A previous app still at `SpecWithCode.app.release-old` (step 1 could not move it to
+   the Trash) stops the run here, before anything is downloaded or quit.
+3. Downloads `SpecWithCode-<version>-arm64.zip` from the public release, over https only, into
+   `~/.specwithcode/backups/desktop-app-updates/` (a rerun reuses a zip whose sha256 matches; a
+   finished run removes it). Nothing changes until its sha256 matches and there is room for the
+   unpacked app plus 512 MiB.
+4. Unpacks it into `/Applications/.SpecWithCode.app-<version>-unpack` and checks that copy: its
+   version, `codesign --verify --deep --strict`, the designated requirement above, and Gatekeeper
+   (`spctl -a -t exec`). A copy that fails is removed and the installed app stays as it was.
+5. Quits the app when it runs: TERM to the processes running its own executable, then up to 60
+   seconds, and waits up to 90 seconds for the app's own updater. When that installs the version
+   as the app quits and the app passes the same checks, it is kept.
+6. Otherwise renames the installed app to `SpecWithCode.app.release-old`, renames the checked copy
+   in and checks it there (a failure puts the previous app back), then moves the previous app to
+   the Trash, never `rm`. A previous app that cannot go to the Trash stays where it is, and the next
+   run retries it first and stops at step 2 when it still cannot.
+7. Reopens the app only when it was running. A run that fails after it quit the app opens
+   whichever app is in place again, unless the app's own updater is still running, or a copy that
+   failed its check after the rename could not be moved aside (the reason then says which app to
+   move to the Trash and which to rename back).
+
+One run at a time holds `~/.specwithcode/backups/desktop-app-updates/.lock`, which names the run
+by its pid and start time: a lock left by a run that is gone (a power loss, a reboot that gave its
+pid to another process) is taken over. A dropped ssh session does not stop a run halfway. The
+rollout prints the worker's lines as `m1: app: <line>`, then one result per worker:
+
+```
+m1: desktop app 1.0.40 -> 1.0.41: unpacked and checked beside the app, then swapped in; reopened, as it was running
+m3: desktop app 1.0.40 -> 1.0.41: its own updater installed it as the app quit; reopened, as it was running
+```
+
+For an app already on the release it prints `m1: desktop app already on 1.0.41`. Each worker's
+JSON result has `desktopApp`: `result` (`already-current`, `updater-on-quit`, `swapped`, or
+`failed` with an `error`), `before`, `after` and `relaunched`. A worker whose app could not be
+updated (unreachable, no sums or a checksum mismatch, a copy that fails a check, an app that does
+not quit, 30 minutes passed) fails the rollout once every service is done: it prints
+`fleet_rollout: every service is on <v>, but m3: desktop app not updated to <v>: <reason>` and
+exits 1. Run `--only workers` again: the services are already on the release, so only the apps
+are retried. `--no-desktop-apps` leaves the apps alone.
+
+To update one worker's app by hand, take the zip's line from the release's `SHA256SUMS`:
+
+```sh
+sha=$(curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/download/v1.0.41/SHA256SUMS |
+  awk '$2 == "SpecWithCode-1.0.41-arm64.zip" { print $1 }')
+ssh <worker> "DRY_RUN=1 V=1.0.41 SHA=$sha /bin/bash -s" < scripts/studio-fleet/desktop_app_update_remote.sh
+ssh <worker> "V=1.0.41 SHA=$sha /bin/bash -s" < scripts/studio-fleet/desktop_app_update_remote.sh
+```
+
+`DRY_RUN=1` reads and reports only: nothing is downloaded, quit, renamed, trashed or opened. The
+last line is `RESULT before=<v> after=<v> how=<how> relaunched=<yes|no|failed>`, or `FAIL <reason>`
+with exit 2 for a bad value or missing tool, 3 for the download or its sha256, 4 when another run,
+the app, its own updater or a previous app left at `SpecWithCode.app.release-old` is in the way, 5
+for no room or a copy that cannot be unpacked or fails a check (before the rename, or after it with
+the previous app back in place), and 6 when a rename failed; its reason says where each app is.
 
 ## Rollback copies
 

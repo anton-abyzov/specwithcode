@@ -512,9 +512,13 @@ function updatedAtMs(state: StudioServiceUpdateState): number | null {
  * after a request is usually the one it wrote for an earlier request. With the
  * agent's write time that is exact: a waiting or failed state written before
  * this request is not its answer, however long the agent takes (its first
- * snapshot can outlast any fixed wait). Without it (older desktops) the state
- * is compared with the one seen before the request, and believed after
- * STALE_FAILURE_MS, since the agent may simply have answered the same again.
+ * snapshot can outlast any fixed wait), nor is one the agent wrote in the
+ * request's own millisecond. The desktop's own failure carries the request's
+ * time, though, and older desktops do not flag it as theirs: only a state
+ * flagged as the agent's is held to that. Without the write time (older
+ * desktops) the state is compared with the one seen before the request, and
+ * believed after STALE_FAILURE_MS, since the agent may simply have answered
+ * the same again.
  */
 export function isStaleServiceAnswer(
   progress: ServiceUpdateProgress,
@@ -524,8 +528,11 @@ export function isStaleServiceAnswer(
   const key = serviceFailureKey(state);
   if (key === null || progress.requestedAt === undefined) return false;
   const written = updatedAtMs(state);
+  const agentsOwn = state.agentStartFailed === false;
   const stale =
-    written !== null ? written < progress.requestedAt : key === (progress.staleFailure ?? null);
+    written !== null
+      ? written < progress.requestedAt || (agentsOwn && written === progress.requestedAt)
+      : key === (progress.staleFailure ?? null);
   if (!stale) return false;
   // A state known to be old (waiting or failed) never ends the attempt: the
   // agent has not run for this request yet, so it stays ignored.

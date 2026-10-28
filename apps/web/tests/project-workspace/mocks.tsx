@@ -1228,6 +1228,8 @@ export const useEnvironment = (environmentId) => ({
   ...(knowledgeServerConfig ? { serverConfig: knowledgeServerConfig } : {}),
 });
 export const useEnvironmentScope = () => true;
+// The fixture host's shell is always live.
+export const useEnvironmentShellLive = (environmentId) => environmentId !== null;
 // Threads never move between projects in this fixture.
 export const waitForThreadMoveOutcome = async () => null;
 export const useEnvironmentScopeAccess = () => "granted";
@@ -1366,6 +1368,47 @@ export const useAtomCommand = (command) => async (args) => {
     }
     return { _tag: "Success", value: reportSnapshot() };
   }
+  if (command === "worktreesRead") {
+    const root = "/Users/me/.specwithcode/worktrees/atlas";
+    const worktree = (name, status, sizeBytes, localCommits, detail = null) => ({
+      path: `${root}/${name}`,
+      branch: name,
+      threadCount: 1,
+      sizeBytes,
+      localCommits,
+      status,
+      detail,
+    });
+    return {
+      _tag: "Success",
+      value: {
+        projectId: args.input.projectId,
+        worktrees: [
+          worktree("budget-totals", "removable", 6_200_000_000, 2),
+          worktree("landing-review", "removable", 5_800_000_000, 0),
+          worktree(
+            "release-notes",
+            "local_changes",
+            1_100_000_000,
+            0,
+            "It has uncommitted, untracked or ignored files. Removing it deletes them.",
+          ),
+          worktree(
+            "shared-docs",
+            "in_use",
+            900_000_000,
+            0,
+            'The thread "Docs refresh" in another project uses it, so it is kept.',
+          ),
+        ],
+      },
+    };
+  }
+  if (command === "worktreesRemove")
+    return {
+      _tag: "Success",
+      value: { projectId: args.input.projectId, removed: args.input.paths, kept: [] },
+    };
   if (command === "folderCheck") {
     const target = args.input.workspaceRoot;
     return {
@@ -1467,6 +1510,8 @@ export const projectEnvironment = withFallback({
   delete: "delete",
   folderCheck: "folderCheck",
   changeFolder: "changeFolder",
+  worktreesRead: "worktreesRead",
+  worktreesRemove: "worktreesRemove",
 });
 // Voice settings and file menus read the host's config; the fixture's host has none loaded.
 const noServerConfig = Atom.make(null);

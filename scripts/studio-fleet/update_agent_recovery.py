@@ -410,6 +410,29 @@ def withdrawn(agent, version):
     return 'downloaded', ua.CANCELLED
 
 
+def asked_again(agent, version, serving):
+    """True when the settings now hold a newer request than `serving` that may install `version`:
+    Update now asked again while a snapshot for `serving` refused it, as a window does once it
+    holds the work for a request whose stop held nothing. agent.config becomes its settings, so
+    the pass serves it instead of writing that refusal, which the window and the service's hold
+    would time against the newer request and take as its answer. A Cancel, a request for another
+    version or one of a run (claimed afresh by run_once) changes nothing."""
+    ua = _ua(agent)
+    try:
+        config = ua.load_config(agent.updates, agent.home)
+    except ua.AgentError:
+        return False
+    if config['installRequestedAt'] in (None, serving) or ua.install_cancelled(config):
+        return False
+    if config.get('installRunId') or getattr(agent, 'run', None) is not None:
+        return False
+    # A copy of the state: replaced() settles a request it turns down, which is the next pass's to do.
+    if ua.update_request.replaced(serving, config, dict(agent.state), version, ua.utcnow()) is not None:
+        return False
+    agent.config = config
+    return True
+
+
 SETTINGS_CHANGED = 'Automatic installation stopped because update settings changed.'
 
 

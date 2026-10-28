@@ -1029,6 +1029,8 @@ class Agent(object):
                         return self.settle(verified, refused_apply, 'failed', install_request,  # The user's cause as it is.
                                            shown=None if refused[0] == 'waiting-for-quiet' else refused)
                     if install_request:  # An explicit request never drains: no pause time or Later stays on show.
+                        if refused[0] != 'waiting-for-quiet' and recovery.asked_again(self, version, serving):
+                            continue  # Asked again as the snapshot refused: served, not answered with that refusal.
                         return pause.forget(self.state) or self.finish(*refused)
                     return pause.after_refusal(self, verified, refused)
                 self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
