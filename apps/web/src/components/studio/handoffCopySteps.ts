@@ -40,8 +40,11 @@ export function nextStepText(input: {
   readonly failedBeforeApply: boolean;
   /** A move held after Apply because checks failed: the coordinator stayed on the source. */
   readonly held?: boolean;
+  /** A move says move, not copy: the person is moving the project. */
+  readonly move?: boolean;
 }): string | null {
   const machine = input.targetLabel;
+  const action = input.move ? "move" : "copy";
   switch (input.stage) {
     case "select":
       return input.auto
@@ -52,8 +55,8 @@ export function nextStepText(input: {
         return `Copy again brings over what changed; it compares first and moves only changed files. Move anyway moves the coordinator with these differences. Undo puts ${machine}'s folder back.`;
       // Before Apply the destination cannot resume: Retry runs the same copy from measuring.
       if (input.failedBeforeApply)
-        return `Retry starts the copy again: ${input.auto ? "it measures and compares again, then copies unless it needs you" : "it measures again, then you choose what to copy and preview it"}. Nothing on ${machine} changed, so Stop copy leaves it as it was.`;
-      return "Retry continues where the copy stopped.";
+        return `Retry starts the ${action} again: ${input.auto ? "it measures and compares again, then copies unless it needs you" : "it measures again, then you choose what to copy and preview it"}. Nothing on ${machine} changed, so Stop ${action} leaves it as it was.`;
+      return `Retry continues where the ${action} stopped.`;
     default:
       return null;
   }

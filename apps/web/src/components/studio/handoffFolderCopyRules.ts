@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type {
   EnvironmentId,
+  ProjectId,
   FolderCopyFileClass,
   FolderCopyMode,
   FolderCopyRow,
@@ -11,9 +12,36 @@ import {
   copyActivityFromSource,
   copyActivityFromStatus,
   copyActivityKey,
+  moveDestination,
   setCopyActivity,
 } from "../../studio/folderCopyActivity";
+import { copiedProjectFolder } from "../../studio/folderCopy";
 import { CLOSABLE_WHILE_WORKING, type CopyStage } from "./handoffCopySteps";
+import type { PendingCopy } from "./handoffFolderCopyPending";
+
+/** Opens the applied copy's project on its machine; nothing before it is registered there. */
+export function openCopiedProject(
+  machine: EnvironmentId | null,
+  copy: FolderCopyStatus | null,
+  pending: PendingCopy | null,
+  onOpen: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly folder: string;
+  }) => void,
+): void {
+  if (!machine || !copy?.projectId) return;
+  onOpen({
+    environmentId: machine,
+    projectId: copy.projectId,
+    folder:
+      copy.projectFolder ??
+      copiedProjectFolder(
+        copy.targetFolder,
+        copy.projectRelativePath ?? pending?.projectRelativePath,
+      ),
+  });
+}
 
 /** What a copy is started with; Copy again reuses the last copy's. */
 export interface CopyChoices {
@@ -69,6 +97,7 @@ export function useCopyReporting({
   mode,
   machine,
   copy,
+  existingDestination = false,
   scanStatus,
   machineName,
   onBusyChange,
@@ -82,6 +111,8 @@ export function useCopyReporting({
   readonly mode: FolderCopyMode;
   readonly machine: EnvironmentId | null;
   readonly copy: FolderCopyStatus | null;
+  /** The move's folder already held a project: the sidebar keeps listing it. */
+  readonly existingDestination?: boolean | undefined;
   readonly scanStatus: FolderCopySourceStatus | null;
   readonly machineName: string;
   readonly onBusyChange: (busy: boolean) => void;
@@ -124,12 +155,21 @@ export function useCopyReporting({
     const fromCopy = copy ? copyActivityFromStatus(copy, machineName) : null;
     const fromSource = scanStatus ? copyActivityFromSource(scanStatus, machineName) : null;
     const label = STAGE_ACTIVITY[stage];
+    const activity =
+      fromCopy ??
+      (fromSource && !fromSource.waiting ? fromSource : null) ??
+      (label ? { machine: machineName, label, fraction: null, waiting: false } : null);
+    // A move names its destination, so the sidebar shows one row while both copies exist.
+    const destination =
+      copy && machine && mode === "copy-and-move"
+        ? moveDestination(copy, machine, existingDestination)
+        : null;
     setCopyActivity(
       activityKey,
-      fromCopy ??
-        (fromSource && !fromSource.waiting ? fromSource : null) ??
-        (label ? { machine: machineName, label, fraction: null, waiting: false } : null),
+      activity && mode === "copy-and-move"
+        ? { ...activity, move: true, ...(destination ? { destination } : {}) }
+        : activity,
     );
-  }, [activityKey, busy, copy, scanStatus, machineName, stage]);
+  }, [activityKey, busy, copy, existingDestination, scanStatus, machineName, stage, mode, machine]);
   return { busy, closeLocked };
 }

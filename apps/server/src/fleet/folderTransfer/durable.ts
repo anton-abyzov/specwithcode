@@ -8,7 +8,10 @@ import * as NodePath from "node:path";
 export async function privateDirectory(directory: string): Promise<string> {
   await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
   const real = await NodeFSP.realpath(directory);
-  if (real !== NodePath.resolve(directory)) throw new Error("Private folder resolves elsewhere.");
+  // The folder and where it leads let the app say which folder is behind a link: the folder
+  // itself, or (as when ~/.specwithcode lives on another volume) a folder above it.
+  if (real !== NodePath.resolve(directory))
+    throw new Error(`Private folder resolves elsewhere: ${NodePath.resolve(directory)} -> ${real}`);
   await NodeFSP.chmod(directory, 0o700);
   return real;
 }

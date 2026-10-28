@@ -6,6 +6,7 @@ import {
   checkoutUnavailableReason,
   chooseCoordinatorView,
   coordinatorMachineKey,
+  heldCheckoutKey,
   orchestratorCopies,
   SUPERSEDED_COORDINATOR_PROBLEM,
   unloadedMachineRef,
@@ -297,5 +298,34 @@ describe("checkoutUnavailableReason", () => {
   it("reads the machine from a saved checkout key", () => {
     expect(checkoutKeyEnvironmentId("env-m4:proj-a")).toBe("env-m4");
     expect(checkoutKeyEnvironmentId("env-m4")).toBe("env-m4");
+  });
+});
+
+describe("heldCheckoutKey", () => {
+  const held = { projectKey: "logical:one", checkout: "env-m4:a" };
+  const source = linked("env-m4", "a", "transferred", 1);
+  const destination = linked("env-m1", "b", "active", 1, {
+    environmentId: "env-m4",
+    projectId: "a",
+  });
+
+  it("keeps the page on the checkout an open move dialog holds after the coordinator moved", () => {
+    const members = [source, destination];
+    // Without the hold the page follows the coordinator to the destination.
+    expect(
+      chooseCoordinatorView({ members, primaryEnvironmentId: "env-m4" }).member?.environmentId,
+    ).toBe("env-m1");
+    const checkoutKey = heldCheckoutKey(held, "logical:one", members);
+    expect(checkoutKey).toBe("env-m4:a");
+    expect(
+      chooseCoordinatorView({ members, checkoutKey, primaryEnvironmentId: "env-m4" }).member
+        ?.environmentId,
+    ).toBe("env-m4");
+  });
+
+  it("lets go for another project, with no hold, and once the held checkout is gone", () => {
+    expect(heldCheckoutKey(held, "logical:two", [source, destination])).toBeNull();
+    expect(heldCheckoutKey(null, "logical:one", [source, destination])).toBeNull();
+    expect(heldCheckoutKey(held, "logical:one", [destination])).toBeNull();
   });
 });

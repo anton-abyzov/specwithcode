@@ -185,6 +185,9 @@ def after_refusal(agent, verified, refused):
     """Ends an automatic pass whose snapshot was refused. For running work: keep waiting until
     automaticPauseAt, then drain, hold and ask for a forced install; anything else ends as before."""
     ua, state = _ua(agent), agent.state
+    if ua.recovery.automatic_superseded(agent):  # Update now pressed as the snapshot ran: run_once serves it next,
+        state['automaticRetry'] = None  # so no refusal of this pass stands as its answer.
+        return agent.finish('downloaded', ua.recovery.SETTINGS_CHANGED)
     if not running_work(refused):
         state['automaticPauseAt'] = None  # Not waiting on work now; the grace starts again.
         return agent.finish(*refused)
@@ -270,8 +273,6 @@ def _pause_and_request(agent, verified, refused):
     the hold inserts a session row, which would fail the guarded prestate of a request written first.
     The request is served by run_once's second iteration, which installs it inside this pass's lock."""
     ua, version = _ua(agent), verified['version']
-    if ua.recovery.automatic_superseded(agent):
-        return agent.finish('downloaded', ua.recovery.SETTINGS_CHANGED)
     agent.state['automaticPausedAt'] = {'version': version, 'at': ua.iso(ua.utcnow())}
     agent.state['automaticPauseAt'] = None  # The drain starts: the desktop offers no Later from here (set_status saves it).
     agent.set_status('waiting-for-quiet', PAUSING % version)  # The service holds only for a pending update.

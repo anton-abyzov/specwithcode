@@ -242,8 +242,8 @@ export function ProjectDefaultsSettings({
       title="Workspace"
       description={
         isProjectScope
-          ? "Automatic starts Git threads in a new worktree and non-Git folders in the current checkout."
-          : "Automatic uses a new worktree for Git projects and the current checkout otherwise. Explicit project and specweave-studio.json choices win."
+          ? "Automatic starts Git threads in a new worktree and non-Git folders in the current checkout. Uncheck Use worktree before a new chat to work in Current checkout. Choose folders in Settings → Storage."
+          : "Automatic uses a new worktree for Git projects and the current checkout otherwise. Explicit project and specweave-studio.json choices win. Worktree storage is configured separately in Storage."
       }
       resetAction={
         !isProjectScope && settings.defaultThreadEnvMode !== null ? (

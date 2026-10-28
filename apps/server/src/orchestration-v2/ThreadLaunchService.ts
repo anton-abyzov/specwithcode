@@ -553,6 +553,10 @@ const make = Effect.gen(function* () {
           branch = flattenTemporaryWorktreeBranchName(branch);
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        const placementSettings = resolveProjectSettings(
+          yield* serverSettings.getSettings,
+          input.projectId,
+        ).settings;
         const worktree = yield* git
           .createWorktree(
             {
@@ -563,6 +567,11 @@ const make = Effect.gen(function* () {
               path: null,
             },
             {
+              worktreesDirectory: placementSettings.worktreesDirectory,
+              ...(placementSettings.worktreeLocationMode !== undefined
+                ? { worktreeLocationMode: placementSettings.worktreeLocationMode }
+                : {}),
+              submodules: placementSettings.worktreeSubmodules,
               progress: {
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {

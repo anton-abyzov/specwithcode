@@ -17,6 +17,7 @@ export interface CopyMachine {
   readonly id: EnvironmentId;
   readonly label: string;
   readonly unavailable: string | null;
+  readonly worktreeStorage?: string | null;
 }
 
 export const copyMachineOptions = (machines: ReadonlyArray<CopyMachine>): MachineOption[] =>
@@ -73,6 +74,7 @@ export function HandoffCopySetup({
   const dialog = useProjectMoveDialog();
   // Browsing belongs to one machine: picking another closes the list.
   const [browsing, setBrowsing] = useState<EnvironmentId | null>(null);
+  const loading = dialog?.machinesLoading === true;
   const narrowed =
     scope !== undefined &&
     scope.selected.kind === "project" &&
@@ -87,7 +89,7 @@ export function HandoffCopySetup({
       />
       <fieldset className="min-w-0" disabled={disabled}>
         <legend className="mb-2 text-sm font-medium">Machine</legend>
-        {machines.length === 0 ? (
+        {machines.length === 0 && !loading ? (
           <p className="text-sm text-muted-foreground">
             No other machine is connected. Pair one in Settings › Connections.
           </p>
@@ -97,34 +99,38 @@ export function HandoffCopySetup({
             options={copyMachineOptions(machines)}
             value={machine}
             disabled={disabled}
+            loading={loading}
             onChange={(value) => onMachineChange(value as EnvironmentId)}
           />
         )}
       </fieldset>
-      <FolderField
-        slot="copy-folder"
-        machineLabel={targetLabel}
-        value={folder}
-        disabled={folderDisabled}
-        placeholder={findingHome ? "Finding the home folder there…" : "Full path on that machine"}
-        onChange={onFolderChange}
-        onBrowse={
-          machine ? () => setBrowsing((open) => (open === machine ? null : machine)) : undefined
-        }
-        browsing={browsing !== null && browsing === machine}
-      >
-        {projectRelativePath !== "." && folder && (
-          <span
-            className="block text-xs text-muted-foreground"
-            data-slot="copy-destination-project"
-          >
-            The project lands in{" "}
-            <span className="font-mono wrap-anywhere">
-              {copiedProjectFolder(folder, projectRelativePath)}
+      {/* The folder belongs to a machine: none is asked for before one is picked. */}
+      {machine && (
+        <FolderField
+          slot="copy-folder"
+          machineLabel={targetLabel}
+          value={folder}
+          disabled={folderDisabled}
+          placeholder={findingHome ? "Finding the home folder there…" : "Full path on that machine"}
+          onChange={onFolderChange}
+          onBrowse={
+            machine ? () => setBrowsing((open) => (open === machine ? null : machine)) : undefined
+          }
+          browsing={browsing !== null && browsing === machine}
+        >
+          {projectRelativePath !== "." && folder && (
+            <span
+              className="block text-xs text-muted-foreground"
+              data-slot="copy-destination-project"
+            >
+              The project lands in{" "}
+              <span className="font-mono wrap-anywhere">
+                {copiedProjectFolder(folder, projectRelativePath)}
+              </span>
             </span>
-          </span>
-        )}
-      </FolderField>
+          )}
+        </FolderField>
+      )}
       {machine && browsing === machine && (
         <RemoteFolderBrowser
           key={machine}

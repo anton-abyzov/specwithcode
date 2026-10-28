@@ -15,7 +15,7 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
-  isLocalGitHubCopilotCommand,
+  localAcpAgentIdForCommand,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
@@ -250,22 +250,21 @@ export function applyProviderInstanceSettings(
   return labelSharedAcpAgentSources(applied);
 }
 
-const GITHUB_COPILOT_AGENT_ID = "github-copilot-cli";
-
 /**
  * The ACP agent an `acpRegistry` instance config runs. A local install counts
- * only when it is recognisably Copilot; other local commands have no agent id.
+ * only when it is recognisably Copilot or DeepSeek Harness; other local
+ * commands have no agent id.
  */
 export function acpAgentIdForInstanceConfig(config: unknown): string | undefined {
   if (config === null || typeof config !== "object") return undefined;
   const { agentId, source, commandPath } = config as Readonly<Record<string, unknown>>;
   if (source === "local") {
-    return isLocalGitHubCopilotCommand(
-      typeof agentId === "string" ? agentId : null,
-      typeof commandPath === "string" ? commandPath : null,
-    )
-      ? GITHUB_COPILOT_AGENT_ID
-      : undefined;
+    return (
+      localAcpAgentIdForCommand(
+        typeof agentId === "string" ? agentId : null,
+        typeof commandPath === "string" ? commandPath : null,
+      ) ?? undefined
+    );
   }
   return typeof agentId === "string" && agentId.trim() ? agentId.trim() : undefined;
 }

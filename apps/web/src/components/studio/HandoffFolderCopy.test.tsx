@@ -1271,7 +1271,7 @@ it("cancels measuring on the source, releases a move and returns to setup withou
   const key = "specwithcode:folder-copy:m4:source";
   expect(localStorage.getItem(key)).not.toBeNull();
   const { operationId } = JSON.parse(localStorage.getItem(key)!);
-  await click("Stop copy");
+  await click("Stop move");
   expect(state.calls.find(([name]) => name === "copySourceCancel")![1]).toMatchObject({
     environmentId: "m4",
     input: { operationId },
@@ -1310,6 +1310,10 @@ it("keeps the dialog open only while coordinator context transfers", async () =>
   );
   // Nothing to press while the coordinator moves: no button acts on the copy.
   expect(document.querySelectorAll('[data-slot="copy-actions"] button')).toHaveLength(0);
+  // The footer is never empty while it moves: it says how long and what to do.
+  expect(document.querySelector('[data-slot="copy-moving-hint"]')?.textContent).toBe(
+    "This takes a few seconds. Keep this window open until it starts.",
+  );
   expect(document.querySelector('[data-slot="dialog-close"][aria-label="Close"]')).toBeNull();
   expect(document.body.textContent).not.toContain("You can close this window.");
   state.handlers.prepare = prepare;
@@ -1322,6 +1326,12 @@ it("keeps the dialog open only while coordinator context transfers", async () =>
     document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
       ?.disabled,
   ).toBe(false);
+  // Done for a move: titled by where the project now is, with Open as the one primary.
+  expect(document.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(
+    "Project is on M3",
+  );
+  expect(dialogButton("Open on M3")).toBeTruthy();
+  expect(document.querySelector('[data-slot="copy-moving-hint"]')).toBeNull();
 });
 
 it("keeps measuring when the dialog closes and resumes the same operation when reopened", async () => {
@@ -1435,8 +1445,9 @@ it("drops a reopened copy whose source measuring failed and says why", async () 
   expect(names()).not.toContain("copyOffer");
   expect(names()).toContain("copySourceCancel");
   expect(localStorage.getItem(key)).toBeNull();
+  // Kept in its own words, with what to do next.
   expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-    "The folder could not be read.",
+    "The folder could not be read. Check that M4 can open the project's folder, then try again.",
   );
 });
 
@@ -2000,7 +2011,9 @@ it("shows the approval error only when the plan is still waiting", async () => {
   };
   await mount();
   await click("Copy to M3");
-  expect(container.querySelector('[role="alert"]')?.textContent).toBe("The connection dropped.");
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    "The connection dropped while copying files. Try again. If it happens again, check that M4 and M3 are both online.",
+  );
   expect(container.querySelector('[data-slot="copy-preview"]')).not.toBeNull();
 });
 

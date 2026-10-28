@@ -1,4 +1,8 @@
 import {
+  resolveWorktreeLocationMode,
+  type WorktreeLocationMode,
+} from "@specweave-studio/contracts";
+import {
   canonicalStudioPath,
   LEGACY_STUDIO_HOME_DIRECTORY,
   STUDIO_HOME_DIRECTORY,
@@ -18,8 +22,19 @@ export function resolveWorktreesDirectory(
   setting: string,
   defaultDir: string,
   path: Path.Path,
+  mode?: WorktreeLocationMode,
+  repository?: string,
 ): string | null {
-  if (setting === "") return defaultDir;
+  const effective = resolveWorktreeLocationMode({
+    worktreesDirectory: setting,
+    worktreeLocationMode: mode,
+  });
+  if (effective === "managed") return defaultDir;
+  if (effective === "project")
+    return repository && path.isAbsolute(repository)
+      ? path.join(repository, ".specwithcode", "worktrees")
+      : null;
+  if (!setting.trim()) return null;
   const expanded = expandHomePathWith(setting, path);
   if (!path.isAbsolute(expanded)) return null;
   const resolved = path.resolve(expanded);
@@ -54,6 +69,9 @@ export function managedWorktreesDirectories(
   settings: {
     readonly worktreesDirectory: string;
     readonly previousWorktreesDirectories: ReadonlyArray<string>;
+    readonly projectSettingsOverrides?: Readonly<
+      Record<string, { readonly worktreesDirectory?: string }>
+    >;
   },
   defaultDir: string,
   path: Path.Path,
@@ -61,7 +79,13 @@ export function managedWorktreesDirectories(
   const directories = new Set([defaultDir]);
   const legacyDefault = legacyStudioPathAlias(defaultDir, path);
   if (legacyDefault !== null) directories.add(legacyDefault);
-  for (const setting of [settings.worktreesDirectory, ...settings.previousWorktreesDirectories]) {
+  for (const setting of [
+    settings.worktreesDirectory,
+    ...settings.previousWorktreesDirectories,
+    ...Object.values(settings.projectSettingsOverrides ?? {}).flatMap((entry) =>
+      entry.worktreesDirectory ? [entry.worktreesDirectory] : [],
+    ),
+  ]) {
     const directory = resolveWorktreesDirectory(setting, defaultDir, path);
     if (directory !== null) directories.add(directory);
   }

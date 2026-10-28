@@ -93,6 +93,13 @@ describe("stepTone", () => {
     expect(stepTone("transfer", { ...base, stage: "moving" })).toBeNull();
   });
 
+  it("marks the live step stopped after a refused start, and only that step", () => {
+    expect(stepTone("where", { ...base, stage: "setup", errored: true })).toBe("failed");
+    expect(stepTone("copy", { ...base, stage: "setup", errored: true })).toBeNull();
+    expect(stepTone("review", { ...base, stage: "preview", errored: true })).toBe("failed");
+    expect(stepTone("where", { ...base, stage: "setup", errored: false })).toBeNull();
+  });
+
   it("leaves a copy going fine unmarked", () => {
     expect(stepTone("copy", { ...base, stage: "copying" })).toBeNull();
     expect(stepTone("review", { ...base, stage: "preview" })).toBeNull();

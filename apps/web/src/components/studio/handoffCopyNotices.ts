@@ -35,6 +35,15 @@ const ACTIVE_WORK = /^Work is still running (?:in this folder|here)\./;
 const ACTIVE_WORK_COPY =
   "Work is still running here. Files that change during the copy won't be included.";
 const ACTIVE_WORK_MOVE = `${ACTIVE_WORK_COPY.slice(0, -1)}, and the project moves once that work stops.`;
+/**
+ * The source's Git snapshot notice. Its second sentence (work made afterward stays here;
+ * copy again) is for a copy only: a move takes the coordinator along and continues there.
+ */
+const GIT_SNAPSHOT =
+  /^(Git history, branches and staged changes are captured when copying starts\.)\s+Work created afterward stays on this machine;.*$/s;
+
+const SNAPSHOT_FUTURE = "are captured when copying starts";
+const SNAPSHOT_PAST = "were captured when copying started";
 
 /** The list part of a notice, up to the sentence that follows it. */
 function namesOf(rest: string): string[] {
@@ -64,6 +73,10 @@ export function groupCopyNotices(input: {
    * or a move; null drops it once copying started, so Done never contradicts a finished move.
    */
   readonly activeWork?: "copy-only" | "copy-and-move" | null;
+  /** What this copy is: a move drops advice that only fits a copy of files. */
+  readonly mode?: "copy-only" | "copy-and-move";
+  /** Done: the Git snapshot is past (a copy says "were captured"; a finished move drops it). */
+  readonly done?: boolean;
 }): CopyNotices {
   const skipped = input.skipped;
   const worktrees = [...(skipped?.worktrees ?? [])];
@@ -91,6 +104,15 @@ export function groupCopyNotices(input: {
     if (ACTIVE_WORK.test(warning)) {
       if (input.activeWork)
         lines.push(input.activeWork === "copy-only" ? ACTIVE_WORK_COPY : ACTIVE_WORK_MOVE);
+      continue;
+    }
+    const snapshot = GIT_SNAPSHOT.exec(warning);
+    if (snapshot && input.mode === "copy-and-move") {
+      if (!input.done) lines.push(snapshot[1]!);
+      continue;
+    }
+    if (snapshot && input.done) {
+      lines.push(warning.replace(SNAPSHOT_FUTURE, SNAPSHOT_PAST));
       continue;
     }
     const independent = SEPARATE.exec(warning);

@@ -1,3 +1,4 @@
+import { WorkspaceModeControl } from "./chat/WorkspaceModeControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
@@ -678,6 +679,9 @@ export const BranchToolbar = memo(function BranchToolbar({
         !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
       )}
     >
+      {showGitControls && !envModeLocked && !forceNewWorktree && !activeWorktreePath ? (
+        <WorkspaceModeControl mode={effectiveEnvMode} onChange={onEnvModeChange} />
+      ) : null}
       {showGitControls ? (
         <div className="contents @3xl/composer-surface:hidden">
           <MobileRunContextSelector

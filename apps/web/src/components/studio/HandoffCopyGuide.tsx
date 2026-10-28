@@ -35,7 +35,9 @@ const TONE_CLASSES: Readonly<Record<CopyStepTone, string>> = {
 /**
  * Where › Copy › Done, with only the steps this run shows: What when the person chooses
  * files first, Review when there is something to review, Transfer for a move. Labels wrap
- * rather than truncate. It only shows progress: what was chosen is in Your choices.
+ * rather than truncate. It only shows progress: what was chosen is in Your choices. On a
+ * phone, where six steps wrap and strand "› Done" on a line of its own, one line says
+ * "Step 5 of 6 · Transfer" instead.
  */
 export function CopyStepLine({ steps }: { readonly steps: ReadonlyArray<CopyStepItem> }) {
   // Measuring and comparing in one click are part of copying: a skipped live step hands
@@ -51,48 +53,70 @@ export function CopyStepLine({ steps }: { readonly steps: ReadonlyArray<CopyStep
         : { ...step, state: "current" as const },
     )
     .filter((step) => !step.skipped);
+  const at = Math.max(
+    0,
+    shown.findIndex((step) => step.state === "current" || step.tone),
+  );
+  const now = shown[at];
   return (
-    <ol
-      className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs"
-      aria-label="Steps"
-      data-slot="copy-steps"
-    >
-      {shown.map((step, index) => {
-        const current = step.state === "current";
-        return (
-          <li key={step.id} className="flex items-center gap-1.5">
-            {index > 0 && (
-              <span className="text-muted-foreground" aria-hidden>
-                ›
+    <>
+      {now && (
+        <p
+          className={cn(
+            "flex items-center gap-1 text-xs sm:hidden",
+            now.tone ? `font-medium ${TONE_CLASSES[now.tone]}` : "text-muted-foreground",
+          )}
+          data-slot="copy-steps-compact"
+        >
+          {now.tone && <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />}
+          <span>
+            Step {at + 1} of {shown.length} · {now.label}
+            {now.tone ? `, ${TONE_NAMES[now.tone]}` : ""}
+          </span>
+        </p>
+      )}
+      <ol
+        className="hidden flex-wrap items-center gap-x-1.5 gap-y-1 text-xs sm:flex"
+        aria-label="Steps"
+        data-slot="copy-steps"
+      >
+        {shown.map((step, index) => {
+          const current = step.state === "current";
+          return (
+            <li key={step.id} className="flex items-center gap-1.5">
+              {index > 0 && (
+                <span className="text-muted-foreground" aria-hidden>
+                  ›
+                </span>
+              )}
+              <span
+                data-slot="copy-step"
+                data-step-id={step.id}
+                data-state={step.state}
+                data-tone={step.tone ?? undefined}
+                aria-current={current ? "step" : undefined}
+                className={cn(
+                  "inline-flex items-center gap-1 whitespace-nowrap",
+                  step.tone
+                    ? `font-medium ${TONE_CLASSES[step.tone]}`
+                    : current
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground",
+                )}
+              >
+                {step.tone ? (
+                  <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />
+                ) : (
+                  step.state === "done" && <CheckIcon className="size-3 shrink-0" aria-hidden />
+                )}
+                <span data-slot="copy-step-label">{step.label}</span>
+                {step.tone && <span className="sr-only">, {TONE_NAMES[step.tone]}</span>}
               </span>
-            )}
-            <span
-              data-slot="copy-step"
-              data-step-id={step.id}
-              data-state={step.state}
-              data-tone={step.tone ?? undefined}
-              aria-current={current ? "step" : undefined}
-              className={cn(
-                "inline-flex items-center gap-1 whitespace-nowrap",
-                step.tone
-                  ? `font-medium ${TONE_CLASSES[step.tone]}`
-                  : current
-                    ? "font-medium text-foreground"
-                    : "text-muted-foreground",
-              )}
-            >
-              {step.tone ? (
-                <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />
-              ) : (
-                step.state === "done" && <CheckIcon className="size-3 shrink-0" aria-hidden />
-              )}
-              <span data-slot="copy-step-label">{step.label}</span>
-              {step.tone && <span className="sr-only">, {TONE_NAMES[step.tone]}</span>}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }
 
@@ -135,7 +159,9 @@ export function CopyChoicesSummary({
             disabled={changeDisabled}
             onClick={onChange}
           >
-            Change (stops this copy)
+            {pending.mode === "copy-and-move"
+              ? "Change (stops the move)"
+              : "Change (stops this copy)"}
           </Button>
         )}
       </div>
@@ -231,11 +257,17 @@ export function CopyNextStep({ children }: { readonly children: ReactNode }) {
   );
 }
 
-/** The helper under the progress line: a working copy carries on with the window closed. */
-export function CopyWorkingHint() {
+/**
+ * The helper under the progress line: a working copy carries on with the window closed. A
+ * move's last step (starting the coordinator there) runs in this window, so a move says
+ * the window comes back for it.
+ */
+export function CopyWorkingHint({ move = false }: { readonly move?: boolean }) {
   return (
     <p className="text-xs text-muted-foreground" data-slot="copy-close-hint">
-      You can close this window. We&rsquo;ll notify you when it&rsquo;s done.
+      {move
+        ? "You can close this window while files copy. We’ll notify you; then reopen it to finish the move."
+        : "You can close this window. We’ll notify you when it’s done."}
     </p>
   );
 }

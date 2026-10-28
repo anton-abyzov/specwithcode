@@ -243,7 +243,7 @@ export function HandoffCopyStepPanels({
             </p>
           )}
           {/* Moving the coordinator must finish here; everything else carries on closed. */}
-          {stage !== "moving" && <CopyWorkingHint />}
+          {stage !== "moving" && <CopyWorkingHint move={mode === "copy-and-move"} />}
         </div>
       )}
 

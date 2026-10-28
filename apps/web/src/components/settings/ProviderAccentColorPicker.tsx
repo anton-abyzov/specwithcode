@@ -10,7 +10,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 
-const FALLBACK_ACCENT_COLOR = "#2563eb";
+const FALLBACK_ACCENT_COLOR = "#6d4fb5";
 
 function ProviderCustomColorPanel(props: {
   readonly value: string;

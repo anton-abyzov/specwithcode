@@ -290,7 +290,8 @@ it("keeps machine, folder, mode and chosen classes after Stop copy while choosin
   await click("Move to M3");
   expect(stage()).toBe("select");
   await act(async () => checkbox('[data-class="untracked"]').click());
-  await click("Stop copy");
+  // A move says Stop move.
+  await click("Stop move");
   expect(names()).toContain("copyRelease");
   expect(pointerNow()).toBeNull();
   expect(stage()).toBe("setup");

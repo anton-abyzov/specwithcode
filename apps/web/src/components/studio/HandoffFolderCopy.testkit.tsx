@@ -164,6 +164,8 @@ export interface FixtureOptions {
   canMove?: boolean;
   savedFolder?: string;
   m1Available?: boolean;
+  /** M3 still connecting or offline, as the dialog lists it. */
+  m3Unavailable?: string;
   savedProject?: (environmentId: string, folder: string) => Record<string, unknown> | null;
   dialog?: boolean;
   workspaceRoot?: string;
@@ -189,7 +191,7 @@ export function CopyFixture(overrides: FixtureOptions) {
       sourceLabel="M4"
       method="copy"
       machines={[
-        { id: "m3" as never, label: "M3", unavailable: null },
+        { id: "m3" as never, label: "M3", unavailable: overrides.m3Unavailable ?? null },
         {
           id: "m1" as never,
           label: "M1",

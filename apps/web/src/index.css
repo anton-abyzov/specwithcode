@@ -24,7 +24,8 @@
   --card-foreground: var(--color-zinc-800);
   --popover: var(--color-white);
   --popover-foreground: var(--color-zinc-800);
-  --primary: oklch(0.488 0.217 264);
+  /* Weave iris, the same values as the default palette in shell.css. */
+  --primary: oklch(0.511 0.155 293.7);
   --primary-foreground: var(--color-white);
   --secondary: var(--color-zinc-50);
   --secondary-foreground: var(--color-zinc-800);
@@ -81,8 +82,8 @@
   --code-foreground: var(--foreground);
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
-  --terminal-cursor: rgb(38 56 78);
-  --terminal-selection-background: rgb(37 63 99 / 20%);
+  --terminal-cursor: #4a3678;
+  --terminal-selection-background: rgb(109 79 181 / 20%);
 
   @variant dark {
     color-scheme: dark;
@@ -95,7 +96,9 @@
     --card-foreground: var(--color-neutral-100);
     --popover: color-mix(in srgb, var(--background) 97%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.571 0.21 264);
+    /* White text is under 3:1 on the dark-mode iris fill; the on-iris ink is 6.6:1. */
+    --primary: oklch(0.709 0.152 294.3);
+    --primary-foreground: #1b1328;
     --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 3%);
@@ -114,7 +117,7 @@
     --success-foreground: var(--color-emerald-400);
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
-    --update-foreground: color-mix(in oklab, var(--color-blue-400) 50%, var(--color-blue-300));
+    --update-foreground: color-mix(in oklab, var(--primary) 70%, var(--color-white));
     --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-control-surface: var(--muted);
@@ -122,8 +125,8 @@
     --sidebar-row-active: var(--accent);
     --sidebar-row-selected: var(--muted);
     --sidebar-stage-fade: var(--card);
-    --terminal-cursor: rgb(180 203 255);
-    --terminal-selection-background: rgb(180 203 255 / 25%);
+    --terminal-cursor: #cbbcff;
+    --terminal-selection-background: rgb(168 140 246 / 25%);
   }
 }
 

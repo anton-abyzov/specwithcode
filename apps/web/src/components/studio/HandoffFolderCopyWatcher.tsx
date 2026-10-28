@@ -288,7 +288,15 @@ export function HandoffFolderCopyWatcher({
       const firstCheck = quiet;
       quiet = false;
       if (destination._tag === "Success") {
-        setCopyActivity(activityKey, copyActivityFromStatus(destination.value, machine));
+        setCopyActivity(
+          activityKey,
+          copyActivityFromStatus(
+            destination.value,
+            machine,
+            saved.environmentId,
+            saved.existingDestination,
+          ),
+        );
         if (!copySettled(destination.value)) return true;
         if (firstCheck) return false;
         if ((saved.auto || saved.replaceAll) && destination.value.state === "previewed") {

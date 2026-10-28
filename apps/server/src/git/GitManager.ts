@@ -733,11 +733,6 @@ export const make = Effect.gen(function* () {
         );
     return resolveProjectSettings(settings, projectId).settings;
   });
-  // Best effort: a settings read failure falls back to the default location.
-  const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
-    Effect.map((settings) => settings.worktreesDirectory),
-    Effect.orElseSucceed(() => ""),
-  );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
   )(function* (input, options) {
@@ -748,8 +743,25 @@ export const make = Effect.gen(function* () {
             Effect.map((settings) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
           );
-    const worktreesDirectory = yield* readWorktreesDirectory;
-    return yield* gitCore.createWorktree(input, { worktreesDirectory, ...options, submodules });
+    const placement = yield* projectSettingsFor(input).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation: "createWorktree",
+            command: "git worktree add",
+            cwd: input.cwd,
+            detail: `Cannot read worktree placement settings: ${String(cause)}`,
+          }),
+      ),
+    );
+    return yield* gitCore.createWorktree(input, {
+      worktreesDirectory: placement.worktreesDirectory,
+      ...(placement.worktreeLocationMode
+        ? { worktreeLocationMode: placement.worktreeLocationMode }
+        : {}),
+      ...options,
+      submodules,
+    });
   });
 
   const readRepositoryInstructions = (cwd: string, fileName: string) =>
@@ -2620,6 +2632,16 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      const placement = yield* projectSettingsFor(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "preparePullRequestThread",
+              cwd: input.cwd,
+              detail: `Cannot read worktree placement settings: ${String(cause)}`,
+            }),
+        ),
+      );
       const worktree = yield* gitCore.createWorktree(
         {
           cwd: input.cwd,
@@ -2627,7 +2649,10 @@ export const make = Effect.gen(function* () {
           path: null,
         },
         {
-          worktreesDirectory: yield* readWorktreesDirectory,
+          worktreesDirectory: placement.worktreesDirectory,
+          ...(placement.worktreeLocationMode
+            ? { worktreeLocationMode: placement.worktreeLocationMode }
+            : {}),
           // Best effort: a settings read failure falls back to the checkout's specweave-studio.json.
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map((settings) => settings.worktreeSubmodules),

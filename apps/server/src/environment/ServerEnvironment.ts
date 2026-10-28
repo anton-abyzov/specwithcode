@@ -290,6 +290,7 @@ export const make = Effect.gen(function* () {
     serverVersion: packageJson.version,
     ...(serverSourceCommit === null ? {} : { serverSourceCommit }),
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+    defaultWorktreesDirectory: serverConfig.worktreesDir,
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
@@ -305,6 +306,7 @@ export const make = Effect.gen(function* () {
       storageCleanup: true,
       projectWorktreeCleanup: true,
       worktreesDirectory: true,
+      worktreeLocationMode: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
       projectSettingsOverrideChanges: true,

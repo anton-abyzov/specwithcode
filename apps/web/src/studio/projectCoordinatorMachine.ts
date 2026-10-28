@@ -24,7 +24,7 @@ export function coordinatorMachineKey(member: CoordinatorMachineMember): string 
 export const SUPERSEDED_COORDINATOR_PROBLEM =
   "Another machine took over this coordinator. It gives way once its machine is reachable; view the newer coordinator to send messages.";
 export const WORKERS_ONLY_PROBLEM =
-  "This copy runs workers, so its coordinator conversation is history. Choose Start a coordinator on this machine to send it messages.";
+  "This project now runs on another machine; the conversation here is kept as history. Switch to that machine above to send messages.";
 export const UNCONFIRMED_COORDINATOR_PROBLEM =
   "This copy has not confirmed its coordinator yet. Reconnect its machine to send messages.";
 
@@ -227,4 +227,27 @@ export function orchestratorCopies<T extends EnvironmentProject>(
         startReady(member.environmentId),
     };
   });
+}
+
+/** The checkout a project page keeps showing while its move dialog is open. */
+export interface HeldCheckout {
+  readonly projectKey: string;
+  readonly checkout: string;
+}
+
+/**
+ * The checkout to keep on screen for `projectKey`, or null. A move dialog holds the page it
+ * was opened on: when the coordinator lands on the other machine mid-move, the page must not
+ * switch to that checkout and hide the dialog's page (a hidden page's dialog stops updating).
+ * A held checkout that is no longer a member is let go.
+ */
+export function heldCheckoutKey(
+  held: HeldCheckout | null,
+  projectKey: string,
+  members: readonly CoordinatorMachineMember[],
+): string | null {
+  if (!held || held.projectKey !== projectKey) return null;
+  return members.some((member) => coordinatorMachineKey(member) === held.checkout)
+    ? held.checkout
+    : null;
 }

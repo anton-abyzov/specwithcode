@@ -878,3 +878,23 @@ describe("worktreesDirectory", () => {
     expect(back.previousWorktreesDirectories).toEqual(["/b"]);
   });
 });
+
+it("retains explicitly used project custom roots when overrides are cleared", () => {
+  const project = ProjectId.make("placement");
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsOverrides: {
+      [project]: {
+        worktreesDirectory: "/old-project-worktrees",
+        worktreeLocationMode: "custom" as const,
+      },
+    },
+  };
+  const next = applyServerSettingsPatch(settings, {
+    projectSettingsOverrideChanges: {
+      [project]: { clear: ["worktreesDirectory", "worktreeLocationMode"] },
+    },
+  });
+  expect(next.previousWorktreesDirectories).toContain("/old-project-worktrees");
+  expect(next.projectSettingsOverrides[project]).toBeUndefined();
+});

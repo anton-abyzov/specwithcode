@@ -27,6 +27,9 @@ describe("providerBrandFor", () => {
     expect(providerBrandFor({ driverKind: "acpRegistry", acpRegistryAgentId: "opencode-v2" })).toBe(
       "opencode",
     );
+    expect(
+      providerBrandFor({ driverKind: "acpRegistry", acpRegistryAgentId: "deepseek-harness" }),
+    ).toBe("deepseek");
     // A local command whose agent id was cleared keeps the generic mark.
     expect(providerBrandFor({ driverKind: "acpRegistry" })).toBeNull();
     // Icon URLs off the official CDN are ignored.

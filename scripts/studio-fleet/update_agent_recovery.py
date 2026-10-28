@@ -404,6 +404,7 @@ def withdrawn(agent, version):
         return None
     request, agent.config = agent.config['installRequestedAt'], config
     if config['installRequestedAt'] is not None and not ua.install_cancelled(config):
+        agent.serving = config['installRequestedAt']  # Taken on or ended here: a failure from now on names it.
         return ua.update_request.replaced(request, config, agent.state, version, ua.utcnow())
     agent.state['handledInstallRequestAt'] = config['installRequestedAt'] or request
     agent.state['quietSince'] = None

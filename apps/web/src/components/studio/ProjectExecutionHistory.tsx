@@ -50,7 +50,11 @@ export function ProjectExecutionHistory({
   );
   if (predecessors.length === 0) return null;
   return (
-    <section className="project-notice" aria-label="Coordinator handoff history">
+    <section
+      className="project-notice"
+      data-slot="handoff-history"
+      aria-label="Coordinator handoff history"
+    >
       <p>
         Continued from another machine. This session started fresh with the retained messages,
         project context and a committed Git checkpoint.

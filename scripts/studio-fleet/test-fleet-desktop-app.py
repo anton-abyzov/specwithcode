@@ -19,6 +19,7 @@ import os
 import pathlib
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -193,7 +194,8 @@ class Machine(unittest.TestCase):
     def env(self, **extra):
         env = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(self.home), 'FAKE': str(self.fake),
                'SWC_APP_DIR': str(self.apps), 'SWC_CACHE_DIR': str(self.cache), 'SWC_POLL': '0.1',
-               'SWC_QUIT_WAIT': '5', 'SWC_SHIPIT_GRACE': '0', 'SWC_SHIPIT_WAIT': '5', 'SWC_LAUNCH_WAIT': '0'}
+               'SWC_QUIT_WAIT': '5', 'SWC_SHIPIT_GRACE': '0', 'SWC_SHIPIT_WAIT': '5', 'SWC_LAUNCH_WAIT': '0',
+               'SWC_LOCK_WAIT': '0'}
         for tool in ('curl', 'PlistBuddy', 'codesign', 'spctl', 'pgrep', 'ps', 'open', 'trash', 'osascript'):
             env['SWC_' + tool.upper()] = str(self.bin / tool)
         env.update(extra)
@@ -681,6 +683,405 @@ class RemoteScript(Machine):
         app.kill()
         script.communicate(timeout=60)
         self.assertEqual(script.returncode, 0)
+
+    def test_a_lock_still_being_made_holds_and_one_left_without_its_record_is_taken_over(self):
+        # A run between its mkdir and its record holds the lock; one that stopped there is gone after 10 seconds.
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        lock.mkdir(parents=True)
+        code, lines = self.run_script()
+        self.assertEqual(code, 4, lines)
+        self.assertIn('another update of this app is starting; let it finish', self.failure(code, lines))
+        self.assertTrue(lock.is_dir())
+        self.assertEqual(bundle_version(self.app), OLD)
+        code, lines = self.run_script(dry=True)
+        self.assertEqual(code, 0, lines)
+        self.assertIn('another update of this app is starting', lines)
+        made = time.time() - 60
+        os.utime(str(lock), (made, made))
+        code, lines = self.run_script()
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
+        self.assertIn('took over the update lock of a run that is gone', lines)
+        self.assertFalse(lock.exists())
+
+    def test_a_run_leaves_a_lock_that_names_another_run(self):
+        make_app(self.app, OLD)
+        self.serve()
+        app = self.start(ignore_term=True)  # Holds the run in its quit, with the lock taken.
+        env = self.env(SWC_QUIT_WAIT='30')
+        env.update({'V': NEW, 'SHA': self.served, 'REPO': REPO, 'DRY_RUN': '0'})
+        script = subprocess.Popen(['/bin/bash', str(SCRIPT)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True)
+        self.processes.append(script)
+        for line in script.stdout:
+            if line.startswith('quitting the app'):
+                break
+        other = self.start('nothing')
+        record = '%d\n%s\n' % (other.pid, started(other.pid))
+        (self.cache / '.lock' / 'pid').write_text(record)  # Another run took the lock over meanwhile.
+        app.kill()
+        script.communicate(timeout=60)
+        self.assertEqual(script.returncode, 0)
+        self.assertEqual((self.cache / '.lock' / 'pid').read_text(), record)
+
+    def run_held_in_quit(self, meanwhile):
+        """Runs an update the app holds up in its quit, with the lock taken, calls meanwhile(), then lets the
+        app go; returns the run's exit code and output lines."""
+        make_app(self.app, OLD)
+        self.serve()
+        app = self.start(ignore_term=True)
+        env = self.env(SWC_QUIT_WAIT='30')
+        env.update({'V': NEW, 'SHA': self.served, 'REPO': REPO, 'DRY_RUN': '0'})
+        script = subprocess.Popen(['/bin/bash', str(SCRIPT)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True)
+        self.processes.append(script)
+        lines = []
+        for line in script.stdout:
+            lines.append(line.rstrip('\n'))
+            if line.startswith('quitting the app'):
+                break
+        meanwhile()
+        app.kill()
+        out, err = script.communicate(timeout=60)
+        self.assertEqual(err, '')
+        return script.returncode, lines + out.splitlines()
+
+    def test_a_run_removes_its_own_lock_left_without_its_record(self):
+        # Its record failed to write (a full disk, say) or went: the lock is still the folder this run made.
+        code, lines = self.run_held_in_quit((self.cache / '.lock' / 'pid').unlink)
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
+        self.assertFalse((self.cache / '.lock').exists())
+        code, lines = self.run_script()  # The next run finds no lock in its way.
+        self.assertEqual((code, self.result(lines)['how']), (0, 'already-current'))
+
+    def test_a_run_removes_its_own_lock_left_without_its_record_for_long(self):
+        # Without its record for longer than a starting run takes, the lock reads as nobody's: still this run's.
+        lock = self.cache / '.lock'
+
+        def record_gone_long_ago():
+            (lock / 'pid').unlink()
+            long_ago = time.time() - 60
+            os.utime(str(lock), (long_ago, long_ago))
+        code, lines = self.run_held_in_quit(record_gone_long_ago)
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
+        self.assertFalse(lock.exists())
+
+    def test_a_run_leaves_the_lock_another_run_made_in_place_of_its_own(self):
+        # Its lock went as it quit the app and another run made one, its record not written yet: that run's.
+        lock = self.cache / '.lock'
+
+        def made_again():
+            shutil.rmtree(str(lock))
+            lock.mkdir()
+        code, lines = self.run_held_in_quit(made_again)
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
+        self.assertTrue(lock.is_dir())
+
+    def mv_refusing_the_lock(self):
+        """A PATH whose mv cannot rename the update lock, as on a full volume; every other rename goes through."""
+        shims = self.root / 'shims'
+        shims.mkdir()
+        mv = shims / 'mv'
+        mv.write_text('#!/bin/bash\n' + r'''
+for arg in "$@"; do
+  case "$arg" in */.lock) exit 1 ;; esac
+done
+exec /bin/mv "$@"
+''')
+        mv.chmod(0o755)
+        return str(shims) + ':/usr/bin:/bin:/usr/sbin:/sbin'
+
+    def test_a_run_removes_its_own_lock_when_the_volume_will_not_rename_it(self):
+        make_app(self.app, OLD)
+        self.serve()
+        code, lines = self.run_script(PATH=self.mv_refusing_the_lock())
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
+
+    def test_a_run_takes_over_a_gone_runs_lock_when_the_volume_will_not_rename_it(self):
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        gone = subprocess.Popen(['/bin/sleep', '120'])
+        left = '%d\n%s\n' % (gone.pid, started(gone.pid))  # The record of a run that is gone.
+        gone.kill()
+        gone.wait()
+        lock.mkdir(parents=True)
+        (lock / 'pid').write_text(left)
+        code, lines = self.run_script(PATH=self.mv_refusing_the_lock())
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'), lines)
+        self.assertIn('took over the update lock of a run that is gone', lines)
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
+
+    def test_a_run_removing_a_lock_in_place_leaves_it_to_the_run_whose_record_lands_in_it(self):
+        # Another run made the lock and wrote its record as this one removed it in place: rm cannot remove the
+        # folder, and this run stops on the lock, now that run's, instead of failing on the rm.
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        gone = subprocess.Popen(['/bin/sleep', '120'])
+        left = '%d\n%s\n' % (gone.pid, started(gone.pid))  # The record of a run that is gone.
+        gone.kill()
+        gone.wait()
+        lock.mkdir(parents=True)
+        (lock / 'pid').write_text(left)
+        other = self.start('nothing')
+        theirs = '%d\n%s\n' % (other.pid, started(other.pid))
+        (self.fake / 'theirs').write_text(theirs)
+        path = self.mv_refusing_the_lock()
+        rm = self.root / 'shims' / 'rm'
+        rm.write_text('#!/bin/bash\n' + r'''
+for arg in "$@"; do
+  if [ "$arg" = "$SWC_CACHE_DIR/.lock" ]; then
+    /bin/cp "$FAKE/theirs" "$arg/pid"
+    exit 1
+  fi
+done
+exec /bin/rm "$@"
+''')
+        rm.chmod(0o755)
+        code, lines = self.run_script(PATH=path)
+        self.assertIn('another update of this app took the lock first', self.failure(code, lines))
+        self.assertEqual(code, 4)
+        self.assertEqual((lock / 'pid').read_text(), theirs)
+        self.assertEqual(bundle_version(self.app), OLD)
+
+    def stat_that_takes_the_new_lock(self, then):
+        """An SWC_STAT that, once this run made its lock and read its inode, does `then` to the lock (as
+        another run would) before this run writes its record."""
+        stub = self.bin / 'stat-then'
+        stub.write_text('#!/bin/bash\n' + r'''
+if [ "$2" = %i ] && [ "$3" = "$SWC_CACHE_DIR/.lock" ] && [ ! -e "$FAKE/stat-then.done" ]; then
+  /usr/bin/stat "$@"
+  rc=$?
+  : > "$FAKE/stat-then.done"
+  ''' + then + r'''
+  exit $rc
+fi
+exec /usr/bin/stat "$@"
+''')
+        stub.chmod(0o755)
+        return str(stub)
+
+    def test_a_run_whose_lock_went_before_its_record_stops_on_the_lock(self):
+        # Another run that judged a gone run's lock removed this run's new lock instead, between this run's
+        # mkdir and its record: this run stops as one whose lock was taken over, not as a failed command.
+        make_app(self.app, OLD)
+        self.serve()
+        stat = self.stat_that_takes_the_new_lock('/bin/mv "$3" "$3-other-run"')
+        code, lines = self.run_script(SWC_STAT=stat)
+        self.assertIn('took the lock over as this one did', self.failure(code, lines))
+        self.assertEqual(code, 4)
+        self.assertFalse((self.cache / '.lock').exists())
+        self.assertTrue((self.cache / '.lock-other-run').is_dir())  # The other run's to remove.
+        self.assertEqual(bundle_version(self.app), OLD)
+
+    def test_a_run_that_cannot_write_its_record_stops_and_removes_its_lock(self):
+        # Its lock stands but takes no record (no room, say): the run stops before it changes anything.
+        make_app(self.app, OLD)
+        self.serve()
+        stat = self.stat_that_takes_the_new_lock('/bin/mkdir "$3/pid"')  # A record that cannot be written.
+        code, lines = self.run_script(SWC_STAT=stat)
+        self.assertIn("could not write this run's record", self.failure(code, lines))
+        self.assertEqual(code, 5)
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
+        self.assertEqual(bundle_version(self.app), OLD)
+
+    def test_a_run_takes_over_only_the_lock_it_judged_gone(self):
+        # Another run took the same stale lock over while this one judged it: this one stops and leaves it.
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        gone = subprocess.Popen(['/bin/sleep', '120'])
+        left = '%d\n%s\n' % (gone.pid, started(gone.pid))  # The record of a run that is gone.
+        gone.kill()
+        gone.wait()
+        lock.mkdir(parents=True)
+        (lock / 'pid').write_text(left)
+        other = self.start('nothing')
+        theirs = '%d\n%s\n' % (other.pid, started(other.pid))
+        # ps, asked for the gone run's start time, first lets the other run take the lock over.
+        (self.fake / 'takeover').write_text('%d\n%s\n%s' % (gone.pid, lock, theirs))
+        stub = self.bin / 'ps-takeover'
+        stub.write_text('#!/bin/bash\n' + r'''
+pid="${@: -1}"
+if [ -f "$FAKE/takeover" ] && [ "$pid" = "$(sed -n 1p "$FAKE/takeover")" ]; then
+  lock="$(sed -n 2p "$FAKE/takeover")"
+  record="$(sed -n '3,4p' "$FAKE/takeover")"
+  rm -f "$FAKE/takeover"
+  rm -rf "$lock" && mkdir "$lock" && printf '%s\n' "$record" > "$lock/pid"
+fi
+exec "$(dirname "$0")/ps" "$@"
+''')
+        stub.chmod(0o755)
+        code, lines = self.run_script(SWC_PS=str(stub))
+        self.assertEqual(code, 4, lines)
+        self.assertEqual(self.failure(code, lines),
+                         'FAIL another update of this app took the lock first; let it finish')
+        self.assertFalse((self.fake / 'takeover').exists())
+        self.assertEqual((lock / 'pid').read_text(), theirs)
+        self.assertEqual(bundle_version(self.app), OLD)
+
+    def test_a_lock_its_run_releases_while_this_one_judges_it_is_taken(self):
+        # The run holding the lock finishes while this one judges it: the lock is free, so this run takes it.
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        holder = self.start('nothing')
+        lock.mkdir(parents=True)
+        (lock / 'pid').write_text('%d\n%s\n' % (holder.pid, started(holder.pid)))
+        # ps, asked for the holder's start time, first lets the holder finish: its lock goes, then the holder.
+        (self.fake / 'release').write_text('%d\n%s\n' % (holder.pid, lock))
+        stub = self.bin / 'ps-release'
+        stub.write_text('#!/bin/bash\n' + r'''
+pid="${@: -1}"
+if [ -f "$FAKE/release" ] && [ "$pid" = "$(sed -n 1p "$FAKE/release")" ]; then
+  lock="$(sed -n 2p "$FAKE/release")"
+  rm -f "$FAKE/release"
+  rm -rf "$lock"
+  kill "$pid"
+  n=0
+  while kill -0 "$pid" 2> /dev/null && [ "$n" -lt 200 ]; do
+    sleep 0.05
+    n=$((n + 1))
+  done
+fi
+exec "$(dirname "$0")/ps" "$@"
+''')
+        stub.chmod(0o755)
+        code, lines = self.run_script(SWC_PS=str(stub))
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'), lines)
+        self.assertFalse((self.fake / 'release').exists())
+        self.assertIsNotNone(holder.poll())
+        self.assertNotIn('took over the update lock of a run that is gone', lines)
+        self.assertEqual(bundle_version(self.app), NEW)
+        self.assertFalse(lock.exists())
+
+    def test_a_lock_made_after_the_judged_one_went_is_left_to_its_run(self):
+        # The lock went before this run read which lock it judges, and another run made one before this run
+        # took it: this run never judged that lock, so it stops and leaves it.
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        holder = self.start('nothing')
+        lock.mkdir(parents=True)
+        (lock / 'pid').write_text('%d\n%s\n' % (holder.pid, started(holder.pid)))
+        other = self.start('nothing')
+        theirs = '%d\n%s\n' % (other.pid, started(other.pid))
+        (self.fake / 'made').write_text('%s\n%s' % (lock, theirs))
+        stub = self.bin / 'stat-made'
+        stub.write_text('#!/bin/bash\n' + r'''
+# The first read of the lock's inode finds it gone; the next finds another run's lock in its place.
+if [ "$2" = %i ] && [ "$3" = "$(sed -n 1p "$FAKE/made")" ]; then
+  if [ ! -f "$FAKE/made.gone" ]; then
+    touch "$FAKE/made.gone"
+    rm -rf "$3"
+    exit 1
+  elif [ ! -f "$FAKE/made.taken" ]; then
+    touch "$FAKE/made.taken"
+    mkdir "$3" && sed -n '2,3p' "$FAKE/made" > "$3/pid"
+  fi
+fi
+exec /usr/bin/stat "$@"
+''')
+        stub.chmod(0o755)
+        code, lines = self.run_script(SWC_STAT=str(stub))
+        self.assertEqual(code, 4, lines)
+        self.assertEqual(self.failure(code, lines), 'FAIL another update of this app took the lock first; let it finish')
+        self.assertTrue((self.fake / 'made.taken').exists())
+        self.assertEqual((lock / 'pid').read_text(), theirs)
+        self.assertEqual(bundle_version(self.app), OLD)
+
+    def test_a_run_judging_a_lock_its_run_releases_never_sees_it_without_its_record(self):
+        # The run holding the lock removes it as another run judges it: the other run sees the whole lock or none,
+        # never a folder whose record went first, which it would take for a run that is starting.
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        shims = self.root / 'shims'
+        shims.mkdir()
+        rm = shims / 'rm'
+        rm.write_text('#!/bin/bash\n' + r'''
+# A slow rm: removes a lock folder's record, then waits for the test before it removes the rest.
+for arg in "$@"; do
+  if [ -d "$arg" ] && [ -f "$arg/pid" ]; then
+    /bin/rm -f "$arg/pid"
+    : > "$FAKE/rm.paused"
+    n=0
+    while [ ! -f "$FAKE/rm.go" ] && [ "$n" -lt 600 ]; do
+      sleep 0.05
+      n=$((n + 1))
+    done
+  fi
+done
+exec /bin/rm "$@"
+''')
+        rm.chmod(0o755)
+        env = self.env(PATH=str(shims) + ':/usr/bin:/bin:/usr/sbin:/sbin')
+        env.update({'V': NEW, 'SHA': self.served, 'REPO': REPO, 'DRY_RUN': '0'})
+        script = subprocess.Popen(['/bin/bash', str(SCRIPT)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True)
+        self.processes.append(script)
+        deadline = time.time() + 60
+        while not (self.fake / 'rm.paused').exists():
+            self.assertLess(time.time(), deadline, 'the run never released its lock')
+            self.assertIsNone(script.poll(), 'the run ended before it released its lock')
+            time.sleep(0.02)
+        self.assertFalse(lock.exists())
+        code, lines = self.run_script()  # Another run as the first one releases its lock.
+        self.assertEqual((code, self.result(lines)['how']), (0, 'already-current'), lines)
+        (self.fake / 'rm.go').write_text('')
+        out, err = script.communicate(timeout=60)
+        self.assertEqual((script.returncode, err), (0, ''), out)
+        self.assertEqual(self.result(out.splitlines())['how'], 'swapped')
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
+
+    def test_of_two_runs_that_take_the_lock_only_the_one_whose_record_stands_goes_on(self):
+        # Two runs judged the same lock gone, or made it one after the other: each waits, then reads the record
+        # again. The run whose record was replaced stops before it changes anything and leaves the lock alone.
+        make_app(self.app, OLD)
+        self.serve()
+        lock = self.cache / '.lock'
+        gone = subprocess.Popen(['/bin/sleep', '120'])
+        left = '%d\n%s\n' % (gone.pid, started(gone.pid))  # The record of a run that is gone.
+        gone.kill()
+        gone.wait()
+        other = self.start('nothing')
+        theirs = '%d\n%s\n' % (other.pid, started(other.pid))
+
+        def names(pid):
+            try:
+                return (lock / 'pid').read_text().split('\n')[0] == str(pid)
+            except OSError:
+                return False
+
+        for stale in (True, False):
+            with self.subTest(stale=stale):
+                if stale:
+                    lock.mkdir(parents=True)
+                    (lock / 'pid').write_text(left)
+                env = self.env(SWC_LOCK_WAIT='3')
+                env.update({'V': NEW, 'SHA': self.served, 'REPO': REPO, 'DRY_RUN': '0'})
+                script = subprocess.Popen(['/bin/bash', str(SCRIPT)], env=env, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True)
+                self.processes.append(script)
+                deadline = time.time() + 10
+                while not names(script.pid):
+                    self.assertLess(time.time(), deadline, 'the run never wrote its record')
+                    time.sleep(0.02)
+                (lock / 'pid').write_text(theirs)  # The other run's record, written as this run waits.
+                out, err = script.communicate(timeout=60)
+                self.assertEqual(err, '')
+                lines = out.splitlines()
+                self.assertEqual(script.returncode, 4, lines)
+                self.assertEqual(self.failure(4, lines),
+                                 'FAIL another update of this app took the lock over as this one did; let it finish')
+                self.assertEqual('took over the update lock of a run that is gone' in lines, stale)
+                self.assertEqual((lock / 'pid').read_text(), theirs)
+                self.assertEqual(bundle_version(self.app), OLD)
+                self.assertEqual(self.leftovers(), [])
+                shutil.rmtree(str(lock))
 
     def test_dry_run_changes_nothing(self):
         make_app(self.app, OLD)

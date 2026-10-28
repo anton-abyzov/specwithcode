@@ -101,6 +101,8 @@ it.effect("reads the request and the agent's answer where the update agent keeps
       source,
       "self.state['handledInstallRequestAt'] = self.config['installRequestedAt']",
     );
+    // Each status names the request its pass served, which the hold matches a failure against.
+    assert.include(source, "self.state['answeredInstallRequestAt'] = self.serving");
     assert.include(
       source,
       "hold = parse_time(self.config['installHoldUntil']) if self.config['installMode'] == 'force' else None",

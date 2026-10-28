@@ -256,10 +256,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-worktrees-location",
-    title: "Worktree location",
+    title: "Worktree storage",
     to: "/settings/storage",
-    scope: "environment-defaults",
-    searchTerms: ["worktree location folder directory path drive external disk"],
+    scope: "project-defaults",
+    searchTerms: [
+      "worktree storage location folder directory path drive external disk managed inside project custom checkout",
+    ],
   },
   {
     id: "storage-artifacts",

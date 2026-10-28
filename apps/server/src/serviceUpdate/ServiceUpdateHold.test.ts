@@ -107,6 +107,36 @@ describe("agentVerdictForHold", () => {
     }
   });
 
+  it("settles on a failure that names this hold's request, not one that names another or none", () => {
+    const earlier = iso(startedAtMs - 60_000);
+    for (const status of ["error", "manual-required"]) {
+      expect(verdict({ status, answeredInstallRequestAt: requested })).toEqual({
+        type: "settled",
+        status,
+      });
+      expect(verdict({ status, answeredInstallRequestAt: null })).toEqual({
+        type: "settled",
+        status,
+      });
+      // The pass that read the earlier request refused it after this one was written.
+      expect(verdict({ status, answeredInstallRequestAt: earlier })).toEqual({ type: "none" });
+      // So did an automatic pass, which served no request.
+      expect(verdict({ status, answeredInstallRequestAt: "" })).toEqual({ type: "none" });
+      expect(
+        verdict({ status, answeredInstallRequestAt: earlier, handledInstallRequestAt: earlier }),
+      ).toEqual({ type: "none" });
+    }
+    // A cancel cleared the request the refusal ends: it still settles that hold.
+    expect(
+      verdict({
+        status: "error",
+        installRequestedAt: null,
+        handledInstallRequestAt: requested,
+        answeredInstallRequestAt: requested,
+      }),
+    ).toEqual({ type: "settled", status: "error" });
+  });
+
   it("follows an install a cancel came too late for", () => {
     // The cancel cleared the request; the agent had already taken it up.
     const cancelled = { installRequestedAt: null, handledInstallRequestAt: requested };
@@ -351,6 +381,48 @@ it.live("releases itself once the update agent handled this request", () =>
       status: "installed",
       updatedAt: yield* isoIn(2),
       handledInstallRequestAt: requested,
+    });
+    assert.isTrue(yield* awaitSelfRelease(hold));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("keeps the hold through a refusal that names an earlier request or none", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-answered-" });
+    const statePath = path.join(dir, "state.json");
+    const configPath = path.join(dir, "config.json");
+    const earlier = yield* isoIn(-60_000);
+    yield* writeJson(statePath, { status: "waiting-for-quiet", updatedAt: yield* isoIn(-30_000) });
+    const hold = yield* holdAt(statePath, { pollMs: 10 });
+    yield* hold.acquire();
+
+    yield* Effect.sleep(Duration.millis(5));
+    const requested = yield* isoIn(0);
+    yield* writeJson(configPath, { installRequestedAt: requested, installMode: "force" });
+    // The pass that read the earlier request refuses it after this one was written.
+    yield* writeJson(statePath, {
+      status: "error",
+      updatedAt: yield* isoIn(1),
+      answeredInstallRequestAt: earlier,
+    });
+    yield* Effect.sleep(Duration.millis(60));
+    assert.isTrue(yield* hold.isHeld);
+
+    // As does an automatic pass, which served none.
+    yield* writeJson(statePath, {
+      status: "error",
+      updatedAt: yield* isoIn(2),
+      answeredInstallRequestAt: "",
+    });
+    yield* Effect.sleep(Duration.millis(60));
+    assert.isTrue(yield* hold.isHeld);
+
+    yield* writeJson(statePath, {
+      status: "error",
+      updatedAt: yield* isoIn(3),
+      answeredInstallRequestAt: requested,
     });
     assert.isTrue(yield* awaitSelfRelease(hold));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -762,6 +834,11 @@ it.live("a carried hold ends when the agent finishes with its request", () =>
       handledInstallRequestAt: request,
     });
     assert.isTrue(yield* awaitSelfRelease(hold));
+    // The poll that ended the hold removes its record, then counts the release: wait for the count.
+    for (let attempt = 0; attempt < 500 && (yield* hold.releaseCount) === 0; attempt += 1) {
+      yield* Effect.sleep(Duration.millis(10));
+    }
+    assert.equal(yield* hold.releaseCount, 1);
     assert.isFalse(yield* fs.exists(path.join(dir, Hold.HOLD_MARKER_FILE)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

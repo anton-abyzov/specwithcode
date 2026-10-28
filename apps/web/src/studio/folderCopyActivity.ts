@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { FolderCopySourceStatus, FolderCopyStatus } from "@specweave-studio/contracts";
+import { copiedProjectFolder, copyDestinationKey } from "./folderCopy";
 
 /**
  * Folder copies running in the background, app wide: what each one is doing, for the
@@ -17,6 +18,69 @@ export interface CopyActivity {
   readonly fraction: number | null;
   /** True while nothing runs and the copy waits for the person (a preview to review). */
   readonly waiting: boolean;
+  /** "Move and continue there": the project itself is moving, not only its files. */
+  readonly move?: boolean;
+  /** Where a move lands, once known: that project is the same one, mid-move. */
+  readonly destination?: MoveDestination;
+}
+
+/** The project a move registers on the destination, by id once known and by folder. */
+export interface MoveDestination {
+  readonly environmentId: string;
+  readonly projectId: string | null;
+  readonly folder: string;
+  /** The folder held a project before the move: it stays listed, with its own threads. */
+  readonly existing?: boolean;
+}
+
+/** Where a copy-and-move lands on `environmentId`; null for a copy of files only. */
+export function moveDestination(
+  status: Pick<
+    FolderCopyStatus,
+    "mode" | "projectId" | "projectFolder" | "targetFolder" | "projectRelativePath"
+  >,
+  environmentId: string,
+  existing = false,
+): MoveDestination | null {
+  if (status.mode !== "copy-and-move") return null;
+  return {
+    environmentId,
+    projectId: status.projectId ?? null,
+    folder:
+      status.projectFolder ?? copiedProjectFolder(status.targetFolder, status.projectRelativePath),
+    ...(existing ? { existing: true } : {}),
+  };
+}
+
+/**
+ * True when `project` is where a running move lands. The sidebar leaves it out, so the
+ * project shows once, on its source row with the move's progress, until the move finishes.
+ * A move waiting for review hides nothing, and neither does one into a folder that already
+ * held a project before the move: that project and its threads stay listed.
+ */
+export function isMovingDestination(
+  project: { readonly environmentId: string; readonly id: string; readonly workspaceRoot: string },
+  activities: ReadonlyMap<string, CopyActivity>,
+): boolean {
+  for (const [source, activity] of activities) {
+    const destination = activity.destination;
+    if (
+      !activity.move ||
+      activity.waiting ||
+      !destination ||
+      destination.existing ||
+      destination.environmentId !== project.environmentId
+    )
+      continue;
+    if (source === copyActivityKey(project.environmentId, project.id)) continue;
+    if (destination.projectId !== null && destination.projectId === project.id) return true;
+    if (
+      copyDestinationKey(project.environmentId, project.workspaceRoot) ===
+      copyDestinationKey(destination.environmentId, destination.folder)
+    )
+      return true;
+  }
+  return false;
 }
 
 /** A copy watched while its dialog is closed: the props its watcher needs. */
@@ -58,7 +122,12 @@ const sameActivity = (a: CopyActivity | undefined, b: CopyActivity | null) =>
       a.machine === b.machine &&
       a.label === b.label &&
       a.fraction === b.fraction &&
-      a.waiting === b.waiting;
+      a.waiting === b.waiting &&
+      a.move === b.move &&
+      a.destination?.environmentId === b.destination?.environmentId &&
+      a.destination?.projectId === b.destination?.projectId &&
+      a.destination?.folder === b.destination?.folder &&
+      a.destination?.existing === b.destination?.existing;
 
 export function setCopyActivity(key: string, activity: CopyActivity | null): void {
   if (sameActivity(activities.get(key), activity)) return;
@@ -137,7 +206,19 @@ const ratio = (done: number, total: number) =>
 export function copyActivityFromStatus(
   status: FolderCopyStatus,
   machine: string,
+  /** The destination's environment: given, a move's activity names where it lands. */
+  environmentId?: string,
+  /** The move's folder already held a project before it started. */
+  existing = false,
 ): CopyActivity | null {
+  const activity = statusActivity(status, machine);
+  const destination = environmentId ? moveDestination(status, environmentId, existing) : null;
+  return activity && status.mode === "copy-and-move"
+    ? { ...activity, move: true, ...(destination ? { destination } : {}) }
+    : activity;
+}
+
+function statusActivity(status: FolderCopyStatus, machine: string): CopyActivity | null {
   const progress = status.progress;
   const bytes = progress ? ratio(progress.bytesDone, progress.bytesTotal) : null;
   const files = progress ? ratio(progress.filesDone, progress.filesTotal) : null;
@@ -187,11 +268,11 @@ export function copyActivityFromSource(
   return null;
 }
 
-/** "Copy to ministorm: copying files, 42%". */
+/** "Copy to ministorm: copying files, 42%", or "Move to ministorm: …" for a move. */
 export function copyActivityText(activity: CopyActivity): string {
   const percent = activity.fraction === null ? "" : `, ${Math.floor(activity.fraction * 100)}%`;
   const label = activity.label.charAt(0).toLowerCase() + activity.label.slice(1);
-  return `Copy to ${activity.machine}: ${label}${percent}`;
+  return `${activity.move ? "Move" : "Copy"} to ${activity.machine}: ${label}${percent}`;
 }
 
 /** Test helper: forgets every activity, watch and opener. */
@@ -200,4 +281,51 @@ export function resetCopyActivityForTests(): void {
   watches = new Map();
   openers.clear();
   emit();
+}
+
+interface ArrangedGroups<G> {
+  readonly pinned: G[];
+  readonly unpinned: G[];
+}
+
+/**
+ * The sidebar's groups without the ones that only hold where a running move lands, and the
+ * listed keys to match: during a move the project shows once, on its source row.
+ */
+export function withoutMovingDestinations<
+  G extends {
+    readonly projectKey: string;
+    readonly memberProjects: ReadonlyArray<{
+      readonly environmentId: string;
+      readonly id: string;
+      readonly workspaceRoot: string;
+    }>;
+  },
+>(
+  visible: ArrangedGroups<G>,
+  listedKeys: ArrangedGroups<string>,
+  activities: ReadonlyMap<string, CopyActivity>,
+): { readonly visible: ArrangedGroups<G>; readonly listedKeys: ArrangedGroups<string> } {
+  if (activities.size === 0) return { visible, listedKeys };
+  const hidden = new Set(
+    [...visible.pinned, ...visible.unpinned]
+      .filter(
+        (group) =>
+          group.memberProjects.length > 0 &&
+          group.memberProjects.every((member) => isMovingDestination(member, activities)),
+      )
+      .map((group) => group.projectKey),
+  );
+  if (hidden.size === 0) return { visible, listedKeys };
+  const keep = (key: string) => !hidden.has(key);
+  return {
+    visible: {
+      pinned: visible.pinned.filter((group) => keep(group.projectKey)),
+      unpinned: visible.unpinned.filter((group) => keep(group.projectKey)),
+    },
+    listedKeys: {
+      pinned: listedKeys.pinned.filter(keep),
+      unpinned: listedKeys.unpinned.filter(keep),
+    },
+  };
 }

@@ -317,7 +317,66 @@ function ProjectSettings() {
   );
 }
 
+/**
+ * The coordinator column as ProjectWorkspaceSurface lays it out (a display: contents wrapper
+ * inside .sws-coordinator), with the "Continued from another machine" banner's history open
+ * over a long conversation: the banner must stop at 40% of the column and scroll inside.
+ * The banner's markup mirrors ProjectExecutionHistory; its data hooks need a live server.
+ */
+function CoordinatorBanner() {
+  const turns = Array.from({ length: 14 }, (_, index) => index);
+  return (
+    <div
+      className="project-surface"
+      style={{ height: "100dvh", display: "flex", flexDirection: "column" }}
+    >
+      <div className="project-workspace-columns sws-columns" data-overview="closed">
+        <section
+          className="project-coordinator sws-coordinator"
+          aria-label="Project coordinator"
+          data-testid="coordinator"
+        >
+          <div className="contents">
+            <section
+              className="project-notice"
+              data-slot="handoff-history"
+              aria-label="Coordinator handoff history"
+            >
+              <p>
+                Continued from another machine. This session started fresh with the retained
+                messages, project context and a committed Git checkpoint.
+              </p>
+              <details open>
+                <summary>Previous coordinator on M4 · Read only</summary>
+                <div aria-label="Retained coordinator messages on M4">
+                  {turns.map((turn) => (
+                    <article key={turn} className="project-message">
+                      <h3>{turn % 2 ? "Coordinator" : "You"}</h3>
+                      <p>Retained message {turn + 1} from the coordinator on M4.</p>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            </section>
+            <div className="project-conversation" data-testid="conversation">
+              {turns.map((turn) => (
+                <article
+                  key={turn}
+                  className={`project-message ${turn % 2 ? "project-message-assistant" : "project-message-user"}`}
+                >
+                  <p>{turn === 0 ? "First message on Minis" : `Message ${turn + 1} on Minis`}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function Fixture() {
+  if (view === "coordinator-banner") return <CoordinatorBanner />;
   return (
     <main className="min-h-screen bg-background p-4 text-foreground" data-testid="fixture">
       {view === "badges" ? <Badges /> : null}

@@ -9,7 +9,8 @@ it from `ProviderLogoMarks.tsx`, so a provider looks the same everywhere.
 - Built-in drivers map by driver kind (`codex` is OpenAI, `muse` is Meta).
 - ACP Registry agents map by their registry id or official CDN icon URL, never
   by a user-editable display name. A local command whose agent id was cleared
-  keeps the generic ACP mark. Unknown registry agents still load their icon
+  keeps the generic ACP mark, except a local Copilot or DeepSeek Harness
+  (`dsh`) command, which is named by its executable. Unknown registry agents still load their icon
   from the registry CDN.
 - Multicolour marks keep their brand colours; monochrome marks follow the
   surrounding text colour, so they read in light and dark themes.
@@ -36,6 +37,7 @@ used only to identify that provider.
 | Kiro                                       | Kiro tile (lobehub `kiro-color`, tile colour from Kiro's own icon)                 |
 | goose, Cline, Auggie, Factory Droid, Junie | Vendor-submitted ACP Registry icons                                                |
 | Amp                                        | Amp mark (lobehub `amp`, same as the Amp ACP adapter)                              |
+| DeepSeek                                   | DeepSeek whale, #4D6BFE (lobehub `deepseek-color`)                                 |
 
 To add a provider, add its SVG as a component in `ProviderLogoMarks.tsx`
 (prefix gradient ids with `useId()`), add the brand to `ProviderLogo.tsx` and

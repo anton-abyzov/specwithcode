@@ -4,7 +4,11 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import { nodePath as NodePath } from "./nodePath.ts";
-import { legacyStudioPathAlias, managedWorktreesDirectories } from "./worktreesDirectory.ts";
+import {
+  legacyStudioPathAlias,
+  managedWorktreesDirectories,
+  resolveWorktreesDirectory,
+} from "./worktreesDirectory.ts";
 
 const settings = { worktreesDirectory: "", previousWorktreesDirectories: [] };
 
@@ -44,3 +48,19 @@ it("never claims a real legacy root beside a fresh branded profile", () =>
     ]);
     assert.isNull(legacyStudioPathAlias("/srv/worktrees", NodePath));
   }));
+
+it("resolves modes without moving or reinterpreting saved legacy roots", () => {
+  assert.equal(resolveWorktreesDirectory("/old", "/managed", NodePath), "/old");
+  assert.equal(
+    resolveWorktreesDirectory("/old", "/managed", NodePath, "managed", "/repo"),
+    "/managed",
+  );
+  assert.equal(
+    resolveWorktreesDirectory("/old", "/managed", NodePath, "project", "/repo"),
+    "/repo/.specwithcode/worktrees",
+  );
+  assert.isNull(resolveWorktreesDirectory("", "/managed", NodePath, "custom", "/repo"));
+  assert.isNull(resolveWorktreesDirectory("relative", "/managed", NodePath, "custom", "/repo"));
+  assert.isNull(resolveWorktreesDirectory("/", "/managed", NodePath, "custom", "/repo"));
+  assert.isNull(resolveWorktreesDirectory("", "/managed", NodePath, "project"));
+});

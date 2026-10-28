@@ -1,3 +1,4 @@
+import { LoaderCircleIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import type { HandoffDestination } from "./HandoffResults";
@@ -45,6 +46,8 @@ export function MachineOptionRows(props: {
   value: string | null;
   onChange: (value: string) => void;
   disabled?: boolean;
+  /** The list is still being read: a quiet row says so below the machines known so far. */
+  loading?: boolean;
   /** Names the group for screen readers when no visible legend wraps it. */
   "aria-label"?: string;
 }) {
@@ -84,6 +87,16 @@ export function MachineOptionRows(props: {
           </label>
         );
       })}
+      {props.loading ? (
+        <div
+          role="status"
+          data-slot="machine-options-loading"
+          className="flex min-w-0 items-center gap-3 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground"
+        >
+          <LoaderCircleIcon className="size-4 shrink-0 animate-spin" aria-hidden />
+          <span className="min-w-0 truncate">Looking for your other machines…</span>
+        </div>
+      ) : null}
     </RadioGroup>
   );
 }

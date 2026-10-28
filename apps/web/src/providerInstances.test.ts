@@ -765,7 +765,7 @@ describe("provider icon metadata", () => {
         [instanceId]: {
           driver,
           enabled: false,
-          config: { ...registryConfig, source: "local", commandPath: "dsh" },
+          config: { ...registryConfig, source: "local", commandPath: "my-agent" },
         },
       },
       providers: {} as never,
@@ -782,6 +782,26 @@ describe("provider icon metadata", () => {
     expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
     expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
     expect(restoredEntry?.enabled).toBe(true);
+  });
+
+  it("names a local DeepSeek Harness command by its executable", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_deepseek_harness");
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const [entry] = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([provider({ provider: driver, instanceId })]),
+      {
+        providerInstances: {
+          [instanceId]: {
+            driver,
+            enabled: true,
+            config: { source: "local", commandPath: "/Users/me/.local/bin/dsh" },
+          },
+        },
+        providers: {} as never,
+      },
+    );
+    expect(entry?.acpRegistryAgentId).toBe("deepseek-harness");
+    expect(entry?.acpRegistryIconUrl).toBeUndefined();
   });
 
   it("retains server-published registry icons without local settings", () => {

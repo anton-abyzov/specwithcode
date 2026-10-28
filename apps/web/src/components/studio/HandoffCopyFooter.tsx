@@ -13,20 +13,33 @@ import { HandoffCopyDoneActions, HandoffCopyFailedActions } from "./HandoffCopyD
 import type { CopyStage } from "./handoffCopySteps";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
+import { plainHandoffError } from "./handoffErrors";
 
 /** Screen 1: Cancel closes the dialog, the primary starts (and with file types, stops to choose). */
 function SetupActions({
   disabled,
+  hint,
   label,
   onStart,
 }: {
   readonly disabled: boolean;
+  /** What the primary waits for (no machine yet), said quietly beside it. */
+  readonly hint: string | null;
   readonly label: string;
   readonly onStart: () => void;
 }) {
   const close = useProjectMoveDialog()?.close ?? null;
   return (
     <>
+      {hint && (
+        <span
+          className="min-w-0 flex-1 self-center text-xs text-muted-foreground"
+          data-slot="copy-setup-hint"
+        >
+          {hint}
+        </span>
+      )}
+      {/* One primary, filled even while off, so the dialog never shows two outline buttons. */}
       <Button disabled={disabled} onClick={onStart}>
         {label}
       </Button>
@@ -42,14 +55,17 @@ function SetupActions({
 /** The leading ghost while a copy works or waits: stops it before anything is applied. */
 function StopCopyButton({
   disabled,
+  move,
   onStop,
 }: {
   readonly disabled: boolean;
+  /** A move says Stop move: the person is moving the project, not copying files. */
+  readonly move: boolean;
   readonly onStop: () => void;
 }) {
   return (
     <Button variant="ghost" data-leading disabled={disabled} onClick={onStop}>
-      Stop copy
+      {move ? "Stop move" : "Stop copy"}
     </Button>
   );
 }
@@ -66,6 +82,7 @@ export function HandoffCopyFooter({
   machine,
   mode,
   targetLabel,
+  sourceLabel,
   auto,
   selection,
   setupBlocked,
@@ -106,6 +123,8 @@ export function HandoffCopyFooter({
   readonly machine: EnvironmentId | null;
   readonly mode: FolderCopyMode;
   readonly targetLabel: string;
+  /** This machine's name, for an error's next step. */
+  readonly sourceLabel?: string;
   readonly auto: boolean;
   readonly chooseFirst: boolean;
   readonly selection: ReadonlyArray<FolderCopyFileClass>;
@@ -147,10 +166,15 @@ export function HandoffCopyFooter({
           role="alert"
           className="max-h-24 basis-full overflow-y-auto wrap-anywhere text-sm text-destructive-foreground"
         >
-          {error}
+          {plainHandoffError(error, mode === "copy-and-move" ? "move" : "copy", {
+            source: sourceLabel,
+            destination: targetLabel,
+          })}
         </p>
       )}
-      {stage === "scanning" && <StopCopyButton disabled={false} onStop={onCancelMeasure} />}
+      {stage === "scanning" && (
+        <StopCopyButton disabled={false} move={mode === "copy-and-move"} onStop={onCancelMeasure} />
+      )}
       {stage === "setup" &&
         (pending ? (
           <Button disabled={busy} onClick={() => onResume(pending)}>
@@ -159,7 +183,8 @@ export function HandoffCopyFooter({
         ) : (
           <SetupActions
             disabled={busy || setupBlocked}
-            label={`${mode === "copy-and-move" ? "Move" : "Copy"} to ${targetLabel}`}
+            hint={machine ? null : "Choose a machine above."}
+            label={`${mode === "copy-and-move" ? "Move" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
             onStart={onMeasure}
           />
         ))}
@@ -170,7 +195,7 @@ export function HandoffCopyFooter({
       )}
       {/* While comparing, the run is busy: Stop copy waits for the compare to settle. */}
       {(stage === "select" || stage === "planning") && (
-        <StopCopyButton disabled={busy} onStop={onStop} />
+        <StopCopyButton disabled={busy} move={mode === "copy-and-move"} onStop={onStop} />
       )}
       {stage === "preview" && copy && (
         <>
@@ -228,7 +253,7 @@ export function HandoffCopyFooter({
         </>
       )}
       {stage === "copying" && copy && copy.state !== "applying" && copy.state !== "applied" && (
-        <StopCopyButton disabled={working} onStop={onStop} />
+        <StopCopyButton disabled={working} move={mode === "copy-and-move"} onStop={onStop} />
       )}
       {stage === "failed" && copy && (
         <HandoffCopyFailedActions
@@ -264,6 +289,15 @@ export function HandoffCopyFooter({
           onLink={onLink}
           onStartNew={onStartNew}
         />
+      )}
+      {/* Starting the coordinator must finish here; the footer says so instead of going blank. */}
+      {stage === "moving" && (
+        <p
+          className="min-w-0 flex-1 self-center text-sm text-muted-foreground"
+          data-slot="copy-moving-hint"
+        >
+          This takes a few seconds. Keep this window open until it starts.
+        </p>
       )}
       {stage === "undone" && (
         <Button variant="outline" onClick={onStartNew}>

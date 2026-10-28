@@ -1392,6 +1392,16 @@ stage_quit_desktop() {
     command="$(q desktop-command --may-fail -- ps -o comm= -p "$pid")"
     # A helper listed by pgrep exits with the app it belongs to; skip it once it is gone.
     if [ -z "$command" ] && ! t desktop-running -- kill -0 "$pid" 2> /dev/null; then continue; fi
+    # One still exiting after the app quit shows another name for a moment; give it 5s.
+    if [ "$command" != "$APP/Contents/MacOS/SpecWithCode" ]; then
+      waited=0
+      while [ $waited -lt 5 ] && t desktop-running -- kill -0 "$pid" 2> /dev/null; do
+        sleep 1
+        waited=$((waited + 1))
+      done
+      t desktop-running -- kill -0 "$pid" 2> /dev/null || continue
+      command="$(q desktop-command --may-fail -- ps -o comm= -p "$pid")"
+    fi
     [ "$command" = "$APP/Contents/MacOS/SpecWithCode" ] ||
       die "process $pid is called SpecWithCode but is not $APP; quit it yourself"
     x quit-desktop -- kill -TERM "$pid"

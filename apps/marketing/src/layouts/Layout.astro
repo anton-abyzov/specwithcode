@@ -130,9 +130,10 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     --fg-faint: #52525b;
     --border: rgba(255, 255, 255, 0.08);
     --border-strong: rgba(255, 255, 255, 0.14);
-    --accent-h: 250;
-    --accent: oklch(0.68 0.17 var(--accent-h));
-    --accent-dim: oklch(0.68 0.17 var(--accent-h) / 0.15);
+    /* Weave iris on a dark page: #a88cf6. */
+    --accent-h: 294.3;
+    --accent: oklch(0.709 0.152 var(--accent-h));
+    --accent-dim: oklch(0.709 0.152 var(--accent-h) / 0.15);
     --ok: oklch(0.72 0.16 150);
     --warn: oklch(0.76 0.15 75);
     --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;

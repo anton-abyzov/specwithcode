@@ -80,10 +80,12 @@ export type CopyStepTone = "failed" | "held" | "attention";
  */
 export function stepTone(
   id: CopyStepId,
-  input: ProgressInput & { readonly held: boolean },
+  input: ProgressInput & { readonly held: boolean; readonly errored?: boolean },
 ): CopyStepTone | null {
   if (id !== progressStep(input)) return null;
   if (input.stage === "failed") return input.held ? "held" : "failed";
+  // A refused start or step (an error in the footer) stopped here; trying again is fine.
+  if (input.errored) return "failed";
   if (input.stage === "done" && id === "transfer") return "attention";
   return null;
 }

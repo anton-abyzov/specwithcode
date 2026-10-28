@@ -1225,8 +1225,9 @@ export function resolveThreadStatusPill(input: {
   if (thread.hasPendingUserInput) {
     return {
       label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      // The dark lift keeps AA on an active dark row (iris alone is 4.44:1).
+      colorClass: "text-primary dark:text-[color-mix(in_srgb,var(--primary)_80%,white)]",
+      dotClass: "bg-primary",
       pulse: false,
     };
   }

@@ -1199,6 +1199,34 @@ it.effect("runs a Scratch thread launched at the root in its own folder", () =>
   }),
 );
 
+it.effect("passes project-local placement to agent-created worktrees", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      serverSettings: {
+        worktreesDirectory: "/global-worktrees",
+        projectSettingsOverrides: { [projectId]: { worktreeLocationMode: "project" } },
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:placement",
+          thread: "thread:placement",
+          message: "Build",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+      assert.equal(harness.createWorktree.mock.calls[0]?.[1]?.worktreeLocationMode, "project");
+      assert.equal(
+        harness.createWorktree.mock.calls[0]?.[1]?.worktreesDirectory,
+        "/global-worktrees",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("names the worktree itself when the client provides no branch", () =>
   Effect.gen(function* () {
     const harness = makeHarness();

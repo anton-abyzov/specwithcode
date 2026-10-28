@@ -3047,6 +3047,8 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.archive"),
     commandId: CommandId,
     threadId: ThreadId,
+    /** Server lifecycle sweep: conditionally archive without stopping or cleaning resources. */
+    inactive: Schema.optional(Schema.Struct({ expectedUpdatedAt: Schema.DateTimeUtc })),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unarchive"),

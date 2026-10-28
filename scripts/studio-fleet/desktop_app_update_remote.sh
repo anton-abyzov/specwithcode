@@ -34,9 +34,9 @@
 # copy that cannot be unpacked or fails a check (after the rename too: the previous app is then back),
 # and 6 when a rename failed (the reason says where each app is).
 # Tests override paths, waits and tools: SWC_APP_DIR, SWC_CACHE_DIR, SWC_REQUIREMENT, SWC_POLL,
-# SWC_QUIT_WAIT, SWC_SHIPIT_GRACE, SWC_SHIPIT_WAIT, SWC_LAUNCH_WAIT, and SWC_CURL, SWC_SHASUM,
-# SWC_PLISTBUDDY, SWC_CODESIGN, SWC_SPCTL, SWC_DITTO, SWC_UNZIP, SWC_DF, SWC_PGREP, SWC_PS,
-# SWC_OPEN, SWC_TRASH, SWC_OSASCRIPT.
+# SWC_QUIT_WAIT, SWC_SHIPIT_GRACE, SWC_SHIPIT_WAIT, SWC_LAUNCH_WAIT, SWC_LOCK_WAIT, and SWC_CURL,
+# SWC_SHASUM, SWC_PLISTBUDDY, SWC_CODESIGN, SWC_SPCTL, SWC_DITTO, SWC_UNZIP, SWC_DF, SWC_PGREP,
+# SWC_PS, SWC_STAT, SWC_DATE, SWC_OPEN, SWC_TRASH, SWC_OSASCRIPT.
 #
 # Everything runs from main, called on the last line: a stream cut short runs nothing. A session
 # dropped while it runs does not stop it halfway: SIGPIPE is ignored, output then goes nowhere, and
@@ -73,6 +73,7 @@ init() {
   SHIPIT_GRACE="${SWC_SHIPIT_GRACE:-5}"
   SHIPIT_WAIT="${SWC_SHIPIT_WAIT:-90}"
   LAUNCH_WAIT="${SWC_LAUNCH_WAIT:-10}"
+  LOCK_WAIT="${SWC_LOCK_WAIT:-2}"
   CURL="${SWC_CURL:-/usr/bin/curl}"
   SHASUM="${SWC_SHASUM:-/usr/bin/shasum}"
   PLISTBUDDY="${SWC_PLISTBUDDY:-/usr/libexec/PlistBuddy}"
@@ -83,6 +84,8 @@ init() {
   DF="${SWC_DF:-/bin/df}"
   PGREP="${SWC_PGREP:-/usr/bin/pgrep}"
   PS="${SWC_PS:-/bin/ps}"
+  STAT="${SWC_STAT:-/usr/bin/stat}"
+  DATE="${SWC_DATE:-/bin/date}"
   OPEN="${SWC_OPEN:-/usr/bin/open}"
   TRASH="${SWC_TRASH:-/usr/bin/trash}"
   OSASCRIPT="${SWC_OSASCRIPT:-/usr/bin/osascript}"
@@ -101,7 +104,16 @@ finish() {
     [ -n "$REASON" ] || REASON="stopped unexpectedly (exit $rc) at: ${FAILED_COMMAND:-unknown}"
     say "FAIL $REASON"
   fi
-  if [ -n "$LOCKED" ]; then rm -rf "$LOCK"; fi
+  # Only this run's lock: one another run took over stays with that run. A lock left without a live
+  # run's record (its record failed to write, say) is this run's while it is the directory it made.
+  if [ -n "$LOCKED" ]; then
+    case "$(lock_holder)" in
+      "$$") release_lock ;;
+      '' | starting)
+        if [ -n "$LOCK_ID" ] && [ "$("$STAT" -f %i "$LOCK" 2> /dev/null)" = "$LOCK_ID" ]; then release_lock; fi
+        ;;
+    esac
+  fi
   exit "$rc"
 }
 
@@ -169,33 +181,85 @@ started() { "$PS" -o lstart= -p "$1" 2> /dev/null | awk '{ $1 = $1; print }' || 
 # The pid of the run that holds the lock, or nothing. The lock names its run by pid and start time:
 # a run stopped by a power loss or SIGKILL keeps its lock, and its pid alone may belong to any other
 # process by the next run (after a reboot, say), which would then stop every run and the repair.
+# A lock without its record yet ("starting") is a run between its mkdir and its record, for up to
+# 10 seconds; one older than that is a run that stopped there.
 lock_holder() {
-  local pid="" start=""
+  local pid="" start="" made now
   { read -r pid && read -r start; } 2> /dev/null < "$LOCK/pid" || true
-  case "$pid" in '' | *[!0-9]*) return 0 ;; esac
+  case "$pid" in
+    '' | *[!0-9]*)
+      made="$("$STAT" -f %m "$LOCK" 2> /dev/null || true)"
+      now="$("$DATE" +%s 2> /dev/null || true)"
+      case "$made:$now" in :* | *: | *[!0-9:]*) return 0 ;; esac
+      if [ $((now - made)) -lt 10 ]; then printf 'starting\n'; fi
+      return 0
+      ;;
+  esac
   if [ -n "$start" ] && [ "$(started "$pid")" = "$start" ]; then printf '%s\n' "$pid"; fi
   return 0
 }
 
+# Moves the lock aside, then removes it: a run judging it meanwhile sees all of it or none of it, never a
+# lock whose record went first, which it would take for a run that is starting. A rename the volume
+# refuses (a full one, say) removes the lock in place, so it is never left behind; a record another
+# run writes into it meanwhile keeps it, and the mkdir that follows leaves it to that run.
+release_lock() {
+  local aside="$CACHE/.lock-gone-$$"
+  rm -rf "$aside"
+  if mv "$LOCK" "$aside" 2> /dev/null; then
+    rm -rf "$aside"
+  elif [ -e "$LOCK" ]; then
+    rm -rf "$LOCK" 2> /dev/null || true
+  fi
+}
+
 take_lock() {
-  local holder
+  local holder me seen now
   if dry; then
     holder="$(lock_holder)"
-    if [ -n "$holder" ]; then say "another update of this app runs (pid $holder)"; fi
+    case "$holder" in
+      '') ;;
+      starting) say "another update of this app is starting" ;;
+      *) say "another update of this app runs (pid $holder)" ;;
+    esac
     return 0
   fi
   mkdir -p "$CACHE"
+  me="$(started "$$")" # Read first: the record follows the mkdir at once.
   if ! mkdir "$LOCK" 2> /dev/null; then
+    seen="$("$STAT" -f %i "$LOCK" 2> /dev/null || true)" # The lock judged below.
     holder="$(lock_holder)"
-    if [ -n "$holder" ]; then
-      die 4 "another update of this app runs (pid $holder); let it finish"
+    case "$holder" in
+      '') ;;
+      starting) die 4 "another update of this app is starting; let it finish" ;;
+      *) die 4 "another update of this app runs (pid $holder); let it finish" ;;
+    esac
+    # Remove only the lock judged gone: one made since (by a run that judged it gone too, or after it
+    # was released) is that run's. A lock its run released meanwhile is free to take.
+    now="$("$STAT" -f %i "$LOCK" 2> /dev/null || true)"
+    if [ -n "$now" ]; then
+      [ "$now" = "$seen" ] || die 4 "another update of this app took the lock first; let it finish"
+      say "took over the update lock of a run that is gone"
+      release_lock
     fi
-    say "took over the update lock of a run that is gone"
-    rm -rf "$LOCK"
-    mkdir "$LOCK" || die 4 "could not take the update lock $LOCK"
+    if ! mkdir "$LOCK" 2> /dev/null; then
+      [ ! -e "$LOCK" ] || die 4 "another update of this app took the lock first; let it finish"
+      die 4 "could not take the update lock $LOCK"
+    fi
   fi
   LOCKED=1
-  printf '%s\n%s\n' "$$" "$(started "$$")" > "$LOCK/pid"
+  LOCK_ID="$("$STAT" -f %i "$LOCK" 2> /dev/null || true)"
+  if ! printf '%s\n%s\n' "$$" "$me" 2> /dev/null > "$LOCK/pid"; then
+    # Gone before its record: another run that judged the lock this one replaced gone removed it.
+    [ -n "$LOCK_ID" ] && [ "$("$STAT" -f %i "$LOCK" 2> /dev/null || true)" = "$LOCK_ID" ] ||
+      die 4 "another update of this app took the lock over as this one did; let it finish"
+    die 5 "could not write this run's record in $LOCK (is the disk full?)"
+  fi
+  # Another run that judged the same lock gone may have removed this one and made its own meanwhile:
+  # the run whose record stands goes on and the other stops here, unless one of them stalled for
+  # longer than LOCK_WAIT between judging the lock and writing its record.
+  sleep "$LOCK_WAIT"
+  [ "$(lock_holder)" = "$$" ] || die 4 "another update of this app took the lock over as this one did; let it finish"
 }
 
 trash_old() {
@@ -443,7 +507,7 @@ main() {
   # The ssh session can drop mid-run (a worker's network moves): a write to it then fails instead
   # of killing the run between quitting the app and reopening it. Every pipe below reads to the end.
   trap '' PIPE
-  BEFORE="" HOW="" RELAUNCHED=no WAS_RUNNING=0 QUIT=0 LEAVE_CLOSED=0 LOCKED="" UNPACK_MADE="" REASON=""
+  BEFORE="" HOW="" RELAUNCHED=no WAS_RUNNING=0 QUIT=0 LEAVE_CLOSED=0 LOCKED="" LOCK_ID="" UNPACK_MADE="" REASON=""
   V="${V:-}" SHA="${SHA:-}" REPO="${REPO:-anton-abyzov/specwithcode}" DRY_RUN="${DRY_RUN:-0}"
   trap finish EXIT
   trap 'FAILED_COMMAND="$BASH_COMMAND"' ERR

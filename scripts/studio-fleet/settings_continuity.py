@@ -37,8 +37,11 @@ import json
 # More pointers than this and the file is compared byte for byte instead.
 PROOF_LIMIT = 20000
 # packages/contracts/src/settings.ts PROJECT_SCOPED_SERVER_SETTING_KEYS.
+# Storage values are scoped within one machine's settings file. Including them
+# here verifies same-machine update continuity; it never copies paths to a peer.
 PROJECT_SCOPED_KEYS = frozenset((
     'agentInstructions', 'claudeWorkflowMode', 'responseStyle', 'worktreeCleanup', 'defaultModelSelection',
+    'worktreeLocationMode', 'worktreesDirectory',
     'defaultModelProviders',
     'defaultRuntimeMode', 'defaultThreadEnvMode', 'newWorktreesStartFromOrigin', 'worktreeSubmodules',
     'defaultAutoPull', 'defaultProjectScripts', 'enableAgentBrowserAccess', 'agentBrowserProfileId',
@@ -136,6 +139,13 @@ def _sparse_encoding_of(after, app, before, override):
     """Whether the app value after the update is `override` as the server stores it: absent
     (the release default), or only parts that equal the same parts of the override."""
     if app not in after:
+        # These storage defaults are known: the directory defaults to empty,
+        # while the optional placement mode has no encoded default. An absent
+        # app value cannot explain losing an explicit local path or mode.
+        if app == pointer('worktreesDirectory'):
+            return before.get(override) == _node('')
+        if app == pointer('worktreeLocationMode'):
+            return False
         return True
     return all(before.get(override + rel) == value for rel, value in _subtree(after, app).items())
 

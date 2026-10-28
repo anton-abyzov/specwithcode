@@ -10,7 +10,7 @@ describe("getMobileTerminalTheme", () => {
     expect(getMobileTerminalTheme("studio-code", "light")).toMatchObject({
       background: "#fcfcfc",
       foreground: "#27272a",
-      cursorForeground: "#26384e",
+      cursorForeground: "#4a3678",
       cursorBackground: "#fcfcfc",
     });
   });
@@ -19,7 +19,7 @@ describe("getMobileTerminalTheme", () => {
     expect(getMobileTerminalTheme("studio-code", "dark")).toMatchObject({
       background: "#0a0a0a",
       foreground: "#f5f5f5",
-      cursorForeground: "#b4cbff",
+      cursorForeground: "#cbbcff",
       cursorBackground: "#0a0a0a",
     });
   });
@@ -49,7 +49,7 @@ describe("buildGhosttyThemeConfig", () => {
 
     expect(config).toContain("background = #0a0a0a");
     expect(config).toContain("foreground = #f5f5f5");
-    expect(config).toContain("cursor-color = #b4cbff");
+    expect(config).toContain("cursor-color = #cbbcff");
     expect(config).toContain("palette = 0=#141415");
     expect(config).toContain("palette = 15=#c6c6c8");
     expect(config.endsWith("\n")).toBe(true);

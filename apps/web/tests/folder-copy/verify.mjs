@@ -125,9 +125,17 @@ const walker = (page, label, flow, viewport) => {
     const layout = await page.evaluate((script) => {
       const popup = document.querySelector('[data-slot="dialog-popup"]');
       const footer = popup.querySelector('[data-slot="dialog-footer"]');
-      const bar = popup.querySelector('[data-slot="copy-steps"]');
+      const full = popup.querySelector('[data-slot="copy-steps"]');
+      // A phone shows one "Step N of M · Label" line in place of the full bar.
+      const compact = popup.querySelector('[data-slot="copy-steps-compact"]');
+      const phone = !!full && full.getClientRects().length === 0;
+      const bar = phone ? compact : full;
       const box = popup.getBoundingClientRect();
-      const items = bar ? [...bar.querySelectorAll('[data-slot="copy-step"]')] : [];
+      const items = bar
+        ? phone
+          ? [bar]
+          : [...bar.querySelectorAll('[data-slot="copy-step"]')]
+        : [];
       const lead = footer.querySelector("button[data-leading]");
       const actions = footer.querySelector('[data-slot="copy-actions"]');
       return {
@@ -143,8 +151,15 @@ const walker = (page, label, flow, viewport) => {
           return rect.left < box.left || rect.right > box.right;
         }),
         stepRows: bar
-          ? new Set([...bar.children].map((li) => Math.round(li.getBoundingClientRect().top))).size
+          ? phone
+            ? Math.round(
+                bar.getBoundingClientRect().height /
+                  parseFloat(getComputedStyle(bar).lineHeight || "16"),
+              ) || 1
+            : new Set([...bar.children].map((li) => Math.round(li.getBoundingClientRect().top)))
+                .size
           : 0,
+        compact: phone ? (compact?.textContent ?? null) : null,
         steps: new Function(`return (${script})()`)(),
         primaries: [...footer.querySelectorAll("button")]
           .filter((button) => button.classList.contains("bg-primary") && !button.disabled)
@@ -256,6 +271,8 @@ const intent = (page) =>
 const COPY_TITLE = "Copy SpecWeave";
 const MOVE_TITLE = "Move SpecWeave";
 const DONE_TITLE = "SpecWeave is on ministorm";
+// A copy of files only leaves the project here: its Done says copied, not on.
+const COPIED_TITLE = "SpecWeave is copied to ministorm";
 const COPY_ONLY = ["where", "what", "review", "copy", "done"];
 const ONE_CLICK = ["where", "copy", "done"];
 const MOVE = ["where", "what", "review", "copy", "transfer", "done"];
@@ -414,7 +431,7 @@ const choosing = async (page, w) => {
     primary: "Open on ministorm",
     steps: bar(["done", "done", "done", "done", "current"]),
     leading: "Undo…",
-    title: DONE_TITLE,
+    title: COPIED_TITLE,
   });
   NodeAssert.match(await body(), /ministorm has a copy\. The coordinator stays here\./);
 
@@ -444,7 +461,7 @@ const choosing = async (page, w) => {
     primary: "Open on ministorm",
     steps: bar(["done", "done", "done", "done", "current"]),
     leading: "Undo…",
-    title: DONE_TITLE,
+    title: COPIED_TITLE,
   });
 };
 
@@ -461,7 +478,7 @@ const oneClick = async (page, w) => {
     primary: "Open on ministorm",
     steps: finished,
     leading: "Undo…",
-    title: DONE_TITLE,
+    title: COPIED_TITLE,
   });
   NodeAssert.equal(await step("what").count(), 0, "a step this run skipped is not listed");
 
@@ -488,7 +505,7 @@ const oneClick = async (page, w) => {
   await check("finished-while-closed", {
     primary: "Open on ministorm",
     steps: finished,
-    title: DONE_TITLE,
+    title: COPIED_TITLE,
   });
   NodeAssert.match(await body(), /finished while the window was closed/);
 };
@@ -511,6 +528,22 @@ const move = async (page, w) => {
     leading: null,
     title: MOVE_TITLE,
   });
+  // A clipped path fades its cut-off start under the "…", which has no background of its
+  // own: nothing shows through it in dark mode either.
+  NodeAssert.deepEqual(
+    await page.evaluate(() => {
+      const box = document.querySelector('[data-slot="folder-box"]');
+      const mark = box.querySelector('[data-slot="folder-ellipsis"]');
+      const clipped = box.hasAttribute("data-clipped");
+      const faded = getComputedStyle(box.querySelector("input")).maskImage.includes("gradient");
+      return {
+        markBackground: getComputedStyle(mark).backgroundColor,
+        fadedWhenClipped: faded === clipped,
+      };
+    }),
+    { markBackground: "rgba(0, 0, 0, 0)", fadedWhenClipped: true },
+    "the folder field's ellipsis",
+  );
   const projectOnly = page.getByRole("checkbox", { name: "Copy only this project folder" });
   NodeAssert.equal(await projectOnly.isChecked(), false, "the whole umbrella goes by default");
   await projectOnly.scrollIntoViewIfNeeded();
@@ -546,10 +579,12 @@ const move = async (page, w) => {
     element.click();
     element.click();
   });
-  await check("measuring", { primary: null, leading: "Stop copy" });
+  await check("measuring", { primary: null, leading: "Stop move" });
+  // A move's last step runs in this window: the close hint says to come back for it.
+  NodeAssert.match(await body(), /then reopen it to finish the move\./);
   NodeAssert.equal(await calls("copyOffer"), 1, "a double click offers once");
   await release("copyOffer");
-  await check("what", { primary: "Preview on ministorm", leading: "Stop copy" });
+  await check("what", { primary: "Preview on ministorm", leading: "Stop move" });
   NodeAssert.match(
     await body(),
     /Work is still running here\. Files that change during the copy won.t be included, and the project moves once that work stops\./,
@@ -570,7 +605,7 @@ const move = async (page, w) => {
     window.__folderCopyFixture.failCopy = true;
   });
   await action("Move to ministorm").click();
-  await check("failed", { primary: "Retry", leading: "Stop copy" });
+  await check("failed", { primary: "Retry", leading: "Stop move" });
   // The stopped step reads in the error colour, not in the plain current-step colour.
   NodeAssert.deepEqual(
     await w.step("copy").evaluate((item) => {

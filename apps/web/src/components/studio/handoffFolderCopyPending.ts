@@ -49,6 +49,8 @@ export interface PendingCopy {
    * of that step and a reopened dialog go ahead despite the differences.
    */
   readonly moveAnyway?: boolean;
+  /** A move to a folder that already held a project: the sidebar keeps listing that project. */
+  readonly existingDestination?: boolean;
   /**
    * The person cancelled while the source was measuring, and the source has not confirmed
    * dropping it. A reopened dialog only tells the source again; it never resumes the copy.

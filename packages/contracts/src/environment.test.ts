@@ -97,3 +97,14 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 });
+
+it("exposes an optional authoritative managed-worktree root", () => {
+  expect(decodeDescriptor(descriptor).defaultWorktreesDirectory).toBeUndefined();
+  expect(
+    decodeDescriptor({
+      ...descriptor,
+      defaultWorktreesDirectory: "/private/app/worktrees",
+      capabilities: { worktreeLocationMode: true },
+    }).defaultWorktreesDirectory,
+  ).toBe("/private/app/worktrees");
+});

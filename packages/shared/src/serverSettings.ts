@@ -473,20 +473,22 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
-    ...(patch.worktreesDirectory !== undefined &&
-    patch.worktreesDirectory !== current.worktreesDirectory
-      ? {
-          previousWorktreesDirectories: [
-            ...current.previousWorktreesDirectories.filter(
-              (directory) => directory !== patch.worktreesDirectory,
-            ),
-            ...(current.worktreesDirectory !== "" &&
-            !current.previousWorktreesDirectories.includes(current.worktreesDirectory)
-              ? [current.worktreesDirectory]
-              : []),
-          ],
-        }
-      : {}),
+    // Keep only roots explicitly recorded by settings, including removed project overrides.
+    previousWorktreesDirectories: [
+      ...new Set([
+        ...current.previousWorktreesDirectories.filter(
+          (directory) => directory !== patch.worktreesDirectory,
+        ),
+        ...(patch.worktreesDirectory !== undefined &&
+        patch.worktreesDirectory !== current.worktreesDirectory &&
+        current.worktreesDirectory
+          ? [current.worktreesDirectory]
+          : []),
+        ...Object.values(current.projectSettingsOverrides).flatMap((entry) =>
+          entry.worktreesDirectory ? [entry.worktreesDirectory] : [],
+        ),
+      ]),
+    ],
     // Host replacement: deepMerge would keep a cleared account pin.
     ...(patch.github?.hosts !== undefined
       ? { github: { ...next.github, hosts: patch.github.hosts } }

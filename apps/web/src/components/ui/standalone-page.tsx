@@ -6,7 +6,7 @@ const backdropClassNames = {
   error:
     "absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]",
   brand:
-    "absolute inset-x-0 top-0 h-72 bg-[radial-gradient(48rem_20rem_at_top,color-mix(in_srgb,var(--color-blue-500)_12%,transparent),transparent)]",
+    "absolute inset-x-0 top-0 h-72 bg-[radial-gradient(48rem_20rem_at_top,color-mix(in_srgb,var(--primary)_12%,transparent),transparent)]",
 };
 
 /** Shared page and card geometry for entry points outside the app shell. */
@@ -24,7 +24,7 @@ export function StandalonePage({
       <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
         <div className={backdropClassNames[tone]} />
         {tone === "pairing" ? (
-          <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
+          <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--primary)_10%,transparent),transparent)]" />
         ) : null}
         <div
           className={
