@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import { continuationThreadId } from "../handoff/HandoffReceiver.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { workerClientName } from "./workerGrantMint.ts";
 import { sweepRevoked } from "./workGrantRevokeSweeper.ts";
@@ -28,9 +29,13 @@ const shell = (id: string, running: boolean) =>
     deletedAt: null,
   }) as unknown as OrchestrationV2ThreadShell;
 
+/** The thread a handoff from M4 continues here, at the id the receiver gives it. */
+const CONTINUATION = continuationThreadId(M4, "thread-on-m4", 2);
+
 const setup = () => {
   const interrupted: Array<{ threadId: string; commandId: string }> = [];
   const shells = new Map([
+    [CONTINUATION as string, shell(CONTINUATION, true)],
     ["from-m4-running", shell("from-m4-running", true)],
     ["from-m4-idle", shell("from-m4-idle", false)],
     ["from-m1-running", shell("from-m1-running", true)],
@@ -102,6 +107,25 @@ describe("revoking a machine's work", () => {
       yield* grants.restore(M4);
       yield* grants.revoke(M4);
       expect(yield* sweepRevoked).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("interrupts a continuation handed off from the revoked machine", () => {
+    const { layer, interrupted } = setup();
+    return Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      // What the receiver records for a takeover under M4's grant.
+      yield* grants.recordOrigin(CONTINUATION, {
+        coordinatorEnvironmentId: M4,
+        path: [M4],
+        hops: 1,
+      });
+      yield* grants.revoke(M4);
+      yield* TestClock.adjust("119 seconds");
+      expect(yield* sweepRevoked).toBe(0);
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* sweepRevoked).toBe(1);
+      expect(interrupted.map((entry) => entry.threadId)).toEqual([CONTINUATION]);
     }).pipe(Effect.provide(layer));
   });
 });

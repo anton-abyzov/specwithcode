@@ -998,6 +998,40 @@ describe("native provider presentation in the v2 timeline", () => {
     item,
   });
 
+  it("keeps requeued pending messages in the queue until a turn claims them", () => {
+    const queued: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make("requeued-message"),
+      type: "user_message",
+      messageId: MessageId.make("requeued-message"),
+      inputIntent: "queued_turn",
+      status: "pending",
+      text: "Next task",
+      createdBy: "user",
+      creationSource: "web",
+      attachments: [],
+    };
+    const input = { visibleTurnItems: [visible(queued)], optimisticMessages: [] };
+    expect(deriveTimelineEntriesFromVisibleTurnItems(input)).toEqual([]);
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    const claimed = { ...input, visibleTurnItems: [visible({ ...queued, status: "running" })] };
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItemsWithState(claimed, previous).entries,
+    ).toHaveLength(1);
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        ...input,
+        visibleTurnItems: [visible({ ...queued, status: "completed" })],
+      }),
+    ).toHaveLength(1);
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        ...input,
+        visibleTurnItems: [visible({ ...queued, inputIntent: "turn_start" })],
+      }),
+    ).toHaveLength(1);
+  });
+
   it("keeps async answers in the question row, including incrementally appended replies", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

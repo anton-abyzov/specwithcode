@@ -105,6 +105,44 @@ interface TrackedSetup {
   readonly fiber: Fiber.Fiber<unknown, unknown> | null;
 }
 
+/** Milliseconds between two ISO timestamps, or null when either is missing. */
+function elapsedMs(startedAt: string | null, endedAt: string | null): number | null {
+  if (startedAt === null || endedAt === null) return null;
+  const elapsed = Date.parse(endedAt) - Date.parse(startedAt);
+  return Number.isFinite(elapsed) ? Math.max(0, elapsed) : null;
+}
+
+/**
+ * Per-stage and total durations of a settled setup, for the one log line a
+ * finished setup writes. Stages that never started are left out.
+ */
+export function summarizeSetupTimings(snapshot: WorktreeSetupSnapshot): {
+  readonly totalMs: number | null;
+  readonly stageMs: Readonly<Partial<Record<WorktreeSetupStageId, number>>>;
+} {
+  const stageMs: Partial<Record<WorktreeSetupStageId, number>> = {};
+  for (const stage of snapshot.stages) {
+    const elapsed = elapsedMs(stage.startedAt, stage.endedAt);
+    if (elapsed !== null) stageMs[stage.id] = elapsed;
+  }
+  return { totalMs: elapsedMs(snapshot.startedAt, snapshot.endedAt), stageMs };
+}
+
+const logSetupTimings = (snapshot: WorktreeSetupSnapshot) => {
+  const { totalMs, stageMs } = summarizeSetupTimings(snapshot);
+  return Effect.logInfo("worktree setup finished").pipe(
+    Effect.annotateLogs({
+      threadId: snapshot.threadId,
+      phase: snapshot.phase,
+      branch: snapshot.branch,
+      baseRef: snapshot.baseRef,
+      worktreePath: snapshot.worktreePath,
+      totalMs,
+      stageMs,
+    }),
+  );
+};
+
 function emptyStage(id: WorktreeSetupStageId): WorktreeSetupStage {
   return {
     id,
@@ -259,28 +297,34 @@ export const make = Effect.gen(function* () {
   const finish: WorktreeSetupTracker["Service"]["finish"] = (threadId, phase, error) =>
     Effect.gen(function* () {
       const endedAt = yield* nowIso;
-      const snapshot = yield* modify(threadId, (tracked) => ({
-        fiber: null,
-        snapshot: {
-          ...tracked.snapshot,
-          phase,
-          endedAt,
-          error:
-            error === undefined || error === null
-              ? null
-              : clampText(error, WORKTREE_SETUP_ERROR_MAX_LENGTH),
-          stages: tracked.snapshot.stages.map((entry) =>
-            entry.status === "running"
-              ? {
-                  ...entry,
-                  status: phase === "done" ? "done" : phase === "cancelled" ? "skipped" : "failed",
-                  endedAt,
-                }
-              : entry,
-          ),
-        },
-      }));
+      let wasRunning = false;
+      const snapshot = yield* modify(threadId, (tracked) => {
+        wasRunning = tracked.snapshot.phase === "running";
+        return {
+          fiber: null,
+          snapshot: {
+            ...tracked.snapshot,
+            phase,
+            endedAt,
+            error:
+              error === undefined || error === null
+                ? null
+                : clampText(error, WORKTREE_SETUP_ERROR_MAX_LENGTH),
+            stages: tracked.snapshot.stages.map((entry) =>
+              entry.status === "running"
+                ? {
+                    ...entry,
+                    status:
+                      phase === "done" ? "done" : phase === "cancelled" ? "skipped" : "failed",
+                    endedAt,
+                  }
+                : entry,
+            ),
+          },
+        };
+      });
       if (!snapshot) return null;
+      if (wasRunning) yield* logSetupTimings(snapshot);
       yield* clearRetention(threadId);
       const fiber = yield* remove(threadId).pipe(
         Effect.delay(FINISHED_RETENTION),

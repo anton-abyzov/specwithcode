@@ -100,7 +100,7 @@ function ClaudeWorkflowSettings() {
         serverScoped
         settingKeys={["claudeWorkflowMode"]}
         {...searchableSetting("claude-workflow-mode")}
-        description="Disabled prevents native workflows. On request starts them when you ask. Automatic lets Claude choose a workflow for complex work. Reasoning effort is set separately."
+        description="Disabled prevents native workflows and Ultracode. On request starts them when you ask. Automatic turns Ultracode on for threads that leave it unset. A model's own Ultracode toggle and its reasoning effort are set in the model picker."
         resetAction={
           mixed || settings.claudeWorkflowMode !== DEFAULT_SERVER_SETTINGS.claudeWorkflowMode ? (
             <SettingResetButton

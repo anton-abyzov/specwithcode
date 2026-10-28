@@ -13,6 +13,7 @@ import { coordinatorForkHandoff } from "./chat/coordinatorForkHandoff";
 import { coordinatorDeviceHandoff } from "./chat/coordinatorDeviceHandoff";
 import { openBackgroundChatComposer, useNewChatDestination } from "~/hooks/useNewChatDestination";
 import { chatControlAnchor, chatUsesPanelSheet } from "./chat/embeddedProjectLayout";
+import { useSessionSkillUses } from "./chat/ComposerSkillsPopover";
 import { resolveCollapseLongReports } from "./chat/delegatedThreadMemory";
 import {
   routesViaCoordinator,
@@ -4640,6 +4641,7 @@ function useChatViewState(props: ChatViewProps) {
     () => timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
     [timelineEntries],
   );
+  const sessionSkillUses = useSessionSkillUses(timelineEntries);
   const rememberedTimelineForActive = useRenderRead(() =>
     peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
   );
@@ -5520,6 +5522,7 @@ function useChatViewState(props: ChatViewProps) {
     timelineBannerOverlayRef,
     timelineEntries,
     timelineMessages,
+    sessionSkillUses,
     timelineOverflows,
     timelineRunHealth,
     timelineActiveHost,
@@ -9927,6 +9930,7 @@ export default function ChatView(props: ChatViewProps) {
     timelineBannerOverlayHeight,
     timelineBannerOverlayRef,
     timelineMessages,
+    sessionSkillUses,
     timelineOverflows,
     timelineRunHealth,
     timelineActiveHost,
@@ -15613,6 +15617,7 @@ export default function ChatView(props: ChatViewProps) {
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
                               promptHistoryMessages={timelineMessages}
+                              sessionSkillUses={sessionSkillUses}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
                               forceExpandedOnMobile={

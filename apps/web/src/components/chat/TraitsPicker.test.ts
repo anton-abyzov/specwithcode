@@ -407,6 +407,29 @@ describe("buildTraitsTriggerParts", () => {
     expect(parts([copilotEffort]).effort).toEqual({ value: "medium", label: "Medium" });
   });
 
+  it("names the Ultracode toggle beside the effort, not as one", () => {
+    const toggle = (currentValue?: boolean): ProviderOptionDescriptor => ({
+      id: "ultracode",
+      label: "Ultracode",
+      type: "boolean",
+      ...(currentValue === undefined ? {} : { currentValue }),
+    });
+    const medium = { ...CLAUDE_EFFORT, currentValue: "medium" };
+    const on = parts([medium, CONTEXT_WINDOW, toggle(true)]);
+    expect(on).toMatchObject({
+      effort: { value: "medium", label: "Medium" },
+      details: "1M",
+      ultracode: true,
+    });
+    expect(on.label).toBe("Medium · 1M · Ultracode");
+    expect(traitsTriggerDescription(on)).toBe("Medium effort · Ultracode · 1M");
+    for (const off of [toggle(false), toggle()]) {
+      const result = parts([medium, CONTEXT_WINDOW, off]);
+      expect(result).toMatchObject({ details: "1M", ultracode: false });
+      expect(result.label).toBe("Medium · 1M");
+    }
+  });
+
   it("names Ultracode as the effort", () => {
     expect(parts([{ ...CLAUDE_EFFORT, currentValue: "ultracode" }, CONTEXT_WINDOW]).effort).toEqual(
       { value: "ultracode", label: "Ultracode" },
@@ -463,6 +486,7 @@ describe("buildTraitsTriggerParts", () => {
       effort: null,
       details: "",
       speed: { icon: "fast", label: "Fast mode" },
+      ultracode: false,
     });
   });
 });

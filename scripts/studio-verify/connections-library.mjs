@@ -69,7 +69,7 @@ try {
       .locator("thead th")
       .allInnerTexts()
       .then((t) => t.map((x) => x.toLowerCase())),
-    ["connection", "codex"],
+    ["server", "codex"],
   );
   await page.getByRole("button", { name: /^All tools/ }).click();
   checks.push("Search, tool filter and clear");

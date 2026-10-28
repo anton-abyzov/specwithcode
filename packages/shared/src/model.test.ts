@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@specweave-studio/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelCapabilities,
+} from "@specweave-studio/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
@@ -361,5 +365,58 @@ describe("provider-reported option display", () => {
     { ...selection, options: [{ id: "variant", value: "none" }] },
   ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
     expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
+  });
+});
+
+describe("upgradeLegacyUltracodeEffort", () => {
+  const caps = (effortIds: ReadonlyArray<string>, toggle: boolean) => ({
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select" as const,
+        options: effortIds.map((id) => ({ id, label: id })),
+      },
+      ...(toggle ? [{ id: "ultracode", label: "Ultracode", type: "boolean" as const }] : []),
+    ],
+  });
+  const current = (descriptors: ReadonlyArray<{ id: string; currentValue?: unknown }>) =>
+    Object.fromEntries(descriptors.map((descriptor) => [descriptor.id, descriptor.currentValue]));
+
+  it("reads a saved Ultracode effort as Extra High plus the toggle", () => {
+    expect(
+      current(
+        getProviderOptionDescriptors({
+          caps: caps(["medium", "xhigh"], true),
+          selections: [{ id: "effort", value: "ultracode" }],
+        }),
+      ),
+    ).toEqual({ effort: "xhigh", ultracode: true });
+  });
+
+  it("keeps the upgraded toggle when sending only explicit choices", () => {
+    const descriptors = getProviderOptionDescriptors({
+      caps: caps(["medium", "xhigh"], true),
+      selections: [{ id: "effort", value: "ultracode" }],
+    });
+    expect(
+      buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, [
+        { id: "effort", value: "ultracode" },
+      ]),
+    ).toEqual([
+      { id: "effort", value: "xhigh" },
+      { id: "ultracode", value: true },
+    ]);
+  });
+
+  it("leaves models that still list Ultracode as an effort alone", () => {
+    expect(
+      current(
+        getProviderOptionDescriptors({
+          caps: caps(["medium", "xhigh", "ultracode"], false),
+          selections: [{ id: "effort", value: "ultracode" }],
+        }),
+      ),
+    ).toEqual({ effort: "ultracode" });
   });
 });

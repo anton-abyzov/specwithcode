@@ -141,7 +141,7 @@ afterEach(() => {
 });
 
 describe("Resume this Mac…", () => {
-  const paused = { kind: "paused", label: "Paused after sleep" } as const;
+  const paused = { kind: "paused", label: "Paused: offline" } as const;
 
   it("asks first, and resumes only after the confirm button", async () => {
     runHandoffMode.mockResolvedValue({ ok: true, value: snapshot({}) });
@@ -157,7 +157,7 @@ describe("Resume this Mac…", () => {
     act(() => button("Resume this Mac…").props.onClick());
     expect(text()).toContain("Resume all threads on this Mac?");
     expect(text()).toContain(
-      "This Mac handed its threads off before sleeping. Resuming lets them run here again, even if another machine already picked them up.",
+      "This Mac lost its network, so it paused threads that other machines could continue. Resuming lets them run here again, even if another machine already picked them up.",
     );
     expect(button("Cancel")).toBeTruthy();
     expect(runHandoffMode).not.toHaveBeenCalled();

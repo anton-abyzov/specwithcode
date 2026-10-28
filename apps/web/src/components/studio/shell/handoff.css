@@ -1,5 +1,5 @@
 /* Move-between-machines badges. "Ready to move" carries the accent color; "Syncing",
-   "Paused after sleep" and "{M} is offline" carry the warning tone, so a glance tells a
+   "Paused: offline" and "{M} is offline" carry the warning tone, so a glance tells a
    healthy thread from one that needs attention. */
 .sws-handoff-badge {
   flex: none;

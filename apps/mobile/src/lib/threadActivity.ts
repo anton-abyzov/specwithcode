@@ -1726,6 +1726,13 @@ export function buildThreadFeed(
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    // A requeued message waits in the queue; listing it in the feed too would show it twice.
+    if (
+      item.type === "user_message" &&
+      item.inputIntent === "queued_turn" &&
+      item.status === "pending"
+    )
+      continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     // Match the web timeline: only the terminal interrupt result is useful to
     // users; the preceding request is transient bookkeeping.

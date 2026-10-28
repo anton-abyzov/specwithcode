@@ -33,7 +33,10 @@ export function compileClaudeModelSelection(
   const descriptors = getProviderOptionDescriptors({ caps: capabilities });
   const supportsBoolean = (id: string) =>
     descriptors.some((descriptor) => descriptor.type === "boolean" && descriptor.id === id);
-  const rawEffort = getModelSelectionStringOptionValue(selection, "effort");
+  const storedEffort = getModelSelectionStringOptionValue(selection, "effort");
+  // Selections saved before the toggle stored Ultracode as the effort; they ran at xhigh.
+  const legacyUltracode = isClaudeCatalogUltracodeEffort(storedEffort);
+  const rawEffort = legacyUltracode ? "xhigh" : storedEffort;
   const resolvedEffort = resolveClaudeCatalogEffort(catalog, selection.model, rawEffort);
   const effort = normalizeClaudeCatalogEffort(catalog, resolvedEffort, selection.model);
   const fastMode = supportsBoolean("fastMode")
@@ -42,10 +45,14 @@ export function compileClaudeModelSelection(
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")
     : undefined;
+  // Unset follows the Claude workflow mode; the policy decides what reaches the CLI.
+  const ultracode =
+    getModelSelectionBooleanOptionValue(selection, "ultracode") ??
+    (legacyUltracode ? true : undefined);
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
-    ...(isClaudeCatalogUltracodeEffort(resolvedEffort) ? { ultracode: true } : {}),
+    ...(supportsBoolean("ultracode") && typeof ultracode === "boolean" ? { ultracode } : {}),
   };
   const apiModelId = resolveClaudeCatalogApiModelId(catalog, selection);
   const promptEffort = resolvePromptInjectedEffort(capabilities, rawEffort) ?? undefined;
@@ -54,6 +61,12 @@ export function compileClaudeModelSelection(
     effort,
     promptEffort,
     settings,
-    queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings }),
+    // Ultracode is launch context like the workflow mode it merges with; the
+    // adapter keys the process on the value that reaches the CLI instead.
+    queryIdentity: JSON.stringify({
+      apiModelId,
+      effort: effort ?? null,
+      settings: { ...settings, ultracode: undefined },
+    }),
   };
 }

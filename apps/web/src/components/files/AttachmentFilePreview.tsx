@@ -13,7 +13,8 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings } from "~/hooks/useSettings";
+import { maskMarkdownFrontmatter } from "~/lib/markdownFrontmatter";
 import { cn } from "~/lib/utils";
 
 import { AudioPreview } from "./AudioPreview";
@@ -37,6 +38,7 @@ export function ReadOnlySourcePreview(props: {
   name: string;
   text: string;
   revealLine?: number | undefined;
+  wordWrap?: boolean | undefined;
 }) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
@@ -180,8 +182,10 @@ export function AttachmentFilePreview(props: {
     return () => controller.abort();
   }, [url, needsText, revision, props.sizeBytes, props.file, refresh]);
   const failure = error ?? (needsText ? contentError : null);
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
-  const updateClientSettings = useUpdateClientSettings();
+  // The wrap button only changes this preview; the word wrap setting stays the default elsewhere.
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? defaultWordWrap;
   // Only the raw-text body honours word wrap. A rendered table or Markdown lays itself out,
   // so offering the toggle there would be a control that visibly does nothing.
   const showsRawText =
@@ -243,10 +247,14 @@ export function AttachmentFilePreview(props: {
       <DelimitedTablePreview name={props.name} text={content.text} delimiter={delimiter} />
     ) : kind === "markdown" && rendered ? (
       <ScrollArea className="min-h-0 flex-1">
-        <ChatMarkdown text={content.text} cwd={undefined} className="mx-auto max-w-4xl px-6 py-5" />
+        <ChatMarkdown
+          text={maskMarkdownFrontmatter(content.text)}
+          cwd={undefined}
+          className="mx-auto max-w-4xl px-6 py-5"
+        />
       </ScrollArea>
     ) : (
-      <ReadOnlySourcePreview name={props.name} text={content.text} />
+      <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
     )
   ) : kind === "pdf" || kind === "html" ? (
     <BrowserDocumentFrame
@@ -320,7 +328,7 @@ export function AttachmentFilePreview(props: {
           <FileSurfaceAction
             label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
             pressed={wordWrap}
-            onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            onPress={() => setWordWrapOverride(!wordWrap)}
           >
             <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>

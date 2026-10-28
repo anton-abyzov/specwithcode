@@ -1563,5 +1563,331 @@ class RequestCommand(unittest.TestCase):
         self.assertEqual(bad.returncode, 2)
 
 
+
+CLI = ['/fake/specweave-studio', 'fleet', 'update', '--base-dir', '/fake/home/m4']
+MACHINES = {'m1-id': 'm1', 'm3-id': 'm3', 'ministorm-id': 'ministorm'}
+
+
+def proof_token(bound=True):
+    """A management token shaped like a Studio access token; `bound` gives it a DPoP `jkt` claim."""
+    import base64
+    claims = {'sub': 'coordinator', 'jkt': 'thumbprint'} if bound else {'sub': 'coordinator'}
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')
+    return payload + '.signature'
+
+
+class FakeCli(object):
+    """M4's `fleet update <machine> ... --json` over SpecWithCode Connect, answered by the fake
+    fleet: each command line is turned back into the update_request.py call it stands for, so
+    the rollout drives the same fake hosts over either route. `unreachable` machines answer as
+    the CLI does when no address answers."""
+
+    def __init__(self, fleet, unreachable=()):
+        self.fleet = fleet
+        self.unreachable = set(unreachable)
+        self.commands = []
+
+    def __call__(self, command, **options):
+        assert options.get('timeout'), options
+        command = list(command)
+        with self.fleet.lock:
+            self.commands.append(command)
+        assert command[:len(CLI)] == CLI and command[-1] == '--json', command
+        identity = MACHINES[command[len(CLI)]]
+        flags = command[len(CLI) + 1:-1]
+        if identity in self.unreachable:
+            return subprocess.CompletedProcess(command, 1, json.dumps(
+                {'error': 'This machine is unavailable over Connect or Tailscale.', 'reason': 'unreachable'}) + '\n', '')
+        if flags == ['--status']:
+            argv = ['status']
+        elif flags == ['--check']:
+            argv = ['check', '--kickstart']
+        elif flags[0] == '--cancel':
+            argv = ['cancel', '--request', flags[1]]
+        else:
+            assert flags[0] == '--version' and (flags[2:] == ['--no-hold'] or flags[2] == '--hold-minutes'), flags
+            argv = ['request', '--version', flags[1], '--kickstart']
+            if flags[2] == '--hold-minutes':
+                argv += ['--force', '--hold-minutes', flags[3]]
+        reply = dict(self.fleet.host(identity)([argv[0], '--identity', identity] + argv[1:]))
+        reply.update(transport='connect', method='service-agent')
+        return subprocess.CompletedProcess(command, 0, 'progress\n' + json.dumps(reply) + '\n', '')
+
+
+class DeadSsh(object):
+    """A worker's ssh that gives no answer, as ssh exits 255 with Tailscale off; or answers with an error."""
+
+    def __init__(self, identity, message=None):
+        self.identity = identity
+        self.message = message
+        self.calls = 0
+        self.command = ['/usr/bin/ssh', identity + '@worker.test', '/usr/bin/python3 -B -']
+        self.app_command = ['/usr/bin/ssh', identity + '@worker.test', 'app']
+
+    def __call__(self, argv):
+        self.calls += 1
+        if self.message:
+            error = fleet_rollout.RolloutError('%s: %s' % (self.identity, self.message))
+            error.reply = {'error': self.message}
+            raise error
+        raise fleet_rollout.RolloutError('%s gave no answer (exit 255)' % self.identity)
+
+
+def connect_fleet(clock, extra=('ministorm',), polls=None):
+    fleet = Fleet(clock, polls=polls)
+    for name in extra:
+        fleet.version[name] = OLD
+        fleet.written[name] = []
+        fleet.status[name] = 'waiting-for-quiet'
+        fleet.message[name] = None
+    fleet.version['m4'] = NEW  # M4 already finalized the release: the worker stage alone runs.
+    return fleet
+
+
+class ConnectFallback(unittest.TestCase):
+    """The worker stage reaches a machine over SpecWithCode Connect when SSH gives no answer, and
+    reports a machine reachable by neither instead of waiting on it."""
+
+    def test_connect_host_maps_each_command_to_fleet_update(self):
+        clock = Clock()
+        fleet = connect_fleet(clock)
+        cli = FakeCli(fleet)
+        host = fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=cli)
+        self.assertEqual(host(['status', '--identity', 'm1'])['version'], OLD)
+        host(['request', '--identity', 'm1', '--version', NEW, '--kickstart'])
+        host(['request', '--identity', 'm1', '--version', NEW, '--kickstart', '--force', '--hold-minutes', '7'])
+        host(['check', '--identity', 'm1', '--kickstart'])
+        host(['cancel', '--identity', 'm1', '--request', '2026-10-28T12:00:00.000Z'])
+        self.assertEqual([command[len(CLI):] for command in cli.commands], [
+            ['m1-id', '--status', '--json'],
+            ['m1-id', '--version', NEW, '--no-hold', '--json'],
+            ['m1-id', '--version', NEW, '--hold-minutes', '7', '--json'],
+            ['m1-id', '--check', '--json'],
+            ['m1-id', '--cancel', '2026-10-28T12:00:00.000Z', '--json']])
+
+    def test_connect_host_errors_keep_the_reason_and_mark_no_answer(self):
+        def answer(stdout, code):
+            return lambda command, **options: subprocess.CompletedProcess(command, code, stdout, '')
+
+        refused = fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=answer(json.dumps(
+            {'error': 'm1 runs 1.0.109, newer than 1.0.41', 'reason': 'downgrade'}) + '\n', 1))
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            refused(['request', '--identity', 'm1', '--version', NEW])
+        self.assertIn('newer than 1.0.41 (downgrade)', str(caught.exception))
+        self.assertEqual(caught.exception.reply['reason'], 'downgrade')
+        self.assertIsNone(fleet_rollout.unanswered(caught.exception))
+        gone = fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=answer(json.dumps(
+            {'error': 'unavailable', 'reason': 'unreachable'}) + '\n', 1))
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            gone(['status', '--identity', 'm1'])
+        self.assertEqual(fleet_rollout.unanswered(caught.exception), 'unreachable')
+        silent = fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=answer('', 1))
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            silent(['status', '--identity', 'm1'])
+        self.assertEqual(fleet_rollout.unanswered(caught.exception), 'exit 1')
+
+        def hang(command, **options):
+            raise subprocess.TimeoutExpired(command, options['timeout'])
+
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=hang)(['status', '--identity', 'm1'])
+        self.assertEqual(fleet_rollout.unanswered(caught.exception), 'timeout')
+
+    def test_a_request_outlasts_an_older_linux_machines_self_update(self):
+        timeouts = {}
+
+        def answer(command, **options):
+            timeouts[command[len(CLI) + 1]] = options['timeout']
+            return subprocess.CompletedProcess(command, 0, json.dumps({'result': 'requested'}) + '\n', '')
+
+        host = fleet_rollout.ConnectHost('ministorm', CLI, 'ministorm-id', run=answer)
+        host(['request', '--identity', 'ministorm', '--version', NEW, '--kickstart'])
+        host(['status', '--identity', 'ministorm'])
+        # server.updateServer stays open through the download and preflight, up to 10 minutes.
+        self.assertGreater(timeouts['--version'], 600)
+        self.assertEqual(timeouts['--status'], fleet_rollout.CALL_TIMEOUT)
+
+    def test_a_failed_linux_self_update_stops_at_once_with_its_reason(self):
+        clock, lines = Clock(), []
+        state = {'phase': 'idle', 'requests': 0}
+
+        def linux(command, **options):
+            flags = command[len(CLI) + 1:-1]
+            if flags[0] == '--version':
+                state['requests'] += 1
+                state['phase'] = 'downloading'
+                reply = {'result': 'requested', 'method': 'boot-service', 'phase': 'downloading',
+                         'request': {'installRequestedAt': None, 'installMode': 'self-update'}}
+            else:
+                reply = {'version': OLD, 'installedVersion': OLD, 'installFinalized': False,
+                         'status': state['phase'], 'message': None, 'lastInstall': None,
+                         'method': 'boot-service', 'phase': state['phase'], 'transport': 'connect'}
+                if state['phase'] == 'downloading':
+                    state['phase'] = 'failed'
+                elif state['phase'] == 'failed':
+                    reply.update(message='preflight blocked', lastError='preflight blocked',
+                                 lastErrorReason='failed')
+            return subprocess.CompletedProcess(command, 0, json.dumps(reply) + '\n', '')
+
+        host = fleet_rollout.ConnectHost('ministorm', CLI, 'ministorm-id', run=linux)
+        begin = clock()
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            fleet_rollout.roll_host('ministorm', host, NEW, False, 15, 30 * 60, 15, clock, clock.sleep, lines.append)
+        self.assertIn('ministorm could not install %s, so it stays on %s: preflight blocked' % (NEW, OLD),
+                      str(caught.exception))
+        self.assertEqual(state['requests'], 1)  # Never asked again.
+        self.assertLess(clock() - begin, 2 * 60)
+
+    def test_a_real_ssh_exit_255_counts_as_no_answer(self):
+        host = fleet_rollout.Host('m1', [sys.executable, '-c', 'import sys; sys.stdin.read(); sys.exit(255)'])
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            host(['status', '--identity', 'm1'])
+        self.assertEqual(fleet_rollout.unanswered(caught.exception), 'exit 255')
+
+    def test_ssh_exit_255_falls_back_to_connect_and_stays_there(self):
+        clock, lines = Clock(), []
+        fleet = connect_fleet(clock, extra=(), polls={'m1': 1, 'm3': 1})
+        cli = FakeCli(fleet)
+        ssh = DeadSsh('m1')
+        hosts = fleet.hosts()
+        hosts['m1'] = fleet_rollout.FallbackHost('m1', ssh, fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=cli))
+        apps = []
+        results = fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=lines.append,
+                                        desktop=lambda identity, say: apps.append(identity) or {'result': 'current'})
+        self.assertEqual(ssh.calls, 1)  # Only the first call tries SSH; the route then stays on Connect.
+        self.assertEqual(results['m1']['result'], 'installed')
+        self.assertEqual(results['m1']['route'], 'connect')
+        self.assertEqual(results['m3']['result'], 'installed')
+        self.assertIn('m1: no SSH answer (exit 255); using SpecWithCode Connect', lines)
+        self.assertIn('m1: installed %s' % NEW, ' '.join(lines))
+        # The worker policy holds over Connect: one version-bound request, never forced or held.
+        requests = [command for command in cli.commands if '--version' in command]
+        self.assertEqual(len(requests), 1)
+        self.assertIn('--no-hold', requests[0])
+        self.assertNotIn('--force', fleet.asked['m1'])
+        # The desktop app step needs SSH: m1's is skipped and reported, m3's runs.
+        self.assertEqual(apps, ['m3'])
+        self.assertEqual(results['m1']['desktopApp'], {'result': 'skipped', 'reason': 'needs SSH'})
+        self.assertTrue(any('m1: desktop app skipped: needs SSH' in line for line in lines))
+
+    def test_an_ssh_error_answer_stays_on_ssh(self):
+        clock = Clock()
+        fleet = connect_fleet(clock, extra=())
+        cli = FakeCli(fleet)
+        ssh = DeadSsh('m1', message='python3 not found')
+        host = fleet_rollout.FallbackHost('m1', ssh, fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=cli))
+        for _ in range(2):
+            with self.assertRaises(fleet_rollout.RolloutError):
+                host(['status', '--identity', 'm1'])
+        self.assertEqual(host.route, 'ssh')
+        self.assertEqual(ssh.calls, 2)
+        self.assertEqual(cli.commands, [])
+
+    def test_a_machine_reachable_by_neither_is_reported_not_hung(self):
+        clock, lines = Clock(), []
+        fleet = connect_fleet(clock, extra=(), polls={'m3': 1})
+        cli = FakeCli(fleet, unreachable={'m1'})
+        hosts = fleet.hosts()
+        hosts['m1'] = fleet_rollout.FallbackHost('m1', DeadSsh('m1'),
+                                                 fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=cli))
+        begin = clock()
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=lines.append)
+        self.assertIn('m1: unreachable over SSH (exit 255) and SpecWithCode Connect (unreachable)',
+                      str(caught.exception))
+        self.assertEqual(fleet.calls('m3', 'request')[0][0], 'm3')  # The other worker still went ahead.
+        self.assertEqual(fleet.version['m3'], NEW)
+        self.assertLess(clock() - begin, 10 * 60)  # m3's polls only; nothing waited on m1.
+
+    def test_a_connect_only_machine_is_updated_over_connect(self):
+        clock, lines = Clock(), []
+        fleet = connect_fleet(clock, polls={'m1': 1, 'm3': 1, 'ministorm': 2})
+        cli = FakeCli(fleet)
+        hosts = fleet.hosts()
+        hosts['ministorm'] = fleet_rollout.ConnectHost('ministorm', CLI, 'ministorm-id', run=cli)
+        results = fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=lines.append,
+                                        desktop=lambda identity, say: {'result': 'current'})
+        self.assertEqual(results['ministorm']['result'], 'installed')
+        self.assertEqual(results['ministorm']['route'], 'connect')
+        self.assertEqual(results['ministorm']['desktopApp']['result'], 'skipped')
+        self.assertEqual(fleet.version['ministorm'], NEW)
+        self.assertTrue(all(command[len(CLI)] == 'ministorm-id' for command in cli.commands))
+
+    def test_an_unreachable_machine_is_skipped_and_reported(self):
+        clock, lines = Clock(), []
+        fleet = connect_fleet(clock, extra=(), polls={'m1': 1, 'm3': 1})
+        hosts = fleet.hosts()
+        hosts['annas-air'] = fleet_rollout.Unreachable('annas-air', 'no SSH, and it has no SpecWithCode Connect address')
+        results = fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=lines.append)
+        self.assertEqual(results['annas-air']['result'], 'skipped')
+        self.assertIn('annas-air: skipped: no SSH, and it has no SpecWithCode Connect address', lines)
+        self.assertEqual(results['m1']['result'], 'installed')
+
+    def write_home(self, temporary, machines):
+        home = pathlib.Path(temporary)
+        own = home / '.specwithcode' / 'm4'
+        own.mkdir(parents=True)
+        (own / 'studio-fleet.json').write_text(json.dumps({'version': 1, 'machines': machines}))
+        inventory = home / 'hosts.json'
+        inventory.write_text(json.dumps({'m1': {'host': 'a.test', 'user': 'u'}, 'm3': {'host': 'b.test', 'user': 'u'}}))
+        return home, inventory
+
+    def test_fleet_adds_connect_routes_from_m4s_fleet(self):
+        machines = [
+            {'id': 'm1-id', 'label': 'M1', 'environmentId': 'e1', 'url': 'https://m1.tail.ts.net',
+             'connectUrl': 'https://prod-1.spec-weave.com', 'managementToken': proof_token()},
+            {'id': 'm3-id', 'label': 'M3', 'environmentId': 'e3', 'url': 'https://m3.tail.ts.net',
+             'managementToken': proof_token()},
+            {'id': 'ministorm-id', 'label': 'ministorm', 'environmentId': 'e5', 'url': 'https://ms.tail.ts.net',
+             'connectUrl': 'https://prod-5.spec-weave.com', 'managementToken': proof_token()},
+            {'id': 'air', 'label': "Anna's Air", 'environmentId': 'e6', 'url': 'https://air.tail.ts.net',
+             'managementToken': proof_token(bound=False)},
+            {'id': 'old', 'label': 'Old box', 'environmentId': 'e7', 'url': 'https://old.tail.ts.net',
+             'connectUrl': 'https://prod-7.spec-weave.com', 'managementToken': proof_token(bound=False)},
+            # M4's own row: fleet id m4, but its label slugs to m4-max. It is never a worker.
+            {'id': 'm4', 'label': 'M4 Max', 'environmentId': 'e4', 'url': 'https://m4.tail.ts.net',
+             'connectUrl': 'https://prod-4.spec-weave.com', 'managementToken': proof_token()},
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            home, inventory = self.write_home(temporary, machines)
+            with mock.patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(inventory)}):
+                hosts = fleet_rollout.fleet(home=home, connect=CLI)
+                without_cli = fleet_rollout.fleet(home=home)  # No installed CLI in this home.
+        self.assertEqual(sorted(hosts), ['annas-air', 'm1', 'm3', 'm4', 'ministorm', 'old-box'])
+        self.assertIsInstance(hosts['m4'], fleet_rollout.Host)
+        self.assertNotIn('m4-max', without_cli)
+        self.assertIsInstance(hosts['m1'], fleet_rollout.FallbackHost)
+        self.assertEqual(hosts['m1'].connect.machine, 'm1-id')
+        self.assertEqual(hosts['m1'].command[0], '/usr/bin/ssh')
+        self.assertIsNotNone(hosts['m1'].app_command)
+        self.assertIsInstance(hosts['m3'], fleet_rollout.Host)  # No Connect address: SSH only.
+        self.assertIsInstance(hosts['ministorm'], fleet_rollout.ConnectHost)
+        self.assertEqual(hosts['ministorm'].command, CLI)
+        self.assertIsInstance(hosts['annas-air'], fleet_rollout.Unreachable)
+        self.assertIn('no SpecWithCode Connect address', hosts['annas-air'].reason)
+        self.assertIn('not proof-bound', hosts['old-box'].reason)
+        self.assertIsInstance(without_cli['m1'], fleet_rollout.Host)
+        self.assertIsInstance(without_cli['ministorm'], fleet_rollout.Unreachable)
+        for host in hosts.values():  # No token is kept on a host.
+            self.assertNotIn('signature', json.dumps(fleet_rollout.plan_route(host)))
+
+    def test_dry_run_prints_each_route(self):
+        machines = [{'id': 'ministorm-id', 'label': 'ministorm', 'environmentId': 'e5',
+                     'url': 'https://ms.tail.ts.net', 'connectUrl': 'https://prod-5.spec-weave.com',
+                     'managementToken': proof_token()}]
+        with tempfile.TemporaryDirectory() as temporary:
+            home, inventory = self.write_home(temporary, machines)
+            env = dict(os.environ, STUDIO_FLEET_HOSTS=str(inventory), HOME=str(home))
+            result = subprocess.run([sys.executable, '-B', str(HERE / 'fleet_rollout.py'), '--version', NEW,
+                                     '--dry-run', '--only', 'workers'], capture_output=True, text=True, timeout=60,
+                                    env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan['order'], ['m1+m3+ministorm'])
+        self.assertEqual(plan['routes']['m1']['route'], 'ssh')
+        # This home has no installed CLI, so ministorm has no route and is reported, not asked.
+        self.assertEqual(plan['routes']['ministorm']['route'], 'skipped')
+
+
 if __name__ == '__main__':
     unittest.main()

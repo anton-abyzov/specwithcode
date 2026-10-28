@@ -5,6 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -223,4 +225,91 @@ describe("WorktreeSetupTracker", () => {
       expect(Schema.is(WorktreeSetupSnapshot)(snapshot)).toBe(true);
     }),
   );
+
+  it.effect("logs per-stage and total durations once when the setup finishes", () => {
+    const logs: Array<{ message: unknown; annotations: Record<string, unknown> }> = [];
+    const logger = Logger.make(({ fiber, message }) => {
+      logs.push({
+        message: Array.isArray(message) ? message[0] : message,
+        annotations: fiber.getRef(References.CurrentLogAnnotations),
+      });
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* WorktreeSetupTracker.make;
+      yield* tracker.begin({
+        threadId,
+        branch: "feature",
+        baseRef: "main",
+        stages: ["fetch", "checkout", "agent"],
+        fiber: null,
+      });
+      yield* tracker.update(threadId, (snapshot) => ({
+        ...snapshot,
+        worktreePath: "/worktrees/repo/feature",
+      }));
+      yield* tracker.stageStatus(threadId, "fetch", "running");
+      yield* TestClock.adjust(Duration.millis(250));
+      yield* tracker.stageStatus(threadId, "fetch", "done");
+      yield* tracker.stageStatus(threadId, "checkout", "running");
+      yield* TestClock.adjust(Duration.millis(1_500));
+      yield* Effect.all([tracker.finish(threadId, "done"), tracker.finish(threadId, "done")], {
+        concurrency: "unbounded",
+      });
+      // Repeated and concurrent finishes must not log the same setup twice.
+      yield* tracker.finish(threadId, "done");
+
+      const timings = logs.filter((entry) => entry.message === "worktree setup finished");
+      expect(timings).toHaveLength(1);
+      expect(timings[0]?.annotations).toMatchObject({
+        threadId,
+        phase: "done",
+        branch: "feature",
+        baseRef: "main",
+        worktreePath: "/worktrees/repo/feature",
+        totalMs: 1_750,
+        // The agent stage never started, so it has no duration.
+        stageMs: { fetch: 250, checkout: 1_500 },
+      });
+      expect(timings[0]?.annotations.stageMs).not.toHaveProperty("agent");
+    }).pipe(
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      Effect.provideService(References.MinimumLogLevel, "Info"),
+    );
+  });
+
+  it("summarizes durations from the snapshot timestamps", () => {
+    const summary = WorktreeSetupTracker.summarizeSetupTimings({
+      threadId,
+      phase: "failed",
+      startedAt: "2026-10-28T10:00:00.000Z",
+      endedAt: "2026-10-28T10:00:02.500Z",
+      branch: null,
+      baseRef: null,
+      worktreePath: null,
+      setupScript: null,
+      stages: [
+        {
+          id: "checkout",
+          status: "done",
+          startedAt: "2026-10-28T10:00:00.100Z",
+          endedAt: "2026-10-28T10:00:01.100Z",
+          percent: null,
+          detail: null,
+          tail: [],
+        },
+        {
+          id: "setup-script",
+          status: "failed",
+          startedAt: "2026-10-28T10:00:01.100Z",
+          endedAt: null,
+          percent: null,
+          detail: null,
+          tail: [],
+        },
+      ],
+      error: "boom",
+      sequence: 3,
+    });
+    expect(summary).toEqual({ totalMs: 2_500, stageMs: { checkout: 1_000 } });
+  });
 });

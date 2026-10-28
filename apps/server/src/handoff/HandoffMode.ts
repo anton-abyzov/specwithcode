@@ -97,6 +97,11 @@ export interface SideEffectInput {
   readonly target: string;
 }
 
+/** Who asks to continue a replica here: an agent needs more shown than the user. */
+export interface HandoffContinueHereOptions {
+  readonly byAgent?: boolean;
+}
+
 /** The moves between machines and models, provided by HandoffMoves once the fleet exists. */
 export interface HandoffMovesPort {
   readonly handOff: (input: HandOffInput) => Effect.Effect<HandOffResult, HandoffModeError>;
@@ -105,6 +110,7 @@ export interface HandoffMovesPort {
   ) => Effect.Effect<HandoffMachineRun, HandoffModeError>;
   readonly continueHere: (
     input: HandoffContinueHereInput,
+    options?: HandoffContinueHereOptions,
   ) => Effect.Effect<HandOffResult, HandoffModeError>;
   readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
   readonly preflight: (
@@ -155,6 +161,7 @@ export class HandoffMode extends Context.Service<
     ) => Effect.Effect<HandoffMachineRun, HandoffModeError>;
     readonly continueHere: (
       input: HandoffContinueHereInput,
+      options?: HandoffContinueHereOptions,
     ) => Effect.Effect<HandOffResult, HandoffModeError>;
     readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
     readonly preflight: (
@@ -833,7 +840,7 @@ export const make = Effect.gen(function* () {
     checkpoint,
     handOff: (input) => viaMoves((port) => port.handOff(input)),
     handOffMachine: (input) => viaMoves((port) => port.handOffMachine(input)),
-    continueHere: (input) => viaMoves((port) => port.continueHere(input)),
+    continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
     preflight: (input) => viaMoves((port) => port.preflight(input)),
     fence,
@@ -859,7 +866,7 @@ export const layerRpcHandlers = WsHandoffModeRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.handoffModeCheckpointNow]: handoff.checkpointNow,
       [WS_METHODS.handoffModeHandOff]: handoff.handOff,
       [WS_METHODS.handoffModeHandOffMachine]: handoff.handOffMachine,
-      [WS_METHODS.handoffModeContinueHere]: handoff.continueHere,
+      [WS_METHODS.handoffModeContinueHere]: (input) => handoff.continueHere(input),
       [WS_METHODS.handoffModeResumeFenced]: () => handoff.resumeFenced,
       [WS_METHODS.handoffModePreflight]: handoff.preflight,
     };

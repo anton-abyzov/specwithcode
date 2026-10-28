@@ -22,12 +22,14 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/htt
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerConfig from "../config.ts";
+import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -365,6 +367,34 @@ it.effect.each([
       expect(requests).toBe(7);
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("advertises the compact input schema for every registered preview tool", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const tools: Record<string, Tool.Any> = PreviewToolkit.tools;
+
+    expect(server.tools.length).toBe(Object.keys(tools).length);
+    for (const { tool } of server.tools) {
+      expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(tools[tool.name]!));
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("still decodes toolkit input with the full schema, not the advertised one", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    // The compact schema drops codec-added null for this non-nullable optional property.
+    const exit = yield* server
+      .callTool({ name: "preview_status", arguments: { tabId: null } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.exit,
+      );
+    expect(exit._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain("InvalidParams");
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("refuses preview tools to a client outside a thread before they run", () =>

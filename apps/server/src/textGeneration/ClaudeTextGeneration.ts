@@ -132,7 +132,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       selections: resolvedModelSelection.options,
     });
     const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
-    const rawEffortSelection = getModelSelectionStringOptionValue(resolvedModelSelection, "effort");
+    const storedEffort = getModelSelectionStringOptionValue(resolvedModelSelection, "effort");
+    // One-shot text never needs workflows; a legacy Ultracode effort keeps its xhigh.
+    const rawEffortSelection = isClaudeCatalogUltracodeEffort(storedEffort)
+      ? "xhigh"
+      : storedEffort;
     const resolvedEffort = resolveClaudeCatalogEffort(
       catalog,
       resolvedModelSelection.model,
@@ -143,7 +147,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       resolvedEffort,
       resolvedModelSelection.model,
     );
-    const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     // Only an explicit choice: a descriptor's own default (adaptive thinking
@@ -158,7 +161,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
-      ...(ultracode ? { ultracode: true } : {}),
     };
     const settingsJson = yield* encodeJsonForOperation(
       operation,

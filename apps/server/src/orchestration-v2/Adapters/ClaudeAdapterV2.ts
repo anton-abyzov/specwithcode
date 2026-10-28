@@ -136,6 +136,7 @@ import { mergeNativeSubscriptionEnvironment } from "../../provider/ProviderInsta
 import {
   claudeHumanMessageOrigin,
   compileClaudeWorkflowPolicy,
+  resolveClaudeUltracode,
   mergeClaudeWorkflowSettings,
   readClaudeInChromeDefault,
   readClaudeSubagentPromptFile,
@@ -1038,6 +1039,7 @@ export function makeClaudeQueryOptions(input: {
         } as ClaudeSdkSettings);
   const workflowPolicy = compileClaudeWorkflowPolicy({
     mode: input.claudeWorkflowMode,
+    ultracode: compiledSelection.settings.ultracode,
     agentInstructions: input.agentInstructions,
     responseStyle: input.responseStyle,
     subagentPromptFileContents: input.subagentPromptFileContents,
@@ -5831,8 +5833,9 @@ export function makeClaudeAdapterV2(
                         yield* Ref.get(pendingBackgroundTasksByNativeThread),
                         nativeThreadId,
                       );
+                // A stopped turn that wrote to the transcript moved past the pinned head.
                 const clearConversationHead =
-                  input.status === "completed" &&
+                  (input.status === "completed" || input.context.nativeMessageCursor !== null) &&
                   input.context.input.providerThread.nativeConversationHeadRef !== null;
                 // While a goal is set, Claude ends a turn on its own only after the
                 // goal's Stop hook passes. It defers that check while background
@@ -8117,11 +8120,19 @@ export function makeClaudeAdapterV2(
             isPaired(
               yield* fileSystem.readFileString(pairingFile).pipe(Effect.orElseSucceed(() => null)),
             );
+          const catalog = adapterOptions.modelCatalog?.() ?? BUNDLED_CLAUDE_MODEL_CATALOG;
+          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           const queryPolicyKey = stringifyJson([
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, {
               ...turnInput.runtimePolicy,
               subagentPromptFileContents,
             }),
+            // The thread's Ultracode toggle is launch context with the workflow
+            // mode: a running background workflow keeps the value it started with.
+            resolveClaudeUltracode(
+              turnInput.runtimePolicy.claudeWorkflowMode,
+              compiledSelection.settings.ultracode,
+            ),
             turnInput.projectAdditionalDirectories ?? [],
             claudeInChromeDefault,
             hideClaudeInChrome,
@@ -8134,8 +8145,6 @@ export function makeClaudeAdapterV2(
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
             projectAdditionalDirectories,
           ]);
-          const catalog = adapterOptions.modelCatalog?.() ?? BUNDLED_CLAUDE_MODEL_CATALOG;
-          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           // A reused process may have given up on SpecWithCode's MCP server
           // after a 401 (its credential was revoked for a while, as when the

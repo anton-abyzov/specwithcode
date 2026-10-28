@@ -13,6 +13,7 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { parseJson } from "../json.ts";
+import { clientRuntimeModeCeiling } from "../mcp/McpInvocationContext.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
@@ -91,6 +92,9 @@ export const layer = HttpRouter.add(
     const caller: ReceiverCaller = {
       sourceEnvironmentId: grant.value.coordinatorEnvironmentId,
       grant: grant.value,
+      // From the credential on this request, not the stored policy: a legacy
+      // grant has no stored cap until its coordinator calls again.
+      runtimeCeiling: clientRuntimeModeCeiling(client.value),
     };
 
     const limit = path === "replicate" ? MAX_BODY_BYTES : HANDOFF_JSON_MAX_BYTES;

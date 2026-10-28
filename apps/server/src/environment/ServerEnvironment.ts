@@ -325,6 +325,8 @@ export const make = Effect.gen(function* () {
       designCommentReplies: true,
       designSvgExport: true,
       studioFleetRemove: true,
+      fleetUpdateRequest: true,
+      fleetSkillUpdate: true,
       threadVisitedTracking: true,
       threadPullRequests: true,
       threadPullRequestWatch: true,

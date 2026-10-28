@@ -323,6 +323,8 @@ import {
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
+import { ComposerSkillsPopover } from "./ComposerSkillsPopover";
+import type { SessionSkillUse } from "./ComposerSkillsPopover.logic";
 import {
   providerSupportsManualCompaction,
   resolveContextWindowModelDisplayName,
@@ -1582,6 +1584,8 @@ export interface ChatComposerProps {
   activeThreadShell: ThreadShell | null;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
+  /** Skills this thread used, for the footer's Skills popover. */
+  sessionSkillUses?: ReadonlyArray<SessionSkillUse> | undefined;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
@@ -1776,6 +1780,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     machine = null,
     activeThread,
     promptHistoryMessages,
+    sessionSkillUses,
     isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
@@ -7934,6 +7939,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
+                  {isComposerResting || !selectedProviderEntry ? null : (
+                    <ComposerSkillsPopover
+                      environmentId={environmentId}
+                      projectId={
+                        activeThread?.projectId ?? props.activeThreadShell?.projectId ?? null
+                      }
+                      cwd={gitCwd}
+                      threadId={isServerThread ? activeThreadId : null}
+                      provider={selectedProviderEntry}
+                      machineLabel={usageMachineLabel}
+                      skills={selectedProviderSkills}
+                      uses={sessionSkillUses}
+                    />
+                  )}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

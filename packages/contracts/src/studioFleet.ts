@@ -544,3 +544,215 @@ export const StudioFleetPhoneLinksResult = Schema.Struct({
   revoked: Schema.Int,
 });
 export type StudioFleetPhoneLinksResult = typeof StudioFleetPhoneLinksResult.Type;
+
+/** An exact release version, `X.Y.Z`: no ranges, tags or prereleases. */
+export const StudioFleetUpdateVersion = Schema.String.check(
+  Schema.isPattern(/^(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,4})\.(0|[1-9]\d{0,5})$/),
+);
+
+/** How a fleet machine installs a release: its update agent (macOS service) or the boot service (Linux). */
+export const StudioFleetUpdateMethod = Schema.Literals(["service-agent", "boot-service"]);
+export type StudioFleetUpdateMethod = typeof StudioFleetUpdateMethod.Type;
+
+/** Where a fleet update request stands on the machine that was asked. */
+export const StudioFleetUpdatePhase = Schema.Literals([
+  "idle",
+  "checking",
+  "draining",
+  "requesting",
+  "requested",
+  "downloading",
+  "installing",
+  "handed-off",
+  "cancelled",
+  "failed",
+]);
+export type StudioFleetUpdatePhase = typeof StudioFleetUpdatePhase.Type;
+
+/** Why a fleet machine did not take an update request. */
+export const StudioFleetUpdateRefusal = Schema.Literals([
+  "downgrade",
+  "unknown-version",
+  "not-offered",
+  "not-held",
+  "unsupported",
+  "busy",
+  "failed",
+]);
+export type StudioFleetUpdateRefusal = typeof StudioFleetUpdateRefusal.Type;
+
+const StudioFleetUpdateHoldMinutes = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isLessThanOrEqualTo(15),
+);
+
+/**
+ * What a fleet primary may ask of this machine with its management token:
+ * install a published release (`force` drains and holds the service as
+ * Update now does), cancel the install request it wrote, or look for a
+ * release now. Nothing else, and no paths, commands or URLs.
+ */
+export const StudioFleetUpdateInput = Schema.Union([
+  exactStruct({
+    coordinatorEnvironmentId: EnvironmentId,
+    version: StudioFleetUpdateVersion,
+    mode: Schema.Literals(["force", "normal"]),
+    holdMinutes: Schema.optionalKey(StudioFleetUpdateHoldMinutes),
+  }),
+  exactStruct({
+    coordinatorEnvironmentId: EnvironmentId,
+    /** The `installRequestedAt` of the request to cancel. */
+    cancel: Schema.String.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(64),
+      Schema.isPattern(/^[0-9T:.+Z-]+$/),
+    ),
+  }),
+  exactStruct({
+    coordinatorEnvironmentId: EnvironmentId,
+    check: Schema.Literal(true),
+  }),
+]);
+export type StudioFleetUpdateInput = typeof StudioFleetUpdateInput.Type;
+
+export const StudioFleetUpdateStatusQuery = Schema.Struct({
+  coordinatorEnvironmentId: EnvironmentId,
+});
+export type StudioFleetUpdateStatusQuery = typeof StudioFleetUpdateStatusQuery.Type;
+
+/** The install request as the update agent's settings hold it. */
+export const StudioFleetUpdateRequestRecord = Schema.Struct({
+  installRequestedAt: Schema.NullOr(Schema.String),
+  installMode: Schema.NullOr(Schema.String),
+  installHoldUntil: Schema.NullOr(Schema.String),
+  installRequest: Schema.NullOr(Schema.Struct({ at: Schema.String, version: Schema.String })),
+});
+export type StudioFleetUpdateRequestRecord = typeof StudioFleetUpdateRequestRecord.Type;
+
+export const StudioFleetUpdateResult = Schema.Struct({
+  method: StudioFleetUpdateMethod,
+  result: Schema.Literals([
+    "accepted",
+    "requested",
+    "checking",
+    "check-requested",
+    "already-installed",
+    "cancelled",
+  ]),
+  phase: StudioFleetUpdatePhase,
+  serverVersion: Schema.String,
+  request: Schema.optionalKey(StudioFleetUpdateRequestRecord),
+});
+export type StudioFleetUpdateResult = typeof StudioFleetUpdateResult.Type;
+
+/**
+ * This machine's update state for its fleet primary. `agent` is the update
+ * agent's own status (`update_request.py status`) on a macOS service.
+ */
+export const StudioFleetUpdateStatus = Schema.Struct({
+  method: StudioFleetUpdateMethod,
+  serverVersion: Schema.String,
+  phase: StudioFleetUpdatePhase,
+  targetVersion: Schema.optionalKey(Schema.String),
+  lastError: Schema.optionalKey(Schema.String),
+  lastErrorReason: Schema.optionalKey(StudioFleetUpdateRefusal),
+  agent: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+});
+export type StudioFleetUpdateStatus = typeof StudioFleetUpdateStatus.Type;
+
+/**
+ * A published skill as `owner/repo/name`: three plain segments, each starting
+ * with a letter or digit. No scheme (`local:`, `github:`), path, URL, `..` or
+ * leading `-` can match, so the value is safe as one argv element.
+ */
+export const StudioFleetSkillName = Schema.String.check(
+  Schema.isMaxLength(200),
+  Schema.isPattern(
+    /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/,
+  ),
+);
+
+/** Which lock the install lands in: the user's (`vskill install --global`) or one project's. */
+export const StudioFleetSkillScope = Schema.Literals(["user", "project"]);
+export type StudioFleetSkillScope = typeof StudioFleetSkillScope.Type;
+
+/**
+ * What a fleet primary may ask of this machine with its management token:
+ * install one published skill at one exact version, for the user or for one
+ * of this machine's own projects (named by its id, never a path), and keep
+ * the pin `install @version` sets or drop it. Nothing else.
+ */
+export const StudioFleetSkillInput = Schema.Union([
+  exactStruct({
+    coordinatorEnvironmentId: EnvironmentId,
+    skill: StudioFleetSkillName,
+    version: StudioFleetUpdateVersion,
+    scope: Schema.Literal("user"),
+    pin: Schema.Boolean,
+  }),
+  exactStruct({
+    coordinatorEnvironmentId: EnvironmentId,
+    skill: StudioFleetSkillName,
+    version: StudioFleetUpdateVersion,
+    scope: Schema.Literal("project"),
+    projectId: ProjectId.check(Schema.isMaxLength(128)),
+    pin: Schema.Boolean,
+  }),
+]);
+export type StudioFleetSkillInput = typeof StudioFleetSkillInput.Type;
+
+export const StudioFleetSkillStatusQuery = Schema.Struct({
+  coordinatorEnvironmentId: EnvironmentId,
+});
+export type StudioFleetSkillStatusQuery = typeof StudioFleetSkillStatusQuery.Type;
+
+/** Where this machine's last skill install from its fleet primary stands. */
+export const StudioFleetSkillPhase = Schema.Literals([
+  "idle",
+  "installing",
+  "unpinning",
+  "installed",
+  "failed",
+]);
+export type StudioFleetSkillPhase = typeof StudioFleetSkillPhase.Type;
+
+/** Why a fleet machine did not install the skill version it was asked for. */
+export const StudioFleetSkillRefusal = Schema.Literals([
+  "unsupported",
+  "vskill-missing",
+  "invalid-skill",
+  "unknown-project",
+  "install-failed",
+  "busy",
+]);
+export type StudioFleetSkillRefusal = typeof StudioFleetSkillRefusal.Type;
+
+export const StudioFleetSkillResult = Schema.Struct({
+  result: Schema.Literal("accepted"),
+  /** Names this install in the status call, so the primary reads its own. */
+  requestId: Schema.String,
+  phase: StudioFleetSkillPhase,
+  skill: Schema.String,
+  version: Schema.String,
+  scope: StudioFleetSkillScope,
+});
+export type StudioFleetSkillResult = typeof StudioFleetSkillResult.Type;
+
+/**
+ * The last skill install on this machine. `installedVersion` and
+ * `pinnedVersion` are read back from the lock vskill wrote once it finished.
+ */
+export const StudioFleetSkillStatus = Schema.Struct({
+  phase: StudioFleetSkillPhase,
+  requestId: Schema.optionalKey(Schema.String),
+  skill: Schema.optionalKey(Schema.String),
+  version: Schema.optionalKey(Schema.String),
+  scope: Schema.optionalKey(StudioFleetSkillScope),
+  projectId: Schema.optionalKey(Schema.String),
+  pin: Schema.optionalKey(Schema.Boolean),
+  installedVersion: Schema.optionalKey(Schema.String),
+  pinnedVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  lastError: Schema.optionalKey(Schema.String),
+  lastErrorReason: Schema.optionalKey(StudioFleetSkillRefusal),
+});
+export type StudioFleetSkillStatus = typeof StudioFleetSkillStatus.Type;

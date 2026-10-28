@@ -176,7 +176,7 @@ describe("handoff badges", () => {
     ).toBeNull();
   });
 
-  it("shows Paused after sleep with Resume this Mac… after a fenced wake", () => {
+  it("shows Paused: offline with Resume this Mac… after a network fence", () => {
     const badge = handoffBadgeFor(
       snapshot({
         pausedSince: "2026-10-20T20:00:00.000Z",
@@ -185,7 +185,7 @@ describe("handoff badges", () => {
       T1,
       name,
     );
-    expect(badge).toEqual({ kind: "paused", label: "Paused after sleep" });
+    expect(badge).toEqual({ kind: "paused", label: "Paused: offline" });
     const html = render(
       <HandoffBadgeActions
         badge={badge!}
@@ -195,6 +195,8 @@ describe("handoff badges", () => {
       />,
     );
     expect(html).toContain("Resume this Mac…");
+    expect(html).not.toContain("sleep");
+    expect(html).not.toContain("woke");
     // The button only asks; the dialog stays closed until it is pressed.
     expect(html).not.toContain("Resume all threads on this Mac?");
   });

@@ -27,11 +27,17 @@ const KNOWN_SHARED_DIRECTORIES = [
   "cache",
   "logs",
   "mcp-oauth-locks",
+  "thread-writer-locks",
 ] as const;
 
-const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
-const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
-const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["mcp-oauth-locks"]);
+// auth.lock guards the shadow home's private auth.json.
+const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
+// Finder maintains metadata separately for each directory, including shadow homes.
+const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
+// Existing OAuth scratch directories can be replaced, as before. Never unlink writer or
+// maintenance locks: a native process may still hold the inode even when the file is empty.
+const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set(["mcp-oauth-locks"]);
+const SHARED_LOCK_ENTRIES = new Set(["thread-writer-locks", ".sqlite-maintenance.lock"]);
 
 function resolveHomePath(path: Path.Path, value: string | undefined): string {
   const expanded =
@@ -197,6 +203,14 @@ const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(f
     linkPath: privatePath,
   });
   if (state._tag === "Symlink") {
+    if (input.entryName === "auth.lock") {
+      return yield* new CodexShadowHomePrivateEntrySymlinkError({
+        sharedHomePath: input.sharedHomePath,
+        effectiveHomePath: input.effectiveHomePath,
+        entryName: input.entryName,
+        path: privatePath,
+      });
+    }
     yield* input.fileSystem.remove(privatePath).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
@@ -243,7 +257,7 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   );
 
   if (state._tag === "NotSymlink") {
-    if (!REPLACEABLE_SHARED_RUNTIME_DIRECTORIES.has(input.entryName)) {
+    if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
       return yield* new CodexShadowHomeEntryConflictError({
         sharedHomePath: input.sharedHomePath,
         effectiveHomePath: input.effectiveHomePath,
@@ -275,6 +289,15 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
 
   const resolvedExisting = path.resolve(path.dirname(link), state.target);
   if (resolvedExisting !== target) {
+    if (SHARED_LOCK_ENTRIES.has(input.entryName)) {
+      return yield* new CodexShadowHomeEntryConflictError({
+        sharedHomePath: input.sharedHomePath,
+        effectiveHomePath: input.effectiveHomePath,
+        entryName: input.entryName,
+        linkPath: link,
+        targetPath: target,
+      });
+    }
     yield* input.fileSystem.remove(link).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
@@ -370,7 +393,9 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
         }),
     }),
   );
-  const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
+  // Link the maintenance path before either home first creates it. A dangling symlink
+  // directs native creation to the shared home too.
+  const entries = new Set<string>([...KNOWN_SHARED_DIRECTORIES, ...SHARED_LOCK_ENTRIES]);
   for (const entryName of sharedEntryNames) {
     if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
       entries.add(entryName);

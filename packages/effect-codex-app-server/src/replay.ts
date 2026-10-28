@@ -244,6 +244,8 @@ function normalizeReplayFrame(value: unknown): unknown {
   return normalized;
 }
 
+const HOST_THREAD_IDENTITY_KEY = "shell_environment_policy.set.SPECWEAVE_";
+
 /**
  * `config` keys a recorder sent on thread requests that the client under test
  * never sends, such as `agents.max_depth`. Recorders list them in the
@@ -257,7 +259,9 @@ function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): R
 /**
  * Thread requests must match on the `config` the client owns. `cwd`, `model`
  * and host-supplied MCP servers (machine-local URLs, short-lived authorization
- * headers) vary per machine, and recorder-only keys are not the client's.
+ * headers) vary per machine, the host's SpecWeave thread identity
+ * (`shell_environment_policy.set.SPECWEAVE_*`) names the app thread, and
+ * recorder-only keys are not the client's.
  */
 function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<string>): unknown {
   if (typeof frame !== "object" || frame === null) return frame;
@@ -275,6 +279,9 @@ function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<s
   if (typeof config !== "object" || config === null) return { ...record, params };
   const { mcp_servers: _mcpServers, ...owned } = config as Record<string, unknown>;
   for (const key of ignoredConfigKeys) delete owned[key];
+  for (const key of Object.keys(owned)) {
+    if (key.startsWith(HOST_THREAD_IDENTITY_KEY)) delete owned[key];
+  }
   return { ...record, params: { ...params, config: owned } };
 }
 

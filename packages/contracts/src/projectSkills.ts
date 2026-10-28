@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /**
@@ -12,6 +18,17 @@ export const ProjectSkillsReadInput = Schema.Struct({
   projectId: ProjectId,
   /** Re-read lockfiles and file contents instead of a recent cached answer. */
   refresh: Schema.optional(Schema.Boolean),
+  /**
+   * The folder to read, such as a thread's worktree. Left out, the project's
+   * workspace root. Only the root and the project's own thread worktrees are
+   * accepted; any other path is refused with `cwd_not_allowed`.
+   */
+  cwd: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The thread whose folder `cwd` is. With it, only that thread's worktree is
+   * looked up instead of every thread of the project.
+   */
+  threadId: Schema.optional(ThreadId),
 });
 export type ProjectSkillsReadInput = typeof ProjectSkillsReadInput.Type;
 
@@ -135,14 +152,16 @@ export class ProjectSkillsReadError extends Schema.TaggedError<ProjectSkillsRead
   "ProjectSkillsReadError",
   {
     projectId: ProjectId,
-    reason: Schema.Literals(["project_not_found", "read_failed"]),
+    reason: Schema.Literals(["project_not_found", "read_failed", "cwd_not_allowed"]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     return this.reason === "project_not_found"
       ? "Project was not found."
-      : "Project skills could not be read.";
+      : this.reason === "cwd_not_allowed"
+        ? "That folder is not this project's folder or one of its thread worktrees."
+        : "Project skills could not be read.";
   }
 }
 

@@ -10,7 +10,10 @@ import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString, type SourceControlRepositoryVisibility } from "@specweave-studio/contracts";
+import {
+  TrimmedNonEmptyString,
+  type SourceControlRepositoryVisibility,
+} from "@specweave-studio/contracts";
 import { normalizeGitRemoteUrl } from "@specweave-studio/shared/git";
 import { decodeJsonResult } from "@specweave-studio/shared/schemaJson";
 import {
@@ -436,7 +439,8 @@ export interface GitHubRepositoryLocator {
 }
 
 /** `owner/name` or `host/owner/name`, as `gh --repo` and GH_REPO take them. */
-function parseGitHubRepositorySelector(
+/** @internal Exported for tests. */
+export function parseGitHubRepositorySelector(
   selector: string,
   defaultHost: string,
 ): GitHubRepositoryLocator | null {
@@ -454,8 +458,10 @@ function parseGitHubRepositorySelector(
   }
   const parts = trimmed.split("/").filter(Boolean);
   if (parts.length === 2) return { host: defaultHost, owner: parts[0]!, name: parts[1]! };
-  if (parts.length === 3)
-    return { host: parts[0]!.toLowerCase(), owner: parts[1]!, name: parts[2]! };
+  // The host picks where the API call and its token go, so it must be a plain host[:port].
+  const host = parts[0]?.toLowerCase();
+  if (parts.length === 3 && host !== undefined && GitHubCredentials.isGitHubHost(host))
+    return { host, owner: parts[1]!, name: parts[2]! };
   return null;
 }
 
@@ -961,7 +967,8 @@ export const make = Effect.gen(function* () {
     );
 
     yield* Effect.gen(function* () {
-      if (!exists) yield* runGit(input.cwd, "branch", ["branch", localBranch, target.ref]);
+      if (!exists)
+        yield* git.createBranch({ cwd: input.cwd, branch: localBranch, startPoint: target.ref });
       yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
       if (exists) {
         yield* runGit(

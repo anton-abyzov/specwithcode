@@ -20,6 +20,16 @@ import { assertMayMigrate, handoffFailure } from "./migrate.ts";
 const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
   new OrchestratorMcpFailure({ code, message });
 
+/**
+ * An agent continues a handed-off thread only after its source has been silent
+ * this long; sooner, the user decides. An unattended agent is the likeliest way
+ * a thread would run on two machines at once.
+ */
+export const AGENT_CONTINUE_SILENCE_MS = 10 * 60_000;
+
+const silentLongEnoughForAgent = (replica: HandoffIncomingReplica, now: number) =>
+  now - Date.parse(replica.lease.renewedAt) >= AGENT_CONTINUE_SILENCE_MS;
+
 /** The calling coordinator's project; replicas are matched only by its explicit link (0948). */
 const callerProject = (tool: string) =>
   Effect.gen(function* () {
@@ -42,7 +52,10 @@ const readyThread = (
   branch: replica.checkpoint.branch,
   sourceUnreachable: replica.sourceUnreachable,
   sourceLastSeenAt: replica.sourceLastSeenAt,
-  canContinueNow: replica.continuedThreadId === null && isLeaseStale(replica.lease, now),
+  canContinueNow:
+    replica.continuedThreadId === null &&
+    isLeaseStale(replica.lease, now) &&
+    silentLongEnoughForAgent(replica, now),
   continuedThreadId: replica.continuedThreadId,
 });
 
@@ -74,8 +87,9 @@ const matchesMachine = (replica: HandoffIncomingReplica, machine: string) => {
 
 /**
  * Continues one handoff-ready thread of this project on this machine, in one
- * call. The handoff service refuses while the source still renews its lease,
- * so two machines never run the same thread.
+ * call. The handoff service refuses while the source still renews its lease
+ * or answers a probe, so two machines never run the same thread; an agent
+ * also waits 10 minutes of silence.
  */
 export const continueHere = (input: OrchestratorMcpThreadContinueHereInput) =>
   Effect.gen(function* () {
@@ -118,12 +132,28 @@ export const continueHere = (input: OrchestratorMcpThreadContinueHereInput) =>
           : `Thread ${input.sourceThreadId} from ${replica.sourceLabel} belongs to another project; a coordinator continues only its own project's threads.`,
       );
     }
+    const now = yield* Clock.currentTimeMillis;
+    if (replica.continuedThreadId === null && !silentLongEnoughForAgent(replica, now)) {
+      return yield* failure(
+        "invalid_request",
+        `${replica.sourceLabel} renewed thread ${input.sourceThreadId}'s lease ${Math.max(
+          0,
+          Math.floor((now - Date.parse(replica.lease.renewedAt)) / 60_000),
+        )} minutes ago; an agent continues a handed-off thread only after ${
+          AGENT_CONTINUE_SILENCE_MS / 60_000
+        } minutes of silence. Ask the user whether to continue it here (Continue here in the app).`,
+      );
+    }
     const continued = yield* handoff
-      .continueHere({
-        sourceEnvironmentId: replica.sourceEnvironmentId,
-        sourceThreadId: replica.sourceThreadId,
-        ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-      })
+      .continueHere(
+        {
+          sourceEnvironmentId: replica.sourceEnvironmentId,
+          sourceThreadId: replica.sourceThreadId,
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        },
+        // The service also needs this machine shown online and the source asked.
+        { byAgent: true },
+      )
       .pipe(Effect.mapError(handoffFailure));
     return {
       source: { environmentId: replica.sourceEnvironmentId, label: replica.sourceLabel },

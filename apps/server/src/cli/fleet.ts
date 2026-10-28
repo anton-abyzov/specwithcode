@@ -30,8 +30,22 @@ import { resolveBaseDir } from "../os-jank.ts";
 import { secretsSentTo } from "../fleet/folderTransfer/secretsReport.ts";
 import { unlinkPhonesFrom } from "../fleet/phoneLinks.ts";
 import { join } from "../nodePath.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - the id file is read once, like the fleet file.
+import { readFile } from "node:fs/promises";
 import { makeFleetLink } from "../fleet/fleetTransport.ts";
-import { discoverFleet, FleetError, readFleetConfig } from "../studioFleet.ts";
+import {
+  type FleetUpdateAction,
+  FleetUpdateFailure,
+  legacySelfUpdateOverSocket,
+  runFleetUpdate,
+} from "../fleet/fleetUpdate.ts";
+import {
+  type FleetSkillAsk,
+  isFleetSkillName,
+  isFleetSkillVersion,
+  runFleetSkillInstalls,
+} from "../fleet/fleetSkills.ts";
+import { discoverFleet, FleetError, type FleetTarget, readFleetConfig } from "../studioFleet.ts";
 import {
   addFleetMachine,
   FleetJoinError,
@@ -395,9 +409,340 @@ export function fleetRemoveSummary(removed: FleetRemoveResult, cli: string): str
   return lines.join("\n");
 }
 
+const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+/** The primary's own environment id: its running server's, else the id file in its home. */
+const primaryEnvironmentId = (baseDir: string, explicit: Option.Option<string>) =>
+  discoverPairTarget(Option.getOrUndefined(explicit)).pipe(
+    Effect.map((target) => target.descriptor.environmentId as string),
+    Effect.catch(() =>
+      Effect.tryPromise(() => readFile(join(baseDir, "userdata", "environment-id"), "utf8")).pipe(
+        Effect.map((raw) => raw.trim()),
+        Effect.orElseSucceed(() => ""),
+      ),
+    ),
+  );
+
+/** Which `fleet update` action the flags ask for, or why they do not make one. */
+export function fleetUpdateActionOf(flags: {
+  readonly version: Option.Option<string>;
+  readonly holdMinutes: Option.Option<number>;
+  readonly noHold: boolean;
+  readonly status: boolean;
+  readonly check: boolean;
+  readonly cancel: Option.Option<string>;
+}): FleetUpdateAction | string {
+  const chosen = [
+    Option.isSome(flags.version),
+    flags.status,
+    flags.check,
+    Option.isSome(flags.cancel),
+  ].filter(Boolean).length;
+  if (chosen !== 1) return "Choose exactly one of --version, --status, --check or --cancel.";
+  if (Option.isSome(flags.version)) {
+    const holdMinutes = Option.getOrUndefined(flags.holdMinutes);
+    if (holdMinutes !== undefined && (flags.noHold || holdMinutes < 1 || holdMinutes > 15))
+      return "--hold-minutes is 1 to 15, and only for a held install (without --no-hold).";
+    return { kind: "request", version: flags.version.value, hold: !flags.noHold, holdMinutes };
+  }
+  if (Option.isSome(flags.cancel)) return { kind: "cancel", request: flags.cancel.value };
+  return flags.status ? { kind: "status" } : { kind: "check" };
+}
+
+/** A human line for one `fleet update` outcome. */
+export function describeFleetUpdate(label: string, outcome: Record<string, unknown>): string {
+  const via = outcome.transport === "connect" ? "over SpecWithCode Connect" : "over Tailscale";
+  if (outcome.result === undefined)
+    return `${label} runs ${String(outcome.version ?? outcome.serverVersion)} (${String(outcome.method ?? "no update path")}, ${String(outcome.phase)}${outcome.message ? `: ${String(outcome.message)}` : ""}), reached ${via}.`;
+  const request = outcome.request as { installRequest?: { version?: string } | null } | undefined;
+  const version = request?.installRequest?.version;
+  switch (outcome.result) {
+    case "requested":
+      return `Asked ${label} to install ${version ?? "the release"} ${via}; read progress with --status.`;
+    case "accepted":
+      return `${label} took the update request ${via} and is ${String(outcome.phase)}; read progress with --status.`;
+    case "checking":
+      return `${label}'s update agent does not offer that release yet; it is looking now. Ask again in a minute.`;
+    case "check-requested":
+      return `Asked ${label} to look for a release now.`;
+    case "already-installed":
+      return `${label} already runs that version.`;
+    case "cancelled":
+      return `Cancelled the install request on ${label}.`;
+    default:
+      return `${label}: ${String(outcome.result)}.`;
+  }
+}
+
+const updateCommand = Command.make("update", {
+  baseDir: baseDirFlag,
+  machine: Argument.String("machine").pipe(
+    Argument.withDescription("The machine's id or name, as `fleet list` shows it."),
+  ),
+  version: Flag.String("version").pipe(
+    Flag.withDescription(
+      "Ask the machine to install this published release (X.Y.Z). A macOS service drains and holds as Update now does; a Linux service updates itself.",
+    ),
+    Flag.optional,
+  ),
+  holdMinutes: Flag.Int("hold-minutes").pipe(
+    Flag.withDescription("How long a held install may retry, 1 to 15 minutes. Default 15."),
+    Flag.optional,
+  ),
+  noHold: Flag.Boolean("no-hold").pipe(
+    Flag.withDescription(
+      "Request the install without stopping work; the update agent waits for a quiet moment.",
+    ),
+    Flag.withDefault(false),
+  ),
+  status: Flag.Boolean("status").pipe(
+    Flag.withDescription("Read the machine's update status."),
+    Flag.withDefault(false),
+  ),
+  check: Flag.Boolean("check").pipe(
+    Flag.withDescription("Ask the machine to look for a release now."),
+    Flag.withDefault(false),
+  ),
+  cancel: Flag.String("cancel").pipe(
+    Flag.withDescription("Cancel the install request made at this time (its installRequestedAt)."),
+    Flag.optional,
+  ),
+  json: Flag.Boolean("json").pipe(
+    Flag.withDescription(
+      "Print one JSON line, shaped like update_request.py's, and exit 1 on failure.",
+    ),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription(
+    "On the primary machine: ask another machine to install a release, over SpecWithCode Connect or Tailscale, with the management token saved for it.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      // With --json a script reads the one line; the exit code still says it failed.
+      const fail = (reason: string, error: string): Effect.Effect<void, FleetCommandError> =>
+        flags.json
+          ? Console.log(encodeJsonLine({ error, reason })).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  process.exitCode = 1;
+                }),
+              ),
+            )
+          : Effect.fail(new FleetCommandError({ detail: error }));
+      const action = fleetUpdateActionOf(flags);
+      if (typeof action === "string") return yield* fail("usage", action);
+      const baseDir = yield* resolveFleetBaseDir(flags.baseDir);
+      const config = yield* Effect.tryPromise({
+        try: () => readFleetConfig(baseDir),
+        catch: fleetFailure,
+      });
+      const wanted = flags.machine.trim().toLowerCase();
+      const target = config?.machines.find(
+        (machine) => machine.id === wanted || machine.label.trim().toLowerCase() === wanted,
+      );
+      if (target === undefined)
+        return yield* fail("unknown-machine", new FleetError("unknown-machine").message);
+      const coordinatorEnvironmentId = yield* primaryEnvironmentId(baseDir, flags.baseDir);
+      if (coordinatorEnvironmentId === "")
+        return yield* fail(
+          "unauthorized",
+          "This machine's environment ID could not be read; start its SpecWithCode service, or pass --base-dir.",
+        );
+      const outcome = yield* Effect.tryPromise({
+        try: () =>
+          runFleetUpdate({
+            link: makeFleetLink({ fetch: globalThis.fetch, baseDir }),
+            target,
+            coordinatorEnvironmentId,
+            action,
+            legacySelfUpdate: legacySelfUpdateOverSocket,
+          }),
+        catch: (error) =>
+          error instanceof FleetUpdateFailure
+            ? error
+            : new FleetUpdateFailure("unreachable", "The machine could not be reached."),
+      }).pipe(Effect.result);
+      if (outcome._tag === "Failure")
+        return yield* fail(outcome.failure.reason, outcome.failure.message);
+      yield* Console.log(
+        flags.json
+          ? encodeJsonLine(outcome.success)
+          : describeFleetUpdate(target.label, outcome.success),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  ),
+);
+
+/** Which skill install the `fleet skills` flags ask for, or why they do not make one. */
+export function fleetSkillAskOfFlags(flags: {
+  readonly skill: string;
+  readonly version: string;
+  readonly scope: "user" | "project";
+  readonly project: Option.Option<string>;
+  readonly noPin: boolean;
+}): FleetSkillAsk | { readonly reason: "usage" | "invalid-skill"; readonly error: string } {
+  const skill = flags.skill.trim();
+  const version = flags.version.trim();
+  if (!isFleetSkillName(skill))
+    return {
+      reason: "invalid-skill",
+      error: `${skill} is not a published skill name; use owner/repo/name (no local: or other sources, paths or URLs).`,
+    };
+  if (!isFleetSkillVersion(version))
+    return { reason: "invalid-skill", error: `${version} is not an exact version (X.Y.Z).` };
+  const pin = !flags.noPin;
+  if (flags.scope === "project") {
+    const projectId = Option.getOrUndefined(flags.project)?.trim() ?? "";
+    if (projectId === "")
+      return {
+        reason: "usage",
+        error: "--scope project needs --project <id>, that machine's own project id.",
+      };
+    return { skill, version, pin, scope: "project", projectId };
+  }
+  if (Option.isSome(flags.project))
+    return { reason: "usage", error: "--project is only for --scope project." };
+  return { skill, version, pin, scope: "user" };
+}
+
+/** Which saved machines `fleet skills` asks: the one named, or every one with --all. */
+export function fleetSkillTargetsOf(
+  machines: ReadonlyArray<FleetTarget>,
+  machine: Option.Option<string>,
+  all: boolean,
+): ReadonlyArray<FleetTarget> | { readonly reason: string; readonly error: string } {
+  if (Option.isSome(machine) === all)
+    return { reason: "usage", error: "Name one machine, or pass --all." };
+  if (Option.isNone(machine))
+    return machines.length === 0
+      ? { reason: "unknown-machine", error: "No other machines are saved here." }
+      : machines;
+  const wanted = machine.value.trim().toLowerCase();
+  const target = machines.find(
+    (entry) => entry.id === wanted || entry.label.trim().toLowerCase() === wanted,
+  );
+  return target === undefined
+    ? { reason: "unknown-machine", error: new FleetError("unknown-machine").message }
+    : [target];
+}
+
+/** A human line for one `fleet skills` outcome. */
+export function describeFleetSkill(outcome: Record<string, unknown>): string {
+  const label = String(outcome.label ?? outcome.machine);
+  if (typeof outcome.error === "string")
+    return `${label}: ${String(outcome.reason)}: ${outcome.error}`;
+  const via = outcome.transport === "connect" ? "over SpecWithCode Connect" : "over Tailscale";
+  const pinned =
+    typeof outcome.pinnedVersion === "string"
+      ? `, pinned at ${outcome.pinnedVersion}`
+      : ", unpinned";
+  return `${label} has ${String(outcome.skill)} ${String(outcome.installedVersion)} (${String(outcome.scope)}${pinned}), installed ${via}.`;
+}
+
+const skillsCommand = Command.make("skills", {
+  baseDir: baseDirFlag,
+  machine: Argument.String("machine").pipe(
+    Argument.withDescription("The machine's id or name, as `fleet list` shows it."),
+    Argument.optional,
+  ),
+  all: Flag.Boolean("all").pipe(
+    Flag.withDescription("Ask every saved machine instead of one."),
+    Flag.withDefault(false),
+  ),
+  skill: Flag.String("skill").pipe(
+    Flag.withDescription("The published skill, as owner/repo/name."),
+  ),
+  version: Flag.String("version").pipe(
+    Flag.withDescription("The exact skill version to install (X.Y.Z)."),
+  ),
+  scope: Flag.Literals("scope", ["user", "project"]).pipe(
+    Flag.withDescription(
+      "user installs for the machine's user (vskill --global); project installs into one project there.",
+    ),
+    Flag.withDefault("user" as const),
+  ),
+  project: Flag.String("project").pipe(
+    Flag.withDescription("With --scope project: that machine's own project id."),
+    Flag.optional,
+  ),
+  noPin: Flag.Boolean("no-pin").pipe(
+    Flag.withDescription(
+      "Drop the pin `vskill install @version` sets, so the machine keeps taking updates.",
+    ),
+    Flag.withDefault(false),
+  ),
+  json: Flag.Boolean("json").pipe(
+    Flag.withDescription(
+      "Print one JSON line per machine, and exit 1 when any machine did not install it.",
+    ),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription(
+    "On the primary machine: install one skill version on another machine, or all of them, over SpecWithCode Connect or Tailscale, and read the version back from its lock.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const fail = (reason: string, error: string): Effect.Effect<void, FleetCommandError> =>
+        flags.json
+          ? Console.log(encodeJsonLine({ error, reason })).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  process.exitCode = 1;
+                }),
+              ),
+            )
+          : Effect.fail(new FleetCommandError({ detail: error }));
+      const ask = fleetSkillAskOfFlags(flags);
+      if ("error" in ask) return yield* fail(ask.reason, ask.error);
+      const baseDir = yield* resolveFleetBaseDir(flags.baseDir);
+      const config = yield* Effect.tryPromise({
+        try: () => readFleetConfig(baseDir),
+        catch: fleetFailure,
+      });
+      const targets = fleetSkillTargetsOf(config?.machines ?? [], flags.machine, flags.all);
+      if ("error" in targets) return yield* fail(targets.reason, targets.error);
+      const coordinatorEnvironmentId = yield* primaryEnvironmentId(baseDir, flags.baseDir);
+      if (coordinatorEnvironmentId === "")
+        return yield* fail(
+          "unauthorized",
+          "This machine's environment ID could not be read; start its SpecWithCode service, or pass --base-dir.",
+        );
+      const outcomes = yield* Effect.promise(() =>
+        runFleetSkillInstalls({
+          link: makeFleetLink({ fetch: globalThis.fetch, baseDir }),
+          targets,
+          coordinatorEnvironmentId,
+          ask,
+        }),
+      );
+      for (const outcome of outcomes)
+        yield* Console.log(flags.json ? encodeJsonLine(outcome) : describeFleetSkill(outcome));
+      if (outcomes.some((outcome) => typeof outcome.error === "string")) {
+        if (flags.json)
+          yield* Effect.sync(() => {
+            process.exitCode = 1;
+          });
+        else
+          return yield* new FleetCommandError({
+            detail: "The skill was not installed on every machine asked.",
+          });
+      }
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  ),
+);
+
 export const fleetCommand = Command.make("fleet").pipe(
   Command.withDescription(
     "Add your other machines over Tailscale or SpecWithCode Connect so coordinators here can start work on them.",
   ),
-  Command.withSubcommands([inviteCommand, addCommand, listCommand, removeCommand]),
+  Command.withSubcommands([
+    inviteCommand,
+    addCommand,
+    listCommand,
+    removeCommand,
+    updateCommand,
+    skillsCommand,
+  ]),
 );

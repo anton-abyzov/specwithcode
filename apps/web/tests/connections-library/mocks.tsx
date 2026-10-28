@@ -103,6 +103,134 @@ const folderEntries: NativeConnectionsSnapshot["connections"] = [
   folderEntry("browser-mcp", "notes-app", "stdio"),
   folderEntry("scheduler", "travel-demo", "http"),
 ];
+/** A wide machine: many servers across Codex, Claude Code and four other tools. */
+const gridNames = [
+  "pencil",
+  "blender",
+  "posthog",
+  "rea",
+  "supermetrics",
+  "excalidraw",
+  "higgsfield",
+  "n8n-mcp",
+  "node_repl",
+  "playwright",
+  "context7",
+  "sentry",
+];
+type GridState = "configured" | "disabled" | "invalid" | null;
+const gridCodex: GridState[] = [
+  "configured",
+  "configured",
+  "configured",
+  null,
+  "configured",
+  "disabled",
+  null,
+  "configured",
+  "configured",
+  null,
+  "configured",
+  "invalid",
+];
+const gridClaude: GridState[] = [
+  "configured",
+  "configured",
+  "configured",
+  "configured",
+  "configured",
+  "configured",
+  "configured",
+  null,
+  null,
+  "configured",
+  "disabled",
+  null,
+];
+const gridOther: Record<string, GridState[]> = {
+  "claude-desktop": [
+    "configured",
+    null,
+    null,
+    null,
+    null,
+    "configured",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+  ],
+  gemini: [
+    "configured",
+    null,
+    "disabled",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    "configured",
+    null,
+    null,
+  ],
+  cursor: [
+    "configured",
+    "configured",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    "configured",
+    "configured",
+    null,
+  ],
+  opencode: [null, null, null, null, null, null, null, "configured", null, null, null, null],
+};
+const gridEntries = (provider: "codex" | "claude", states: GridState[]) =>
+  gridNames.flatMap((name, index) => {
+    const state = states[index];
+    if (!state) return [];
+    return [
+      {
+        id: `${provider}-user:${name}`,
+        name,
+        provider,
+        sourceId: `${provider}-user`,
+        scope: "user" as const,
+        transport: index % 3 === 0 ? ("stdio" as const) : ("http" as const),
+        state,
+        shadowed: false,
+        portable: name !== "node_repl",
+        ...(provider === "claude" && state === "disabled" ? { parked: true } : {}),
+      },
+    ];
+  });
+const gridSnapshot: NativeConnectionsSnapshot = {
+  observedAt: "2026-10-14T12:00:00Z",
+  runtime: "unverified",
+  truncated: false,
+  sources: [
+    { id: "codex-user", provider: "codex", scope: "user", status: "read" },
+    { id: "claude-user", provider: "claude", scope: "user", status: "read" },
+  ],
+  connections: [...gridEntries("codex", gridCodex), ...gridEntries("claude", gridClaude)],
+  otherTools: Object.entries(gridOther).map(([tool, states]) => ({
+    tool: tool as "claude-desktop" | "gemini" | "cursor" | "opencode",
+    status: "read" as const,
+    connections: gridNames.flatMap((name, index) => {
+      const state = states[index];
+      return state && state !== "invalid"
+        ? [{ id: `${tool}:${name}`, name, transport: "stdio" as const, state }]
+        : [];
+    }),
+  })),
+};
 export function useEnvironmentQuery(
   atom: { environmentId: string; input: { projectId?: string } } | null,
 ) {
@@ -111,29 +239,34 @@ export function useEnvironmentQuery(
   const provider = atom?.environmentId === "remote" ? "claude" : "codex";
   const scope = atom?.input.projectId ? "project" : "user";
   const sourceId = `${provider}-${scope}`;
-  const snapshot: NativeConnectionsSnapshot = {
-    observedAt: "2026-10-14T12:00:00Z",
-    runtime: "unverified",
-    truncated: false,
-    sources: [{ id: sourceId, provider, scope, status: mode === "invalid" ? "invalid" : "read" }],
-    connections:
-      mode === "empty" || mode === "invalid"
-        ? []
-        : mode === "folders"
-          ? folderEntries
-          : [
-              {
-                id: sourceId,
-                name: provider === "claude" ? "Remote analytics" : "PostHog",
-                provider,
-                scope,
-                sourceId,
-                transport: "http",
-                state: scope === "project" ? "disabled" : "configured",
-                shadowed: false,
-              },
-            ],
-  };
+  const snapshot: NativeConnectionsSnapshot =
+    mode === "grid"
+      ? gridSnapshot
+      : {
+          observedAt: "2026-10-14T12:00:00Z",
+          runtime: "unverified",
+          truncated: false,
+          sources: [
+            { id: sourceId, provider, scope, status: mode === "invalid" ? "invalid" : "read" },
+          ],
+          connections:
+            mode === "empty" || mode === "invalid"
+              ? []
+              : mode === "folders"
+                ? folderEntries
+                : [
+                    {
+                      id: sourceId,
+                      name: provider === "claude" ? "Remote analytics" : "PostHog",
+                      provider,
+                      scope,
+                      sourceId,
+                      transport: "http",
+                      state: scope === "project" ? "disabled" : "configured",
+                      shadowed: false,
+                    },
+                  ],
+        };
   return {
     data: mode === "loading" ? null : snapshot,
     error: mode === "error" ? "Discovery unavailable" : null,

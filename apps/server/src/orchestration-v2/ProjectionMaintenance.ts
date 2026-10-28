@@ -282,7 +282,14 @@ export const layer: Layer.Layer<
     const READ_STATE_THREAD_EVENT_TYPES = ["thread.visited", "thread.marked-unread"];
     // Keep the first snapshot for replay insertion order and the last for state.
     // Commanded items and subagents retain every snapshot for replay and prompt anchors.
-    const KEYED_EVENT_TYPES = ["message.updated", "node.updated", "turn-item.updated"];
+    // A provider-turn snapshot may omit tokenUsage and inherit the last recorded
+    // one, so the newest snapshot that carries tokenUsage is retained as well.
+    const KEYED_EVENT_TYPES = [
+      "message.updated",
+      "node.updated",
+      "turn-item.updated",
+      "provider-turn.updated",
+    ];
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
@@ -301,6 +308,7 @@ export const layer: Layer.Layer<
       readonly entity_id: string | null;
       readonly stored_chars: number;
       readonly imported_legacy_thread: number;
+      readonly has_token_usage: number;
     };
     type Obsolete = {
       readonly sequence: number;
@@ -325,7 +333,9 @@ export const layer: Layer.Layer<
       const readStateThreadIds = new Set<string>();
       // null: only the newest is retained so far. Otherwise the oldest seen,
       // retained until an even older one appears.
-      const oldestCandidateByEntityKey = new Map<string, Obsolete | null>();
+      const oldestCandidateByEntityKey = new Map<string, ScannedEvent | null>();
+      // Provider turns whose effective tokenUsage a retained snapshot already holds.
+      const tokenUsageRetainedKeys = new Set<string>();
       return (row: ScannedEvent): Obsolete | undefined => {
         if (row.imported_legacy_thread === 1) return obsoleteOf(row);
         if (row.application_event_version !== 2) return undefined;
@@ -343,12 +353,22 @@ export const layer: Layer.Layer<
         if (
           row.event_type === "message.updated" ||
           row.event_type === "node.updated" ||
-          (row.event_type === "turn-item.updated" && row.entity_id !== null)
+          ((row.event_type === "turn-item.updated" || row.event_type === "provider-turn.updated") &&
+            row.entity_id !== null)
         ) {
           const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
           const candidate = oldestCandidateByEntityKey.get(key);
-          oldestCandidateByEntityKey.set(key, candidate === undefined ? null : obsoleteOf(row));
-          return candidate ?? undefined;
+          oldestCandidateByEntityKey.set(key, candidate === undefined ? null : row);
+          if (candidate === undefined) {
+            if (row.has_token_usage === 1) tokenUsageRetainedKeys.add(key);
+            return undefined;
+          }
+          if (candidate === null) return undefined;
+          if (candidate.has_token_usage === 1 && !tokenUsageRetainedKeys.has(key)) {
+            tokenUsageRetainedKeys.add(key);
+            return undefined;
+          }
+          return obsoleteOf(candidate);
         }
         return undefined;
       };
@@ -435,8 +455,19 @@ export const layer: Layer.Layer<
               AND event.command_id IS NULL
               AND json_extract(event.payload_json, '$.type') <> 'subagent'
             THEN json_extract(event.payload_json, '$.id')
+            WHEN event.application_event_version = 2
+              AND event.event_type = 'provider-turn.updated'
+              AND event.command_id IS NULL
+            THEN json_extract(event.payload_json, '$.id')
             ELSE NULL
           END AS entity_id,
+          CASE
+            WHEN event.application_event_version = 2
+              AND event.event_type = 'provider-turn.updated'
+            THEN json_type(event.payload_json, '$.tokenUsage') IS NOT NULL
+              AND json_type(event.payload_json, '$.tokenUsage') <> 'null'
+            ELSE 0
+          END AS has_token_usage,
           CASE
             WHEN event.application_event_version = 1
               OR event.event_type IN ${sql.in(candidateEventTypes)}

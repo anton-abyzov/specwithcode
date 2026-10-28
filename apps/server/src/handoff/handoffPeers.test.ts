@@ -168,6 +168,22 @@ describe("handoff peers over SpecWithCode Connect", () => {
     ),
   );
 
+  it.effect("reads no answer from any address as unreachable, not as a local failure", () =>
+    withPeers(
+      {
+        grant: (jkt) => studioToken({ sid: "grant", jkt }),
+        offline: new Set([ORIGIN, CONNECT_ORIGIN]),
+      },
+      (peers) =>
+        Effect.gen(function* () {
+          const result = yield* Effect.result(peers.heartbeat(machine.environmentId, heartbeat));
+          expect(Result.isFailure(result) && result.failure.code).toBe("unreachable");
+          // Continue here reads a local failure as "could not ask", never as silence.
+          expect(Result.isFailure(result) && result.failure.local).toBeUndefined();
+        }),
+    ),
+  );
+
   it.effect("still reports a refused grant over Connect", () =>
     withPeers(
       {

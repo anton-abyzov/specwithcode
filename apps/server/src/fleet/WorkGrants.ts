@@ -123,6 +123,8 @@ export interface WorkGrantsShape {
     threadId: ThreadId,
     origin: WorkOrigin,
   ) => Effect.Effect<void, WorkGrantsError>;
+  /** Drops a thread's own origin record, as when the move that recorded it failed. */
+  readonly forgetOrigin: (threadId: ThreadId) => Effect.Effect<void, WorkGrantsError>;
   readonly policies: Effect.Effect<ReadonlyArray<WorkGrantPolicyRecord>, WorkGrantsError>;
   readonly origins: Effect.Effect<ReadonlyArray<WorkOriginRecord>, WorkGrantsError>;
   readonly update: (
@@ -147,6 +149,7 @@ const disabled: WorkGrantsShape = {
   forCoordinator: (id) => Effect.succeed(unscopedGrant(id)),
   originOf: () => Effect.succeed(undefined),
   recordOrigin: () => Effect.void,
+  forgetOrigin: () => Effect.void,
   policies: Effect.succeed([]),
   origins: Effect.succeed([]),
   update: () => Effect.fail(new WorkGrantsError({ reason: "storage" })),
@@ -367,6 +370,16 @@ export const make = Effect.gen(function* () {
       return [undefined, { ...file, origins }] as const;
     });
 
+  const forgetOrigin: WorkGrantsShape["forgetOrigin"] = (threadId) =>
+    modify((file) =>
+      file.origins.some((entry) => entry.threadId === threadId)
+        ? ([
+            undefined,
+            { ...file, origins: file.origins.filter((entry) => entry.threadId !== threadId) },
+          ] as const)
+        : ([undefined, undefined] as const),
+    );
+
   const known = (file: StoreFile, coordinatorEnvironmentId: string) =>
     file.policies.some((policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId);
 
@@ -468,6 +481,7 @@ export const make = Effect.gen(function* () {
     forCoordinator,
     originOf,
     recordOrigin,
+    forgetOrigin,
     policies: lock.withPermit(read).pipe(Effect.map((file) => file.policies)),
     origins: lock.withPermit(read).pipe(Effect.map((file) => file.origins)),
     update,

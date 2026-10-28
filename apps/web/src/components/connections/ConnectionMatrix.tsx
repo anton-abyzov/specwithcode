@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useId, useState, type ReactNode } from "react";
 import type {
   NativeConnection,
   NativeConnectionApplyInput,
@@ -7,8 +7,18 @@ import type {
   NativeOtherToolInventory,
   NativeTool,
 } from "@specweave-studio/contracts";
-import { CheckIcon, ChevronDownIcon, CopyIcon, InfoIcon, SearchIcon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  InfoIcon,
+  MinusIcon,
+  PlusIcon,
+  SearchIcon,
+  XIcon,
+} from "lucide-react";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import {
   filterRows,
   statusCounts,
@@ -72,12 +82,16 @@ const stateName = {
   disabled: "Disabled",
   invalid: "Invalid declaration",
 };
-const statusFilters: ReadonlyArray<{ id: StatusFilter; label: string }> = [
-  { id: "all", label: "All" },
-  { id: "enabled", label: "Enabled" },
-  { id: "disabled", label: "Disabled" },
-  { id: "missing", label: "Missing somewhere" },
-  { id: "invalid", label: "Invalid" },
+const statusFilters: ReadonlyArray<{ id: StatusFilter; label: string; tip: string }> = [
+  { id: "all", label: "All", tip: "Every server in the shown tools." },
+  { id: "enabled", label: "Enabled", tip: "Turned on in at least one shown tool." },
+  { id: "disabled", label: "Disabled", tip: "Turned off in at least one shown tool." },
+  {
+    id: "missing",
+    label: "Partly set up",
+    tip: "Set up in at least one shown tool and missing from another.",
+  },
+  { id: "invalid", label: "Invalid", tip: "A broken entry in at least one shown tool." },
 ];
 /** Declared in a file the user edits, as opposed to a plugin or one folder's local entry. */
 const own = (c: NativeConnection) => c.plugin === undefined && c.project === undefined;
@@ -109,9 +123,94 @@ type Density = "compact" | "detailed";
 function Hint({ text, inline }: { text: string; inline: boolean }) {
   if (inline) return <p className="text-xs text-muted-foreground">{text}</p>;
   return (
-    <span className="connection-hint" title={text} aria-label={text} role="note" tabIndex={0}>
-      <InfoIcon aria-hidden className="size-3.5" />
+    <Tip content={text}>
+      <span className="connection-hint" aria-label={text} role="note" tabIndex={0}>
+        <InfoIcon aria-hidden className="size-3.5" />
+      </span>
+    </Tip>
+  );
+}
+
+/** A cell's mark: its tone, or "add" for a missing server another tool's entry can fill. */
+type Glyph = CellTone | "add";
+const glyphLabel: Record<Glyph, string> = {
+  configured: "Enabled",
+  disabled: "Disabled",
+  invalid: "Invalid",
+  unknown: "Unknown",
+  none: "Not set up",
+  add: "Can add",
+};
+const legend: ReadonlyArray<{ glyph: Glyph; tip: string }> = [
+  {
+    glyph: "configured",
+    tip: "Declared and turned on in that tool's config file. Sign-in is not checked.",
+  },
+  { glyph: "disabled", tip: "Declared in that tool's config file but turned off." },
+  {
+    glyph: "add",
+    tip: "Not set up in that tool, but another tool's entry can be copied there. Select + to add it.",
+  },
+  { glyph: "none", tip: "That tool's config has no entry for this server." },
+  { glyph: "invalid", tip: "The entry is malformed or has no supported transport." },
+  { glyph: "unknown", tip: "A config file could not be read, so that tool's list is incomplete." },
+];
+/** A quick action a cell offers, or the note that says why there is none. */
+type Offer =
+  | { readonly hint: string }
+  | {
+      readonly connection: NativeConnection;
+      readonly input: NativeConnectionApplyInput;
+      readonly label: string;
+    }
+  | null;
+interface CellView {
+  readonly glyph: Glyph;
+  /** "Enabled in Codex": the tooltip's first line. */
+  readonly title: string;
+  /** The status label the detailed view prints beside the mark. */
+  readonly text: string;
+  /** Scope and transport of a declaration, or how an add works. */
+  readonly where?: string;
+  readonly offer: Offer;
+  /** The declaration the mark opens. */
+  readonly selectId?: string;
+}
+const unknownView = (tool: string): CellView => ({
+  glyph: "unknown",
+  title: `Unknown in ${tool}`,
+  text: glyphLabel.unknown,
+  offer: { hint: "A config file could not be read, so this tool's list is incomplete." },
+});
+
+/** The state mark shared by every cell and the legend. */
+function StatusGlyph({ tone }: { tone: Glyph }) {
+  return (
+    <span aria-hidden className="connection-glyph" data-glyph={tone}>
+      {tone === "configured" ? (
+        <CheckIcon strokeWidth={3.5} />
+      ) : tone === "disabled" ? (
+        <MinusIcon strokeWidth={3.5} />
+      ) : tone === "add" ? (
+        <PlusIcon strokeWidth={3} />
+      ) : tone === "invalid" ? (
+        "!"
+      ) : tone === "unknown" ? (
+        "?"
+      ) : null}
     </span>
+  );
+}
+
+/** A hover and focus tooltip around inline content; the content keeps its own handlers. */
+function Tip({ content, children }: { content: ReactNode; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="connection-tip-trigger" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup>{content}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -148,6 +247,7 @@ export function ConnectionMatrix({
   const [density, setDensity] = useState<Density>(initialDensity);
   const [collapsed, setCollapsed] = useState<ReadonlyArray<Group>>([]);
   const [copied, setCopied] = useState<string | null>(null);
+  const uid = useId();
   const detailed = density === "detailed";
   // A tool gets a column once its configuration exists on this machine.
   const others = (snapshot.otherTools ?? []).filter((t) => t.status !== "missing");
@@ -241,146 +341,202 @@ export function ConnectionMatrix({
     setSelectedId(closing ? null : id);
     setOpenRow(closing ? null : name);
   }
-  function statusButton(id: string, name: string, label: string, text: string, title: string) {
-    const isSelected = selectedId === id;
-    return (
-      <button
-        type="button"
-        className="connection-status connection-status-button"
-        aria-label={`${name} ${label} details`}
-        aria-pressed={isSelected}
-        title={title}
-        onClick={() => select(id, name)}
-      >
-        <span aria-hidden className="connection-dot" />
-        {text}
-      </button>
-    );
-  }
-  function emptyCell(tone: "none" | "unknown", action: ReactNode = null) {
-    const text = tone === "unknown" ? "Unknown" : "Not found";
-    return (
-      <div className="connection-cell" data-tone={tone}>
-        <span className="connection-status" title={text}>
-          <span aria-hidden className="connection-dot" />
-          {detailed || tone === "unknown" ? text : <span className="sr-only">{text}</span>}
-        </span>
-        {action}
-      </div>
-    );
-  }
-  function cell(name: string, provider: Provider) {
-    const { entries, found } = resolve(name, provider);
-    const incomplete = issues.some((s) => s.provider === provider) || snapshot.truncated;
-    if (!found) {
-      const other = incomplete
-        ? undefined
-        : snapshot.connections.find(
-            (c) =>
-              c.name === name &&
-              c.provider !== provider &&
-              c.scope === "user" &&
-              own(c) &&
-              !c.shadowed,
-          );
-      return emptyCell(incomplete ? "unknown" : "none", other ? addAction(other, provider) : null);
-    }
-    const where = meta(found, entries);
-    return (
-      <div className="connection-cell" data-tone={found.state}>
-        <div className="connection-cell-line">
-          {statusButton(
-            found.id,
-            name,
-            toolName(provider),
-            `${stateName[found.state]}${incomplete ? " · incomplete scan" : ""}`,
-            where,
-          )}
-          {found.state === "disabled" ? enableAction(found) : null}
-        </div>
-        {detailed ? <div className="connection-meta">{where}</div> : null}
-      </div>
-    );
-  }
-  function otherCell(name: string, inventory: NativeOtherToolInventory) {
-    const found = inventory.connections.find((c) => c.name === name);
-    if (!found)
-      return emptyCell(inventory.status !== "read" || snapshot.truncated ? "unknown" : "none");
-    const where = `${found.parked ? "Kept aside by SpecWithCode" : "User"} · ${found.transport}`;
-    return (
-      <div className="connection-cell" data-tone={found.state}>
-        {statusButton(
-          found.id,
-          name,
-          otherToolNames[inventory.tool],
-          stateName[found.state],
-          where,
-        )}
-        {detailed ? <div className="connection-meta">{where}</div> : null}
-      </div>
-    );
-  }
-
-  function actionButton(
+  const offer = (
     connection: NativeConnection,
     input: NativeConnectionApplyInput,
     label: string,
-    short = label,
-  ) {
-    if (!onApply) return null;
+  ): Offer => (onApply ? { connection, input, label } : null);
+  /** Why a disabled entry is off, or the switch that turns it on from here. */
+  function enableOffer(connection: NativeConnection): Offer {
+    if (connection.plugin !== undefined)
+      return { hint: `The ${connection.plugin} plugin ships it turned off.` };
+    if (connection.pluginProvided)
+      return {
+        hint: `Codex runs this through its ${connection.name} plugin, so this older entry can stay off.`,
+      };
+    if (connection.parked)
+      return offer(connection, { action: "enable", connectionId: connection.id }, "Turn on");
+    if (connection.provider === "claude") return { hint: "Turn it on with /mcp in Claude Code." };
+    if (connection.scope !== "user") return { hint: "Turn it on in the project config." };
+    return offer(connection, { action: "enable", connectionId: connection.id }, "Enable");
+  }
+  /** Why a tool lacks a server another tool runs, or the copy that adds it. */
+  function addOffer(source: NativeConnection, provider: Provider): Offer {
+    if (source.state === "invalid") return null;
+    if (!source.portable)
+      return {
+        hint: source.pluginProvided
+          ? `A ${toolName(source.provider)} feature; ${toolName(provider)} has no equivalent entry.`
+          : `This ${toolName(source.provider)} declaration cannot run in ${toolName(provider)}.`,
+      };
+    // Copy what runs today; a disabled entry is enabled first, where it is declared.
+    if (source.state !== "configured") return null;
+    return offer(
+      source,
+      { action: "copy", connectionId: source.id },
+      `Add to ${toolName(provider)}`,
+    );
+  }
+  function providerView(name: string, provider: Provider): CellView {
+    const { entries, found } = resolve(name, provider);
+    const incomplete = issues.some((s) => s.provider === provider) || snapshot.truncated;
+    const tool = toolName(provider);
+    if (!found) {
+      if (incomplete) return unknownView(tool);
+      const other = snapshot.connections.find(
+        (c) =>
+          c.name === name && c.provider !== provider && c.scope === "user" && own(c) && !c.shadowed,
+      );
+      const add = other ? addOffer(other, provider) : null;
+      return {
+        glyph: add && "input" in add ? "add" : "none",
+        title: `Not set up in ${tool}`,
+        text: glyphLabel.none,
+        offer: add,
+        ...(other && add && "input" in add
+          ? {
+              where: `Select + to copy the ${toolName(other.provider)} entry. You review the change before it is saved.`,
+            }
+          : {}),
+      };
+    }
+    return {
+      glyph: found.state,
+      title: `${stateName[found.state]} in ${tool}`,
+      text: glyphLabel[found.state],
+      where: `${meta(found, entries)}${incomplete ? " · incomplete scan" : ""}`,
+      offer: found.state === "disabled" ? enableOffer(found) : null,
+      selectId: found.id,
+    };
+  }
+  function otherView(name: string, inventory: NativeOtherToolInventory): CellView {
+    const tool = otherToolNames[inventory.tool];
+    const found = inventory.connections.find((c) => c.name === name);
+    if (!found) {
+      if (inventory.status !== "read" || snapshot.truncated) return unknownView(tool);
+      return { glyph: "none", title: `Not set up in ${tool}`, text: glyphLabel.none, offer: null };
+    }
+    return {
+      glyph: found.state,
+      title: `${stateName[found.state]} in ${tool}`,
+      text: glyphLabel[found.state],
+      where: `${found.parked ? "Kept aside by SpecWithCode" : "User"} · ${found.transport}`,
+      offer: null,
+      selectId: found.id,
+    };
+  }
+  /**
+   * One cell: a single status mark with a tooltip in the compact view; the mark,
+   * its label, scope, notes and quick action in the detailed one.
+   */
+  function renderCell(view: CellView, name: string, toolLabel: string, descId: string) {
+    const action = view.offer && "input" in view.offer ? view.offer : null;
+    const hint = view.offer && "hint" in view.offer ? view.offer.hint : null;
+    const lines = [
+      view.where,
+      hint,
+      view.selectId ? "Select for details and actions." : null,
+    ].filter((line): line is string => Boolean(line));
+    const tip = (
+      <div className="connection-tip">
+        <p className="font-medium">{view.title}</p>
+        {lines.map((line) => (
+          <p key={line} className="text-muted-foreground">
+            {line}
+          </p>
+        ))}
+      </div>
+    );
+    const description = (
+      <span id={descId} className="sr-only">
+        {/* The detailed view prints the status beside the mark, so it is not read twice. */}
+        {[detailed ? null : `${view.title}.`, ...lines].filter(Boolean).join(" ")}
+      </span>
+    );
+    const label = detailed ? <span className="connection-status-text">{view.text}</span> : null;
+    const pending = action !== null && pendingId === action.connection.id;
+    const mark = view.selectId ? (
+      <button
+        type="button"
+        className="connection-status connection-status-button"
+        aria-label={`${name} ${toolLabel} details`}
+        aria-describedby={descId}
+        aria-pressed={selectedId === view.selectId}
+        onClick={() => select(view.selectId!, name)}
+      >
+        <StatusGlyph tone={view.glyph} />
+        {label}
+        {description}
+      </button>
+    ) : action && !detailed ? (
+      <button
+        type="button"
+        className="connection-status connection-status-button"
+        aria-label={`${action.label}: ${action.connection.name}`}
+        aria-describedby={descId}
+        data-pending={pending || undefined}
+        aria-busy={pending || undefined}
+        disabled={pendingId !== null}
+        onClick={() => onApply?.(action.input)}
+      >
+        <StatusGlyph tone="add" />
+        {description}
+      </button>
+    ) : (
+      <span className="connection-status">
+        <StatusGlyph tone={view.glyph} />
+        {label}
+        {description}
+      </span>
+    );
+    return (
+      <div className="connection-cell" data-tone={view.glyph}>
+        <div className="connection-cell-line">
+          <Tip content={tip}>{mark}</Tip>
+        </div>
+        {detailed && view.selectId && view.where ? (
+          <div className="connection-meta">{view.where}</div>
+        ) : null}
+        {detailed && hint ? <div className="connection-meta">{hint}</div> : null}
+        {detailed && action ? (
+          <div className="connection-cell-action">
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={pendingId !== null}
+              aria-label={`${action.label}: ${action.connection.name}`}
+              title={action.label}
+              onClick={() => onApply?.(action.input)}
+            >
+              {pending ? (
+                "Saving…"
+              ) : view.glyph === "add" ? (
+                <>
+                  <PlusIcon aria-hidden />
+                  Add
+                </>
+              ) : (
+                action.label
+              )}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  /** An older machine has no Turn on in the details, so its quick enable sits there. */
+  function enableButton(found: Offer) {
+    if (!found || !("input" in found)) return null;
     return (
       <Button
         variant="outline"
         size="xs"
         disabled={pendingId !== null}
-        aria-label={`${label}: ${connection.name}`}
-        title={label}
-        onClick={() => onApply(input)}
+        aria-label={`${found.label}: ${found.connection.name}`}
+        onClick={() => onApply?.(found.input)}
       >
-        {pendingId === connection.id ? "Saving…" : detailed ? label : short}
+        {pendingId === found.connection.id ? "Saving…" : found.label}
       </Button>
-    );
-  }
-  function enableAction(connection: NativeConnection) {
-    if (connection.plugin !== undefined)
-      return (
-        <Hint inline={detailed} text={`The ${connection.plugin} plugin ships it turned off.`} />
-      );
-    if (connection.pluginProvided)
-      return (
-        <Hint
-          inline={detailed}
-          text={`Codex runs this through its ${connection.name} plugin, so this older entry can stay off.`}
-        />
-      );
-    if (connection.parked)
-      return actionButton(connection, { action: "enable", connectionId: connection.id }, "Turn on");
-    if (connection.provider === "claude")
-      return <Hint inline={detailed} text="Turn it on with /mcp in Claude Code." />;
-    if (connection.scope !== "user")
-      return <Hint inline={detailed} text="Turn it on in the project config." />;
-    return actionButton(connection, { action: "enable", connectionId: connection.id }, "Enable");
-  }
-  function addAction(source: NativeConnection, provider: Provider) {
-    if (source.state === "invalid") return null;
-    if (!source.portable)
-      return (
-        <Hint
-          inline={detailed}
-          text={
-            source.pluginProvided
-              ? `A ${toolName(source.provider)} feature; ${toolName(provider)} has no equivalent entry.`
-              : `This ${toolName(source.provider)} declaration cannot run in ${toolName(provider)}.`
-          }
-        />
-      );
-    // Copy what runs today; a disabled entry is enabled first, where it is declared.
-    if (source.state !== "configured") return null;
-    return actionButton(
-      source,
-      { action: "copy", connectionId: source.id },
-      `Add to ${toolName(provider)}`,
-      "+ Add",
     );
   }
   /** Copies where a declaration lives (file and key), never its command, URL or secrets. */
@@ -572,6 +728,9 @@ export function ConnectionMatrix({
             : selectedOther
               ? manageActions({ ...selectedOther, native: selectedOther.tool === "opencode" })
               : null}
+          {selected && !manage && selected.state === "disabled"
+            ? enableButton(enableOffer(selected))
+            : null}
           {selected
             ? copyButton(selected.id, locationOf(selected))
             : selectedOther
@@ -600,22 +759,39 @@ export function ConnectionMatrix({
   const chip = (
     pressed: boolean,
     label: string,
-    count: number,
+    count: number | null,
     onClick: () => void,
+    tip: string,
     aria = label,
+    enabledCount = false,
   ) => (
-    <button
-      key={aria}
-      type="button"
-      className="connection-chip"
-      aria-pressed={pressed}
-      aria-label={`${aria} (${count})`}
-      onClick={onClick}
-    >
-      {label}
-      <span className="connection-chip-count">{count}</span>
-    </button>
+    <Tip key={aria} content={tip}>
+      <button
+        type="button"
+        className="connection-chip"
+        aria-pressed={pressed}
+        aria-label={count === null ? aria : `${aria} (${count})`}
+        onClick={onClick}
+      >
+        {label}
+        {count === null ? null : (
+          <span className="connection-chip-count" data-enabled={enabledCount || undefined}>
+            {count}
+          </span>
+        )}
+      </button>
+    </Tip>
   );
+  const shownTones = new Set(allRows.flatMap((row) => row.tones));
+  const legendShown = legend.filter((item) =>
+    item.glyph === "add"
+      ? onApply !== undefined
+      : item.glyph === "invalid" || item.glyph === "unknown"
+        ? shownTones.has(item.glyph)
+        : true,
+  );
+  const nameWidth = detailed ? 200 : 176;
+  const toolWidth = detailed ? 164 : 104;
   return (
     <div className="space-y-3" data-testid="connection-matrix">
       <p className="text-sm text-muted-foreground">{PER_TOOL_NOTE}</p>
@@ -656,12 +832,13 @@ export function ConnectionMatrix({
               />
             </label>
             <div className="connection-chips" role="group" aria-label="Filter by AI tool">
-              <span className="connection-chips-label">Tools</span>
+              <span className="connection-chips-label">Show tools</span>
               {chip(
                 chosenTools === null,
                 "All",
-                allColumns.length,
+                null,
                 () => setChosenTools(null),
+                "Show a column for every tool.",
                 "All tools",
               )}
               {allColumns.map((column) =>
@@ -670,27 +847,43 @@ export function ConnectionMatrix({
                   column.label,
                   enabledIn(column),
                   () => setChosenTools((current) => toggleTool(current, column.id)),
+                  `${enabledIn(column)} ${enabledIn(column) === 1 ? "server" : "servers"} enabled in ${column.label}. ${
+                    chosenTools === null
+                      ? "Select to show only this tool."
+                      : "Select to add or remove this column."
+                  }`,
                   `${column.label} enabled`,
+                  true,
                 ),
               )}
             </div>
             <div className="connection-chips" role="group" aria-label="Filter by status">
-              <span className="connection-chips-label">Status</span>
+              <span className="connection-chips-label">Show servers</span>
               {statusFilters
                 .filter((f) => f.id !== "invalid" || counts.invalid > 0 || status === "invalid")
-                .map((f) => chip(status === f.id, f.label, counts[f.id], () => setStatus(f.id)))}
+                .map((f) =>
+                  chip(status === f.id, f.label, counts[f.id], () => setStatus(f.id), f.tip),
+                )}
             </div>
             <div className="connection-chips connection-density" role="group" aria-label="Density">
               {(["compact", "detailed"] as const).map((d) => (
-                <button
+                <Tip
                   key={d}
-                  type="button"
-                  className="connection-chip"
-                  aria-pressed={density === d}
-                  onClick={() => setDensity(d)}
+                  content={
+                    d === "compact"
+                      ? "One mark per cell. Hover a mark for what it means."
+                      : "Status, scope, transport and notes in every cell."
+                  }
                 >
-                  {d === "compact" ? "Compact" : "Detailed"}
-                </button>
+                  <button
+                    type="button"
+                    className="connection-chip"
+                    aria-pressed={density === d}
+                    onClick={() => setDensity(d)}
+                  >
+                    {d === "compact" ? "Compact" : "Detailed"}
+                  </button>
+                </Tip>
               ))}
             </div>
           </div>
@@ -702,114 +895,133 @@ export function ConnectionMatrix({
               </Button>
             </div>
           ) : (
-            <div className="connection-table-wrap">
-              <table
-                className="connection-table"
-                data-density={density}
-                style={{
-                  minWidth: `${Math.max(480, (detailed ? 180 : 150) + (columns - 1) * (detailed ? 150 : 92))}px`,
-                }}
-              >
-                <caption className="sr-only">Configured MCP connections by AI tool</caption>
-                <colgroup>
-                  {columns > 3 ? (
-                    <col style={{ width: detailed ? 180 : 150 }} />
-                  ) : (
-                    <col className="w-[38%]" />
-                  )}
-                  {Array.from({ length: columns - 1 }, (_, index) => (
-                    <col key={index} />
-                  ))}
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th scope="col">Connection</th>
-                    {columnsShown.map((column) => (
-                      <th key={column.id} scope="col">
-                        {column.label}
-                      </th>
+            <TooltipProvider delay={250}>
+              <ul className="connection-legend" aria-label="Status legend">
+                {legendShown.map((item) => (
+                  <li key={item.glyph}>
+                    <Tip content={item.tip}>
+                      <span className="connection-legend-item">
+                        <StatusGlyph tone={item.glyph} />
+                        {glyphLabel[item.glyph]}
+                      </span>
+                    </Tip>
+                  </li>
+                ))}
+              </ul>
+              <div className="connection-table-wrap">
+                <table
+                  className="connection-table"
+                  data-density={density}
+                  style={{
+                    minWidth: `${Math.max(480, nameWidth + (columns - 1) * toolWidth)}px`,
+                  }}
+                >
+                  <caption className="sr-only">Configured MCP connections by AI tool</caption>
+                  <colgroup>
+                    {columns > 3 ? (
+                      <col style={{ width: nameWidth }} />
+                    ) : (
+                      <col className="w-[38%]" />
+                    )}
+                    {Array.from({ length: columns - 1 }, (_, index) => (
+                      <col key={index} />
                     ))}
-                  </tr>
-                </thead>
-                {rows.map((group) => {
-                  const isCollapsed = collapsed.includes(group.id);
-                  return (
-                    <tbody key={group.id} data-group={group.id}>
-                      {(rows.length > 1 || group.id !== "own") && (
-                        <tr className="connection-group">
-                          <th scope="colgroup" colSpan={columns}>
-                            <span className="connection-group-head">
-                              <button
-                                type="button"
-                                className="connection-group-toggle"
-                                aria-expanded={!isCollapsed}
-                                onClick={() =>
-                                  setCollapsed((current) =>
-                                    isCollapsed
-                                      ? current.filter((g) => g !== group.id)
-                                      : [...current, group.id],
-                                  )
-                                }
-                              >
-                                <ChevronDownIcon aria-hidden className="size-3.5" />
-                                {group.title} · {group.rows.length}
-                              </button>
-                              {group.id === "project" ? (
-                                <span data-testid="folder-only-note">
-                                  <Hint inline={false} text={FOLDER_ONLY_NOTE} />
-                                </span>
-                              ) : null}
-                            </span>
-                          </th>
-                        </tr>
-                      )}
-                      {isCollapsed
-                        ? null
-                        : group.rows.map(({ name }) => (
-                            <Fragment key={name}>
-                              <tr data-selected={detailsRow === name || undefined}>
-                                <th scope="row">
-                                  <button
-                                    type="button"
-                                    className="connection-name"
-                                    title={name}
-                                    aria-expanded={detailsRow === name}
-                                    aria-label={`${name} row details`}
-                                    onClick={() => {
-                                      const open = detailsRow === name;
-                                      setSelectedId(null);
-                                      setOpenRow(open ? null : name);
-                                    }}
-                                  >
-                                    {name}
-                                  </button>
-                                  {name === COMPUTER_USE_CONNECTION && computerUseNote ? (
-                                    <Hint
-                                      inline={false}
-                                      text="Agents in SpecWithCode use the app's own computer use. Open for the permissions it needs."
-                                    />
-                                  ) : null}
-                                </th>
-                                {columnsShown.map((column) => (
-                                  <td key={column.id}>
-                                    {column.inventory
-                                      ? otherCell(name, column.inventory)
-                                      : cell(name, column.id as Provider)}
-                                  </td>
-                                ))}
-                              </tr>
-                              {detailsRow === name ? (
-                                <tr className="connection-details-row">
-                                  <td colSpan={columns}>{details(name)}</td>
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th scope="col">Server</th>
+                      {columnsShown.map((column) => (
+                        <th key={column.id} scope="col">
+                          {column.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  {rows.map((group) => {
+                    const isCollapsed = collapsed.includes(group.id);
+                    return (
+                      <tbody key={group.id} data-group={group.id}>
+                        {(rows.length > 1 || group.id !== "own") && (
+                          <tr className="connection-group">
+                            <th scope="colgroup" colSpan={columns}>
+                              <span className="connection-group-head">
+                                <button
+                                  type="button"
+                                  className="connection-group-toggle"
+                                  aria-expanded={!isCollapsed}
+                                  onClick={() =>
+                                    setCollapsed((current) =>
+                                      isCollapsed
+                                        ? current.filter((g) => g !== group.id)
+                                        : [...current, group.id],
+                                    )
+                                  }
+                                >
+                                  <ChevronDownIcon aria-hidden className="size-3.5" />
+                                  {group.title} · {group.rows.length}
+                                </button>
+                                {group.id === "project" ? (
+                                  <span data-testid="folder-only-note">
+                                    <Hint inline={false} text={FOLDER_ONLY_NOTE} />
+                                  </span>
+                                ) : null}
+                              </span>
+                            </th>
+                          </tr>
+                        )}
+                        {isCollapsed
+                          ? null
+                          : group.rows.map(({ name }, rowIndex) => (
+                              <Fragment key={name}>
+                                <tr data-selected={detailsRow === name || undefined}>
+                                  <th scope="row">
+                                    <button
+                                      type="button"
+                                      className="connection-name"
+                                      title={name}
+                                      aria-expanded={detailsRow === name}
+                                      aria-label={`${name} row details`}
+                                      onClick={() => {
+                                        const open = detailsRow === name;
+                                        setSelectedId(null);
+                                        setOpenRow(open ? null : name);
+                                      }}
+                                    >
+                                      {name}
+                                    </button>
+                                    {name === COMPUTER_USE_CONNECTION && computerUseNote ? (
+                                      <Hint
+                                        inline={false}
+                                        text="Agents in SpecWithCode use the app's own computer use. Open for the permissions it needs."
+                                      />
+                                    ) : null}
+                                  </th>
+                                  {columnsShown.map((column, columnIndex) => (
+                                    <td key={column.id}>
+                                      {renderCell(
+                                        column.inventory
+                                          ? otherView(name, column.inventory)
+                                          : providerView(name, column.id as Provider),
+                                        name,
+                                        column.label,
+                                        `${uid}-${group.id}-${rowIndex}-${columnIndex}`,
+                                      )}
+                                    </td>
+                                  ))}
                                 </tr>
-                              ) : null}
-                            </Fragment>
-                          ))}
-                    </tbody>
-                  );
-                })}
-              </table>
-            </div>
+                                {detailsRow === name ? (
+                                  <tr className="connection-details-row">
+                                    <td colSpan={columns}>{details(name)}</td>
+                                  </tr>
+                                ) : null}
+                              </Fragment>
+                            ))}
+                      </tbody>
+                    );
+                  })}
+                </table>
+              </div>
+            </TooltipProvider>
           )}
           {filtered && shownRows.length > 0 ? (
             <p className="text-xs text-muted-foreground" role="status">

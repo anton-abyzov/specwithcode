@@ -25,7 +25,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
-import { HandoffTurnGate, turnRefusal } from "../handoff/HandoffTurnGate.ts";
+import {
+  HandoffTurnGate,
+  PAUSED_OFFLINE_REFUSAL,
+  turnRefusal,
+} from "../handoff/HandoffTurnGate.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
@@ -767,9 +771,7 @@ describe("limit handoff in the fallback sweep", () => {
       );
       expect(asked).toEqual([]);
       expect(result.dispatched).toEqual([]);
-      expect(result.shown?.waiting).toBe(
-        "This machine woke after handing its threads off and no other machine answered yet. Choose Resume this Mac to run it here.",
-      );
+      expect(result.shown?.waiting).toBe(PAUSED_OFFLINE_REFUSAL);
     }),
   );
 

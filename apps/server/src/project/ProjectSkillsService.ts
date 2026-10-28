@@ -8,6 +8,10 @@
  * composer's reload does. Lockfiles, digests and the optional `vskill doctor`
  * run on top, cached briefly per folder.
  *
+ * A read may name a thread's folder (`cwd`): only the project's workspace
+ * root and its own thread worktrees are accepted, so the read cannot be
+ * pointed at an arbitrary path on the host.
+ *
  * @module project/ProjectSkillsService
  */
 import {
@@ -28,6 +32,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type { ProviderSkillSource } from "./projectSkillsInventory.ts";
@@ -97,6 +102,25 @@ export function providerSkillsForCwd(
   };
 }
 
+/**
+ * The folder a read scans: the workspace root when `requested` is left out,
+ * else the allowed folder it names (compared after resolving `.`, `..` and
+ * trailing separators), or null when it names none of them. The stored
+ * spelling is returned so the providers' per-folder snapshots match.
+ */
+export function allowedSkillsCwd(
+  resolve: (value: string) => string,
+  workspaceRoot: string,
+  worktrees: ReadonlyArray<string>,
+  requested: string | undefined,
+): string | null {
+  if (requested === undefined) return workspaceRoot;
+  const target = resolve(requested);
+  for (const candidate of [workspaceRoot, ...worktrees])
+    if (resolve(candidate) === target) return candidate;
+  return null;
+}
+
 export class ProjectSkillsService extends Context.Service<
   ProjectSkillsService,
   {
@@ -108,13 +132,64 @@ export class ProjectSkillsService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const cache = yield* Ref.make(
-    new Map<string, { readonly at: number; readonly snapshot: ProjectSkillsSnapshot }>(),
+    new Map<
+      string,
+      {
+        readonly projectId: ProjectSkillsReadInput["projectId"];
+        readonly at: number;
+        readonly snapshot: ProjectSkillsSnapshot;
+      }
+    >(),
   );
+
+  /**
+   * Worktrees `input.cwd` may name. With a thread id only that thread is read;
+   * without one, every thread of the project from a recent shell snapshot.
+   */
+  const projectWorktrees = (input: ProjectSkillsReadInput) => {
+    const threadId = input.threadId;
+    if (threadId !== undefined) {
+      return projections.getThreadSummaries
+        ? projections
+            .getThreadSummaries(input.projectId, [threadId])
+            .pipe(
+              Effect.map((rows) =>
+                rows.flatMap((row) => (row.worktreePath !== null ? [row.worktreePath] : [])),
+              ),
+            )
+        : projections
+            .getThreadShell(threadId)
+            .pipe(
+              Effect.map((thread) =>
+                thread !== null &&
+                thread.projectId === input.projectId &&
+                thread.deletedAt === null &&
+                thread.worktreePath !== null
+                  ? [thread.worktreePath]
+                  : [],
+              ),
+            );
+    }
+    return projections
+      .getShellSnapshot({ maxAgeMs: CACHE_TTL_MS })
+      .pipe(
+        Effect.map((snapshot) =>
+          [...snapshot.threads, ...snapshot.archivedThreads].flatMap((thread) =>
+            thread.projectId === input.projectId &&
+            thread.deletedAt === null &&
+            thread.worktreePath !== null
+              ? [thread.worktreePath]
+              : [],
+          ),
+        ),
+      );
+  };
 
   const scanProvider = (provider: ServerProvider, cwd: string, fresh: boolean) =>
     Effect.gen(function* () {
@@ -151,11 +226,39 @@ export const make = Effect.gen(function* () {
           reason: "project_not_found",
         });
       }
-      const cwd = project.value.workspaceRoot;
+      const workspaceRoot = project.value.workspaceRoot;
       const now = yield* Clock.currentTimeMillis;
-      const cached = (yield* Ref.get(cache)).get(cwd);
-      if (cached && input.refresh !== true && now - cached.at < CACHE_TTL_MS) {
-        return cached.snapshot;
+      // A folder answered recently was allowed then; reuse it before any
+      // thread lookup, so reopening the popover costs no database read.
+      if (input.refresh !== true) {
+        const target = path.resolve(input.cwd ?? workspaceRoot);
+        for (const entry of (yield* Ref.get(cache)).values())
+          if (
+            entry.projectId === input.projectId &&
+            now - entry.at < CACHE_TTL_MS &&
+            path.resolve(entry.snapshot.cwd) === target
+          )
+            return entry.snapshot;
+      }
+      const worktrees =
+        input.cwd === undefined || path.resolve(input.cwd) === path.resolve(workspaceRoot)
+          ? []
+          : yield* projectWorktrees(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSkillsReadError({
+                    projectId: input.projectId,
+                    reason: "read_failed",
+                    cause,
+                  }),
+              ),
+            );
+      const cwd = allowedSkillsCwd(path.resolve, workspaceRoot, worktrees, input.cwd);
+      if (cwd === null) {
+        return yield* new ProjectSkillsReadError({
+          projectId: input.projectId,
+          reason: "cwd_not_allowed",
+        });
       }
 
       const eligible = (yield* registry.getProviders).filter(
@@ -179,9 +282,10 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       yield* Ref.update(cache, (current) => {
+        const key = `${input.projectId}\u0000${cwd}`;
         const next = new Map(current);
-        next.delete(cwd);
-        next.set(cwd, { at: now, snapshot });
+        next.delete(key);
+        next.set(key, { projectId: input.projectId, at: now, snapshot });
         while (next.size > MAX_CACHED_FOLDERS) next.delete(next.keys().next().value!);
         return next;
       });

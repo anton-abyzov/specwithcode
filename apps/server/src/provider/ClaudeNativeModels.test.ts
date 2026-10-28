@@ -212,6 +212,29 @@ describe("native Claude model discovery", () => {
     expect(options.settings).toEqual({ enableWorkflows: true, ultracode: false });
   });
 
+  it("offers the Ultracode toggle only on models with xhigh effort", () => {
+    const descriptors = (model: string) =>
+      mergeClaudeNativeModels(BUNDLED_CLAUDE_MODEL_CATALOG, [
+        haiku,
+        row("old", "claude-sonnet-4-6", {
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high", "max"],
+        }),
+      ])
+        .models.find((entry) => entry.model.slug === model)
+        ?.model.capabilities?.optionDescriptors?.map((descriptor) =>
+          descriptor.type === "select"
+            ? `${descriptor.id}:${descriptor.options.map((option) => option.id).join(",")}`
+            : descriptor.id,
+        );
+    expect(descriptors("claude-haiku-5-5")).toContain("ultracode");
+    expect(descriptors("claude-sonnet-4-6")).not.toContain("ultracode");
+    expect(descriptors("claude-opus-5-5")).toContain("ultracode");
+    expect(descriptors("claude-opus-5-5")?.find((id) => id.startsWith("effort:"))).not.toContain(
+      "ultracode",
+    );
+  });
+
   it("keeps each instance independent and replaces prior account discovery on successful initialization", () => {
     const first = createClaudeNativeCatalog(BUNDLED_CLAUDE_MODEL_CATALOG),
       second = createClaudeNativeCatalog(BUNDLED_CLAUDE_MODEL_CATALOG);

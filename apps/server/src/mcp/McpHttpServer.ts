@@ -37,6 +37,7 @@ import * as DesignSystems from "../design/systems/adapters.ts";
 import { DesignSystemsToolkit } from "./toolkits/designSystems/tools.ts";
 import * as DesignSystemsHandlers from "./toolkits/designSystems/handlers.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -567,7 +568,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
     tool: new McpSchema.Tool({
       name: tool.name,
       description: Tool.getDescription(tool),
-      inputSchema: Tool.getJsonSchema(tool),
+      inputSchema: advertisedJsonSchema(tool),
       annotations: {
         ...Context.getOption(tool.annotations, Tool.Title).pipe(
           Option.map((title) => ({ title })),
@@ -754,7 +755,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
       tool: new McpSchema.Tool({
         name: tool.name,
         description: Tool.getDescription(tool),
-        inputSchema: Tool.getJsonSchema(tool),
+        inputSchema: advertisedJsonSchema(tool),
         annotations: {
           ...Context.getOption(tool.annotations, Tool.Title).pipe(
             Option.map((title) => ({ title })),
@@ -951,13 +952,38 @@ const registerDesignScreenshot = Effect.fn("McpHttpServer.registerDesignScreensh
 });
 
 /**
+ * `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one.
+ * Only the advertised schema changes: the toolkit still decodes with its own schema.
+ */
+const withAdvertisedSchemas = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const advertisingServer = McpServer.McpServer.of({
+      ...server,
+      addTool: (options) =>
+        server.addTool({
+          ...options,
+          tool: new McpSchema.Tool({
+            ...options.tool,
+            inputSchema: compactJsonSchema(options.tool.inputSchema),
+          }),
+        }),
+    });
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
+  });
+
+/**
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
  */
 export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
-) => McpServer.toolkit(toolkit).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+) =>
+  Layer.effectDiscard(withAdvertisedSchemas(McpServer.registerToolkit(toolkit))).pipe(
+    Layer.provide(McpServer.McpServer.layer),
+    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+  );
 
 /** A hand-registered tool, also only with handlers that declared their access. */
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(

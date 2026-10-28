@@ -3,6 +3,8 @@ import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { getClientSettings } from "~/hooks/useSettings";
+
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 
 const { refresh } = vi.hoisted(() => ({ refresh: vi.fn<() => Promise<string | null>>() }));
@@ -17,7 +19,9 @@ vi.mock("~/components/ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("./ReadOnlySourcePreview", () => ({
-  default: ({ text }: { text: string }) => <pre>{text}</pre>,
+  default: ({ text, wordWrap }: { text: string; wordWrap?: boolean }) => (
+    <pre data-word-wrap={String(wordWrap)}>{text}</pre>
+  ),
 }));
 vi.mock("./fileSurfaceChrome", () => ({
   FILE_SURFACE_SUBHEADER_CLASS: "",
@@ -129,5 +133,46 @@ describe("attachment HTML preview recovery", () => {
     await toggleMode("Show rendered page");
     expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
     expect(renderer.root.findByType("iframe").props.title).toBe("document.html");
+  });
+});
+
+describe("attachment word wrap", () => {
+  let renderer: ReactTestRenderer | undefined;
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+
+  afterEach(async () => {
+    if (renderer) await act(() => renderer?.unmount());
+    renderer = undefined;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("unwraps one text attachment without turning off the word wrap setting", async () => {
+    const wrapsByDefault = getClientSettings().wordWrap;
+    const file = new Blob(["a long line"], { type: "text/plain" });
+    await act(async () => {
+      renderer = create(
+        <AttachmentFilePreview
+          name="notes.txt"
+          mimeType={file.type}
+          sizeBytes={file.size}
+          file={file}
+        />,
+      );
+    });
+    const root = renderer!.root;
+    const toggleLabel = (wraps: boolean) => (wraps ? "Disable word wrap" : "Enable word wrap");
+    expect(root.findByType("pre").props["data-word-wrap"]).toBe(String(wrapsByDefault));
+
+    await act(async () => {
+      root.findByProps({ "aria-label": toggleLabel(wrapsByDefault) }).props.onClick();
+    });
+
+    expect(root.findAllByProps({ "aria-label": toggleLabel(!wrapsByDefault) })).toHaveLength(1);
+    expect(root.findByType("pre").props["data-word-wrap"]).toBe(String(!wrapsByDefault));
+    expect(getClientSettings().wordWrap).toBe(wrapsByDefault);
   });
 });

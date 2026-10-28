@@ -38,6 +38,7 @@ import { publishOnTailscale, type TailscalePublishError } from "./tailscalePubli
 export const FLEET_INVITE_SESSION_LABEL = "Fleet management (fleet invite)";
 
 export {
+  FLEET_INVITE_MAKER_SCOPES,
   FLEET_INVITE_SCOPES,
   FLEET_REDEEM_WINDOW,
   fleetRedeemSubject,

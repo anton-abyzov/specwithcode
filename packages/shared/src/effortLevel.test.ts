@@ -33,6 +33,29 @@ const claudeNoXhigh = [
 const grok = [select("reasoningEffort", "Reasoning", ["high", "medium", "low"])];
 
 describe("resolveEffort", () => {
+  it("maps 'ultracode' to Extra High plus the separate Ultracode toggle", () => {
+    const claude = [
+      select("effort", "Reasoning", ["low", "medium", "high", "xhigh", "max"]),
+      { id: "ultracode", label: "Ultracode", type: "boolean" } as ProviderOptionDescriptor,
+    ];
+    const resolved = resolveEffort("ultracode", claude);
+    expect(resolved).toMatchObject({ ok: true, value: "xhigh", ultracode: true });
+    if (!resolved.ok) throw new Error("expected a resolution");
+    expect(
+      withEffortSelection(
+        [
+          { id: "effort", value: "low" },
+          { id: "ultracode", value: false },
+        ],
+        resolved,
+      ),
+    ).toEqual([
+      { id: "effort", value: "xhigh" },
+      { id: "ultracode", value: true },
+    ]);
+    expect(resolveEffort("ultracode", claudeNoXhigh).ok).toBe(false);
+  });
+
   it("matches the Copilot option id and phrasing like 'extra high'", () => {
     for (const phrase of ["xhigh", "extra high", "Extra-High", "EXTRA_HIGH", "very high"]) {
       expect(resolveEffort(phrase, copilot)).toEqual({

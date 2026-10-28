@@ -99,6 +99,18 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+/**
+ * Lets a fleet primary ask this machine to install a published release and
+ * read its update status (`/api/studio/fleet/update`), and nothing else. No
+ * RPC maps to it.
+ */
+export const AuthFleetUpdateScope = "fleet:update" as const;
+/**
+ * Lets a fleet primary ask this machine to install one published skill
+ * version with vskill and read how that went (`/api/studio/fleet/skills`),
+ * and nothing else. No RPC maps to it.
+ */
+export const AuthFleetSkillsScope = "fleet:skills" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -117,6 +129,8 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthFleetUpdateScope,
+  AuthFleetSkillsScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -163,6 +177,9 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
   [AuthSourceControlWriteScope]: AuthOrchestrationOperateScope,
   [AuthFilesystemWriteScope]: AuthOrchestrationOperateScope,
   [AuthTerminalReadScope]: AuthTerminalOperateScope,
+  // Presentation only, so old clients can decode a denial naming it.
+  [AuthFleetUpdateScope]: AuthOrchestrationOperateScope,
+  [AuthFleetSkillsScope]: AuthOrchestrationOperateScope,
 };
 
 /** Keep permission denials decodable by clients with the original scope enum. */

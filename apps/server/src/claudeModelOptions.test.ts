@@ -29,6 +29,50 @@ describe("compileClaudeModelSelection", () => {
     });
   });
 
+  it("compiles the Ultracode toggle separately from effort", () => {
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-opus-5-5", [
+          { id: "effort", value: "medium" },
+          { id: "ultracode", value: true },
+        ]),
+      ),
+    ).toMatchObject({ effort: "medium", settings: { ultracode: true } });
+    expect(
+      compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "ultracode", value: false }]))
+        .settings,
+    ).toMatchObject({ ultracode: false });
+    expect(
+      compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "effort", value: "high" }]))
+        .settings,
+    ).not.toHaveProperty("ultracode");
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-sonnet-4-6", [{ id: "ultracode", value: true }]),
+      ).settings,
+    ).not.toHaveProperty("ultracode");
+  });
+
+  it("leaves Ultracode out of the selection identity; the adapter keys it with the mode", () => {
+    const identity = (options: NonNullable<ModelSelection["options"]>) =>
+      compileClaudeModelSelection(selection("claude-opus-5-5", options)).queryIdentity;
+    const unset = [{ id: "effort", value: "medium" }];
+    expect(identity([...unset, { id: "ultracode", value: true }])).toBe(identity(unset));
+    expect(identity([...unset, { id: "ultracode", value: false }])).toBe(identity(unset));
+    expect(identity([{ id: "effort", value: "high" }])).not.toBe(identity(unset));
+  });
+
+  it("keeps an explicit toggle over a legacy Ultracode effort", () => {
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-opus-5-5", [
+          { id: "effort", value: "ultracode" },
+          { id: "ultracode", value: false },
+        ]),
+      ),
+    ).toMatchObject({ effort: "xhigh", settings: { ultracode: false } });
+  });
+
   it("compiles fast mode only for models that expose it", () => {
     expect(
       compileClaudeModelSelection(selection("claude-opus-4-6", [{ id: "fastMode", value: true }]))

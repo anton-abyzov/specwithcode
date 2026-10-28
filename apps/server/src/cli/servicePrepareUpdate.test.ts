@@ -415,9 +415,9 @@ describe("specweave-studio service prepare-update", () => {
         ]).pipe(Effect.flip);
         assert.instanceOf(error, ServicePrepareUpdateNotRunningError);
         // No auth store, secret or session was made for a home no service runs from: only the
-        // empty folders every command's config makes.
+        // empty folders every command's config makes, and the worktrees folder's Spotlight marker.
         const files = NodeFS.readdirSync(baseDir, { recursive: true, withFileTypes: true })
-          .filter((entry) => !entry.isDirectory())
+          .filter((entry) => !entry.isDirectory() && entry.name !== ServerConfig.SPOTLIGHT_NEVER_INDEX_FILE)
           .map((entry) => entry.name);
         assert.deepStrictEqual(files, []);
       }).pipe(Effect.provide(layerCliRuntime)),

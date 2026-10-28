@@ -72,6 +72,8 @@ export interface ExecuteGitInput {
    */
   readonly keepLineCallbacksAfterTruncation?: boolean;
   readonly progress?: ExecuteGitProgress;
+  /** Writes .git/config, which every worktree shares and Git locks without waiting. */
+  readonly writesSharedConfig?: boolean;
 }
 
 export interface ExecuteGitResult {
@@ -426,6 +428,12 @@ export class GitVcsDriver extends Context.Service<
     readonly renameBranch: (
       input: GitRenameBranchInput,
     ) => Effect.Effect<GitRenameBranchResult, GitCommandError>;
+    /** Create without implicit tracking writes, then record tracking with retry. */
+    readonly createBranch: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly startPoint: string;
+    }) => Effect.Effect<void, GitCommandError>;
     readonly createRef: (
       input: VcsCreateRefInput,
     ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;

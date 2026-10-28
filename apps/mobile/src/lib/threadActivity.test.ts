@@ -234,6 +234,28 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("hides a requeued message that waits in the queue but keeps other pending messages", () => {
+    for (const inputIntent of [
+      "queued_turn",
+      "turn_start",
+      "steer",
+      "promoted_queued_to_steer",
+    ] as const) {
+      const entries = buildThreadFeed([
+        projected(
+          { ...userMessage(), inputIntent, status: "pending" } as OrchestrationV2TurnItem,
+          0,
+        ),
+      ]);
+      expect(entries).toHaveLength(inputIntent === "queued_turn" ? 0 : 1);
+    }
+    expect(
+      buildThreadFeed([
+        projected({ ...userMessage(), inputIntent: "queued_turn" } as OrchestrationV2TurnItem, 0),
+      ]),
+    ).toHaveLength(1);
+  });
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {
