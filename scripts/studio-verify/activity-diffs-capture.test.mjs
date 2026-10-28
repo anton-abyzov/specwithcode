@@ -575,6 +575,22 @@ function toolCalls(updates) {
 }
 
 test(
+  "independent activity mock processes return distinct session identities",
+  { timeout: 60000 },
+  async (t) => {
+    const dir = tempDir(t, "activity-diffs-mock-sessions-");
+    const first = startMock(t, dir, dir);
+    const second = startMock(t, dir, dir);
+    const [firstId, secondId] = await Promise.all([first.open(), second.open()]);
+    assert.notEqual(firstId, secondId);
+    first.end();
+    second.end();
+    assert.deepEqual(await first.exited, { code: 0, signal: null });
+    assert.deepEqual(await second.exited, { code: 0, signal: null });
+  },
+);
+
+test(
   "the mock agent plays the two scripted turns inside the scratch repository",
   { timeout: 90000 },
   async (t) => {

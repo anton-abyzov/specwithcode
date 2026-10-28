@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
@@ -128,7 +129,10 @@ const permissionRequestCount = Math.max(
   1,
   Number(process.env.STUDIO_ACP_PERMISSION_REQUEST_COUNT ?? "1") || 1,
 );
-const sessionId = "mock-session-1";
+const sessionId =
+  process.env.STUDIO_ACP_ACTIVITY_SCENARIO === "1"
+    ? `mock-session-${randomUUID()}`
+    : "mock-session-1";
 
 let currentModeId = antigravityProfile ? "default" : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";

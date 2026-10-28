@@ -35,6 +35,7 @@ import {
   type ServerProviderUpdateState,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -148,6 +149,9 @@ export class ProviderRegistry extends Context.Service<
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   }
 >()("specweave-studio/provider/ProviderRegistry") {}
+
+/** A plain refresh scans a cwd again once its snapshot is this old. */
+const WORKSPACE_SNAPSHOT_MAX_AGE_MS = 60_000;
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -518,6 +522,10 @@ export const layer = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
     >(new Map());
+    // When each instance last scanned each cwd. A snapshot older than
+    // WORKSPACE_SNAPSHOT_MAX_AGE_MS (or read from the cache at boot) is scanned
+    // again on the next plain refresh, so skills installed outside the app appear.
+    const workspaceScannedAtRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -1057,10 +1065,14 @@ export const layer = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
+      const scanKey = `${input.instanceId}\0${input.cwd}`;
+      const scannedAt = (yield* Ref.get(workspaceScannedAtRef)).get(scanKey);
+      const now = yield* Clock.currentTimeMillis;
+      const recent = scannedAt !== undefined && now - scannedAt < WORKSPACE_SNAPSHOT_MAX_AGE_MS;
       if (
         !provider ||
         !provider.enabled ||
-        (!input.fresh && scannedFrom && !scannedFrom.slashCommandsPending)
+        (!input.fresh && scannedFrom && !scannedFrom.slashCommandsPending && recent)
       ) {
         return providers;
       }
@@ -1097,6 +1109,12 @@ export const layer = Layer.effect(
                       Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
                         : candidate,
+                    ),
+                  ).pipe(
+                    Effect.tap(() =>
+                      Ref.update(workspaceScannedAtRef, (scans) =>
+                        new Map(scans).set(scanKey, now),
+                      ),
                     ),
                   );
                 }),
