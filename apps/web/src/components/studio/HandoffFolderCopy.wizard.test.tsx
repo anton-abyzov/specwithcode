@@ -233,6 +233,64 @@ it("marks the step a copy stopped at", async () => {
   expect(step("done").hasAttribute("data-tone")).toBe(false);
 });
 
+it("says a refused start in plain words, marks Where stopped and lets the person retry", async () => {
+  const offer = state.handlers.copyOffer!;
+  state.handlers.copyOffer = () => {
+    throw new Error(
+      "The copy failed on this machine: Private folder resolves elsewhere: /Users/anton/.specwithcode/staging",
+    );
+  };
+  await mount();
+  await click("Copy to M3");
+  expect(stageNow()).toBe("setup");
+  const alert = document.querySelector('[role="alert"]')?.textContent ?? "";
+  // Names the machine it happened on and what to do, without "staging" or "drive".
+  expect(alert).toContain(
+    "SpecWithCode's working folder on M3 (/Users/anton/.specwithcode/staging) is behind a shortcut, so the copy can't start. Use a normal folder that isn't a shortcut or inside one, then try again.",
+  );
+  expect(alert).not.toContain("Private folder resolves elsewhere");
+  expect(step("where").getAttribute("data-tone")).toBe("failed");
+  expect(step("where").textContent).toBe("Where, stopped");
+  // The label stays and trying again is allowed.
+  expect(button("Copy to M3").disabled).toBe(false);
+  state.handlers.copyOffer = offer;
+  await click("Copy to M3");
+  expect(stageNow()).not.toBe("setup");
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("pins the machine it picked: one that connects later never retargets the button or the copy", async () => {
+  await mount({ m3Unavailable: "Connecting…", m1Available: true });
+  expect(button("Copy to M1").disabled).toBe(false);
+  // M3, listed first, finishes connecting: the label under the cursor stays M1.
+  await mount({ m1Available: true });
+  expect(button("Copy to M1").disabled).toBe(false);
+  await click("Copy to M1");
+  // M1 drops to reconnecting mid-copy while M3 is ready: everything still goes to M1.
+  await mount({});
+  await settle();
+  const touched = state.calls.map(
+    ([, call]) => call as { environmentId?: string; input?: Record<string, unknown> },
+  );
+  expect(touched.some((call) => call?.environmentId === "m1")).toBe(true);
+  expect(touched.some((call) => call?.environmentId === "m3")).toBe(false);
+  expect(touched.some((call) => call?.input?.["destinationEnvironmentId"] === "m3")).toBe(false);
+});
+
+it("waits visibly for a machine, then picks the first that becomes ready", async () => {
+  await mount({ m3Unavailable: "Connecting…" });
+  // One filled primary, off, with what it waits for said beside it.
+  expect(button("Copy").disabled).toBe(true);
+  expect(document.querySelector('[data-slot="copy-setup-hint"]')?.textContent).toBe(
+    "Choose a machine above.",
+  );
+  // No folder to ask about before there is a machine to put it on.
+  expect(document.querySelector('input[aria-label^="Folder on"]')).toBeNull();
+  await mount({});
+  expect(button("Copy to M3").disabled).toBe(false);
+  expect(folderInput().value).not.toBe("");
+});
+
 it("puts Stop copy first in the dialog footer as a ghost while choosing", async () => {
   await mount({ dialog: true });
   await chooseFirst();

@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
 import { HandoffCopyActionsTarget } from "./HandoffCopyActions";
 import {
   FilesTravelChoice,
@@ -16,6 +17,7 @@ import {
   ProjectMoveDialog,
   type MoveIntent,
 } from "./ProjectMoveOptions";
+import { plainHandoffError } from "./handoffErrors";
 import {
   Dialog,
   DialogDescription,
@@ -73,6 +75,9 @@ export function MachineHandoffDialog({
   onOpenChange,
   sourceLabel,
   projectTitle,
+  workspaceContext,
+  destinationCheckout,
+  destinationWorktreeStorage,
   destinations,
   selected,
   onSelect,
@@ -99,7 +104,10 @@ export function MachineHandoffDialog({
   copyBusy = false,
   copyLocked,
   copyDoneOn = null,
+  machinesLoading = false,
 }: {
+  /** The other machines' first status read has not settled: their list shows a loading row. */
+  readonly machinesLoading?: boolean;
   /** How the destination gets the files; the copy methods render `copyFlow` instead. */
   readonly method?: HandoffFolderMethod;
   readonly onMethodChange?: (method: HandoffFolderMethod) => void;
@@ -126,6 +134,9 @@ export function MachineHandoffDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly sourceLabel: string;
   readonly projectTitle: string;
+  readonly workspaceContext?: HandoffWorkspaceContext;
+  readonly destinationCheckout?: string | null;
+  readonly destinationWorktreeStorage?: string | null;
   /** Saved project folders on other machines; `selected` is one of their keys. */
   readonly destinations: ReadonlyArray<HandoffDestination>;
   readonly selected: string;
@@ -171,12 +182,14 @@ export function MachineHandoffDialog({
             methodDisabled: busy || !onMethodChange || complete,
             intent,
             close: locked ? null : close,
+            machinesLoading,
           }}
         >
           <DialogHeader>
             <DialogTitle className="wrap-anywhere">
+              {/* A copy of files only leaves the project here: its title says copied, not on. */}
               {copying && copyDoneOn
-                ? `${projectTitle} is on ${copyDoneOn}`
+                ? `${projectTitle} ${intent === "copy" ? "is copied to" : "is on"} ${copyDoneOn}`
                 : complete
                   ? `${projectTitle} is on ${targetLabel}`
                   : `${intent === "copy" ? "Copy" : "Move"} ${projectTitle}`}
@@ -191,6 +204,14 @@ export function MachineHandoffDialog({
             )}
           </DialogHeader>
           <DialogPanel>
+            {!copying && !complete && workspaceContext && (
+              <HandoffWorkspaceSummary
+                source={workspaceContext}
+                destinationFolder={target?.folder}
+                destinationCheckout={destinationCheckout}
+                destinationWorktreeStorage={destinationWorktreeStorage}
+              />
+            )}
             {copying ? (
               <HandoffCopyActionsTarget.Provider value={copyActionsTarget}>
                 {copyFlow}
@@ -227,11 +248,15 @@ export function MachineHandoffDialog({
                 folderPicker={folderPicker}
                 sourceChanges={sourceChanges}
                 busy={busy}
+                loading={machinesLoading}
               />
             )}
             {!copying && error && (
               <p role="alert" className="wrap-anywhere text-sm text-destructive-foreground">
-                {error}
+                {plainHandoffError(error, "move", {
+                  source: sourceLabel,
+                  destination: targetLabel,
+                })}
               </p>
             )}
             {!copying && error && onRestart && (
@@ -278,15 +303,24 @@ export function MachineHandoffDialog({
               </>
             ) : (
               <>
+                {!busy && !machineLabel && (
+                  <span
+                    className="min-w-0 self-center text-xs text-muted-foreground sm:mr-auto"
+                    data-slot="handoff-setup-hint"
+                  >
+                    Choose a machine above.
+                  </span>
+                )}
                 <Button variant="outline" disabled={busy} onClick={close}>
                   Cancel
                 </Button>
+                {/* One primary, filled even while off: never two outline buttons side by side. */}
                 <Button
                   className="min-w-0 max-w-full shrink"
                   disabled={busy || !target || !!target.unavailable}
                   onClick={onReview}
                 >
-                  {busy ? "Checking…" : `Move to ${machineLabel ?? "selected machine"}`}
+                  {busy ? "Checking…" : machineLabel ? `Move to ${machineLabel}` : "Move"}
                 </Button>
               </>
             )}
@@ -311,7 +345,9 @@ function GitWhere({
   folderPicker,
   sourceChanges,
   busy,
+  loading,
 }: {
+  readonly loading: boolean;
   readonly sourceLabel: string;
   readonly destinations: ReadonlyArray<HandoffDestination>;
   readonly selected: string;
@@ -341,7 +377,7 @@ function GitWhere({
       <SourceChangesNote changes={sourceChanges} sourceLabel={sourceLabel} busy={busy} />
       <fieldset disabled={busy} className="min-w-0">
         <legend className="mb-2 text-sm font-medium">Machine</legend>
-        {machines.length === 0 ? (
+        {machines.length === 0 && !loading ? (
           <p className="text-sm text-muted-foreground">
             No other machine is connected. Pair one in Settings › Connections.
           </p>
@@ -351,6 +387,7 @@ function GitWhere({
             options={machines}
             value={machine}
             disabled={busy}
+            loading={loading}
             onChange={(value) => onMachineChange?.(value)}
           />
         )}

@@ -225,6 +225,7 @@ class InstallNow(AgentCase):
         self.assertEqual(self.run_agent(), 1)
         state = self.state()
         self.assertEqual((state['status'], state['lastInstall']['result']), ('error', 'failed'))
+        self.assertEqual(state['answeredInstallRequestAt'], self.REQUESTED)  # settle() names what it settles.
         self.assertEqual(len(self.apply_calls()), 1 + update_agent.APPLY_RETRIES)
         self.assertFalse((self.updates / 'install-in-progress.json').exists())
 
@@ -328,6 +329,7 @@ class InstallNow(AgentCase):
         self.assertEqual(self.run_agent(), 1)
         state = self.state()
         self.assertEqual((state['status'], state['lastInstall']['result']), ('error', 'failed'))
+        self.assertEqual(state['answeredInstallRequestAt'], self.REQUESTED)  # settle() names what it settles.
         self.assertEqual(len(self.apply_calls()), 1 + update_agent.APPLY_RETRIES)
         self.assertEqual(state['handledInstallRequestAt'], self.REQUESTED)
 
@@ -536,26 +538,206 @@ class InstallNow(AgentCase):
                          [self.REQUESTED, self.NEWER])
         self.assert_installed_for_the_newer_request(applies=1)
 
-    def test_a_request_for_another_version_asked_as_the_snapshot_refused_is_left_to_its_own_pass(self):
-        """The refusing pass neither serves nor settles it: the next pass fetches that release and installs it."""
+    def written_while_refused(self, newer_request, fail_calls=(1,), **control):
+        """Runs a pass whose first snapshot (for REQUESTED) refuses while the desktop writes `newer_request`,
+        as do the other snapshot calls in `fail_calls`; returns the agent's exit code and each (status,
+        request it names) it wrote."""
         self.fake.add_release()
         self.request()
         lost = 'AssertionError: The SpecWithCode service lost its SQLite locks on its database.'
-        self.control(snapshotFailCalls=[1], snapshotError=lost + '\nREFUSAL restart-needed locks-lost',
-                     newVersion='0.3.0')
-        snapshot, newer = update_agent.Agent.take_snapshot, later()
+        self.control(snapshotFailCalls=list(fail_calls), snapshotError=lost + '\nREFUSAL restart-needed locks-lost',
+                     **control)
+        snapshot, set_status, written = update_agent.Agent.take_snapshot, update_agent.Agent.set_status, []
 
-        def asked_for_another(agent, *args):
+        def asked_meanwhile(agent, *args):
             result = snapshot(agent, *args)
             if len(self.snapshot_calls()) == 1:
-                self.fake.add_release('0.3.0')
-                self.request(installRequestedAt=newer, installRequest={'at': newer, 'version': '0.3.0'})
+                newer_request()
             return result
-        with mock.patch.object(update_agent.Agent, 'take_snapshot', asked_for_another):
-            self.assertEqual(self.run_agent(), 0)
+
+        def recorded(agent, status, message=None):
+            set_status(agent, status, message)
+            written.append((status, agent.state['answeredInstallRequestAt']))
+        with mock.patch.object(update_agent.Agent, 'take_snapshot', asked_meanwhile), \
+                mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            code = self.run_agent()
+        return code, written
+
+    def test_a_request_asked_again_whose_own_snapshot_refuses_names_that_request(self):
+        """Served after the earlier request's refusal, the newer request's own refusal answers it: the
+        service's hold for it ends on that, and the earlier refusal is written for neither."""
+        code, written = self.written_while_refused(lambda: self.request(installRequestedAt=self.NEWER),
+                                                   fail_calls=(1, 2))
+        self.assertEqual(code, 1)
+        self.assertEqual([call['argv'][call['argv'].index('--request') + 1] for call in self.snapshot_calls()],
+                         [self.REQUESTED, self.NEWER])
+        self.assertEqual([entry for entry in written if entry[0] == 'error'], [('error', self.NEWER)])
+
+    def test_a_request_for_another_version_asked_as_the_snapshot_refused_is_left_to_its_own_pass(self):
+        """The refusing pass neither serves nor settles it: the next pass fetches that release and installs it.
+        The refusal names the request it ends, so the service's hold for the newer one does not end on it."""
+        newer = later()
+
+        def asked_for_another():
+            self.fake.add_release('0.3.0')
+            self.request(installRequestedAt=newer, installRequest={'at': newer, 'version': '0.3.0'})
+        code, written = self.written_while_refused(asked_for_another, newVersion='0.3.0')
+        self.assertEqual(code, 0)
+        self.assertIn(('error', self.REQUESTED), written)
         state = self.state()
-        self.assertEqual((state['status'], state['installedVersion'], state['handledInstallRequestAt']),
-                         ('installed', '0.3.0', newer))
+        self.assertEqual((state['status'], state['installedVersion'], state['handledInstallRequestAt'],
+                          state['answeredInstallRequestAt']), ('installed', '0.3.0', newer, newer))
+
+    def test_a_refusal_written_after_a_run_asked_names_the_request_it_ends(self):
+        """Update now starts a run while the snapshot for an earlier request refuses: the pass leaves the run's
+        request to its own claim, and the refusal it writes names the earlier request, not the run's."""
+        _, written = self.written_while_refused(lambda: self.request(installRequestedAt=self.NEWER, installRunId='run-2'))
+        self.assertIn(('error', self.REQUESTED), written)
+        self.assertNotIn(('error', self.NEWER), written)
+        self.assertEqual([call['argv'][call['argv'].index('--request') + 1] for call in self.snapshot_calls()][:1],
+                         [self.REQUESTED])
+
+    def test_an_automatic_refusal_with_update_now_pressed_meanwhile_leaves_it_to_that_request(self):
+        """Update now pressed while an automatic pass's snapshot ran, which then refused: the pass
+        writes no refusal for the service's new hold to take as its answer, and serves the request next."""
+        self.fake.add_release()
+        self.config(installAutomatically=True, quietMinutes=0)
+        self.control(snapshotFailCalls=[1], snapshotError='REFUSAL environment Port belongs to another process')
+        snapshot, set_status, written = update_agent.Agent.take_snapshot, update_agent.Agent.set_status, []
+
+        def asked_meanwhile(agent, *args):
+            result = snapshot(agent, *args)
+            if len(self.snapshot_calls()) == 1:  # What Update now writes: automatic installs stay on.
+                self.config(installAutomatically=True, quietMinutes=0, installMode='force',
+                            installHoldUntil=later(15), installRequestedAt=self.NEWER)
+            return result
+
+        def recorded(agent, status, message=None):
+            set_status(agent, status, message)
+            written.append((status, agent.state['answeredInstallRequestAt'], message))
+        with mock.patch.object(update_agent.Agent, 'take_snapshot', asked_meanwhile), \
+                mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            self.assertEqual(self.run_agent(), 0)
+        self.assertNotIn('error', [status for status, _, _ in written])
+        # The automatic pass, which served none, ended there.
+        self.assertIn(('downloaded', '', update_agent.recovery.SETTINGS_CHANGED), written)
+        self.assertEqual(['--request' in call['argv'] for call in self.snapshot_calls()], [False, True])
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt'], state['answeredInstallRequestAt']),
+                         ('installed', self.NEWER, self.NEWER))
+
+    def reports_an_interrupted_install(self, asked_before=False, handled=False):
+        """An automatic pass reports the install an earlier pass left interrupted; Update now is pressed
+        before the pass or as it reports, with an earlier request handled when `handled`. Returns each
+        (status, request it names) the agent wrote."""
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.run_agent()
+        state = self.state()
+        state['status'] = 'installing'
+        if handled:  # Once Update now was used, its handled request stays in the settings.
+            self.request(installRequestedAt=self.REQUESTED)
+            state['handledInstallRequestAt'] = self.REQUESTED
+        (self.updates / 'state.json').write_text(json.dumps(state))
+        (self.updates / 'install-in-progress.json').write_text(json.dumps(
+            {'version': '0.2.0', 'receipt': str(self.updates / 'receipts' / 'x.json'), 'at': 'now'}))
+        if asked_before:
+            self.request(installRequestedAt=self.NEWER)
+        settle, set_status, written, messages = update_agent.recovery.settle_interrupted, update_agent.Agent.set_status, [], []
+
+        def asked_meanwhile(agent):
+            if not asked_before:
+                self.request(installRequestedAt=self.NEWER)
+            return settle(agent)
+
+        def recorded(agent, status, message=None):
+            set_status(agent, status, message)
+            written.append((status, agent.state['answeredInstallRequestAt']))
+            messages.append(message or '')
+        with mock.patch.object(update_agent.recovery, 'settle_interrupted', asked_meanwhile), \
+                mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            self.run_agent()
+        self.assertIn('was interrupted', messages[0])
+        return written
+
+    def test_an_interrupted_install_an_automatic_pass_reports_names_no_request(self):
+        """Update now pressed as the pass reports it: the report answers no request, so the new hold
+        stays up, and the pass serves the request next."""
+        written = self.reports_an_interrupted_install()
+        self.assertEqual(written[0], ('error', ''))
+        self.assertIn(('installing', self.NEWER), written)
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt'], state['answeredInstallRequestAt']),
+                         ('installed', self.NEWER, self.NEWER))
+
+    def test_an_interrupted_install_reported_after_a_handled_request_names_no_request(self):
+        """The same once an earlier request was handled, which stays in the settings: that request is
+        not pending, so the report answers none, and the request pressed as it reports is served next."""
+        written = self.reports_an_interrupted_install(handled=True)
+        self.assertEqual(written[0], ('error', ''))
+        self.assertIn(('installing', self.NEWER), written)
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt'], state['answeredInstallRequestAt']),
+                         ('installed', self.NEWER, self.NEWER))
+
+    def test_an_interrupted_install_reported_with_a_request_pending_names_nothing(self):
+        """Pressed before the pass: the interruption may be that request's own install, so the report
+        names nothing and the hold ends on it by its time, as before."""
+        written = self.reports_an_interrupted_install(asked_before=True)
+        self.assertEqual(written[0], ('error', None))
+        self.assertEqual(self.apply_calls(), [])
+
+    def test_a_pass_for_a_request_written_meanwhile_that_fails_before_naming_it_names_none(self):
+        """The pass run once more for a request written during the last one fails reading its installation:
+        it named no request yet, so it names none, not the one the last pass served."""
+        self.fake.add_release()
+        self.request()
+        load_installation, set_status = update_agent.load_installation, update_agent.Agent.set_status
+        written, asked = [], []
+
+        def unreadable_once_asked(home, identity):
+            if asked:
+                raise update_agent.AgentError('SpecWithCode m4 is not installed')
+            return load_installation(home, identity)
+
+        def recorded(agent, status, message=None):
+            set_status(agent, status, message)
+            written.append((status, agent.state['answeredInstallRequestAt']))
+            if status == 'installed' and not asked:  # Update now pressed again as the pass ends.
+                self.request(installRequestedAt=self.NEWER)
+                asked.append(True)
+        with mock.patch.object(update_agent, 'load_installation', unreadable_once_asked), \
+                mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            self.assertEqual(self.run_agent(), 1)
+        self.assertEqual(written[-2:], [('installed', self.REQUESTED), ('error', None)])
+
+    def test_a_check_that_fails_for_a_request_names_it_not_one_written_meanwhile(self):
+        """GitHub fails the check a request's pass runs while Update now is pressed again: that failure
+        is the earlier request's, and the newer one is served next, with its hold still up."""
+        self.fake.add_release()
+        self.request(checkRequestedAt=later())
+        self.fake.list_status = 502
+        check, set_status, written = update_agent.Agent.check, update_agent.Agent.set_status, []
+
+        def asked_meanwhile(agent):
+            if self.fake.list_status != 200:
+                self.request(installRequestedAt=self.NEWER)
+                try:
+                    return check(agent)
+                finally:
+                    self.fake.list_status = 200
+            return check(agent)
+
+        def recorded(agent, status, message=None):
+            set_status(agent, status, message)
+            written.append((status, agent.state['answeredInstallRequestAt']))
+        with mock.patch.object(update_agent.Agent, 'check', asked_meanwhile), \
+                mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            self.assertEqual(self.run_agent(), 0)
+        self.assertEqual([entry for entry in written if entry[0] == 'error'], [('error', self.REQUESTED)])
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt'], state['answeredInstallRequestAt']),
+                         ('installed', self.NEWER, self.NEWER))
 
     def automatic_passes_after(self, **failing):
         """A plain request that ends failed, then two automatic passes with Install automatically on."""
@@ -677,11 +859,42 @@ class BoundRequest(AgentCase):
         self.assertEqual(state['status'], 'error')
         self.assertEqual(state['message'], 'SpecWithCode 0.1.9 was asked for, but 0.2.0 is the update now '
                                            'available; choose Update now again to install it.')
-        self.assertEqual(state['handledInstallRequestAt'], at)
+        self.assertEqual((state['handledInstallRequestAt'], state['answeredInstallRequestAt']), (at, at))
         self.assertEqual((self.snapshot_calls(), self.apply_calls()), ([], []))
         # Settled: the next pass does not install it either.
         self.run_agent()
-        self.assertEqual((self.state()['status'], self.apply_calls()), ('downloaded', []))
+        state = self.state()
+        self.assertEqual((state['status'], state['answeredInstallRequestAt'], self.apply_calls()),
+                         ('downloaded', '', []))
+
+    def test_a_download_that_fails_for_a_request_names_the_request_it_ends(self):
+        """The service's hold for a request written while it downloaded does not end on this failure."""
+        self.fake.add_release(corrupt_runtime=True)
+        at, newer = self.request(), later(1)
+        download, set_status, written = update_agent.Agent.download_and_verify, update_agent.Agent.set_status, []
+
+        def asked_again(agent, meta):  # Update now pressed again, for the same version, as it downloads.
+            self.request(at=newer)
+            return download(agent, meta)
+
+        def recorded(agent, status, message=None):
+            set_status(agent, status, message)
+            written.append((status, agent.state['answeredInstallRequestAt'], message or ''))
+        with mock.patch.object(update_agent.Agent, 'download_and_verify', asked_again), \
+                mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            self.assertEqual(self.run_agent(), 1)
+        errors = [entry for entry in written if entry[0] == 'error']
+        # The newer request, served by the pass run once more for it, ends on the rejected download.
+        self.assertEqual([named for _, named, _ in errors], [at, newer])
+        self.assertIn('checksum', errors[0][2])
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt'], state['answeredInstallRequestAt']),
+                         ('error', newer, newer))
+        # The same failure from a pass no request asked for names none: no hold takes it as its answer.
+        self.config(installAutomatically=True, installRequestedAt=None, installRequest=None, checkRequestedAt=later())
+        self.run_agent()
+        state = self.state()
+        self.assertEqual((state['status'], state['answeredInstallRequestAt']), ('error', ''))
 
     def test_a_request_for_a_release_newer_than_the_cached_one_checks_again(self):
         # The desktop saw 0.2.1 before the agent's next scheduled check; the cached 0.2.0 must not refuse it.
@@ -706,6 +919,7 @@ class BoundRequest(AgentCase):
                 state = self.state()
                 self.assertEqual((state['status'], state['handledInstallRequestAt']), ('error', at))
                 self.assertEqual(state['message'], update_request.EXPIRED)
+                self.assertEqual(state['answeredInstallRequestAt'], at)
                 self.assertEqual((self.snapshot_calls(), self.apply_calls()), ([], []))
                 self.run_agent()  # Settled: the next pass neither installs it nor repeats the message.
                 self.assertEqual((self.state()['status'], self.apply_calls()), ('downloaded', []))
@@ -877,7 +1091,7 @@ class BoundRequest(AgentCase):
         self.assertEqual(self.run_agent(), 1)
         state = self.state()
         self.assertEqual((state['status'], state['message']), ('error', update_request.EXPIRED))
-        self.assertEqual(state['handledInstallRequestAt'], newer['at'])
+        self.assertEqual((state['handledInstallRequestAt'], state['answeredInstallRequestAt']), (newer['at'], newer['at']))
         self.assertEqual(self.apply_calls(), [])
 
     def test_the_request_lifetime_matches_the_desktop(self):

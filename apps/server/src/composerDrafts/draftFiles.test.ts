@@ -6,7 +6,15 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { draftFolder, listDrafts, putDraft, readDraftWithData, removeDraft } from "./draftFiles.ts";
+import {
+  acquireDraftLease,
+  hasProtectedDraft,
+  draftFolder,
+  listDrafts,
+  putDraft,
+  readDraftWithData,
+  removeDraft,
+} from "./draftFiles.ts";
 
 const png = (seed: number) => Uint8Array.from([0x89, 0x50, 0x4e, 0x47, seed, seed + 1, seed + 2]);
 const image = (id: string, data?: Uint8Array) => ({
@@ -181,4 +189,31 @@ describe("composer draft files", () => {
     expect(draft?.data.get("shot")?.byteLength).toBe(512 * 1024);
     expect(draft?.data.get("shot")?.[300]).toBe(300 % 251);
   }, 20_000);
+});
+
+it("serializes archive decisions with existing draft saves and removals", async () => {
+  const key = "thread:archive-race";
+  const release = await acquireDraftLease(dir, key);
+  const saved = putDraft(
+    dir,
+    { key, prompt: "Retain this unsent draft", attachments: [], editedAt: 1 },
+    1,
+  );
+  expect(await hasProtectedDraft(dir, key)).toBe(false);
+  release();
+  await saved;
+  const releaseAgain = await acquireDraftLease(dir, key);
+  const removed = removeDraft(dir, key);
+  expect(await hasProtectedDraft(dir, key)).toBe(true);
+  releaseAgain();
+  await removed;
+  expect(await hasProtectedDraft(dir, key)).toBe(false);
+});
+it("fails closed on malformed draft metadata and attachment-only drafts", async () => {
+  const key = "thread:unreadable";
+  await fs.mkdir(draftFolder(dir, key), { recursive: true });
+  await fs.writeFile(path.join(draftFolder(dir, key), "draft.json"), "{broken");
+  expect(await hasProtectedDraft(dir, key)).toBe(true);
+  await putDraft(dir, { key, prompt: "", attachments: [image("pending", png(1))], editedAt: 1 }, 1);
+  expect(await hasProtectedDraft(dir, key)).toBe(true);
 });

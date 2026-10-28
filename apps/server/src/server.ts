@@ -1,3 +1,6 @@
+import * as Scheduler from "./scheduling/Scheduler.ts";
+import * as InactiveThreadArchive from "./orchestration-v2/InactiveThreadArchive.ts";
+import * as InactiveThreadArchiveGuard from "./orchestration-v2/InactiveThreadArchiveGuard.ts";
 import type { RelayManagedEndpointRuntimeConfig } from "@specweave-studio/contracts/relay";
 import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
@@ -544,6 +547,7 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerCheckpointStore),
   Layer.provide(layerGitWorkflow),
   Layer.provide(ResourceCleanupService.layer),
+  Layer.provide(InactiveThreadArchiveGuard.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(
     RunFinalizationService.layerObserver.pipe(
       Layer.provide(ProjectionStoreV2.layer),
@@ -641,6 +645,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   MachineNicknameSync.layer.pipe(Layer.provide(FleetTargets.layer)),
   // Asks Studio Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
+  InactiveThreadArchive.layerStart.pipe(
+    // Same canonical layer object as the orchestration runtime; memoization shares its clock.
+    Layer.provide(Scheduler.layer),
+    Layer.provide(ProjectionStoreV2.layer),
+    Layer.provide(ThreadManagementService.layer),
+  ),
   layerThreadSettlementWorker,
   layerThreadFinishActionWorker,
   // Handoff mode: leases, checkpoints after each turn and while a turn runs long.

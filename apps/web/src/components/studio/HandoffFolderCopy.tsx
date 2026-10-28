@@ -27,6 +27,7 @@ import {
 import { randomUUID } from "../../lib/utils";
 import { useCopyScope } from "./HandoffCopyScope";
 import { useCopyDestination } from "./useCopyDestination";
+import { handoffErrorMarksStep } from "./handoffErrors";
 import {
   abortError,
   APPROVED,
@@ -84,6 +85,7 @@ import {
   APPLYING,
   insideSkipped,
   NOT_ABSOLUTE,
+  openCopiedProject,
   POLL_MS,
   REPOSITORY_SETTLE_MS,
   useCopyReporting,
@@ -91,6 +93,7 @@ import {
 } from "./handoffFolderCopyRules";
 import { useCopyLink } from "./useCopyLink";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
+import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
 import type { RepositoryChoices } from "./HandoffCopyPreview";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
@@ -106,6 +109,7 @@ type Stage = CopyStage;
 export function HandoffFolderCopy({
   project,
   coordinatorId,
+  workspaceContext,
   sourceLabel,
   method,
   machines,
@@ -122,6 +126,7 @@ export function HandoffFolderCopy({
 }: {
   readonly project: EnvironmentProject;
   readonly coordinatorId: ThreadId | null;
+  readonly workspaceContext?: HandoffWorkspaceContext;
   readonly sourceLabel: string;
   readonly method: Exclude<HandoffFolderMethod, "folder">;
   readonly machines: ReadonlyArray<CopyMachine>;
@@ -250,6 +255,7 @@ export function HandoffFolderCopy({
     mode,
     machine,
     copy,
+    existingDestination: pending?.existingDestination,
     scanStatus,
     machineName: targetLabel,
     onBusyChange,
@@ -288,6 +294,7 @@ export function HandoffFolderCopy({
     contextTransferred,
     copy,
     held: stage === "failed" && copyHeld(copy),
+    errored: error !== null && handoffErrorMarksStep(error, stage),
     working,
     pending,
     latestPending,
@@ -742,6 +749,8 @@ export function HandoffFolderCopy({
     const { machine, folder, mode, selection, copyRoot, projectRelativePath } = choices;
     if (machines.find((entry) => entry.id === machine)?.unavailable || scope.loading) return;
     if (!absolute(folder)) throw new Error(NOT_ABSOLUTE);
+    // Every later step (poll, apply, cancel, move, open) reads this machine: pin it.
+    setMachine(machine);
     if (projectRelativePath !== ".") {
       try {
         const supported = unwrap(await capabilities({ environmentId: machine, input: {} }));
@@ -756,11 +765,9 @@ export function HandoffFolderCopy({
     setSummary(null);
     setSecretPaths([]);
     setSecretsConfirmed(false);
-    const projectId = destinationProjectId(
-      machine,
-      mode,
-      copiedProjectFolder(folder, projectRelativePath),
-    );
+    const projectFolder = copiedProjectFolder(folder, projectRelativePath);
+    const projectId = destinationProjectId(machine, mode, projectFolder);
+    const existing = mode === "copy-and-move" && knownProject(machine, projectFolder) !== null;
     setCancelledFor(null);
     // The pointer holds the choices from here; the draft was for an unsent form.
     draft.dropDraft();
@@ -775,6 +782,7 @@ export function HandoffFolderCopy({
       selection,
       method: choices.method,
       ...(choices.auto ? { auto: true } : {}),
+      ...(existing ? { existingDestination: true } : {}),
     };
     remember(saved);
     const measured = await followMeasure(saved, async () =>
@@ -1288,12 +1296,15 @@ export function HandoffFolderCopy({
     approveLabel,
     failedBeforeApply,
     held: stage === "failed" && copyHeld(copy),
+    move: mode === "copy-and-move",
   });
   const notices = groupCopyNotices({
     skipped: summary?.skipped,
     linksOutside: summary?.linksOutside,
     warnings: [...(summary?.warnings ?? []), ...(copy?.warnings ?? [])],
     rootLabel,
+    mode,
+    done: stage === "done",
     activeWork: stage === "select" || stage === "preview" ? mode : null,
   });
   // Transfer and Open act on the applied copy shown on Done; only Done renders them.
@@ -1304,22 +1315,21 @@ export function HandoffFolderCopy({
             moveCoordinator(pending.operationId, machine, copy.projectId!, copy, movingAnyway),
           )
       : null;
-  const openCopy = () => {
-    if (!machine || !copy?.projectId) return;
-    onOpenProject({
-      environmentId: machine,
-      projectId: copy.projectId,
-      folder:
-        copy.projectFolder ??
-        copiedProjectFolder(
-          copy.targetFolder,
-          copy.projectRelativePath ?? pending?.projectRelativePath,
-        ),
-    });
-  };
+  const openCopy = () => openCopiedProject(machine, copy, pending, onOpenProject);
 
   return (
     <div className="space-y-4" data-slot="handoff-folder-copy" data-stage={stage}>
+      <HandoffWorkspaceSummary
+        transferContext={(pending?.mode ?? mode) === "copy-and-move"}
+        source={workspaceContext ?? { projectFolder: project.workspaceRoot }}
+        copyRoot={pending?.copyRoot ?? scope.selected.copyRoot}
+        destinationFolder={copiedProjectFolder(
+          pending?.targetFolder ?? folder,
+          pending?.projectRelativePath ?? scope.selected.projectRelativePath,
+        )}
+        destinationCheckout={copy?.projectFolder}
+        destinationWorktreeStorage={target?.worktreeStorage}
+      />
       <CopyStepLine steps={stepView.steps} />
       {stepView.note && <CopyResumeNote>{stepView.note}</CopyResumeNote>}
       {stepView.checking ? (
@@ -1460,6 +1470,7 @@ export function HandoffFolderCopy({
             machine={machine}
             mode={mode}
             targetLabel={targetLabel}
+            sourceLabel={sourceLabel}
             auto={auto}
             chooseFirst={chooseFirst}
             selection={selection}

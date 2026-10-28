@@ -15,6 +15,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { cliOfDriver, providerLabel } from "../../studio/projectUsageModel";
+import { useCoordinatorProvider } from "../../studio/useCoordinatorProvider";
 import { Button } from "../ui/button";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 
@@ -74,6 +75,34 @@ function Row({
   );
 }
 
+/** A provider id the machine does not list, by a name people know, never the raw id. */
+const missingProviderName = (instanceId: string) => {
+  const label = providerLabel(cliOfDriver(instanceId, instanceId));
+  return label !== instanceId ? label : "The coordinator's coding agent";
+};
+
+/**
+ * The provider rows to show. A moved coordinator needs only the provider it runs with:
+ * other providers' sign-ins are hidden. While that provider is unknown (the coordinator
+ * has not synced there yet), every enabled one is listed, so the list is never blank.
+ * `missing` names a coordinator provider the machine does not offer.
+ */
+export function readinessProviders(
+  providers: ReadonlyArray<ServerProvider>,
+  coordinator: { readonly only: boolean; readonly instanceId: string | null },
+): { readonly shown: ReadonlyArray<ServerProvider>; readonly missing: string | null } {
+  const enabled = providers.filter((provider) => provider.enabled && provider.installed);
+  if (!coordinator.only || coordinator.instanceId === null)
+    return { shown: enabled, missing: null };
+  const shown = enabled.filter((provider) => provider.instanceId === coordinator.instanceId);
+  if (shown.length > 0) return { shown, missing: null };
+  const known = providers.find((provider) => provider.instanceId === coordinator.instanceId);
+  return {
+    shown,
+    missing: known ? providerName(known) : missingProviderName(coordinator.instanceId),
+  };
+}
+
 /**
  * What a machine still needs before a project runs there: provider and GitHub
  * sign-ins, read access to each repository origin and the tools the project's
@@ -85,12 +114,19 @@ export function MachineReadinessChecklist({
   environmentLabel,
   projectId,
   autoCheck = true,
+  coordinatorOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly projectId?: ProjectId | null;
   readonly autoCheck?: boolean;
+  /** Lists only the provider the project's coordinator runs with there. */
+  readonly coordinatorOnly?: boolean;
 }) {
+  const coordinatorProvider = useCoordinatorProvider(
+    environmentId,
+    coordinatorOnly ? (projectId ?? null) : null,
+  );
   const check = useAtomCommand(machineHandoff.readiness, { reportFailure: false });
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -127,7 +163,10 @@ export function MachineReadinessChecklist({
     void run();
   }, [autoCheck, run]);
 
-  const enabled = providers.filter((provider) => provider.enabled && provider.installed);
+  const { shown: enabled, missing } = readinessProviders(providers, {
+    only: coordinatorOnly,
+    instanceId: coordinatorProvider,
+  });
   const blocked =
     report?.repositories.filter((repo) => repo.status !== "ok" && repo.status !== "no-origin") ??
     [];
@@ -149,7 +188,13 @@ export function MachineReadinessChecklist({
         Sign-ins are never copied between machines. Each one happens on {environmentLabel} itself.
       </p>
       <ul className="space-y-1">
-        {enabled.length === 0 ? (
+        {missing ? (
+          <Row
+            ok={false}
+            title={`${missing}: not set up on ${environmentLabel}`}
+            detail={`The coordinator runs with it. Install and turn it on in Settings › Providers on ${environmentLabel}.`}
+          />
+        ) : enabled.length === 0 ? (
           <Row ok={false} title="No coding agent is installed and enabled there." />
         ) : (
           enabled.map((provider) => {

@@ -317,7 +317,24 @@ export const make = Effect.gen(function* () {
         const realPath = yield* fs.realPath(worktreePath);
         const realParent = yield* fs.realPath(path.dirname(worktreePath));
         if (realPath !== path.join(realParent, path.basename(worktreePath))) return;
-        if (!roots.some((root) => inside(root, realPath))) return;
+        if (!roots.some((root) => inside(root, realPath))) {
+          // A recorded thread may use project-local storage after settings change.
+          // Resolve only its Git registration; never scan sibling repositories.
+          const common = yield* git.execute({
+            operation: "StorageCleanup.projectLocalRoot",
+            cwd: worktreePath,
+            args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            maxOutputBytes: 4096,
+          });
+          const commonDir = common.stdout.trim();
+          if (path.basename(commonDir) !== ".git") return;
+          const repository = path.dirname(commonDir);
+          const projectRoot = yield* fs.realPath(project.workspaceRoot);
+          if (repository !== projectRoot && !inside(projectRoot, repository)) return;
+          const localRoot = path.join(repository, ".specwithcode", "worktrees");
+          if (!inside(localRoot, realPath)) return;
+          if ((yield* fs.realPath(localRoot)) !== localRoot) return;
+        }
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects])) return;
         // A linked worktree has a .git file. Never remove a main checkout.
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File") return;
@@ -670,6 +687,7 @@ export const make = Effect.gen(function* () {
       serverSettings.worktreesDirectory,
       config.worktreesDir,
       path,
+      serverSettings.worktreeLocationMode,
     );
     const roots: Array<string> = [];
     for (const directory of [

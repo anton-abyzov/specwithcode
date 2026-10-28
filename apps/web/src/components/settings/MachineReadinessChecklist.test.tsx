@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
+import { MachineReadinessChecklist, readinessProviders } from "./MachineReadinessChecklist";
 
 const state = vi.hoisted(() => ({
   calls: [] as unknown[],
@@ -10,6 +10,14 @@ const state = vi.hoisted(() => ({
   canManage: true,
   readiness: null as unknown,
   fail: null as Error | null,
+  coordinatorProvider: null as string | null,
+  coordinatorAsked: [] as Array<[unknown, unknown]>,
+}));
+vi.mock("../../studio/useCoordinatorProvider", () => ({
+  useCoordinatorProvider: (environmentId: unknown, projectId: unknown) => {
+    state.coordinatorAsked.push([environmentId, projectId]);
+    return projectId ? state.coordinatorProvider : null;
+  },
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.providers }));
 vi.mock("../../state/server", () => ({
@@ -55,13 +63,14 @@ const button = (label: string) => {
   if (!element) throw new Error(`Missing button ${label}: ${container.textContent}`);
   return element;
 };
-const mount = async (projectId?: string) => {
+const mount = async (projectId?: string, coordinatorOnly = false) => {
   await act(async () =>
     root.render(
       <MachineReadinessChecklist
         environmentId={"m3" as never}
         environmentLabel="M3"
         projectId={projectId as never}
+        coordinatorOnly={coordinatorOnly}
       />,
     ),
   );
@@ -73,6 +82,8 @@ beforeEach(() => {
   state.calls = [];
   state.canManage = true;
   state.fail = null;
+  state.coordinatorProvider = null;
+  state.coordinatorAsked = [];
   state.providers = [
     provider("claudeAgent", "authenticated", { email: "me@example.com" }),
     provider("codex", "unauthenticated"),
@@ -139,4 +150,76 @@ it("hides sign-in for a browser without provider permission and explains an olde
   expect(container.textContent).toContain(
     "M3 could not be checked. It may run an older SpecWithCode.",
   );
+});
+
+it("after a move, lists only the provider the coordinator runs with", async () => {
+  state.coordinatorProvider = "codex";
+  await mount("moved", true);
+  expect(state.coordinatorAsked.at(-1)).toEqual(["m3", "moved"]);
+  const text = container.textContent ?? "";
+  expect(text).toContain("Codex: not signed in");
+  expect(text).not.toContain("Claude");
+  expect(button("Sign in on M3")).toBeTruthy();
+});
+
+it("after a move, says when the coordinator's provider is not set up there", async () => {
+  state.coordinatorProvider = "cursor";
+  await mount("moved", true);
+  const text = container.textContent ?? "";
+  // An id the machine does not list is never shown raw.
+  expect(text).toContain("The coordinator's coding agent: not set up on M3");
+  expect(text).not.toContain("cursor");
+  expect(text).toContain("Install and turn it on in Settings › Providers on M3.");
+  expect(text).not.toContain("Claude");
+  expect(text).not.toContain("Codex");
+  expect(text).not.toContain("No coding agent");
+});
+
+it("after a move, lists every enabled provider until the coordinator's provider is known", async () => {
+  await mount("moved", true);
+  const text = container.textContent ?? "";
+  expect(text).toContain("Claude: signed in");
+  expect(text).toContain("Codex: not signed in");
+  expect(text).not.toContain("No coding agent");
+});
+
+it("without the coordinator filter, every installed provider is listed and none asked about", async () => {
+  await mount("copied");
+  expect(state.coordinatorAsked.every(([, projectId]) => projectId === null)).toBe(true);
+  expect(container.textContent).toContain("Claude: signed in");
+  expect(container.textContent).toContain("Codex: not signed in");
+});
+
+it("readinessProviders keeps enabled, installed providers and filters to the coordinator's", () => {
+  const off = { ...provider("cursor", "authenticated"), enabled: false, displayName: "Cursor" };
+  const all = [
+    provider("claudeAgent", "authenticated"),
+    provider("codex", "unauthenticated"),
+    off,
+  ] as never[];
+  expect(
+    readinessProviders(all, { only: false, instanceId: null }).shown.map(
+      (p: { instanceId: string }) => p.instanceId,
+    ),
+  ).toEqual(["claudeAgent", "codex"]);
+  expect(
+    readinessProviders(all, { only: true, instanceId: null }).shown.map(
+      (p: { instanceId: string }) => p.instanceId,
+    ),
+  ).toEqual(["claudeAgent", "codex"]);
+  expect(
+    readinessProviders(all, { only: true, instanceId: "codex" }).shown.map(
+      (p: { instanceId: string }) => p.instanceId,
+    ),
+  ).toEqual(["codex"]);
+  // Installed but turned off: named by its display name, not shown as a sign-in.
+  expect(readinessProviders(all, { only: true, instanceId: "cursor" })).toEqual({
+    shown: [],
+    missing: "Cursor",
+  });
+  expect(readinessProviders(all, { only: true, instanceId: "gone" }).missing).toBe(
+    "The coordinator's coding agent",
+  );
+  // A known driver id reads as its product name.
+  expect(readinessProviders([], { only: true, instanceId: "claudeAgent" }).missing).toBe("Claude");
 });

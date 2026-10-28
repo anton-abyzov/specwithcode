@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   gitHubCopilotIconUrlForInstanceConfig,
+  localAcpAgentIdForCommand,
   isGitHubCopilotIcon,
   AcpRegistryImportSessionInput,
   AcpRegistryManagedBinaryUninstallInput,
@@ -220,5 +221,24 @@ describe("Copilot identity from instance config", () => {
     ).toBeNull();
     expect(gitHubCopilotIconUrlForInstanceConfig({ agentId: "gemini" })).toBeNull();
     expect(gitHubCopilotIconUrlForInstanceConfig(undefined)).toBeNull();
+  });
+});
+
+describe("local ACP command identity", () => {
+  it("recognises Copilot and DeepSeek Harness by executable, nothing else", () => {
+    expect(
+      localAcpAgentIdForCommand(
+        "github-copilot-cli",
+        "/usr/local/lib/node_modules/@github/copilot-darwin-arm64/copilot",
+      ),
+    ).toBe("github-copilot-cli");
+    expect(localAcpAgentIdForCommand(null, "/Users/me/.local/bin/dsh")).toBe("deepseek-harness");
+    expect(localAcpAgentIdForCommand(null, "C:\\Tools\\dsh.cmd")).toBe("deepseek-harness");
+    expect(localAcpAgentIdForCommand("github-copilot-cli", "/usr/local/bin/dsh")).toBe(
+      "deepseek-harness",
+    );
+    expect(localAcpAgentIdForCommand(null, "/usr/local/bin/dshell")).toBeNull();
+    expect(localAcpAgentIdForCommand(null, "/opt/dsh/bin/agent")).toBeNull();
+    expect(localAcpAgentIdForCommand(null, null)).toBeNull();
   });
 });

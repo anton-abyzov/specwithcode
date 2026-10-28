@@ -119,7 +119,8 @@ DEFAULT_CONFIG = {'schemaVersion': 1, 'checkAutomatically': True, 'downloadInBac
 STATE_KEYS = ('schemaVersion', 'agentVersion', 'status', 'installedVersion', 'installedSourceCommit',
               'availableVersion', 'availableTag', 'availableNotes', 'availablePublishedAt',
               'downloadedVersion', 'checkedAt', 'quietSince', 'message', 'lastInstall',
-              'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt', 'automaticRetry', 'runSupport',
+              'handledInstallRequestAt', 'handledCheckRequestAt', 'answeredInstallRequestAt', 'updatedAt',
+              'automaticRetry', 'runSupport',
               'automaticWaitSince', 'automaticPauseAt', 'automaticLastBusyAt',  # update_agent_pause: an automatic
               'automaticPausedAt')  # install's wait for work, and its last drain {version, at}.
 
@@ -671,6 +672,7 @@ class Agent(object):
         self.inst = None
         self.lock_fd = lock_fd  # Passed to the helper, which keeps the pass lock while it runs.
         self.run = None  # The run.json record this pass owns (update_agent_run.claim).
+        self.serving = None  # The install request this pass serves, '' for none; None until run_pass names it.
         self._token = None
         self._token_resolved = False
 
@@ -684,6 +686,9 @@ class Agent(object):
         assert status in STATUSES
         self.state['status'] = status
         self.state['message'] = redact(message) if message else None
+        # Names the request this pass serves ('' for none): the service's hold for another request never takes
+        # this as its answer. None, before a pass names one, still ends a hold by its time.
+        self.state['answeredInstallRequestAt'] = self.serving
         self.save()
         if self.run is not None:
             self.run.mirror(status, self.state['message'])
@@ -1006,6 +1011,8 @@ class Agent(object):
             if self.config['installRequestedAt'] != serving:  # A newer request this pass took on starts afresh.
                 attempt, retries, refused_apply, window = 0, 0, None, utcnow()
                 serving = self.config['installRequestedAt']
+            if install_request:
+                self.serving = serving
             attempt += 1
             if not install_request and recovery.automatic_superseded(self):  # Ends as after the snapshot, without its full read.
                 self.state['automaticRetry'] = None
@@ -1031,6 +1038,8 @@ class Agent(object):
                     if install_request:  # An explicit request never drains: no pause time or Later stays on show.
                         if refused[0] != 'waiting-for-quiet' and recovery.asked_again(self, version, serving):
                             continue  # Asked again as the snapshot refused: served, not answered with that refusal.
+                        # A run's or another release's request written meanwhile is not served here: the
+                        # refusal names the request it ends, so the service's hold for that one ignores it.
                         return pause.forget(self.state) or self.finish(*refused)
                     return pause.after_refusal(self, verified, refused)
                 self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
@@ -1077,7 +1086,9 @@ class Agent(object):
         before = recovery.installation_fingerprint(self) if not install_request else None
         if install_request: self.state['automaticRetry'] = None  # Explicit requests start fresh.
         handled = self.state['handledInstallRequestAt']
-        if install_request: self.state['handledInstallRequestAt'] = self.config['installRequestedAt']  # noqa: E701
+        if install_request:  # The request it settles, which a failure from here on names.
+            self.state['handledInstallRequestAt'] = self.config['installRequestedAt']
+            self.serving = self.config['installRequestedAt']
         write_json(self.marker_path, {'version': version, 'receipt': str(receipt), 'at': iso(utcnow()),
                                       'sourceCommit': verified['sourceCommit'],
                                       'previousSourceCommit': verified['binding']['installedSourceCommit']}, self.home)
@@ -1105,7 +1116,9 @@ class Agent(object):
     def settle(self, verified, receipt, outcome, install_request, before=None, shown=None):
         """Record an apply's outcome and end the pass; also a refused one whose retry never applied,
         then with `shown`, the retry snapshot's own refusal, when that is one the user can act on."""
-        if install_request: self.state['handledInstallRequestAt'] = self.config['installRequestedAt']  # noqa: E701
+        if install_request:  # The request it settles, which a failure from here on names.
+            self.state['handledInstallRequestAt'] = self.config['installRequestedAt']
+            self.serving = self.config['installRequestedAt']
         status, message = self.complete_install(verified['version'], receipt, outcome, verified['sourceCommit'],
                                                 verified['binding']['installedSourceCommit'])
         if not install_request and outcome == 'failed':
@@ -1203,6 +1216,8 @@ class Agent(object):
         state['installedVersion'] = self.inst['version']
         state['installedSourceCommit'] = self.inst['sourceCommit']
         installed = version_tuple(self.inst['version'])
+        if config['installRequestedAt'] in (None, state.get('handledInstallRequestAt')):
+            self.serving = ''  # No request pending: an interrupted install settled here answers none.
         if state['status'] == 'installing' or os.path.lexists(str(self.marker_path)):
             settled = recovery.settle_interrupted(self)
             if settled is not None:
@@ -1218,8 +1233,10 @@ class Agent(object):
                 if key == 'availableVersion':
                     self.clear_available()
                 state[key] = None
+        self.serving = config['installRequestedAt']  # An expired request's failure names it too.
         install_request = update_request.pending(config, state, installed, utcnow(), install_cancelled, AgentError,
                                                  ttl_until=runs.ttl_until(self))
+        self.serving = config['installRequestedAt'] if install_request else ''  # An automatic pass serves none.
         check_request = config['checkRequestedAt'] is not None and \
             config['checkRequestedAt'] != state.get('handledCheckRequestAt')
         if not config['checkAutomatically'] and not install_request and not check_request:
@@ -1308,7 +1325,7 @@ def run_once(home, identity, test_mode, out):
         agent = Agent(home, identity, test_mode, out, lock_fd)
         agent.rotate_log()
         for again in (True, False):  # Once more for a request written while this pass held the lock.
-            agent.state = load_state(agent.state_path, home)
+            agent.state, agent.serving = load_state(agent.state_path, home), None
             try:
                 agent.config = load_config(updates, home)
                 agent.inst = load_installation(home, identity)

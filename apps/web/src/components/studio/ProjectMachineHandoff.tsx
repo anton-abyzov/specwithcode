@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -17,7 +27,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { useEnvironments } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
@@ -56,7 +66,17 @@ import {
   writeHandoffMachinePreference,
   type HandoffMachine,
 } from "../../studio/handoffMachinePreference";
+import { environmentServerConfigsAtom } from "../../state/server";
+import { destinationDefaultWorktreeStorage } from "./HandoffWorkspaceSummary";
 import { useHandoffSourceChanges } from "./useHandoffSourceChanges";
+import {
+  machineConnecting,
+  machinesSettling,
+  machineUnavailable,
+  moveBlockedReason,
+  useMachinesSettling,
+} from "../../studio/handoffMachineList";
+import { MoveDialogHold } from "../../studio/moveDialogHold";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   return {
@@ -85,8 +105,25 @@ export function ProjectMachineHandoff({
   readonly onOpenChange?: (open: boolean) => void;
   readonly requestedTarget?: string | null;
 }) {
-  const { environments } = useEnvironments();
+  const { environments, isReady: catalogReady } = useEnvironments();
   const projects = useProjects();
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  const sourceThread = useThreadShell(
+    coordinatorId ? { environmentId: project.environmentId, threadId: coordinatorId } : null,
+  );
+  const workspaceContext = {
+    projectFolder: project.workspaceRoot,
+    repository: project.repositoryIdentity
+      ? project.workspaceRoot
+      : "No repository selected (project coordinator)",
+    checkout: sourceThread ? (sourceThread.worktreePath ?? project.workspaceRoot) : null,
+    branch: sourceThread?.branch,
+    mode: sourceThread
+      ? sourceThread.worktreePath
+        ? ("worktree" as const)
+        : ("local" as const)
+      : null,
+  };
   const canOperate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
   const canGit = useEnvironmentsWithScope(environments, AuthSourceControlWriteScope);
   const canWrite = useEnvironmentsWithScope(environments, AuthFilesystemWriteScope);
@@ -97,6 +134,10 @@ export function ProjectMachineHandoff({
   const storageKey = machineHandoffStorageKey(project.environmentId, project.id);
   const [open, setOpen] = useState(false);
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
+  // The page stays on this checkout while the dialog is open, even once the coordinator runs
+  // on the other machine: a page switched away hides this dialog's page and freezes it.
+  const holdPage = useContext(MoveDialogHold);
+  useEffect(() => () => holdPage?.(false), [holdPage]);
   const [selected, setSelected] = useState("");
   const [pickerMachine, setPickerMachine] = useState<EnvironmentId | null>(null);
   const preferenceKey = handoffMachinePreferenceKey(project.environmentId, project.id);
@@ -106,9 +147,11 @@ export function ProjectMachineHandoff({
   // Handlers read the latest snapshot even before React commits it (a late folder save).
   const latestSnapshot = useRef<MachineHandoffPrepareResult | null>(null);
   const setSnapshot = (value: MachineHandoffPrepareResult | null) => {
+    if (!value) setPreviewCheckout(null);
     latestSnapshot.current = value;
     setSnapshotState(value);
   };
+  const [previewCheckout, setPreviewCheckout] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<MachineHandoffReceiveResult | null>(null);
   const [consent, setConsent] = useState(false);
   const [phase, setPhase] = useState<
@@ -185,8 +228,17 @@ export function ProjectMachineHandoff({
     recordMachinesSeen(connectedIds ? connectedIds.split("\n") : []);
   }, [connectedIds]);
   const seen = useMemo(() => (open ? readMachinesSeen() : {}), [open]);
-  const machines = environments
-    .filter((item) => item.environmentId !== project.environmentId)
+  const others = environments.filter((item) => item.environmentId !== project.environmentId);
+  // Until the first status read settles, a machine still connecting is not "Connect first".
+  const machinesLoading = useMachinesSettling(
+    open,
+    machinesSettling({
+      catalogReady: catalogReady !== false,
+      phases: others.map((item) => item.connection.phase),
+    }),
+  );
+  const machines = others
+    .filter((item) => !(machinesLoading && machineConnecting(item.connection.phase)))
     .map((item): HandoffMachine & { id: EnvironmentId } => {
       const online = item.connection.phase === "connected";
       const status = fleet.snapshot?.machines.find(
@@ -196,26 +248,30 @@ export function ProjectMachineHandoff({
         id: item.environmentId,
         label: item.label,
         online,
-        unavailable: !online
-          ? "Connect first"
-          : !canOperate.has(item.environmentId) ||
-              !canGit.has(item.environmentId) ||
-              !canWrite.has(item.environmentId) ||
-              !canConfigure.has(item.environmentId)
-            ? "Permission required"
-            : null,
+        unavailable: machineUnavailable(
+          item.connection.phase,
+          canOperate.has(item.environmentId) &&
+            canGit.has(item.environmentId) &&
+            canWrite.has(item.environmentId) &&
+            canConfigure.has(item.environmentId),
+        ),
         workersAllowed: status === "allowed" || status === "expiring",
         hasProjectFolder: candidates.some((entry) => entry.environmentId === item.environmentId),
         lastOnlineAt: seen[item.environmentId] ?? null,
       };
     });
   const source = environments.find((item) => item.environmentId === project.environmentId);
-  const sourceReady =
-    source?.connection.phase === "connected" &&
-    coordinatorId !== null &&
-    canOperate.has(project.environmentId) &&
-    canGit.has(project.environmentId) &&
-    canWrite.has(project.environmentId);
+  // Said on the disabled button's tooltip: a disabled button alone never says why.
+  const blockedReason = moveBlockedReason({
+    connected: source?.connection.phase === "connected",
+    coordinator: coordinatorId !== null,
+    permitted:
+      canOperate.has(project.environmentId) &&
+      canGit.has(project.environmentId) &&
+      canWrite.has(project.environmentId),
+  });
+  const sourceReady = blockedReason === null;
+  const blockedReasonId = useId();
   const target = candidates.find((item) => `${item.environmentId}:${item.id}` === selected);
   const destinationPlan = target
     ? {
@@ -306,6 +362,7 @@ export function ProjectMachineHandoff({
     // An open dialog follows the copy itself.
     if (value) unwatchCopy(activityKey);
     setOpen(value);
+    holdPage?.(value);
     onOpenChange?.(value);
   };
   // A background copy's toast opens this dialog while this project is on screen.
@@ -470,6 +527,7 @@ export function ProjectMachineHandoff({
       if (checked.value.executionMode !== "project-folder")
         throw new Error("Update the other machine to move projects into saved folders.");
       setSnapshot(prepared.value);
+      setPreviewCheckout(checked.value.workspacePath);
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
         await complete(checked.value, prepared.value.bundle);
       } else setPhase("review");
@@ -571,7 +629,14 @@ export function ProjectMachineHandoff({
     value: item.id,
     label: item.label,
     tone: item.unavailable ? "off" : "ready",
-    reason: !item.online ? "Offline" : item.unavailable ? "Needs permission" : null,
+    reason:
+      item.unavailable === "Connecting…"
+        ? "Connecting…"
+        : !item.online
+          ? "Offline"
+          : item.unavailable
+            ? "Needs permission"
+            : null,
     disabled: item.unavailable !== null,
   }));
   /** Chooses a machine for the Git move: its usable saved folder, else the folder picker. */
@@ -585,59 +650,71 @@ export function ProjectMachineHandoff({
 
   return (
     <>
-      <Tip
-        label={
-          sourceReady
-            ? "Move this project to another machine"
-            : "Connect this machine and open its coordinator to move this project"
-        }
-      >
-        <MachineHandoffButton
-          disabled={!sourceReady}
-          onClick={() => {
-            changeOpen(true);
-            if (!snapshot) {
-              setIntent("move");
-              try {
-                const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
-                // An unfinished Git handoff resumes in the method that started it, an
-                // unfinished copy in the current one; otherwise every opening starts fresh.
-                if (pending) setMethod("folder");
-                else if (
-                  localStorage.getItem(folderCopyStorageKey(project.environmentId, project.id)) ===
-                  null
-                )
-                  setMethod("copy");
-                const saved = readHandoffMachinePreference(preferenceKey);
-                setPreference(saved);
-                const preferred = pickHandoffMachine(machines, saved);
-                const preferredFolder = destinations.find(
-                  (item) => item.environmentId === preferred && !item.unavailable,
-                );
-                // The preferred machine wins; without a saved folder there, the picker opens on it.
-                const choice =
-                  pending?.targetKey ??
-                  preferredFolder?.key ??
-                  (preferred === null
-                    ? destinations.find((item) => !item.unavailable)?.key
-                    : undefined) ??
-                  "";
-                setSelected(choice);
-                setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
-                setError(null);
-              } catch (cause) {
-                setSelected("");
-                showError(cause);
+      <Tip label={blockedReason ?? "Move this project to another machine"}>
+        {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
+            tooltip and screen readers read the reason it describes. */}
+        <span className="inline-flex" data-slot="handoff-trigger-wrap">
+          {blockedReason ? (
+            <span id={blockedReasonId} className="sr-only">
+              {blockedReason}
+            </span>
+          ) : null}
+          <MachineHandoffButton
+            aria-disabled={sourceReady ? undefined : true}
+            aria-describedby={blockedReason ? blockedReasonId : undefined}
+            onClick={() => {
+              if (!sourceReady) return;
+              changeOpen(true);
+              if (!snapshot) {
+                setIntent("move");
+                try {
+                  const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
+                  // An unfinished Git handoff resumes in the method that started it, an
+                  // unfinished copy in the current one; otherwise every opening starts fresh.
+                  if (pending) setMethod("folder");
+                  else if (
+                    localStorage.getItem(
+                      folderCopyStorageKey(project.environmentId, project.id),
+                    ) === null
+                  )
+                    setMethod("copy");
+                  const saved = readHandoffMachinePreference(preferenceKey);
+                  setPreference(saved);
+                  const preferred = pickHandoffMachine(machines, saved);
+                  const preferredFolder = destinations.find(
+                    (item) => item.environmentId === preferred && !item.unavailable,
+                  );
+                  // The preferred machine wins; without a saved folder there, the picker opens on it.
+                  const choice =
+                    pending?.targetKey ??
+                    preferredFolder?.key ??
+                    (preferred === null
+                      ? destinations.find((item) => !item.unavailable)?.key
+                      : undefined) ??
+                    "";
+                  setSelected(choice);
+                  setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
+                  setError(null);
+                } catch (cause) {
+                  setSelected("");
+                  showError(cause);
+                }
               }
-            }
-          }}
-        />
+            }}
+          />
+        </span>
       </Tip>
       <MachineHandoffDialog
         open={open}
         onOpenChange={changeOpen}
+        machinesLoading={machinesLoading}
         sourceLabel={source?.label ?? "This machine"}
         projectTitle={logicalProjectTitle(project)}
+        workspaceContext={workspaceContext}
+        destinationCheckout={receipt?.workspacePath ?? previewCheckout}
+        destinationWorktreeStorage={destinationDefaultWorktreeStorage(
+          target ? configs.get(target.environmentId)?.environment : null,
+        )}
         destinations={destinations}
         selected={selected}
         onSelect={(key) => {
@@ -678,12 +755,16 @@ export function ProjectMachineHandoff({
             <HandoffFolderCopy
               project={project}
               coordinatorId={coordinatorId}
+              workspaceContext={workspaceContext}
               sourceLabel={source?.label ?? "This machine"}
               method={method}
               machines={machines.map((item) => ({
                 id: item.id,
                 label: item.label,
                 unavailable: item.unavailable,
+                worktreeStorage: destinationDefaultWorktreeStorage(
+                  configs.get(item.id)?.environment,
+                ),
               }))}
               savedFolder={(environmentId) =>
                 candidates.find((item) => item.environmentId === environmentId)?.workspaceRoot ??

@@ -1,5 +1,13 @@
 import { ChevronDownIcon } from "lucide-react";
-import { createContext, useContext, useId, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -21,6 +29,8 @@ export interface ProjectMoveDialogContext {
   readonly intent: MoveIntent;
   /** Closes the dialog the way its corner close does; null while a step must finish here. */
   readonly close: (() => void) | null;
+  /** True while the other machines' first status read has not settled. */
+  readonly machinesLoading?: boolean;
 }
 
 export const ProjectMoveDialog = createContext<ProjectMoveDialogContext | null>(null);
@@ -185,24 +195,41 @@ export function FolderField({
 }) {
   const id = useId();
   const label = `Folder on ${machineLabel}`;
+  const tail = useTailVisible(value);
   return (
     <div className="space-y-1.5 text-sm" data-slot={slot}>
       <label htmlFor={id} className="block font-medium">
         {label}
       </label>
       <div className="flex min-w-0 gap-2">
-        <Input
-          id={id}
-          className="min-w-0 flex-1"
-          font="mono"
-          value={value}
-          readOnly={readOnly}
-          disabled={disabled}
-          placeholder={placeholder}
-          spellCheck={false}
-          aria-label={label}
-          onChange={(event) => onChange?.(event.currentTarget.value)}
-        />
+        <div ref={tail.box} className="group/folder relative min-w-0 flex-1" data-slot="folder-box">
+          <Input
+            ref={tail.input}
+            id={id}
+            // Clipped, the path's cut-off start fades out under the "…", in every theme: the
+            // mark needs no background of its own, so nothing shows through it.
+            className="min-w-0 group-data-[clipped]/folder:[&_input]:[mask-image:linear-gradient(to_right,transparent_1.375rem,black_1.375rem)]"
+            font="mono"
+            value={value}
+            title={value || undefined}
+            readOnly={readOnly}
+            disabled={disabled}
+            placeholder={placeholder}
+            spellCheck={false}
+            aria-label={label}
+            onFocus={tail.onFocus}
+            onBlur={tail.onBlur}
+            onChange={(event) => onChange?.(event.currentTarget.value)}
+          />
+          {/* A long path shows its end, where the folder names differ; this marks the cut. */}
+          <span
+            aria-hidden
+            data-slot="folder-ellipsis"
+            className="pointer-events-none absolute inset-y-px left-px hidden items-center ps-2.5 pe-0.5 font-mono text-base text-muted-foreground group-data-[clipped]/folder:flex sm:text-sm"
+          >
+            …
+          </span>
+        </div>
         {onBrowse && (
           <Button
             type="button"
@@ -218,4 +245,40 @@ export function FolderField({
       {children}
     </div>
   );
+}
+
+/**
+ * Keeps the end of a long path in view while the field is not being edited, and marks the
+ * box `data-clipped` when its start is cut off. Editing shows the field as typed.
+ */
+function useTailVisible(value: string) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const input = useRef<HTMLInputElement | null>(null);
+  const editing = useRef(false);
+  const show = () => {
+    const field = input.current;
+    if (!field || editing.current) return;
+    field.scrollLeft = field.scrollWidth;
+    box.current?.toggleAttribute("data-clipped", field.scrollWidth > field.clientWidth + 1);
+  };
+  useLayoutEffect(show, [value]);
+  useEffect(() => {
+    const field = input.current;
+    if (!field || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(show);
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, []);
+  return {
+    box,
+    input,
+    onFocus: () => {
+      editing.current = true;
+      box.current?.removeAttribute("data-clipped");
+    },
+    onBlur: () => {
+      editing.current = false;
+      show();
+    },
+  };
 }

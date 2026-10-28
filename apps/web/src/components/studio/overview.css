@@ -5,8 +5,9 @@
   --desk-faint: var(--muted-foreground);
   --desk-line: var(--border);
   --desk-panel: var(--card);
-  --desk-moss: #415d3d;
-  --desk-moss-soft: #e7eddf;
+  /* The brand accent for focus, hover and highlights; status keeps its own tokens. */
+  --desk-moss: var(--primary);
+  --desk-moss-soft: color-mix(in srgb, var(--primary) 9%, var(--desk-paper));
   --desk-amber: #8a5a14;
   --desk-amber-soft: #f6ecd6;
   --desk-red: #a3392c;
@@ -18,8 +19,6 @@
   font-feature-settings: "tnum" 0;
 }
 .dark .studio-desk {
-  --desk-moss: #b9cf98;
-  --desk-moss-soft: #2b3a29;
   --desk-amber: #ebcf8e;
   --desk-amber-soft: #3a3324;
   --desk-red: #f0a493;
@@ -518,8 +517,8 @@
   border-color: var(--desk-amber);
 }
 .studio-state-dot.working {
-  background: var(--desk-moss);
-  border-color: var(--desk-moss);
+  background: var(--shell-working);
+  border-color: var(--shell-working);
 }
 .studio-session-main {
   min-width: 0;
@@ -714,7 +713,7 @@
   background: currentColor;
 }
 .studio-host-state.connected {
-  color: var(--desk-moss);
+  color: var(--success-foreground);
 }
 .studio-host-body {
   padding: 0 14px;
@@ -739,7 +738,7 @@
   text-align: right;
 }
 .studio-account-status.available {
-  color: var(--desk-moss);
+  color: var(--success-foreground);
 }
 .studio-quota-windows {
   display: grid;

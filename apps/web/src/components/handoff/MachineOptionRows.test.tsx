@@ -69,3 +69,28 @@ it("renders a radio per machine with its reason and reports the pick", async () 
   await act(async () => (radios[2] as HTMLElement).click());
   expect(onChange).not.toHaveBeenCalled();
 });
+
+it("shows a quiet loading row under the machines while the list is still being read", async () => {
+  const render = (loading: boolean) =>
+    act(async () =>
+      root.render(
+        <MachineOptionRows
+          aria-label="Machine"
+          value=""
+          onChange={() => undefined}
+          loading={loading}
+          options={destinationOptions([
+            { environmentId: id("minis"), label: "Minis", state: "reachable" },
+          ])}
+        />,
+      ),
+    );
+  await render(true);
+  const loading = container.querySelector('[data-slot="machine-options-loading"]');
+  expect(loading?.getAttribute("role")).toBe("status");
+  expect(loading?.textContent).toBe("Looking for your other machines…");
+  // It is not a choice.
+  expect(container.querySelectorAll('[role="radio"]')).toHaveLength(1);
+  await render(false);
+  expect(container.querySelector('[data-slot="machine-options-loading"]')).toBeNull();
+});

@@ -1,7 +1,8 @@
 /* The three-pane shell: projects and chats, the coordinator, the project's threads.
    Unlayered on purpose, so these rules settle the look where a feature utility
    and a shell class meet on one element. Colors come from the app's semantic
-   tokens only; the default palette below is what gives them their warmth. */
+   tokens only; the default palette below is what gives them their warmth.
+   The brand accent is Weave iris: #6d4fb5 in light, #a88cf6 in dark. */
 
 /* Default palette. A chosen theme sets data-theme-id and keeps its own colors. */
 html:not([data-theme-id]),
@@ -12,7 +13,7 @@ html[data-theme-id=""] {
   --card-foreground: #1f1f1f;
   --popover: #ffffff;
   --popover-foreground: #1f1f1f;
-  --primary: #b5532f;
+  --primary: #6d4fb5;
   --primary-foreground: #ffffff;
   --secondary: #f3f3f3;
   --secondary-foreground: #1f1f1f;
@@ -35,7 +36,7 @@ html[data-theme-id=""] {
   --shell-working: #2563a8;
   --shell-done: #35704a;
   --shell-failed: #b42318;
-  --shell-link: #2563a8;
+  --shell-link: #6d4fb5;
 }
 html:not([data-theme-id]) [data-app-sidebar],
 html[data-theme-id=""] [data-app-sidebar] {
@@ -67,8 +68,9 @@ html.dark[data-theme-id=""] {
   --popover: #30302e;
   --popover-foreground: #f5f4ee;
   --surface-raised: #30302e;
-  --primary: #d97757;
-  --primary-foreground: #1f1e1d;
+  /* White on the light iris fill is under 3:1; the dark on-iris ink is 6.6:1. */
+  --primary: #a88cf6;
+  --primary-foreground: #1b1328;
   --secondary: rgb(250 249 245 / 6%);
   --secondary-foreground: #f5f4ee;
   --muted: rgb(250 249 245 / 6%);
@@ -90,7 +92,8 @@ html.dark[data-theme-id=""] {
   --shell-working: #7fb2ea;
   --shell-done: #86c394;
   --shell-failed: #ff8a80;
-  --shell-link: #7fb2ea;
+  /* The strong iris: #a88cf6 falls under AA on a hovered message bubble. */
+  --shell-link: #cbbcff;
 }
 html.dark:not([data-theme-id]) [data-app-sidebar],
 html.dark[data-theme-id=""] [data-app-sidebar] {
@@ -1192,6 +1195,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-pane-notice,
 .sws-coordinator > .contents > .project-notice {
   margin: 12px 22px 0;
+}
+/* The "Continued from another machine" banner sits in its own row above the conversation:
+   it never shrinks under the first message, keeps a gap below it, and scrolls inside
+   itself once its retained history is opened. */
+.sws-coordinator > .contents > [data-slot="handoff-history"] {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  margin-bottom: 4px;
 }
 .sws-coordinator .project-conversation {
   container-type: inline-size;

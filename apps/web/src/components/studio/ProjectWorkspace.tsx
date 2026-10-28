@@ -2,7 +2,7 @@ import { useRememberProjectDestination } from "../../studio/projectReturnNavigat
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -26,7 +26,9 @@ import {
   checkoutUnavailableReason,
   chooseCoordinatorView,
   coordinatorMachineKey,
+  heldCheckoutKey,
   type CheckoutUnavailableReason,
+  type HeldCheckout,
   orchestratorCopies,
   unloadedMachineRef,
   unloadedMachineRefs,
@@ -40,6 +42,7 @@ import { isElectron } from "../../env";
 
 import { ProjectWorkspaceSurface } from "./ProjectWorkspaceSurface";
 import { KeptProjectPages } from "./KeptProjectPages";
+import { MoveDialogHold } from "../../studio/moveDialogHold";
 
 export function findProjectGroup<
   G extends {
@@ -136,9 +139,11 @@ export function ProjectWorkspace({
   // The machine of a linked checkout, read to say why that checkout is not listed.
   const checkoutEnvironmentId = checkoutKey ? checkoutKeyEnvironmentId(checkoutKey) : null;
   const checkoutProjectsLive = useEnvironmentShellLive(checkoutEnvironmentId);
+  // An open move dialog keeps its checkout on screen until it closes (see heldCheckoutKey).
+  const [held, setHeld] = useState<HeldCheckout | null>(null);
   const view = chooseCoordinatorView({
     members,
-    checkoutKey,
+    checkoutKey: checkoutKey ?? heldCheckoutKey(held, projectKey, members),
     lastViewed: savedMachines[projectKey],
     primaryEnvironmentId,
     unreachable,
@@ -166,6 +171,11 @@ export function ProjectWorkspace({
   if (leftThread !== null && selected !== leftThread) setLeftThread(null);
   const paneSelected = selected === leftThread ? null : selected;
   const currentMachine = member ? coordinatorMachineKey(member) : null;
+  const holdMoveDialog = useMemo(
+    () => (open: boolean) =>
+      setHeld(open && currentMachine ? { projectKey, checkout: currentMachine } : null),
+    [projectKey, currentMachine],
+  );
   const chooseMachine = (key: string) => {
     if (key !== currentMachine && selected !== null) {
       setLeftThread(selected);
@@ -308,26 +318,28 @@ export function ProjectWorkspace({
   }
   const pageKey = `${project.environmentId}:${project.id}`;
   const page = (
-    <ProjectWorkspaceSurface
-      key={pageKey}
-      project={project}
-      projectKey={projectKey}
-      iconCheckouts={members}
-      selectedEnvironmentId={
-        onSelectThread ? selectedThreadEnvironmentId : localSelectedEnvironment
-      }
-      ownershipProblem={ownershipProblem}
-      checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady)}
-      unknownMachines={unloadedMachineRefs(members).map((ref) => ({
-        key: `${ref.environmentId}:${ref.projectId}`,
-        machine: machineName(ref.environmentId) ?? "Linked machine",
-      }))}
-      savedMachineMissing={savedMachineMissing}
-      onCheckout={machinesLoaded ? chooseMachine : null}
-      restoringThread={restoringThread}
-      selected={paneSelected}
-      setSelected={setSelected}
-    />
+    <MoveDialogHold value={holdMoveDialog}>
+      <ProjectWorkspaceSurface
+        key={pageKey}
+        project={project}
+        projectKey={projectKey}
+        iconCheckouts={members}
+        selectedEnvironmentId={
+          onSelectThread ? selectedThreadEnvironmentId : localSelectedEnvironment
+        }
+        ownershipProblem={ownershipProblem}
+        checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady)}
+        unknownMachines={unloadedMachineRefs(members).map((ref) => ({
+          key: `${ref.environmentId}:${ref.projectId}`,
+          machine: machineName(ref.environmentId) ?? "Linked machine",
+        }))}
+        savedMachineMissing={savedMachineMissing}
+        onCheckout={machinesLoaded ? chooseMachine : null}
+        restoringThread={restoringThread}
+        selected={paneSelected}
+        setSelected={setSelected}
+      />
+    </MoveDialogHold>
   );
   return (
     <KeptProjectPages

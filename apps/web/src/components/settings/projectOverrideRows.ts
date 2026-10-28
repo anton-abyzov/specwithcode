@@ -15,6 +15,8 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   claudeWorkflowMode: { label: "Claude workflow mode", page: "Agents" },
   responseStyle: { label: "Response style", page: "Agents" },
   worktreeCleanup: { label: "Worktree cleanup", page: "Storage" },
+  worktreeLocationMode: { label: "Worktree storage", page: "Storage" },
+  worktreesDirectory: { label: "Custom worktree folder", page: "Storage" },
   defaultModelSelection: { label: "Model for new threads", page: "General" },
   defaultModelProviders: { label: "Providers for the recommended model", page: "General" },
   defaultRuntimeMode: { label: "Permissions for new threads", page: "General" },

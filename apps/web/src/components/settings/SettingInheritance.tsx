@@ -64,6 +64,15 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
     if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
       return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];
     }
+    if (key === "worktreeLocationMode")
+      return (
+        (
+          { managed: "App-managed", project: "Inside project", custom: "Custom folder" } as Record<
+            string,
+            string
+          >
+        )[value] ?? value
+      );
     if (key === "threadFinishAction" && value in THREAD_FINISH_ACTION_LABELS) {
       return THREAD_FINISH_ACTION_LABELS[value as keyof typeof THREAD_FINISH_ACTION_LABELS];
     }

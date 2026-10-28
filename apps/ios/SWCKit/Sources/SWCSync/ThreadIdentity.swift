@@ -21,7 +21,9 @@ public struct ThreadIdentity: Hashable, Sendable {
   public init(selection: ModelSelection, providers: [ServerProviderSummary]) {
     let catalog = providers.first { $0.instanceId == selection.instanceId }
     let id = catalog?.driver ?? selection.instanceId
-    let brand = id == "acpRegistry" ? Self.registryBrand(catalog?.iconUrl) : Self.providerBrand(id)
+    let brand = id == "acpRegistry"
+      ? Self.registryBrand(catalog?.iconUrl) ?? Self.localAcpBrand(selection.instanceId)
+      : Self.providerBrand(id)
     let names = ["claudeAgent": "Claude Code", "codex": "Codex", "githubCopilot": "GitHub Copilot", "copilot": "GitHub Copilot", "gemini": "Gemini CLI", "grok": "Grok", "opencode": "OpenCode", "pi": "Pi", "muse": "Muse"]
     provider = catalog?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
       ?? names[id] ?? selection.instanceId
@@ -38,10 +40,16 @@ public struct ThreadIdentity: Hashable, Sendable {
     let agent = String(url.path.dropFirst("/registry/v1/latest/".count).dropLast(4))
     if agent == "github-copilot" || agent == "github-copilot-cli" { return "copilot" }
     if agent == "droid" || agent == "factory-droid" { return "factory" }
-    for (prefix, brand) in [("claude", "claude"), ("codex", "openai"), ("openai", "openai"), ("gemini", "gemini"), ("grok", "grok"), ("cursor", "cursor"), ("qwen", "qwen"), ("kimi", "kimi"), ("mistral", "mistral"), ("kiro", "kiro")] {
+    for (prefix, brand) in [("claude", "claude"), ("codex", "openai"), ("openai", "openai"), ("gemini", "gemini"), ("grok", "grok"), ("cursor", "cursor"), ("qwen", "qwen"), ("kimi", "kimi"), ("mistral", "mistral"), ("kiro", "kiro"), ("deepseek", "deepseek")] {
       if agent == prefix || agent.hasPrefix(prefix + "-") { return brand }
     }
     return ["opencode", "goose", "cline", "auggie", "amp", "junie"].contains(agent) ? agent : nil
+  }
+
+  /// DeepSeek Harness is not in the ACP Registry, so a local `dsh` instance has no
+  /// icon URL; its instance id is all that names it. Copilot never matches here.
+  static func localAcpBrand(_ instanceId: String) -> String? {
+    instanceId.lowercased().hasPrefix("acpregistry_deepseek") ? "deepseek" : nil
   }
 
   public static func providerBrand(_ id: String) -> String? {

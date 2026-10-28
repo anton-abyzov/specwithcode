@@ -6,9 +6,13 @@ import {
   copyActivityText,
   copyOpener,
   currentCopyActivities,
+  isMovingDestination,
+  moveDestination,
+  withoutMovingDestinations,
   registerCopyOpener,
   resetCopyActivityForTests,
   setCopyActivity,
+  type CopyActivity,
 } from "./folderCopyActivity";
 
 const status = (state: string, extra: Record<string, unknown> = {}) =>
@@ -83,4 +87,130 @@ it("opens only the dialog still registered for the project", () => {
   expect(opened).toBe(1);
   unregister();
   expect(copyOpener("a")).toBeNull();
+});
+
+const moving = (destination: CopyActivity["destination"]): CopyActivity => ({
+  machine: "ministorm",
+  label: "Copying files",
+  fraction: 0.5,
+  waiting: false,
+  move: true,
+  ...(destination ? { destination } : {}),
+});
+
+it("says Move for a move in the sidebar line, and names where it lands", () => {
+  expect(copyActivityText(moving(undefined))).toBe("Move to ministorm: copying files, 50%");
+  const activity = copyActivityFromStatus(
+    status("transferring", {
+      mode: "copy-and-move",
+      targetFolder: "/Users/me/work",
+      projectRelativePath: "app",
+      projectFolder: null,
+    }),
+    "ministorm",
+    "env-mini",
+  );
+  expect(activity).toMatchObject({
+    move: true,
+    destination: { environmentId: "env-mini", projectId: null, folder: "/Users/me/work/app" },
+  });
+  // Copy files only: no move and no destination to hide.
+  expect(
+    copyActivityFromStatus(status("transferring", { mode: "copy-only" }), "ministorm", "env-mini"),
+  ).not.toHaveProperty("move");
+  expect(
+    moveDestination(
+      { mode: "copy-only", projectId: null, projectFolder: null, targetFolder: "/x" } as never,
+      "env-mini",
+    ),
+  ).toBeNull();
+});
+
+it("recognises the project a running move registers, by id or by folder, never the source", () => {
+  const activities = new Map([
+    [
+      "env-m4:source",
+      moving({ environmentId: "env-mini", projectId: null, folder: "/Users/me/work/" }),
+    ],
+  ]);
+  expect(
+    isMovingDestination(
+      { environmentId: "env-mini", id: "new", workspaceRoot: "/Users/me/work" },
+      activities,
+    ),
+  ).toBe(true);
+  expect(
+    isMovingDestination(
+      { environmentId: "env-m4", id: "other", workspaceRoot: "/Users/me/work" },
+      activities,
+    ),
+  ).toBe(false);
+  const byId = new Map([
+    [
+      "env-m4:source",
+      moving({ environmentId: "env-mini", projectId: "new", folder: "/elsewhere" }),
+    ],
+  ]);
+  expect(
+    isMovingDestination({ environmentId: "env-mini", id: "new", workspaceRoot: "/x" }, byId),
+  ).toBe(true);
+  // A copy of files only never hides a project.
+  const copyOnly = new Map([
+    [
+      "env-m4:source",
+      { ...moving({ environmentId: "env-mini", projectId: "new", folder: "/x" }), move: false },
+    ],
+  ]);
+  expect(
+    isMovingDestination({ environmentId: "env-mini", id: "new", workspaceRoot: "/x" }, copyOnly),
+  ).toBe(false);
+});
+
+it("keeps listing a project while the move waits for review, or when it already lived there", () => {
+  const project = { environmentId: "env-mini", id: "earlier", workspaceRoot: "/Users/me/app" };
+  const at = (activity: CopyActivity) => new Map([["env-m4:source", activity]]);
+  const destination = { environmentId: "env-mini", projectId: "earlier", folder: "/Users/me/app" };
+  expect(isMovingDestination(project, at(moving(destination)))).toBe(true);
+  // A choose-first move that is not reviewed yet hides nothing.
+  expect(isMovingDestination(project, at({ ...moving(destination), waiting: true }))).toBe(false);
+  // A move into a folder that already held a project keeps that project and its threads listed.
+  expect(isMovingDestination(project, at(moving({ ...destination, existing: true })))).toBe(false);
+  expect(
+    copyActivityFromStatus(
+      status("transferring", { mode: "copy-and-move", targetFolder: "/Users/me/app" }),
+      "ministorm",
+      "env-mini",
+      true,
+    )?.destination,
+  ).toMatchObject({ existing: true });
+});
+
+it("shows a moving project once in the sidebar, on its source row", () => {
+  const group = (projectKey: string, members: Array<[string, string, string]>) => ({
+    projectKey,
+    memberProjects: members.map(([environmentId, id, workspaceRoot]) => ({
+      environmentId,
+      id,
+      workspaceRoot,
+    })),
+  });
+  const source = group("source", [["env-m4", "source", "/Users/me/app"]]);
+  const landing = group("landing", [["env-mini", "new", "/Users/me/app"]]);
+  const other = group("other", [["env-mini", "other", "/Users/me/other"]]);
+  const visible = { pinned: [landing], unpinned: [source, other] };
+  const listedKeys = { pinned: ["landing"], unpinned: ["source", "other"] };
+  const activities = new Map([
+    [
+      "env-m4:source",
+      moving({ environmentId: "env-mini", projectId: "new", folder: "/Users/me/app" }),
+    ],
+  ]);
+  expect(withoutMovingDestinations(visible, listedKeys, activities)).toEqual({
+    visible: { pinned: [], unpinned: [source, other] },
+    listedKeys: { pinned: [], unpinned: ["source", "other"] },
+  });
+  // Nothing moving: the same lists come back untouched.
+  const idle = withoutMovingDestinations(visible, listedKeys, new Map());
+  expect(idle.visible).toBe(visible);
+  expect(idle.listedKeys).toBe(listedKeys);
 });

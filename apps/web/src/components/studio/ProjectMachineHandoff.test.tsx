@@ -13,6 +13,7 @@ import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
 import { buildProjectGroups } from "../../logicalProject";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { handoffMachinePreferenceKey } from "../../studio/handoffMachinePreference";
+import { MoveDialogHold } from "../../studio/moveDialogHold";
 
 vi.mock("../../state/filesystem", () => ({
   filesystemEnvironment: { browse: (input: unknown) => input },
@@ -34,8 +35,11 @@ const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   props: null as ComponentProps<typeof MachineHandoffDialog> | null,
   denied: new Set<string>(),
+  /** A denied scope is denied on this machine (the source) too, not only on destinations. */
+  sourceDenied: false,
   projects: [] as Array<Record<string, unknown>>,
   order: [] as string[],
+  catalogReady: true as boolean | undefined,
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../studio/machineHandoff", () => ({
@@ -56,14 +60,22 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { error: Error }) => failure.error,
 }));
 vi.mock("../../state/environments", () => ({
-  useEnvironments: () => ({ environments: state.environments }),
+  useEnvironments: () => ({ environments: state.environments, isReady: state.catalogReady }),
 }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () =>
+    new Map([["m1", { environment: { defaultWorktreesDirectory: "/target/managed/worktrees" } }]]),
+}));
+vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => state.projects,
+  useThreadShell: () => ({ worktreePath: "/external/worker-checkout", branch: "feature/source" }),
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: (_environments: unknown, scope: string) =>
-    new Set(state.denied.has(scope) ? ["m4"] : ["m4", "m1", "m3", "m2"]),
+    new Set(
+      state.denied.has(scope) ? (state.sourceDenied ? [] : ["m4"]) : ["m4", "m1", "m3", "m2"],
+    ),
 }));
 vi.mock("../../lib/utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/utils")>()),
@@ -121,6 +133,7 @@ const bundle = {
 };
 const ready = {
   executionMode: "project-folder",
+  workspacePath: "/target/project-folder",
   operationId,
   phase: "ready",
   projectId: "target",
@@ -197,6 +210,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.order = [];
   state.denied.clear();
+  state.sourceDenied = false;
+  state.catalogReady = true;
   state.projects = [source, target];
   state.fleet = null;
   state.environments = [
@@ -230,6 +245,13 @@ it("previews without publishing, then rechecks the selected machine before one e
   await review();
   expect(props().phase).toBe("review");
   expect(state.order).toEqual(["inspect", "preview"]);
+  expect(props().workspaceContext).toMatchObject({
+    checkout: "/external/worker-checkout",
+    branch: "feature/source",
+    mode: "worktree",
+  });
+  expect(props().destinationCheckout).toBe(ready.workspacePath);
+  expect(props().destinationWorktreeStorage).toBe("/target/managed/worktrees");
   expect(state.receive.mock.calls[0]?.[0]).toEqual({
     environmentId: "m1",
     input: {
@@ -999,4 +1021,110 @@ it("opens Move coordinator to X as a move with X chosen for the copy and the Git
   // Requested, so a saved draft or last copy cannot swap the machine or the move.
   expect(copy.machineRequested).toBe(true);
   expect(copy.defaultMode).toBe("copy-and-move");
+});
+
+it("says why Move project is off: a focusable button that describes the reason and does nothing", async () => {
+  await act(async () =>
+    root.render(<ProjectMachineHandoff project={source as never} coordinatorId={null} />),
+  );
+  const wrap = container.querySelector('[data-slot="handoff-trigger-wrap"]')!;
+  const reason = () => {
+    const button = wrap.querySelector("button")!;
+    return document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
+  };
+  const button = wrap.querySelector("button")!;
+  // Focusable, so a keyboard or screen reader reaches it and hears the reason.
+  expect(button.disabled).toBe(false);
+  expect(button.getAttribute("aria-disabled")).toBe("true");
+  expect(reason()).toBe("Send this project its first message, then you can move it.");
+  await act(async () => button.click());
+  expect(props().open).toBe(false);
+  state.environments = [
+    { environmentId: "m4", label: "M4", connection: { phase: "disconnected" } },
+    { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
+  ];
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff project={source as never} coordinatorId={"coordinator" as never} />,
+    ),
+  );
+  expect(reason()).toBe("Connect this machine to move this project.");
+  expect(wrap.querySelector("button")!.getAttribute("aria-disabled")).toBe("true");
+});
+
+it("says when this connection lacks permission to move the project", async () => {
+  state.denied.add("source-control:write");
+  state.sourceDenied = true;
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff project={source as never} coordinatorId={"coordinator" as never} />,
+    ),
+  );
+  const button = container.querySelector('[data-slot="handoff-trigger-wrap"] button')!;
+  expect(button.getAttribute("aria-disabled")).toBe("true");
+  expect(document.getElementById(button.getAttribute("aria-describedby")!)?.textContent).toBe(
+    "This connection needs permission to move projects.",
+  );
+});
+
+it("an available Move project has no blocked reason and is not an extra tab stop", async () => {
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff project={source as never} coordinatorId={"coordinator" as never} />,
+    ),
+  );
+  const wrap = container.querySelector('[data-slot="handoff-trigger-wrap"]')!;
+  const button = wrap.querySelector("button")!;
+  expect(wrap.hasAttribute("tabindex")).toBe(false);
+  expect(button.hasAttribute("aria-disabled")).toBe(false);
+  expect(button.hasAttribute("aria-describedby")).toBe(false);
+  expect(button.disabled).toBe(false);
+});
+
+it("while machines load, hides those still connecting and tells the dialog it is loading", async () => {
+  state.catalogReady = false;
+  state.environments = [
+    { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
+    { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
+    { environmentId: "m3", label: "M3", connection: { phase: "connecting" } },
+  ];
+  await mount();
+  expect(props().machinesLoading).toBe(true);
+  expect(props().machines?.map((machine) => machine.label)).toEqual(["M1"]);
+  state.catalogReady = true;
+  state.environments = [
+    { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
+    { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
+    { environmentId: "m3", label: "M3", connection: { phase: "disconnected" } },
+  ];
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff project={source as never} coordinatorId={"coordinator" as never} />,
+    ),
+  );
+  expect(props().machinesLoading).toBe(false);
+  expect(props().machines?.map((machine) => [machine.label, machine.reason ?? null])).toEqual([
+    ["M1", null],
+    ["M3", "Offline"],
+  ]);
+});
+
+it("holds the workspace page on this checkout while the move dialog is open", async () => {
+  const hold = vi.fn();
+  await act(async () =>
+    root.render(
+      <MoveDialogHold value={hold}>
+        <ProjectMachineHandoff project={source as never} coordinatorId={"coordinator" as never} />
+      </MoveDialogHold>,
+    ),
+  );
+  await act(async () => container.querySelector("button")!.click());
+  expect(hold).toHaveBeenLastCalledWith(true);
+  await act(async () => props().onOpenChange(false));
+  expect(hold).toHaveBeenLastCalledWith(false);
+  await act(async () => container.querySelector("button")!.click());
+  expect(hold).toHaveBeenLastCalledWith(true);
+  // Leaving the page lets go of the hold.
+  await act(async () => root.render(<div>Another checkout</div>));
+  expect(hold).toHaveBeenLastCalledWith(false);
 });

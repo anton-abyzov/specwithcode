@@ -221,7 +221,8 @@ export function HandoffMachineResults(props: {
             {result.outcome === "moved" && result.continuedThreadId && props.onOpenThread ? (
               <button
                 type="button"
-                className="text-xs text-primary underline-offset-2 hover:underline"
+                // Button padding, so the focus ring sits around the text rather than on it.
+                className="-my-1 shrink-0 rounded-md px-2 py-1 text-xs text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() =>
                   props.onOpenThread?.(
                     result.continuedThreadId as ThreadId,

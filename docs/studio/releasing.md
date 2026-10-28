@@ -434,10 +434,14 @@ script follows the desktop stage's order:
    failed its check after the rename could not be moved aside (the reason then says which app to
    move to the Trash and which to rename back).
 
-One run at a time holds `~/.specwithcode/backups/desktop-app-updates/.lock`, which names the run
-by its pid and start time: a lock left by a run that is gone (a power loss, a reboot that gave its
-pid to another process) is taken over. A dropped ssh session does not stop a run halfway. The
-rollout prints the worker's lines as `m1: app: <line>`, then one result per worker:
+One run at a time holds `~/.specwithcode/backups/desktop-app-updates/.lock`, which names the run by
+its pid and start time: a lock left by a run that is gone (a power loss, a reboot that gave its pid
+to another process) is taken over, and one its run releases meanwhile is taken, but a lock another
+run made while this one judged it stays with that run. Each run reads its record again 2 seconds
+after writing it and stops (exit 4) when another run's record replaced it, or when its lock went
+before it wrote its record, so of two runs that take over the same lock at once only one goes on,
+unless one of them stalls for more than those 2 seconds. A dropped ssh session does not stop a run halfway. The rollout prints the worker's lines
+as `m1: app: <line>`, then one result per worker:
 
 ```
 m1: desktop app 1.0.40 -> 1.0.41: unpacked and checked beside the app, then swapped in; reopened, as it was running
@@ -450,8 +454,9 @@ JSON result has `desktopApp`: `result` (`already-current`, `updater-on-quit`, `s
 updated (unreachable, no sums or a checksum mismatch, a copy that fails a check, an app that does
 not quit, 30 minutes passed) fails the rollout once every service is done: it prints
 `fleet_rollout: every service is on <v>, but m3: desktop app not updated to <v>: <reason>` and
-exits 1. Run `--only workers` again: the services are already on the release, so only the apps
-are retried. `--no-desktop-apps` leaves the apps alone.
+exits 1. Continue the release with `bash scripts/release/release.sh <v> --resume`: the services
+are already on the release, so only the apps are retried, and the merge stage still runs. Outside
+a release, `--only workers` retries them the same way. `--no-desktop-apps` leaves the apps alone.
 
 To update one worker's app by hand, take the zip's line from the release's `SHA256SUMS`:
 

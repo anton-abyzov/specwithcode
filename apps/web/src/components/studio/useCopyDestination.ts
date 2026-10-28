@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
@@ -7,7 +7,8 @@ import type { useCopyScope } from "./HandoffCopyScope";
 import type { CopyMachine } from "./HandoffCopySetup";
 
 /**
- * Screen 1's machine and folder: the preferred machine when it can take the copy, and the saved
+ * Screen 1's machine and folder: the preferred machine when it can take the copy (or, until
+ * one is chosen, the first that becomes ready), and the saved
  * folder there, else the same layout under that machine's home. A typed path wins until the
  * machine or copy root changes.
  */
@@ -22,11 +23,18 @@ export function useCopyDestination({
   readonly savedFolder: (environmentId: EnvironmentId) => string | null;
   readonly scope: ReturnType<typeof useCopyScope>;
 }) {
-  const firstMachine =
-    machines.find((machine) => machine.id === preferredMachine && !machine.unavailable)?.id ??
-    machines.find((machine) => !machine.unavailable)?.id ??
-    null;
-  const [machine, setMachine] = useState<EnvironmentId | null>(firstMachine);
+  const preferred =
+    machines.find((machine) => machine.id === preferredMachine && !machine.unavailable)?.id ?? null;
+  const firstMachine = preferred ?? machines.find((machine) => !machine.unavailable)?.id ?? null;
+  // Until a machine is chosen, the first ready one is: machines that finish connecting after
+  // the dialog opened are picked up instead of leaving the form without a machine. Once one is
+  // ready it is pinned, so a machine that connects later (or this one briefly reconnecting)
+  // never retargets the button label or a copy that has already started.
+  const [chosen, setMachine] = useState<EnvironmentId | null>(preferred);
+  useEffect(() => {
+    if (chosen === null && firstMachine) setMachine(firstMachine);
+  }, [chosen, firstMachine]);
+  const machine = chosen ?? firstMachine;
   const [folderDraft, setFolderDraft] = useState<{
     machine: EnvironmentId;
     value: string;

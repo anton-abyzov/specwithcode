@@ -17,7 +17,7 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import {
-  isLocalGitHubCopilotCommand,
+  localAcpAgentIdForCommand,
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
@@ -737,12 +737,10 @@ export function ProviderInstanceCard({
       acpRegistryAgentId={
         readConfigString(instance.config, "source") !== "local"
           ? (readConfigString(instance.config, "agentId") ?? undefined)
-          : isLocalGitHubCopilotCommand(
-                readConfigString(instance.config, "agentId"),
-                readConfigString(instance.config, "commandPath"),
-              )
-            ? "github-copilot-cli"
-            : undefined
+          : (localAcpAgentIdForCommand(
+              readConfigString(instance.config, "agentId"),
+              readConfigString(instance.config, "commandPath"),
+            ) ?? undefined)
       }
       acpRegistryIconUrl={
         readConfigString(instance.config, "source") === "local"

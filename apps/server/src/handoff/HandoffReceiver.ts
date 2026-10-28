@@ -31,6 +31,7 @@ import {
   type ThreadExecutionReason,
   type ThreadExecutionRecord,
 } from "@specweave-studio/contracts";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -38,6 +39,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as ServerSettings from "../serverSettings.ts";
+import { resolveHandoffPlacement } from "./handoffPlacement.ts";
 import * as ServerConfig from "../config.ts";
 import { clampRuntimeMode } from "../fleet/remoteWorkerMatching.ts";
 import {
@@ -225,6 +228,7 @@ export const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const config = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const grants = yield* WorkGrants.WorkGrants;
   const locks = yield* KeyedLock.make<string>();
   const label = handoff.machineLabel;
@@ -460,10 +464,9 @@ export const make = Effect.gen(function* () {
   /** A worktree at the checkpoint's base commit holding its files as uncommitted changes. */
   const materialize = (input: {
     readonly root: string;
-    readonly projectTitle: string;
+    readonly placement: { readonly worktreePath: string; readonly existing: boolean };
     readonly sourceLabel: string;
     readonly sourceThreadId: ThreadId;
-    readonly epoch: number;
     readonly branch: string | null;
     readonly baseCommit: string;
     readonly commit: string;
@@ -471,12 +474,8 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.tryPromise({
       try: async () => {
-        const name = `${refComponent(input.projectTitle).slice(0, 32)}-handoff-${refComponent(
-          input.sourceThreadId,
-        ).slice(-16)}-e${input.epoch}`;
-        const worktreePath = NodePath.join(config.worktreesDir, name);
-        const existing = await NodeFSP.stat(worktreePath).catch(() => null);
-        if (existing !== null) {
+        const { worktreePath, existing } = input.placement;
+        if (existing) {
           // A retried takeover finds the worktree its first attempt made.
           const branch = (
             await runGit(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"], {
@@ -494,7 +493,7 @@ export const make = Effect.gen(function* () {
           sourceLabel: input.sourceLabel,
           sourceThreadId: input.sourceThreadId,
         });
-        await NodeFSP.mkdir(config.worktreesDir, { recursive: true, mode: 0o700 });
+        await NodeFSP.mkdir(NodePath.dirname(worktreePath), { recursive: true, mode: 0o700 });
         await runGit(input.root, [
           "worktree",
           "add",
@@ -585,12 +584,30 @@ export const make = Effect.gen(function* () {
       if (held !== checkpoint.commit) {
         return yield* refuse(409, "invalid", at("no checkpoint for this thread"), "checkpoint");
       }
+      const placementSettings = resolveProjectSettings(
+        yield* serverSettings.getSettings.pipe(
+          Effect.mapError(() =>
+            refuse(500, "failed", at("could not read destination worktree settings")),
+          ),
+        ),
+        project.id,
+      ).settings;
+      const name = `${refComponent(project.title).slice(0, 32)}-handoff-${refComponent(
+        request.sourceThreadId,
+      ).slice(-16)}-e${request.epoch}`;
+      const placement = yield* resolveHandoffPlacement({
+        repository: root,
+        name,
+        defaultDirectory: config.worktreesDir,
+        settings: placementSettings,
+      }).pipe(
+        Effect.mapError((cause) => refuse(409, "invalid", at(describe(cause)), "checkpoint")),
+      );
       const { worktreePath, branch } = yield* materialize({
         root,
-        projectTitle: project.title,
+        placement,
         sourceLabel: replica.sourceLabel,
         sourceThreadId: request.sourceThreadId,
-        epoch: request.epoch,
         branch: checkpoint.branch,
         baseCommit: checkpoint.baseCommit,
         commit: checkpoint.commit,

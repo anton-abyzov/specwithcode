@@ -1322,8 +1322,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     isSelected,
   });
   // Status hues follow the system-wide convention set by sidebar v1 and the
-  // mobile Live Activity/widgets (amber approval, indigo input, sky working)
-  // so a thread reads the same color everywhere it surfaces.
+  // mobile Live Activity/widgets (amber approval, violet input, sky working)
+  // so a thread reads the same color everywhere it surfaces. Input wears the
+  // brand accent: Weave iris in the default look.
   const topStatus = runStalled
     ? {
         label: "No activity",
@@ -1357,7 +1358,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             ? {
                 label: "Input",
                 icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
+                className: "text-primary dark:text-[color-mix(in_srgb,var(--primary)_80%,white)]",
               }
             : status === "limited"
               ? {

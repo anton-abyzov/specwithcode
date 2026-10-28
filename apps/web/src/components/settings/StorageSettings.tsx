@@ -1,4 +1,9 @@
-import type { StorageCleanupSettings, WorktreeCleanupRules } from "@specweave-studio/contracts";
+import { InactiveThreadArchiveSetting } from "./InactiveThreadArchiveSetting";
+import {
+  resolveWorktreeLocationMode,
+  type StorageCleanupSettings,
+  type WorktreeCleanupRules,
+} from "@specweave-studio/contracts";
 import { resolveWorktreeCleanup } from "@specweave-studio/shared/projectSettings";
 import { useRef, useState } from "react";
 
@@ -29,57 +34,123 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-function WorktreesDirectoryRow() {
-  const { connectedEnvironments, targets } = useSettingsScope();
+export function WorktreesDirectoryRow() {
+  const { connectedEnvironments, targets, scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const mixed = useScopedSettingsMixed(["worktreesDirectory"]);
+  const mixed = useScopedSettingsMixed(["worktreesDirectory", "worktreeLocationMode"]);
   const edited = useRef(false);
+  const mode = resolveWorktreeLocationMode(settings);
+  const oneMachine = connectedEnvironments.length === 1;
+  const projectScope = scope.kind === "project" || scope.kind === "checkout";
+  const member = projectScope
+    ? scope.members?.find((entry) => entry.environmentId === targets[0]?.environmentId)
+    : null;
+  const repositories = member?.workspaceSettings?.environment.repositories ?? [];
+  const configuredPath = repositories.length === 1 ? repositories[0]?.localPath : null;
+  // Settings cannot choose a chat's repository. Only disclose a concrete path
+  // when the project has exactly one configured, absolute checkout.
+  const repositoryRoot =
+    configuredPath && /^(?:\/|[A-Za-z]:[\\/])/.test(configuredPath)
+      ? configuredPath.replace(/[\\/]$/, "")
+      : "<selected Git repository>";
+  const resolved =
+    mode === "project"
+      ? `${repositoryRoot}/.specwithcode/worktrees`
+      : mode === "custom"
+        ? settings.worktreesDirectory || "Choose an absolute folder on this machine"
+        : (connectedEnvironments[0]?.serverConfig?.environment.defaultWorktreesDirectory ??
+          "App-managed storage on the selected machine");
   if (
     connectedEnvironments.some(
       (environment) =>
-        environment.serverConfig?.environment.capabilities.worktreesDirectory !== true,
+        environment.serverConfig?.environment.capabilities.worktreeLocationMode !== true,
     )
   )
     return null;
-  const scopeKey = targets.map((target) => target.environmentId).join(",");
-
   return (
-    <SettingsRow
-      {...searchableSetting("storage-worktrees-location")}
-      description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the SpecWithCode home folder."
-      }
-      serverScoped
-      settingKeys={["worktreesDirectory"]}
-      resetAction={
-        mixed || settings.worktreesDirectory !== "" ? (
+    <>
+      <SettingsRow
+        {...searchableSetting("storage-worktrees-location")}
+        title="Worktree storage"
+        description="Choose where new isolated checkouts are created. Project folder stays unchanged. Existing worktrees stay where they are."
+        serverScoped
+        settingKeys={["worktreeLocationMode", "worktreesDirectory"]}
+        resetAction={
           <SettingResetButton
-            label="worktree location"
-            onClick={() => updateSettings({ worktreesDirectory: "" })}
+            label="worktree storage"
+            onClick={() => updateSettings({ worktreeLocationMode: "managed" })}
           />
-        ) : null
-      }
-      control={
-        <Input
-          key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
-          aria-label="Worktree location"
-          autoCapitalize="none"
-          spellCheck={false}
-          placeholder={mixed ? "Mixed" : "Default"}
-          defaultValue={mixed ? "" : settings.worktreesDirectory}
-          onChange={() => {
-            edited.current = true;
-          }}
-          onBlur={(event) => {
-            const value = event.target.value.trim();
-            if (edited.current && (mixed || value !== settings.worktreesDirectory))
-              updateSettings({ worktreesDirectory: value });
-            edited.current = false;
-          }}
+        }
+        control={
+          <Select
+            value={mixed ? null : mode}
+            onValueChange={(value) => {
+              if (value === "managed" || value === "project" || (value === "custom" && oneMachine))
+                updateSettings({ worktreeLocationMode: value });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Worktree storage">
+              <SelectValue>
+                {mixed
+                  ? "Mixed"
+                  : mode === "managed"
+                    ? "App-managed"
+                    : mode === "project"
+                      ? "Inside project"
+                      : "Custom folder"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="managed">App-managed</SelectItem>
+              <SelectItem value="project">Inside project</SelectItem>
+              <SelectItem value="custom" disabled={!oneMachine}>
+                Custom folder
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+      {mode === "custom" && !mixed && (
+        <SettingsRow
+          title="Custom worktree folder"
+          description={
+            oneMachine
+              ? "Absolute folder on the selected machine. Existing worktrees are kept."
+              : "Select one machine to edit its custom folder."
+          }
+          serverScoped
+          settingKeys={["worktreesDirectory"]}
+          control={
+            <Input
+              key={`${targets.map((target) => target.environmentId).join(",")}:${settings.worktreesDirectory}`}
+              aria-label="Worktree location"
+              autoCapitalize="none"
+              spellCheck={false}
+              disabled={!oneMachine}
+              placeholder="/absolute/worktrees"
+              defaultValue={settings.worktreesDirectory}
+              onChange={() => {
+                edited.current = true;
+              }}
+              onBlur={(event) => {
+                const value = event.target.value.trim();
+                if (edited.current && value !== settings.worktreesDirectory)
+                  updateSettings({ worktreesDirectory: value, worktreeLocationMode: "custom" });
+                edited.current = false;
+              }}
+            />
+          }
         />
-      }
-    />
+      )}
+      <p className="break-all px-4 pb-3 text-xs text-muted-foreground">
+        {mixed
+          ? "Storage differs across selected machines."
+          : connectedEnvironments.length > 1
+            ? "Each selected machine uses its own worktree storage. Select one machine to inspect its resolved path."
+            : `New worktrees: ${resolved}`}
+      </p>
+    </>
   );
 }
 
@@ -213,8 +284,13 @@ export function StorageSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {!isProjectScope && (
+        <SettingsSection id="storage-archive" title="Chat history">
+          <InactiveThreadArchiveSetting />
+        </SettingsSection>
+      )}
       <SettingsSection id="storage-worktrees" title="Worktrees">
-        {!isProjectScope && <WorktreesDirectoryRow />}
+        <WorktreesDirectoryRow />
         {isProjectScope && (
           <SettingsRow
             title="Automatic worktree cleanup"

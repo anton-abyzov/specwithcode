@@ -51,6 +51,7 @@ const BRANDS: ReadonlyArray<ProviderBrand> = [
   "factory",
   "amp",
   "junie",
+  "deepseek",
 ];
 const INSTANCES: ReadonlyArray<readonly [string, string, string?]> = [
   ["claudeAgent", "Claude"],
@@ -64,6 +65,7 @@ const INSTANCES: ReadonlyArray<readonly [string, string, string?]> = [
   ["acpRegistry", "Copilot", "github-copilot-cli"],
   ["acpRegistry", "Gemini", "gemini"],
   ["acpRegistry", "Qwen Code", "qwen-code"],
+  ["acpRegistry", "DeepSeek Harness", "deepseek-harness"],
   ["acpRegistry", "Unknown agent"],
 ];
 

@@ -216,6 +216,50 @@ class ProjectSettingsSimplified(unittest.TestCase):
             check(before, changed(before, simplified, lambda v: v.pop('projectAutoPullOverrides')))
 
 
+class MachineLocalWorktreeStorage(unittest.TestCase):
+    def test_distinct_machine_local_project_paths_are_preserved(self):
+        before = {'worktreeLocationMode': 'managed', 'worktreesDirectory': '',
+                  'projectSettingsSimplified': True,
+                  'projectSettingsOverrides': {
+                      P1: {'worktreeLocationMode': 'custom', 'worktreesDirectory': '/Volumes/builds/one'},
+                      P2: {'worktreeLocationMode': 'custom', 'worktreesDirectory': '/Volumes/builds/two'}}}
+        self.assertEqual(check(before, json.loads(json.dumps(before)))['result'], 'preserved')
+        for key, value in (('worktreeLocationMode', 'managed'),
+                           ('worktreesDirectory', '/another-machine/worktrees')):
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, key):
+                check(before, changed(before, lambda v: v['projectSettingsOverrides'][P1].update({key: value})))
+            with self.subTest(dropped=key), self.assertRaisesRegex(AssertionError, key):
+                check(before, changed(before, lambda v: v['projectSettingsOverrides'][P1].pop(key)))
+
+    def test_first_simplification_only_drops_storage_equal_to_the_local_app_value(self):
+        before = {'worktreeLocationMode': 'custom', 'worktreesDirectory': '/Volumes/builds/shared',
+                  'projectSettingsOverrides': {
+                      P1: {'worktreeLocationMode': 'custom', 'worktreesDirectory': '/Volumes/builds/shared'}}}
+        after = changed(before, simplified, lambda v: v['projectSettingsOverrides'].pop(P1))
+        self.assertEqual(check(before, after)['migrations']['project-settings-simplified']['keys'],
+                         ['worktreeLocationMode', 'worktreesDirectory'])
+        different = changed(before, lambda v: v['projectSettingsOverrides'][P1].update(
+            worktreesDirectory='/Volumes/builds/project'))
+        with self.assertRaisesRegex(AssertionError, 'worktreesDirectory'):
+            check(different, changed(different, simplified, lambda v: v['projectSettingsOverrides'].pop(P1)))
+
+    def test_storage_has_no_general_migration_exception(self):
+        before = {'worktreeLocationMode': 'custom', 'worktreesDirectory': '/Volumes/builds/local'}
+        for edits in ((), (simplified,)):
+            with self.subTest(marker=bool(edits)), self.assertRaisesRegex(AssertionError, 'worktreesDirectory'):
+                check(before, changed(before, lambda v: v.update(worktreesDirectory='/peer/worktrees'), *edits))
+
+    def test_an_absent_app_value_cannot_explain_losing_an_explicit_path_or_mode(self):
+        for key, value in (('worktreesDirectory', '/Volumes/builds/project'),
+                           ('worktreeLocationMode', 'custom')):
+            before = {'projectSettingsOverrides': {P1: {key: value}}}
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, key):
+                check(before, changed(before, simplified, lambda v: v['projectSettingsOverrides'].pop(P1)))
+        before = {'projectSettingsOverrides': {P1: {'worktreesDirectory': ''}}}
+        self.assertEqual(check(before, changed(before, simplified,
+                         lambda v: v['projectSettingsOverrides'].pop(P1)))['result'], 'preserved')
+
+
 class SecretMovedToStore(unittest.TestCase):
     def test_typed_in_tokens_may_become_the_redaction_placeholder(self):
         before = changed(base(), lambda v: v.update(github={'tokens': {'github.com': SECRET}}))

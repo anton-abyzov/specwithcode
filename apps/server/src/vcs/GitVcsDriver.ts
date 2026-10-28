@@ -175,6 +175,7 @@ export interface CreateWorktreeOptions {
   readonly submodules?: WorktreeSubmodules | null;
   /** The `worktreesDirectory` setting, used when the input has no explicit path. */
   readonly worktreesDirectory?: string;
+  readonly worktreeLocationMode?: "managed" | "project" | "custom";
 }
 
 export interface GitCommitProgress {

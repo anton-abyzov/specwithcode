@@ -13,6 +13,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   resolveProviderInstanceEnabled,
   ServerSettings,
+  resolveWorktreeLocationMode,
   ServerSettingsPatch,
 } from "./settings.ts";
 
@@ -1265,5 +1266,42 @@ describe("ClientSettings external browser target", () => {
       browserExternalTarget: null,
     });
     expect(() => decodeClientSettingsPatch({ browserExternalTarget: { browserId: "" } })).toThrow();
+  });
+});
+
+describe("workspace lifecycle settings", () => {
+  it("preserves legacy directory interpretation and defaults archiving to 30 days", () => {
+    const defaults = decodeServerSettings({});
+    expect(defaults.archiveInactiveThreadsAfterDays).toBe(30);
+    expect(defaults.worktreeLocationMode).toBeUndefined();
+    expect(resolveWorktreeLocationMode(defaults)).toBe("managed");
+    const legacy = decodeServerSettings({ worktreesDirectory: "/old/worktrees" });
+    expect(legacy.worktreesDirectory).toBe("/old/worktrees");
+    expect(resolveWorktreeLocationMode(legacy)).toBe("custom");
+  });
+  it.each(["managed", "project", "custom"])(
+    "round-trips %s placement and project overrides",
+    (worktreeLocationMode) => {
+      const input = {
+        worktreeLocationMode,
+        worktreesDirectory: "/custom",
+        archiveInactiveThreadsAfterDays: null,
+        projectSettingsOverrides: {
+          project: { worktreeLocationMode, worktreesDirectory: "/project-custom" },
+        },
+      };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    },
+  );
+  it.each([0, -1, 1.5, 3651, "30"])(
+    "rejects invalid archive duration %s",
+    (archiveInactiveThreadsAfterDays) => {
+      expect(() => decodeServerSettings({ archiveInactiveThreadsAfterDays })).toThrow();
+      expect(() => decodeServerSettingsPatch({ archiveInactiveThreadsAfterDays })).toThrow();
+    },
+  );
+  it("rejects unknown placement modes", () => {
+    expect(() => decodeServerSettingsPatch({ worktreeLocationMode: "sibling" })).toThrow();
   });
 });

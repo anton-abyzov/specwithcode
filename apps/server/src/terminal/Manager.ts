@@ -155,6 +155,15 @@ export class TerminalManager extends Context.Service<
   TerminalManager,
   {
     /**
+     * Serialize a lifecycle decision with open, attach-spawn, restart and close.
+     * Non-reentrant: the effect must not call terminal lifecycle methods for this thread.
+     */
+    readonly withThreadLifecycleLock: <A, E, R>(
+      threadId: string,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
+
+    /**
      * Open or attach to a terminal session.
      *
      * Reuses an existing session for the same thread/terminal id and restores
@@ -3327,6 +3336,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   );
 
   return TerminalManager.of({
+    withThreadLifecycleLock: withThreadLock,
     open,
     attachStream,
     observeStream,

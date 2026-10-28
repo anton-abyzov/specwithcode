@@ -1,3 +1,4 @@
+import * as InactiveThreadArchiveGuard from "./InactiveThreadArchiveGuard.ts";
 import {
   hasCurrentLifecycleAcceptance,
   LifecycleEvidenceActivation,
@@ -1161,6 +1162,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const handoffGate = yield* HandoffTurnGate.HandoffTurnGate;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
+  const inactiveArchiveGuard = yield* InactiveThreadArchiveGuard.InactiveThreadArchiveGuard;
   const projectPermissionUpdates = yield* Semaphore.make(1);
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
@@ -3974,7 +3976,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     }
 
-    if (command.type === "thread.archive") {
+    if (command.type === "thread.archive" && command.inactive === undefined) {
       const projection = yield* loadProjectionForCommand(
         command,
         ["runs", "attempts", "nodes", "subagents", "messages"],
@@ -4044,7 +4046,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // decided serially against the projection, so a turn start that
     // re-engages the thread cannot race this detach.
     const detachSessionIds = new Set(
-      command.type === "thread.archive" || command.type === "thread.settle"
+      (command.type === "thread.archive" && command.inactive === undefined) ||
+        command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
         : command.type === "thread.metadata.update" &&
             command.worktreePath !== undefined &&
@@ -4119,7 +4122,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     }
 
-    if (command.type === "thread.archive") {
+    if (command.type === "thread.archive" && command.inactive === undefined) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
@@ -12519,7 +12522,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const expectedThreadSequence =
       command.type === "thread.deferred-resolution.request" ||
       command.type === "thread.deferred-resolution.finish" ||
-      command.type === "thread.lifecycle-receipt.record"
+      command.type === "thread.lifecycle-receipt.record" ||
+      (command.type === "thread.archive" && command.inactive !== undefined)
         ? yield* eventSink
             .latestSequence({ threadId: command.threadId })
             .pipe(mapDispatchError(command))
@@ -12683,7 +12687,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithoutPermissionGate = (command: OrchestrationV2ServerCommand) => {
     const dispatch = admitCreation(
       command,
-      threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command)),
+      threadDispatch.withLock(
+        commandThreadId(command),
+        command.type === "thread.archive" && command.inactive !== undefined
+          ? inactiveArchiveGuard.protect(command, dispatchWithReceiptEffect(command)).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+              ),
+            )
+          : dispatchWithReceiptEffect(command),
+      ),
     );
     // Count the command through persistence, including admission and thread-lock waits.
     // A conditional update closes this gate and awaits every previously admitted command.

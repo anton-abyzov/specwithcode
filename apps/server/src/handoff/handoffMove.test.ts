@@ -10,10 +10,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   HANDOFF_LEASE_STALE_MS,
   type HandoffCheckpoint,
   type HandoffRunEnding,
+  type ServerSettings as ServerSettingsValue,
   ProjectId,
   ThreadId,
   threadTurnKey,
@@ -24,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -100,6 +103,8 @@ function machine(environmentId: EnvironmentId, label: string): Machine {
 const scenario = (
   options: {
     readonly linked?: boolean;
+    readonly destinationSettings?: Partial<ServerSettingsValue>;
+    readonly destinationRepositoryName?: string;
     readonly signedIn?: boolean;
     readonly sourceMembers?: boolean;
     readonly sourcePersonal?: boolean;
@@ -115,7 +120,7 @@ const scenario = (
     NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 1;\n");
     git(sourceRoot, "add", "-A");
     git(sourceRoot, "commit", "-q", "-m", "base");
-    const destinationRoot = NodePath.join(base, "minis-repo");
+    const destinationRoot = NodePath.join(base, options.destinationRepositoryName ?? "minis-repo");
     git(base, "clone", "-q", sourceRoot, destinationRoot);
     NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 2;\n");
     NodeFS.writeFileSync(NodePath.join(sourceRoot, "notes.md"), "half done\n");
@@ -236,6 +241,12 @@ const scenario = (
     const servicesFor = (target: Machine, roots: { project: ProjectId; root: string }) =>
       Layer.mergeAll(
         Layer.succeed(HandoffMode, handoffFor(target)),
+        Layer.succeed(ServerSettings.ServerSettingsService, {
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            ...options.destinationSettings,
+          }),
+        } as never),
         Layer.succeed(ServerConfig.ServerConfig, { worktreesDir } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>
@@ -532,6 +543,60 @@ const staleReplicaOnMinis = (
   });
 
 describe("handoff between two machines", () => {
+  it.effect("honors the destination project's project-local override for an actual handoff", () =>
+    Effect.gen(function* () {
+      const { moves, destination, destinationRoot } = yield* scenario({
+        // Backslashes trigger Git's human-readable quoting on Windows. A literal
+        // quote exercises the same raw-path boundary on POSIX without illegal Windows names.
+        destinationRepositoryName:
+          process.platform === "win32" ? "minis-repo" : 'minis-"quoted"-repo',
+        destinationSettings: {
+          projectSettingsOverrides: { [destinationProject]: { worktreeLocationMode: "project" } },
+        },
+      });
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      yield* handOff(moves);
+      const strategy = destination.launches[0]!.workspaceStrategy as { worktreePath: string };
+      expect(
+        strategy.worktreePath.startsWith(
+          NodePath.join(destinationRoot, ".specwithcode", "worktrees") + NodePath.sep,
+        ),
+      ).toBe(true);
+      const ignoredPath = NodeChildProcess.execFileSync(
+        "git",
+        ["-C", destinationRoot, "check-ignore", "--stdin", "-z"],
+        {
+          input: `${strategy.worktreePath}\0`,
+          encoding: "utf8",
+          env: gitEnv,
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+      expect(ignoredPath).toBe(`${strategy.worktreePath}\0`);
+      expect(NodeFS.readFileSync(NodePath.join(strategy.worktreePath, "app.ts"), "utf8")).toBe(
+        "export const a = 2;\n",
+      );
+    }),
+  );
+  it.effect("honors the destination project's custom storage override", () =>
+    Effect.gen(function* () {
+      const custom = NodePath.join(directory(), "custom-worktrees");
+      const { moves, destination, destinationRoot } = yield* scenario({
+        destinationSettings: {
+          projectSettingsOverrides: {
+            [destinationProject]: { worktreeLocationMode: "custom", worktreesDirectory: custom },
+          },
+        },
+      });
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      yield* handOff(moves);
+      const strategy = destination.launches[0]!.workspaceStrategy as { worktreePath: string };
+      expect(strategy.worktreePath.startsWith(custom + NodePath.sep)).toBe(true);
+      expect(NodeFS.readFileSync(NodePath.join(strategy.worktreePath, "app.ts"), "utf8")).toBe(
+        "export const a = 2;\n",
+      );
+    }),
+  );
   it.effect("moves a thread stopped by its usage limit and resumes it on the destination", () =>
     Effect.gen(function* () {
       const { source, destination, moves, destinationRoot } = yield* scenario();

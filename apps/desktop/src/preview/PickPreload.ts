@@ -1234,7 +1234,7 @@ function startAnnotation(sendEnabled: boolean): void {
     if (tool === "draw") {
       const stroke: PreviewAnnotationStrokeTarget = {
         id: nextId("stroke"),
-        color: annotationTheme?.primary ?? "#2563eb",
+        color: annotationTheme?.primary ?? "#6d4fb5",
         width: 4,
         points: [dragStart],
         bounds: { x: dragStart.x, y: dragStart.y, width: 1, height: 1 },

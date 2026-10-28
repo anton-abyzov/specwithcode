@@ -11,6 +11,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   type HandoffCheckpoint,
   ProjectId,
@@ -22,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { writeCheckpoint } from "../handoff/checkpointGit.ts";
@@ -173,6 +175,9 @@ const scenario = (options: { readonly modeOn: boolean }) =>
     const servicesFor = (target: Machine, roots: { project: ProjectId; root: string }) =>
       Layer.mergeAll(
         Layer.succeed(HandoffMode, handoffFor(target)),
+        Layer.succeed(ServerSettings.ServerSettingsService, {
+          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        } as never),
         Layer.succeed(ServerConfig.ServerConfig, { worktreesDir } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>

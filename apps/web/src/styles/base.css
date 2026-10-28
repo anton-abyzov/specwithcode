@@ -683,8 +683,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     color: oklch(0.2 0 0);
   }
   :root {
-    /* Keep the original SpecWithCode artwork palettes as the defaults. Built-in
-       themes override them with their own pigments in the components layer. */
+    /* The original SpecWithCode artwork palettes, kept for custom themes. The
+       default look wears the iris artwork, and built-in themes override these
+       with their own pigments, both in the components layer. */
     --stage-art-top: oklch(0.782169 0.123386 240.226);
     --stage-art-mid: oklch(0.616111 0.195824 259.735);
     --stage-art-bottom: oklch(0.441553 0.232394 265.474);
@@ -862,7 +863,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     }
   }
 
-  html[data-theme-id="iris"] {
+  /* The default look (no theme chosen) shares the iris artwork: Weave iris is
+     the brand accent. */
+  html[data-theme-id="iris"],
+  html:not([data-theme-id]),
+  html[data-theme-id=""] {
     --stage-art-top: oklch(0.738305 0.113454 298.926);
     --stage-art-mid: oklch(0.551826 0.159189 294.531);
     --stage-art-bottom: oklch(0.37147 0.133317 289.999);
@@ -882,7 +887,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     }
   }
 
-  :is(html[data-theme-id="studio-chat"], html[data-theme-id="ocean"], html[data-theme-id="iris"]) {
+  :is(
+    html[data-theme-id="studio-chat"],
+    html[data-theme-id="ocean"],
+    html[data-theme-id="iris"],
+    html:not([data-theme-id]),
+    html[data-theme-id=""]
+  ) {
     --stage-night-top: color-mix(in oklch, var(--stage-art-top) 38%, var(--stage-night-base-top));
     --stage-night-mid: color-mix(in oklch, var(--stage-art-mid) 38%, var(--stage-night-base-mid));
     --stage-night-bottom: color-mix(
@@ -909,7 +920,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     html[data-theme-id="grove"],
     html[data-theme-id="ocean"],
     html[data-theme-id="ember"],
-    html[data-theme-id="iris"]
+    html[data-theme-id="iris"],
+    html:not([data-theme-id]),
+    html[data-theme-id=""]
   ) {
     --stage-art-celeste-highlight: var(--stage-art-highlight);
     --stage-art-celeste-secondary: var(--stage-art-secondary);

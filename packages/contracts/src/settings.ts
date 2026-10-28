@@ -1,3 +1,12 @@
+import {
+  ArchiveInactiveThreadsAfterDays,
+  WorktreeLocationMode,
+} from "./workspaceLifecycleSettings.ts";
+export {
+  ArchiveInactiveThreadsAfterDays,
+  WorktreeLocationMode,
+  resolveWorktreeLocationMode,
+} from "./workspaceLifecycleSettings.ts";
 import { MaxBootedDevices, SshDeviceHostConfigs } from "./device.ts";
 import { ExternalBrowserTarget } from "./externalBrowser.ts";
 import {
@@ -1438,6 +1447,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "claudeWorkflowMode",
   "responseStyle",
   "worktreeCleanup",
+  "worktreeLocationMode",
+  "worktreesDirectory",
   "defaultModelSelection",
   "defaultModelProviders",
   "defaultRuntimeMode",
@@ -1491,6 +1502,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
+  worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
+  worktreesDirectory: Schema.optionalKey(TrimmedString),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
@@ -1606,6 +1619,11 @@ export const ServerSettings = Schema.Struct({
    * or `~/worktrees`. Empty uses `<Studio home>/worktrees`.
    */
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Absent preserves legacy custom-directory behavior. Placement is machine-local. */
+  worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
+  archiveInactiveThreadsAfterDays: ArchiveInactiveThreadsAfterDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(30)),
+  ),
   /**
    * Custom locations used before the current one. Server-maintained so
    * worktrees left there stay eligible for cleanup and review diffs.
@@ -2184,6 +2202,8 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
+  worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
+  archiveInactiveThreadsAfterDays: Schema.optionalKey(ArchiveInactiveThreadsAfterDays),
   // Server settings
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),

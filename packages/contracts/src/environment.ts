@@ -128,6 +128,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server honors the `worktreesDirectory` setting. */
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
+  worktreeLocationMode: Schema.optionalKey(Schema.Boolean),
   /** Server persists the opt-in for continuing interrupted threads after restarts. */
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
@@ -308,6 +309,8 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   serverSourceCommit: Schema.optionalKey(TrimmedNonEmptyString),
   /** Absent on hosts from before explicit orchestration protocol negotiation. */
   orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
+  /** Authoritative managed worktree root on this machine; absent on older servers. */
+  defaultWorktreesDirectory: Schema.optionalKey(TrimmedNonEmptyString),
   capabilities: ExecutionEnvironmentCapabilities,
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;

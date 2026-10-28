@@ -17,6 +17,7 @@ import { checkLabel, copyProblem } from "./handoffCopyNotices";
 import { CopyUndoPreview } from "./HandoffCopyPreview";
 import { ProjectLinkDialog } from "./ProjectLinkDialog";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
+import { plainHandoffError } from "./handoffErrors";
 
 /** Paths listed for files that changed on the source while copying; the rest are counted. */
 const UNSTABLE_SHOWN = 20;
@@ -144,6 +145,8 @@ export function HandoffCopyDone({
         environmentId={machine}
         environmentLabel={targetLabel}
         projectId={projectId}
+        // A moved coordinator needs only its own provider signed in there.
+        coordinatorOnly={moved}
       />
       {mode === "copy-only" && copy.backupsDiscardedAt !== undefined && (
         <p className="text-muted-foreground text-xs">
@@ -389,7 +392,11 @@ export function HandoffCopyFailed({
       <p role="alert" className="wrap-anywhere text-destructive-foreground">
         {copy.state === "applied"
           ? `The files are on ${targetLabel}, but the coordinator did not start there.`
-          : (copy.error?.message ?? "The copy stopped.")}
+          : plainHandoffError(
+              copy.error?.message ?? "The copy stopped.",
+              copy.mode === "copy-and-move" ? "move" : "copy",
+              { source: sourceLabel, destination: targetLabel },
+            )}
         {failedBeforeApply ? ` Nothing in ${copy.targetFolder} changed.` : ""}
       </p>
       {copy.undoIncomplete && (
@@ -458,7 +465,7 @@ export function HandoffCopyFailedActions({
       </Button>
       {failedBeforeApply && (
         <Button variant="ghost" data-leading disabled={busy} onClick={onCancel}>
-          Stop copy
+          {copy.mode === "copy-and-move" ? "Stop move" : "Stop copy"}
         </Button>
       )}
     </>

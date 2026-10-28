@@ -371,6 +371,13 @@ export interface AgentStateReading {
   readonly updatedAtMs: number | null;
   /** `state.json` handledInstallRequestAt: the last request the agent finished with. */
   readonly handledInstallRequestAt: unknown;
+  /**
+   * `state.json` answeredInstallRequestAt: the install request the pass that wrote the status served, "" when
+   * it served none (an automatic pass). Null when the pass named none: it failed before naming one (reading
+   * its settings or its installation, say), or reported an install an earlier pass left interrupted while a
+   * request was pending. Older agents leave it out.
+   */
+  readonly answeredInstallRequestAt?: unknown;
   /** `config.json` installRequestedAt: the request the desktop wrote last. */
   readonly installRequestedAt: unknown;
   /** `config.json` installHoldUntil of a forced request: when the agent stops retrying. */
@@ -433,9 +440,12 @@ export function agentVerdictForHold(input: {
   // Some failures end the pass without marking the request handled; holding
   // the service on until the time limit would only block its users. One
   // written in the request's own millisecond is not about it: the agent had
-  // not read it yet.
+  // not read it yet. Nor is one from a pass that served another request, or
+  // none (""): the pass that serves this request answers it.
+  const answered = reading.answeredInstallRequestAt ?? null;
   if (
     (status === "error" || status === "manual-required") &&
+    (answered === null || answered === requestKey) &&
     updatedAtMs !== null &&
     updatedAtMs > requestedAtMs
   )
@@ -466,6 +476,7 @@ const decodeAgentState = Schema.decodeUnknownOption(
       message: Schema.optional(Schema.Unknown),
       updatedAt: Schema.optional(Schema.Unknown),
       handledInstallRequestAt: Schema.optional(Schema.Unknown),
+      answeredInstallRequestAt: Schema.optional(Schema.Unknown),
       installedVersion: Schema.optional(Schema.Unknown),
       availableVersion: Schema.optional(Schema.Unknown),
       downloadedVersion: Schema.optional(Schema.Unknown),
@@ -887,6 +898,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         message: raw.message,
         updatedAtMs,
         handledInstallRequestAt: raw.handledInstallRequestAt,
+        answeredInstallRequestAt: raw.answeredInstallRequestAt,
         installRequestedAt: request?.installRequestedAt,
         installHoldUntilMs:
           request?.installMode === "force" ? epochMillis(request.installHoldUntil) : null,

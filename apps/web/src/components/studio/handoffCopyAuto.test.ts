@@ -491,3 +491,50 @@ describe("steps and what happens next", () => {
     expect(sourceProgressText({ files: 1, bytes: 5 }, "M4")).toBe("Measuring… 1 file, 5 B");
   });
 });
+
+describe("groupCopyNotices for a move", () => {
+  const snapshot =
+    "Git history, branches and staged changes are captured when copying starts. Work created afterward stays on this machine; copy again to include it.";
+
+  it("drops the copy-again advice from a move, where the project itself moves", () => {
+    const moved = groupCopyNotices({
+      warnings: [snapshot],
+      rootLabel: "Project root",
+      mode: "copy-and-move",
+    });
+    expect(moved.lines).toEqual([
+      "Git history, branches and staged changes are captured when copying starts.",
+    ]);
+  });
+
+  it("speaks of the snapshot in the past on Done, and drops it from a finished move", () => {
+    expect(
+      groupCopyNotices({
+        warnings: [snapshot],
+        rootLabel: "Project root",
+        mode: "copy-and-move",
+        done: true,
+      }).lines,
+    ).toEqual([]);
+    expect(
+      groupCopyNotices({
+        warnings: [snapshot],
+        rootLabel: "Project root",
+        mode: "copy-only",
+        done: true,
+      }).lines,
+    ).toEqual([
+      "Git history, branches and staged changes were captured when copying started. Work created afterward stays on this machine; copy again to include it.",
+    ]);
+  });
+
+  it("keeps the work-created-afterward line for Copy files only", () => {
+    expect(
+      groupCopyNotices({ warnings: [snapshot], rootLabel: "Project root", mode: "copy-only" })
+        .lines,
+    ).toEqual([snapshot]);
+    expect(groupCopyNotices({ warnings: [snapshot], rootLabel: "Project root" }).lines).toEqual([
+      snapshot,
+    ]);
+  });
+});

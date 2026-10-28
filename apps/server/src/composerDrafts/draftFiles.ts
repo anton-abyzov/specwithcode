@@ -50,6 +50,33 @@ function exclusive<T>(folder: string, run: () => Promise<T>): Promise<T> {
   });
   return next;
 }
+/** Share the same lease as saves/removals when deciding whether a thread may archive. */
+export function acquireDraftLease(dir: string, key: string): Promise<() => void> {
+  return new Promise((acquired) => {
+    void exclusive(draftFolder(dir, key), () => new Promise<void>((release) => acquired(release)));
+  });
+}
+
+/** Unlike display reads, an unreadable or malformed draft fails closed. Call under its lease. */
+export async function hasProtectedDraft(dir: string, key: string): Promise<boolean> {
+  let text: string;
+  try {
+    text = await fs.readFile(path.join(draftFolder(dir, key), DRAFT_FILE), "utf8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      try {
+        return (await fs.readdir(draftFolder(dir, key))).length > 0;
+      } catch (folderCause) {
+        if ((folderCause as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw folderCause;
+      }
+    }
+    throw cause;
+  }
+  const draft = parseDraft(text);
+  return draft === null || draft.key !== key || !draftIsEmpty(draft);
+}
+
 const ATTACHMENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 
 export const draftFolder = (dir: string, key: string) =>

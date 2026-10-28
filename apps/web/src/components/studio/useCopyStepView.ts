@@ -30,6 +30,7 @@ export function useCopyStepView({
   contextTransferred,
   copy,
   held,
+  errored = false,
   working,
   pending,
   latestPending,
@@ -43,6 +44,8 @@ export function useCopyStepView({
   readonly contextTransferred: boolean;
   readonly copy: FolderCopyStatus | null;
   readonly held: boolean;
+  /** An error is shown for the live step: the bar marks it stopped. */
+  readonly errored?: boolean;
   readonly working: boolean;
   readonly pending: PendingCopy | null;
   readonly latestPending: RefObject<PendingCopy | null>;
@@ -106,7 +109,7 @@ export function useCopyStepView({
       state: behind ? "done" : id === shown ? "current" : "next",
       // One click skips choosing, and comparing too when the plan replaced nothing.
       skipped: auto && (id === "what" || (id === "review" && !planShown)),
-      tone: restoring ? null : stepTone(id, { ...stepInput, held }),
+      tone: restoring ? null : stepTone(id, { ...stepInput, held, errored: errored && !working }),
     };
   });
 

@@ -256,8 +256,10 @@ describe("machine handoff dialog", () => {
   it("explains an empty machine list and prevents a review without a target", async () => {
     await handoff({ destinations: [], machines: [], machine: null, selected: "" });
     expect(document.body.textContent).toContain("No other machine is connected.");
-    expect(button("Move to selected machine").disabled).toBe(true);
-    await click(button("Move to selected machine"));
+    // No machine picked: one filled primary, off, with what it waits for said beside it.
+    expect(button("Move").disabled).toBe(true);
+    expect(document.body.textContent).toContain("Choose a machine above.");
+    await click(button("Move"));
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
@@ -487,6 +489,13 @@ describe("handoff file method and intent", () => {
     expect(onMethodChange).not.toHaveBeenCalled();
     await handoff({ intent: "move" });
     expect(document.querySelector("h2")?.textContent).toBe("Move Product");
+  });
+
+  it("titles a finished copy of files only as copied, and a finished move as on", async () => {
+    await handoff({ method: "copy", intent: "copy", copyFlow, copyDoneOn: "ministorm" });
+    expect(document.querySelector("h2")?.textContent).toBe("Product is copied to ministorm");
+    await handoff({ method: "copy", intent: "move", copyFlow, copyDoneOn: "ministorm" });
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
   });
 
   it("switches the Git move to a files-only copy from the segmented choice", async () => {

@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   HANDOFF_LEASE_STALE_MS,
   type HandoffCheckpoint,
@@ -29,6 +30,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
@@ -422,6 +424,9 @@ const receiving = (options: { readonly runtimeMode?: RuntimeMode } = {}) =>
             return result;
           }),
       } as unknown as HandoffMode["Service"]),
+      Layer.succeed(ServerSettings.ServerSettingsService, {
+        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      } as never),
       Layer.succeed(ServerConfig.ServerConfig, {
         worktreesDir: NodePath.join(base, "worktrees"),
       } as never),

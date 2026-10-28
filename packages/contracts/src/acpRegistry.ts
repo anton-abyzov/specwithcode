@@ -50,6 +50,28 @@ export function isLocalGitHubCopilotCommand(
 }
 
 /**
+ * DeepSeek Harness (`@deepseek-ai/dsh`) is not in the ACP Registry, so a local
+ * `dsh` command is the only way to recognise it. The id is Studio's own name
+ * for it and never resolves to a Registry icon.
+ */
+export const DEEPSEEK_HARNESS_AGENT_ID = "deepseek-harness";
+
+export function isLocalDeepSeekHarnessCommand(commandPath: string | null | undefined): boolean {
+  const executable = commandPath?.trim().split(/[\\/]/u).pop()?.toLowerCase() ?? "";
+  return /^dsh(?:\.(?:exe|cmd|bat))?$/u.test(executable);
+}
+
+/** The agent a local ACP command runs, when the command is recognisably one we brand. */
+export function localAcpAgentIdForCommand(
+  agentId: string | null | undefined,
+  commandPath: string | null | undefined,
+): string | null {
+  if (isLocalGitHubCopilotCommand(agentId, commandPath)) return GITHUB_COPILOT_AGENT_ID;
+  if (isLocalDeepSeekHarnessCommand(commandPath)) return DEEPSEEK_HARNESS_AGENT_ID;
+  return null;
+}
+
+/**
  * The official Copilot icon URL for a configured provider instance, or null when
  * the instance is not GitHub Copilot. Clients use it to name Copilot even when a
  * snapshot from an older server carries no icon.

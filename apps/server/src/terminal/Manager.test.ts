@@ -427,6 +427,48 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect("holds terminal open, attach-spawn and restart behind a lifecycle decision", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      for (const mode of ["open", "attach", "restart"] as const) {
+        const input = { ...openInput({ threadId: `lifecycle-${mode}` }), cols: 80, rows: 24 };
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const attempted = yield* Deferred.make<void>();
+        const before = ptyAdapter.spawnInputs.length;
+        const decision = yield* manager
+          .withThreadLifecycleLock(
+            input.threadId,
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const action =
+          mode === "open"
+            ? manager.open(input).pipe(Effect.asVoid)
+            : mode === "attach"
+              ? manager
+                  .attachStream(input, () => Effect.void)
+                  .pipe(
+                    Effect.tap((unsubscribe) => Effect.sync(unsubscribe)),
+                    Effect.asVoid,
+                  )
+              : manager.restart(input).pipe(Effect.asVoid);
+        const request = yield* Deferred.succeed(attempted, undefined).pipe(
+          Effect.andThen(action),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(attempted);
+        yield* Effect.yieldNow;
+        expect(ptyAdapter.spawnInputs).toHaveLength(before);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(decision);
+        yield* Fiber.join(request);
+        expect(ptyAdapter.spawnInputs).toHaveLength(before + 1);
+      }
+    }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

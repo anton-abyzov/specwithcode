@@ -81,6 +81,36 @@ try {
   await page.getByText("Keep threads ready to move").first().waitFor();
   for (const gone of ["Show automated", "Show archived", "Continue automatically"])
     NodeAssert.equal(await page.getByText(gone).count(), 0, gone);
+  // The handoff banner with its history open stops at 40% of the coordinator column and
+  // scrolls inside; the conversation keeps the rest, starting below the banner.
+  for (const [width, height] of [
+    [1280, 800],
+    [375, 812],
+  ]) {
+    for (const theme of ["light", "dark"]) {
+      await page.setViewportSize({ width, height });
+      await page.goto(`${origin}/?view=coordinator-banner&theme=${theme}`);
+      await page.getByText("First message on Minis").waitFor({ timeout: 10_000 });
+      await page.waitForTimeout(150);
+      const box = await page.evaluate(() => {
+        const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
+        const banner = document.querySelector('[data-slot="handoff-history"]');
+        return {
+          column: rect('[data-testid="coordinator"]').height,
+          banner: rect('[data-slot="handoff-history"]'),
+          conversation: rect('[data-testid="conversation"]'),
+          scrolls: banner.scrollHeight > banner.clientHeight,
+        };
+      });
+      NodeAssert.ok(box.banner.height <= box.column * 0.4 + 1, `banner ${JSON.stringify(box)}`);
+      NodeAssert.ok(box.scrolls, "the open history scrolls inside the banner");
+      NodeAssert.ok(box.conversation.top >= box.banner.bottom, "conversation starts below it");
+      NodeAssert.ok(box.conversation.height >= box.column * 0.5, "conversation keeps the rest");
+      const path = NodePath.join(output, `coordinator-banner-${theme}-${width}x${height}.png`);
+      await page.screenshot({ path });
+      shots.push(path);
+    }
+  }
   NodeAssert.deepEqual(errors, []);
 } finally {
   await browser.close();

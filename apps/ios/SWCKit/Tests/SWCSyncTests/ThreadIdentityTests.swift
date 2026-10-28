@@ -30,6 +30,10 @@ import SWCWire
     #expect(ThreadIdentity(selection: .init(instanceId: "custom-instance", model: "auto"), providers: [forged]).providerBrand == nil)
     forged.iconUrl = nil
     #expect(ThreadIdentity(selection: .init(instanceId: "custom-instance", model: "auto"), providers: [forged]).providerBrand == nil)
+    let deepseek = ServerProviderSummary(instanceId: "acpRegistry_deepseek_harness", driver: "acpRegistry", displayName: "DeepSeek Harness")
+    #expect(ThreadIdentity(selection: .init(instanceId: "acpRegistry_deepseek_harness", model: "auto"), providers: [deepseek]).providerBrand == "deepseek")
+    let localCopilot = ServerProviderSummary(instanceId: "acpRegistry_github-copilot", driver: "acpRegistry", displayName: "Copilot")
+    #expect(ThreadIdentity(selection: .init(instanceId: "acpRegistry_github-copilot", model: "auto"), providers: [localCopilot]).providerBrand == nil)
   }
   @Test func authoritativeCurrentSelectionWins() throws {
     var thread = try TestData.thread()

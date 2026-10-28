@@ -47,6 +47,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type FocusEvent,
@@ -91,7 +92,9 @@ import { requestProjectSettings } from "../../../studio/projectSettingsRequests"
 import type { ProjectNameCheck } from "../../../studio/projectRename";
 import {
   copyActivityText,
+  useCopyActivities,
   useCopyActivity,
+  withoutMovingDestinations,
   type CopyActivity,
 } from "../../../studio/folderCopyActivity";
 
@@ -173,7 +176,13 @@ export function SidebarProjectList(props: {
     | ((group: SidebarProjectSnapshot, level: ProjectNotificationLevel) => void)
     | undefined;
 }) {
-  const { visible, listedKeys } = props;
+  // A move's destination joins the project only when the move finishes; until then it is
+  // the same project mid-move, shown once on its source row.
+  const copyActivities = useCopyActivities();
+  const { visible, listedKeys } = useMemo(
+    () => withoutMovingDestinations(props.visible, props.listedKeys, copyActivities),
+    [props.visible, props.listedKeys, copyActivities],
+  );
   const listRef = useRef<HTMLUListElement | null>(null);
   const motionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);

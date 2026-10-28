@@ -3997,6 +3997,44 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect(
+      "creates project-local worktrees with private exclusions and rejects nested custom roots",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const exclude = path.join(cwd, ".git", "info", "exclude");
+          yield* fs.writeFileString(exclude, "# keep local exclusions\n/private-draft\n");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const created = yield* driver.createWorktree(
+            { cwd, path: null, refName: initialBranch, newRefName: "feature/project-local" },
+            { worktreeLocationMode: "project" },
+          );
+          assert.isTrue(
+            created.worktree.path.startsWith(
+              path.join(yield* fs.realPath(cwd), ".specwithcode", "worktrees") + path.sep,
+            ),
+          );
+          assert.equal(
+            yield* fs.readFileString(exclude),
+            "# keep local exclusions\n/private-draft\n/.specwithcode/worktrees/\n",
+          );
+          const status = yield* git(cwd, ["status", "--porcelain"]);
+          assert.equal(status.trim(), "");
+          for (const custom of [cwd, path.dirname(cwd), path.join(cwd, "nested")]) {
+            const error = yield* driver
+              .createWorktree(
+                { cwd, path: null, refName: initialBranch, newRefName: "feature/unsafe" },
+                { worktreeLocationMode: "custom", worktreesDirectory: custom },
+              )
+              .pipe(Effect.flip);
+            assert.match(error.detail, /worktree location/);
+          }
+        }),
+    );
+
     it.effect("resolves the submodule mode from the option, then specweave-studio.json", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

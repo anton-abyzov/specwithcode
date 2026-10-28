@@ -451,8 +451,10 @@ vi.mock("../../hooks/useThreadActionMenu", () => ({
 }));
 vi.mock("../../browser/useOpenLink", () => ({ useOpenLink: () => state.openLink }));
 vi.mock("../../env", () => ({ isElectron: false }));
+const serverConfigFixture = vi.hoisted(() => ({ atom: {}, configs: new Map() }));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => [],
+  useAtomValue: (atom: unknown) =>
+    atom === serverConfigFixture.atom ? serverConfigFixture.configs : [],
   useAtomRefresh: () => state.shellRefresh,
 }));
 vi.mock("../../state/filesystem", () => ({
@@ -460,6 +462,7 @@ vi.mock("../../state/filesystem", () => ({
   useFilesystemReadAccess: () => ({ canReadFiles: false, isPending: false, error: null }),
 }));
 vi.mock("../../state/server", () => ({
+  environmentServerConfigsAtom: serverConfigFixture.atom,
   primaryServerKeybindingsAtom: {},
   primaryServerConfigAtom: {},
   serverEnvironment: { updateSettings: {} },

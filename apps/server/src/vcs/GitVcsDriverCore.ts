@@ -1,3 +1,5 @@
+import { resolveWorktreeLocationMode } from "@specweave-studio/contracts";
+import { validateWorktreePlacement, ignoreProjectWorktrees } from "../worktreePlacement.ts";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
@@ -3788,11 +3790,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const repoName = path.basename(input.cwd);
     let worktreePath = input.path;
     if (worktreePath == null) {
-      const parentDir = resolveWorktreesDirectory(
+      const repositoryRoot = (yield* runGitStdout(
+        "GitVcsDriver.createWorktree.repository",
+        input.cwd,
+        ["rev-parse", "--show-toplevel"],
+      )).trim();
+      let parentDir = resolveWorktreesDirectory(
         options?.worktreesDirectory ?? "",
         worktreesDir,
         path,
+        options?.worktreeLocationMode,
+        repositoryRoot,
       );
+      if (parentDir !== null)
+        parentDir = yield* validateWorktreePlacement(
+          {
+            directory: parentDir,
+            repository: repositoryRoot,
+            setting: options?.worktreesDirectory ?? "",
+            ...(options?.worktreeLocationMode ? { mode: options.worktreeLocationMode } : {}),
+          },
+          fileSystem,
+          path,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                operation: "GitVcsDriver.createWorktree",
+                command: "git worktree add",
+                cwd: input.cwd,
+                detail: String(cause),
+              }),
+          ),
+        );
       if (parentDir === null) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.createWorktree",
@@ -3812,6 +3842,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
           Effect.ignore,
         );
+      if (
+        resolveWorktreeLocationMode({
+          worktreesDirectory: options?.worktreesDirectory ?? "",
+          worktreeLocationMode: options?.worktreeLocationMode,
+        }) === "project"
+      ) {
+        const exclude = (yield* runGitStdout("GitVcsDriver.createWorktree.exclude", input.cwd, [
+          "rev-parse",
+          "--git-path",
+          "info/exclude",
+        ])).trim();
+        yield* ignoreProjectWorktrees(path.resolve(input.cwd, exclude), fileSystem, path).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                operation: "GitVcsDriver.createWorktree",
+                command: "git worktree add",
+                cwd: input.cwd,
+                detail: `Cannot protect project-local worktrees: ${String(cause)}`,
+              }),
+          ),
+        );
+      }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
     const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];

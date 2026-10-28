@@ -190,6 +190,13 @@ function resolveProjectOverrides(
     effective[key] = value;
     sources[key] = "project";
   }
+  // A legacy project directory is one placement choice, independent of the
+  // environment's explicit mode. Resetting the project restores inheritance.
+  if (sources.worktreesDirectory === "project" && sources.worktreeLocationMode !== "project") {
+    effective.worktreeLocationMode = String(effective.worktreesDirectory).trim()
+      ? "custom"
+      : "managed";
+  }
   // A project's single fallback model, set before fallback orders existed,
   // outranks an environment-wide order the project never chose.
   if (

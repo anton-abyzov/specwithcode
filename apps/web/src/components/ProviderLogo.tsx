@@ -10,6 +10,7 @@ import {
   ClaudeLogo,
   ClineLogo,
   CursorLogo,
+  DeepSeekLogo,
   FactoryLogo,
   GeminiLogo,
   GooseLogo,
@@ -48,7 +49,8 @@ export type ProviderBrand =
   | "auggie"
   | "factory"
   | "amp"
-  | "junie";
+  | "junie"
+  | "deepseek";
 
 const LOGO_BY_BRAND: Readonly<Record<ProviderBrand, Icon>> = {
   claude: ClaudeLogo,
@@ -72,6 +74,7 @@ const LOGO_BY_BRAND: Readonly<Record<ProviderBrand, Icon>> = {
   factory: FactoryLogo,
   amp: AmpLogo,
   junie: JunieLogo,
+  deepseek: DeepSeekLogo,
 };
 
 const BRAND_BY_DRIVER: Readonly<Record<string, ProviderBrand>> = {
@@ -108,6 +111,7 @@ const BRAND_BY_ACP_AGENT: ReadonlyArray<readonly [RegExp, ProviderBrand]> = [
   [/^(?:factory-)?droid$/, "factory"],
   [/^amp(?:-|$)/, "amp"],
   [/^junie$/, "junie"],
+  [/^deepseek(?:-|$)/, "deepseek"],
 ];
 
 function acpAgentIdFromIconUrl(iconUrl: string | null | undefined): string | null {

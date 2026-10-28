@@ -255,3 +255,10 @@ it("shows no handoff history beside a linked copy whose coordinator never moved"
   );
   expect(container.textContent).toBe("");
 });
+
+it("renders the banner as its own slot, so the coordinator page gives it a row of its own", async () => {
+  await render();
+  const banner = container.querySelector('[aria-label="Coordinator handoff history"]');
+  expect(banner?.getAttribute("data-slot")).toBe("handoff-history");
+  expect(banner?.textContent).toContain("Continued from another machine.");
+});
