@@ -17,6 +17,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  RELAY_ROUTE_ID,
   type ConnectionRoute,
   connectionRouteAddress,
   connectionRouteId,
@@ -27,6 +28,7 @@ import {
 import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
+import { beginConnectRouteRemoval, endConnectRouteRemoval } from "~/cloud/connectRoutePlan";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
@@ -83,10 +85,13 @@ export function EnvironmentRoutesList({
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
-    await removeRoute({
-      environmentId: environment.environmentId,
-      routeId: connectionRouteId(route.target),
-    });
+    const routeId = connectionRouteId(route.target);
+    // Removing Connect by hand keeps it removed; the automatic Connect route skips this
+    // machine. The removal is recorded first so the catalog update can't race it.
+    const isConnect = routeId === RELAY_ROUTE_ID;
+    if (isConnect) beginConnectRouteRemoval(environment.environmentId);
+    const result = await removeRoute({ environmentId: environment.environmentId, routeId });
+    if (isConnect) endConnectRouteRemoval(environment.environmentId, result._tag === "Success");
   };
 
   const handleDragEnd = (event: DragEndEvent) => {

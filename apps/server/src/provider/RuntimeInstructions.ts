@@ -87,6 +87,25 @@ export function codexShellEnvironmentArgs(identity: SpecweaveAgentIdentity): str
 }
 
 /**
+ * The same identity as `thread/start`, `thread/resume` and `thread/fork` config
+ * entries. One Codex app-server serves every thread of a provider instance, so
+ * the process-level `-c` overrides name only the thread that opened it; each
+ * thread's own config layers above them and names the thread that runs the
+ * command. Without it a delegated worker's `specweave` ledger writes bind the
+ * coordinator, and the worker reads as having changed code without an increment.
+ */
+export function codexThreadShellEnvironmentConfig(
+  identity: SpecweaveAgentIdentity,
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(specweaveAgentEnvironment(identity)).map(([name, value]) => [
+      `shell_environment_policy.set.${name}`,
+      value,
+    ]),
+  );
+}
+
+/**
  * Child-process `env`/`extendEnv` options with the headless variables applied.
  * Without an explicit environment the child inherits the server's, so the
  * variables extend it rather than replace it.

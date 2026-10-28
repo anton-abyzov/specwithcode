@@ -50,15 +50,67 @@ function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelC
     const profile = decodeClaudeProfileAdapter(entry.profileAdapter ?? {});
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
+    const runtime = profile.value.claudeCode ?? {};
     models.push({
-      model: entry.model,
-      runtime: profile.value.claudeCode ?? {},
+      model: withClaudeUltracodeToggle(entry.model, runtime),
+      runtime,
       compatibility: adapter.value.claudeCode ?? {},
     });
   }
 
   return {
     models,
+  };
+}
+
+export const CLAUDE_ULTRACODE_DESCRIPTOR = {
+  id: "ultracode",
+  label: "Ultracode",
+  description: "Multi-agent workflows on every task, at any effort",
+  type: "boolean",
+} as const satisfies NonNullable<ModelCapabilities["optionDescriptors"]>[number];
+
+/**
+ * Claude Code turns ultracode on as its own session setting, beside effort.
+ * The shared manifest still lists it as an effort choice (installed builds read
+ * it from main), so move that choice into a separate toggle here.
+ */
+export function withClaudeUltracodeToggle(
+  model: ServerProviderModel,
+  runtime: ClaudeCodeProfile,
+): ServerProviderModel {
+  const descriptors = model.capabilities?.optionDescriptors;
+  if (!descriptors) return model;
+  const effort = descriptors.find((descriptor) => descriptor.id === "effort");
+  const offered =
+    (effort?.type === "select" && effort.options.some((option) => option.id === "ultracode")) ||
+    Object.hasOwn(runtime.effortMap ?? {}, "ultracode");
+  if (!offered) return model;
+  const next = descriptors.flatMap((descriptor) => {
+    if (descriptor.id === "ultracode") return [];
+    if (descriptor.id !== "effort" || descriptor.type !== "select") return [descriptor];
+    const { currentValue, ...rest } = descriptor;
+    return [
+      {
+        ...rest,
+        ...(currentValue === undefined || currentValue === "ultracode" ? {} : { currentValue }),
+        options: descriptor.options.filter((option) => option.id !== "ultracode"),
+        ...(descriptor.promptInjectedValues
+          ? {
+              promptInjectedValues: descriptor.promptInjectedValues.filter(
+                (value) => value !== "ultracode",
+              ),
+            }
+          : {}),
+      },
+    ];
+  });
+  return {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      optionDescriptors: [...next, CLAUDE_ULTRACODE_DESCRIPTOR],
+    },
   };
 }
 
@@ -106,12 +158,10 @@ export function scopeClaudeModelCatalog(
   for (const entry of customEntries) {
     if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
     customCatalogModels.push({
-      model: {
-        slug: entry.slug,
-        name: entry.name,
-        isCustom: true,
-        capabilities: entry.capabilities,
-      },
+      model: withClaudeUltracodeToggle(
+        { slug: entry.slug, name: entry.name, isCustom: true, capabilities: entry.capabilities },
+        {},
+      ),
       runtime: {},
       compatibility: {},
     });
@@ -213,6 +263,7 @@ export function normalizeClaudeCatalogEffort(
   return effortMap[effort] ?? undefined;
 }
 
+/** Selections saved before Ultracode became a toggle store it as the effort. */
 export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined): boolean {
   return effort === "ultracode";
 }

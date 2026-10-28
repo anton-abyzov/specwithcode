@@ -11,10 +11,14 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   AuthAccessWriteScope,
+  AuthFleetSkillsScope,
+  AuthFleetUpdateScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
+  StudioFleetSkillError,
+  StudioFleetUpdateError,
 } from "@specweave-studio/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -41,6 +45,8 @@ import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as FleetHttp from "./studioFleetHttp.ts";
+import * as FleetSkills from "./fleet/fleetSkills.ts";
+import * as FleetUpdate from "./fleet/fleetUpdate.ts";
 import { persistServerRuntimeState } from "./serverRuntimeState.ts";
 import { fleetTailscaleState } from "./studioFleetInvite.ts";
 const descriptor = (environmentId: string) => ({
@@ -128,6 +134,8 @@ async function api(
   operatorDelegation = false,
   url = "https://fixture.tailnet.ts.net:8443",
   coordinatorEnvironmentId?: EnvironmentId,
+  fleetUpdateWorker?: FleetUpdate.FleetUpdateWorker["Service"],
+  fleetSkillWorker?: FleetSkills.FleetSkillWorker["Service"],
 ) {
   const config = Layer.effect(
     Config.ServerConfig,
@@ -184,6 +192,16 @@ async function api(
           }),
         ),
         Layer.provide(fakeTailscale),
+        Layer.provide(
+          fleetUpdateWorker === undefined
+            ? Layer.empty
+            : Layer.succeed(FleetUpdate.FleetUpdateWorker, fleetUpdateWorker),
+        ),
+        Layer.provide(
+          fleetSkillWorker === undefined
+            ? Layer.empty
+            : Layer.succeed(FleetSkills.FleetSkillWorker, fleetSkillWorker),
+        ),
         Layer.provide(
           FetchHttpClient.layer.pipe(
             Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)),
@@ -372,7 +390,50 @@ async function api(
         body: JSON.stringify(body),
       }),
     );
-  return { request, workers, add, invite, tailscaleStatus, signIn, phone, dispose };
+  const update = (body?: object, headers: Record<string, string> = {}) =>
+    handler(
+      new Request(
+        `http://localhost:8319/api/studio/fleet/update${body ? "" : "?coordinatorEnvironmentId=env-primary"}`,
+        {
+          method: body ? "POST" : "GET",
+          headers: {
+            "content-type": "application/json",
+            host: "localhost:8319",
+            authorization: "Bearer synthetic-session",
+            ...headers,
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        },
+      ),
+    );
+  const skills = (body?: object, headers: Record<string, string> = {}) =>
+    handler(
+      new Request(
+        `http://localhost:8319/api/studio/fleet/skills${body ? "" : "?coordinatorEnvironmentId=env-primary"}`,
+        {
+          method: body ? "POST" : "GET",
+          headers: {
+            "content-type": "application/json",
+            host: "localhost:8319",
+            authorization: "Bearer synthetic-session",
+            ...headers,
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        },
+      ),
+    );
+  return {
+    request,
+    workers,
+    add,
+    invite,
+    tailscaleStatus,
+    signIn,
+    phone,
+    update,
+    skills,
+    dispose,
+  };
 }
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -703,7 +764,12 @@ describe("inviting this machine over HTTP", () => {
       expect(serveCalls()).toEqual([["serve", "--bg", "--https=443", "http://127.0.0.1:8319"]]);
       expect(issuedSessions).toHaveLength(1);
       expect(issuedSessions[0]).toMatchObject({
-        scopes: [...AuthStandardClientScopes, AuthAccessWriteScope],
+        scopes: [
+          ...AuthStandardClientScopes,
+          AuthAccessWriteScope,
+          AuthFleetUpdateScope,
+          AuthFleetSkillsScope,
+        ],
         label: "Fleet management (fleet invite)",
         subject: "fleet-invitation",
         principal: { kind: "coordinator", environmentId: "approved-primary" },
@@ -1060,4 +1126,309 @@ it("R-E-02 refuses delegated phone codes even with a forged hub identity", async
   } finally {
     await manager.dispose();
   }
+});
+
+describe("a fleet primary asking this machine to update", () => {
+  const PRIMARY = EnvironmentId.make("env-primary");
+  const asked: FleetUpdate.FleetUpdateAsk[] = [];
+  const fakeWorker: FleetUpdate.FleetUpdateWorker["Service"] = {
+    request: (ask) =>
+      "version" in ask && ask.version === "1.0.100"
+        ? Effect.fail(
+            new StudioFleetUpdateError({
+              reason: "downgrade",
+              message: "This machine runs newer.",
+            }),
+          )
+        : Effect.sync(() => {
+            asked.push(ask);
+            return {
+              method: "service-agent" as const,
+              result: "accepted" as const,
+              phase: "draining" as const,
+              serverVersion: "1.0.109",
+            };
+          }),
+    status: Effect.succeed({
+      method: "service-agent" as const,
+      serverVersion: "1.0.109",
+      phase: "requested" as const,
+      targetVersion: "1.0.110",
+      agent: { installRequestedAt: "2026-10-28T13:10:00.000Z" },
+    }),
+  };
+  const install = { coordinatorEnvironmentId: "env-primary", version: "1.0.110", mode: "force" };
+  afterEach(() => {
+    asked.length = 0;
+  });
+
+  it("takes an install request and a status read from the primary's management token", async () => {
+    const service = await api([AuthFleetUpdateScope], false, undefined, PRIMARY, fakeWorker);
+    try {
+      const response = await service.update({ ...install, holdMinutes: 10 });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toMatchObject({ result: "accepted", phase: "draining" });
+      expect(asked).toEqual([{ version: "1.0.110", mode: "force", holdMinutes: 10 }]);
+      const status = await service.update();
+      expect(status.status).toBe(200);
+      expect(await status.json()).toMatchObject({
+        phase: "requested",
+        agent: { installRequestedAt: "2026-10-28T13:10:00.000Z" },
+      });
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("accepts a token issued before fleet:update through environment:maintain", async () => {
+    const service = await api(
+      [...AuthStandardClientScopes, AuthAccessWriteScope],
+      false,
+      undefined,
+      PRIMARY,
+      fakeWorker,
+    );
+    try {
+      expect((await service.update(install)).status).toBe(200);
+      expect(asked).toHaveLength(1);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("refuses a token without the update scope, another primary's token and the owner's sign-in", async () => {
+    const cases: Array<[ReadonlyArray<AuthEnvironmentScope>, EnvironmentId | undefined]> = [
+      [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], PRIMARY],
+      [[AuthFleetUpdateScope], EnvironmentId.make("env-other")],
+      [[...AuthStandardClientScopes, AuthAccessWriteScope, AuthFleetUpdateScope], undefined],
+    ];
+    for (const [scopes, coordinator] of cases) {
+      const service = await api(scopes, false, undefined, coordinator, fakeWorker);
+      try {
+        expect((await service.update(install)).status).toBe(403);
+        expect((await service.update()).status).toBe(403);
+      } finally {
+        await service.dispose();
+      }
+    }
+    expect(asked).toEqual([]);
+  });
+
+  it("refuses anything beyond an install, a cancel or a check", async () => {
+    const service = await api([AuthFleetUpdateScope], false, undefined, PRIMARY, fakeWorker);
+    try {
+      for (const body of [
+        { ...install, version: "latest" },
+        { ...install, command: "rm -rf /" },
+        { ...install, holdMinutes: 60 },
+        { coordinatorEnvironmentId: "env-primary", url: "https://example.com/evil.tar.gz" },
+      ])
+        expect((await service.update(body)).status).toBe(400);
+      expect(asked).toEqual([]);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("answers the machine's named refusal, such as a downgrade", async () => {
+    const service = await api([AuthFleetUpdateScope], false, undefined, PRIMARY, fakeWorker);
+    try {
+      const response = await service.update({ ...install, version: "1.0.100" });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        _tag: "StudioFleetUpdateError",
+        reason: "downgrade",
+      });
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("says unsupported where this server has no fleet update worker", async () => {
+    const service = await api([AuthFleetUpdateScope], false, undefined, PRIMARY);
+    try {
+      const response = await service.update(install);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ reason: "unsupported" });
+    } finally {
+      await service.dispose();
+    }
+  });
+});
+
+describe("a fleet primary asking this machine to install a skill", () => {
+  const PRIMARY = EnvironmentId.make("env-primary");
+  const asked: FleetSkills.FleetSkillAsk[] = [];
+  const fakeWorker: FleetSkills.FleetSkillWorker["Service"] = {
+    request: (ask) =>
+      ask.scope === "project" && ask.projectId === "nope"
+        ? Effect.fail(
+            new StudioFleetSkillError({
+              reason: "unknown-project",
+              message: "This machine has no project nope.",
+            }),
+          )
+        : Effect.sync(() => {
+            asked.push(ask);
+            return {
+              result: "accepted" as const,
+              requestId: "2026-10-28T15:00:00.000Z#1",
+              phase: "installing" as const,
+              skill: ask.skill,
+              version: ask.version,
+              scope: ask.scope,
+            };
+          }),
+    status: Effect.succeed({
+      phase: "installed" as const,
+      requestId: "2026-10-28T15:00:00.000Z#1",
+      installedVersion: "1.2.3",
+      pinnedVersion: null,
+    }),
+  };
+  const install = {
+    coordinatorEnvironmentId: "env-primary",
+    skill: "anton-abyzov/vskill/sw-do",
+    version: "1.2.3",
+    scope: "user",
+    pin: false,
+  };
+  afterEach(() => {
+    asked.length = 0;
+  });
+
+  it("takes an install and a status read from the primary's fleet:skills token", async () => {
+    const service = await api(
+      [AuthFleetSkillsScope],
+      false,
+      undefined,
+      PRIMARY,
+      undefined,
+      fakeWorker,
+    );
+    try {
+      const response = await service.skills(install);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toMatchObject({ result: "accepted", phase: "installing" });
+      expect(asked).toEqual([
+        { skill: "anton-abyzov/vskill/sw-do", version: "1.2.3", pin: false, scope: "user" },
+      ]);
+      const project = await service.skills({
+        ...install,
+        scope: "project",
+        projectId: "proj-1",
+        pin: true,
+      });
+      expect(project.status).toBe(200);
+      expect(asked[1]).toEqual({
+        skill: "anton-abyzov/vskill/sw-do",
+        version: "1.2.3",
+        pin: true,
+        scope: "project",
+        projectId: "proj-1",
+      });
+      const status = await service.skills();
+      expect(status.status).toBe(200);
+      expect(await status.json()).toMatchObject({ phase: "installed", installedVersion: "1.2.3" });
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("accepts a token issued before fleet:skills through environment:maintain", async () => {
+    const service = await api(
+      [...AuthStandardClientScopes, AuthAccessWriteScope, AuthFleetUpdateScope],
+      false,
+      undefined,
+      PRIMARY,
+      undefined,
+      fakeWorker,
+    );
+    try {
+      expect((await service.skills(install)).status).toBe(200);
+      expect(asked).toHaveLength(1);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("refuses fleet:update alone, another primary's token and the owner's sign-in", async () => {
+    const cases: Array<[ReadonlyArray<AuthEnvironmentScope>, EnvironmentId | undefined]> = [
+      [[AuthFleetUpdateScope], PRIMARY],
+      [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], PRIMARY],
+      [[AuthFleetSkillsScope], EnvironmentId.make("env-other")],
+      [[...AuthStandardClientScopes, AuthAccessWriteScope, AuthFleetSkillsScope], undefined],
+    ];
+    for (const [scopes, coordinator] of cases) {
+      const service = await api(scopes, false, undefined, coordinator, undefined, fakeWorker);
+      try {
+        expect((await service.skills(install)).status).toBe(403);
+        expect((await service.skills()).status).toBe(403);
+      } finally {
+        await service.dispose();
+      }
+    }
+    expect(asked).toEqual([]);
+  });
+
+  it("refuses shell text, paths, URLs, local: sources and extra fields", async () => {
+    const service = await api(
+      [AuthFleetSkillsScope],
+      false,
+      undefined,
+      PRIMARY,
+      undefined,
+      fakeWorker,
+    );
+    try {
+      for (const body of [
+        { ...install, skill: "anton-abyzov/vskill/sw-do; rm -rf ~" },
+        { ...install, skill: "local:/Users/me/skills/x" },
+        { ...install, skill: "https://github.com/anton-abyzov/vskill" },
+        { ...install, skill: "../../etc/passwd" },
+        { ...install, version: "latest" },
+        { ...install, command: "rm -rf /" },
+        { ...install, scope: "project", projectRoot: "/tmp", projectId: "p" },
+        { ...install, scope: "project" },
+      ])
+        expect((await service.skills(body)).status, JSON.stringify(body)).toBe(400);
+      expect(asked).toEqual([]);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("answers the machine's named refusal, such as an unknown project", async () => {
+    const service = await api(
+      [AuthFleetSkillsScope],
+      false,
+      undefined,
+      PRIMARY,
+      undefined,
+      fakeWorker,
+    );
+    try {
+      const response = await service.skills({ ...install, scope: "project", projectId: "nope" });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        _tag: "StudioFleetSkillError",
+        reason: "unknown-project",
+      });
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("says unsupported where this server has no fleet skill worker", async () => {
+    const service = await api([AuthFleetSkillsScope], false, undefined, PRIMARY);
+    try {
+      const response = await service.skills(install);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ reason: "unsupported" });
+    } finally {
+      await service.dispose();
+    }
+  });
 });

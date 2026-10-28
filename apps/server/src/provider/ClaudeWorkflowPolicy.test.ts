@@ -184,6 +184,30 @@ describe("Claude workflow policy", () => {
     assert.isUndefined(policy.allowedTools);
   });
 
+  it("lets the thread toggle choose ultracode unless workflows are disabled", () => {
+    const ultracode = (
+      mode: "disabled" | "on-request" | "automatic",
+      toggle: boolean | undefined,
+    ) =>
+      compileClaudeWorkflowPolicy({ mode, ultracode: toggle, environment: {} }).settings.ultracode;
+    assert.deepEqual(
+      (["disabled", "on-request", "automatic"] as const).map((mode) => [
+        ultracode(mode, undefined),
+        ultracode(mode, true),
+        ultracode(mode, false),
+      ]),
+      [
+        [false, false, false],
+        [false, true, false],
+        [true, true, false],
+      ],
+    );
+    assert.isTrue(
+      compileClaudeWorkflowPolicy({ extraArgs: { effort: "ultracode" }, environment: {} }).settings
+        .ultracode,
+    );
+  });
+
   it("on-request disables automatic orchestration and preserves native permissions", () => {
     const policy = compileClaudeWorkflowPolicy({
       mode: "on-request",

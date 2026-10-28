@@ -9,6 +9,8 @@
  */
 import {
   AuthAccessWriteScope,
+  AuthFleetSkillsScope,
+  AuthFleetUpdateScope,
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
 } from "@specweave-studio/contracts";
@@ -19,7 +21,21 @@ import * as Duration from "effect/Duration";
  * holds, so it carries every scope a connection from the primary may ask for,
  * plus access:write to mint those pairings.
  */
-export const FLEET_INVITE_SCOPES = [...AuthStandardClientScopes, AuthAccessWriteScope] as const;
+export const FLEET_INVITE_SCOPES = [
+  ...AuthStandardClientScopes,
+  AuthAccessWriteScope,
+  AuthFleetUpdateScope,
+  AuthFleetSkillsScope,
+] as const;
+
+/**
+ * What the person making an invitation must hold here: every scope the line
+ * hands out except `fleet:update` and `fleet:skills`, which only a fleet
+ * primary uses and are narrower than `environment:maintain`, already among these.
+ */
+export const FLEET_INVITE_MAKER_SCOPES = FLEET_INVITE_SCOPES.filter(
+  (scope) => scope !== AuthFleetUpdateScope && scope !== AuthFleetSkillsScope,
+);
 
 /**
  * How long a v2 line's one-time credential can be redeemed. Short on purpose:

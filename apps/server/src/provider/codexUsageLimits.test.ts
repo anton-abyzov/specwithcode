@@ -369,6 +369,48 @@ describe("codexRateLimitsToLimits", () => {
 });
 
 describe("codexRateLimitsToUpdate", () => {
+  it("deduplicates repeated model-bucket windows against that bucket's snapshot", () => {
+    const cached = { limitId: "spark", primary: { usedPercent: 25, windowDurationMins: 300 } };
+    expect(codexRateLimitsToUpdate(cached)?.windows[0]?.id).toBe("spark:primary");
+    expect(codexRateLimitsToUpdate(structuredClone(cached), cached)).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ ...cached, limitName: "GPT-5.3-Codex-Spark" }, cached)?.windows[0]
+        ?.modelScope,
+    ).toBe("GPT-5.3-Codex-Spark");
+    expect(
+      codexRateLimitsToUpdate(
+        { ...cached, primary: { ...cached.primary, usedPercent: 26 } },
+        cached,
+      )?.windows[0]?.usedPercent,
+    ).toBe(26);
+  });
+  it("does not republish cached windows over a newer account probe", () => {
+    const cached = {
+      primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 20, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    };
+    expect(codexRateLimitsToUpdate(cached)?.windows).toHaveLength(2);
+    expect(codexRateLimitsToUpdate(structuredClone(cached), cached)).toBeUndefined();
+
+    const changed = { ...cached, secondary: { ...cached.secondary, usedPercent: 21 } };
+    expect(codexRateLimitsToUpdate(changed, cached)?.windows.map((window) => window.id)).toEqual([
+      "secondary",
+    ]);
+    expect(codexRateLimitsToUpdate({ primary: cached.primary }, cached)).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, resetsAt: 1_784_001_000 } }, cached)
+        ?.windows,
+    ).toHaveLength(1);
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, usedPercent: 76 } }, cached)
+        ?.windows[0]?.usedPercent,
+    ).toBe(76);
+    // A denial still withdraws permission when its windows repeat the cached ones.
+    expect(
+      codexRateLimitsToUpdate({ ...structuredClone(cached), spendControlReached: true }, cached),
+    ).toMatchObject({ windows: [], spendControlReached: true });
+  });
+
   it("carries an explicit main spend denial even without a window", () => {
     expect(
       codexRateLimitsToUpdate({

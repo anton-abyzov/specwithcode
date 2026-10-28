@@ -12,13 +12,16 @@
  * refused definitely changed nothing, so the source takes its lease back; one
  * that never answered may have continued, so the source stays paused until a
  * heartbeat settles it. A copy that cannot reach any replica for longer than
- * a stale lease fences itself, so a partition never runs a thread twice.
+ * a stale lease fences itself only when it also cannot reach SpecWithCode
+ * Connect (its own network is down): a sleeping replica machine is silent
+ * too, and must not stop the work here (1128).
  */
 import * as NodeFSP from "node:fs/promises";
 
 import {
   CommandId,
   type EnvironmentId,
+  HANDOFF_LEASE_RENEW_MS,
   HANDOFF_LEASE_STALE_MS,
   type HandOffInput,
   type HandOffMachineInput,
@@ -35,6 +38,7 @@ import {
   type HandoffReplicaStatus,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
+  type ProjectId,
   type ThreadId,
   appendThreadExecutionHistory,
 } from "@specweave-studio/contracts";
@@ -55,7 +59,8 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
-import { HandoffMode } from "./HandoffMode.ts";
+import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
+import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
@@ -84,6 +89,16 @@ import { HANDOFF_APP_VERSION, HANDOFF_PROTOCOL_VERSION, versionFailure } from ".
 const SETTLE_TIMEOUT = Duration.seconds(45);
 const SETTLE_POLL = Duration.millis(500);
 const REFUSED_RETRY_MS = 10 * 60_000;
+/** After a start or a wake, Continue here waits this long: the network may not be back yet. */
+export const WAKE_GRACE_MS = 2 * HANDOFF_LEASE_RENEW_MS;
+/**
+ * Idle time this long between one lease tick's end and the next one's start means
+ * the machine slept (or its clock jumped). Ticks are spaced from the previous end,
+ * so a slow tick never reads as a sleep.
+ */
+const WAKE_GAP_MS = 2 * HANDOFF_LEASE_RENEW_MS;
+/** How long Continue here waits for the source to answer a direct probe. */
+const SOURCE_PROBE_TIMEOUT = Duration.seconds(5);
 /** A failing replication waits 30s, then twice as long each time, up to 10 minutes. */
 export const REPLICATE_RETRY_BASE_MS = 30_000;
 export const REPLICATE_RETRY_MAX_MS = 10 * 60_000;
@@ -115,6 +130,7 @@ export const make = Effect.gen(function* () {
   const handoff = yield* HandoffMode;
   const peers = yield* HandoffPeers;
   const receiver = yield* HandoffReceiver;
+  const connectivity = yield* HandoffConnectivity;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectService.ProjectService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -122,9 +138,21 @@ export const make = Effect.gen(function* () {
   const self = handoff.environmentId;
   const selfLabel = handoff.machineLabel;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const selfCaller: ReceiverCaller = { sourceEnvironmentId: self, grant: null };
+  // A move to this machine runs on the owner's own sign-ins: no access ceiling applies.
+  const selfCaller: ReceiverCaller = {
+    sourceEnvironmentId: self,
+    grant: null,
+    runtimeCeiling: null,
+  };
   /** When each replica machine last answered this machine, for self-fencing. */
   const lastAnswer = new Map<string, number>();
+  /**
+   * When this server started or last woke (idle time between lease ticks), when
+   * the last tick ended, and how many ticks run now.
+   */
+  let wokeAt = yield* Clock.currentTimeMillis;
+  let lastTickEndAt: number | null = null;
+  let ticksRunning = 0;
   /** Per thread and destination: failed replications in a row and when to try again. */
   const replicateBackoff = new Map<string, { failures: number; retryAt: number }>();
   const backoffKey = (threadId: ThreadId, destination: EnvironmentId) =>
@@ -755,7 +783,12 @@ export const make = Effect.gen(function* () {
                 pendingTakeover: { destinationEnvironmentId: destination, request },
                 lastError: `${error.message} This thread stays paused until that machine answers.`,
               })).pipe(Effect.ignore)
-            : releaseHold(input.threadId, null),
+            : releaseHold(
+                input.threadId,
+                destinationRefused(error) && error.check === "grant"
+                  ? `Not moved: ${error.message}`.slice(0, 1000)
+                  : null,
+              ),
         ),
         Effect.mapError(fromPeer),
       );
@@ -825,7 +858,12 @@ export const make = Effect.gen(function* () {
             threadId,
             title,
             outcome: moved.failure.code === "fenced" ? "skipped" : "stayed",
-            detail: moved.failure.message.slice(0, 500),
+            // A destination whose work grant does not allow the thread (its sign-in, its
+            // project) says so, so the user sees why it stayed on a Mac about to sleep.
+            detail: (moved.failure.code === "needs_grant"
+              ? `Not moved: ${moved.failure.message}`
+              : moved.failure.message
+            ).slice(0, 500),
             continuedThreadId: null,
             resumed: false,
           });
@@ -895,11 +933,51 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * Continues a replica here after its source went silent. Allowed only once
-   * the source's lease is stale, the same wait the source uses to fence itself.
+   * Is the source awake? A direct probe: any answer it sent, a refusal included,
+   * says it runs. "unknown" when this machine cannot ask it (no route, no
+   * credential, identity check): that says nothing about the source.
    */
-  const continueHere = (input: HandoffContinueHereInput) =>
+  const probeSource = (
+    replica: { readonly sourceEnvironmentId: EnvironmentId; readonly projectId: ProjectId | null },
+    sourceThreadId: ThreadId,
+    detail: { readonly sourceProjectId: ProjectId; readonly repositoryPath: string } | undefined,
+  ) =>
     Effect.gen(function* () {
+      const projectId = replica.projectId ?? detail?.sourceProjectId ?? null;
+      if (projectId === null) return "unknown" as const;
+      // Read-only on the source: it only lists which of no commits it knows.
+      const answer = yield* peers
+        .negotiate(replica.sourceEnvironmentId, {
+          sourceEnvironmentId: self,
+          sourceProjectId: projectId,
+          sourceThreadId,
+          repositoryPath: detail?.repositoryPath ?? ".",
+          candidates: [],
+        })
+        .pipe(Effect.result, Effect.timeoutOption(SOURCE_PROBE_TIMEOUT));
+      if (Option.isNone(answer)) return "silent" as const;
+      if (answer.value._tag === "Success") return "awake" as const;
+      const error = answer.value.failure;
+      if (error.local === true) {
+        yield* Effect.logWarning(
+          "Continue here could not probe the source; only its stale lease decides",
+          { sourceEnvironmentId: replica.sourceEnvironmentId, message: error.message },
+        );
+        return "unknown" as const;
+      }
+      return error.code === "unreachable" ? ("silent" as const) : ("awake" as const);
+    });
+
+  /**
+   * Continues a replica here after its source went silent. Allowed only once
+   * the source's lease is stale, this machine has been awake long enough for
+   * its network to be back, its own network is not shown down, and the source
+   * does not answer a direct probe. An agent also needs both shown: this
+   * machine online and the source silent rather than unaskable.
+   */
+  const continueHere = (input: HandoffContinueHereInput, options?: HandoffContinueHereOptions) =>
+    Effect.gen(function* () {
+      const byAgent = options?.byAgent === true;
       const document = yield* handoff.document;
       const replica = findIncoming(document, input.sourceEnvironmentId, input.sourceThreadId);
       if (replica === undefined) {
@@ -923,6 +1001,20 @@ export const make = Effect.gen(function* () {
           )} seconds ago; it may still be running it.`,
         );
       }
+      // Right after a wake every lease looks stale and the network may still be down,
+      // so a silent source proves nothing yet. Idle time the lease tick has not seen
+      // yet counts as a wake too; a tick still running is no idle time.
+      const justWoke =
+        now - wokeAt < WAKE_GRACE_MS ||
+        (ticksRunning === 0 && lastTickEndAt !== null && now - lastTickEndAt > WAKE_GAP_MS);
+      if (justWoke) {
+        return yield* failed(
+          "busy",
+          `This machine just started or woke; try again in ${Math.round(
+            WAKE_GRACE_MS / 1000,
+          )} seconds, once it has checked whether ${replica.sourceLabel} still runs this thread.`,
+        );
+      }
       const detail = (document.incomingDetails ?? {})[
         incomingKey(input.sourceEnvironmentId, input.sourceThreadId)
       ];
@@ -933,9 +1025,38 @@ export const make = Effect.gen(function* () {
         selfLabel,
       });
       if (mismatch !== null) return yield* failed("invalid", mismatch.message);
+      // A machine that lost its own network sees every source as silent, while the
+      // source, still online, keeps running the thread and never fences it.
+      const network = yield* connectivity.probe;
+      if (network === "offline") {
+        return yield* failed(
+          "busy",
+          `This machine cannot reach the network, so ${replica.sourceLabel} may still be running this thread; try again once it is back online.`,
+        );
+      }
+      if (byAgent && network !== "online") {
+        return yield* failed(
+          "busy",
+          `This machine cannot show that its network works (no SpecWithCode Connect link), so ${replica.sourceLabel}'s silence proves nothing; ask the user whether to continue it here (Continue here in the app).`,
+        );
+      }
+      const source = yield* probeSource(replica, input.sourceThreadId, detail);
+      if (source === "awake") {
+        return yield* failed(
+          "busy",
+          `${replica.sourceLabel} answered just now and still holds this thread; hand it off from there.`,
+        );
+      }
+      if (source === "unknown" && byAgent) {
+        return yield* failed(
+          "busy",
+          `This machine could not ask ${replica.sourceLabel} whether it still runs this thread; ask the user whether to continue it here (Continue here in the app).`,
+        );
+      }
       const response = yield* receiver
         .takeover(
-          { sourceEnvironmentId: input.sourceEnvironmentId, grant: null },
+          // Continuing here runs on this machine's own sign-ins: no access ceiling applies.
+          { sourceEnvironmentId: input.sourceEnvironmentId, grant: null, runtimeCeiling: null },
           {
             sourceEnvironmentId: input.sourceEnvironmentId,
             sourceThreadId: input.sourceThreadId,
@@ -964,12 +1085,13 @@ export const make = Effect.gen(function* () {
 
   /**
    * Every lease tick: heartbeat the machines holding replicas (they answer
-   * which threads they continued, which fences the copy here) and fence this
-   * machine's running copies when no replica machine has answered for longer
-   * than a stale lease. It never ships a checkpoint, so a slow replication
-   * cannot delay it.
+   * which threads they continued, which fences the copy here). A running copy
+   * whose replica machines all went silent past a stale lease fences itself
+   * only when this machine also cannot reach SpecWithCode Connect: silence
+   * alone may be a sleeping laptop, and that must never stop the work here.
+   * It never ships a checkpoint, so a slow replication cannot delay it.
    */
-  const heartbeat = Effect.gen(function* () {
+  const heartbeatOnce = Effect.gen(function* () {
     const document = yield* handoff.document;
     const now = yield* Clock.currentTimeMillis;
     const byPeer = new Map<EnvironmentId, Array<{ sourceThreadId: ThreadId; epoch: number }>>();
@@ -1040,24 +1162,22 @@ export const make = Effect.gen(function* () {
         );
       }
     }
-    if (byPeer.size > 0 && document.pausedSince !== null) {
-      const anyAnswered = [...byPeer.keys()].some(
-        (peer) => now - (lastAnswer.get(peer) ?? 0) <= HANDOFF_LEASE_STALE_MS,
+    const usableRemote = (record: (typeof document.threads)[string]) =>
+      record.replicas.filter(
+        (replica) => replica.environmentId !== self && replica.sequence !== null,
       );
-      if (anyAnswered) {
-        yield* handoff.updateDocument(
-          (current) => [undefined, { ...current, pausedSince: null }] as const,
-        );
-      }
-    }
-    // Self-fence: a running copy whose replica machines all went silent stops.
+    const answeredNow = (environmentId: EnvironmentId) =>
+      now - (lastAnswer.get(environmentId) ?? Number.NEGATIVE_INFINITY) <= HANDOFF_LEASE_STALE_MS;
+    // Running copies whose replica machines all went silent: only a machine that holds
+    // a usable checkpoint could continue a thread. Turning handoff off later leaves
+    // those copies continuable, so the mode does not matter here.
+    const silentRunning: Array<OrchestrationV2ThreadShell> = [];
     for (const [id, record] of Object.entries(document.threads)) {
       if (record.continuedOn !== null || record.lease?.holderEnvironmentId !== self) continue;
-      const remote = record.replicas.filter((replica) => replica.environmentId !== self);
+      const remote = usableRemote(record);
       if (remote.length === 0) continue;
-      // Only a partition counts: every replica machine answered here before and then went
-      // silent for longer than a stale lease. A machine never heard from since this server
-      // started (asleep all along) does not stop work here.
+      // Every such machine answered here before and then went silent for longer than a
+      // stale lease. A machine never heard from since this server started does not count.
       const silent = remote.every((replica) => {
         const seen = lastAnswer.get(replica.environmentId);
         return seen !== undefined && now - seen > HANDOFF_LEASE_STALE_MS;
@@ -1066,26 +1186,60 @@ export const make = Effect.gen(function* () {
       const shell = yield* projections
         .getThreadShell(id as ThreadId)
         .pipe(Effect.orElseSucceed(() => null));
-      if (shell === null || shell.activeRunId === null) continue;
-      yield* Effect.logWarning("Handoff mode fenced a thread whose replicas stopped answering", {
-        threadId: id,
-      });
-      yield* updateRecord(shell.id, (current) => ({ ...current, fencedBy: "sleep" })).pipe(
-        Effect.ignore,
-      );
-      yield* handoff.updateDocument(
-        (current) =>
-          [
-            undefined,
-            current.pausedSince === null
-              ? { ...current, pausedSince: DateTime.formatIso(DateTime.makeUnsafe(now)) }
-              : current,
-          ] as const,
-      );
-      yield* interruptRun(
-        shell,
-        "No other machine answered for this thread's lease; it paused here.",
-      );
+      if (shell !== null && shell.activeRunId !== null) silentRunning.push(shell);
+    }
+    // Threads this machine paused when its network went down. Its network coming
+    // back proves nothing about them: a replica machine may have continued one and
+    // gone to sleep since. Only an answer from one of their replica machines (which
+    // carries any continuation) or Resume this Mac lifts the pause.
+    const waiting = Object.values(document.threads).filter(
+      (record) =>
+        record.fencedBy === "sleep" &&
+        record.continuedOn === null &&
+        record.lease?.holderEnvironmentId === self &&
+        usableRemote(record).length > 0,
+    );
+    // Asked only when it decides something: a fence, or a pause from an older build.
+    const network =
+      silentRunning.length > 0 || (document.pausedSince !== null && waiting.length === 0)
+        ? yield* connectivity.probe
+        : "unknown";
+    if (document.pausedSince !== null) {
+      const settled =
+        waiting.length === 0
+          ? network !== "offline"
+          : waiting.every((record) =>
+              usableRemote(record).some((replica) => answeredNow(replica.environmentId)),
+            );
+      if (settled) {
+        yield* handoff.updateDocument(
+          (current) => [undefined, { ...current, pausedSince: null }] as const,
+        );
+      }
+    }
+    if (network === "offline") {
+      for (const shell of silentRunning) {
+        yield* Effect.logWarning(
+          "Handoff mode fenced a thread: its replicas and SpecWithCode Connect stopped answering",
+          { threadId: shell.id },
+        );
+        yield* updateRecord(shell.id, (current) => ({ ...current, fencedBy: "sleep" })).pipe(
+          Effect.ignore,
+        );
+        yield* handoff.updateDocument(
+          (current) =>
+            [
+              undefined,
+              current.pausedSince === null
+                ? { ...current, pausedSince: DateTime.formatIso(DateTime.makeUnsafe(now)) }
+                : current,
+            ] as const,
+        );
+        yield* interruptRun(
+          shell,
+          "This machine lost its network and no other machine answered for this thread's lease; it paused here.",
+        );
+      }
     }
     // Replicas whose source went silent read "unknown" here.
     yield* handoff.updateDocument((current) => {
@@ -1095,6 +1249,24 @@ export const make = Effect.gen(function* () {
   }).pipe(
     Effect.catchCause((cause) => Effect.logWarning("Handoff moves heartbeat failed", { cause })),
   );
+
+  const heartbeat = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    // Ticks start 30 seconds after the previous one ended; longer idle time means
+    // this machine slept. A slow tick (a re-sent takeover, a fence) is no sleep.
+    if (ticksRunning === 0 && lastTickEndAt !== null && now - lastTickEndAt > WAKE_GAP_MS) {
+      wokeAt = now;
+    }
+    ticksRunning += 1;
+    yield* heartbeatOnce.pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          ticksRunning -= 1;
+          lastTickEndAt = yield* Clock.currentTimeMillis;
+        }),
+      ),
+    );
+  });
 
   /**
    * Ships each thread's newest checkpoint to every paired machine in its
@@ -1164,4 +1336,4 @@ export const layerFleet = Layer.effectDiscard(
     const moves = yield* make;
     yield* handoff.attachMoves(moves);
   }),
-).pipe(Layer.provide(HandoffPeersLayer));
+).pipe(Layer.provide(Layer.merge(HandoffPeersLayer, HandoffConnectivityLayer)));

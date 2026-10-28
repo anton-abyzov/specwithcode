@@ -1,5 +1,7 @@
-/* MCP connection matrix: one baseline per row, status dot + label, meta under it. */
+/* MCP connection matrix: one status mark per cell, label and meta beside it in the detailed view. */
 .connection-table-wrap {
+  /* Anchors each cell's screen-reader text so it scrolls with the table, not the page. */
+  position: relative;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -16,10 +18,11 @@
 }
 .connection-table thead th {
   padding: 8px 14px;
-  font-size: 11px;
+  overflow: hidden;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--muted-foreground);
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--muted) 45%, transparent);
@@ -86,17 +89,25 @@
   vertical-align: middle;
 }
 .connection-table[data-density="compact"] thead th {
-  padding: 8px 10px;
+  padding: 8px 6px;
+}
+/* Compact tool columns: the mark sits centred under its tool's name. */
+.connection-table[data-density="compact"] thead th:not(:first-child),
+.connection-table[data-density="compact"] tbody td {
+  text-align: center;
+}
+.connection-table[data-density="compact"] .connection-cell,
+.connection-table[data-density="compact"] .connection-cell-line {
+  align-items: center;
+  justify-content: center;
 }
 .connection-table[data-density="compact"] tbody th[scope="row"],
 .connection-table[data-density="compact"] thead th:first-child {
   padding-left: 14px;
 }
-.connection-table[data-density="compact"] .connection-cell {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
+.connection-table[data-density="compact"] .connection-status-button {
+  margin: -3px;
+  padding: 3px;
 }
 .connection-toolbar {
   display: flex;
@@ -136,10 +147,9 @@
 }
 .connection-chips-label {
   margin-right: 2px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  white-space: nowrap;
   color: var(--muted-foreground);
 }
 .connection-chip {
@@ -168,6 +178,19 @@
 .connection-chip-count {
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
+}
+/* A tool chip counts its enabled servers: the same green as an enabled mark. */
+.connection-chip-count[data-enabled] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.connection-chip-count[data-enabled]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--success, #3f8f4a);
 }
 .connection-density {
   margin-left: auto;
@@ -227,12 +250,17 @@
   gap: 2px;
 }
 .connection-status {
+  position: relative;
   display: inline-flex;
   max-width: 100%;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   font-weight: 500;
+  white-space: nowrap;
   color: var(--foreground);
+}
+.connection-cell-action {
+  padding: 4px 0 0 17px;
 }
 .connection-status-button {
   margin: -2px -6px;
@@ -245,45 +273,111 @@
 .connection-status-button[aria-pressed="true"] {
   background: color-mix(in srgb, var(--foreground) 8%, transparent);
 }
+.connection-status-button:disabled {
+  cursor: default;
+}
 .connection-status-button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
-.connection-dot {
-  width: 7px;
-  height: 7px;
+.connection-status-button[data-pending] .connection-glyph {
+  animation: connection-pending 1s ease-in-out infinite alternate;
+}
+@keyframes connection-pending {
+  to {
+    opacity: 0.35;
+  }
+}
+.connection-tip-trigger {
+  display: inline-flex;
+  max-width: 100%;
+}
+.connection-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+  text-align: left;
+}
+/* Status marks: filled for a declaration that runs, outlined for one that does not. */
+.connection-glyph {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
-  background: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted-foreground);
 }
-.connection-cell[data-tone="configured"] .connection-dot {
+.connection-glyph svg {
+  width: 10px;
+  height: 10px;
+}
+.connection-glyph[data-glyph="configured"] {
   background: var(--success, #3f8f4a);
+  color: #fff;
 }
-.connection-cell[data-tone="disabled"] .connection-dot {
-  background: transparent;
+.connection-glyph[data-glyph="disabled"] {
   box-shadow: inset 0 0 0 1.5px var(--muted-foreground);
 }
-.connection-cell[data-tone="invalid"] .connection-dot {
+.connection-glyph[data-glyph="invalid"] {
   background: var(--destructive);
+  color: #fff;
 }
-.connection-cell[data-tone="unknown"] .connection-dot {
-  background: var(--warning, #b7791f);
+.connection-glyph[data-glyph="unknown"] {
+  box-shadow: inset 0 0 0 1.5px var(--warning, #b7791f);
+  color: var(--warning, #b7791f);
+}
+.connection-glyph[data-glyph="add"] {
+  border: 1.5px dashed color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+button:hover > .connection-glyph[data-glyph="add"],
+button:focus-visible > .connection-glyph[data-glyph="add"] {
+  border-style: solid;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.connection-glyph[data-glyph="none"]::before {
+  content: "";
+  width: 8px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
 }
 .connection-cell[data-tone="none"] .connection-status,
+.connection-cell[data-tone="add"] .connection-status,
 .connection-cell[data-tone="unknown"] .connection-status {
   font-weight: 400;
   color: var(--muted-foreground);
 }
-.connection-cell[data-tone="none"] .connection-dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+.connection-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.connection-legend > li {
+  display: flex;
+}
+.connection-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: help;
 }
 .connection-meta {
-  padding-left: 15px;
+  padding-left: 23px;
   font-size: 12px;
   line-height: 16px;
   color: var(--muted-foreground);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .connection-table tbody tr.connection-group > th {
   padding: 6px 14px;
@@ -310,4 +404,7 @@
 }
 .connection-table thead th:first-child {
   background: color-mix(in srgb, var(--muted) 45%, var(--card));
+}
+.connection-table tbody tr.connection-details-row > td {
+  text-align: left;
 }

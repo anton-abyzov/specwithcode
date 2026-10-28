@@ -223,8 +223,22 @@ export function codexRateLimitsToLimits(input: {
 
 export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,
+  previous?: CodexRateLimitSnapshot,
 ): ProviderUsageLimitsUpdate | undefined {
-  const windows = codexRateLimitsToWindows(snapshot);
+  const previousWindows = previous ? codexRateLimitsToWindows(previous) : [];
+  // Token ticks repeat session-cached limits that may predate an account probe or reset.
+  const windows = codexRateLimitsToWindows(snapshot).filter((window) => {
+    const existing = previousWindows.find((candidate) => candidate.id === window.id);
+    return (
+      !existing ||
+      existing.kind !== window.kind ||
+      existing.label !== window.label ||
+      existing.modelScope !== window.modelScope ||
+      existing.usedPercent !== window.usedPercent ||
+      existing.resetsAt !== window.resetsAt ||
+      existing.windowDurationMins !== window.windowDurationMins
+    );
+  });
   const main = !snapshot.limitId || snapshot.limitId === "codex";
   // Sparse notifications can withdraw permission, including without windows.
   // They cannot grant permission or renew the earlier full-read observation.

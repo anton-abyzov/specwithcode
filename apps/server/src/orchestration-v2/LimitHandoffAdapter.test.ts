@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import { describe, expect } from "vite-plus/test";
 
 import { HandoffMode } from "../handoff/HandoffMode.ts";
+import { PAUSED_OFFLINE_REFUSAL } from "../handoff/HandoffTurnGate.ts";
 
 import {
   EMPTY_HANDOFF_DOCUMENT,
@@ -345,8 +346,7 @@ describe("heldOutcome", () => {
     };
     expect(heldOutcome(document, threadId, m4)).toEqual({
       type: "in-doubt",
-      message:
-        "This machine woke after handing its threads off and no other machine answered yet. Choose Resume this Mac to run it here.",
+      message: PAUSED_OFFLINE_REFUSAL,
       heldByState: true,
     });
   });

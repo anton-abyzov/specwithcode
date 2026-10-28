@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -178,6 +179,7 @@ interface ExecuteGitOptions {
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
   progress?: GitVcsDriver.ExecuteGitProgress | undefined;
+  writesSharedConfig?: boolean | undefined;
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -446,6 +448,8 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
   [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
   [/a branch named .+ already exists/i, "branch_already_exists"],
+  // The same prefix also reports permission errors, which retrying cannot fix.
+  [/could not lock config file .+: File exists/i, "config_locked"],
   [/invalid reference: |not a valid object name/i, "invalid_reference"],
   // ssh names the methods it tried, so the parenthesized list varies:
   // `(publickey)`, `(publickey,password)`, `(keyboard-interactive)`.
@@ -1151,6 +1155,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // Git takes .git/config.lock without waiting, and every worktree of a
+  // repository shares that file, so parallel thread launches would fail each
+  // other's branch and config writes. Serialize this process's writers per
+  // repository; writes from other processes are covered by retrying.
+  const sharedConfigLocks = new Map<string, Semaphore.Semaphore>();
+  const withSharedConfigLock = <A, E>(cwd: string, effect: Effect.Effect<A, E>) =>
+    resolveRepositoryPaths(cwd).pipe(
+      Effect.orElseSucceed(() => null),
+      Effect.flatMap((repositoryPaths) => {
+        if (repositoryPaths === null) return effect;
+        let lock = sharedConfigLocks.get(repositoryPaths.gitCommonDir);
+        if (lock === undefined) {
+          lock = Semaphore.makeUnsafe(1);
+          sharedConfigLocks.set(repositoryPaths.gitCommonDir, lock);
+        }
+        return lock.withPermit(effect);
+      }),
+    );
+
   const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
     executeRaw(input).pipe(
       withMetrics({
@@ -1172,6 +1195,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "git.args_count": input.args.length,
         },
       }),
+      // Outside the process permit: resolving the repository may itself need one.
+      (execution) =>
+        input.writesSharedConfig ? withSharedConfigLock(input.cwd, execution) : execution,
     );
 
   const executeGit = (
@@ -1193,6 +1219,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ? { appendTruncationMarker: options.appendTruncationMarker }
         : {}),
       ...(options.progress ? { progress: options.progress } : {}),
+      ...(options.writesSharedConfig ? { writesSharedConfig: true } : {}),
     }).pipe(
       Effect.flatMap((result) => {
         if (options.allowNonZeroExit || result.exitCode === 0) {
@@ -1688,17 +1715,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input) {
     const preferredName = sanitizeRemoteName(input.preferredName);
     const normalizedTargetUrl = normalizeGitRemoteUrl(input.url);
-    const remoteFetchUrls = yield* runGitStdout(
+    const listRemoteFetchUrls = runGitStdout(
       "GitVcsDriver.ensureRemote.listRemoteUrls",
       input.cwd,
       ["remote", "-v"],
     ).pipe(Effect.map((stdout) => parseRemoteFetchUrls(stdout)));
+    const findMatchingRemote = (remoteFetchUrls: Map<string, string>) =>
+      Array.from(remoteFetchUrls.entries()).find(
+        ([, remoteUrl]) => normalizeGitRemoteUrl(remoteUrl) === normalizedTargetUrl,
+      )?.[0];
 
-    for (const [remoteName, remoteUrl] of remoteFetchUrls.entries()) {
-      if (normalizeGitRemoteUrl(remoteUrl) === normalizedTargetUrl) {
-        return remoteName;
-      }
-    }
+    const remoteFetchUrls = yield* listRemoteFetchUrls;
+    const existing = findMatchingRemote(remoteFetchUrls);
+    if (existing !== undefined) return existing;
 
     let remoteName = preferredName;
     let suffix = 1;
@@ -1707,13 +1736,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       suffix += 1;
     }
 
-    yield* runGit("GitVcsDriver.ensureRemote.add", input.cwd, [
-      "remote",
-      "add",
-      remoteName,
-      input.url,
-    ]);
-    return remoteName;
+    return yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.ensureRemote.add",
+      input.cwd,
+      ["remote", "add", "--", remoteName, input.url],
+      { writesSharedConfig: true },
+    ).pipe(
+      retryWhileConfigLocked,
+      Effect.as(remoteName),
+      // A parallel launch for the same fork may have added it since the listing above.
+      Effect.catch((error) =>
+        listRemoteFetchUrls.pipe(
+          Effect.flatMap((current) => {
+            const added = findMatchingRemote(current);
+            return added === undefined ? Effect.fail(error) : Effect.succeed(added);
+          }),
+        ),
+      ),
+    );
   });
 
   /**
@@ -2420,6 +2460,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { commitSha };
   });
 
+  // `push -u` exits 0 without the upstream when another writer holds the config
+  // lock, so the push and the upstream are separate steps.
+  const recordPushedUpstream = Effect.fn("recordPushedUpstream")(
+    function* (cwd: string, branch: string, remoteName: string, publishBranch: string) {
+      // Without a prior upstream, Git ignores a merge ref with no remote, so losing the second
+      // write leaves none rather than a wrong one.
+      yield* writeConfigValue({
+        cwd,
+        key: `branch.${branch}.merge`,
+        value: `refs/heads/${publishBranch}`,
+      });
+      yield* writeConfigValue({ cwd, key: `branch.${branch}.remote`, value: remoteName });
+      // Matches what `push -u` sets for a remote upstream.
+      const autoSetupRebase = yield* readConfigValue(cwd, "branch.autoSetupRebase");
+      if (autoSetupRebase === "always" || autoSetupRebase === "remote") {
+        yield* writeConfigValue({ cwd, key: `branch.${branch}.rebase`, value: "true" });
+      }
+      return true;
+    },
+    Effect.catch((cause) =>
+      Effect.logWarning("pushed, but could not record the branch upstream", { cause }).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
+
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
@@ -2442,14 +2508,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
-        ["push", "-u", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        ["push", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
         { timeoutMs: null },
       );
       return {
         status: "pushed" as const,
         branch,
         upstreamBranch: `${requestedRemoteName}/${publishBranch}`,
-        setUpstream: true,
+        setUpstream: yield* recordPushedUpstream(cwd, branch, requestedRemoteName, publishBranch),
       };
     }
 
@@ -2507,14 +2573,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
-        ["push", "-u", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        ["push", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
         { timeoutMs: null },
       );
       return {
         status: "pushed" as const,
         branch,
         upstreamBranch: `${publishRemoteName}/${publishBranch}`,
-        setUpstream: true,
+        setUpstream: yield* recordPushedUpstream(cwd, branch, publishRemoteName, publishBranch),
       };
     }
 
@@ -2541,8 +2607,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const remoteName = publishRemoteName ?? currentUpstream.remoteName;
         const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-        // `-u` retargets the upstream to the published branch, so keep the
-        // base recorded first; base resolution reads gh-merge-base before the
+        // Publishing retargets the upstream to the published branch, so keep
+        // the base recorded first; base resolution reads gh-merge-base before the
         // upstream ref.
         const configuredMergeBase = yield* runGitStdout(
           "GitVcsDriver.pushCurrentBranch.readMergeBase",
@@ -2551,23 +2617,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           true,
         ).pipe(Effect.map((stdout) => stdout.trim()));
         if (configuredMergeBase.length === 0) {
-          yield* runGit("GitVcsDriver.pushCurrentBranch.recordMergeBase", cwd, [
-            "config",
-            `branch.${branch}.gh-merge-base`,
-            currentUpstream.branchName,
-          ]);
+          yield* writeConfigValue({
+            cwd,
+            key: `branch.${branch}.gh-merge-base`,
+            value: currentUpstream.branchName,
+          });
         }
         yield* runGit(
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
           cwd,
-          ["push", "-u", remoteName, `HEAD:refs/heads/${publishBranch}`],
+          ["push", remoteName, `HEAD:refs/heads/${publishBranch}`],
           { timeoutMs: null },
         );
         return {
           status: "pushed" as const,
           branch,
           upstreamBranch: `${remoteName}/${publishBranch}`,
-          setUpstream: true,
+          setUpstream: yield* recordPushedUpstream(cwd, branch, remoteName, publishBranch),
         };
       }
 
@@ -3354,6 +3420,66 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
+  // Git never waits for .git/config.lock, and git run outside Studio, such as an
+  // agent's, can hold it. Only writes that are safe to repeat retry.
+  const retryWhileConfigLocked = <A>(effect: Effect.Effect<A, GitCommandError>) =>
+    effect.pipe(
+      Effect.retry({
+        while: (error) => error.reason === "config_locked",
+        times: 10,
+        schedule: Schedule.spaced("50 millis"),
+      }),
+    );
+
+  const writeConfigValue = Effect.fn("writeConfigValue")(function* (input: {
+    readonly cwd: string;
+    readonly key: string;
+    readonly value: string;
+  }) {
+    yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.writeConfigValue",
+      input.cwd,
+      ["config", input.key, input.value],
+      { writesSharedConfig: true },
+    ).pipe(retryWhileConfigLocked);
+  });
+
+  // `git branch` writes a remote start point's upstream itself and fails outright
+  // if the config is locked, so tracking is recorded afterwards by a write that
+  // retries.
+  const createBranchAt = Effect.fn("createBranchAt")(function* (
+    operation: string,
+    input: { readonly cwd: string; readonly branch: string; readonly startPoint: string },
+    options: { readonly fallbackErrorDetail: string; readonly includeFatalLine?: boolean },
+  ) {
+    // `git branch` does not read a lone - as the previous checkout.
+    const startPoint = input.startPoint === "-" ? "@{-1}" : input.startPoint;
+    yield* executeGitWithStableDiagnostics(
+      operation,
+      input.cwd,
+      ["branch", "--no-track", "--", input.branch, startPoint],
+      options,
+    );
+    const startRef = yield* executeGit(
+      `${operation}.resolveStartPoint`,
+      input.cwd,
+      ["rev-parse", "--symbolic-full-name", startPoint],
+      { allowNonZeroExit: true },
+    ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")));
+    if (!startRef.startsWith("refs/remotes/")) return;
+    yield* executeGitWithStableDiagnostics(
+      `${operation}.track`,
+      input.cwd,
+      ["branch", `--set-upstream-to=${startRef}`, "--", input.branch],
+      { writesSharedConfig: true },
+    ).pipe(
+      retryWhileConfigLocked,
+      Effect.catch((cause) =>
+        Effect.logWarning("created the branch without tracking its start point", { cause }),
+      ),
+    );
+  });
+
   const readGitRefsSnapshot = Effect.fn("readGitRefsSnapshot")(function* (gitCommonDir: string) {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
@@ -3675,42 +3801,98 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Storage.`,
         });
       }
+      yield* fileSystem
+        .makeDirectory(parentDir, { recursive: true, mode: 0o700 })
+        .pipe(
+          Effect.andThen(
+            ServerConfig.markWorktreesRootUnindexed(parentDir).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ),
+          ),
+          Effect.ignore,
+        );
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-      : ["worktree", "add", worktreePath, input.refName];
+    const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGit(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        includeFatalLine: true,
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
-                },
-              },
-            }
-          : {}),
-      },
+    let createdBranch = false;
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        if (input.newRefName) {
+          // Kept apart from the checkout so the shared-config lock only covers the tracking write.
+          yield* createBranchAt(
+            "GitVcsDriver.createWorktree.createBranch",
+            { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
+            { fallbackErrorDetail: "git worktree add failed", includeFatalLine: true },
+          );
+          createdBranch = true;
+        }
+        yield* restore(
+          executeGit(
+            "GitVcsDriver.createWorktree",
+            input.cwd,
+            ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
+            {
+              fallbackErrorDetail: "git worktree add failed",
+              includeFatalLine: true,
+              timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+              ...(onCheckoutProgress
+                ? {
+                    // Git only prints checkout progress when stderr is a tty or the
+                    // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+                    env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+                    progress: {
+                      onStderrLine: (line) => {
+                        const parsed = parseGitCheckoutProgressLine(line);
+                        return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                      },
+                    },
+                  }
+                : {}),
+            },
+          ),
+        );
+        // Publish ownership before leaving the cancellation mask.
+        if (progress?.onWorktreeClaimed) yield* progress.onWorktreeClaimed(worktreePath);
+      }).pipe(
+        // The branch was created above for this worktree only; a retried launch
+        // would otherwise fail on it as already existing.
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit) && createdBranch && input.newRefName
+            ? Effect.gen(function* () {
+                // An interrupted checkout may already have registered the worktree.
+                // Only remove it when it still owns the branch we just created.
+                const checkedOut = yield* executeGit(
+                  "GitVcsDriver.createWorktree.inspectCancelledCheckout",
+                  worktreePath,
+                  ["symbolic-ref", "--short", "HEAD"],
+                  { allowNonZeroExit: true, timeoutMs: 10_000 },
+                ).pipe(
+                  Effect.map((result) => result.stdout.trim()),
+                  Effect.orElseSucceed(() => ""),
+                );
+                if (checkedOut === input.newRefName)
+                  yield* executeGit(
+                    "GitVcsDriver.createWorktree.removeCancelledCheckout",
+                    input.cwd,
+                    ["worktree", "remove", "--force", "--", worktreePath],
+                    { allowNonZeroExit: true, timeoutMs: 10_000 },
+                  ).pipe(Effect.ignore);
+                yield* executeGit(
+                  "GitVcsDriver.createWorktree.removeCreatedBranch",
+                  input.cwd,
+                  ["branch", "-D", "--", input.newRefName!],
+                  { allowNonZeroExit: true, timeoutMs: 10_000, writesSharedConfig: true },
+                ).pipe(Effect.ignore);
+              })
+            : Effect.void,
+        ),
+      ),
     );
-
-    if (progress?.onWorktreeClaimed) {
-      yield* progress.onWorktreeClaimed(worktreePath);
-    }
 
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
     // skills, tooling or source in one gets a worktree that is quietly missing
@@ -3757,19 +3939,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* progress.onSubmodulesStarted();
       }
       const onSubmoduleLine = progress?.onSubmoduleLine;
+      // Registering submodule URLs writes the shared config; the clones that follow do not.
       yield* runGit(
-        "GitVcsDriver.createWorktree.updateSubmodules",
+        "GitVcsDriver.createWorktree.initSubmodules",
         worktreePath,
-        submoduleMode.value === "recursive"
-          ? ["submodule", "update", "--init", "--recursive"]
-          : ["submodule", "update", "--init"],
-        onSubmoduleLine
-          ? {
-              env: { LC_ALL: "C" },
-              progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
-            }
-          : {},
+        ["submodule", "init"],
+        { writesSharedConfig: true },
       ).pipe(
+        Effect.andThen(
+          runGit(
+            "GitVcsDriver.createWorktree.updateSubmodules",
+            worktreePath,
+            submoduleMode.value === "recursive"
+              ? ["submodule", "update", "--init", "--recursive"]
+              : ["submodule", "update", "--init"],
+            onSubmoduleLine
+              ? {
+                  env: { LC_ALL: "C" },
+                  progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
+                }
+              : {},
+          ),
+        ),
         Effect.matchEffect({
           onFailure: (cause) =>
             Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
@@ -3797,11 +3988,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         remoteNames.toSorted((left, right) => right.length - left.length),
       );
       const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
-      yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
-        "config",
-        `branch.${input.newRefName}.gh-merge-base`,
-        baseBranch,
-      ]);
+      // Best-effort: the worktree and its branch already exist, and failing here
+      // would strand them. The base falls back to the upstream when unrecorded.
+      yield* writeConfigValue({
+        cwd: input.cwd,
+        key: `branch.${input.newRefName}.gh-merge-base`,
+        value: baseBranch,
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("created the worktree without recording its base branch", {
+            cause,
+          }),
+        ),
+      );
     }
 
     return {
@@ -4023,12 +4222,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const localBranchAlreadyExists = yield* branchExists(input.cwd, input.localBranch);
     const targetRef = `${input.remoteName}/${input.remoteBranch}`;
+    if (!localBranchAlreadyExists) {
+      return yield* createBranchAt(
+        "GitVcsDriver.fetchRemoteBranch.materialize",
+        { cwd: input.cwd, branch: input.localBranch, startPoint: targetRef },
+        { fallbackErrorDetail: "git branch create failed" },
+      );
+    }
     yield* runGit(
       "GitVcsDriver.fetchRemoteBranch.materialize",
       input.cwd,
-      localBranchAlreadyExists
-        ? ["branch", "--force", input.localBranch, targetRef]
-        : ["branch", input.localBranch, targetRef],
+      ["branch", "--force", input.localBranch, targetRef],
+      { writesSharedConfig: true },
     );
   });
 
@@ -4044,12 +4249,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = (input) =>
-    runGit("GitVcsDriver.setBranchUpstream", input.cwd, [
-      "branch",
-      "--set-upstream-to",
-      `${input.remoteName}/${input.remoteBranch}`,
-      input.branch,
-    ]);
+    executeGitWithStableDiagnostics(
+      "GitVcsDriver.setBranchUpstream",
+      input.cwd,
+      ["branch", "--set-upstream-to", `${input.remoteName}/${input.remoteBranch}`, input.branch],
+      { writesSharedConfig: true },
+    ).pipe(retryWhileConfigLocked, Effect.asVoid);
 
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
     "removeWorktree",
@@ -4119,6 +4324,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       {
         timeoutMs: 10_000,
         fallbackErrorDetail: "git branch delete failed",
+        // Under contention Git deletes the ref but keeps its config section.
+        writesSharedConfig: true,
       },
     );
   });
@@ -4140,6 +4347,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       {
         timeoutMs: 10_000,
         fallbackErrorDetail: "git branch rename failed",
+        writesSharedConfig: true,
       },
     );
 
@@ -4218,6 +4426,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, [...checkoutArgs, "--"], {
         timeoutMs: 10_000,
         fallbackErrorDetail: "git checkout failed",
+        // Checking out a remote branch creates a local one that tracks it.
+        writesSharedConfig: !localInputExists,
       });
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
@@ -4234,6 +4444,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit("GitVcsDriver.createRef", input.cwd, ["branch", input.refName], {
         timeoutMs: 10_000,
         fallbackErrorDetail: "git branch create failed",
+        // `branch.autoSetupMerge=always` records HEAD's branch as the upstream.
+        writesSharedConfig: true,
       });
       if (input.switchRef) {
         yield* switchRef({ cwd: input.cwd, refName: input.refName });
@@ -4357,6 +4569,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     pruneWorktrees: (input) => withListRefsInvalidation(input.cwd, pruneWorktrees(input)),
     deleteLocalBranch: (input) => withListRefsInvalidation(input.cwd, deleteLocalBranch(input)),
     renameBranch: (input) => withListRefsInvalidation(input.cwd, renameBranch(input)),
+    createBranch: (input) =>
+      withListRefsInvalidation(
+        input.cwd,
+        createBranchAt("GitVcsDriver.createBranch", input, {
+          fallbackErrorDetail: "git branch create failed",
+        }),
+      ),
     createRef: (input) => withListRefsInvalidation(input.cwd, createRef(input)),
     switchRef: (input) => withListRefsInvalidation(input.cwd, switchRef(input)),
     initRepo: initRepoWithListRefsInvalidation,

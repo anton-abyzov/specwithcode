@@ -432,6 +432,19 @@ describe("GitHubApi", () => {
       expect(requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("never sends a token to a host that is not a plain hostname", () => {
+    // The harness credentials would hand a token to any host, so the API must refuse first.
+    const { layer, requests } = harness(() => json({}));
+    return Effect.gen(function* () {
+      const api = yield* GitHubApi.GitHubApi;
+      for (const host of ["evil.com#.ghe.com", "evil.com/.ghe.com", "user@x.ghe.com"]) {
+        const error = yield* Effect.flip(api.rest({ host, operation: "repo", path: "repos/o/r" }));
+        expect(error._tag).toBe("GitHubApiAuthenticationError");
+      }
+      expect(requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("GitHubCredentials", () => {

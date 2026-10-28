@@ -182,6 +182,13 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Absent on servers from before 1.0.58, which answer 404: clients keep the
       rest of the private machines list working and say only removal needs an update. */
   studioFleetRemove: Schema.optionalKey(Schema.Boolean),
+  /** Server takes its fleet primary's update requests at `/api/studio/fleet/update`.
+      Absent on older servers: the primary falls back to the boot service's
+      self-update RPC on Linux, or reports that the machine updates itself. */
+  fleetUpdateRequest: Schema.optionalKey(Schema.Boolean),
+  /** Server takes its fleet primary's skill installs at `/api/studio/fleet/skills`.
+      Absent on older servers: the primary reports `unsupported` for them. */
+  fleetSkillUpdate: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.visit / thread.mark-unread commands and
       projects lastVisitedAt on thread shells. Same version-skew contract as
       threadSettlement: clients keep their local visited state against

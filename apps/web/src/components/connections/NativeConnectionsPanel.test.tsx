@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -5,6 +6,17 @@ import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { NativeConnectionsPanel } from "./NativeConnectionsPanel";
 import { ConnectionsLibrarySettings } from "../settings/ConnectionsLibrarySettings";
 import { Select } from "../ui/select";
+vi.mock("../ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({ render, children }: { render?: ReactNode; children?: ReactNode }) {
+      return isValidElement(render) ? cloneElement(render, undefined, children) : children;
+    },
+    TooltipPopup: () => null,
+  };
+});
 
 const state = vi.hoisted(() => ({
   permitted: true,
@@ -130,6 +142,12 @@ it("edits directly without preview on a machine that predates managing servers",
   };
   await renderPanel();
   expect(text()).not.toContain("Add server");
+  // Without the manage set, the details carry the quick enable.
+  await act(() =>
+    renderer.root
+      .findAll((n) => n.type === "button" && n.props["aria-label"] === "docs Codex details")[0]!
+      .props.onClick(),
+  );
   const enable = renderer.root.findAll(
     (n) => n.type === "button" && n.props["aria-label"] === "Enable: docs",
   )[0]!;

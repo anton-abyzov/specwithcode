@@ -331,6 +331,16 @@ it.effect.each(
         if (delivery !== null) {
           yield* Deferred.succeed(rejectSteer, undefined);
           yield* Fiber.join(delivery);
+          // A mailbox delivery is a notification item, not a requeued user message.
+          if (!mailbox) {
+            const requeued = yield* orchestrator.getThreadProjection(threadId);
+            const item = requeued.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === messageId,
+            );
+            assert.equal(item?.status, "pending");
+            assert.isNull(item?.startedAt);
+            assert.isNull(item?.completedAt);
+          }
         }
         if (timing === "before dispatch") yield* dispatchSteer;
         yield* worker.drain();
@@ -383,6 +393,14 @@ it.effect.each(
         ]);
         assert.equal(steerCalls, timing === "during delivery" ? 1 : 0);
         const final = yield* orchestrator.getThreadProjection(threadId);
+        if (!mailbox) {
+          assert.equal(
+            final.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === messageId,
+            )?.status,
+            "completed",
+          );
+        }
         assert.equal(final.messages.filter((message) => message.id === messageId).length, 1);
         assert.equal(
           final.messages.find((message) => message.id === messageId)?.runId,
@@ -403,7 +421,12 @@ it.effect.each(
           ProviderReplayHarness.layerWithRegistry(
             { name: `steering-completion-${timing}` },
             ProviderAdapterRegistry.layerSingle(adapter),
-            { runEffectWorker: false, databaseLayer: fixtureProjectDatabase([ProjectId.make("project:steering-completion")]) },
+            {
+              runEffectWorker: false,
+              databaseLayer: fixtureProjectDatabase([
+                ProjectId.make("project:steering-completion"),
+              ]),
+            },
           ),
         ),
       );
@@ -518,7 +541,10 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   const layer = ProviderReplayHarness.layerWithRegistry(
     { name },
     ProviderAdapterRegistry.layerSingle(adapter),
-    { runEffectWorker: false, databaseLayer: fixtureProjectDatabase([ProjectId.make(`project:${name}`)]) },
+    {
+      runEffectWorker: false,
+      databaseLayer: fixtureProjectDatabase([ProjectId.make(`project:${name}`)]),
+    },
   );
   // Creates the thread and starts its first turn on `runSelection`.
   const startFirstTurn = Effect.gen(function* () {
@@ -704,6 +730,78 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
         assert.equal(started[1]?.message.messageId, MessageId.make("message:steer"));
         assert.deepEqual(started[1]?.modelSelection, composerSelection);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("force sends multiple queued messages and can force send a requeued message again", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "multiple-promoted-messages",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const queue = (text: string, commandId: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(commandId),
+            threadId,
+            messageId: MessageId.make(`message:${text}`),
+            text,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        for (const text of ["one", "two", "remaining"]) yield* queue(text, `queue-${text}`);
+        const promote = Effect.fn("test.promote")(function* (text: string, commandId: string) {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const queued = projection.runs.find(
+            (run) =>
+              run.status === "queued" && run.userMessageId === MessageId.make(`message:${text}`),
+          )!;
+          yield* orchestrator.dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make(commandId),
+            threadId,
+            queuedRunId: queued.id,
+            targetRunId: started[0]!.runId,
+          });
+        });
+        yield* promote("one", "promote-one");
+        yield* promote("two", "promote-two");
+        yield* worker.drain();
+        assert.deepEqual(steered, ["one", "two"]);
+
+        // The completion-race fallback redispatches the same message into the queue.
+        yield* queue("one", "requeue-one");
+        const requeued = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          requeued.turnItems.find(
+            (item) => item.type === "user_message" && item.messageId === "message:one",
+          )?.status,
+          "pending",
+        );
+        yield* promote("one", "promote-one-again");
+        yield* worker.drain();
+        assert.deepEqual(steered, ["one", "two", "one"]);
+        assert.lengthOf(started, 1);
+        const final = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          final.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
+          [MessageId.make("message:remaining")],
+        );
+        for (const text of ["one", "two"]) {
+          const items = final.turnItems.filter(
+            (item) => item.type === "user_message" && item.messageId === `message:${text}`,
+          );
+          assert.lengthOf(items, 1);
+          assert.equal(items[0]?.status, "completed");
+        }
       }).pipe(Effect.provide(layer));
     }),
   ),

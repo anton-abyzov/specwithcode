@@ -72,6 +72,8 @@ export type EffortResolution =
       readonly label: string;
       /** False when the model lacks the requested level and the nearest one was used. */
       readonly exact: boolean;
+      /** "ultracode" asks for Extra High plus the model's separate Ultracode toggle. */
+      readonly ultracode?: true;
     }
   | { readonly ok: false; readonly message: string };
 
@@ -90,6 +92,14 @@ export function resolveEffort(
   }
   const levels = descriptor.options.map((choice) => choice.id).join(", ");
   const key = normalize(requested);
+  if (
+    key === "ultracode" &&
+    !descriptor.options.some((choice) => normalize(choice.id) === key) &&
+    descriptors?.some((candidate) => candidate.id === "ultracode" && candidate.type === "boolean")
+  ) {
+    const resolved = resolveEffort("xhigh", descriptors);
+    return resolved.ok ? { ...resolved, ultracode: true } : resolved;
+  }
   const exact = descriptor.options.find(
     (choice) => normalize(choice.id) === key || normalize(choice.label) === key,
   );
@@ -138,11 +148,13 @@ export function resolveEffort(
 /** Set the resolved effort on option selections, replacing any earlier value for that option. */
 export function withEffortSelection(
   selections: ReadonlyArray<ProviderOptionSelection> | undefined,
-  resolved: { readonly optionId: string; readonly value: string },
+  resolved: { readonly optionId: string; readonly value: string; readonly ultracode?: true },
 ): ReadonlyArray<ProviderOptionSelection> {
+  const replaced = resolved.ultracode ? [resolved.optionId, "ultracode"] : [resolved.optionId];
   return [
-    ...(selections ?? []).filter((selection) => selection.id !== resolved.optionId),
+    ...(selections ?? []).filter((selection) => !replaced.includes(selection.id)),
     { id: resolved.optionId, value: resolved.value },
+    ...(resolved.ultracode ? [{ id: "ultracode", value: true }] : []),
   ];
 }
 

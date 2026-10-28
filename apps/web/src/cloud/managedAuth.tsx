@@ -108,9 +108,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   return (
     <>
       {children}
-      {isLoaded && isSignedIn && userId ? (
-        <ConnectRouteReconciler key={userId} accountId={userId} />
-      ) : null}
+      {isLoaded && isSignedIn && userId ? <ConnectRouteReconciler key={userId} /> : null}
     </>
   );
 }

@@ -69,7 +69,8 @@ export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
   readonly uncertain: boolean;
   /**
    * The call failed on this machine before it reached the destination (no such
-   * machine, no credential, identity check failed). Nothing changed there for
+   * machine, no credential, identity check failed; not a network that carried
+   * no answer, which is plain unreachable). Nothing changed there for
    * this call, but it is no refusal from the destination either, so it never
    * settles an earlier takeover that is still in doubt.
    */
@@ -234,7 +235,9 @@ export const make = Effect.gen(function* () {
                   uncertain: false,
                   local: true,
                 })
-              : unreachable(target.label, false, true),
+              : // No address answered: the network between the two says nothing about
+                // this machine's setup, so it is no local failure.
+                unreachable(target.label, false),
       });
       const address: FleetOrigin = { origin: reached.origin, transport: reached.transport };
       yield* Ref.update(identities, (current) =>

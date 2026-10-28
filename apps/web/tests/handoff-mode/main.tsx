@@ -77,7 +77,7 @@ const rows: Array<{ title: string; model: string; badge: HandoffBadgeView }> = [
   {
     title: "Sleep handoff flush",
     model: "Sonnet 5.5",
-    badge: { kind: "paused", label: "Paused after sleep" },
+    badge: { kind: "paused", label: "Paused: offline" },
   },
 ];
 

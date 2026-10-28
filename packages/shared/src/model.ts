@@ -187,12 +187,39 @@ function withDescriptorCurrentValue(
   };
 }
 
+/**
+ * Claude selections saved before Ultracode became its own toggle store it as
+ * the effort. Where the model now offers the toggle instead of that effort
+ * choice, read them as Extra High plus Ultracode, which is how they ran.
+ */
+export function upgradeLegacyUltracodeEffort(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | null | undefined {
+  if (getRawSelectionValueById(selections, "effort") !== "ultracode") return selections;
+  const effort = descriptors.find((descriptor) => descriptor.id === "effort");
+  const toggle = descriptors.find((descriptor) => descriptor.id === "ultracode");
+  if (
+    effort?.type !== "select" ||
+    effort.options.some((option) => option.id === "ultracode") ||
+    toggle?.type !== "boolean"
+  ) {
+    return selections;
+  }
+  const upgraded = (selections ?? []).map((selection) =>
+    selection.id === "effort" ? { id: "effort", value: "xhigh" } : selection,
+  );
+  return upgraded.some((selection) => selection.id === "ultracode")
+    ? upgraded
+    : [...upgraded, { id: "ultracode", value: true }];
+}
+
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
 }): ReadonlyArray<ProviderOptionDescriptor> {
-  const { caps, selections } = input;
-  const baseDescriptors = (caps.optionDescriptors ?? []).map(cloneDescriptor);
+  const baseDescriptors = (input.caps.optionDescriptors ?? []).map(cloneDescriptor);
+  const selections = upgradeLegacyUltracodeEffort(baseDescriptors, input.selections);
 
   return baseDescriptors.map((descriptor) =>
     withDescriptorCurrentValue(
@@ -292,7 +319,9 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   if (!selections || selections.length === 0) {
     return undefined;
   }
-  const explicitIds = new Set(selections.map((selection) => selection.id));
+  // A legacy Ultracode effort also set the toggle; keep both explicit.
+  const upgraded = descriptors ? upgradeLegacyUltracodeEffort(descriptors, selections) : selections;
+  const explicitIds = new Set((upgraded ?? selections).map((selection) => selection.id));
   const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
     (selection) => explicitIds.has(selection.id),
   );

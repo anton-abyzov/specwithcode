@@ -1030,6 +1030,7 @@ import {
   resolveEffort,
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
+import { upgradeLegacyUltracodeEffort } from "@specweave-studio/shared/model";
 import { workerFollowUpText } from "../project/workerFollowUp.ts";
 import {
   launchIncrementFields,
@@ -1698,9 +1699,13 @@ const make = Effect.gen(function* () {
         );
       }
 
-      const requestedOptions = input.target?.options;
       const descriptors = provider.models.find((candidate) => candidate.slug === model)
         ?.capabilities?.optionDescriptors;
+      // Callers written when Ultracode was an effort level keep working.
+      const requestedOptions =
+        input.target?.options === undefined || descriptors === undefined
+          ? input.target?.options
+          : (upgradeLegacyUltracodeEffort(descriptors, input.target.options) ?? undefined);
       if (requestedOptions !== undefined) {
         const invalid = invalidOptionSelections(requestedOptions, descriptors);
         if (invalid.length > 0) {

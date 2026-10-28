@@ -1,6 +1,7 @@
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { maskMarkdownFrontmatter } from "~/lib/markdownFrontmatter";
 import { resolvePathLinkTarget } from "~/terminal-links";
 
 export function FileMarkdownPreview(props: {
@@ -23,7 +24,7 @@ export function FileMarkdownPreview(props: {
 
   return (
     <ChatMarkdown
-      text={props.text}
+      text={maskMarkdownFrontmatter(props.text)}
       cwd={props.cwd}
       imageBaseDir={imageBaseDir}
       threadRef={props.threadRef}

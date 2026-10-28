@@ -4,7 +4,17 @@ SpecWithCode's native Claude workflow policy is separate from reasoning effort:
 
 - **Disabled** removes workflow preapprovals and denies the Workflow tool. A native disable flag also prevents advanced launch settings from enabling it.
 - **On request** keeps workflows available for explicit requests and saved workflow commands. Existing native permission checks still approve or deny each launch.
-- **Automatic** enables Claude's ultracode orchestration setting. It preserves the selected reasoning effort and native permission policy.
+- **Automatic** enables Claude's ultracode orchestration setting for threads that leave the Ultracode toggle unset. It preserves the selected reasoning effort and native permission policy.
+
+## Ultracode toggle
+
+Claude Code models that support Ultracode (those with Extra High effort, such as Opus 5.5) show an **Ultracode** toggle in the model's traits menu, next to reasoning effort. The composer then reads, for example, "Opus 5.5 · Medium · Ultracode". The toggle sends Claude Code's `ultracode` session setting, which keeps the chosen effort.
+
+- An explicit On or Off wins over the workflow mode, except that **Disabled** always turns Ultracode off, because Claude Code needs workflows for it.
+- Left unset, it follows the mode: on in Automatic, off otherwise.
+- Older selections that stored "Ultracode" as the effort read as Extra High with Ultracode on, which is how they ran.
+- Left unset, the menu marks neither choice and says it follows the workflow mode.
+- Ultracode is launch context, like the workflow mode: an idle query reopens with resume when the effective value changes, and a running background workflow keeps the value it started with until it settles.
 
 Environment and project instructions are additive. SpecWithCode includes mandatory runtime rules, both instruction additions, and attached SpecWithCode MCP guidance in the main system append and the documented `--append-subagent-system-prompt` flag. The native agent's default system prompt and user/project/local Claude configuration remain enabled. A main SDK system append alone does not reach workflow workers.
 

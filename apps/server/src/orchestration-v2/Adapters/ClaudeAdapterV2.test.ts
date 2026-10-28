@@ -217,6 +217,32 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.notInclude(append("detailed"), '<response_style mode="concise">');
   });
 
+  it("makeClaudeQueryOptions sends the thread's Ultracode toggle beside its effort", () => {
+    const settings = (
+      claudeWorkflowMode: "on-request" | "automatic",
+      options: NonNullable<ModelSelection["options"]>,
+    ) =>
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: "claude-opus-5-5", options },
+        nativeThreadId: "ultracode-toggle",
+        resume: false,
+        cwd: "/workspace",
+        claudeWorkflowMode,
+      });
+    const onRequest = settings("on-request", [
+      { id: "effort", value: "medium" },
+      { id: "ultracode", value: true },
+    ]);
+    assert.equal(onRequest.effort, "medium");
+    assert.include(onRequest.settings, { enableWorkflows: true, ultracode: true });
+    assert.include(settings("automatic", [{ id: "ultracode", value: false }]).settings, {
+      ultracode: false,
+    });
+    assert.include(settings("on-request", [{ id: "effort", value: "high" }]).settings, {
+      ultracode: false,
+    });
+  });
+
   it("makeClaudeQueryOptions enforces disabled workflow despite advanced native launch flags", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -5200,6 +5226,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.continuationRequests, 0);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  // After a rollback the provider thread pins a head; a stopped turn that wrote to the
+  // transcript moved past it, so resuming there again would drop that turn's context.
+  it.effect.each([
+    { name: "with assistant output clears", wroteOutput: true },
+    { name: "with no assistant output keeps", wroteOutput: false },
+  ])("an interrupted turn after a rollback $name the rolled-back head", ({ wroteOutput }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const now = yield* DateTime.now;
+        const pinnedHead = "00000000-0000-4000-8000-000000025510";
+        const pinnedThread = {
+          ...harness.providerThread,
+          nativeConversationHeadRef: {
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeId: pinnedHead,
+            strength: "weak" as const,
+          },
+        };
+        const interruptedInput = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: pinnedThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-interrupt-after-rollback-${wroteOutput}`),
+          text: "The secret word is apricot-25510. Then run sleep 60.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          nativeThreadHasTurns: true,
+        });
+        yield* harness.runtime.startTurn(interruptedInput);
+        assert.equal(harness.getOpenedOptions()?.resumeSessionAt, pinnedHead);
+        if (wroteOutput) {
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000025511",
+              text: "Noted apricot-25510. Running sleep.",
+            }),
+          );
+        }
+        yield* harness.runtime.interruptTurn({
+          providerThread: pinnedThread,
+          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${interruptedInput.attemptId}`,
+          }),
+        });
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        const afterInterrupt = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        )?.providerThread;
+        assert.isDefined(afterInterrupt);
+        if (wroteOutput) assert.isNull(afterInterrupt.nativeConversationHeadRef);
+        else assert.equal(afterInterrupt.nativeConversationHeadRef?.nativeId, pinnedHead);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

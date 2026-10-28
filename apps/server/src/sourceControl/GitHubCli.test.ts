@@ -81,6 +81,7 @@ function harness(input: {
         return args.preferredName;
       }),
     fetchRemoteTrackingBranch: (args) => record("fetchRemoteTrackingBranch", undefined)(args),
+    createBranch: (args) => record("createBranch", undefined)(args),
     setBranchUpstream: (args) => record("setBranchUpstream", undefined)(args),
     switchRef: (args) => record("switchRef", { refName: args.refName })(args) as never,
     listLocalBranchNames: () => Effect.succeed([...(input.localBranches ?? [])]),
@@ -245,6 +246,24 @@ describe("GitHubCli repository resolution", () => {
       assert.strictEqual(error._tag, "GitHubCliCommandError");
       assert.include(String((error.cause as Error).message), "No GitHub repository");
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("parseGitHubRepositorySelector", () => {
+  it("reads host/owner/name only when the host is a plain hostname", () => {
+    assert.deepStrictEqual(
+      GitHubCli.parseGitHubRepositorySelector("GHE.corp:8443/acme/web", "github.com"),
+      { host: "ghe.corp:8443", owner: "acme", name: "web" },
+    );
+    for (const selector of [
+      "evil.com#.ghe.com/o/r",
+      "evil.com?.ghe.com/acme/web",
+      "token@evil.com/acme/web",
+      "evil.com\\.ghe.com/acme/web",
+      "-evil.com/acme/web",
+    ]) {
+      assert.strictEqual(GitHubCli.parseGitHubRepositorySelector(selector, "github.com"), null);
+    }
   });
 });
 
@@ -510,7 +529,10 @@ describe("GitHubCli.checkoutPullRequest", () => {
           "fetchRemoteTrackingBranch",
           { cwd: "/repo", remoteName: "origin", remoteBranch: "feature/x" },
         ],
-        ["execute", ["branch", "feature/x", "refs/remotes/origin/feature/x"]],
+        [
+          "createBranch",
+          { cwd: "/repo", branch: "feature/x", startPoint: "refs/remotes/origin/feature/x" },
+        ],
         ["switchRef", { cwd: "/repo", refName: "feature/x" }],
         [
           "setBranchUpstream",

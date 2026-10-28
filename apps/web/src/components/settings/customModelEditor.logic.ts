@@ -83,6 +83,7 @@ export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
     },
     { id: "fastMode", label: "Fast Mode", type: "boolean" },
     { id: "thinking", label: "Thinking", type: "boolean" },
+    { id: "ultracode", label: "Ultracode", type: "boolean" },
   ],
   [ProviderDriverKind.make("cursor")]: [
     { id: "reasoning", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },

@@ -8,10 +8,13 @@ import type {
 } from "@specweave-studio/client-runtime/connection";
 import {
   type ConnectRoutePlanMachine,
+  beginConnectRouteRemoval,
   connectFirstRouteOrder,
+  endConnectRouteRemoval,
+  isConnectRouteRemoving,
   machinesMissingConnectRoute,
-  readConnectRouteOffers,
-  recordConnectRouteOffer,
+  readDeclinedConnectRoutes,
+  setConnectRouteDeclined,
   unreachableMachines,
 } from "./connectRoutePlan";
 
@@ -111,23 +114,60 @@ describe("connectReachCopy", () => {
   });
 });
 
-describe("connect route offers", () => {
+describe("declined Connect routes", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("remembers machines per account so a removed route is not added back", () => {
+  it("keeps only machines the user removed Connect from, until it is added back", () => {
     const store = new Map<string, string>();
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => void store.set(key, value),
     });
-    recordConnectRouteOffer("acct-a", new Set(["m1"]));
-    expect([...readConnectRouteOffers("acct-a")]).toEqual(["m1"]);
-    expect(readConnectRouteOffers("acct-b").size).toBe(0);
+    setConnectRouteDeclined("m1", true);
+    expect([...readDeclinedConnectRoutes()]).toEqual(["m1"]);
     const m1 = machine("m1", [bearer("https://m1.ts.net")]);
-    expect(
-      machinesMissingConnectRoute([m1], new Set(["m1"]), readConnectRouteOffers("acct-a")),
-    ).toEqual([]);
+    const m3 = machine("m3", [bearer("https://m3.ts.net")]);
+    const missing = machinesMissingConnectRoute(
+      [m1, m3],
+      new Set(["m1", "m3"]),
+      readDeclinedConnectRoutes(),
+    );
+    expect(missing.map((entry) => entry.environmentId)).toEqual(["m3"]);
+    setConnectRouteDeclined("m1", false);
+    expect(readDeclinedConnectRoutes().size).toBe(0);
+  });
+
+  it("keeps a removal for the session when storage is blocked", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    });
+    setConnectRouteDeclined("m4", true);
+    expect(readDeclinedConnectRoutes().has("m4")).toBe(true);
+    setConnectRouteDeclined("m4", false);
+    expect(readDeclinedConnectRoutes().has("m4")).toBe(false);
+  });
+
+  it("records a removal before it runs and lifts it when the removal fails", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+    });
+    beginConnectRouteRemoval("m5");
+    expect(isConnectRouteRemoving("m5")).toBe(true);
+    expect(readDeclinedConnectRoutes().has("m5")).toBe(true);
+    endConnectRouteRemoval("m5", false);
+    expect(isConnectRouteRemoving("m5")).toBe(false);
+    expect(readDeclinedConnectRoutes().has("m5")).toBe(false);
+    beginConnectRouteRemoval("m5");
+    endConnectRouteRemoval("m5", true);
+    expect(readDeclinedConnectRoutes().has("m5")).toBe(true);
   });
 });

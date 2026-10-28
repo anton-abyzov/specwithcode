@@ -533,7 +533,13 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         );
       })}
       {booleanDescriptors.map((descriptor, index) => {
-        const selectedValue = descriptor.currentValue === true ? "on" : "off";
+        // An unset Ultracode follows the Claude workflow mode, so neither choice is marked.
+        const selectedValue =
+          descriptor.currentValue === true
+            ? "on"
+            : descriptor.id === "ultracode" && descriptor.currentValue === undefined
+              ? ""
+              : "off";
 
         return (
           <div key={descriptor.id}>
@@ -541,6 +547,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             <MenuGroup>
               <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
                 {descriptor.label}
+                {descriptor.id === "ultracode" && descriptor.description ? (
+                  <div className="font-normal">{descriptor.description}</div>
+                ) : null}
+                {selectedValue === "" ? (
+                  <div className="font-normal">Not set: follows the Claude workflow mode</div>
+                ) : null}
               </div>
               <MenuRadioGroup
                 value={selectedValue}
@@ -627,13 +639,17 @@ export function buildTraitsTriggerDisplay(input: {
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
-        : descriptor.type === "boolean"
-          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
-          : getProviderOptionCurrentLabel(
-              descriptor,
-              input.modelSelection,
-              input.reportedModelSelection,
-            );
+        : descriptor.id === "ultracode" && descriptor.type === "boolean"
+          ? descriptor.currentValue === true
+            ? "Ultracode"
+            : null
+          : descriptor.type === "boolean"
+            ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
+            : getProviderOptionCurrentLabel(
+                descriptor,
+                input.modelSelection,
+                input.reportedModelSelection,
+              );
     if (typeof label === "string" && label.length > 0) {
       // Custom models retain descriptor order, so the primary select can be context.
       if (
@@ -672,6 +688,8 @@ export interface TraitsTriggerParts {
   readonly details: string;
   /** A faster speed than standard, drawn as a bolt; its words go in the tooltip and name. */
   readonly speed: { readonly icon: "fast" | "ultrafast"; readonly label: string } | null;
+  /** Claude's Ultracode toggle is on; named beside the effort, not folded into it. */
+  readonly ultracode: boolean;
 }
 
 /** The selected faster speed, named the way the menu names it. */
@@ -694,7 +712,12 @@ function triggerSpeed(
 export function traitsTriggerDescription(parts: TraitsTriggerParts): string {
   // Without an effort level the label already names the speed ("1M · Fast").
   if (!parts.effort) return parts.label;
-  return [`${parts.effort.label} effort`, parts.details, parts.speed?.label]
+  return [
+    `${parts.effort.label} effort`,
+    parts.ultracode ? "Ultracode" : null,
+    parts.details,
+    parts.speed?.label,
+  ]
     .filter(Boolean)
     .join(" · ");
 }
@@ -705,6 +728,12 @@ export function buildTraitsTriggerParts(
 ): TraitsTriggerParts {
   const { label } = buildTraitsTriggerDisplay(input);
   const speed = triggerSpeed(input.provider, input.descriptors);
+  const ultracode = input.descriptors.some(
+    (candidate) =>
+      candidate.id === "ultracode" &&
+      candidate.type === "boolean" &&
+      candidate.currentValue === true,
+  );
   const descriptor = findEffortDescriptor(input.descriptors);
   const ultrathink =
     input.ultrathinkPromptControlled && descriptor?.id === input.primarySelectDescriptorId;
@@ -727,7 +756,7 @@ export function buildTraitsTriggerParts(
           input.reportedModelSelection,
         );
   if (!descriptor || typeof value !== "string" || !effortLabel || !effortGlyphLevel(value)) {
-    return { label, effort: null, details: "", speed };
+    return { label, effort: null, details: "", speed, ultracode };
   }
   const details: Array<string> = [];
   for (const other of input.descriptors) {
@@ -736,6 +765,8 @@ export function buildTraitsTriggerParts(
       // A faster speed is drawn as a bolt, not a word.
       if (other.id === "fastMode") {
         if (other.currentValue === true && !speed) details.push("Fast");
+      } else if (other.id === "ultracode") {
+        // Drawn beside the effort, so it stays visible when details collapse.
       } else if (other.id === "thinking") {
         details.push(other.currentValue === true ? "Thinking" : "No thinking");
       } else {
@@ -770,6 +801,7 @@ export function buildTraitsTriggerParts(
     effort: { value, label: effortLevelLabel(value, effortLabel) },
     details: details.join(" · "),
     speed,
+    ultracode,
   };
 }
 
@@ -838,6 +870,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     effort: triggerEffort,
     details: triggerDetails,
     speed: triggerSpeedPart,
+    ultracode: triggerUltracode,
   } = triggerParts;
   const triggerDescription = traitsTriggerDescription(triggerParts);
   const speedIcon = triggerSpeedPart ? (
@@ -852,6 +885,12 @@ export const TraitsPicker = memo(function TraitsPicker({
       />
     </span>
   ) : null;
+  const ultracodeMark =
+    triggerEffort && triggerUltracode ? (
+      <span data-composer-control-ultracode className="shrink-0 font-normal text-primary">
+        · Ultracode
+      </span>
+    ) : null;
   const isCodexStyle = provider === "codex";
 
   return (
@@ -906,6 +945,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                     {triggerEffort.label}
                   </span>
                   {speedIcon}
+                  {ultracodeMark}
                   {triggerDetails ? (
                     <span
                       data-composer-control-label
@@ -939,6 +979,7 @@ export const TraitsPicker = memo(function TraitsPicker({
               />
               <span data-composer-control-effort>{triggerEffort.label}</span>
               {speedIcon}
+              {ultracodeMark}
               {triggerDetails ? (
                 <span data-composer-control-label className="font-normal text-muted-foreground">
                   {triggerDetails}

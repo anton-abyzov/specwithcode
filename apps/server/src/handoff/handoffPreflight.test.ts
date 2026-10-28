@@ -218,7 +218,7 @@ describe("turnRefusal", () => {
     );
   });
 
-  it("pauses a machine that woke with replicated leases until a peer answers", () => {
+  it("pauses a machine that lost its network with replicated leases until it is back", () => {
     const document = withRecord(
       {
         lease: lease(m4, "active"),
@@ -235,6 +235,11 @@ describe("turnRefusal", () => {
       },
       { pausedSince: "2026-10-20T14:05:00.000Z" },
     );
-    expect(turnRefusal(document, threadId, m4)).toContain("Resume this Mac");
+    const refusal = turnRefusal(document, threadId, m4);
+    expect(refusal).toContain("lost its network");
+    expect(refusal).toContain("Resume this Mac");
+    expect(refusal).not.toContain("woke");
+    // Without a pause the same thread starts turns.
+    expect(turnRefusal({ ...document, pausedSince: null }, threadId, m4)).toBeNull();
   });
 });

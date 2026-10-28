@@ -50,6 +50,11 @@ import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Sink from "effect/Sink";
+import * as Stdio from "effect/Stdio";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
+import * as Queue from "effect/Queue";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -63,6 +68,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import {
+  ProviderAdapterEventStreamError,
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
   ProviderAdapterRollbackThreadError,
@@ -705,6 +711,10 @@ describe("CodexAdapterV2 process spawning", () => {
           model: "gpt-5.4",
           config: {
             "tools.update_plan.enabled": true,
+            // The shared app-server names the thread that opened it; each thread names itself.
+            "shell_environment_policy.set.SPECWEAVE_STUDIO_THREAD_ID": "thread-codex-mcp",
+            "shell_environment_policy.set.SPECWEAVE_TOOL": "codex",
+            "shell_environment_policy.set.SPECWEAVE_MODEL": "",
             mcp_servers: {
               "studio-code": {
                 url: "http://127.0.0.1:43123/mcp",
@@ -1739,6 +1749,7 @@ function codexReplayPreamble(input: {
           thread: {
             id: input.nativeThreadId,
             sessionId: input.nativeThreadId,
+            projectId: null,
             forkedFromId: null,
             preview: "",
             ephemeral: false,
@@ -1830,6 +1841,151 @@ function withReplayRequestId(
     ? { ...entry, frame: { ...entry.frame, id } }
     : entry;
 }
+
+describe("CodexAdapterV2 process exit", () => {
+  const isProviderAdapterEventStreamError = Schema.is(ProviderAdapterEventStreamError);
+
+  it.effect.each([
+    { exit: "numeric", active: false },
+    { exit: "SIGKILL", active: false },
+    { exit: "numeric", active: true },
+    { exit: "SIGKILL", active: true },
+  ] as const)("retires the shared session after $exit (active turn: $active)", ({ exit, active }) =>
+    Effect.gen(function* () {
+      const scenario = `process-exit-${exit}-${active}`;
+      const nativeThreadId = `native-${scenario}`;
+      const nativeTurnId = `turn-${scenario}`;
+      const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+      const emit = (frame: unknown) =>
+        Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+      const outputEnded = yield* Deferred.make<void>();
+      const turnStarted = yield* Deferred.make<void>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const events: Array<ProviderAdapterV2Event> = [];
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+      const terminationError =
+        exit === "numeric"
+          ? new CodexError.CodexAppServerProcessExitedError({ code: 17, pid: 52 })
+          : new CodexError.CodexAppServerTransportError({
+              operation: "read-process-exit-status",
+              pid: 52,
+              cause: PlatformError.systemError({
+                _tag: "Unknown",
+                module: "ChildProcess",
+                method: "exitCode",
+                cause: new Error("Process terminated by SIGKILL"),
+              }),
+            });
+      const client = yield* CodexClient.make(
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(input),
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.gen(function* () {
+                const frame = JSON.parse(
+                  typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+                ) as { readonly id?: number; readonly method: string };
+                const response = preamble.find(
+                  (entry) =>
+                    entry.type === "emit_inbound" &&
+                    entry.label === frame.method &&
+                    Predicate.isObject(entry.frame) &&
+                    "id" in entry.frame,
+                );
+                if (response?.type === "emit_inbound") {
+                  yield* emit(response.frame);
+                }
+              }),
+            ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
+          stderr: () => Sink.drain,
+        }),
+        {},
+        Effect.succeed(terminationError),
+      );
+      const adapter = CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: { open: () => Effect.succeed(client) },
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* makeReplayServerConfig(scenario).pipe(Effect.orDie),
+      });
+      const threadId = ThreadId.make(`thread-${scenario}`);
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`session-${scenario}`),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const eventReader = yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => events.push(event)).pipe(
+            Effect.andThen(
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+                ? Deferred.succeed(turnStarted, undefined)
+                : event.type === "turn.terminal"
+                  ? Deferred.succeed(turnCompleted, undefined)
+                  : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+          text: "work",
+        }),
+      );
+      yield* emit({
+        method: "turn/started",
+        params: {
+          threadId: nativeThreadId,
+          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+        },
+      });
+      yield* Deferred.await(turnStarted);
+      if (!active) {
+        yield* emit({
+          method: "turn/completed",
+          params: {
+            threadId: nativeThreadId,
+            turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+          },
+        });
+        yield* Deferred.await(turnCompleted);
+        assert.isTrue(
+          events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+        );
+      }
+
+      yield* Queue.end(input);
+      // Output closes only after the protocol records the process termination.
+      yield* Deferred.await(outputEnded);
+      const rpcError = yield* client.request("thread/list", {}).pipe(Effect.flip);
+      assert.strictEqual(rpcError, terminationError);
+      // Without the fix the stream never ends, so this waits until the project timeout.
+      const readerExit = yield* Fiber.await(eventReader);
+      // A failure, not a clean end, carries the Codex error into the session's lastError.
+      assert.isTrue(
+        Exit.isFailure(readerExit) &&
+          isProviderAdapterEventStreamError(Cause.squash(readerExit.cause)),
+        "the session manager must receive process death so it can retire the shared process",
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+});
 
 describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
@@ -2691,7 +2847,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           excludeTurns: true,
           cwd: "/workspace",
           model: "gpt-5.4",
-          config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+          config: {
+            ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+            "shell_environment_policy.set.SPECWEAVE_STUDIO_THREAD_ID": "thread-inject-thread-not-loaded",
+            "shell_environment_policy.set.SPECWEAVE_TOOL": "codex",
+            "shell_environment_policy.set.SPECWEAVE_MODEL": "",
+          },
         },
       ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),

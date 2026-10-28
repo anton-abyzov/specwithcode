@@ -25,6 +25,7 @@ import {
   type ModelSelection,
   type Project,
   type ProjectId,
+  type RuntimeMode,
   type ServerProvider,
   ThreadId,
   type ThreadExecutionReason,
@@ -38,7 +39,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
-import { projectInGrant, type EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
+import { clampRuntimeMode } from "../fleet/remoteWorkerMatching.ts";
+import {
+  accountInGrant,
+  projectInGrant,
+  type EffectiveWorkGrant,
+} from "../fleet/workGrantPolicy.ts";
+import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { runGit } from "../fleet/folderTransfer/git.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -104,6 +111,11 @@ export class HandoffRefusal extends Data.TaggedError("HandoffRefusal")<{
 export interface ReceiverCaller {
   readonly sourceEnvironmentId: EnvironmentId;
   readonly grant: EffectiveWorkGrant | null;
+  /**
+   * The most a continuation may run with here: the access the source's worker
+   * credential signed in with. Absent or null for this machine asking itself.
+   */
+  readonly runtimeCeiling?: RuntimeMode | null;
 }
 
 const refuse = (
@@ -135,6 +147,11 @@ const fromBundleError = (label: string, cause: unknown) => {
     return refuse(cause.code === "failed" ? 500 : 409, code, `${label}: ${cause.message}`);
   }
   return refuse(500, "failed", `${label}: ${describe(cause)}`);
+};
+
+const noticeOf = (parts: ReadonlyArray<string | null>) => {
+  const notice = parts.filter((part): part is string => part !== null).join(" ");
+  return notice.length === 0 ? null : notice.slice(0, 500);
 };
 
 const EXECUTION_REASON: Readonly<Record<TakeoverReason, ThreadExecutionReason>> = {
@@ -208,6 +225,7 @@ export const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const config = yield* ServerConfig.ServerConfig;
+  const grants = yield* WorkGrants.WorkGrants;
   const locks = yield* KeyedLock.make<string>();
   const label = handoff.machineLabel;
   const at = (message: string) => `${label}: ${message}`;
@@ -245,6 +263,22 @@ export const make = Effect.gen(function* () {
   const inGrant = (caller: ReceiverCaller, project: Project) =>
     caller.grant === null ||
     projectInGrant(caller.grant.projects, caller.sourceEnvironmentId, project);
+
+  /** Why the grant does not let the source run on this sign-in, or null when it does. */
+  const accountRefusal = (
+    caller: ReceiverCaller,
+    sourceLabel: string,
+    instanceId: ModelSelection["instanceId"],
+  ) => {
+    if (caller.grant === null || accountInGrant(caller.grant.accounts, instanceId)) return null;
+    const allowed =
+      caller.grant.accounts.kind === "listed" ? caller.grant.accounts.instanceIds : [];
+    return at(
+      allowed.length === 0
+        ? `this machine lets ${sourceLabel} use none of its sign-ins, so it cannot continue work here. The user can allow sign-ins in Settings > Connections > Who can run work on this Mac.`
+        : `this machine lets ${sourceLabel} use only these sign-ins: ${allowed.join(", ")}. The user can allow ${instanceId} in Settings > Connections > Who can run work on this Mac.`,
+    );
+  };
 
   const requireProject = (caller: ReceiverCaller, sourceProjectId: ProjectId) =>
     Effect.gen(function* () {
@@ -375,6 +409,15 @@ export const make = Effect.gen(function* () {
             ? holder.holderLabel
             : null,
       });
+      const account =
+        modelSelection === null
+          ? null
+          : accountRefusal(
+              caller,
+              replica?.sourceLabel ?? "the source machine",
+              modelSelection.instanceId,
+            );
+      if (account !== null) failures.push({ check: "grant", message: account });
       if (replica?.continuedThreadId != null) {
         failures.push({ check: "lease", message: at("already continues this thread") });
       }
@@ -501,7 +544,7 @@ export const make = Effect.gen(function* () {
       if (failures.length > 0) {
         const first = failures[0]!;
         return yield* refuse(
-          409,
+          first.check === "grant" ? 403 : 409,
           first.check === "grant" ? "needs_grant" : "invalid",
           failures.map((failure) => failure.message).join("; "),
           first.check,
@@ -561,44 +604,88 @@ export const make = Effect.gen(function* () {
       const now = yield* nowIso;
       const modelSelection = request.modelSelection ?? detail.modelSelection;
       const resume = shouldResume(checkpoint.runEnding);
-      // The lease and journal land before the thread exists, so its first run
-      // starts under the takeover epoch and never repeats the source's side effects.
-      yield* updateDocument((current) => {
-        const record = current.threads[threadId] ?? emptyThreadRecord(project.id);
-        const next = {
-          ...record,
-          projectId: project.id,
-          mode: "on" as const,
-          lease: {
-            holderEnvironmentId: handoff.environmentId,
-            holderLabel: label,
-            holderThreadId: threadId,
-            epoch: request.epoch,
-            renewedAt: now,
-            state: "active" as const,
-          },
-          sideEffects: [...checkpoint.sideEffects],
-          resumeTurnKey: checkpoint.turnKey,
-          // An idle continuation starts no run; its first turn carries the note and transcript.
-          pendingSeed: resume ? null : idleSeed(seed),
-        };
-        return [next, { ...current, threads: { ...current.threads, [threadId]: next } }] as const;
-      });
-      yield* launches
-        .launch({
-          commandId: CommandId.make(`handoff-takeover:${threadId}`),
-          threadId,
-          projectId: project.id,
-          title: replica.title,
-          modelSelection,
-          runtimeMode: detail.runtimeMode,
-          interactionMode: detail.interactionMode,
-          workspaceStrategy: { type: "existing_worktree", worktreePath, branch },
-          ...(resume ? { initialMessage: { text: seed, attachments: [] } } : {}),
-          createdBy: "system",
-          creationSource: "server",
-        })
-        .pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
+      const ceiling = caller.runtimeCeiling ?? null;
+      const clamped =
+        ceiling === null
+          ? null
+          : clampRuntimeMode({ started: detail.runtimeMode, requested: undefined, ceiling });
+      const runtimeMode = clamped?.ok === true ? clamped.mode : detail.runtimeMode;
+      const loweredFrom = clamped?.ok === true ? clamped.loweredFrom : undefined;
+      if (caller.grant !== null) {
+        // The route checked the grant before the move began; a revoke since then wins.
+        const current = yield* grants
+          .forCoordinator(caller.sourceEnvironmentId)
+          .pipe(Effect.mapError(() => refuse(500, "failed", at("could not read its work grants"))));
+        if (current.revoked) {
+          return yield* refuse(
+            403,
+            "needs_grant",
+            at(`this machine revoked ${replica.sourceLabel}'s work here`),
+            "grant",
+          );
+        }
+        // The continuation is the source's work: the revoke sweeper and its own
+        // later calls see it under the source's grant, as delegated work is.
+        yield* grants
+          .recordOrigin(threadId, {
+            coordinatorEnvironmentId: caller.sourceEnvironmentId,
+            path: [caller.sourceEnvironmentId],
+            hops: 1,
+          })
+          .pipe(
+            Effect.mapError(() => refuse(500, "failed", at("could not record the work's origin"))),
+          );
+      } else {
+        // A self continue is this machine's own work, even where an earlier failed
+        // move of the same epoch recorded the source as its origin.
+        yield* grants.forgetOrigin(threadId).pipe(Effect.ignore);
+      }
+      yield* Effect.gen(function* () {
+        // The lease and journal land before the thread exists, so its first run
+        // starts under the takeover epoch and never repeats the source's side effects.
+        yield* updateDocument((current) => {
+          const record = current.threads[threadId] ?? emptyThreadRecord(project.id);
+          const next = {
+            ...record,
+            projectId: project.id,
+            mode: "on" as const,
+            lease: {
+              holderEnvironmentId: handoff.environmentId,
+              holderLabel: label,
+              holderThreadId: threadId,
+              epoch: request.epoch,
+              renewedAt: now,
+              state: "active" as const,
+            },
+            sideEffects: [...checkpoint.sideEffects],
+            resumeTurnKey: checkpoint.turnKey,
+            // An idle continuation starts no run; its first turn carries the note and transcript.
+            pendingSeed: resume ? null : idleSeed(seed),
+          };
+          return [next, { ...current, threads: { ...current.threads, [threadId]: next } }] as const;
+        });
+        yield* launches
+          .launch({
+            commandId: CommandId.make(`handoff-takeover:${threadId}`),
+            threadId,
+            projectId: project.id,
+            title: replica.title,
+            modelSelection,
+            runtimeMode,
+            interactionMode: detail.interactionMode,
+            workspaceStrategy: { type: "existing_worktree", worktreePath, branch },
+            ...(resume ? { initialMessage: { text: seed, attachments: [] } } : {}),
+            createdBy: "system",
+            creationSource: "server",
+          })
+          .pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
+      }).pipe(
+        // A failed move leaves no origin behind: the same id may later be continued
+        // here by this machine's own user.
+        Effect.onError(() =>
+          caller.grant === null ? Effect.void : grants.forgetOrigin(threadId).pipe(Effect.ignore),
+        ),
+      );
       const previous = detail.execution;
       const execution: ThreadExecutionRecord = {
         ownerMachineId: previous?.ownerMachineId ?? caller.sourceEnvironmentId,
@@ -659,13 +746,17 @@ export const make = Effect.gen(function* () {
         machineLabel: label,
         modelSelection,
         resumed: resume,
-        notice:
+        notice: noticeOf([
+          loweredFrom === undefined
+            ? null
+            : `Runs at ${runtimeMode} here (lowered from ${loweredFrom}) under this Mac's limits for ${replica.sourceLabel}.`,
           checkpoint.skipped.length > 0
             ? `Not carried over: ${checkpoint.skipped
                 .slice(0, 5)
                 .map((file) => file.path)
-                .join(", ")}`.slice(0, 500)
+                .join(", ")}`
             : null,
+        ]),
       };
       yield* updateDocument((current) => {
         const next = markContinued(current, request, response, now);

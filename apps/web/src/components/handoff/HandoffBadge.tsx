@@ -218,8 +218,8 @@ export function ResumeMachineDialogView(props: {
         <AlertDialogHeader>
           <AlertDialogTitle>Resume all threads on this Mac?</AlertDialogTitle>
           <AlertDialogDescription>
-            This Mac handed its threads off before sleeping. Resuming lets them run here again, even
-            if another machine already picked them up.
+            This Mac lost its network, so it paused threads that other machines could continue.
+            Resuming lets them run here again, even if another machine already picked them up.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

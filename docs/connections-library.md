@@ -5,10 +5,10 @@ Open **Settings → Connections** and select an execution machine. Each AI tool 
 ## Finding a server
 
 - **Search** matches server names, plugin names and folder names.
-- **Tools** chips show how many servers each tool has enabled. Picking one narrows the table to that tool; picking more compares them; **All** shows every tool. Rows with no declaration in the shown tools drop out.
-- **Status**: Enabled, Disabled, Missing somewhere (declared in one shown tool and absent from another) and, when present, Invalid. **Clear filters** resets all three.
+- **Show tools**: picking a tool narrows the table to that tool; picking more compares them; **All** shows every tool. Rows with no declaration in the shown tools drop out.
+- **Show tools** chips show how many servers each tool has enabled (the green dot). **Show servers**: Enabled, Disabled, Partly set up (declared in one shown tool and absent from another) and, when present, Invalid. Every chip explains itself on hover. **Clear filters** resets all three.
 - Rows are sorted enabled-first within each group (your connections, from plugins, only in one folder). Group headers collapse.
-- **Compact** (default) shows one line per cell: empty cells are a faint ring, and notes sit behind an info mark. **Detailed** shows each declaration's scope and transport and the notes inline.
+- **Compact** (default) shows one status mark per cell; hovering or focusing it says what the state means, where it is declared and any note. A legend above the table names each mark. **Detailed** prints the status, scope, transport, notes and quick actions in each cell.
 
 Select a status for that tool's source, transport, other declarations, access owner and actions; select a server name for the row's details, including the computer-use permission note. **Copy location** copies the file and key (for example `~/.codex/config.toml [mcp_servers.posthog]`), never the command, URL or secrets, which the machine does not send to the browser.
 
@@ -19,7 +19,7 @@ Open a project's **Environment** to include its registered checkout's configurat
 - **Enabled**: a supported command or URL is declared and turned on. This does not establish sign-in, project trust, native policy, or session access.
 - **Disabled**: an explicit disable was found in the inspected configuration.
 - **Invalid declaration**: the entry has no supported transport or has an invalid structure.
-- **Not found**: no matching declaration was found in the inspected sources. **Unknown** replaces this when a source could not be read or the inventory was truncated.
+- **Not set up**: no matching declaration was found in the inspected sources (a dash). **Can add** (a dashed +) means another tool's portable, enabled entry can be copied here; selecting it starts the reviewed copy. **Unknown** replaces Not set up when a source could not be read or the inventory was truncated.
 
 Offline, denied, loading and failed scans are shown separately from an empty inventory. Partial scans retain an incomplete-results notice. Matching names across clients are a comparison aid; they do not prove identical servers or accounts.
 

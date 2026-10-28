@@ -48,8 +48,14 @@ try {
     if (theme === "dark") await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.getByLabel("Fixture state").selectOption("folders");
     await page.getByText("Only in one folder (Claude Code) · 3").waitFor();
-    await page.getByText("Claude Code, only in sample-portal and 2 more folders · stdio").waitFor();
+    // The group note is a tooltip on its info mark.
+    await page.getByRole("note", { name: /only when it runs in that folder/ }).hover();
     await page.getByText("Claude Code loads these only when it runs in that folder.").waitFor();
+    await page.mouse.move(0, 0);
+    await page.getByRole("button", { name: "Detailed" }).click();
+    await page
+      .getByText("Claude Code, only in sample-portal and 2 more folders · stdio", { exact: true })
+      .waitFor();
     NodeAssert.equal(await page.getByText(/private project/i).count(), 0);
     await page.getByRole("button", { name: "design-mcp Claude Code details" }).click();
     await page.getByText("Claude Code, only in sample-portal (~/.claude.json)").waitFor();

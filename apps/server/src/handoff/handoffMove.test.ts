@@ -33,10 +33,12 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { incomingRef } from "./bundleGit.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
+import { HandoffConnectivity, type HandoffConnectivityState } from "./handoffConnectivity.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffMoves from "./HandoffMoves.ts";
 import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
+import { PAUSED_OFFLINE_REFUSAL, turnRefusal } from "./HandoffTurnGate.ts";
 import { HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
@@ -302,6 +304,9 @@ const scenario = (
       shipments: 0,
       olderDestination: false,
       newerDestination: false,
+      /** What a probe of this machine's own network (SpecWithCode Connect) answers. */
+      connect: "online" as HandoffConnectivityState,
+      connectProbes: 0,
     };
     const viaNetwork = <A>(effect: Effect.Effect<A, HandoffReceiver.HandoffRefusal>) =>
       network.down
@@ -399,7 +404,20 @@ const scenario = (
       return yield* HandoffMoves.make.pipe(
         Effect.provideService(HandoffReceiver.HandoffReceiver, receiver),
       );
-    }).pipe(Effect.provide(Layer.merge(sourceServices, Layer.succeed(HandoffPeers, peers))));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          sourceServices,
+          Layer.succeed(HandoffPeers, peers),
+          Layer.succeed(HandoffConnectivity, {
+            probe: Effect.sync(() => {
+              network.connectProbes += 1;
+              return network.connect;
+            }),
+          }),
+        ),
+      ),
+    );
     // The source holds the lease and handoff mode is on for the thread.
     source.document = {
       ...source.document,
@@ -434,6 +452,84 @@ const scenario = (
 
 const handOff = (moves: Effect.Success<ReturnType<typeof scenario>>["moves"]) =>
   moves.handOff({ threadId, destinationEnvironmentId: minis });
+
+/** How the source answers Minis's direct probe before Continue here. */
+const probedSource = (
+  answer: "silent" | "awake" | "refuses" | "local",
+  probes: Array<unknown> = [],
+) =>
+  ({
+    negotiate: (_: unknown, request: unknown) => {
+      probes.push(request);
+      switch (answer) {
+        case "awake":
+          return Effect.succeed({ known: [] });
+        case "refuses":
+          return Effect.fail(
+            new HandoffPeerError({
+              code: "needs_grant",
+              check: "grant",
+              message: "M4: this machine's work grant there was revoked",
+              uncertain: false,
+            }),
+          );
+        case "local":
+          return Effect.fail(
+            new HandoffPeerError({
+              code: "needs_grant",
+              check: "grant",
+              message: "M4: this machine has no work grant there",
+              uncertain: false,
+              local: true,
+            }),
+          );
+        default:
+          return Effect.fail(
+            new HandoffPeerError({
+              code: "unreachable",
+              message: "M4 did not answer.",
+              uncertain: true,
+            }),
+          );
+      }
+    },
+  }) as unknown as HandoffPeers["Service"];
+
+/** Minis, holding a replica of the M4 thread whose lease went stale, with moves of its own. */
+const staleReplicaOnMinis = (
+  source: Parameters<typeof probedSource>[0],
+  options: {
+    /** What a probe of Minis's own network answers; unprovided, nothing can be shown. */
+    readonly connect?: HandoffConnectivityState;
+    readonly heartbeat?: HandoffPeers["Service"]["heartbeat"];
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const setup = yield* scenario();
+    const { moves, destinationReceiver, destination, destinationRoot, destinationServices } = setup;
+    NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+    yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
+    const renewedAt = Date.parse(findIncoming(destination.document, m4, threadId)!.lease.renewedAt);
+    const probes: Array<unknown> = [];
+    const connect = options.connect;
+    const minisMoves = yield* HandoffMoves.make.pipe(
+      Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
+      Effect.provideService(HandoffPeers, {
+        ...probedSource(source, probes),
+        ...(options.heartbeat === undefined ? {} : { heartbeat: options.heartbeat }),
+      }),
+      Effect.provide(destinationServices),
+      connect === undefined
+        ? (effect) => effect
+        : Effect.provideService(HandoffConnectivity, { probe: Effect.succeed(connect) }),
+    );
+    yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
+    const continueHere = minisMoves.continueHere({
+      sourceEnvironmentId: m4,
+      sourceThreadId: threadId,
+    });
+    return { ...setup, minisMoves, probes, continueHere };
+  });
 
 describe("handoff between two machines", () => {
   it.effect("moves a thread stopped by its usage limit and resumes it on the destination", () =>
@@ -838,7 +934,7 @@ describe("handoff between two machines", () => {
         );
         const minisMoves = yield* HandoffMoves.make.pipe(
           Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
-          Effect.provideService(HandoffPeers, {} as never),
+          Effect.provideService(HandoffPeers, probedSource("silent")),
           Effect.provide(destinationServices),
         );
         yield* TestClock.setTime(renewedAt + 30_000);
@@ -892,7 +988,211 @@ describe("handoff between two machines", () => {
       }),
   );
 
-  it.effect("fences a running copy whose replica machines went silent past a stale lease", () =>
+  it.effect.each(["awake", "refuses"] as const)(
+    "refuses Continue here while the source answers a direct probe (%s)",
+    (answer) =>
+      Effect.gen(function* () {
+        const { continueHere, destination, probes } = yield* staleReplicaOnMinis(answer);
+        const refused = yield* continueHere.pipe(Effect.flip);
+        expect(refused.code).toBe("busy");
+        expect(refused.message).toBe(
+          "M4 answered just now and still holds this thread; hand it off from there.",
+        );
+        expect(probes).toEqual([
+          expect.objectContaining({ sourceEnvironmentId: minis, candidates: [] }),
+        ]);
+        expect(destination.launches).toHaveLength(0);
+        expect(findIncoming(destination.document, m4, threadId)?.continuedThreadId).toBeNull();
+      }),
+  );
+
+  it.effect.each(["silent", "local"] as const)(
+    "continues here when the source is unreachable or cannot be probed (%s)",
+    (answer) =>
+      Effect.gen(function* () {
+        const { continueHere, destination, probes } = yield* staleReplicaOnMinis(answer);
+        const continued = yield* continueHere;
+        expect(probes).toHaveLength(1);
+        expect(destination.launches).toHaveLength(1);
+        expect(destination.document.threads[continued.threadId]?.lease?.epoch).toBe(2);
+      }),
+  );
+
+  it.effect("refuses Continue here while this machine's own network is down", () =>
+    Effect.gen(function* () {
+      const { continueHere, destination, probes } = yield* staleReplicaOnMinis("silent", {
+        connect: "offline",
+      });
+      const refused = yield* continueHere.pipe(Effect.flip);
+      expect(refused.code).toBe("busy");
+      expect(refused.message).toContain("cannot reach the network");
+      expect(probes).toHaveLength(0);
+      expect(destination.launches).toHaveLength(0);
+    }),
+  );
+
+  it.effect.each([
+    { connect: "unknown", source: "silent", refusal: "cannot show that its network works" },
+    { connect: "online", source: "local", refusal: "could not ask M4" },
+  ] as const)(
+    "holds an agent to a shown network and a source it asked ($connect, $source)",
+    ({ connect, source, refusal }) =>
+      Effect.gen(function* () {
+        const { minisMoves, destination } = yield* staleReplicaOnMinis(source, { connect });
+        const refused = yield* minisMoves
+          .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId }, { byAgent: true })
+          .pipe(Effect.flip);
+        expect(refused.code).toBe("busy");
+        expect(refused.message).toContain(refusal);
+        expect(refused.message).toContain("ask the user");
+        expect(destination.launches).toHaveLength(0);
+      }),
+  );
+
+  it.effect("lets an agent continue once this machine is online and the source is silent", () =>
+    Effect.gen(function* () {
+      const { minisMoves, destination } = yield* staleReplicaOnMinis("silent", {
+        connect: "online",
+      });
+      yield* minisMoves.continueHere(
+        { sourceEnvironmentId: m4, sourceThreadId: threadId },
+        { byAgent: true },
+      );
+      expect(destination.launches).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reads a slow lease tick as no sleep", () =>
+    Effect.gen(function* () {
+      // Minis holds a thread of its own with a copy on M4, so its tick heartbeats M4,
+      // and M4 takes 90 seconds to answer. M4 also answers the probe, so an attempt
+      // that passes the wake check is refused only for that.
+      let answered = 0;
+      const { minisMoves, destination } = yield* staleReplicaOnMinis("awake", {
+        heartbeat: () =>
+          Effect.sleep("90 seconds").pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                answered += 1;
+              }),
+            ),
+            Effect.as({ machineLabel: "M4", continued: [] as Array<never> }),
+          ),
+      });
+      const own = ThreadId.make("thread-minis-own");
+      destination.document = {
+        ...destination.document,
+        threads: {
+          ...destination.document.threads,
+          [own]: {
+            ...emptyThreadRecord(destinationProject),
+            lease: {
+              holderEnvironmentId: minis,
+              holderLabel: "Minis",
+              holderThreadId: own,
+              epoch: 1,
+              renewedAt: "2026-10-20T14:00:00.000Z",
+              state: "active",
+            },
+            replicas: [
+              {
+                environmentId: m4,
+                machineLabel: "M4",
+                state: "current",
+                sequence: 1,
+                detail: null,
+                updatedAt: "2026-10-20T14:00:00.000Z",
+              },
+            ],
+          },
+        },
+      };
+      const attempt = minisMoves
+        .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
+        .pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+      const tick = Effect.gen(function* () {
+        const fiber = yield* minisMoves.heartbeat.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        return fiber;
+      });
+      yield* tick;
+      yield* TestClock.adjust("90 seconds");
+      yield* TestClock.adjust("30 seconds");
+      const slow = yield* tick;
+      // Eighty seconds into a tick: no idle time, so no wake.
+      yield* TestClock.adjust("80 seconds");
+      expect(yield* attempt).toContain("answered just now");
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(slow);
+      expect(answered).toBe(2);
+      // The next tick starts 30 seconds after the slow one ended: still no wake.
+      yield* TestClock.adjust("30 seconds");
+      yield* tick;
+      expect(yield* attempt).toContain("answered just now");
+    }),
+  );
+
+  it.effect("waits a minute after this machine starts or wakes before continuing here", () =>
+    Effect.gen(function* () {
+      const { destination, destinationReceiver, destinationServices, minisMoves } =
+        yield* staleReplicaOnMinis("silent");
+      const attempt = (moves: typeof minisMoves) =>
+        moves.continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId });
+      // A server that just started.
+      const started = yield* HandoffMoves.make.pipe(
+        Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
+        Effect.provideService(HandoffPeers, probedSource("silent")),
+        Effect.provide(destinationServices),
+      );
+      const fresh = yield* attempt(started).pipe(Effect.flip);
+      expect(fresh.code).toBe("busy");
+      expect(fresh.message).toContain("just started or woke");
+      // A machine whose lease ticks stopped for five minutes slept; before its next tick
+      // sees the gap, Continue here already does.
+      yield* minisMoves.heartbeat;
+      yield* TestClock.adjust("5 minutes");
+      expect((yield* attempt(minisMoves).pipe(Effect.flip)).message).toContain(
+        "just started or woke",
+      );
+      yield* minisMoves.heartbeat;
+      expect((yield* attempt(minisMoves).pipe(Effect.flip)).code).toBe("busy");
+      yield* TestClock.adjust("30 seconds");
+      yield* minisMoves.heartbeat;
+      expect((yield* attempt(minisMoves).pipe(Effect.flip)).code).toBe("busy");
+      expect(destination.launches).toHaveLength(0);
+      yield* TestClock.adjust("31 seconds");
+      yield* minisMoves.heartbeat;
+      yield* attempt(minisMoves);
+      expect(destination.launches).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps running when its replica machines go silent while its own network works", () =>
+    Effect.gen(function* () {
+      const { source, moves, fixture, network } = yield* scenario();
+      yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
+      fixture.activeRunId = "run-1";
+      yield* moves.tick;
+      // Minis went to sleep; M4 still reaches SpecWithCode Connect.
+      network.down = true;
+      for (let tick = 0; tick < 4; tick += 1) {
+        yield* TestClock.adjust("60 seconds");
+        yield* moves.tick;
+      }
+      expect(network.connectProbes).toBeGreaterThan(0);
+      expect(source.dispatched).toHaveLength(0);
+      expect(fixture.activeRunId).toBe("run-1");
+      expect(source.document.pausedSince).toBeNull();
+      expect(source.document.threads[threadId]?.fencedBy).toBeNull();
+      // New turns still start here.
+      expect(turnRefusal(source.document, threadId, m4)).toBeNull();
+    }),
+  );
+
+  it.effect("fences a running copy only when its own network is down as well", () =>
     Effect.gen(function* () {
       const { source, moves, fixture, network } = yield* scenario();
       yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
@@ -900,18 +1200,149 @@ describe("handoff between two machines", () => {
       yield* moves.tick;
       expect(source.dispatched).toHaveLength(0);
       network.down = true;
+      network.connect = "offline";
       yield* TestClock.adjust("60 seconds");
       yield* moves.tick;
       expect(source.dispatched).toHaveLength(0);
       yield* TestClock.adjust("60 seconds");
       yield* moves.tick;
       expect(source.dispatched[0]).toMatchObject({ type: "run.interrupt", threadId });
+      expect(source.dispatched[0]?.reason).toContain("lost its network");
+      expect(source.document.threads[threadId]?.fencedBy).toBe("sleep");
       expect(source.document.pausedSince).not.toBeNull();
-      // The peer answers again: the pause lifts and nothing is continued twice.
+      expect(turnRefusal(source.document, threadId, m4)).toBe(PAUSED_OFFLINE_REFUSAL);
+      // Connect answers again while Minis still sleeps. Minis may have continued the
+      // thread before it slept, so the pause stands until Minis itself answers.
+      network.connect = "online";
+      yield* TestClock.adjust("30 seconds");
+      yield* moves.tick;
+      expect(source.document.pausedSince).not.toBeNull();
+      expect(turnRefusal(source.document, threadId, m4)).toBe(PAUSED_OFFLINE_REFUSAL);
+      network.down = false;
+      yield* moves.tick;
+      expect(source.document.pausedSince).toBeNull();
+      expect(turnRefusal(source.document, threadId, m4)).toBeNull();
+      expect(source.document.threads[threadId]?.continuedOn).toBeNull();
+    }),
+  );
+
+  it.effect("lifts a network pause once the peer answers again", () =>
+    Effect.gen(function* () {
+      const { source, moves, fixture, network } = yield* scenario();
+      yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
+      fixture.activeRunId = "run-1";
+      yield* moves.tick;
+      network.down = true;
+      network.connect = "offline";
+      yield* TestClock.adjust("120 seconds");
+      yield* moves.tick;
+      expect(source.document.pausedSince).not.toBeNull();
       network.down = false;
       yield* moves.tick;
       expect(source.document.pausedSince).toBeNull();
       expect(source.document.threads[threadId]?.continuedOn).toBeNull();
+    }),
+  );
+
+  it.effect("never fences when no Connect relay is configured to show isolation", () =>
+    Effect.gen(function* () {
+      const { source, moves, fixture, network } = yield* scenario();
+      yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
+      fixture.activeRunId = "run-1";
+      yield* moves.tick;
+      network.down = true;
+      network.connect = "unknown";
+      yield* TestClock.adjust("120 seconds");
+      yield* moves.tick;
+      yield* TestClock.adjust("120 seconds");
+      yield* moves.tick;
+      expect(source.dispatched).toHaveLength(0);
+      expect(source.document.pausedSince).toBeNull();
+      // A pause left by an older build is cleared on the next tick, though no peer answers.
+      source.document = { ...source.document, pausedSince: "2026-10-20T14:05:00.000Z" };
+      yield* moves.tick;
+      expect(source.document.pausedSince).toBeNull();
+    }),
+  );
+
+  it.effect("counts only replicas holding a usable checkpoint", () =>
+    Effect.gen(function* () {
+      const { source, moves, fixture, network } = yield* scenario();
+      yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
+      fixture.activeRunId = "run-1";
+      yield* moves.tick;
+      network.down = true;
+      network.connect = "offline";
+      const record = source.document.threads[threadId]!;
+      // Minis holds no checkpoint it could continue (it needs a grant).
+      source.document = {
+        ...source.document,
+        threads: {
+          ...source.document.threads,
+          [threadId]: {
+            ...record,
+            replicas: record.replicas.map((replica) => ({
+              ...replica,
+              state: "needs-grant" as const,
+              sequence: null,
+            })),
+          },
+        },
+      };
+      yield* TestClock.adjust("120 seconds");
+      yield* moves.tick;
+      expect(source.dispatched).toHaveLength(0);
+      expect(source.document.pausedSince).toBeNull();
+    }),
+  );
+
+  it.effect("fences a thread whose handoff was turned off, since its copies stay continuable", () =>
+    Effect.gen(function* () {
+      const { source, moves, fixture, network } = yield* scenario();
+      yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
+      fixture.activeRunId = "run-1";
+      yield* moves.tick;
+      network.down = true;
+      network.connect = "offline";
+      const record = source.document.threads[threadId]!;
+      source.document = {
+        ...source.document,
+        threads: { ...source.document.threads, [threadId]: { ...record, mode: "off" } },
+      };
+      yield* TestClock.adjust("120 seconds");
+      yield* moves.tick;
+      expect(source.dispatched[0]).toMatchObject({ type: "run.interrupt", threadId });
+      expect(source.document.pausedSince).not.toBeNull();
+      expect(turnRefusal(source.document, threadId, m4)).toBe(PAUSED_OFFLINE_REFUSAL);
+    }),
+  );
+
+  it.effect("tells why a thread stayed when the destination's grant refuses it", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, fixture, network, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      fixture.activeRunId = "run-1";
+      network.failTakeover = new HandoffPeerError({
+        code: "needs_grant",
+        check: "grant",
+        message: "Minis: this machine lets M4 use only these sign-ins: codex.",
+        uncertain: false,
+      });
+      const run = yield* moves.handOffMachine({ destinationEnvironmentId: minis, reason: "sleep" });
+      expect(run.results).toEqual([
+        expect.objectContaining({
+          threadId,
+          outcome: "stayed",
+          detail: "Not moved: Minis: this machine lets M4 use only these sign-ins: codex.",
+        }),
+      ]);
+      const record = source.document.threads[threadId]!;
+      expect(record.lease?.state).toBe("active");
+      expect(record.lastError).toBe(
+        "Not moved: Minis: this machine lets M4 use only these sign-ins: codex.",
+      );
+      expect(source.document.pausedSince).toBeNull();
+      expect(destination.launches).toHaveLength(0);
     }),
   );
 

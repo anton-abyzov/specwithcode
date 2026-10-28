@@ -146,7 +146,14 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
     const text = yield* fs.readFileString(
       yield* path.fromFileUrl(delegatedTaskStatusTranscriptFile),
     );
-    return yield* decodeProviderReplayNdjson(text);
+    const transcript = yield* decodeProviderReplayNdjson(text);
+    // The recording ends when the recorder closes the app-server while the parent
+    // turn is still open. This test keeps acting as that parent afterwards, and
+    // replaying the exit would kill the shared process and fail the parent run.
+    return {
+      ...transcript,
+      entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
+    };
   },
   Effect.provide(NodeServices.layer),
 );

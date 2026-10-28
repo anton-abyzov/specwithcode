@@ -40,6 +40,16 @@ import {
   StudioWorkGrantResult,
   StudioFleetRedeemInput,
   StudioFleetRedeemResult,
+  StudioFleetUpdateInput,
+  StudioFleetUpdateRefusal,
+  StudioFleetUpdateResult,
+  StudioFleetUpdateStatus,
+  StudioFleetUpdateStatusQuery,
+  StudioFleetSkillInput,
+  StudioFleetSkillRefusal,
+  StudioFleetSkillResult,
+  StudioFleetSkillStatus,
+  StudioFleetSkillStatusQuery,
 } from "./studioFleet.ts";
 import {
   DeviceSignInApproveInput,
@@ -457,6 +467,42 @@ export class StudioFleetInviteError extends Schema.TaggedError<StudioFleetInvite
 ) {
   [HttpServerRespondable.symbol]() {
     return HttpServerResponse.schemaJson(StudioFleetInviteError)(this, { status: 409 });
+  }
+}
+
+/**
+ * This machine did not take its fleet primary's update request. `reason`
+ * names why (a downgrade, a version that is not published, no update agent
+ * here); `message` says it plainly.
+ */
+export class StudioFleetUpdateError extends Schema.TaggedError<StudioFleetUpdateError>()(
+  "StudioFleetUpdateError",
+  {
+    reason: StudioFleetUpdateRefusal,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(StudioFleetUpdateError)(this, { status: 409 });
+  }
+}
+
+/**
+ * This machine did not take its fleet primary's skill install. `reason`
+ * names why (no vskill here, an unknown project, one already running);
+ * `message` says it plainly.
+ */
+export class StudioFleetSkillError extends Schema.TaggedError<StudioFleetSkillError>()(
+  "StudioFleetSkillError",
+  {
+    reason: StudioFleetSkillRefusal,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(StudioFleetSkillError)(this, { status: 409 });
   }
 }
 
@@ -1218,6 +1264,74 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
       query: StudioFleetRemoteWorkersQuery,
       success: StudioFleetRemoteWorkersResult,
       error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * The fleet primary asks this machine to install a published release, to
+     * cancel the request it wrote, or to look for a release now. Only the
+     * primary's own management token (coordinator principal, `fleet:update`
+     * or, for tokens issued before it, `environment:maintain`) may. The
+     * answer comes before any drain or download; progress is read below.
+     */
+    HttpApiEndpoint.post("requestFleetUpdate", "/api/studio/fleet/update", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetUpdateInput,
+      success: StudioFleetUpdateResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetUpdateError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("fleetUpdateStatus", "/api/studio/fleet/update", {
+      headers: OptionalBearerHeaders,
+      query: StudioFleetUpdateStatusQuery,
+      success: StudioFleetUpdateStatus,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetUpdateError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * The fleet primary asks this machine to install one published skill
+     * version with vskill. Only the primary's own management token
+     * (coordinator principal, `fleet:skills` or, for tokens issued before it,
+     * `environment:maintain`) may. The answer comes before the install runs;
+     * how it went, with the version read back from the lock, is read below.
+     */
+    HttpApiEndpoint.post("requestFleetSkill", "/api/studio/fleet/skills", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetSkillInput,
+      success: StudioFleetSkillResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetSkillError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("fleetSkillStatus", "/api/studio/fleet/skills", {
+      headers: OptionalBearerHeaders,
+      query: StudioFleetSkillStatusQuery,
+      success: StudioFleetSkillStatus,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetSkillError,
+      ],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

@@ -49,7 +49,7 @@ import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -797,7 +797,10 @@ export default function FilePreviewPanel({
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const { resolvedTheme } = useTheme();
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  // The wrap button only changes this panel; the word wrap setting stays the default elsewhere.
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
@@ -890,7 +893,6 @@ export default function FilePreviewPanel({
         : null;
   const canToggleRendered =
     previewPath !== null && attachment === undefined && renderedMode !== null;
-  const updateClientSettings = useUpdateClientSettings();
   // Word wrap only reaches the text bodies. A rendered Markdown document, a table and the
   // browser frame all lay themselves out, so the toggle stays hidden rather than inert.
   const showsRawText =
@@ -1055,7 +1057,7 @@ export default function FilePreviewPanel({
             <FileSurfaceAction
               label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
               pressed={wordWrap}
-              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+              onPress={() => setWordWrapOverride(!wordWrap)}
             >
               <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
@@ -1199,6 +1201,7 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
                 onPostRender={onFilePostRender}
+                wordWrap={wordWrap}
               />
             ) : (
               <DiffWorkerPoolProvider>

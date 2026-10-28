@@ -1138,3 +1138,30 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+describe("ChatMarkdown tables", () => {
+  it("opens a table at its natural size with only the copy control", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={"| Name | Note |\n| --- | --- |\n| a | b |"} />,
+    );
+
+    expect(html).toContain('class="chat-markdown-table-container"');
+    expect(html).not.toContain("data-expanded");
+    expect(html).not.toContain("table cells");
+    expect(html).toContain('aria-label="Copy table"');
+  });
+
+  it("keeps short link words whole and lets long ones break anywhere", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          "[PR #12](https://github.com/acme/app/pull/12) and [https://example.com/a-very-long-path-segment](https://example.com/a-very-long-path-segment)"
+        }
+      />,
+    );
+
+    expect(html).toContain("R #12");
+    expect(html).toContain("a<wbr/>-<wbr/>v<wbr/>e<wbr/>r");
+  });
+});

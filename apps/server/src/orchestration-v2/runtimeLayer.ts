@@ -196,7 +196,7 @@ const layerProjectUsageProvided = ProjectUsageService.layer.pipe(
 );
 
 const layerProjectSkillsProvided = ProjectSkillsService.layer.pipe(
-  Layer.provide(ProjectStore.layer),
+  Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStore.layer)),
 );
 
 const layerProjectEnvironmentProvided = ProjectEnvironmentService.layer.pipe(

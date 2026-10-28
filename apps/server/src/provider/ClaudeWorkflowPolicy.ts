@@ -117,9 +117,24 @@ export function mergeClaudeWorkflowSettings(
   return { ...parsed, ...workflowSettings };
 }
 
+/**
+ * What reaches Claude Code for ultracode: Disabled always wins (the CLI needs
+ * workflows for it), then the thread's toggle, then the launch alias or mode.
+ */
+export function resolveClaudeUltracode(
+  mode: ClaudeWorkflowMode | undefined,
+  toggle: boolean | undefined,
+  launchUltracode = false,
+): boolean {
+  const effective = mode ?? "on-request";
+  return effective !== "disabled" && (toggle ?? (launchUltracode || effective === "automatic"));
+}
+
 /** Native orchestration and reasoning effort are independent session choices. */
 export function compileClaudeWorkflowPolicy(input: {
   readonly mode?: ClaudeWorkflowMode | undefined;
+  /** The thread's Ultracode toggle; unset follows the mode. */
+  readonly ultracode?: boolean | undefined;
   readonly agentInstructions?: string | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly orchestrationInstructions?: string | undefined;
@@ -151,15 +166,16 @@ export function compileClaudeWorkflowPolicy(input: {
   // The CLI rejects simultaneous inline/file additions. Preserve both contents
   // in one append rather than passing conflicting flags or discarding rules.
   delete extraArgs["append-subagent-system-prompt-file"];
-  // The CLI alias also selects xhigh effort. Keep that effort while allowing
-  // the separate Studio workflow policy to decide orchestration.
-  if (extraArgs.effort === "ultracode") extraArgs.effort = "xhigh";
+  // The CLI alias also selects xhigh effort. Keep that effort and treat the
+  // alias as an unset toggle asking for ultracode; the policy still decides.
+  const launchUltracode = extraArgs.effort === "ultracode";
+  if (launchUltracode) extraArgs.effort = "xhigh";
   // An initialize-only SDK append is not inherited by workflow workers.
   // The documented CLI flag is: verified against native worker journals.
   extraArgs["append-subagent-system-prompt"] = instructions;
   const settings = {
     enableWorkflows: mode !== "disabled",
-    ultracode: mode === "automatic",
+    ultracode: resolveClaudeUltracode(mode, input.ultracode, launchUltracode),
   } satisfies ClaudeSdkSettings;
   const environment = { ...input.environment };
   if (mode === "disabled") environment.CLAUDE_CODE_DISABLE_WORKFLOWS = "1";

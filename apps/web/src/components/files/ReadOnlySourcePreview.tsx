@@ -21,12 +21,15 @@ export default function ReadOnlySourcePreview(props: {
   readonly onPostRender?: FileOptions<unknown, undefined>["onPostRender"];
   /** Scrolls to and marks this line once it renders. */
   readonly revealLine?: number | undefined;
+  /** A preview's own wrap toggle; omitted follows the word wrap setting. */
+  readonly wordWrap?: boolean | undefined;
 }) {
   const revealLine = useFileLineReveal(props.name, props.revealLine ?? null, 0);
   const onPostRender: FileOptions<unknown, undefined>["onPostRender"] =
     props.onPostRender ?? (props.revealLine === undefined ? undefined : revealLine);
   const { resolvedTheme } = useTheme();
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const wordWrap = props.wordWrap ?? defaultWordWrap;
   return (
     <DiffWorkerPoolProvider>
       <Virtualizer

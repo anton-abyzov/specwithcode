@@ -121,6 +121,7 @@ import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codex
 import {
   withHeadlessBrowserEnvironment,
   codexShellEnvironmentArgs,
+  codexThreadShellEnvironmentConfig,
   withSpecweaveAgentEnvironment,
 } from "../../provider/RuntimeInstructions.ts";
 import {
@@ -151,6 +152,7 @@ import {
 } from "../AttachmentPrompt.ts";
 import {
   ProviderAdapterEnsureThreadError,
+  ProviderAdapterEventStreamError,
   ProviderAdapterForkThreadError,
   ProviderAdapterInterruptError,
   ProviderAdapterOpenSessionError,
@@ -1414,6 +1416,10 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      // The shared app-server's own `-c` identity names the thread that opened it.
+      ...(input.threadId === null
+        ? {}
+        : codexThreadShellEnvironmentConfig({ threadId: input.threadId, tool: "codex" })),
       ...(mcpSession === undefined
         ? {}
         : {
@@ -1939,8 +1945,29 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<
+          ProviderAdapterV2Event,
+          ProviderAdapterEventStreamError
+        >();
+        // Drain final notifications before the session manager retires the dead process.
+        // Queue.fail lets readers take items already buffered before they see the failure.
+        yield* client.awaitTermination.pipe(
+          Effect.catch((cause) =>
+            Queue.fail(
+              events,
+              new ProviderAdapterEventStreamError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+            ),
+          ),
+          Effect.forkScoped,
+        );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
+        const rateLimitSnapshotsByBucket = yield* Ref.make(
+          new Map<string, CodexRateLimitSnapshot>(),
+        );
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
@@ -3036,6 +3063,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           .request("thread/resume", {
                             threadId: input.nativeThreadId,
                             excludeTurns: true,
+                            ...codexThreadRuntimeParams({ threadId: input.context.projectionThreadId }),
                           })
                           .pipe(Effect.flatMap(decodeCodexChildModel))
                       : Effect.succeed(response),
@@ -4221,6 +4249,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
           Effect.gen(function* () {
+            const bucket = payload.rateLimits.limitId || "codex";
+            const previous = yield* Ref.modify(rateLimitSnapshotsByBucket, (snapshots) => {
+              const previous = snapshots.get(bucket);
+              // Sparse updates keep the windows already observed for this bucket. The main
+              // snapshot below deliberately excludes model buckets and cannot deduplicate them.
+              const next = {
+                ...previous,
+                ...Object.fromEntries(
+                  Object.entries(payload.rateLimits).filter(([, value]) => value !== undefined),
+                ),
+              };
+              return [previous, new Map(snapshots).set(bucket, next)] as const;
+            });
             yield* Ref.update(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
             );
@@ -4242,7 +4283,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 turnItem: updated,
               });
             }
-            const update = codexRateLimitsToUpdate(payload.rateLimits);
+            const update = codexRateLimitsToUpdate(
+              {
+                ...payload.rateLimits,
+                ...(payload.rateLimits.limitName === undefined && previous?.limitName !== undefined
+                  ? { limitName: previous.limitName }
+                  : {}),
+              },
+              previous,
+            );
             if (update && adapterOptions.onUsageLimits) {
               const checkedAt = DateTime.formatIso(yield* DateTime.now);
               yield* adapterOptions.onUsageLimits({ ...update, checkedAt });

@@ -662,6 +662,13 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     // Task progress belongs in the composer, not between conversation entries.
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    // Requeued messages are rendered by the queue control until a turn claims them.
+    if (
+      item.type === "user_message" &&
+      item.inputIntent === "queued_turn" &&
+      item.status === "pending"
+    )
+      continue;
     if (
       item.type === "assistant_message" &&
       !item.streaming &&

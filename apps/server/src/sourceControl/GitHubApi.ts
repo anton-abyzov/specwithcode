@@ -361,6 +361,14 @@ export const make = Effect.gen(function* () {
   const credential: GitHubApi["Service"]["credential"] = Effect.fn("GitHubApi.credential")(
     function* (host) {
       const normalized = normalizeHost(host);
+      // The request URL is built from this text, so a host that is not a bare host[:port]
+      // never gets a token.
+      if (!GitHubCredentials.isGitHubHost(normalized)) {
+        return yield* new GitHubApiAuthenticationError({
+          host: normalized,
+          operation: "credential",
+        });
+      }
       const pinned = yield* PinnedGitHubCredential;
       if (pinned !== null) {
         // A pinned page only ever talks to the host it verified.

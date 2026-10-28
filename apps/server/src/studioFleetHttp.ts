@@ -9,7 +9,10 @@ import {
   EnvironmentHttpBadRequestError,
   EnvironmentHttpInternalServerError,
   type EnvironmentAuthInvalidError,
+  EnvironmentAuthenticatedPrincipal,
   StudioFleetInviteError,
+  StudioFleetSkillError,
+  StudioFleetUpdateError,
 } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
 import * as Clock from "effect/Clock";
@@ -36,6 +39,8 @@ import {
 } from "./auth/CredentialFailureLimiter.ts";
 import { requestRemoteAddress } from "./auth/utils.ts";
 import * as Config from "./config.ts";
+import * as FleetSkills from "./fleet/fleetSkills.ts";
+import * as FleetUpdate from "./fleet/fleetUpdate.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
@@ -58,7 +63,7 @@ import {
 import {
   fleetInviteProblem,
   fleetTailscaleSignInProblem,
-  FLEET_INVITE_SCOPES,
+  FLEET_INVITE_MAKER_SCOPES,
   FLEET_INVITE_SESSION_LABEL,
   issueFleetInvitation,
   readFleetTailscaleStatus,
@@ -187,6 +192,44 @@ export const layer = HttpApiBuilder.group(
       new EnvironmentHttpInternalServerError({
         message: "Could not read the clients paired with this machine.",
       });
+    const fleetUpdates = yield* Effect.serviceOption(FleetUpdate.FleetUpdateWorker);
+    /**
+     * Only the fleet primary's own management token: a coordinator principal
+     * for the primary named in the request, with `fleet:update` (or
+     * `environment:maintain`, which every token issued before it holds).
+     */
+    const requireFleetPrimary = (coordinatorEnvironmentId: EnvironmentId) =>
+      Effect.gen(function* () {
+        const session = yield* EnvironmentAuthenticatedPrincipal;
+        if (!FleetUpdate.fleetUpdateAllowed(session, coordinatorEnvironmentId))
+          return yield* new EnvironmentHttpForbiddenError({
+            message:
+              "Only this machine's fleet primary, with the management token it holds here, can ask it to update.",
+          });
+        if (Option.isNone(fleetUpdates))
+          return yield* new StudioFleetUpdateError({
+            reason: "unsupported",
+            message: "This machine cannot take update requests from its fleet primary.",
+          });
+        return fleetUpdates.value;
+      });
+    const fleetSkills = yield* Effect.serviceOption(FleetSkills.FleetSkillWorker);
+    /** The same gate for skill installs, with `fleet:skills` (or `environment:maintain`). */
+    const requireFleetSkillsPrimary = (coordinatorEnvironmentId: EnvironmentId) =>
+      Effect.gen(function* () {
+        const session = yield* EnvironmentAuthenticatedPrincipal;
+        if (!FleetSkills.fleetSkillsAllowed(session, coordinatorEnvironmentId))
+          return yield* new EnvironmentHttpForbiddenError({
+            message:
+              "Only this machine's fleet primary, with the management token it holds here, can ask it to install skills.",
+          });
+        if (Option.isNone(fleetSkills))
+          return yield* new StudioFleetSkillError({
+            reason: "unsupported",
+            message: "This machine cannot take skill installs from its fleet primary.",
+          });
+        return fleetSkills.value;
+      });
     const threadManagement = yield* ThreadManagement.ThreadManagementService;
     const projectService = yield* ProjectService.ProjectService;
     const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -285,6 +328,55 @@ export const layer = HttpApiBuilder.group(
             return { ...snapshot, machines };
           }),
         )
+        .handle("requestFleetUpdate", ({ payload }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            const worker = yield* requireFleetPrimary(payload.coordinatorEnvironmentId);
+            const ask = FleetUpdate.fleetUpdateAskOf(payload);
+            const result = yield* worker.request(ask);
+            yield* Effect.logInfo("Fleet primary asked this machine to update.", {
+              coordinatorEnvironmentId: payload.coordinatorEnvironmentId,
+              ask:
+                "version" in ask
+                  ? `${ask.mode} ${ask.version}`
+                  : "cancel" in ask
+                    ? "cancel"
+                    : "check",
+              result: result.result,
+            });
+            return result;
+          }),
+        )
+        .handle("fleetUpdateStatus", ({ query }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            const worker = yield* requireFleetPrimary(query.coordinatorEnvironmentId);
+            return yield* worker.status;
+          }),
+        )
+        .handle("requestFleetSkill", ({ payload }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            const worker = yield* requireFleetSkillsPrimary(payload.coordinatorEnvironmentId);
+            const ask = FleetSkills.fleetSkillAskOf(payload);
+            const result = yield* worker.request(ask);
+            yield* Effect.logInfo("Fleet primary asked this machine to install a skill.", {
+              coordinatorEnvironmentId: payload.coordinatorEnvironmentId,
+              skill: `${ask.skill}@${ask.version}`,
+              scope: ask.scope,
+              pin: ask.pin,
+              requestId: result.requestId,
+            });
+            return result;
+          }),
+        )
+        .handle("fleetSkillStatus", ({ query }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            const worker = yield* requireFleetSkillsPrimary(query.coordinatorEnvironmentId);
+            return yield* worker.status;
+          }),
+        )
         .handle("addFleetMachine", ({ payload }) =>
           Effect.gen(function* () {
             yield* noStore;
@@ -325,7 +417,7 @@ export const layer = HttpApiBuilder.group(
             // The line hands out the invite scopes, so only a caller holding all
             // of them may make one: never more than the maker holds.
             const principal = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            if (!FLEET_INVITE_SCOPES.every((scope) => principal.scopes.has(scope)))
+            if (!FLEET_INVITE_MAKER_SCOPES.every((scope) => principal.scopes.has(scope)))
               return yield* new EnvironmentHttpForbiddenError({
                 message:
                   "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Invite this machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",

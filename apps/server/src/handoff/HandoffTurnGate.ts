@@ -1,9 +1,10 @@
 /**
  * The one check the orchestrator makes before a turn starts on a thread in
  * handoff mode: a copy another machine continued, a lease another machine
- * holds, a transfer in flight, or a machine that woke fenced never starts a
- * turn. Without handoff state every turn is allowed (the default), so tests
- * and servers that never use handoff mode see no change.
+ * holds, a transfer in flight, or a machine that lost its network while other
+ * machines hold copies of its threads never starts a turn. Without handoff
+ * state every turn is allowed (the default), so tests and servers that never
+ * use handoff mode see no change.
  */
 import type { ThreadId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
@@ -13,7 +14,7 @@ import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as HandoffModeStore from "./HandoffModeStore.ts";
-import { effectiveHandoffMode, type HandoffDocument } from "./handoffState.ts";
+import type { HandoffDocument } from "./handoffState.ts";
 
 export interface HandoffTurnGateShape {
   /** Null when a turn may start; otherwise the reason it may not. Never fails. */
@@ -36,6 +37,10 @@ export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
 ) {}
 
 /** Why a turn may not start on this machine, or null. Pure, for tests. */
+/** Why a thread waits after this machine paused on losing its network. */
+export const PAUSED_OFFLINE_REFUSAL =
+  "This machine lost its network while other machines hold copies of this thread, so one of them may have continued it. It starts no turn here until one of those machines answers; choose Resume this Mac to run it here anyway.";
+
 export function turnRefusal(
   document: HandoffDocument,
   threadId: string,
@@ -55,13 +60,9 @@ export function turnRefusal(
       return "This thread is being handed off; it starts no turn until the handoff finishes.";
     }
   }
-  if (
-    document.pausedSince !== null &&
-    lease !== null &&
-    record.replicas.length > 0 &&
-    effectiveHandoffMode(document, record.projectId, record.mode) !== "off"
-  ) {
-    return "This machine woke after handing its threads off and no other machine answered yet. Choose Resume this Mac to run it here.";
+  // Turning handoff off leaves the copies elsewhere continuable, so the mode does not matter.
+  if (document.pausedSince !== null && lease !== null && record.replicas.length > 0) {
+    return PAUSED_OFFLINE_REFUSAL;
   }
   return null;
 }

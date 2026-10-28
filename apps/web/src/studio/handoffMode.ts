@@ -329,8 +329,8 @@ export function threadHandoffState(
 }
 
 /**
- * The badge a local thread shows. A paused machine (it woke after another
- * machine took over and can't reach its peers) wins over the thread's own state.
+ * The badge a local thread shows. A paused machine (it lost its network while
+ * other machines hold copies of its threads) wins over the thread's own state.
  */
 export function handoffBadgeFor(
   snapshot: HandoffModeSnapshot | null,
@@ -350,7 +350,7 @@ export function handoffBadgeFor(
     };
   }
   if (snapshot.pausedSince !== null && (state.effectiveMode === "on" || state.badge === "paused"))
-    return { kind: "paused", label: "Paused after sleep" };
+    return { kind: "paused", label: "Paused: offline" };
   switch (state.badge) {
     case "ready":
       return { kind: "ready", label: "Ready to move" };
@@ -372,7 +372,7 @@ export function handoffBadgeFor(
     case "handing-off":
       return { kind: "handing-off", label: "Moving…" };
     case "paused":
-      return { kind: "paused", label: "Paused after sleep" };
+      return { kind: "paused", label: "Paused: offline" };
     default:
       return null;
   }

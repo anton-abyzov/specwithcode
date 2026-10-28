@@ -1,8 +1,21 @@
+import type { ReactNode } from "react";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ConnectionMatrix, FOLDER_ONLY_NOTE, PER_TOOL_NOTE } from "./ConnectionMatrix";
 import type { NativeConnectionsSnapshot } from "@specweave-studio/contracts";
+vi.mock("../ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({ render, children }: { render?: ReactNode; children?: ReactNode }) {
+      return isValidElement(render) ? cloneElement(render, undefined, children) : children;
+    },
+    TooltipPopup: () => null,
+  };
+});
+
 let renderer: ReactTestRenderer;
 beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
 afterEach(async () => {
@@ -46,8 +59,8 @@ describe("connection matrix", () => {
     await act(() => {
       renderer = create(<ConnectionMatrix snapshot={snapshot} project />);
     });
-    expect(text()).toContain("Disabled");
-    expect(text()).toContain("Not found");
+    expect(text()).toContain("Disabled in Codex");
+    expect(text()).toContain("Not set up in Claude Code");
     await act(() =>
       renderer.root.findByProps({ "aria-label": "PostHog Codex details" }).props.onClick(),
     );
@@ -74,8 +87,8 @@ describe("connection matrix", () => {
         />,
       );
     });
-    expect(text()).toContain("Unknown");
-    expect(text()).not.toContain("Not found");
+    expect(text()).toContain("Unknown in Claude Code");
+    expect(text()).not.toContain("Not set up in");
     expect(text()).toContain("Results are incomplete");
   });
   it("keeps empty, failed and truncated scans distinct", async () => {
@@ -152,6 +165,15 @@ describe("connection matrix", () => {
       renderer.root.findAll((node) => node.props["data-testid"] === "computer-use-connection-note"),
     ).toHaveLength(0);
     expect(text()).toContain("Claude Code has no equivalent entry");
+    // Compact cells hold one mark each: Add stays a mark, Enable moves to the details.
+    expect(button("Enable: docs")).toHaveLength(0);
+    await act(() => button("Add to Codex: amplitude")[0]!.props.onClick());
+    expect(onApply).toHaveBeenCalledWith({ action: "copy", connectionId: "amp" });
+    await act(() =>
+      renderer.root
+        .findAll((n) => n.type === "button" && n.children.includes("Detailed"))[0]!
+        .props.onClick(),
+    );
     await act(() => button("Enable: docs")[0]!.props.onClick());
     expect(onApply).toHaveBeenCalledWith({ action: "enable", connectionId: "docs" });
     await act(() => button("Add to Codex: amplitude")[0]!.props.onClick());
@@ -251,7 +273,7 @@ describe("connection matrix", () => {
     });
     const headers = renderer.root.findAll((n) => n.type === "th" && n.props.scope === "col");
     expect(headers.map((h) => h.children.join(""))).toEqual([
-      "Connection",
+      "Server",
       "Codex",
       "Claude Code",
       "Gemini CLI",
@@ -271,7 +293,7 @@ describe("connection matrix", () => {
     // The group says what a folder-only entry is and that nothing else gets it.
     expect(
       renderer.root.findByProps({ "data-testid": "folder-only-note" }).findByProps({ role: "note" })
-        .props.title,
+        .props["aria-label"],
     ).toBe(FOLDER_ONLY_NOTE);
     expect(FOLDER_ONLY_NOTE).toContain("only when it runs in that folder");
     expect(FOLDER_ONLY_NOTE).toContain("Other folders, projects and providers do not get them");
@@ -284,7 +306,7 @@ describe("connection matrix", () => {
       .findAllByType("button")
       .map((b) => b.props["aria-label"]);
     expect(toolChips).toEqual([
-      "All tools (4)",
+      "All tools",
       "Codex enabled (2)",
       "Claude Code enabled (1)",
       "Gemini CLI enabled (1)",
@@ -361,7 +383,8 @@ describe("connection matrix", () => {
       action: "copyAll",
       connectionId: "codex:codex-user:a",
     });
-    // A parked Claude Code entry turns on from its cell.
+    // A parked Claude Code entry turns on from its details.
+    await act(() => byLabel("notes Claude Code details")[0]!.props.onClick());
     await act(() => byLabel("Turn on: notes")[0]!.props.onClick());
     expect(onApply).toHaveBeenLastCalledWith({
       action: "enable",
@@ -449,9 +472,9 @@ describe("connection matrix", () => {
       renderer.root
         .findAll((n) => n.type === "th" && n.props.scope === "col")
         .map((h) => h.children.join(""));
-    expect(headers()).toEqual(["Connection", "Codex"]);
+    expect(headers()).toEqual(["Server", "Codex"]);
     await press("Claude Code enabled");
-    await press("Missing somewhere");
+    await press("Partly set up");
     expect(rowNames()).toEqual(["alpha", "gamma"]);
     await press("Disabled");
     expect(rowNames()).toEqual(["beta"]);
@@ -467,7 +490,7 @@ describe("connection matrix", () => {
         .props.onClick(),
     );
     expect(rowNames()).toEqual(["beta", "alpha", "delta", "gamma"]);
-    expect(headers()).toEqual(["Connection", "Codex", "Claude Code", "OpenCode"]);
+    expect(headers()).toEqual(["Server", "Codex", "Claude Code", "OpenCode"]);
   });
   it("copies a declaration's file and key, never its command", async () => {
     const writeText = vi.fn(() => Promise.resolve());
@@ -518,5 +541,47 @@ describe("connection matrix", () => {
         (n) => n.type === "button" && String(n.props["aria-label"]).startsWith("Copy location"),
       ),
     ).toHaveLength(0);
+  });
+  it("explains every cell state in its tooltip text and shows a legend", async () => {
+    const base = { scope: "user", shadowed: false, transport: "stdio" } as const;
+    await act(() => {
+      renderer = create(
+        <ConnectionMatrix
+          onApply={vi.fn()}
+          snapshot={{
+            ...snapshot,
+            connections: [
+              {
+                ...base,
+                id: "a",
+                name: "alpha",
+                provider: "claude",
+                sourceId: "claude-user",
+                state: "configured",
+                portable: true,
+              },
+              {
+                ...base,
+                id: "b",
+                name: "beta",
+                provider: "codex",
+                sourceId: "codex-user",
+                state: "invalid",
+              },
+            ],
+          }}
+        />,
+      );
+    });
+    expect(text()).toContain(
+      "Enabled in Claude Code. User · stdio Select for details and actions.",
+    );
+    expect(text()).toContain("Select + to copy the Claude Code entry.");
+    expect(text()).toContain("Invalid declaration in Codex.");
+    const legend = renderer.root
+      .findByProps({ "aria-label": "Status legend" })
+      .findAll((n) => n.props.className === "connection-legend-item")
+      .map((n) => n.children.filter((c) => typeof c === "string").join(""));
+    expect(legend).toEqual(["Enabled", "Disabled", "Can add", "Not set up", "Invalid"]);
   });
 });

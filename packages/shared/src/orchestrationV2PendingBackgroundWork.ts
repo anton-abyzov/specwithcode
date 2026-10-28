@@ -93,7 +93,9 @@ type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "sta
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
->;
+> & {
+  readonly snapshot: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
+};
 
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
@@ -291,7 +293,10 @@ function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
   return (pullRequests ?? []).flatMap((link) =>
-    link.watch === undefined || link.source === "stack-dismissed"
+    // The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
+    link.watch === undefined ||
+    link.source === "stack-dismissed" ||
+    link.snapshot?.state === "merged"
       ? []
       : [
           {
@@ -460,7 +465,9 @@ export function classifyRunHealth(input: {
   }
   if (input.activeWork === null) {
     const limit = input.activeWorkUnknown === true ? RUN_STALL_WAITING_IDLE_MS : RUN_STALL_IDLE_MS;
-    return idleMs >= limit ? { state: "stalled", idleMs, label: null } : { state: "working", idleMs };
+    return idleMs >= limit
+      ? { state: "stalled", idleMs, label: null }
+      : { state: "working", idleMs };
   }
   const waitThreadId = input.activeWork.waitThreadId;
   // Waiting on another thread is that thread's progress, not this one stalling.

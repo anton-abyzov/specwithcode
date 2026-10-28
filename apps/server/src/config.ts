@@ -17,6 +17,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@specweave-studio/shared/observability";
 import * as OtelEnvironment from "@specweave-studio/shared/otelEnvironment";
 
@@ -177,6 +178,25 @@ export const deriveServerPaths = Effect.fn(function* (
   };
 });
 
+/**
+ * Spotlight would otherwise index every file of every agent worktree as it is
+ * checked out, competing with the checkout for disk. Best-effort and macOS
+ * only: a failure here never blocks startup. Append mode keeps any existing
+ * file as it is.
+ */
+export const SPOTLIGHT_NEVER_INDEX_FILE = ".metadata_never_index";
+
+export const markWorktreesRootUnindexed = Effect.fn("markWorktreesRootUnindexed")(function* (
+  worktreesDir: string,
+) {
+  if ((yield* HostProcessPlatform) !== "darwin") return;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs
+    .writeFileString(path.join(worktreesDir, SPOTLIGHT_NEVER_INDEX_FILE), "", { flag: "a" })
+    .pipe(Effect.ignore);
+});
+
 export const ensureServerDirectories = Effect.fn(function* (derivedPaths: ServerDerivedPaths) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -189,14 +209,24 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true, mode: 0o700 }),
       fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true, mode: 0o700 }),
       fs.makeDirectory(derivedPaths.worktreesDir, { recursive: true, mode: 0o700 }),
-      fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), { recursive: true, mode: 0o700 }),
+      fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), {
+        recursive: true,
+        mode: 0o700,
+      }),
       fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true, mode: 0o700 }),
       fs.makeDirectory(derivedPaths.providerStatusCacheDir, { recursive: true, mode: 0o700 }),
-      fs.makeDirectory(path.dirname(derivedPaths.anonymousIdPath), { recursive: true, mode: 0o700 }),
-      fs.makeDirectory(path.dirname(derivedPaths.serverRuntimeStatePath), { recursive: true, mode: 0o700 }),
+      fs.makeDirectory(path.dirname(derivedPaths.anonymousIdPath), {
+        recursive: true,
+        mode: 0o700,
+      }),
+      fs.makeDirectory(path.dirname(derivedPaths.serverRuntimeStatePath), {
+        recursive: true,
+        mode: 0o700,
+      }),
     ],
     { concurrency: "unbounded" },
   );
+  yield* markWorktreesRootUnindexed(derivedPaths.worktreesDir);
 
   const swept = sweepStalePendingAttachments({
     attachmentsDir: derivedPaths.attachmentsDir,

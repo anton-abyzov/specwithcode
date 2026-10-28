@@ -1,6 +1,10 @@
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { ModelCapabilities } from "@specweave-studio/contracts";
-import type { ClaudeCatalogModel, ClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
+import {
+  CLAUDE_ULTRACODE_DESCRIPTOR,
+  type ClaudeCatalogModel,
+  type ClaudeModelCatalog,
+} from "./ClaudeModelCatalog.ts";
 
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const text = (value: unknown): string | undefined =>
@@ -55,6 +59,13 @@ function capabilities(row: ModelInfo, existing?: ClaudeCatalogModel): ModelCapab
         : [],
     );
   }
+  // Claude Code offers ultracode only on models with xhigh effort.
+  if (row.supportsEffort === false) replace("ultracode", []);
+  else if (row.supportsEffort === true && Array.isArray(row.supportedEffortLevels))
+    replace(
+      "ultracode",
+      row.supportedEffortLevels.includes("xhigh") ? [CLAUDE_ULTRACODE_DESCRIPTOR] : [],
+    );
   // Adaptive thinking is on unless a thread turns it off: the adapter asks for
   // it whenever the selection leaves Thinking unset. The default says so, so an
   // unset Thinking reads "On" instead of "Off".
