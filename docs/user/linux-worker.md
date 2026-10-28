@@ -3,7 +3,7 @@
 Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
 
 Add a Linux machine, such as a small VPS, to your private fleet so coordinators on
-your Mac can start workers there. It runs the same SpecWithCode server as a Mac
+your main computer can start workers there. It runs the same SpecWithCode server as a desktop
 worker; only the install differs. Cloud compute stays yours: you rent the VPS and
 sign its provider CLIs in with your own accounts. This is how SpecWithCode runs
 work off your own computers; it does not start sessions on a provider's VMs.
@@ -13,8 +13,8 @@ replacement.
 
 [SpecWithCode Connect](./remote-access.md#specwithcode-connect) is enough, with
 no Tailscale, both to open the host from your desktop app, a browser or your
-iPhone and to let your Mac start work there. This page also sets up Tailscale,
-an optional direct route your Mac tries first. To skip it, link Connect on the
+iPhone and to let your main computer start work there. This page also sets up Tailscale,
+an optional direct route your main computer tries first. To skip it, link Connect on the
 host (`specwithcode connect`) and make the line with `--via connect`.
 
 > **Use API keys on a VPS, never a subscription.** We do not recommend signing
@@ -37,8 +37,9 @@ Hetzner CAX and Azure Dpsv5 machines are arm64).
 
 Tailscale connects outward, so the host needs no open inbound port: leave the
 provider's firewall or security group closed to everything but SSH, or close SSH
-too and use Tailscale SSH. Windows hosts cannot run workers, because the
-background service is Linux and macOS only.
+too and use Tailscale SSH. This guide covers Linux workers. For a Windows 10 or 11
+x64 worker, use the [Windows desktop installer](./install.md#windows); its background
+service runs as a scheduled task for your user.
 
 On a fresh Ubuntu or Debian VM, as a regular user with `sudo`:
 
@@ -51,7 +52,7 @@ On a host where Tailscale is already up, run
 `sudo tailscale set --operator="$(id -un)"` instead. Making your user the
 operator lets SpecWithCode set up Tailscale Serve without root.
 
-Sign in with the Tailscale account your Mac uses, then in the Tailscale admin
+Sign in with the Tailscale account your main computer uses, then in the Tailscale admin
 console turn off key expiry for this machine so it does not drop out of the fleet
 after a few months. HTTPS certificates must be enabled for the tailnet: in the
 admin console, open **DNS** and turn on **HTTPS Certificates**. Install Node.js
@@ -123,7 +124,7 @@ The service takes the `PATH` of your login shell when it starts. Install
 `specwithcode service restart`.
 
 To update, run `STUDIO_ENABLE_SELF_UPDATE=true specwithcode update --yes` on the
-host, or update it from the Mac. It installs the next release the same way,
+host, or update it from the main computer. It installs the next release the same way,
 under `~/.specwithcode/runtime/versions/<version>`, switches the `specwithcode`
 command to it and restarts the service; `--yes` allows the restart from a
 script.
@@ -135,7 +136,7 @@ details and troubleshooting.
 
 Create a key in the [Claude Console](https://platform.claude.com/settings/keys)
 (set a spend limit on its workspace) and save it in a file only you can read.
-From your Mac, run this, then paste the key at the prompt; it is not shown:
+From your main computer, run this, then paste the key at the prompt; it is not shown:
 
 ```bash
 ssh -t you@your-vps 'umask 077; mkdir -p ~/.config/specwithcode; printf "Paste the API key, then Enter: "; read -rs K; printf "%s\n" "$K" > ~/.config/specwithcode/anthropic.key; echo; echo saved'
@@ -172,7 +173,7 @@ For Codex, install it with `sudo npm install -g @openai/codex`, then run
 key in that variable. Do not run `claude login` or `codex login` with a
 subscription on a VPS.
 
-## Pair it with your Mac
+## Pair it with your main computer
 
 On the Linux host, run:
 
