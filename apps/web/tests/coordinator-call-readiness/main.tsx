@@ -10,19 +10,26 @@ const status = {
   microphone: "granted",
   reason: mode === "unsupported" ? "Voice calls need the SpecWithCode app on macOS." : null,
 } as const;
-window.desktopBridge = {
-  getVoiceStatus: async () => status,
-  requestVoiceAccess: async () => {
-    document.body.dataset.prepare = "called";
-    return mode === "missing-helper"
-      ? { ...status, supported: false, reason: "On-device speech is not available in this build." }
-      : status;
-  },
-  setVoiceCallActive: async () => {},
-  transcribeVoice: async () => "",
-  synthesizeVoice: async () => new Uint8Array(),
-  openMicrophoneSettings: async () => {},
-} as unknown as DesktopBridge;
+// "browser" is a page with no desktop bridge, like the web UI on a phone.
+if (mode !== "browser")
+  window.desktopBridge = {
+    ...(mode === "windows" ? { getClientPlatform: () => "win32" } : {}),
+    getVoiceStatus: async () => status,
+    requestVoiceAccess: async () => {
+      document.body.dataset.prepare = "called";
+      return mode === "missing-helper"
+        ? {
+            ...status,
+            supported: false,
+            reason: "On-device speech is not available in this build.",
+          }
+        : status;
+    },
+    setVoiceCallActive: async () => {},
+    transcribeVoice: async () => "",
+    synthesizeVoice: async () => new Uint8Array(),
+    openMicrophoneSettings: async () => {},
+  } as unknown as DesktopBridge;
 function App() {
   const call = useVoiceCall(
     async () => null,

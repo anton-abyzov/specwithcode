@@ -379,3 +379,46 @@ it.effect("continues update-stopped turns after a hold ends, once the update is 
     yield* Fiber.interrupt(fiber);
   }),
 );
+
+it.effect("starts gated only while held, then waits for the install request to close", () =>
+  Effect.gen(function* () {
+    const held = yield* Ref.make(false);
+    const requestOpen = yield* Ref.make(false);
+    const released = yield* Deferred.make<void>();
+    const gateFor = ServerRuntimeStartup.startupUpdateGate({
+      isHeld: Ref.get(held),
+      awaitReleased: Effect.flatMap(Ref.get(held), (value) =>
+        value ? Deferred.await(released) : Effect.void,
+      ),
+      installRequestOpen: Ref.get(requestOpen),
+      pollMs: 1_000,
+    });
+
+    // Nothing held and no request: an ordinary start.
+    assert.isFalse((yield* gateFor).held);
+
+    // An open request with no hold (a normal-mode request, or a forced one whose
+    // hold was not carried: no marker, another request, an expired hold) starts
+    // as before: turns resume and the worker starts at once.
+    yield* Ref.set(requestOpen, true);
+    assert.isFalse((yield* gateFor).held);
+    yield* Ref.set(requestOpen, false);
+
+    // M4, 2026-10-28: held (a carried hold or the install gate): no turn resumes
+    // and no agent starts; waits for the release, then for the request.
+    yield* Ref.set(held, true);
+    yield* Ref.set(requestOpen, true);
+    const holding = yield* gateFor;
+    assert.isTrue(holding.held);
+    const behindHold = yield* holding.awaitReleased.pipe(Effect.forkChild);
+    yield* TestClock.adjust("3 seconds");
+    assert.isUndefined(behindHold.pollUnsafe());
+    yield* Ref.set(held, false);
+    yield* Deferred.succeed(released, undefined);
+    yield* TestClock.adjust("3 seconds");
+    assert.isUndefined(behindHold.pollUnsafe());
+    yield* Ref.set(requestOpen, false);
+    yield* TestClock.adjust("1 second");
+    yield* Fiber.join(behindHold);
+  }),
+);

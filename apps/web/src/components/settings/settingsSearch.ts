@@ -482,6 +482,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["voice call talk speak microphone mic dictation speech audio phone"],
     desktopOnly: true,
+    macOnly: true,
   },
   {
     id: "time-format",

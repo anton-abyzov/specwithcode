@@ -54,6 +54,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectKnowledge from "./knowledge/ProjectKnowledge.ts";
 import { knowledgeSections } from "./knowledge/knowledgeSections.ts";
 import { fenceText } from "./promptFence.ts";
+import { isSpecweaveProject } from "./ThreadIncrementProgress.ts";
 
 export class ProjectWorkspaceService extends Context.Service<
   ProjectWorkspaceService,
@@ -124,6 +125,8 @@ export function projectContextText(input: {
   files: readonly string[];
   /** The owner's other machines from studio-fleet.json; without them no machine lines are added. */
   fleet?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
+  /** The project plans its work in SpecWeave (isSpecweaveProject). */
+  specweave?: boolean | undefined;
 }): string {
   const { settings } = input;
   const coordinator = settings.coordinatorThreadId === input.threadId;
@@ -133,6 +136,13 @@ export function projectContextText(input: {
         "Before starting work, call studio_thread_list and send a follow-up with studio_thread_send to the worker already owning that area; never duplicate an active assignment. Revive an idle worker only while its context is recent; otherwise start a fresh one.",
         "Route at once: after that check, your next call starts the worker with delegate_task in mode async and a title of a few words. The brief is the user's own words plus only what the worker cannot find itself: relevant memory, decisions made, and the default you chose where the request was ambiguous. Never add deliverables the user did not ask for. Pass a provider, model or effort the user names; otherwise leave them out and the app uses the project's worker model.",
         "Delegated workers share this checkout: give parallel workers separate files and have them leave branches and commits alone unless the user asked for them. Use studio_thread_launch with a worktree only when the user asks for separate branches or worktrees.",
+        // The launch tools' own description of increment is not enough: without
+        // this line coordinators stopped passing it and threads started unlinked.
+        ...(input.specweave === true
+          ? [
+              'This project plans its work in SpecWeave: pass increment on every launch, an open NNNN that covers the work, "new" for a change that needs planning, or "none" for questions, reviews and small fixes; post the spec a launch returns as [NNNN](<specPath>).',
+            ]
+          : []),
         ...(settings.workerMachine
           ? [
               `This project's workers run on ${
@@ -420,6 +430,9 @@ const make = Effect.gen(function* () {
         files: [],
         index: "",
         fleet: settings.coordinatorThreadId === threadId ? yield* fleetMachines : undefined,
+        specweave:
+          settings.coordinatorThreadId === threadId &&
+          (yield* Effect.promise(() => isSpecweaveProject(project.workspaceRoot))),
       }).split("\nGoal:\n")[0]!;
       const shared = projectContextSnapshot([
         ["role", role],

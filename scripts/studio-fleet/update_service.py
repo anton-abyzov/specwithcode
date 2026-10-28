@@ -47,28 +47,47 @@ def _utc(value):
         return None
     return parsed if parsed.tzinfo is not None else None
 
+def _small_json(path, home):
+    path = owned_path(path, home)
+    assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 64 << 10, HOLD_REFUSAL
+    value = json.loads(path.read_text())
+    assert isinstance(value, dict), HOLD_REFUSAL
+    return value
+
 def assert_held(service, request, now=None):
     """The running service holds itself for this very forced request: its `updates/hold.json`
     (written by ServiceUpdateHold while held, removed when the hold ends) names the running
     pid, began after this process started and has not ended; and `updates/config.json` still
     asks to force-install `request`, made during this hold and not cancelled. A service that
     restarted, a hold that ended or a request that changed refuses the reap. Returns when the
-    hold began."""
+    hold began.
+
+    A carried hold is the exception to "made during this hold": a service the helper restarted
+    while it was held for `request` (database_restart) holds itself again at startup, and its
+    hold.json names that `request`. It counts when `updates/database-restart.json` records that
+    restart for `request` of another pid, the request came before the restart, the restart before
+    this process's start and the hold, and the hold ends by the marker's `until` (the old hold's
+    end). The service's runtime record is written once it serves, after the hold, so the restart,
+    not the record, bounds when the hold may begin."""
     updates = service['own'] / 'updates'
-    values = {}
-    for name in ('hold.json', 'config.json'):
-        path = owned_path(updates / name, service['home'])
-        assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 64 << 10, HOLD_REFUSAL
-        values[name] = json.loads(path.read_text())
-        assert isinstance(values[name], dict), HOLD_REFUSAL
-    hold, config, runtime = values['hold.json'], values['config.json'], service['runtime']
+    hold, config = (_small_json(updates / name, service['home']) for name in ('hold.json', 'config.json'))
+    runtime = service['runtime']
     now = now or datetime.datetime.now(datetime.timezone.utc)
     began, ends, launched = _utc(hold.get('startedAt')), _utc(hold.get('expiresAt')), _utc(runtime.get('startedAt'))
     requested, cancelled = _utc(request), config.get('installCancelledAt')
     assert hold.get('schemaVersion') == 1 and type(hold.get('pid')) is int and hold['pid'] == runtime['pid'], HOLD_REFUSAL
-    assert None not in (began, ends, launched, requested) and launched <= began <= requested <= now < ends, HOLD_REFUSAL
+    assert None not in (began, ends, launched, requested) and began <= now < ends, HOLD_REFUSAL
     assert config.get('installMode') == 'force' and config.get('installRequestedAt') == request, HOLD_REFUSAL
     assert cancelled is None or (_utc(cancelled) is not None and _utc(cancelled) <= requested), HOLD_REFUSAL
+    if 'request' not in hold:
+        assert launched <= began and requested <= now and began <= requested, HOLD_REFUSAL
+        return began
+    marker = _small_json(updates / 'database-restart.json', service['home'])
+    restarted, until = _utc(marker.get('restartedAt')), _utc(marker.get('until'))
+    assert hold['request'] == request and marker.get('request') == request, HOLD_REFUSAL
+    assert type(marker.get('servicePid')) is int and marker['servicePid'] != runtime['pid'], HOLD_REFUSAL
+    assert None not in (restarted, until) and requested <= restarted <= began and restarted <= launched, HOLD_REFUSAL
+    assert ends <= until, HOLD_REFUSAL
     return began
 
 # The install gate's settle when the running service holds itself for this very forced request:

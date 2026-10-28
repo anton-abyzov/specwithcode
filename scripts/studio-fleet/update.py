@@ -827,6 +827,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                             'reads': (current['rows'], current_carried, current.get('databaseCapture'))}
         if expected['rows'] == before['rows']:
             prestate_read = (prestate_mark, position, base['expected']['reads'])
+            # The same `since` as `before`: the checks before the stop re-read only what committed
+            # after this read. Against the before-read's position they would meet the commits this
+            # read already proved (pages outside auth) and read the whole database once more.
+            base['before'] = base['expected']
     assert_prestate(expected, current, current_carried, auth_baseline=before['rows'])
     lap('prestateCheck')
     # Written only once the prestate holds, so a refusal above leaves no folder behind.
@@ -1169,7 +1173,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         except Exception as error:  # Pruning never fails a verified update.
             result['prunedReleases'] = []
             result['pruneError'] = type(error).__name__
-        # Stage folders a killed helper left, older bundles, and finished updates' receipts and owned-updates folders.
+        # Stage folders a killed helper left, older bundles, finished updates' receipts and owned-updates folders,
+        # and, after a week, held receipts, refusal records, orphaned owned-updates and install/verification entries.
         result['prunedLeftovers'] = prune_update_leftovers(home, own, manifest['version'], keep=[output, backup])
         # The new release's update agent replaces an older one, as the desktop installs its own: a Mac
         # whose desktop app is old or never opened kept its first agent otherwise. Never fails the update.

@@ -275,6 +275,81 @@ describe("VoiceCallController", () => {
     });
   });
 
+  it("ends the call when transcription keeps failing the same way", async () => {
+    const { controller, close, utterance } = harness({
+      transcribe: vi.fn(async () => {
+        throw new Error("Speech recognition is turned off for SpecWithCode in System Settings.");
+      }),
+    });
+    await controller.start();
+    utterance();
+    await flush();
+    expect(controller.getState().phase).toBe("listening");
+    utterance();
+    await flush();
+    expect(controller.getState()).toMatchObject({
+      phase: "error",
+      error: "Speech recognition is turned off for SpecWithCode in System Settings.",
+    });
+    expect(close).toHaveBeenCalledOnce();
+    expect(controller.active).toBe(false);
+  });
+
+  it("keeps listening when a transcription failure is followed by a success", async () => {
+    const transcribe = vi
+      .fn<VoiceCallDependencies["transcribe"]>()
+      .mockRejectedValueOnce(new Error("Speech model is downloading."))
+      .mockResolvedValueOnce("hello")
+      .mockRejectedValueOnce(new Error("Speech model is downloading."));
+    const { controller, utterance } = harness({ transcribe });
+    await controller.start();
+    for (let turn = 0; turn < 3; turn += 1) {
+      utterance();
+      await flush();
+      await flush();
+    }
+    expect(controller.getState()).toMatchObject({
+      phase: "listening",
+      notice: "Speech model is downloading.",
+    });
+  });
+
+  it("keeps listening through repeated failures that clear on their own", async () => {
+    const { controller, utterance } = harness({
+      transcribe: vi.fn(async () => {
+        throw new Error("On-device speech took too long.");
+      }),
+    });
+    await controller.start();
+    for (let turn = 0; turn < 3; turn += 1) {
+      utterance();
+      await flush();
+    }
+    expect(controller.getState()).toMatchObject({
+      phase: "listening",
+      notice: "On-device speech took too long.",
+    });
+  });
+
+  it("stops a reply whose audio is still being made and listens again", async () => {
+    const synthesis = deferred<Uint8Array>();
+    const { controller, dependencies, utterance } = harness({
+      synthesize: vi.fn(() => synthesis.promise),
+    });
+    await controller.start();
+    utterance();
+    await flush();
+    await flush();
+    expect(controller.getState().phase).toBe("speaking");
+    controller.interrupt();
+    await flush();
+    expect(controller.getState().phase).toBe("listening");
+    synthesis.resolve(new Uint8Array([1]));
+    await flush();
+    expect(dependencies.play).not.toHaveBeenCalled();
+    expect(controller.getState().phase).toBe("listening");
+  });
+
   it("ends cleanly mid-turn and closes the microphone", async () => {
     const answer = deferred<string>();
     const { controller, close, dependencies, utterance } = harness({

@@ -85,6 +85,17 @@ class ProviderReleaseGuards(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'extra directories'):
             activation.verify_provider_release(self.manifest, self.home)
 
+    def test_finder_view_files_are_ignored_but_other_extras_and_links_are_refused(self):
+        (self.release/'.DS_Store').write_bytes(b'Bud1'); (self.release/'node_modules/.DS_Store').write_bytes(b'Bud1')
+        self.assertEqual(activation.verify_provider_release(self.manifest, self.home), self.release)
+        (self.release/'notes.txt').write_text('added')
+        with self.assertRaisesRegex(AssertionError, 'extra files'):
+            activation.verify_provider_release(self.manifest, self.home)
+        (self.release/'notes.txt').unlink(); (self.release/'node_modules/.DS_Store').unlink()
+        (self.release/'node_modules/.DS_Store').symlink_to(self.release/'.DS_Store')  # A link is never Finder's.
+        with self.assertRaisesRegex(AssertionError, 'extra files'):
+            activation.verify_provider_release(self.manifest, self.home)
+
     def test_duplicate_paths_unknown_types_and_missing_executables_are_rejected(self):
         duplicate = copy.deepcopy(self.manifest)
         duplicate['files'].append(copy.deepcopy(duplicate['files'][0]))

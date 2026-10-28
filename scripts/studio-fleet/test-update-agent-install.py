@@ -837,5 +837,28 @@ class BoundRequest(AgentCase):
         self.assertEqual(datetime.timedelta(minutes=int(minutes)), update_request.REQUEST_TTL)
 
 
+
+class HelperFolderFinderFiles(AgentCase):
+    """Finder's .DS_Store in the verified helpers folder is not a change; anything else still is."""
+
+    def test_finder_view_files_are_ignored_but_other_extras_and_links_are_refused(self):
+        root = self.updates / 'helpers' / '0.2.0' / 'h'
+        (root / 'scripts' / 'studio-fleet').mkdir(parents=True)
+        (root / 'scripts' / 'studio-fleet' / 'update.py').write_text('print(1)\n')
+        verified = {'version': '0.2.0', 'helpers': {'root': 'h', 'files': {
+            'scripts/studio-fleet/update.py': update_agent.sha256_file(root / 'scripts' / 'studio-fleet' / 'update.py')}}}
+        agent = update_agent.Agent(self.home, 'm4', True, lambda line: None)
+        for folder in (root, root / 'scripts'):
+            (folder / '.DS_Store').write_bytes(b'Bud1')
+        self.assertEqual(agent.verify_helpers(verified), root / 'scripts' / 'studio-fleet')
+        (root / 'notes.txt').write_text('added')
+        with self.assertRaisesRegex(update_agent.AgentError, 'Verified helpers changed on disk'):
+            agent.verify_helpers(verified)
+        (root / 'notes.txt').unlink()
+        (root / 'scripts' / '.DS_Store').unlink()
+        os.symlink('studio-fleet/update.py', str(root / 'scripts' / '.DS_Store'))  # A link is never Finder's.
+        with self.assertRaisesRegex(update_agent.AgentError, 'Verified helpers changed on disk'):
+            agent.verify_helpers(verified)
+
 if __name__ == '__main__':
     unittest.main()

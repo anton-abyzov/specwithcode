@@ -28,7 +28,6 @@ import {
 
 import { useAtomValue } from "@effect/atom-react";
 import { primaryServerConfigAtom } from "../../state/server";
-import { isElectron } from "../../env";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import {
   useClientSettings,
@@ -39,6 +38,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { CoordinatorReplyWaiter, type CoordinatorReplySnapshot } from "../../studio/voiceCallReply";
 import { openCallMicrophone, playCallAudio } from "../../studio/voiceCallAudio";
+import { canHostVoiceCall } from "../../studio/voiceCallSupport";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -67,7 +67,7 @@ type VoiceBridge = Required<
 
 function voiceBridge(): VoiceBridge | null {
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
-  if (!isElectron || !bridge) return null;
+  if (!bridge || !canHostVoiceCall(bridge)) return null;
   const {
     getVoiceStatus,
     requestVoiceAccess,
@@ -237,18 +237,20 @@ export function useVoiceCall(
       alive = false;
     };
   }, [bridge]);
-  const unavailableReason =
-    coordinatorProblem ??
-    (!settingsLoaded
-      ? "Voice settings are still loading…"
-      : !hostStatus
-        ? "Checking voice support…"
-        : !hostStatus.supported
-          ? (hostStatus.reason ?? "Voice calls are unavailable on this device.")
-          : voice.provider === "elevenlabs" &&
-              (!voice.elevenLabsApiKey.trim() || !/^[a-zA-Z0-9_-]+$/.test(voice.elevenLabsVoiceId))
-            ? "Add your ElevenLabs API key and voice ID in Voice settings, or select the free macOS voice."
-            : null);
+  const unavailableReason = !bridge
+    ? "Voice calls need the SpecWithCode app on macOS."
+    : (coordinatorProblem ??
+      (!settingsLoaded
+        ? "Voice settings are still loading…"
+        : !hostStatus
+          ? "Checking voice support…"
+          : !hostStatus.supported
+            ? (hostStatus.reason ?? "Voice calls are unavailable on this device.")
+            : voice.provider === "elevenlabs" &&
+                (!voice.elevenLabsApiKey.trim() ||
+                  !/^[a-zA-Z0-9_-]+$/.test(voice.elevenLabsVoiceId))
+              ? "Add your ElevenLabs API key and voice ID in Voice settings, or select the free macOS voice."
+              : null));
   const [consentOpen, setConsentOpen] = useState(false);
   const [microphoneBlocked, setMicrophoneBlocked] = useState(false);
   const levelTarget = useRef<HTMLElement | null>(null);
@@ -325,7 +327,12 @@ export function useVoiceCall(
       onStateChange: (next) => {
         setState(next);
         if (next.phase === "error") {
-          setMicrophoneBlocked(next.error?.includes("System Settings") ?? false);
+          // Only a microphone problem gets the microphone settings button; a
+          // speech recognition one names its own place in System Settings.
+          setMicrophoneBlocked(
+            /microphone/i.test(next.error ?? "") &&
+              (next.error?.includes("System Settings") ?? false),
+          );
           if (controller.current === call) controller.current = null;
           void bridge.setVoiceCallActive({ active: false }).catch(() => undefined);
         }

@@ -47,6 +47,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
+import { unreachableMachines } from "../../cloud/connectRoutePlan";
+import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
 import { ConnectionReason } from "./ConnectionReason";
@@ -369,8 +371,24 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       setPending(null);
     }
   }
+  const unreachable = unreachableMachines(
+    environments.filter(
+      (environment) =>
+        environment.environmentId !== environmentId && saved.has(environment.environmentId),
+    ),
+  ).map((environment) => {
+    const machine = snapshot?.machines.find(
+      (candidate) => candidate.environmentId === environment.environmentId,
+    );
+    return {
+      environmentId: environment.environmentId,
+      label: machine?.label ?? environment.label,
+      onConnect: Boolean(machine?.connectUrl),
+    };
+  });
   return (
     <StudioFleetRoster
+      banner={<ConnectReachBanner machines={unreachable} />}
       snapshot={snapshot}
       loading={loading}
       failed={failed}
@@ -498,6 +516,7 @@ export function StudioFleetRoster({
   inviteDialog = null,
   machineStatuses = NO_MACHINE_STATUSES,
   canCheckReadiness = false,
+  banner = null,
 }: {
   snapshot: StudioFleetSnapshot | null;
   loading: boolean;
@@ -539,6 +558,8 @@ export function StudioFleetRoster({
   machineStatuses?: Readonly<Record<string, FleetMachineConnection>>;
   /** Offers each connected machine's sign-in and repository-access checklist. */
   canCheckReadiness?: boolean;
+  /** Shown above the list, such as the Connect sign-in for machines that cannot be reached. */
+  banner?: ReactNode;
 }) {
   const [readinessFor, setReadinessFor] = useState<string | null>(null);
   return (
@@ -557,6 +578,7 @@ export function StudioFleetRoster({
         </Button>
       }
     >
+      {banner}
       {failed ? (
         <p role="status" className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           Private machines could not be checked. Refresh to retry.

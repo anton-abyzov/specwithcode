@@ -18,16 +18,22 @@ disk. prune_state_backups keeps the newest few of them.
 prune_update_leftovers removes what no other step does: install/incoming folders a killed helper
 left behind and release bundles older than the installed release, and the receipts (296 files,
 54 MB on one Mac) and owned-updates folders of finished updates beyond the newest few. A held or
-unfinished update's receipt and folder, and any receipt the agent's state, run or marker names,
-always stay.
+unfinished update's receipt and folder stay for a week; any receipt the agent's state, run or marker
+names always stays.
+
+prune_orphaned_owned_updates and prune_verification age out the rest after 7 days: owned-updates
+folders no receipt or agent file names any more (82 on one Mac) and install/verification entries
+(2.1 GB). Symlinks are never followed.
 """
 import json
 import os
 import pathlib
 import re
 import shutil
+import stat
 import time
 
+from release_check import FINDER_FILES
 import studio_paths
 
 RELEASE_NAME = re.compile(r'[a-f0-9]{20}')
@@ -45,6 +51,8 @@ ATTEMPT_FILE = re.compile(r'(?:update|prestate)-(.+-\d{8}T\d{6,12}Z)\.(?:json|lo
 RECORD_FILE = re.compile(r'(reap|idle-agents|database-restart)-(\d{8}T\d{6,12}Z-[a-f0-9]{8})\.(?:json|log)')
 OWNED_UPDATE_NAME = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 RECEIPTS_KEPT = 10
+MAX_AGE_SECONDS = 7 * 86400
+AGENT_FILES = ('state.json', 'run.json', 'install-in-progress.json')
 RECEIPT_READ_LIMIT = 64 << 20
 
 
@@ -133,8 +141,9 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
 
     Keeps the `keep_newest` newest copies, any folder in `keep`, anything written in the
     last hour (another identity's update may be using it) and any folder that holds a file
-    backup_state never writes. Only plain pre-<commit>-<stamp>[-<uuid>] folders directly in
-    the backups root are candidates; symlinks are never followed. Never raises.
+    backup_state never writes, a regular Finder .DS_Store aside. Only plain
+    pre-<commit>-<stamp>[-<uuid>] folders directly in the backups root are candidates; symlinks
+    are never followed. Never raises.
 
     With `only_if_frees`, removes nothing unless the candidates' files add up to at least that many
     bytes. Their sizes are an upper bound: a clone frees only the blocks it no longer shares.
@@ -160,8 +169,9 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
                 entries = list(child.iterdir())
             except OSError:
                 continue
-            if any(entry.is_symlink() or not entry.is_file() or entry.name not in STATE_BACKUP_FILES for entry in entries):
-                continue  # Not only what backup_state writes: someone put it there by hand.
+            if any(entry.is_symlink() or not entry.is_file() or entry.name not in STATE_BACKUP_FILES | FINDER_FILES
+                   for entry in entries):
+                continue  # Not only what backup_state writes (or Finder's view settings): someone put it there by hand.
             backups.append((child.name.split('-')[2], info.st_mtime, child, entries))
     except OSError:
         return []
@@ -239,7 +249,7 @@ def prune_incoming(home, installed, now=None, recent_seconds=RECENT_SECONDS):
 def _named_receipts(updates):
     """The receipt file names the agent still points at: its state, its run, its install marker."""
     names = set()
-    for file_name in ('state.json', 'run.json', 'install-in-progress.json'):
+    for file_name in AGENT_FILES:
         try:
             value = json.loads((updates / file_name).read_text())
         except (OSError, ValueError):
@@ -283,14 +293,37 @@ def _finished_attempt(files, owned_root, own):
     return True, folder
 
 
-def prune_update_receipts(own, keep=(), keep_newest=RECEIPTS_KEPT, now=None, recent_seconds=RECENT_SECONDS):
+def _guards_state_copy(files):
+    """True when an unfinished attempt's update receipt names a pre-update state copy that still
+    exists (stateBackup): after a held or failed restore that copy may be the only database from
+    before the migration, and the receipt is what keeps it (held_state_backups) and its
+    owned-updates folder. An unreadable receipt guards nothing it could name."""
+    for path in files:
+        if not (path.name.startswith('update-') and path.suffix == '.json'):
+            continue
+        try:
+            receipt = json.loads(path.read_text()) if path.stat().st_size <= RECEIPT_READ_LIMIT else None
+        except (OSError, ValueError):
+            continue
+        backup = receipt.get('stateBackup') if isinstance(receipt, dict) else None
+        if isinstance(backup, str) and backup and os.path.lexists(backup):
+            return True
+    return False
+
+
+def prune_update_receipts(own, keep=(), keep_newest=RECEIPTS_KEPT, now=None, recent_seconds=RECENT_SECONDS,
+                          max_age=MAX_AGE_SECONDS):
     """Deletes old update receipts and the owned-updates folders of finished updates; returns
     {'receipts': [...], 'ownedUpdates': [...]}, the names removed. Keeps the `keep_newest` newest
     attempts (an update-/prestate- pair) and records of each kind, anything in `keep`, anything
     the agent's state.json, run.json or install marker names, anything written in the last hour,
     and every attempt whose receipt is not finished (see _finished), so a held rollback keeps its
     receipt, the state copy it names (held_state_backups) and its owned-updates folder. An
-    owned-updates folder goes only with the finished receipt that names it."""
+    owned-updates folder goes only with the finished receipt that names it. An unfinished (held)
+    attempt or a refusal record older than `max_age` goes whatever its rank, unless kept, named,
+    or its receipt still names a state copy that exists (_guards_state_copy: that copy and its
+    folder must wait for a person); the aged attempt's folder is left to
+    prune_orphaned_owned_updates, which removes it in the same pass once nothing names it."""
     own = pathlib.Path(own)
     updates = own / 'updates'
     removed = {'receipts': [], 'ownedUpdates': []}
@@ -318,12 +351,17 @@ def prune_update_receipts(own, keep=(), keep_newest=RECEIPTS_KEPT, now=None, rec
         by_kind.setdefault(key[0], []).append((stamp[:15], max(mtime for mtime, _ in files), key))
     owned_root = own / 'owned-updates'
     for entries in by_kind.values():
-        for _stamp, newest, key in sorted(entries, reverse=True)[max(0, keep_newest):]:
+        for rank, (_stamp, newest, key) in enumerate(sorted(entries, reverse=True)):
             files = [path for _, path in groups[key]]
             if moment - newest < recent_seconds or any(path.name in protected for path in files):
                 continue
+            aged = moment - newest >= max_age
             finished, folder = _finished_attempt(files, owned_root, own)
             if not finished:
+                if not aged or _guards_state_copy(files):
+                    continue
+                folder = None  # The orphan pass takes it once this receipt is gone.
+            elif rank < keep_newest and not (aged and key[0] != 'attempt'):
                 continue
             try:
                 if folder is not None:
@@ -339,13 +377,98 @@ def prune_update_receipts(own, keep=(), keep_newest=RECEIPTS_KEPT, now=None, rec
     return removed
 
 
+def _newest_mtime(path):
+    """The newest lstat mtime of `path` and everything below it, never following a symlink."""
+    info = os.lstat(str(path))
+    newest = info.st_mtime
+    if stat.S_ISDIR(info.st_mode):
+        with os.scandir(str(path)) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    newest = max(newest, _newest_mtime(entry.path))
+                else:
+                    newest = max(newest, entry.stat(follow_symlinks=False).st_mtime)
+    return newest
+
+
+def _aged_entries(root, keep, moment, max_age):
+    """Plain files and folders directly in `root` whose newest mtime is `max_age` old; symlinks,
+    Finder files, names in `keep` and anything unreadable stay."""
+    aged = []
+    for child in sorted(root.iterdir()):
+        if child.name in keep or child.name in FINDER_FILES or child.is_symlink():
+            continue
+        try:
+            if moment - _newest_mtime(child) >= max_age:
+                aged.append(child)
+        except OSError:
+            continue
+    return aged
+
+
+def _remove_all(paths):
+    removed = []
+    for path in paths:
+        try:
+            _remove(path)
+        except OSError:
+            continue
+        removed.append(path.name)
+    return removed
+
+
+def prune_orphaned_owned_updates(own, keep=(), now=None, max_age=MAX_AGE_SECONDS):
+    """Deletes owned-updates folders that no receipt, agent state, run or install marker names and
+    that nothing in has changed for `max_age`; returns the names removed. A receipt too large to
+    read, a symlinked receipt, or a symlinked receipts or owned-updates root removes nothing."""
+    own = pathlib.Path(own)
+    root, receipts = _plain_directory(own / 'owned-updates', own), own / 'updates' / 'receipts'
+    if root is None or (os.path.lexists(str(receipts)) and _plain_directory(receipts, own) is None):
+        return []
+    named = {pathlib.Path(str(item)).name for item in keep if item}
+    sources = [own / 'updates' / name for name in AGENT_FILES]
+    if receipts.is_dir():
+        sources += [path for path in receipts.iterdir() if path.suffix == '.json']
+    for path in sources:
+        try:
+            if not os.path.lexists(str(path)):
+                continue
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > RECEIPT_READ_LIMIT:
+                return []  # A record it cannot read without following a link: keep every folder.
+            text = path.read_text(errors='replace')
+        except OSError:
+            return []
+        named.update(re.findall(OWNED_UPDATE_NAME.pattern, text))  # Any mention keeps the folder, valid JSON or not.
+    moment = time.time() if now is None else now
+    orphans = [child for child in _aged_entries(root, named, moment, max_age)
+               if OWNED_UPDATE_NAME.fullmatch(child.name) and child.is_dir()]
+    return _remove_all(orphans)
+
+
+def prune_verification(home, keep=(), now=None, max_age=MAX_AGE_SECONDS):
+    """Deletes install/verification entries nothing in has changed for `max_age`; returns the
+    names removed. Entries in `keep`, symlinks and Finder files stay."""
+    root = _plain_directory(studio_paths.install_root(home) / 'verification', home)
+    if root is None:
+        return []
+    moment = time.time() if now is None else now
+    return _remove_all(_aged_entries(root, {pathlib.Path(str(item)).name for item in keep if item}, moment, max_age))
+
+
 def prune_update_leftovers(home, own, installed, keep=()):
-    """prune_incoming and prune_update_receipts after a verified update. Never raises."""
+    """prune_incoming, prune_update_receipts, prune_orphaned_owned_updates and prune_verification
+    after a verified update. The last two report only when they removed something or failed.
+    Never raises."""
     result = {}
     for name, step in (('incoming', lambda: prune_incoming(home, installed)),
-                       ('receipts', lambda: prune_update_receipts(own, keep))):
+                       ('receipts', lambda: prune_update_receipts(own, keep)),
+                       ('orphanedOwnedUpdates', lambda: prune_orphaned_owned_updates(own, keep)),
+                       ('verification', lambda: prune_verification(home, keep))):
         try:
-            result[name] = step()
+            removed = step()
         except Exception as error:  # Pruning never fails a verified update.
             result[name + 'Error'] = type(error).__name__
+            continue
+        if removed or name in ('incoming', 'receipts'):
+            result[name] = removed
     return result

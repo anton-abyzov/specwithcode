@@ -71,8 +71,10 @@ export function resolveRelayTracingConfig() {
 
 export function hasCloudPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
-  return import.meta.env.VITE_STUDIO_ENABLE_HOSTED_SERVICES === "true" &&
-    Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
+  return (
+    import.meta.env.VITE_STUDIO_ENABLE_HOSTED_SERVICES === "true" &&
+    Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl)
+  );
 }
 
 export function resolveRelayClerkTokenOptions() {

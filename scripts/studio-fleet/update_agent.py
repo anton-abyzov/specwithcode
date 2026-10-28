@@ -92,6 +92,9 @@ LIMITS = {'list': 10 << 20, PLAN_ASSET: 256 << 10, SUMS_ASSET: 256 << 10, MANIFE
           'runtime': 1 << 30, 'helpers': 64 << 20, 'json': 4 << 20, 'receipt': 64 << 20}  # Receipts, snapshots: grow with threads
 HELPER_MAX_FILES = 2000
 HELPER_MAX_BYTES = 64 << 20
+# Finder's view settings (release_check.FINDER_FILES, which is not shipped beside this agent): a
+# regular file of this name in the helpers folder is not a change; a link of the name still is.
+FINDER_FILES = frozenset({'.DS_Store'})
 LOG_LIMIT = 1 << 20
 # launchd's StandardOutPath and StandardErrorPath for the service grow forever otherwise
 # (52 MB seen); past the limit the newest SERVICE_LOG_KEPT bytes move to <name>.1.
@@ -915,7 +918,8 @@ class Agent(object):
                 _refuse_if(path.is_symlink(), 'Verified helpers changed on disk')
             for name in filenames:
                 path = pathlib.Path(directory) / name
-                actual[path.relative_to(root).as_posix()] = sha256_file(path)
+                if not (name in FINDER_FILES and path.is_file()):
+                    actual[path.relative_to(root).as_posix()] = sha256_file(path)
         _refuse_if(actual != verified['helpers']['files'], 'Verified helpers changed on disk')
         return root / 'scripts' / 'studio-fleet'
 

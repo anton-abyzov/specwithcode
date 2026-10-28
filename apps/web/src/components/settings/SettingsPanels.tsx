@@ -72,6 +72,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
+import { canHostVoiceCall } from "../../studio/voiceCallSupport";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
@@ -606,7 +607,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.keepAwakeWhileWorking !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileWorking
         ? ["Keep awake while sessions work"]
         : []),
-      ...(isElectron && settings.voiceCallsAllowed !== DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed
+      ...(canHostVoiceCall() &&
+      settings.voiceCallsAllowed !== DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed
         ? ["Voice calls with the coordinator"]
         : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
@@ -2523,7 +2525,7 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
-        {isElectron ? (
+        {canHostVoiceCall() ? (
           <SettingsRow
             {...searchableSetting("voice-calls")}
             description="Call a project's coordinator and talk instead of typing. The microphone is on only during a call, speech is turned into text on this Mac, and the text is sent as your message."

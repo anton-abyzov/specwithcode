@@ -16,6 +16,7 @@ export default defineConfig({
       { find: /.*\/studio\/voiceCallAudio$/, replacement: mock },
       { find: /^\.\/VoiceSettings$/, replacement: mock },
       { find: /^\.\.\/\.\.\/env$/, replacement: mock },
+      { find: /^\.\.\/env$/, replacement: mock },
       { find: "@specweave-studio/client-runtime/state/runtime", replacement: mock },
       { find: "@effect/atom-react", replacement: mock },
     ],
