@@ -326,7 +326,8 @@ export function planReconcile(input: PlanInput): Plan {
           row: {
             ...base,
             status: "conflict",
-            detail: "A folder with other files is already here, not this repository.",
+            detail:
+              "Files already occupy this path; the destination scan did not identify a repository here.",
             choices,
             decision,
             needsDecision: decision === null,

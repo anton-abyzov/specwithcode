@@ -6,7 +6,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
-import { applyPlan, type ApplyInput } from "./apply.ts";
+import { applyPlan, type ApplyInput, type JournalEntry } from "./apply.ts";
+import { JsonLog } from "./durable.ts";
 import { DEFAULT_SELECTION } from "./classify.ts";
 import { repositoryRelations, scanDestination } from "./destinationScan.ts";
 import { git, makeUmbrella, write, type UmbrellaFixture } from "./folderFixture.testkit.ts";
@@ -565,15 +566,17 @@ async function fileHandlePrototype() {
  * lets that sync finish and stops Apply at its next staged file.
  */
 async function applyWithCrash(input: ApplyInput, at: number, after: boolean) {
-  const prototype = await fileHandlePrototype();
-  const original = prototype.sync;
+  const original = JsonLog.prototype.sync;
   let calls = 0;
   let durable = 0;
   let crashed = false;
   const away = `${input.stagingRoot}.away`;
-  const spy = vi.spyOn(prototype, "sync").mockImplementation(async function (
-    this: NodeFSP.FileHandle,
+  const spy = vi.spyOn(JsonLog.prototype, "sync").mockImplementation(async function (
+    this: JsonLog<JournalEntry>,
   ) {
+    // A previous timed-out test may still be finishing its own Undo. Its syncs
+    // must not advance this fixture's crash checkpoint or be suppressed.
+    if (this.file !== input.journalFile) return original.call(this);
     if (crashed) return;
     calls += 1;
     if (calls === at && !after) {
@@ -623,15 +626,41 @@ describe("Apply journal durability", () => {
 
   it.each([
     ["intents synced, nothing written yet", 1, true],
-    ["a batch written, its done marks lost", 3, false],
-    ["a backup recorded, then stopped", 5, true],
-    ["a backup moved, its write intent lost", 6, false],
+    ["a batch written, its done marks lost", 2, false],
+    ["a backup recorded, then stopped", 3, true],
+    ["a backup moved, its write intent lost", 4, false],
   ] as const)(
     "a crash with %s replays to the full copy, and Undo restores the folder",
     async (_label, at, after) => {
-      const { input, target, expected } = syntheticApply(`crash-${at}-${after}`, 2000, 2);
+      // Cross the real 512-file batch boundary once. The separate 2000-file
+      // test above covers four batches; crash replay need not restore 2000 files
+      // with two durable Undo syncs each on slow Windows disks.
+      const { input, target, expected } = syntheticApply(`crash-${at}-${after}`, 513, 2);
       const before = tree(target);
       await applyWithCrash(input, at, after);
+      const records = NodeFS.readFileSync(input.journalFile, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { t: string; path?: string });
+      if (at <= 2) {
+        expect(records.filter((entry) => entry.t === "write")).toHaveLength(512);
+        expect(records.some((entry) => entry.t === "write-done")).toBe(false);
+        const written = Object.keys(tree(target)).filter(
+          (path) => path.startsWith("d") && !path.endsWith("/"),
+        );
+        expect(written).toHaveLength(at === 1 ? 0 : 512);
+      } else {
+        expect(
+          NodeFS.readFileSync(NodePath.join(input.backupRoot, "files/zz/old0.txt"), "utf8"),
+        ).toBe("original 0\n");
+        expect(NodeFS.existsSync(NodePath.join(target, "zz/old0.txt"))).toBe(false);
+        expect(records.some((entry) => entry.t === "backup" && entry.path === "zz/old0.txt")).toBe(
+          true,
+        );
+        expect(records.some((entry) => entry.t === "write" && entry.path === "zz/old0.txt")).toBe(
+          false,
+        );
+      }
       await applyPlan(input);
       const after_ = tree(target);
       for (const [path, body] of Object.entries(expected)) expect(after_[path]).toBe(body);

@@ -224,6 +224,17 @@ runpy.run_path(install, run_name='__main__')
         self.assert_rejected(rejected)
         self.assertIn('Unindexed existing release file', rejected.stderr)
 
+    def test_reused_release_ignores_finder_view_files(self):
+        digest = self.bundle()
+        result = self.install(digest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(result.stdout)
+        own = self.home / '.specwithcode/stage'
+        own.rename(own.with_name('preserved-first-install'))
+        (pathlib.Path(receipt['release']) / '.DS_Store').write_bytes(b'Bud1')  # Finder opened the folder.
+        reused = self.install(digest)
+        self.assertEqual(reused.returncode, 0, reused.stderr)
+
     def test_symlinked_studio_roots_do_not_write_native_store(self):
         digest = self.bundle()
         protected = self.home / '.codex'

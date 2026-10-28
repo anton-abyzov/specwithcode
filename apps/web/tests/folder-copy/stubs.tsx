@@ -22,12 +22,15 @@ export const useEnvironmentQuery = () => ({
   data: { parentPath: "/home/anton", entries: [] },
   isPending: false,
 });
-let applied = false;
+const fixtureParams = new URLSearchParams(location.search);
+let incompleteUndo = fixtureParams.get("undo") === "incomplete";
+const undoCommitted = fixtureParams.get("committed") === "true";
+let applied = incompleteUndo;
 let attempted = false;
 let published = false;
-let op = "";
-let mode = "copy-only";
-let targetFolder = "";
+let op = incompleteUndo ? "00000000-0000-4000-8000-000000000009" : "";
+let mode = incompleteUndo && !undoCommitted ? "copy-and-move" : "copy-only";
+let targetFolder = incompleteUndo ? "/home/anton/Projects/project" : "";
 const umbrella = "/Users/you/Projects/github/specweave-umb";
 const child = "repositories/anton-abyzov/specweave";
 let copyRoot = umbrella;
@@ -46,9 +49,18 @@ const status = (state: string) => ({
   title: "SpecWeave",
   selection: [],
   mirror: false,
-  state,
-  failedStep: state === "failed" ? "transfer" : null,
-  error: state === "failed" ? { message: "The copy connection was interrupted." } : null,
+  state: incompleteUndo ? "failed" : state,
+  undoIncomplete: incompleteUndo,
+  failedStep: incompleteUndo ? "applied" : state === "failed" ? "transfer" : null,
+  error: incompleteUndo
+    ? {
+        code: "copy_failed",
+        message:
+          "Undo did not finish: report: EACCES: cannot list this folder. Retry Undo after restoring access.",
+      }
+    : state === "failed"
+      ? { message: "The copy connection was interrupted." }
+      : null,
   progress: null,
   disk: null,
   // One repository the destination does not have yet, so a one-click copy approves itself.
@@ -75,7 +87,7 @@ const status = (state: string) => ({
   checks: [],
   warnings: summary.warnings,
   unstable: [],
-  committed: state === "applied",
+  committed: incompleteUndo ? undoCommitted : state === "applied",
   projectId: state === "applied" ? "copied" : null,
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
@@ -233,8 +245,19 @@ export const useAtomCommand =
       value = status(applied ? "applied" : "failed");
     } else if (name === "copyStatus")
       value = status(applied ? "applied" : attempted ? "failed" : "previewed");
-    else if (name === "copyRelease") value = { released: true };
-    else if (name === "copyCancel" || name === "copySourceCancel") value = status("cancelled");
+    else if (name === "copyUndo") {
+      if (!input.preview) incompleteUndo = false;
+      value = {
+        status: status(input.preview ? "failed" : "undone"),
+        items: [],
+        edited: 0,
+        undone: !input.preview,
+        kept: [],
+        problems: [],
+      };
+    } else if (name === "copyRelease") value = { released: true };
+    else if (name === "copySourceCancel") value = { state: "cancelled" };
+    else if (name === "copyCancel") value = status("cancelled");
     else value = {};
     return { _tag: "Success", value };
   };

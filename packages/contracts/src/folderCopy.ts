@@ -363,6 +363,8 @@ export const FolderCopyStatus = Schema.Struct({
   mirror: Schema.Boolean,
   state: FolderCopyState,
   failedStep: Schema.NullOr(FolderCopyState),
+  /** Restoration started but has not completed; recover with Undo, never Apply Retry. */
+  undoIncomplete: Schema.optional(Schema.Boolean),
   error: Schema.NullOr(Schema.Struct({ code: bounded(64), message: bounded(4000) })),
   progress: Schema.NullOr(
     Schema.Struct({

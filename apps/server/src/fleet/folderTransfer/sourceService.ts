@@ -614,6 +614,11 @@ export class SourceTransfers {
   async checkScan(operationId: string): Promise<SourceOperationRecord | null> {
     const loaded = await this.load(operationId);
     if (!loaded) return null;
+    // save() publishes the ready state before its durable write completes.
+    // A destination can already read that manifest while build() is finishing.
+    // Wait for that published result, while genuine measuring still reports busy.
+    if (loaded.building && ["scanned", "ready", "committed"].includes(loaded.record.state))
+      await loaded.building;
     if (loaded.building || !["scanned", "ready", "committed"].includes(loaded.record.state))
       throw new SourceTransferError(
         409,

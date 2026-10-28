@@ -12,6 +12,10 @@ import { git } from "./folderFixture.testkit.ts";
 import type { FileAction, Plan } from "./reconcile.ts";
 import { previewUndo, undoApply } from "./undo.ts";
 
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeFSP>()),
+}));
+
 let base: string;
 let counter = 0;
 
@@ -216,6 +220,73 @@ const LEGACY_BIG = ".big.swc-0b5e5a0e-3c1f-4a8e-9a57-2f1c3d4e5f60.partial";
 const LEGACY_OTHER = ".other.swc-0b5e5a0e-3c1f-4a8e-9a57-2f1c3d4e5f60.partial";
 
 describe("a cross-volume copy killed mid-way", () => {
+  it.each(["Apply replay", "Undo"])("%s reports a cleanup listing failure", async (mode) => {
+    const { input, target } = scenario(
+      (folder) => NodeFS.writeFileSync(NodePath.join(folder, LEGACY_BIG), "unfinished"),
+      { big: "BIG\n" },
+      [fileAction("big", "BIG\n")],
+    );
+    await intents(input, { big: "BIG\n" });
+    const error = Object.assign(new Error("EACCES: cannot list partials"), { code: "EACCES" });
+    const readdir = vi.spyOn(NodeFSP, "readdir").mockRejectedValue(error);
+    try {
+      if (mode === "Apply replay") {
+        await expect(applyPlan(input)).rejects.toBe(error);
+      } else {
+        expect((await undoOf(input)).problems).toEqual(["big: EACCES: cannot list partials"]);
+      }
+    } finally {
+      readdir.mockRestore();
+    }
+    expect(NodeFS.readFileSync(NodePath.join(target, LEGACY_BIG), "utf8")).toBe("unfinished");
+    // A retry after the failure is fixed can enumerate and clean up normally.
+    if (mode === "Apply replay") await applyPlan(input);
+    else expect((await undoOf(input)).problems).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(target, LEGACY_BIG))).toBe(false);
+  });
+
+  it.for(["Apply replay", "Undo"])(
+    "%s removes a pre-clipping Unicode partial and preserves another operation's partials",
+    async (mode, context) => {
+      const name = "é".repeat(120);
+      const { input, target } = scenario(() => undefined, { [name]: "complete\n" }, [
+        fileAction(name, "complete\n"),
+      ]);
+      const to = NodePath.join(target, name);
+      // Reproduce the previous release's spelling independently of partialPath.
+      const oldPartial = (journal: string) =>
+        NodePath.join(target, `.${name}.swc-partial-${sha(`${journal}\0${to}`).slice(0, 12)}`);
+      const old = oldPartial(input.journalFile);
+      expect(Buffer.byteLength(NodePath.basename(old))).toBe(266);
+      expect(old).not.toBe(partialPath(to, input.journalFile));
+      try {
+        NodeFS.writeFileSync(old, "unfinished");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENAMETOOLONG") throw error;
+        context.skip("Host filesystem cannot contain the pre-upgrade Unicode partial");
+        return;
+      }
+      const otherOld = oldPartial(`${input.journalFile}.other`);
+      const otherCurrent = partialPath(to, `${input.journalFile}.other`);
+      NodeFS.writeFileSync(otherOld, "other old partial");
+      NodeFS.writeFileSync(otherCurrent, "other current partial");
+      NodeFS.writeFileSync(partialPath(to, input.journalFile), "current unfinished");
+      await intents(input, { [name]: "complete\n" });
+      if (mode === "Apply replay") {
+        const result = await applyPlan(input);
+        expect(result.warnings).toEqual([]);
+        expect(NodeFS.readFileSync(to, "utf8")).toBe("complete\n");
+      } else {
+        expect((await undoOf(input)).problems).toEqual([]);
+      }
+      expect(tree(target)).toEqual({
+        ...(mode === "Apply replay" ? { [name]: "complete\n" } : {}),
+        [NodePath.basename(otherOld)]: "other old partial",
+        [NodePath.basename(otherCurrent)]: "other current partial",
+      });
+    },
+  );
+
   it("names its partial per target, and replay removes the leftover", async () => {
     const { input, target } = scenario(() => undefined, { big: "BIG\n" }, [
       fileAction("big", "BIG\n"),

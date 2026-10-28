@@ -64,6 +64,8 @@ const sourceCommit = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], {
 const lock = readFileSync(join(root, "pnpm-lock.yaml"), "utf8");
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const within = (base, path) => path === base || path.startsWith(base + sep);
+// Finder writes .DS_Store into any folder a window shows, even mid-build; it is never part of a release.
+const FINDER_FILE = ".DS_Store";
 const store = realpathSync(join(root, "node_modules/.pnpm"));
 // Native adapters deliberately use createRequire; ESM imports alone omit them.
 const serverPackage = JSON.parse(readFileSync(join(root, "apps/server/package.json"), "utf8"));
@@ -158,7 +160,13 @@ function includeVolume(volume) {
     } else if (stat.isDirectory()) {
       mkdirSync(to, { recursive: true });
       for (const name of readdirSync(from)) {
-        if (name === ".git" || name === ".bin" || name === ".repos" || /^\.env(?:\.|$)/.test(name))
+        if (
+          name === ".git" ||
+          name === ".bin" ||
+          name === ".repos" ||
+          name === FINDER_FILE ||
+          /^\.env(?:\.|$)/.test(name)
+        )
           continue;
         copyTree(join(from, name), join(to, name));
       }
@@ -229,6 +237,7 @@ const notices = await generateThirdPartyLicenseManifest({
 writeFileSync(join(output, "third-party-licenses.json"), JSON.stringify(notices) + "\n");
 function indexTree(path) {
   for (const name of readdirSync(path).sort()) {
+    if (name === FINDER_FILE) continue;
     const absolute = join(path, name),
       local = relative(output, absolute);
     const stat = lstatSync(absolute);
@@ -258,7 +267,7 @@ manifest.packages = [
 manifest.pnpmVolumes = volumes.size;
 writeFileSync(join(output, "studio-manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 mkdirSync(dirname(archive), { recursive: true, mode: 0o700 });
-execFileSync("/usr/bin/tar", ["-czf", archive, "-C", output, "."], {
+execFileSync("/usr/bin/tar", ["-czf", archive, "--exclude", FINDER_FILE, "-C", output, "."], {
   env: { COPYFILE_DISABLE: "1", PATH: "/usr/bin:/bin", HOME: process.env.HOME },
   stdio: "ignore",
 });

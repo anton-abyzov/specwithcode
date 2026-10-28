@@ -341,3 +341,129 @@ describe("repository choices", () => {
     expect(onRepositories).toHaveBeenLastCalledWith({ clone: ["repo:api"], skip: [] });
   });
 });
+
+describe("copy preview clarity", () => {
+  it("labels unresolved repository counts as pending rather than empty", async () => {
+    const onDecide = vi.fn();
+    await render(
+      <CopyPlanPreview
+        status={status([
+          row({
+            filesToMove: 0,
+            bytesToMove: 0,
+            status: "conflict",
+            choices: ["keep-mine", "take-theirs"],
+            needsDecision: true,
+          }),
+        ])}
+        onDecide={onDecide}
+        onClone={vi.fn()}
+        disabled={false}
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("Choose a version to calculate files and size.");
+    expect(text).not.toContain("0 files, 0 B");
+    expect(text).toContain("Planned so far:");
+    expect(text).toContain("Choose for 1 folder before copying.");
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes zero file actions from an empty repository and keeps the destination choice explicit", async () => {
+    await render(
+      <CopyPlanPreview
+        status={status([
+          row({
+            filesToMove: 0,
+            bytesToMove: 0,
+            decision: "keep-mine",
+            choices: ["keep-mine", "take-theirs"],
+          }),
+        ])}
+        onDecide={vi.fn()}
+        onClone={vi.fn()}
+        disabled={false}
+      />,
+    );
+    expect(container.textContent).toContain(
+      "Destination version kept; no source files planned for this folder.",
+    );
+    await render(
+      <CopyPlanPreview
+        status={status([row({ filesToMove: 0, bytesToMove: 0, clone: true })])}
+        onDecide={vi.fn()}
+        onClone={vi.fn()}
+        disabled={false}
+      />,
+    );
+    expect(container.textContent).toContain("Repository changes may still be applied through Git.");
+    expect(container.textContent).not.toContain("0 files, 0 B");
+  });
+
+  it("keeps bulk decisions visible while collapsing individual conflicts without choosing for the person", async () => {
+    const onDecide = vi.fn();
+    const conflicts = Array.from({ length: 46 }, (_, n) => ({
+      id: `file:${n}`,
+      path: `.specweave/increments/0001-example/${n}/ledger.jsonl`,
+      reason: "differs" as const,
+      choices: ["keep-mine", "take-theirs", "keep-both"] as const,
+      decision: null,
+    }));
+    const copy = {
+      ...status([row({ conflicts, status: "conflict", needsDecision: true })]),
+      totals: { filesToMove: 3, bytesToMove: 3000, bytesPresent: 0, decisionsNeeded: 46 },
+    };
+    await render(
+      <CopyPlanPreview status={copy} onDecide={onDecide} onClone={vi.fn()} disabled={false} />,
+    );
+    const details = container.querySelector<HTMLDetailsElement>(
+      '[data-slot="copy-conflict-details"]',
+    )!;
+    expect(details.open).toBe(false);
+    expect(container.textContent).toContain("Choose for 46 files before copying.");
+    expect(details.contains(button("All: Keep this machine’s version"))).toBe(false);
+    expect(onDecide).not.toHaveBeenCalled();
+    await act(async () => {
+      details.open = true;
+    });
+    expect(details.querySelectorAll('[role="radiogroup"]')).toHaveLength(46);
+    // Pick one file's keep-both option, preserving every other unresolved choice.
+    const firstGroup = details.querySelector('[role="radiogroup"]')!;
+    const radios = firstGroup.querySelectorAll<HTMLElement>('[role="radio"]');
+    await act(async () => radios[2]!.click());
+    expect(onDecide).toHaveBeenCalledExactlyOnceWith({ "file:0": "keep-both" });
+    onDecide.mockClear();
+    await act(async () => button("All: Take the source version (back up this one)").click());
+    expect(onDecide).toHaveBeenCalledExactlyOnceWith({ "all:repo:api": "take-theirs" });
+  });
+});
+
+it("does not call already resolved omitted conflicts pending when there are zero file actions", async () => {
+  const copy = {
+    ...status([
+      row({
+        filesToMove: 0,
+        bytesToMove: 0,
+        needsDecision: false,
+        moreConflicts: 40,
+        conflicts: [
+          {
+            id: "file:a",
+            path: "a",
+            reason: "differs",
+            choices: ["keep-mine", "take-theirs"],
+            decision: "keep-mine",
+          },
+        ],
+      }),
+    ]),
+    totals: { filesToMove: 0, bytesToMove: 0, bytesPresent: 0, decisionsNeeded: 0 },
+  };
+  await render(
+    <CopyPlanPreview status={copy} onDecide={vi.fn()} onClone={vi.fn()} disabled={false} />,
+  );
+  expect(container.textContent).not.toContain(
+    "File transfers depend on the conflict choices below.",
+  );
+  expect(container.textContent).toContain("Repository content may still arrive through Git");
+});

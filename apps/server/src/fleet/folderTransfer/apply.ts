@@ -59,6 +59,22 @@ export type JournalEntry =
   | { readonly t: "checkout"; readonly repo: string; readonly from: string; readonly to: string }
   | { readonly t: "worktree-added"; readonly main: string; readonly path: string }
   | { readonly t: "cloned"; readonly path: string }
+  /** Synced before Undo changes a path; the digest recognizes a move completed before its done mark. */
+  | {
+      readonly t: "undo-file-intent";
+      readonly path: string;
+      readonly backup: string | null;
+      readonly digest: string | null;
+    }
+  | { readonly t: "undo-file-done"; readonly path: string }
+  | {
+      readonly t: "undo-stash-intent";
+      readonly repo: string;
+      readonly sha: string;
+      readonly before: string;
+    }
+  | { readonly t: "undo-stash-restored"; readonly repo: string; readonly sha: string }
+  | { readonly t: "undo-stash-done"; readonly repo: string; readonly sha: string }
   | { readonly t: "done" };
 
 export type ApplyRefusal =
@@ -116,14 +132,33 @@ const absoluteIn = (root: string, relative: string) => {
  * operation (named by its journal) and destination, so a move run again replaces
  * the leftover instead of adding one, and its hash keeps it off anyone's own file.
  */
-export const partialPath = (to: string, journalFile: string) =>
-  NodePath.join(
+const partialSuffix = (to: string, journalFile: string) =>
+  `.swc-partial-${NodeCrypto.createHash("sha256")
+    .update(`${journalFile}\0${to}`)
+    .digest("hex")
+    .slice(0, 12)}`;
+
+export const partialPath = (to: string, journalFile: string) => {
+  const suffix = partialSuffix(to, journalFile);
+  return NodePath.join(
     NodePath.dirname(to),
-    `.${NodePath.basename(to)}.swc-partial-${NodeCrypto.createHash("sha256")
-      .update(`${journalFile}\0${to}`)
-      .digest("hex")
-      .slice(0, 12)}`,
+    `.${clipBytes(NodePath.basename(to), MAX_NAME_BYTES - 1 - suffix.length)}${suffix}`,
   );
+};
+
+/** A conservative UTF-8 component bound, including byte-limited filesystems such as ext4. */
+const MAX_NAME_BYTES = 255;
+
+/** `name` cut to at most `limit` UTF-8 bytes, never inside a character. */
+function clipBytes(name: string, limit: number): string {
+  if (Buffer.byteLength(name) <= limit) return name;
+  let clipped = "";
+  for (const char of name) {
+    if (Buffer.byteLength(clipped + char) > limit) break;
+    clipped += char;
+  }
+  return clipped;
+}
 
 /** The partial name earlier versions used: `.<name>.swc-<uuid>.partial`. */
 const LEGACY_PARTIAL =
@@ -143,12 +178,19 @@ export async function removePartials(
   const folder = NodePath.dirname(to);
   let names = listings.get(folder);
   if (names === undefined) {
-    names = await NodeFSP.readdir(folder).catch(() => []);
+    names = await NodeFSP.readdir(folder).catch((cause: unknown) => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw cause;
+    });
     listings.set(folder, names);
   }
   const name = NodePath.basename(to);
+  // Before clipping, deterministic partials used the full destination basename.
+  // APFS/NTFS can contain Unicode names beyond this UTF-8 bound. Only remove a
+  // listed entry, so byte-limited filesystems never receive an absent over-limit path.
+  const unclipped = `.${name}${partialSuffix(to, journalFile)}`;
   for (const other of names)
-    if (LEGACY_PARTIAL.exec(other)?.[1] === name)
+    if (other === unclipped || LEGACY_PARTIAL.exec(other)?.[1] === name)
       await NodeFSP.rm(NodePath.join(folder, other), { recursive: true, force: true });
 }
 
@@ -754,7 +796,11 @@ async function reconcileRefs(
     if (head !== step.sourceHead) {
       if (step.stashDestination && !resumed && (await trackedChanges(cwd))) {
         const message = `swc-handoff-${input.operationId}`;
-        await runGit(cwd, ["stash", "push", "--include-untracked", "-q", "-m", message]);
+        // Git's stash helper builds its own pathspecs. Inheriting literal mode
+        // leaves quoted untracked names (such as spaces) behind after stash push.
+        await runGit(cwd, ["stash", "push", "--include-untracked", "-q", "-m", message], {
+          env: { GIT_LITERAL_PATHSPECS: "0" },
+        });
         const sha = await currentRef(cwd, "refs/stash");
         if (sha) await journal.append({ t: "stash", repo: step.repo, sha }, true);
       }

@@ -345,3 +345,71 @@ it("says the source has not dropped an undone move when the cancel and the relea
   expect(alert).toContain("M4 refused the release.");
   expect(pointerNow()).toMatchObject({ operationId: OPERATION });
 });
+
+it.each([false, true])(
+  "recovers incomplete Undo after reopening (committed: %s)",
+  async (committed) => {
+    const problem = "report: EACCES: cannot list partials";
+    const failed = copyStatus("failed", {
+      undoIncomplete: true,
+      committed,
+      projectId: committed ? PROJECT : null,
+      failedStep: "applied",
+      error: { code: "copy_failed", message: problem },
+    });
+    const initial = committed ? copyStatus("applied") : heldMove();
+    reopenMove({ mode: committed ? "copy-only" : "copy-and-move" });
+    statuses = [initial];
+    state.handlers.copyUndo = ({ input }: any) => ({
+      status: input.preview ? initial : failed,
+      items: [],
+      edited: 0,
+      undone: false,
+      kept: [],
+      problems: input.preview ? [] : [problem],
+    });
+    await mount();
+    await click("Undo…");
+    await click("Undo the copy");
+    expect(container.textContent).toContain(problem);
+    expect(names()).not.toContain("copySourceCancel");
+    expect(names()).not.toContain("copyRelease");
+    state.handlers.copyStatus = () => failed;
+    await remount();
+    if (labels().includes("View")) await click("View");
+    expect(labels()).toContain("Undo…");
+    expect(labels()).not.toContain("Retry");
+    expect(pointerNow()).toMatchObject({ operationId: OPERATION });
+    state.handlers.copyUndo = ({ input }: any) => ({
+      status: input.preview ? failed : copyStatus("undone", { committed }),
+      items: [],
+      edited: 0,
+      undone: !input.preview,
+      kept: [],
+      problems: [],
+    });
+    await click("Undo…");
+    await click("Undo the copy");
+    expect(pointerNow()).toBeNull();
+    expect(container.textContent).toContain("is back to how it was before the copy");
+    expect(names()).not.toContain("copyRetry");
+  },
+);
+
+it("ends only the source hold while retaining incomplete Undo recovery", async () => {
+  const failed = copyStatus("failed", {
+    undoIncomplete: true,
+    committed: false,
+    failedStep: "applied",
+    error: { code: "copy_failed", message: "Undo needs recovery" },
+  });
+  reopenMove();
+  state.handlers.copyStatus = () => failed;
+  await mount();
+  await click("End source hold");
+  expect(names()).toContain("copySourceCancel");
+  expect(names()).toContain("copyRelease");
+  expect(names()).not.toContain("copyCancel");
+  expect(pointerNow()).toMatchObject({ operationId: OPERATION });
+  expect(labels()).toContain("Undo…");
+});

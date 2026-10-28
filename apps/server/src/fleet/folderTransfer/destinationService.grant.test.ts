@@ -214,7 +214,7 @@ describe("A held copy-and-move", () => {
       await copies.retry(operationId);
       await held.holding;
       await expect(copies.undo(operationId, true)).rejects.toMatchObject({ code: "busy" });
-      await expect(copies.retry(operationId)).rejects.toMatchObject({ code: "refused" });
+      await expect(copies.retry(operationId)).rejects.toMatchObject({ code: "busy" });
       held.release();
       const finished = await settle(copies, operationId, ["applied", "failed"]);
       expect(finished).toMatchObject({ state: "applied", committed: true, error: null });

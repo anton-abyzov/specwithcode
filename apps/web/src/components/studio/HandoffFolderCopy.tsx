@@ -468,7 +468,12 @@ export function HandoffFolderCopy({
    * Tells the source to drop an operation and, for a move, to release any fence. A strict
    * call keeps the pointer and says so when the source did not; gone counts as dropped.
    */
-  const abandonSource = async (saved: PendingCopy, reason: string, strict: boolean) => {
+  const abandonSource = async (
+    saved: PendingCopy,
+    reason: string,
+    strict: boolean,
+    retainPending = false,
+  ) => {
     const operationId = saved.operationId;
     const cancelled = await sourceCancel({
       environmentId: project.environmentId,
@@ -487,7 +492,7 @@ export function HandoffFolderCopy({
       }
     }
     if (notDropped) throw notDropped;
-    remember(null);
+    if (!retainPending) remember(null);
   };
 
   const show = (next: FolderCopyStatus) => setStage(stageForStatus(next));
@@ -1273,6 +1278,18 @@ export function HandoffFolderCopy({
       remember(null);
     });
 
+  const endUndoSourceHold = () =>
+    run(async () => {
+      if (!pending || !copy?.undoIncomplete || copy.committed) return;
+      await abandonSource(
+        pending,
+        "Ended the source hold; destination Undo recovery is retained.",
+        true,
+        true,
+      );
+      setSourceDropped(true);
+    });
+
   /**
    * Clears this copy so another can start. Copy again keeps the file classes and the
    * ticked secret files; a new copy starts from the defaults.
@@ -1651,6 +1668,8 @@ export function HandoffFolderCopy({
             onCopyAgain={() => void copyAgainNow()}
             onRetry={() => void retryCopy()}
             onUndo={(force, previewOnly) => void undoCopy(force, previewOnly)}
+            onEndSourceHold={() => void endUndoSourceHold()}
+            sourceDropped={sourceDropped}
             onTransfer={transfer}
             onOpen={openCopy}
             onLink={() => setLinkDialog(true)}

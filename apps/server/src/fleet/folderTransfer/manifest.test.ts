@@ -340,7 +340,13 @@ it("counts existing external folders and labels missing registrations without pr
     "1 missing worktree registration(s), not current folders: gone-external",
   );
   expect(current.notices?.join(" ")).toContain("1 worktree(s) outside this folder");
-  expect(git(main, "worktree", "list", "--porcelain")).toContain(gone);
+  // Git uses forward slashes on Windows. Compare actual registration paths
+  // in native form while still proving the missing registration was not pruned.
+  const registered = git(main, "worktree", "list", "--porcelain")
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => NodePath.resolve(line.slice("worktree ".length)));
+  expect(registered).toContain(gone);
   const added = NodePath.join(base, "new-external");
   git(main, "worktree", "add", "-q", "-b", "added", added);
   expect((await scanFolder(main)).repositories[0]?.worktrees).toHaveLength(2);
