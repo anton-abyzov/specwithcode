@@ -7,31 +7,26 @@ import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
-import {
-  handoffMachineStatus,
-  mirroredProjectFolder,
-  type HandoffMachine,
-} from "../../studio/handoffMachinePreference";
+import { mirroredProjectFolder, type HandoffMachine } from "../../studio/handoffMachinePreference";
 import { Button } from "../ui/button";
+import { FolderField } from "./ProjectMoveOptions";
+import { RemoteFolderBrowser } from "./RemoteFolderBrowser";
 
-/** All paths and listings belong to the selected remote environment. */
+/**
+ * Saves a folder on the chosen machine as this project, so the Git move can continue there.
+ * All paths and listings belong to that machine.
+ */
 export function HandoffFolderPicker({
   machines,
-  machine: chosenMachine,
-  suggestedMachine = null,
-  onMachineChange,
-  defaultOpen = false,
+  machine,
   sourceFolder = null,
   title,
   onSaved,
   existingFolders = [],
 }: {
   machines: readonly (HandoffMachine & { id: EnvironmentId })[];
+  /** The machine chosen in the machine list; nothing is read without one. */
   machine: EnvironmentId | null;
-  /** Shown until the person picks a machine, so the list never opens empty. */
-  suggestedMachine?: EnvironmentId | null;
-  onMachineChange: (machine: EnvironmentId | null) => void;
-  defaultOpen?: boolean;
   /** This project's folder on the source machine, mirrored to find the same checkout. */
   sourceFolder?: string | null;
   title: string;
@@ -42,35 +37,18 @@ export function HandoffFolderPicker({
   }[];
   onSaved: (environmentId: EnvironmentId, projectId: ProjectId, path: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(defaultOpen);
-  const suggestion = machines.some((m) => m.id === suggestedMachine && !m.unavailable)
-    ? suggestedMachine
-    : (machines.find((m) => !m.unavailable)?.id ?? null);
-  // Opening fixes the suggestion, so a machine going offline never retargets an entered path.
-  const [pinned, setPinned] = useState(() => (defaultOpen ? suggestion : null));
-  // A machine that connects while the picker is open becomes its machine.
-  if (expanded && !chosenMachine && pinned === null && suggestion !== null) setPinned(suggestion);
-  const shownMachine = chosenMachine ?? pinned ?? suggestion;
-  // A collapsed picker reads nothing from the other machine.
-  const machine = expanded ? (chosenMachine ?? pinned) : null;
   const [path, setPath] = useState("~/Projects/");
-  const [browsePath, setBrowsePath] = useState("~/Projects/");
   const [edited, setEdited] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const access = useFilesystemReadAccess(machine);
-  const query = useEnvironmentQuery(
-    machine && access.canReadFiles
-      ? filesystemEnvironment.browse({
-          environmentId: machine,
-          input: { partialPath: browsePath },
-        })
-      : null,
-  );
+  const selected = machines.find((m) => m.id === machine) ?? null;
+  const readable = selected ? machine : null;
+  const access = useFilesystemReadAccess(readable);
   const mirrored = sourceFolder ? mirroredProjectFolder(sourceFolder) : null;
   const probe = useEnvironmentQuery(
-    machine && access.canReadFiles && mirrored
-      ? filesystemEnvironment.browse({ environmentId: machine, input: { partialPath: mirrored } })
+    readable && access.canReadFiles && mirrored
+      ? filesystemEnvironment.browse({ environmentId: readable, input: { partialPath: mirrored } })
       : null,
   );
   const mirroredName = mirrored?.split("/").pop() ?? null;
@@ -78,9 +56,10 @@ export function HandoffFolderPicker({
   // The found checkout fills the folder until the person changes it.
   const folder = edited ? path : (found?.fullPath ?? path);
   const create = useAtomCommand(projectEnvironment.create, { reportFailure: false });
-  const selected = machines.find((m) => m.id === machine);
+  if (!readable || !selected) return null;
+  const target = readable;
   async function save() {
-    if (!machine || saving || selected?.unavailable || !access.canReadFiles) return;
+    if (saving || selected?.unavailable || !access.canReadFiles) return;
     setSaving(true);
     setError(null);
     try {
@@ -90,17 +69,16 @@ export function HandoffFolderPicker({
         throw new Error("Browse to an existing folder or enter its full absolute path.");
       const existing = existingFolders.find(
         (existing) =>
-          existing.environmentId === machine &&
+          existing.environmentId === target &&
           existing.workspaceRoot.replace(/[/\\]+$/, "") === folder.replace(/[/\\]+$/, ""),
       );
       if (existing) {
-        onSaved(machine, existing.id, existing.workspaceRoot);
-        onMachineChange(null);
+        onSaved(target, existing.id, existing.workspaceRoot);
         return;
       }
       const projectId = ProjectId.make(randomUUID());
       const result = await create({
-        environmentId: machine,
+        environmentId: target,
         input: {
           projectId,
           title,
@@ -110,8 +88,7 @@ export function HandoffFolderPicker({
         },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      onSaved(machine, projectId, folder);
-      onMachineChange(null);
+      onSaved(target, projectId, folder);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this folder.");
     } finally {
@@ -119,118 +96,51 @@ export function HandoffFolderPicker({
     }
   }
   return (
-    <details
-      className="mt-4 rounded-lg border p-3"
-      open={expanded}
-      onToggle={(event) => setExpanded(event.currentTarget.open)}
-    >
-      <summary className="cursor-pointer text-sm font-medium">
-        Choose another folder on a machine
-      </summary>
-      <div className="mt-3 space-y-2">
-        <label className="block text-sm">
-          Machine
-          <select
-            aria-label="Folder machine"
-            className="mt-1 block w-full rounded border bg-background p-2"
-            value={shownMachine ?? ""}
-            disabled={saving}
-            onChange={(event) => onMachineChange((event.target.value as EnvironmentId) || null)}
-          >
-            {!shownMachine && <option value="">Choose a machine</option>}
-            {machines.map((m) => (
-              <option key={m.id} value={m.id} disabled={!!m.unavailable}>
-                {m.label} — {handoffMachineStatus(m)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {machine && (
-          <>
-            <p className="text-xs text-muted-foreground" data-slot="handoff-folder-status">
-              {found
-                ? `Found this project's folder on ${selected?.label}. Use it, or browse to another checkout.`
-                : probe.isPending && mirrored
-                  ? `Looking for this project's folder on ${selected?.label}…`
-                  : `Browsing ${selected?.label}. Save an existing checkout of this project's umbrella repository.`}
-            </p>
-            <label className="block text-sm">
-              Folder
-              <input
-                aria-label="Remote project folder"
-                className="mt-1 block w-full rounded border bg-background p-2"
-                value={folder}
-                disabled={saving}
-                onChange={(event) => {
-                  setEdited(true);
-                  setPath(event.target.value);
-                }}
-              />
-            </label>
-            {/* A found folder needs no listing until the person browses. */}
-            {query.isPending && (!found || edited) && <p role="status">Loading folders…</p>}
-            {query.data && (!found || edited) && (
-              <div className="max-h-40 overflow-auto rounded border" aria-label="Remote folders">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    const parent =
-                      query.data!.parentPath.replace(/[/\\]+$/, "").replace(/[/\\][^/\\]+$/, "") ||
-                      "/";
-                    setEdited(true);
-                    setPath(parent);
-                    setBrowsePath(parent.endsWith("/") ? parent : `${parent}/`);
-                  }}
-                >
-                  Up one folder
-                </Button>
-                {query.data.entries.map((entry) => (
-                  <button
-                    type="button"
-                    key={entry.fullPath}
-                    className="block w-full px-3 py-1 text-left text-sm hover:bg-accent"
-                    disabled={saving}
-                    onClick={() => {
-                      setEdited(true);
-                      setPath(entry.fullPath);
-                      setBrowsePath(`${entry.fullPath}/`);
-                    }}
-                  >
-                    {entry.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            {(error || query.error || access.error) && (
-              <p role="alert" className="text-sm text-destructive-foreground">
-                {error ?? String(query.error ?? access.error)}
-              </p>
-            )}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={saving || !access.canReadFiles}
-                onClick={() => {
-                  setEdited(true);
-                  setPath(folder);
-                  setBrowsePath(folder.endsWith("/") ? folder : `${folder}/`);
-                }}
-              >
-                Browse folder
-              </Button>
-              <Button
-                size="sm"
-                disabled={saving || !access.canReadFiles || !!selected?.unavailable}
-                onClick={() => void save()}
-              >
-                {saving ? "Saving…" : "Use this folder"}
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
-    </details>
+    <div className="space-y-2" data-slot="handoff-folder-picker">
+      <FolderField
+        machineLabel={selected.label}
+        value={folder}
+        disabled={saving}
+        onChange={(value) => {
+          setEdited(true);
+          setPath(value);
+        }}
+        onBrowse={() => setBrowsing((value) => !value)}
+        browseDisabled={!access.canReadFiles}
+        browsing={browsing}
+      >
+        <p className="text-xs text-muted-foreground" data-slot="handoff-folder-status">
+          {found && !edited
+            ? `Found this project on ${selected.label}.`
+            : probe.isPending && mirrored
+              ? `Looking for this project on ${selected.label}…`
+              : `Pick a checkout of this project on ${selected.label}.`}
+        </p>
+      </FolderField>
+      {browsing && (
+        <RemoteFolderBrowser
+          machine={target}
+          start={folder}
+          disabled={saving}
+          onPick={(picked) => {
+            setEdited(true);
+            setPath(picked);
+          }}
+        />
+      )}
+      {(error || access.error) && (
+        <p role="alert" className="text-sm text-destructive-foreground">
+          {error ?? String(access.error)}
+        </p>
+      )}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={saving || !access.canReadFiles || !!selected.unavailable}
+        onClick={() => void save()}
+      >
+        {saving ? "Saving…" : "Use this folder"}
+      </Button>
+    </div>
   );
 }

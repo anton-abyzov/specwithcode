@@ -5,6 +5,8 @@ import {
   WS_METHODS,
   WsProjectPlanningRpcGroup,
   WsProjectKnowledgeRpcGroup,
+  ProjectThreadsDeleteError,
+  type ProjectThreadsDeleteInput,
   type AssetAccessError,
   type AssetCreateUrlResult,
   type AssetResource,
@@ -67,6 +69,27 @@ export const handlers = Effect.gen(function* () {
   };
 });
 
+/** What the person reads when deleting a project's threads is refused or fails. */
+export function threadsDeleteMessage(cause: ProjectService.ProjectServiceError): string {
+  switch (cause._tag) {
+    case "ProjectNotFoundError":
+      return "This project was not found.";
+    case "ProjectRequestDeniedError":
+      switch (cause.reason) {
+        case "confirmation_required":
+          return "Type the project name exactly to delete its threads.";
+        case "active_work":
+          return "Some threads are still working. Stop them, then delete the threads.";
+        case "too_many_deletes":
+          return "Too many deletes in the last minute. Wait a moment and try again.";
+        default:
+          return "The threads could not be deleted.";
+      }
+    default:
+      return "The threads could not be deleted. Threads deleted before the failure stay deleted; try again to finish.";
+  }
+}
+
 /**
  * The folder check, project worktree, and SpecWeave increment handlers (see
  * `WsProjectPlanningRpcGroup`).
@@ -78,12 +101,20 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
     const incrementProgress = yield* ThreadIncrementProgressService.ThreadIncrementProgressService;
     const folders = yield* ProjectFolderService;
     const worktrees = yield* ProjectWorktreeCleanup.make;
+    const projects = yield* ProjectService.ProjectService;
     return {
       [WS_METHODS.projectsFolderCheck]: (
         input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
       ) => folders.check(input),
       [WS_METHODS.projectsWorktreesRead]: worktrees.read,
       [WS_METHODS.projectsWorktreesRemove]: worktrees.remove,
+      [WS_METHODS.projectsThreadsDelete]: (input: ProjectThreadsDeleteInput) =>
+        projects.deleteThreads(input).pipe(
+          Effect.map((deletedThreadIds) => ({ projectId: input.projectId, deletedThreadIds })),
+          Effect.mapError(
+            (cause) => new ProjectThreadsDeleteError({ message: threadsDeleteMessage(cause) }),
+          ),
+        ),
       [WS_METHODS.projectsThreadIncrementProgressRead]: incrementProgress.read,
       [WS_METHODS.projectsIncrementsList]: incrementProgress.listIncrements,
       [WS_METHODS.projectsThreadIncrementLink]: incrementProgress.link,

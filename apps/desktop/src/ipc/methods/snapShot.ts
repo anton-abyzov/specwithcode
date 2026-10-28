@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Electron from "electron";
 
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
@@ -44,6 +45,29 @@ const ensureTrustedSnapShotSender = Effect.fn("desktop.ipc.snapShot.ensureTruste
     return main.value;
   },
 );
+
+const ensureTrustedSnapShotAppSender = Effect.fn("desktop.ipc.snapShot.ensureTrustedAppSender")(
+  function* (event: DesktopIpc.DesktopIpcInvokeEvent | undefined) {
+    const windows = yield* (yield* ElectronWindow.ElectronWindow).appWindows;
+    const window = windows.find(
+      (window) => !window.isDestroyed() && window.webContents.id === event?.sender.id,
+    );
+    if (!window) return yield* new SnapShotIpcUnauthorizedSenderError();
+    return window;
+  },
+);
+
+const ensureSnapShotOwner = Effect.fn("desktop.ipc.snapShot.ensureOwner")(function* (
+  id: string,
+  event: DesktopIpc.DesktopIpcInvokeEvent | undefined,
+) {
+  const window = yield* ensureTrustedSnapShotAppSender(event);
+  const owner = yield* (yield* DesktopWindow.DesktopWindow).snapShotOwner(id);
+  if (Option.isNone(owner) || owner.value !== window || owner.value.isDestroyed()) {
+    return yield* new SnapShotIpcUnauthorizedSenderError();
+  }
+  return window;
+});
 
 export function snapShotScreenFrame(
   viewportFrame: DesktopSnapShotAnimationDestination["viewportFrame"],
@@ -166,8 +190,18 @@ export const listPendingSnapShots = DesktopIpc.makeIpcMethod({
   payload: Schema.Void,
   result: Schema.Array(DesktopPendingSnapShot),
   handler: Effect.fn("desktop.ipc.snapShot.listPending")(function* (_, event) {
-    yield* ensureTrustedSnapShotSender(event);
-    return yield* (yield* DesktopSnapShot.DesktopSnapShot).listPending;
+    const window = yield* ensureTrustedSnapShotAppSender(event);
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    const captures = yield* (yield* DesktopSnapShot.DesktopSnapShot).listPending;
+    return yield* Effect.filter(captures, (capture) =>
+      desktopWindow
+        .snapShotOwner(capture.id)
+        .pipe(
+          Effect.map(
+            (owner) => Option.isSome(owner) && owner.value === window && !window.isDestroyed(),
+          ),
+        ),
+    );
   }),
 });
 
@@ -176,7 +210,7 @@ export const readSnapShot = DesktopIpc.makeIpcMethod({
   payload: DesktopSnapShotId,
   result: DesktopSnapShotSchema,
   handler: Effect.fn("desktop.ipc.snapShot.read")(function* (id, event) {
-    yield* ensureTrustedSnapShotSender(event);
+    yield* ensureSnapShotOwner(id, event);
     return yield* (yield* DesktopSnapShot.DesktopSnapShot).read(id);
   }),
 });
@@ -187,7 +221,7 @@ export const setSnapShotAnimationDestination = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.snapShot.setAnimationDestination")(
     function* (destination, event) {
-      const window = yield* ensureTrustedSnapShotSender(event);
+      const window = yield* ensureSnapShotOwner(destination.id, event);
       if (
         destination.viewportFrame.width <= 0 ||
         destination.viewportFrame.height <= 0 ||
@@ -223,7 +257,7 @@ export const dismissSnapShotAnimation = DesktopIpc.makeIpcMethod({
   payload: DesktopSnapShotId,
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.snapShot.dismissAnimation")(function* (id, event) {
-    yield* ensureTrustedSnapShotSender(event);
+    yield* ensureSnapShotOwner(id, event);
     yield* (yield* DesktopSnapShot.DesktopSnapShot).dismissAnimation(id);
   }),
 });
@@ -233,7 +267,8 @@ export const acknowledgeSnapShot = DesktopIpc.makeIpcMethod({
   payload: DesktopSnapShotId,
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.snapShot.acknowledge")(function* (id, event) {
-    yield* ensureTrustedSnapShotSender(event);
+    yield* ensureSnapShotOwner(id, event);
     yield* (yield* DesktopSnapShot.DesktopSnapShot).acknowledge(id);
+    yield* (yield* DesktopWindow.DesktopWindow).forgetSnapShotOwner(id);
   }),
 });

@@ -4,7 +4,7 @@ import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state
 import type { FolderCopyScopes } from "@specweave-studio/contracts";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
-import { Radio, RadioGroup } from "../ui/radio-group";
+import { Checkbox } from "../ui/checkbox";
 
 export function useCopyScope(project: EnvironmentProject) {
   const command = useAtomCommand(machineHandoff.copyScopes, { reportFailure: false });
@@ -68,6 +68,10 @@ export function useCopyScope(project: EnvironmentProject) {
   };
 }
 
+/**
+ * The copy root, under More options. The whole umbrella is the default when the project sits
+ * in one; "Copy only this project folder" narrows it. A plain project has nothing to choose.
+ */
 export function HandoffCopyScope({
   scope,
   sourceLabel,
@@ -77,50 +81,42 @@ export function HandoffCopyScope({
   readonly sourceLabel: string;
   readonly disabled: boolean;
 }) {
+  const projectOnly = scope.scopes.find((entry) => entry.kind === "project") ?? null;
+  const umbrella =
+    scope.scopes.find(
+      (entry) => entry.copyRoot === scope.recommended && entry.kind !== "project",
+    ) ??
+    scope.scopes.find((entry) => entry.kind !== "project") ??
+    null;
+  const narrowed = projectOnly !== null && scope.selected.copyRoot === projectOnly.copyRoot;
   return (
-    <fieldset
-      className="min-w-0 space-y-2"
-      disabled={disabled || scope.loading}
-      data-slot="copy-source-folder"
-    >
-      <legend className="mb-2 text-sm font-medium">What to copy from {sourceLabel}</legend>
+    <div className="min-w-0 space-y-1.5" data-slot="copy-source-folder">
       {scope.loading ? (
         <p role="status" className="text-xs text-muted-foreground">
           Checking project and umbrella folders…
         </p>
       ) : (
-        <RadioGroup
-          aria-label="Source folder"
-          value={scope.selected.copyRoot}
-          onValueChange={scope.select}
-        >
-          {[...scope.scopes]
-            .sort(
-              (a, b) =>
-                Number(b.copyRoot === scope.recommended) - Number(a.copyRoot === scope.recommended),
-            )
-            .map((entry) => (
-              <label
-                key={entry.copyRoot}
-                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${scope.selected.copyRoot === entry.copyRoot ? "border-primary bg-accent/40" : ""}`}
-              >
-                <span className="flex h-5 items-center">
-                  <Radio value={entry.copyRoot} />
-                </span>
-                <span className="min-w-0 leading-5">
-                  <span className="block font-medium">
-                    {entry.kind === "workspace"
-                      ? `Whole umbrella · ${entry.label}`
-                      : "This project folder only"}
-                    {scope.scopes.length > 1 && entry.copyRoot === scope.recommended
-                      ? " (recommended)"
-                      : ""}
-                  </span>
-                  <span className="block font-mono text-xs wrap-anywhere">{entry.copyRoot}</span>
-                </span>
-              </label>
-            ))}
-        </RadioGroup>
+        umbrella &&
+        projectOnly && (
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <span className="flex h-5 items-center">
+              <Checkbox
+                checked={narrowed}
+                disabled={disabled}
+                aria-label="Copy only this project folder"
+                onCheckedChange={(checked) =>
+                  scope.select(checked === true ? projectOnly.copyRoot : umbrella.copyRoot)
+                }
+              />
+            </span>
+            <span className="min-w-0 leading-5">
+              Copy only this project folder
+              <span className="block text-xs text-muted-foreground">
+                Otherwise the whole umbrella folder goes, so its repositories stay together.
+              </span>
+            </span>
+          </label>
+        )
       )}
       {scope.notice && (
         <p role="status" className="text-xs text-warning-foreground">
@@ -128,40 +124,17 @@ export function HandoffCopyScope({
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        Copies the selected folder and its contents, preserving their layout. Folders outside this
-        root and linked folders are not followed.
+        Copies <span className="font-mono wrap-anywhere">{scope.selected.copyRoot}</span> from{" "}
+        {sourceLabel}. Linked folders and anything outside it stay here.
       </p>
-      {scope.selected.projectRelativePath !== "." && (
-        <div
-          className="space-y-1 rounded-md bg-muted/50 p-3 text-xs"
-          data-slot="copy-project-location"
-        >
-          <p>
-            This project and its coordinator stay in{" "}
-            <span className="font-mono wrap-anywhere">{scope.selected.projectRelativePath}</span>{" "}
-            inside the copied umbrella.
-          </p>
-          {scope.selected.repositories.length > 0 && (
-            <details>
-              <summary className="cursor-pointer">
-                Included repositories ({scope.selected.repositories.length}
-                {scope.selected.truncated ? "+" : ""})
-              </summary>
-              <ul className="mt-1 space-y-1 font-mono wrap-anywhere">
-                {scope.selected.repositories.map((repo) => (
-                  <li key={repo}>{repo}</li>
-                ))}
-              </ul>
-              {scope.selected.truncated && (
-                <p className="mt-1">
-                  The list is abbreviated. Measure the folder to review the copy.
-                </p>
-              )}
-            </details>
-          )}
-        </div>
+      {scope.selected.projectRelativePath !== "." && scope.selected.repositories.length > 0 && (
+        <p className="text-xs text-muted-foreground" data-slot="copy-project-location">
+          Includes {scope.selected.repositories.length}
+          {scope.selected.truncated ? "+" : ""}{" "}
+          {scope.selected.repositories.length === 1 ? "repository" : "repositories"}.
+        </p>
       )}
-    </fieldset>
+    </div>
   );
 }
 

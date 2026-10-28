@@ -30,6 +30,11 @@ export interface CopyNotices {
 const OUTSIDE = /^(.+?): (\d+) worktree\(s\) outside this folder (?:are|were) not copied: (.*)$/s;
 const INSIDE = /^(\d+) linked worktree\(s\) inside this folder (?:are|were) not copied: (.*)$/s;
 const SEPARATE = /^(.+?): this worktree will become an independent Git repository/;
+/** The source's running-work notice, from this version or an older one. */
+const ACTIVE_WORK = /^Work is still running (?:in this folder|here)\./;
+const ACTIVE_WORK_COPY =
+  "Work is still running here. Files that change during the copy won't be included.";
+const ACTIVE_WORK_MOVE = `${ACTIVE_WORK_COPY.slice(0, -1)}, and the project moves once that work stops.`;
 
 /** The list part of a notice, up to the sentence that follows it. */
 function namesOf(rest: string): string[] {
@@ -54,6 +59,11 @@ export function groupCopyNotices(input: {
   readonly warnings: ReadonlyArray<string>;
   /** "Umbrella root" or "Project root". */
   readonly rootLabel: string;
+  /**
+   * Running work matters before Apply only: Where and Review say it, in the words for a copy
+   * or a move; null drops it once copying started, so Done never contradicts a finished move.
+   */
+  readonly activeWork?: "copy-only" | "copy-and-move" | null;
 }): CopyNotices {
   const skipped = input.skipped;
   const worktrees = [...(skipped?.worktrees ?? [])];
@@ -76,6 +86,11 @@ export function groupCopyNotices(input: {
     if (inside) {
       // Newer sources list them all in `skipped`; older ones only in this notice.
       if (!skipped) worktrees.push(...namesOf(inside[2]!));
+      continue;
+    }
+    if (ACTIVE_WORK.test(warning)) {
+      if (input.activeWork)
+        lines.push(input.activeWork === "copy-only" ? ACTIVE_WORK_COPY : ACTIVE_WORK_MOVE);
       continue;
     }
     const independent = SEPARATE.exec(warning);

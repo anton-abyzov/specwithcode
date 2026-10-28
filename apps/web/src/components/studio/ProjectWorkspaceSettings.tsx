@@ -44,6 +44,7 @@ import {
 import { ProjectLocation } from "./ProjectLocation";
 import { ProjectFolderChange } from "./ProjectFolderChange";
 import { useProjectDeletionWorktrees } from "./ProjectDeletionWorktrees";
+import { ProjectThreadsDeletion } from "./ProjectThreadsDeletion";
 import { ProjectEnvironment } from "./ProjectEnvironment";
 import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
@@ -583,6 +584,7 @@ export function ProjectWorkspaceSettings({
                   </div>
                   <section className="project-danger-zone">
                     <h3>Danger zone</h3>
+                    <ProjectThreadsDeletion project={project} disabled={disabled} />
                     <h4>Delete project</h4>
                     <p>
                       Permanently delete this project and all of its threads. This cannot be undone.

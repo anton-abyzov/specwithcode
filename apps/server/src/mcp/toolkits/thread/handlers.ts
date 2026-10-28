@@ -438,17 +438,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
                 "The expected run is not this thread's active turn. This delayed call cannot resolve a newer or finished turn.",
             });
           }
-          if (!self && input.expectedRunId !== undefined) {
+          if (!self && (input.expectedRunId !== undefined || input.userRequested === true)) {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
-              message: "expectedRunId is only for resolving your own running thread.",
+              message:
+                "expectedRunId and userRequested are only for resolving your own running thread.",
             });
           }
           command = {
             ...common,
             ...(currentRun === undefined
               ? { type: "thread.settle" as const }
-              : { type: "thread.deferred-resolution.request" as const, runId: currentRun.id }),
+              : {
+                  type: "thread.deferred-resolution.request" as const,
+                  runId: currentRun.id,
+                  ...(input.userRequested === true ? { userRequested: true as const } : {}),
+                }),
             ...(input.note === undefined ? {} : { note: input.note }),
           };
           break;

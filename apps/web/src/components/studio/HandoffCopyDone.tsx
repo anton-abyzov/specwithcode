@@ -9,11 +9,14 @@ import type {
 } from "@specweave-studio/contracts";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { copiedProjectFolder } from "../../studio/folderCopy";
+import { EllipsisIcon } from "lucide-react";
 import { MachineReadinessChecklist } from "../settings/MachineReadinessChecklist";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { checkLabel, copyProblem } from "./handoffCopyNotices";
 import { CopyUndoPreview } from "./HandoffCopyPreview";
 import { ProjectLinkDialog } from "./ProjectLinkDialog";
+import { useProjectMoveDialog } from "./ProjectMoveOptions";
 
 /** Paths listed for files that changed on the source while copying; the rest are counted. */
 const UNSTABLE_SHOWN = 20;
@@ -60,24 +63,45 @@ export function HandoffCopyDone({
   readonly onLinked: () => void;
 }) {
   const problem = copyProblem(copy, sourceLabel);
+  // Inside the dialog its title says it; standalone, the panel does.
+  const titled = useProjectMoveDialog() !== null;
+  const moved = mode === "copy-and-move" && contextTransferred;
   return (
     <div className="space-y-3 text-sm" data-slot="copy-done">
+      {!titled && (
+        <p className="text-base font-medium wrap-anywhere" data-slot="copy-done-title">
+          {project.title} is on {targetLabel}
+        </p>
+      )}
       {problem && (
         <CopyProblems copy={copy} sourceLabel={sourceLabel}>
           {movingAnyway
-            ? `The copy finished, but ${problem}. You chose Move anyway, so coordinator context ${contextTransferred ? "transferred" : "transfers"} with these differences.`
+            ? `The files are on ${targetLabel}, but ${problem}. You chose Move anyway, so the coordinator ${contextTransferred ? "moved" : "moves"} with these differences.`
             : copyAgain
-              ? `The copy finished, but ${problem}. Copy again: it compares first and moves only what changed.`
-              : `The copy finished, but ${problem}.`}
+              ? `The files are on ${targetLabel}, but ${problem}. Copy again: it compares first and moves only what changed.`
+              : `The files are on ${targetLabel}, but ${problem}.`}
         </CopyProblems>
       )}
-      <p role="status">
-        {mode === "copy-and-move" && contextTransferred
-          ? `The coordinator continues on ${targetLabel} in ${copy.projectFolder ?? copiedProjectFolder(copy.targetFolder, copy.projectRelativePath)}.`
-          : mode === "copy-and-move"
-            ? `${targetLabel} has a copy in ${copy.targetFolder}. Coordinator context has not finished transferring.`
-            : `${targetLabel} has a copy in ${copy.targetFolder}. The coordinator stays on ${sourceLabel}.`}
-      </p>
+      <div className="space-y-1" data-slot="copy-done-body">
+        <p role="status">
+          {moved
+            ? `The coordinator now runs on ${targetLabel}.`
+            : mode === "copy-and-move"
+              ? copyAgain
+                ? "The coordinator stays here until you copy again."
+                : "Files are copied. Move the coordinator once work here is idle."
+              : `${targetLabel} has a copy. The coordinator stays here.`}
+        </p>
+        <p className="text-xs text-muted-foreground wrap-anywhere">
+          In{" "}
+          <span className="font-mono">
+            {moved
+              ? (copy.projectFolder ??
+                copiedProjectFolder(copy.targetFolder, copy.projectRelativePath))
+              : copy.targetFolder}
+          </span>
+        </p>
+      </div>
       {transferNotice && (
         <p role="status" className="text-xs text-warning-foreground">
           {transferNotice}
@@ -95,9 +119,9 @@ export function HandoffCopyDone({
           data-slot="copy-link"
         >
           {link.status === "linking"
-            ? `Linking the copy on ${targetLabel} so it runs workers for ${sourceLabel}…`
+            ? `Linking the copy on ${targetLabel} to ${sourceLabel}…`
             : link.status === "linked"
-              ? `Linked: the copy on ${targetLabel} runs workers; the coordinator on ${sourceLabel} sends it work.`
+              ? `Linked: ${sourceLabel} can send work to the copy on ${targetLabel}.`
               : `Not linked yet. ${link.reason}`}
         </p>
       )}
@@ -222,10 +246,12 @@ export const copyHeld = (copy: FolderCopyStatus | null): boolean =>
 function HandoffCopyHeld({
   copy,
   sourceLabel,
+  targetLabel,
   undoPreview,
 }: {
   readonly copy: FolderCopyStatus;
   readonly sourceLabel: string;
+  readonly targetLabel: string;
   readonly undoPreview: FolderCopyUndoResult | null;
 }) {
   const problem = copyProblem(copy, sourceLabel);
@@ -237,9 +263,9 @@ function HandoffCopyHeld({
         detail={problem ? (copy.error?.message ?? null) : null}
       >
         {problem
-          ? `The files are in ${copy.targetFolder}, but ${problem}, so the coordinator stayed on ${sourceLabel}. Copy again: it compares first and moves only what changed.`
+          ? `The files are on ${targetLabel}, but ${problem}, so the coordinator stayed here.`
           : (copy.error?.message ??
-            `The files are in ${copy.targetFolder}, but the coordinator stayed on ${sourceLabel}.`)}
+            `The files are on ${targetLabel}, but the coordinator stayed here.`)}
       </CopyProblems>
       {undoPreview && <CopyUndoPreview result={undoPreview} />}
     </div>
@@ -275,7 +301,10 @@ export function HandoffCopyUndone({
   );
 }
 
-/** Undo with a preview first; the second click undoes, moving edited files aside if any. */
+/**
+ * Undo with a preview first, as the footer's leading ghost; the second click undoes,
+ * moving edited files aside if any.
+ */
 function CopyUndoButton({
   busy,
   undoPreview,
@@ -286,17 +315,22 @@ function CopyUndoButton({
   readonly onUndo: (force: boolean, previewOnly: boolean) => void;
 }) {
   return undoPreview ? (
-    <Button variant="outline" disabled={busy} onClick={() => onUndo(undoPreview.edited > 0, false)}>
+    <Button
+      variant="outline"
+      data-leading
+      disabled={busy}
+      onClick={() => onUndo(undoPreview.edited > 0, false)}
+    >
       {undoPreview.edited > 0 ? "Undo and keep edited files aside" : "Undo the copy"}
     </Button>
   ) : (
-    <Button variant="outline" disabled={busy} onClick={() => onUndo(false, true)}>
+    <Button variant="ghost" data-leading disabled={busy} onClick={() => onUndo(false, true)}>
       Undo…
     </Button>
   );
 }
 
-/** A held move's buttons: Copy again leads; Move anyway commits and transfers as it is. */
+/** A held move's buttons: Copy again leads; Move anyway commits and moves as it is. */
 function HandoffCopyHeldActions({
   copy,
   busy,
@@ -331,21 +365,30 @@ function HandoffCopyHeldActions({
 export function HandoffCopyFailed({
   copy,
   sourceLabel,
+  targetLabel,
   failedBeforeApply,
   undoPreview,
 }: {
   readonly copy: FolderCopyStatus;
   readonly sourceLabel: string;
+  readonly targetLabel: string;
   readonly failedBeforeApply: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
 }) {
   if (copyHeld(copy))
-    return <HandoffCopyHeld copy={copy} sourceLabel={sourceLabel} undoPreview={undoPreview} />;
+    return (
+      <HandoffCopyHeld
+        copy={copy}
+        sourceLabel={sourceLabel}
+        targetLabel={targetLabel}
+        undoPreview={undoPreview}
+      />
+    );
   return (
     <div className="space-y-2 text-sm">
       <p role="alert" className="wrap-anywhere text-destructive-foreground">
         {copy.state === "applied"
-          ? `The files are in ${copy.targetFolder}, but the coordinator did not start there.`
+          ? `The files are on ${targetLabel}, but the coordinator did not start there.`
           : (copy.error?.message ?? "The copy stopped.")}
         {failedBeforeApply ? ` Nothing in ${copy.targetFolder} changed.` : ""}
       </p>
@@ -359,7 +402,7 @@ export function HandoffCopyFailed({
   );
 }
 
-/** A stopped copy's buttons: a held move's choices, otherwise Retry and, before Apply, Cancel. */
+/** A stopped copy's buttons: a held move's choices, otherwise Retry and, before Apply, Stop copy. */
 export function HandoffCopyFailedActions({
   copy,
   busy,
@@ -414,8 +457,8 @@ export function HandoffCopyFailedActions({
         Retry
       </Button>
       {failedBeforeApply && (
-        <Button variant="outline" disabled={busy} onClick={onCancel}>
-          Cancel copy
+        <Button variant="ghost" data-leading disabled={busy} onClick={onCancel}>
+          Stop copy
         </Button>
       )}
     </>
@@ -423,8 +466,9 @@ export function HandoffCopyFailedActions({
 }
 
 /**
- * The finished copy's buttons. Copy again leads when files changed on the source while
- * copying or a check failed; transferring context waits for it.
+ * The finished copy's buttons: Open on {machine} leads, unless Copy again (files changed
+ * while copying or a check failed) or moving the coordinator comes first. Undo… sits left;
+ * the ⋯ menu holds the rest.
  */
 export function HandoffCopyDoneActions({
   copy,
@@ -432,6 +476,7 @@ export function HandoffCopyDoneActions({
   busy,
   targetLabel,
   copyAgain,
+  canCopyAgain,
   canTransfer,
   canUndo,
   undoPreview,
@@ -448,21 +493,26 @@ export function HandoffCopyDoneActions({
   readonly mode: FolderCopyMode;
   readonly busy: boolean;
   readonly targetLabel: string;
+  /** Copy again is the answer: files changed while copying or a check failed. */
   readonly copyAgain: boolean;
-  /** A move whose coordinator context has not transferred yet. */
+  /** A pointer is left to copy again from. */
+  readonly canCopyAgain: boolean;
+  /** A move whose coordinator has not moved yet. */
   readonly canTransfer: boolean;
   readonly canUndo: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly linkReview: boolean;
+  /** A coordinator transfer may need recovering: nothing may release the source. */
   readonly startNewLocked: boolean;
   readonly onCopyAgain: () => void;
-  /** Null when no pointer is left to transfer from. */
+  /** Null when no pointer is left to move from. */
   readonly onTransfer: (() => void) | null;
   readonly onOpen: () => void;
   readonly onUndo: (force: boolean, previewOnly: boolean) => void;
   readonly onLink: () => void;
   readonly onStartNew: () => void;
 }) {
+  const transfer = canTransfer && !copyAgain && onTransfer !== null;
   return (
     <>
       {copyAgain && (
@@ -470,25 +520,36 @@ export function HandoffCopyDoneActions({
           Copy again
         </Button>
       )}
-      {canTransfer && !copyAgain && onTransfer && (
+      {transfer && (
         <Button disabled={busy} onClick={onTransfer}>
-          Transfer coordinator context
+          Move coordinator now
         </Button>
       )}
-      <Button variant={copyAgain || canTransfer ? "outline" : "default"} onClick={onOpen}>
+      <Button variant={copyAgain || transfer ? "outline" : "default"} onClick={onOpen}>
         Open on {targetLabel}
       </Button>
+      <Menu>
+        <MenuTrigger
+          render={<Button variant="ghost" size="icon" aria-label="More actions" disabled={busy} />}
+        >
+          <EllipsisIcon aria-hidden />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {!copyAgain && canCopyAgain && (
+            // Copying again releases the source like a new copy, so the same lock holds it.
+            <MenuItem disabled={startNewLocked} onClick={onCopyAgain}>
+              Copy again
+            </MenuItem>
+          )}
+          {mode === "copy-only" && linkReview && <MenuItem onClick={onLink}>Link…</MenuItem>}
+          <MenuItem disabled={startNewLocked} onClick={onStartNew}>
+            Start a new copy
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
       {canUndo && copy.backupsDiscardedAt === undefined && (
         <CopyUndoButton busy={busy} undoPreview={undoPreview} onUndo={onUndo} />
       )}
-      {mode === "copy-only" && linkReview && (
-        <Button variant="outline" disabled={busy} onClick={onLink}>
-          Link…
-        </Button>
-      )}
-      <Button variant="ghost" disabled={busy || startNewLocked} onClick={onStartNew}>
-        Start a new copy
-      </Button>
     </>
   );
 }

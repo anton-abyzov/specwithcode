@@ -76,13 +76,15 @@ function layerFor(root: string, fixture: Fixture) {
       getDescriptor: Effect.succeed({ label: "M4" }),
     } as unknown as ServerEnvironment.ServerEnvironment["Service"]),
     Layer.succeed(ProjectService.ProjectService, {
-      getById: () =>
+      getById: (id: ProjectId) =>
         Effect.succeed(
-          Option.some({
-            id: projectId,
-            workspaceRoot: root,
-            workspaceSettings: fixture.kind ? { kind: fixture.kind } : null,
-          }),
+          id === projectId
+            ? Option.some({
+                id: projectId,
+                workspaceRoot: root,
+                workspaceSettings: fixture.kind ? { kind: fixture.kind } : null,
+              })
+            : Option.none(),
         ),
     } as unknown as ProjectService.ProjectService["Service"]),
     Layer.succeed(ProjectionStore.ProjectionStoreV2, {
@@ -174,6 +176,25 @@ describe("HandoffMode", () => {
       expect((yield* handoff.snapshot).threads.every((thread) => thread.checkpoint === null)).toBe(
         true,
       );
+    }).pipe(Effect.provide(layerFor(repository(), fixture)));
+  });
+
+  it.effect("sets a project override only for a project on this machine", () => {
+    const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+    return Effect.gen(function* () {
+      const handoff = yield* HandoffMode.HandoffMode;
+      const elsewhere = ProjectId.make("project-on-another-machine");
+      const refused = yield* handoff
+        .setProjectMode({ projectId: elsewhere, mode: "on" })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({ code: "invalid" });
+      expect(refused.message).toBe("That project is not on this machine.");
+      // Clearing a stale entry always works.
+      yield* handoff.setProjectMode({ projectId: elsewhere, mode: null });
+      const snapshot = yield* handoff.setProjectMode({ projectId, mode: "off" });
+      expect(snapshot.projectModes).toEqual({ [projectId]: "off" });
+      // The origin backup is off until the person turns it on.
+      expect(snapshot.config.pushToOrigin).toBe(false);
     }).pipe(Effect.provide(layerFor(repository(), fixture)));
   });
 

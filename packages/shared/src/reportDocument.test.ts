@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   markdownDocument,
   reportBlocker,
+  reportWaitReason,
   reportDocument,
   reportSentences,
 } from "./reportDocument.ts";
@@ -268,4 +269,24 @@ describe("markdownDocument", () => {
     const text = "# Title\n\n---\n\nBody.\n";
     expect(markdownDocument(text)).toEqual({ title: null, properties: [], body: text });
   });
+});
+
+describe("explicit dependency reports", () => {
+  it.each([
+    ["Now waiting on CI for #886, #198 and #890; I'll merge each once green.", "Waiting for CI"],
+    ["**Blockers:** Waiting for a fresh review of #899.", "Waiting for review"],
+    ["Waiting for PR #899 to merge.", "Waiting for PR merge"],
+    ["Waiting for subagents to finish.", "Waiting for subagents"],
+  ])("classifies %s", (text, reason) => expect(reportWaitReason(text)).toBe(reason));
+  it.each([
+    "Waiting for CI. Can you approve the deployment?",
+    "Waiting for your review",
+    "Waiting for a license",
+    "CI passed. Nothing is waiting.",
+    "> Waiting for CI",
+    "Waiting for CI\n\nAll checks passed; completed.",
+    "Waiting for CI\n\n**Blockers:** none.",
+  ])("does not turn a user request or old wait into a dependency: %s", (text) =>
+    expect(reportWaitReason(text)).toBeNull(),
+  );
 });

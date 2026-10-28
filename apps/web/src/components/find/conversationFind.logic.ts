@@ -3,8 +3,8 @@ import { noteReaderScroll, noteReaderScrollAround } from "../../lib/readerScroll
 export const FIND_SCOPE_ATTRIBUTE = "data-conversation-find-scope";
 export const FIND_IGNORE_ATTRIBUTE = "data-conversation-find-ignore";
 /**
- * Text under this attribute is one run, though `<wbr>` splits it into several text nodes:
- * `report-final` matches a wrapped value split after `report-`.
+ * Text under this attribute is one run, though `<wbr>` or word boxes split it into several
+ * text nodes: `report-final` matches a wrapped value split after `report-`.
  */
 export const FIND_JOINED_TEXT_ATTRIBUTE = "data-path-wrap";
 export const FIND_HIGHLIGHT = "studio-find";

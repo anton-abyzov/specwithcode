@@ -9,7 +9,8 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { CheckIcon, XIcon } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
 import { readThreadShell, useProjects } from "../../state/entities";
@@ -33,20 +34,19 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Label } from "../ui/label";
 import {
-  HandoffDestinationSelect,
   HandoffMachineResults,
   HandoffPreflightFailures,
   preflightSummary,
   type HandoffDestination,
 } from "./HandoffResults";
 import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
+import { destinationOptions, MachineOptionRows } from "./MachineOptionRows";
 import { useHandoffDestinations } from "./useHandoffDestinations";
 
 interface HandOffMachineRequest {
   readonly environmentId: EnvironmentId | null;
-  /** Lists only this project's threads: the switcher's "Migrate threads…". */
+  /** Lists only this project's threads: the switcher's "Move {M}'s running threads…". */
   readonly project?: { readonly id: ProjectId; readonly title: string } | undefined;
 }
 
@@ -54,14 +54,14 @@ const useRequest = create<{ request: HandOffMachineRequest | null }>(() => ({
   request: null,
 }));
 
-/** Opens "Hand off this machine…"; without an id it hands off the machine this window serves. */
+/** Opens "Move running threads"; without an id it moves threads off the machine this window serves. */
 export function requestHandOffMachine(environmentId: EnvironmentId | null = null) {
   useRequest.setState({ request: { environmentId } });
 }
 
 /**
- * Opens "Migrate threads…" for one project's running handoff-mode threads on
- * the machine that holds them. Each thread is checked against the chosen
+ * Opens "Move {project}'s running threads" for one project's running threads
+ * that are kept ready to move, on the machine that holds them. Each thread is checked against the chosen
  * destination before anything moves; the coordinator stays where it is.
  */
 export function requestMigrateProjectThreads(
@@ -117,12 +117,39 @@ export interface HandOffMachineDialogViewProps {
   onOpenThread: (threadId: ThreadId, environmentId: EnvironmentId) => void;
 }
 
+/** The dialog's title: "Move running threads", or "Move atlas's running threads" for one project. */
+export function handOffMachineTitle(projectName?: string | null): string {
+  return projectName ? `Move ${projectName}'s running threads` : "Move running threads";
+}
+
+/** The primary button: "Move 2 threads", "Checking…", or "Nothing ready to move" when none passed. */
+export function handOffMachinePrimaryLabel(state: {
+  submitting: boolean;
+  checking: boolean;
+  movable: number;
+}): string {
+  if (state.submitting) return "Moving…";
+  if (state.checking) return "Checking…";
+  if (state.movable === 0) return "Nothing ready to move";
+  return state.movable === 1 ? "Move 1 thread" : `Move ${state.movable} threads`;
+}
+
 /** The dialog's body, without data wiring, so fixtures and tests can render each state. */
 export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
-  const id = useId();
+  const isSelected = (threadId: ThreadId) => props.selected.has(threadId);
+  // While a check runs, earlier results are stale: nothing counts as ready until it finishes.
+  const resultFor = (threadId: ThreadId) =>
+    props.checking ? undefined : props.preflight.get(threadId);
   const movable = props.threads.filter(
-    (thread) => props.selected.has(thread.threadId) && props.preflight.get(thread.threadId)?.ok,
+    (thread) => isSelected(thread.threadId) && resultFor(thread.threadId)?.ok,
   ).length;
+  const failed =
+    props.preflightError !== null ||
+    props.threads.some(
+      (thread) => isSelected(thread.threadId) && resultFor(thread.threadId)?.ok === false,
+    );
+  const noneOnline = !props.destinations.some((item) => item.state === "reachable");
+  const destinationName = props.destinationName || "the other machine";
   return (
     <Dialog
       open
@@ -130,23 +157,26 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
         if (!open && !props.submitting) props.onCancel();
       }}
     >
-      <DialogPopup className="sm:max-w-xl">
+      <DialogPopup className="sm:max-w-lg" showCloseButton={!props.submitting}>
         <form
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!props.run) props.onSubmit();
+            if (!props.run && !props.submitting && !props.checking && movable > 0) props.onSubmit();
           }}
         >
           <DialogHeader>
-            <DialogTitle>
-              {props.projectName ? "Migrate threads…" : "Hand off this machine…"}
-            </DialogTitle>
-            <DialogDescription>
-              {props.projectName
-                ? `${props.projectName}'s running threads in handoff mode on ${props.machineName} continue on the machine you choose. The coordinator stays where it is. A thread that fails a check stays on ${props.machineName}, untouched.`
-                : `Running threads in handoff mode on ${props.machineName} continue on the machine you choose. A thread that fails a check stays here, untouched.`}
-            </DialogDescription>
+            <DialogTitle>{handOffMachineTitle(props.projectName)}</DialogTitle>
+            {props.run ? null : (
+              <DialogDescription>
+                {
+                  "They continue on the machine you pick. Anything that can't move stays here, untouched."
+                }
+                {props.projectName
+                  ? ` ${props.projectName}'s coordinator stays on ${props.machineName}.`
+                  : null}
+              </DialogDescription>
+            )}
           </DialogHeader>
           <DialogPanel>
             {props.run ? (
@@ -157,65 +187,100 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
               />
             ) : (
               <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor={`${id}-machine`}>Machine</Label>
-                  <HandoffDestinationSelect
-                    id={`${id}-machine`}
-                    destinations={props.destinations}
-                    value={props.destinationId}
-                    disabled={props.submitting}
-                    onChange={props.onDestination}
-                  />
-                </div>
-                {props.threads.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {props.projectName
-                      ? `No thread of ${props.projectName} in handoff mode is running on ${props.machineName}.`
-                      : "No thread in handoff mode is running here."}
-                  </p>
-                ) : (
-                  <ul className="flex flex-col gap-2" aria-label="Running threads">
-                    {props.threads.map((thread) => {
-                      const result = props.preflight.get(thread.threadId);
-                      return (
-                        <li key={thread.threadId}>
-                          <label className="flex items-start gap-2 text-sm">
-                            <Checkbox
-                              checked={props.selected.has(thread.threadId)}
-                              disabled={props.submitting}
-                              onCheckedChange={(checked) =>
-                                props.onToggle(thread.threadId, checked === true)
-                              }
-                            />
-                            <span className="flex min-w-0 flex-col gap-0.5">
-                              <span className="truncate">{thread.title}</span>
-                              {result ? (
-                                <>
-                                  <span
-                                    className={
-                                      result.ok
-                                        ? "text-xs text-muted-foreground"
-                                        : "text-xs text-destructive-foreground"
-                                    }
-                                  >
-                                    {preflightSummary(result)}
+                <fieldset className="flex min-w-0 flex-col gap-1.5" disabled={props.submitting}>
+                  <legend className="mb-1.5 text-sm font-medium">Move to</legend>
+                  {props.destinations.length > 0 ? (
+                    <MachineOptionRows
+                      aria-label="Move to"
+                      options={destinationOptions(props.destinations)}
+                      value={props.destinationId}
+                      disabled={props.submitting}
+                      onChange={(value) => props.onDestination(value as EnvironmentId)}
+                    />
+                  ) : null}
+                  {noneOnline ? (
+                    <p className="text-sm text-muted-foreground">
+                      No other machine is online. Pair one in Settings › Connections.
+                    </p>
+                  ) : null}
+                </fieldset>
+                <fieldset className="flex min-w-0 flex-col gap-1.5" disabled={props.submitting}>
+                  <legend className="mb-1.5 text-sm font-medium">
+                    {`Threads (${props.threads.length})`}
+                  </legend>
+                  {props.threads.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {props.projectName
+                        ? `Nothing of ${props.projectName} is running on ${props.machineName} that's set to keep ready to move.`
+                        : "Nothing is running here that's set to keep ready to move."}
+                    </p>
+                  ) : (
+                    <ul className="flex flex-col gap-1.5" aria-label="Running threads">
+                      {props.threads.map((thread) => {
+                        const on = isSelected(thread.threadId);
+                        const result = on ? resultFor(thread.threadId) : undefined;
+                        return (
+                          <li
+                            key={thread.threadId}
+                            data-thread-status={threadStatus(props, on, result)}
+                          >
+                            <label className="flex items-start gap-2.5 rounded-lg border border-border px-3 py-2 text-sm">
+                              <Checkbox
+                                className="mt-0.5"
+                                checked={on}
+                                disabled={props.submitting}
+                                onCheckedChange={(checked) =>
+                                  props.onToggle(thread.threadId, checked === true)
+                                }
+                              />
+                              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                <span className="truncate font-medium">{thread.title}</span>
+                                {result && !result.ok ? (
+                                  <>
+                                    <span
+                                      role="status"
+                                      className="flex items-center gap-1.5 text-xs text-destructive-foreground"
+                                    >
+                                      <XIcon className="size-3.5 shrink-0" aria-hidden />
+                                      {preflightSummary(result, destinationName)}
+                                    </span>
+                                    <HandoffPreflightFailures result={result} />
+                                  </>
+                                ) : result ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    {result.resume
+                                      ? "The current turn keeps running there."
+                                      : "It will wait there for your next message."}
                                   </span>
-                                  <HandoffPreflightFailures result={result} />
-                                </>
-                              ) : props.checking && props.selected.has(thread.threadId) ? (
-                                <span className="text-xs text-muted-foreground">Checking…</span>
+                                ) : null}
+                              </span>
+                              {result?.ok ? (
+                                <span
+                                  role="status"
+                                  className="flex shrink-0 items-center gap-1 text-xs text-success-foreground"
+                                >
+                                  <CheckIcon className="size-3.5" aria-hidden />
+                                  Ready
+                                </span>
+                              ) : on && props.checking ? (
+                                <span
+                                  role="status"
+                                  className="shrink-0 text-xs text-muted-foreground"
+                                >
+                                  Checking…
+                                </span>
                               ) : null}
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </fieldset>
                 {props.destinationUpdate}
                 {props.preflightError ? (
                   <p role="alert" className="text-xs text-destructive-foreground">
-                    {`Couldn't check: ${props.preflightError}`}
+                    {`Couldn't reach ${destinationName}: ${props.preflightError}`}
                   </p>
                 ) : null}
                 {props.error ? (
@@ -226,42 +291,63 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
               </div>
             )}
           </DialogPanel>
-          {props.run ? null : (
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={props.submitting}
-                onClick={props.onCancel}
-              >
-                Cancel
+          <DialogFooter>
+            {props.run ? (
+              <Button type="button" onClick={props.onCancel}>
+                Done
               </Button>
-              {props.onRecheck && !props.checking && movable < props.selected.size ? (
-                <Button type="button" variant="outline" onClick={props.onRecheck}>
-                  Check again
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={props.submitting}
+                  onClick={props.onCancel}
+                >
+                  Cancel
                 </Button>
-              ) : null}
-              <Button
-                type="submit"
-                disabled={
-                  props.submitting ||
-                  props.checking ||
-                  props.destinationId === null ||
-                  movable === 0
-                }
-              >
-                {props.submitting
-                  ? "Handing off…"
-                  : movable === 1
-                    ? `Hand off 1 thread`
-                    : `Hand off ${movable} threads`}
-              </Button>
-            </DialogFooter>
-          )}
+                {props.onRecheck &&
+                props.destinationId !== null &&
+                !props.checking &&
+                !props.submitting &&
+                failed ? (
+                  <Button type="button" variant="outline" onClick={props.onRecheck}>
+                    Try again
+                  </Button>
+                ) : null}
+                <Button
+                  type="submit"
+                  disabled={
+                    props.submitting ||
+                    props.checking ||
+                    props.destinationId === null ||
+                    movable === 0
+                  }
+                >
+                  {handOffMachinePrimaryLabel({
+                    submitting: props.submitting,
+                    checking: props.checking,
+                    movable,
+                  })}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
         </form>
       </DialogPopup>
     </Dialog>
   );
+}
+
+function threadStatus(
+  props: HandOffMachineDialogViewProps,
+  selected: boolean,
+  result: HandoffPreflightResult | undefined,
+): "off" | "checking" | "ready" | "failed" | "idle" {
+  if (!selected) return "off";
+  if (props.checking) return "checking";
+  if (result === undefined) return "idle";
+  return result.ok ? "ready" : "failed";
 }
 
 function HandOffMachineDialog({
@@ -333,6 +419,7 @@ function HandOffMachineDialog({
       if (!live) return;
       setChecking(false);
       if (!next.ok) {
+        setPreflight(new Map());
         setPreflightError(next.error);
         return;
       }

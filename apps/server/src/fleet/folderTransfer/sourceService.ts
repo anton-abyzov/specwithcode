@@ -228,6 +228,16 @@ function persistsAfterClose(patch: Partial<SourceOperationRecord>): boolean {
 const closedStop = (cause: unknown) =>
   cause instanceof SourceTransferError && cause.code === "closed";
 
+/**
+ * Whether a link's target resolves outside the scanned folder. An absolute link
+ * into the folder itself, such as a worktree's node_modules pointing at its main
+ * checkout, still arrives whole; a relative link that climbs out with `..` does not.
+ */
+function linkLeavesRoot(root: string, path: string, target: string): boolean {
+  const resolved = NodePath.resolve(root, NodePath.dirname(path), target);
+  return resolved !== root && !resolved.startsWith(`${root}${NodePath.sep}`);
+}
+
 function inventoryFingerprint(scan: FolderScan): string {
   return sha256Hex(
     Buffer.from(
@@ -270,7 +280,7 @@ function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): Sour
       (entry) =>
         entry.type === "symlink" &&
         typeof entry.target === "string" &&
-        (entry.target.startsWith("/") || /^[A-Za-z]:/.test(entry.target)),
+        linkLeavesRoot(scan.root, entry.path, entry.target),
     ).length,
     // The skipped-worktree notice leads, so the cap can never drop it.
     warnings: [

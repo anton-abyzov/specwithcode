@@ -9112,9 +9112,8 @@ function useChatViewActions(
         id: `${HANDOFF_CONTINUED}${activeThread.id}`,
         variant: "info",
         icon: <FolderInputIcon />,
-        title: `Continued on ${machine}`,
-        description:
-          "This thread handed off. It is read-only here; send new messages in the continuation.",
+        title: `Moved to ${machine}`,
+        description: `You can read it here. New messages go to ${machine}.`,
         actions: (
           <Button
             size="xs"
@@ -9126,7 +9125,7 @@ function useChatViewActions(
               })
             }
           >
-            Open continuation
+            Open on {machine}
           </Button>
         ),
       };

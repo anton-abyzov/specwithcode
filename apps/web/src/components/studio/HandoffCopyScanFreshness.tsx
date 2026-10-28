@@ -1,7 +1,25 @@
 import type { FolderCopySourceStatus } from "@specweave-studio/contracts";
 import { Button } from "../ui/button";
 
-/** Refresh is read-only: the current job, class selections and conflict choices stay intact. */
+const UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
+  ["day", 86_400_000],
+  ["hour", 3_600_000],
+  ["minute", 60_000],
+];
+
+/** "2 days ago", "5 minutes ago", or "just now". */
+export function measuredAgo(at: number, now = Date.now()): string {
+  const elapsed = Math.max(0, now - at);
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  for (const [unit, size] of UNITS)
+    if (elapsed >= size) return format.format(-Math.floor(elapsed / size), unit);
+  return "just now";
+}
+
+/**
+ * One muted line under What and Review: when the folder was measured, and Measure again.
+ * Measuring again is read-only: the current copy, file types and conflict choices stay.
+ */
 export function HandoffCopyScanFreshness({
   status,
   busy,
@@ -14,50 +32,35 @@ export function HandoffCopyScanFreshness({
   readonly onCompareAgain: () => void;
 }) {
   const changed = status?.freshness?.current === false;
-  const time = (value: number) =>
-    new Date(value).toLocaleString(undefined, {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
+  const at = status?.scanCompletedAt;
   return (
-    <div className="rounded-lg border p-3 text-sm" data-slot="copy-scan-freshness">
-      <p>
-        {status?.scanCompletedAt !== undefined
-          ? `Saved scan from ${time(status.scanCompletedAt)}.`
-          : "Saved scan. Its measurement time is unknown."}{" "}
-        Closing and reopening resumes this scan.
-      </p>
-      <p className="text-muted-foreground">
-        {status?.freshness?.summary
-          ? "The counts and worktree names below show the refreshed source. The saved comparison is kept until you explicitly replace it."
-          : "The folder counts and worktree names below describe that saved scan."}
+    <div className="space-y-1 text-xs text-muted-foreground" data-slot="copy-scan-freshness">
+      <p className="flex flex-wrap items-center gap-x-1.5">
+        <span data-slot="copy-scan-age">
+          {at === undefined ? "Measured earlier" : `Measured ${measuredAgo(at)}`}
+        </span>
+        <span aria-hidden>·</span>
+        <Button variant="link" size="xs" disabled={busy} onClick={onRefresh}>
+          Measure again
+        </Button>
       </p>
       {status?.freshness && (
-        <p role="status">
-          Checked {time(status.freshness.checkedAt)}.{" "}
+        <p role="status" className={changed ? "text-warning-foreground" : undefined}>
           {changed
-            ? "The source changed, or this older scan cannot be validated. Review a new comparison before copying."
-            : "The source still matches this scan. Your copy choices are unchanged."}
+            ? "The folder changed since it was measured. Compare again before copying."
+            : "Nothing changed since then, so your choices stay."}
         </p>
       )}
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" disabled={busy} onClick={onRefresh}>
-          Refresh scan
-        </Button>
-        {changed && (
+      {changed && (
+        <div className="space-y-1">
           <Button variant="outline" size="sm" disabled={busy} onClick={onCompareAgain}>
             Measure and compare again
           </Button>
-        )}
-      </div>
-      {changed && (
-        <p className="mt-2 text-muted-foreground">
-          A new comparison keeps the machine, folder and file classes. Review conflict choices
-          again; secret files remain excluded until confirmed.
-        </p>
+          <p>
+            It keeps the machine, folder and file types. You review the choices again, and secret
+            files stay out until you tick them.
+          </p>
+        </div>
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 // @vitest-environment jsdom
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -70,6 +71,8 @@ const state = vi.hoisted(() => ({
   }>,
   /** The coordinator's runtime requests; a pending user_input one with its card asks a question. */
   runtimeRequests: [] as unknown[],
+  detailStatus: "live",
+  shellRefresh: vi.fn(),
   coordinatorId: "coord" as string | null,
   coordinatorModel: { instanceId: "claude-native", model: "coordinator-model" } as {
     instanceId: string;
@@ -218,6 +221,7 @@ vi.mock("../../state/entities", () => ({
         })),
         turnItems: state.turnItems,
         thread: { id: state.coordinatorId },
+        updatedAt: DateTime.makeUnsafe("2026-10-28T12:00:00Z"),
         runtimeRequests: state.runtimeRequests,
       },
     };
@@ -225,7 +229,7 @@ vi.mock("../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null ? null : (state.shells.find((shell) => shell.id === ref.threadId) ?? null),
   useThreadHistory: () => ({ hasMoreHistory: false }),
-  useThreadStatus: () => "ready",
+  useThreadStatus: () => state.detailStatus,
   // The More menu reads each machine's scratch folder to leave Design off "No project".
   useServerConfigs: () => new Map(),
 }));
@@ -447,7 +451,10 @@ vi.mock("../../hooks/useThreadActionMenu", () => ({
 }));
 vi.mock("../../browser/useOpenLink", () => ({ useOpenLink: () => state.openLink }));
 vi.mock("../../env", () => ({ isElectron: false }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => [],
+  useAtomRefresh: () => state.shellRefresh,
+}));
 vi.mock("../../state/filesystem", () => ({
   filesystemEnvironment: { browse: (input: unknown) => input },
   useFilesystemReadAccess: () => ({ canReadFiles: false, isPending: false, error: null }),
@@ -803,6 +810,8 @@ beforeEach(() => {
   state.runs = [];
   state.turnItems = [];
   state.runtimeRequests = [];
+  state.detailStatus = "live";
+  state.shellRefresh.mockReset();
   state.send.mockReset();
   state.navigate.mockReset();
   state.relatedThreadId = "worker";
@@ -980,3 +989,5 @@ export {
   alertText,
   recreateRoot,
 };
+
+vi.mock("../../state/shell", () => ({ environmentShell: { stateAtom: () => ({}) } }));

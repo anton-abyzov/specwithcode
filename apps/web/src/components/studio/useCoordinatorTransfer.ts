@@ -33,7 +33,7 @@ type KnownProject = (
 ) => EnvironmentProject | null;
 
 /**
- * Coordinator context for "Copy and transfer coordinator context": previews the
+ * Moves the coordinator after "Move and continue there" copied the files: previews the
  * destination, fences the source, then starts the coordinator in the copied folder.
  */
 export function useCoordinatorTransfer({
@@ -59,7 +59,7 @@ export function useCoordinatorTransfer({
     if (known && known.id !== projectId)
       throw new DestinationContextPreviewError(
         new Error(
-          "The destination registration changed. Check this copied folder before transferring context.",
+          "The destination registration changed. Check this copied folder before moving the coordinator.",
         ),
       );
     return {
@@ -122,7 +122,7 @@ export function useCoordinatorTransfer({
       );
       if (checked.executionMode !== "project-folder" || checked.projectId !== projectId)
         throw new Error(
-          "Update or check the destination before transferring context into this copied folder.",
+          "Update or check the other machine before moving the coordinator into this copied folder.",
         );
     } catch (cause) {
       throw new DestinationContextPreviewError(cause);

@@ -44,7 +44,7 @@ type RecoveryProps = {
   stoppedAt: string;
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
-  /** Another ready provider the stopped run can continue on, with a context handoff. */
+  /** Another ready provider the stopped run can continue on, by switching model. */
   fallback?: {
     label: string;
     model: string;
@@ -68,7 +68,7 @@ type RecoveryProps = {
     model: string;
     onContinue: () => Promise<void>;
   } | null;
-  /** The project lists other machines a limited thread may move to: show why each can or can't. */
+  /** The project lists other machines a limited thread may move to: offer the first that can take it. */
   machines?: { environmentId: EnvironmentId; threadId: ThreadId } | null;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
@@ -274,7 +274,7 @@ function RecoveryActions({
     setPending(true);
     setError(null);
     try {
-      // A device handoff creates another thread. Disarm this stopped run first
+      // Continuing on another device creates another thread. Disarm this stopped run first
       // so the source cannot also resume when its reset arrives.
       if (scheduled) await onChange({ runId, resetAt, autoResume: false });
       await target.onContinue();
@@ -335,21 +335,21 @@ function RecoveryActions({
       {!canAutoContinue ? (
         <p className="basis-full text-xs text-muted-foreground">
           {handoffs.length > 0
-            ? "The provider did not say when this limit resets, so the thread cannot continue by itself. Hand it off now, or send a message after the reset."
+            ? "The provider did not say when this limit resets, so the thread cannot continue by itself. Continue elsewhere now, or send a message after the reset."
             : "The provider did not say when this limit resets, so the thread cannot continue by itself. Send a message after the reset."}
         </p>
       ) : null}
       {handoffs.length > 0 ? (
         <div className="flex min-w-0 basis-full flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {scheduled ? "Or hand off now:" : "Hand off now instead of waiting:"}
+            {scheduled ? "Or continue elsewhere now:" : "Continue elsewhere instead of waiting:"}
           </span>
           {fallback ? (
             <Button
               size="xs"
               variant={waiting ? "ghost" : "outline"}
               disabled={pending}
-              title={`Hand this thread to ${fallback.label} (${fallback.model}) with its context and continue the stopped turn`}
+              title={`Switch this thread to ${fallback.label} (${fallback.model}) and continue the stopped turn with its conversation`}
               aria-label={`Continue with ${fallback.label} · ${fallback.model}`}
               className="max-w-full min-w-0"
               onClick={() => void continueElsewhere(fallback)}
@@ -392,10 +392,12 @@ function RecoveryActions({
               size="xs"
               variant={waiting ? "ghost" : "outline"}
               disabled={pending}
-              title={`Start a thread on ${device.label} (${device.model}) with a written handoff of this conversation. Changes not pushed from this device do not go with it.`}
+              title={`Start a thread on ${device.label} (${device.model}) with a written summary of this conversation. Changes not pushed from this device do not go with it.`}
               onClick={() => void continueElsewhere(device)}
             >
-              {`Continue on ${device.label}`}
+              {machines
+                ? `Start fresh on ${device.label} (summary only)`
+                : `Continue on ${device.label}`}
             </Button>
           ) : null}
         </div>

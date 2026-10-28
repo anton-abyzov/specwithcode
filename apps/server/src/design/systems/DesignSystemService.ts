@@ -28,6 +28,8 @@ import {
   type DesignSystemProposalSummary,
   type DesignSystemProposalsResult,
   type DesignSystemProposeInput,
+  type DesignSystemRebuildPreviewsInput,
+  type DesignSystemRebuildPreviewsResult,
   type DesignSystemRescanInput,
   type DesignSystemRescanResult,
   type DesignSystemScanInput,
@@ -81,6 +83,12 @@ import {
   readInsideRoot,
   scanCandidates,
 } from "./scanCandidates.ts";
+import {
+  type PreviewBuilder,
+  type PreviewFile,
+  nodePreviewBuilder,
+  PREVIEWS_FOLDER,
+} from "./previews/buildPreviews.ts";
 import { previewScan } from "./scanPreview.ts";
 
 /** Open proposals per actor (the user, or one agent thread). */
@@ -226,6 +234,11 @@ export class DesignSystemService extends Context.Service<
       caller: DesignSystemCaller,
       input: DesignSystemRescanInput,
     ) => Effect.Effect<DesignSystemRescanResult, DesignError>;
+    /** Renders the system's components again from project code. Only the user asks. */
+    readonly rebuildPreviews: (
+      caller: DesignSystemCaller,
+      input: DesignSystemRebuildPreviewsInput,
+    ) => Effect.Effect<DesignSystemRebuildPreviewsResult, DesignError>;
     readonly figmaStatus: () => Effect.Effect<FigmaDesktopStatus, DesignError>;
   }
 >()("specweave-studio/design/systems/DesignSystemService") {}
@@ -279,9 +292,30 @@ export const discardProposalsForSystem = (
   return discarded;
 };
 
+/** A system with its previews recorded, and the files to store once it is written (null: no build). */
+interface PreviewedSystem {
+  readonly system: DesignSystem;
+  readonly files: ReadonlyArray<PreviewFile> | null;
+  readonly problems: ReadonlyArray<string>;
+}
+
+const previewProblem = (error: unknown) =>
+  `Previews were not stored: ${error instanceof Error ? error.message : String(error)}`.slice(
+    0,
+    1_000,
+  );
+
+const refOf = (resolved: DesignOwnerRoots, systemId: string) => ({
+  owner: resolved.owner,
+  systemId,
+  path: `${resolved.refPrefix}${systemId}/system.json`,
+});
+
 export interface DesignSystemServiceOptions {
   readonly figmaEndpoint?: string;
   readonly now?: () => string;
+  /** Builds component previews in a child process; tests pass a fake. */
+  readonly previews?: PreviewBuilder;
 }
 
 export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}) =>
@@ -291,6 +325,7 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
     const proposals = yield* DesignSystemProposals;
     const now = options.now ?? (() => new Date().toISOString());
     const figma = () => new FigmaDesktopMcpClient(options.figmaEndpoint ?? FIGMA_DESKTOP_MCP_URL);
+    const previewBuilder = options.previews ?? nodePreviewBuilder;
 
     /**
      * Keeps a proposal for review. An actor over its quota loses its own
@@ -673,6 +708,68 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
         }
       });
 
+    /**
+     * Renders the components of a system read from project code, before it is
+     * written, and records on each component which file holds its preview or
+     * why it has none. Runs the kit's code in a child process, so it is only
+     * reached from the user's confirm or rebuild. Never fails: without a build
+     * the system is returned as it was and the problems say why.
+     */
+    const buildPreviewsFor = (resolved: DesignOwnerRoots, system: DesignSystem) =>
+      Effect.promise(async (): Promise<PreviewedSystem> => {
+        if (
+          resolved.projectRoot === null ||
+          system.components.length === 0 ||
+          !system.sources.some((source) => source.kind === "file")
+        ) {
+          return { system, files: null, problems: [] };
+        }
+        try {
+          const realRoot = await NodeFS.realpath(resolved.projectRoot);
+          const build = await previewBuilder.build(realRoot, system);
+          // A package that failed to build keeps the previews it had: nothing is
+          // deleted or forgotten until a build of everything succeeds.
+          if (!build.complete && system.previews !== undefined) {
+            return {
+              system,
+              files: null,
+              problems: [...build.problems, "Kept the previous previews."],
+            };
+          }
+          const { previews: _previous, ...rest } = system;
+          return {
+            system: {
+              ...rest,
+              components: system.components.map((component) => {
+                const { previewFile: _file, previewNote: _note, ...plain } = component;
+                return { ...plain, ...build.components.get(component.id) };
+              }),
+              ...(build.previews === null ? {} : { previews: build.previews }),
+            },
+            files: build.files,
+            problems: build.problems,
+          };
+        } catch (error) {
+          return { system, files: null, problems: [previewProblem(error)] };
+        }
+      });
+
+    /** Stores a build's files once its system is written; earlier previews it did not rebuild go. */
+    const storePreviewFiles = (
+      resolved: DesignOwnerRoots,
+      systemId: string,
+      previewed: PreviewedSystem,
+    ) =>
+      Effect.promise(async (): Promise<ReadonlyArray<string>> => {
+        if (previewed.files === null) return previewed.problems;
+        try {
+          await previewBuilder.store(resolved.designRoot, systemId, previewed.files);
+          return previewed.problems;
+        } catch (error) {
+          return [...previewed.problems, previewProblem(error)];
+        }
+      });
+
     return DesignSystemService.of({
       scan: (caller, input) =>
         Effect.gen(function* () {
@@ -759,7 +856,8 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
                     .catch(() => false),
                 ));
           const { derivedFrom: _dropped, ...withoutLineage } = reviewed;
-          const system: DesignSystem = held ? reviewed : withoutLineage;
+          const previewed = yield* buildPreviewsFor(resolved, held ? reviewed : withoutLineage);
+          const system = previewed.system;
           const written = yield* attempt(() =>
             files.writeDesignSystem(resolved.designRoot, system, {
               expectedRevision: proposal.target === null ? null : proposal.target.revision,
@@ -768,6 +866,7 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
           );
           proposals.delete(proposal.id);
           yield* storeBrandFiles(resolved, written.id, proposal, input.excludeFiles ?? []);
+          yield* storePreviewFiles(resolved, written.id, previewed);
           return {
             ref: {
               owner: resolved.owner,
@@ -782,6 +881,42 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
           const proposal = proposals.get(proposalId);
           if (!proposal || !visibleTo(caller, proposal)) return { discarded: false };
           return { discarded: proposals.delete(proposalId) };
+        }),
+      rebuildPreviews: (caller, input) =>
+        Effect.gen(function* () {
+          if (caller.actor.kind !== "user") {
+            return yield* failure(
+              "forbidden",
+              "Only the user rebuilds previews, because it runs the kit's code.",
+            );
+          }
+          const resolved = yield* resolveForWrite(caller, input.owner);
+          const system = yield* attempt(() =>
+            files.readDesignSystem(resolved.designRoot, input.systemId),
+          );
+          const previewed = yield* buildPreviewsFor(resolved, system);
+          if (previewed.files === null && previewed.problems.length === 0) {
+            return {
+              ref: refOf(resolved, system.id),
+              system,
+              problems: ["This system has no components from project code to preview."],
+            };
+          }
+          const written =
+            previewed.files === null
+              ? system
+              : yield* attempt(() =>
+                  files.writeDesignSystem(resolved.designRoot, previewed.system, {
+                    expectedRevision: system.revision,
+                    actor: caller.actor,
+                  }),
+                );
+          const problems = yield* storePreviewFiles(resolved, written.id, previewed);
+          return {
+            ref: refOf(resolved, written.id),
+            system: written,
+            problems: problems.slice(0, 50),
+          };
         }),
       rescan: (caller, input) =>
         Effect.gen(function* () {
@@ -813,7 +948,8 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
           // alone are worth a review (D-03); once any are kept, declined ones stay out.
           const stored = yield* storedPaths(resolved, system.id);
           const lacking = system.components.length === 0 || system.tokens.length === 0;
-          const offerBrandFiles = stored.length === 0;
+          // Built previews are not brand files someone kept or declined.
+          const offerBrandFiles = stored.every((path) => path.startsWith(`${PREVIEWS_FOLDER}/`));
           const recorded = new Set(fileSources.map((source) => source.location));
           const needsScan =
             lacking || (offerBrandFiles && (changed.length > 0 || missing.length > 0));

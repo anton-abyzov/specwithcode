@@ -1041,3 +1041,32 @@ button.sws-subagent-row:focus-visible {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+
+.sws-subagents-scope {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.sws-subagents-sections {
+  min-height: 0;
+  overflow-y: auto;
+}
+.sws-subagents-sections h3,
+.sws-subagents-sections summary {
+  padding: 8px 12px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sws-subagents-sections summary {
+  cursor: pointer;
+}
+.sws-subagents-sections section > p {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--muted-foreground);
+}
+.sws-subagents-sections ul {
+  overflow-y: visible;
+}

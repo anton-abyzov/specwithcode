@@ -2,6 +2,8 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
+  RuntimeRequestId,
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
   TurnItemId,
@@ -348,6 +350,77 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect.each(["restored", "missing", "unavailable"] as const)(
+    "refreshes a legacy cached question once without requiring a new runtime event (%s)",
+    (outcome) =>
+      Effect.gen(function* () {
+        const now = BASE_PROJECTION.updatedAt;
+        const requestId = RuntimeRequestId.make(`${"update-reopen:".repeat(10)}ask-user:relay`);
+        const nodeId = NodeId.make("node:legacy-question");
+        const request = {
+          id: requestId,
+          nodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input" as const,
+          status: "pending" as const,
+          responseCapability: { type: "message" as const },
+          createdAt: now,
+          resolvedAt: null,
+        };
+        const card: OrchestrationV2TurnItem = {
+          id: TurnItemId.make("card:legacy-question"),
+          threadId: THREAD_ID,
+          runId: null,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 687000029,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "user_input_request",
+          requestId,
+          responseMode: "message",
+          questions: [
+            {
+              id: "q1",
+              header: "Owner relay",
+              question: "Can you relay the existing review request?",
+              options: [],
+              allowCustomAnswer: true,
+            },
+          ],
+        };
+        const cached = { ...BASE_PROJECTION, runtimeRequests: [request], turnItems: [] };
+        const restored = outcome === "restored";
+        const refreshed = { ...cached, turnItems: restored ? [card] : [] };
+        const h = yield* makeHarness({
+          cached,
+          httpSnapshot:
+            outcome === "unavailable"
+              ? { _tag: "unavailable" }
+              : {
+                  _tag: "present",
+                  snapshot: { snapshotSequence: 8, projection: refreshed },
+                },
+        });
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(yield* Ref.get(h.loaderCalls)).toBe(1);
+        expect(yield* Ref.get(h.subscriptionCount)).toBe(1);
+        expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(
+          outcome === "unavailable" ? CACHED_SNAPSHOT_SEQUENCE : 8,
+        );
+        const actual = Option.getOrThrow(state.data);
+        expect(actual.runtimeRequests[0]?.status).toBe("pending");
+        expect(actual.turnItems.some((item) => item.id === card.id)).toBe(restored);
+      }),
+  );
+
   it.effect("loads the server thread when its local cache read fails", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
+  logicalProjectTitle,
   AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -16,6 +17,8 @@ import {
   parsePendingMachineHandoff,
 } from "../../studio/machineHandoffPending";
 import type { ProjectExecutionScope } from "../../studio/projectDomain";
+import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 
 /** Source recovery belongs to the logical project, even after its active surface moves. */
 export function ProjectHandoffRecovery({
@@ -37,9 +40,10 @@ export function ProjectHandoffRecovery({
     Record<string, { text: string; complete?: boolean; busy?: boolean }>
   >({});
   const entries = scopes.flatMap((scope) => {
-    const binding = members.find(
-      (member) => member.environmentId === scope.environmentId && member.id === scope.projectId,
-    )?.workspaceSettings?.coordinatorBinding;
+    const member = members.find(
+      (item) => item.environmentId === scope.environmentId && item.id === scope.projectId,
+    );
+    const binding = member?.workspaceSettings?.coordinatorBinding;
     if (binding?.state === "transferred" || !scope.coordinatorThreadId) return [];
     let pending = null;
     try {
@@ -53,7 +57,12 @@ export function ProjectHandoffRecovery({
       binding?.state === "transferring" ? binding.operationId : pending?.operationId;
     if (!operationId) return [];
     const key = `${scope.environmentId}:${scope.projectId}:${operationId}`;
-    return [{ scope, operationId, key }];
+    // Where the move was going: the binding's successor, else the pointer's "machine:project".
+    const destinationId =
+      binding?.successor?.environmentId ??
+      (pending?.targetKey.includes(":") ? pending.targetKey.split(":")[0] : undefined);
+    const project = member?.title ? logicalProjectTitle(member) : null;
+    return [{ scope, operationId, key, destinationId, project }];
   });
   const ready = (environmentId: (typeof scopes)[number]["environmentId"]) =>
     environments.some(
@@ -68,7 +77,7 @@ export function ProjectHandoffRecovery({
     running.current.add(entry.key);
     setStatuses((current) => ({
       ...current,
-      [entry.key]: { text: "Checking the saved handoff…", busy: true },
+      [entry.key]: { text: "Checking the move…", busy: true },
     }));
     try {
       // No destination or new operation is invented. The source returns its immutable saved plan.
@@ -90,12 +99,15 @@ export function ProjectHandoffRecovery({
         bundle.coordinatorBinding?.state !== "transferring"
       )
         throw new Error(
-          "This handoff has not published its checkpoint. Open the source coordinator's Handoff dialog to review and continue it.",
+          `This move isn't ready to finish yet. Open Move on ${
+            environments.find((item) => item.environmentId === entry.scope.environmentId)?.label ??
+            "the source"
+          } to continue it.`,
         );
       const destination = bundle.destination;
       if (!ready(destination.environmentId) || !canConfigure.has(destination.environmentId))
         throw new Error(
-          "Reconnect the destination with permission to run work and transfer code, then retry this saved handoff.",
+          "Reconnect the destination machine with permission to run work and copy code, then try again.",
         );
       const checked = await receive({
         environmentId: destination.environmentId,
@@ -129,7 +141,7 @@ export function ProjectHandoffRecovery({
       if (received._tag === "Failure") throw squashAtomCommandFailure(received);
       const receipt = received.value;
       if (receipt.phase !== "started" || !receipt.coordinatorThreadId)
-        throw new Error("The destination has not started. This saved handoff can be retried.");
+        throw new Error("The coordinator has not started on the destination yet. Try again.");
       const acknowledged = await prepare({
         environmentId: entry.scope.environmentId,
         input: {
@@ -158,7 +170,7 @@ export function ProjectHandoffRecovery({
       }
       setStatuses((current) => ({
         ...current,
-        [entry.key]: { text: "Handoff confirmed on the source and destination.", complete: true },
+        [entry.key]: { text: "Move finished on both machines.", complete: true },
       }));
     } catch (cause) {
       setStatuses((current) => ({
@@ -167,7 +179,7 @@ export function ProjectHandoffRecovery({
           text:
             cause instanceof Error
               ? cause.message
-              : "The saved handoff could not be confirmed. Retry when both machines are connected.",
+              : "The move could not finish. Try again when both machines are connected.",
         },
       }));
     } finally {
@@ -178,39 +190,49 @@ export function ProjectHandoffRecovery({
     <>
       {entries.map((entry) => {
         const status = statuses[entry.key];
-        const label =
-          environments.find(
-            (environment) => environment.environmentId === entry.scope.environmentId,
-          )?.label ?? entry.scope.environmentId;
+        const machineName = (environmentId: string | undefined) =>
+          environments.find((environment) => environment.environmentId === environmentId)?.label ??
+          environmentId;
+        const label = machineName(entry.scope.environmentId)!;
+        const destination = machineName(entry.destinationId);
+        const sourceReady = ready(entry.scope.environmentId);
+        const project = entry.project ?? "this project";
         return (
           <section
             key={entry.key}
             className="project-notice"
-            aria-label={`Handoff recovery from ${label}`}
+            aria-label={`Finish moving ${project}`}
             data-handoff-recovery={entry.operationId}
           >
-            <p>
-              Unfinished handoff from {label}. The saved transfer needs confirmation; the source
-              will not resume automatically.
+            <p className="font-medium">
+              {destination
+                ? `Finish moving ${project} to ${destination}`
+                : `Finish moving ${project}`}
             </p>
-            <p className="project-muted">Operation {entry.operationId}</p>
+            <p className="project-muted">
+              The move stopped partway. {label} won’t restart on its own.
+            </p>
             {status ? <p role="status">{status.text}</p> : null}
-            {!ready(entry.scope.environmentId) ? (
-              <p>
-                Reconnect {label} with permission to run work and transfer code to recover this
-                handoff.
-              </p>
+            {!sourceReady ? (
+              <p>Reconnect {label} with permission to run work and copy code.</p>
             ) : null}
             {!status?.complete ? (
-              <button
-                type="button"
-                className="project-control"
-                disabled={!ready(entry.scope.environmentId) || status?.busy}
+              <Button
+                size="sm"
+                disabled={!sourceReady || status?.busy}
                 onClick={() => void retry(entry)}
               >
-                Retry saved handoff
-              </button>
+                Finish move
+              </Button>
             ) : null}
+            <div className="project-muted text-xs">
+              <Collapsible>
+                <CollapsibleTrigger>Details</CollapsibleTrigger>
+                <CollapsiblePanel>
+                  <p>Operation {entry.operationId}</p>
+                </CollapsiblePanel>
+              </Collapsible>
+            </div>
           </section>
         );
       })}

@@ -33,6 +33,8 @@ export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMai
 export interface CompactEventStoreOptions {
   /** Count what would be deleted without deleting anything. */
   readonly dryRun?: boolean;
+  /** Additional background pacing, outside transactions; offline callers omit it. */
+  readonly betweenPages?: Effect.Effect<void>;
   /**
    * Checked before every delete statement. When it returns false the pass
    * stops before that delete and reports `interrupted`; what it already
@@ -87,7 +89,7 @@ export interface ProjectionMaintenanceV2Shape {
 
 /** Events per discovery query: about 40 ms of reads on a cold 20 GB log at 500 rows. */
 export const COMPACTION_PAGE_SIZE = 100;
-const COMPACTION_RECEIPT_PAGE_SIZE = 500;
+const COMPACTION_RECEIPT_PAGE_SIZE = 50;
 
 export class ProjectionMaintenanceV2 extends Context.Service<
   ProjectionMaintenanceV2,
@@ -278,9 +280,9 @@ export const layer: Layer.Layer<
     // projection (they skip its updatedAt bump), so they supersede only each
     // other. Activity events supersede both groups.
     const READ_STATE_THREAD_EVENT_TYPES = ["thread.visited", "thread.marked-unread"];
-    // Whole-entity snapshots keyed by payload id. turn-item.updated stays
-    // intact because replay assigns positions on first write.
-    const KEYED_EVENT_TYPES = ["message.updated", "node.updated"];
+    // Keep the first snapshot for replay insertion order and the last for state.
+    // Commanded items and subagents retain every snapshot for replay and prompt anchors.
+    const KEYED_EVENT_TYPES = ["message.updated", "node.updated", "turn-item.updated"];
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
@@ -338,7 +340,11 @@ export const layer: Layer.Layer<
           readStateThreadIds.add(row.stream_id);
           return undefined;
         }
-        if (row.event_type === "message.updated" || row.event_type === "node.updated") {
+        if (
+          row.event_type === "message.updated" ||
+          row.event_type === "node.updated" ||
+          (row.event_type === "turn-item.updated" && row.entity_id !== null)
+        ) {
           const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
           const candidate = oldestCandidateByEntityKey.get(key);
           oldestCandidateByEntityKey.set(key, candidate === undefined ? null : obsoleteOf(row));
@@ -424,6 +430,11 @@ export const layer: Layer.Layer<
             WHEN event.application_event_version = 2
               AND event.event_type IN ('message.updated', 'node.updated')
             THEN json_extract(event.payload_json, '$.id')
+            WHEN event.application_event_version = 2
+              AND event.event_type = 'turn-item.updated'
+              AND event.command_id IS NULL
+              AND json_extract(event.payload_json, '$.type') <> 'subagent'
+            THEN json_extract(event.payload_json, '$.id')
             ELSE NULL
           END AS entity_id,
           CASE
@@ -467,6 +478,7 @@ export const layer: Layer.Layer<
               // even when nothing is deleted so requests can progress.
               yield* pause;
               if (!(yield* remove(obsolete))) return;
+              if (options.betweenPages !== undefined) yield* options.betweenPages;
               through = (rows.at(-1)?.sequence ?? 1) - 1;
               if (rows.length < pageSize) return;
             }
@@ -571,6 +583,7 @@ export const layer: Layer.Layer<
             deletedReceiptCount += obsolete.length;
             yield* Effect.yieldNow;
           }
+          if (options.betweenPages !== undefined) yield* options.betweenPages;
           throughReceiptRowId = (rows.at(-1)?.row_id ?? 1) - 1;
           if (rows.length < COMPACTION_RECEIPT_PAGE_SIZE) break;
         }

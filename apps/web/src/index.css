@@ -1214,11 +1214,14 @@ video.artifact-viewer-media {
 
 /* Its scroller is a flex row (outline, page), so the page must not stretch to
    the scroller's height: a stretched page overflows itself and its bottom
-   padding never reaches the scroll area. */
+   padding never reaches the scroll area. It must shrink beside the outline,
+   too: a table with a value longer than the page scrolls in its own frame,
+   not the page. */
 .report-document-page {
   box-sizing: border-box;
   align-self: flex-start;
   width: 100%;
+  min-width: 0;
   max-width: calc(var(--report-measure) + 2 * var(--report-page-inline));
   margin-inline: auto;
   padding: var(--report-page-top) var(--report-page-inline) var(--report-page-end);
@@ -1243,9 +1246,10 @@ video.artifact-viewer-media {
 }
 
 /* Outline: a dash per heading at the left edge, sticky while reading;
-   hovering it lists the headings by name. */
+   hovering it lists the headings by name, above a wide table's frame. */
 .report-outline {
   position: sticky;
+  z-index: 1;
   top: 0;
   align-self: flex-start;
   width: 3rem;
@@ -1487,13 +1491,25 @@ video.artifact-viewer-media {
   margin-top: 0.35rem;
 }
 
-/* Tables read like a document's: full width, a tinted header, row rules,
-   cells that wrap, inside one rounded frame. */
+/* Tables read like a document's: a tinted header, row rules and wrapping
+   cells inside one rounded frame. The frame is the scroll root, so it holds
+   the table and the copy controls sit under it. */
 .report-document .chat-markdown .chat-markdown-table-container {
   margin-block: 1.25rem;
-  overflow: hidden;
+}
+
+.report-document .chat-markdown .chat-markdown-table-container > :first-child {
   border: 1px solid var(--border);
   border-radius: 0.625rem;
+}
+
+/* The root clips the viewport's ring utilities and the viewport's scroll fades
+   mask its edges, so keyboard focus on the table draws on the root. */
+.report-document
+  .chat-markdown-table-container
+  > :first-child:has(> [data-slot="scroll-area-viewport"]:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
 }
 
 .report-document .chat-markdown table {
@@ -1518,11 +1534,65 @@ video.artifact-viewer-media {
   border-bottom: 0;
 }
 
-.report-document .chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
-.report-document .chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
-  max-width: 22rem;
+/* Cells wrap only between words, collapsed or expanded: a column never gets
+   narrower than its longest word. A table that cannot fit then scrolls inside
+   its frame. */
+.report-document .chat-markdown .chat-markdown-table-container[data-expanded] :is(th, td) {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Code breaks only between the word boxes ChatMarkdown draws in a table, so a
+   command wraps at its spaces and an identifier or path stays whole. */
+.report-document .chat-markdown-table-container :is(th, td) code {
+  white-space: nowrap;
+}
+
+.report-document .chat-markdown-table-container :is(th, td) code:has(> .chat-markdown-code-word) {
+  white-space: normal;
+}
+
+.report-document .chat-markdown-table-container .chat-markdown-code-word {
+  white-space: nowrap;
+}
+
+/* A cell's text keeps a readable width: long text never narrows below 14rem
+   (30% of a narrow reader) and wraps by 28rem, so a column of reasons beside
+   wide file chips stays a line or two tall instead of a word per line. A file
+   chip or token longer than 28rem keeps its whole width. */
+.report-document .chat-markdown .chat-markdown-cell {
+  display: block;
+  min-width: calc-size(max-content, min(size, 14rem, 30cqi));
+  max-width: calc-size(min-content, max(size, 28rem));
+}
+
+/* A table may use the reader's width beyond the prose measure: its frame
+   grows to the table's natural width, up to the room beside the outline, and
+   stays centered on the page. The cell box above bounds every line, so a wide
+   table never turns into long lines. */
+.report-reader-body,
+[data-report-file-pane] {
+  container: report-reader / inline-size;
+}
+
+.report-reader-body:has(> .report-outline) {
+  --report-outline-room: 3rem;
+}
+
+@container report-reader (width > 0) {
+  .report-document .chat-markdown > .chat-markdown-table-container {
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr);
+    justify-content: center;
+  }
+
+  .report-document .chat-markdown > .chat-markdown-table-container > :first-child {
+    max-width: calc(100cqi - var(--report-outline-room, 0rem) - 2 * var(--report-page-inline));
+  }
 }
 
 /* In a document, a file it names reads as a link, not a boxed chip: the
@@ -1828,6 +1898,12 @@ video.artifact-viewer-media {
 
 .chat-markdown tbody td {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
+}
+
+/* A cell's content box (ChatMarkdown): chat tables lay out as if it were not
+   there, and report pages size it. */
+.chat-markdown .chat-markdown-cell {
+  display: contents;
 }
 
 /* Collapsed (default): single-line cells truncate so arbitrary chat content

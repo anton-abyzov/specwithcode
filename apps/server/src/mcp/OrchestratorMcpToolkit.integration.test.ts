@@ -868,6 +868,26 @@ describe("orchestrator MCP toolkit", () => {
               "running",
             );
 
+            const explicitUserResolve = yield* invoke("studio_thread_organize", {
+              action: "settle",
+              expectedRunId: parentRun?.id,
+              userRequested: true,
+              note: "User requested Resolve",
+            });
+            expect(explicitUserResolve.isError).toBe(false);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).thread.deferredResolution,
+            ).toMatchObject({
+              runId: parentRun?.id,
+              userRequested: true,
+            });
+            const otherThreadUserResolve = yield* invokeAs(
+              { ...invocation, thread: undefined },
+              "studio_thread_organize",
+              { action: "settle", threadId: parentThreadId, userRequested: true },
+            );
+            expect(otherThreadUserResolve.isError).toBe(true);
+
             const pinned = yield* invoke("studio_thread_organize", { action: "pin" });
             expect(pinned.isError).toBe(false);
             expect(pinned.structuredContent).toHaveProperty("sequence");

@@ -76,15 +76,15 @@ const render = (node: React.ReactElement) => renderToStaticMarkup(node);
 const open = () => {};
 
 describe("handoff badges", () => {
-  it("shows Handoff ready in the accent state once replicated", () => {
+  it("shows Ready to move in the accent state once replicated", () => {
     const badge = handoffBadgeFor(snapshot({ threads: [thread({ badge: "ready" })] }), T1, name);
-    expect(badge).toEqual({ kind: "ready", label: "Handoff ready" });
+    expect(badge).toEqual({ kind: "ready", label: "Ready to move" });
     const html = render(<HandoffBadgeChip badge={badge!} />);
     expect(html).toContain('data-handoff="ready"');
-    expect(html).toContain("Handoff ready");
+    expect(html).toContain("Ready to move");
   });
 
-  it("shows Checkpoint behind with each lagging machine's reason", () => {
+  it("shows Syncing with each lagging machine's reason", () => {
     const badge = handoffBadgeFor(
       snapshot({
         threads: [
@@ -108,18 +108,18 @@ describe("handoff badges", () => {
     );
     expect(badge).toMatchObject({
       kind: "behind",
-      label: "Checkpoint behind",
+      label: "Syncing",
       detail: "Minis: no work grant for this project",
     });
   });
 
-  it("shows Handing off… during a transfer", () => {
+  it("shows Moving… during a transfer", () => {
     expect(
       handoffBadgeFor(snapshot({ threads: [thread({ badge: "handing-off" })] }), T1, name),
-    ).toEqual({ kind: "handing-off", label: "Handing off…" });
+    ).toEqual({ kind: "handing-off", label: "Moving…" });
   });
 
-  it("shows Continued on <machine> with a link, and the source turns read-only", () => {
+  it("shows Moved to <machine> with a link, and the source turns read-only", () => {
     const state = snapshot({
       threads: [
         thread({
@@ -134,7 +134,7 @@ describe("handoff badges", () => {
       ],
     });
     const badge = handoffBadgeFor(state, T1, name);
-    expect(badge).toMatchObject({ kind: "continued", label: "Continued on Minis" });
+    expect(badge).toMatchObject({ kind: "continued", label: "Moved to Minis", machine: "Minis" });
     expect(isHandoffReadOnly(state, T1)).toBe(true);
     const html = render(
       <HandoffBadgeActions
@@ -144,13 +144,13 @@ describe("handoff badges", () => {
         onOpenThread={open}
       />,
     );
-    expect(html).toContain("Open continuation");
+    expect(html).toContain("Open on Minis");
   });
 
-  it("offers one-click Continue here when the source machine is unreachable", () => {
+  it("offers one-click Continue here when the source machine is offline", () => {
     const local = snapshot({ environmentId: MINIS, incoming: [replica({})] });
     const badge = unreachableBadgeFor(incomingReplicaFor(local, M4, T1), name);
-    expect(badge?.label).toBe("Handoff ready · M4 unreachable");
+    expect(badge?.label).toBe("M4 is offline");
     const html = render(
       <HandoffBadgeActions
         badge={badge!}
@@ -176,7 +176,7 @@ describe("handoff badges", () => {
     ).toBeNull();
   });
 
-  it("shows Paused with Continue here anyway after a fenced wake", () => {
+  it("shows Paused after sleep with Resume this Mac… after a fenced wake", () => {
     const badge = handoffBadgeFor(
       snapshot({
         pausedSince: "2026-10-20T20:00:00.000Z",
@@ -185,7 +185,7 @@ describe("handoff badges", () => {
       T1,
       name,
     );
-    expect(badge).toEqual({ kind: "paused", label: "Paused" });
+    expect(badge).toEqual({ kind: "paused", label: "Paused after sleep" });
     const html = render(
       <HandoffBadgeActions
         badge={badge!}
@@ -194,7 +194,9 @@ describe("handoff badges", () => {
         onOpenThread={open}
       />,
     );
-    expect(html).toContain("Continue here anyway");
+    expect(html).toContain("Resume this Mac…");
+    // The button only asks; the dialog stays closed until it is pressed.
+    expect(html).not.toContain("Resume all threads on this Mac?");
   });
 
   it("shows nothing for a thread outside handoff mode", () => {

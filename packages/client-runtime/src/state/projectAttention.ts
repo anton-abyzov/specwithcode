@@ -1,3 +1,4 @@
+import { reportWaitReason } from "@specweave-studio/shared/reportDocument";
 import * as DateTime from "effect/DateTime";
 import {
   attentionIdentity,
@@ -8,6 +9,7 @@ import {
 } from "@specweave-studio/shared/projectAttention";
 import {
   threadAwaitingPerson,
+  subagentExecutionStatus,
   threadRuntimeIsActive,
   type EnvironmentThreadShell,
 } from "./models.js";
@@ -16,17 +18,47 @@ const millis = (value: string | null | undefined): number | null => {
   const n = value ? Date.parse(value) : NaN;
   return Number.isFinite(n) ? n : null;
 };
+/** How the host names a project's coordinator thread (see projectCoordinatorThreads). */
+const COORDINATOR_THREAD_PREFIX = "project-coordinator:";
 /**
- * A provider-native subagent (Claude's Agent tool, Codex or Cursor subagents):
- * its final report is its parent agent's tool result, not a message to the person.
+ * Whether a thread's final report is read by an agent rather than the person:
+ * a provider-native subagent (Claude's Agent tool, Codex or Cursor subagents),
+ * whose report is its parent's tool result, or a delegate_task child of a
+ * worker, whose report is delivered to that worker. A coordinator's workers
+ * report to the person (the coordinator never repeats their results), so their
+ * blockers still count.
  */
 export const reportsToParentAgent = (
   thread: Pick<EnvironmentThreadShell, "lineage"> & {
     readonly source?: Pick<EnvironmentThreadShell["source"], "creationSource"> | undefined;
   },
-): boolean =>
-  thread.lineage?.relationshipToParent === "subagent" &&
-  thread.source?.creationSource === "provider";
+): boolean => {
+  if (thread.lineage?.relationshipToParent !== "subagent") return false;
+  if (thread.source?.creationSource === "provider") return true;
+  const parent = thread.lineage.parentThreadId;
+  return typeof parent === "string" && !parent.startsWith(COORDINATOR_THREAD_PREFIX);
+};
+/** A dependency is separate from an actual pending request or held queue. */
+export function threadDependencyWait(thread: EnvironmentThreadShell): string | null {
+  if (thread.archivedAt != null || thread.deletedAt != null || thread.settledOverride === "settled")
+    return null;
+  if (
+    thread.lineage?.relationshipToParent === "subagent" &&
+    ["completed", "cancelled", "failed", "interrupted"].includes(
+      subagentExecutionStatus({ thread }),
+    )
+  )
+    return null;
+  if (thread.runtime?.status === "waiting") {
+    return thread.source?.activeWork?.waitThreadId
+      ? "Waiting for subagents"
+      : (reportWaitReason(thread.source?.activeWork?.label ?? "") ?? "Waiting for background work");
+  }
+  if (threadRuntimeIsActive(thread.runtime) || reportsToParentAgent(thread)) return null;
+  if (thread.reportedBlocker && !reportWaitReason(thread.reportedBlocker)) return null;
+  return thread.reportedWait ?? reportWaitReason(thread.reportedBlocker ?? "");
+}
+
 export function observeProjectThread(
   thread: EnvironmentThreadShell,
   freshness: AttentionFreshness = "live",
@@ -50,12 +82,13 @@ export function observeProjectThread(
   // Final reports can ask for a decision after the native request has closed.
   // Use the same quiet-thread blocker that rows display, so those rows, project
   // counts and descendant attention all agree. A resumed turn supersedes it.
-  // A provider-native subagent's report is its parent agent's tool result, not
-  // a message to the person: the parent decides, and relays a real decision in
-  // its own report. It never gets a user message, so it would never clear.
+  // A child's report that an agent reads is not a message to the person: the
+  // parent decides, and relays a real decision in its own report. The child
+  // never gets a user message, so its blocker would never clear.
   if (
     thread.reportedBlocker?.trim() &&
     !reportsToParentAgent(thread) &&
+    reportWaitReason(thread.reportedBlocker) === null &&
     !threadRuntimeIsActive(thread.runtime) &&
     !person
   )
@@ -118,6 +151,7 @@ export interface AttentionRoot {
   readonly freshness: AttentionFreshness;
   readonly actions: readonly ProjectAction[];
   readonly working: boolean;
+  readonly waits?: readonly string[];
 }
 export interface ProjectAttention {
   readonly roots: readonly AttentionRoot[];
@@ -153,6 +187,7 @@ export function aggregateProjectAttention(input: {
       freshness: AttentionFreshness;
       actions: ProjectAction[];
       working: boolean;
+      waits: string[];
     }
   >();
   for (const thread of input.roots) {
@@ -166,6 +201,7 @@ export function aggregateProjectAttention(input: {
       freshness: member.freshness,
       actions: [],
       working: false,
+      waits: [],
     });
   }
   let complete = input.members.length > 0 && input.members.every((m) => m.freshness === "live");
@@ -215,7 +251,16 @@ export function aggregateProjectAttention(input: {
     const actions = classifyProjectActions(observation);
     if (member.freshness === "live") {
       root.actions.push(...actions);
-      root.working ||= observation.active;
+      const wait = observation.settled ? null : threadDependencyWait(thread);
+      if (wait && !root.waits.includes(wait)) root.waits.push(wait);
+      const executionActive =
+        thread.lineage?.relationshipToParent !== "subagent" ||
+        subagentExecutionStatus({ thread }) === "running";
+      root.working ||=
+        root.thread.settledOverride !== "settled" &&
+        observation.active &&
+        thread.runtime?.status !== "waiting" &&
+        executionActive;
     } else if (actions.length) staleRoots.add(root.key);
   }
   for (const member of input.members) {

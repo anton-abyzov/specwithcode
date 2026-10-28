@@ -18,6 +18,7 @@ const stubs = new Set(
     "hooks/useSettings",
     "state/server",
     "components/handoff/HandoffModelPicker",
+    "components/studio/useLinkMachines",
   ].map((path) => NodePath.resolve(appSource, path)),
 );
 export default defineConfig({

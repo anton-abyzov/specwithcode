@@ -19,6 +19,7 @@ import type {
   ModSpecweaveIncrement,
   ModSpecweaveResult,
   ModSpecweaveTask,
+  ThreadIncrementAcWaiver,
 } from "@specweave-studio/contracts";
 import { compareIncrementFoldersNewestFirst } from "@specweave-studio/shared/specweaveIncrement";
 import * as Clock from "effect/Clock";
@@ -57,6 +58,35 @@ const META_EVENTS = new Set(["note", "session", "handoff", "pickup"]);
 const CARD_LINE_CHARS = 100;
 const CARD_LINK_CHARS = 2_048;
 const EVIDENCE_CHARS = 8_192;
+
+export interface SpecweaveAcceptedSkip extends ThreadIncrementAcWaiver {
+  readonly ac: string;
+}
+
+/** Same complete-record rule as SpecWeave #2175; never changes task state. */
+function acceptedSkip(raw: Record<string, unknown>): SpecweaveAcceptedSkip | null {
+  if (typeof raw.t !== "string" || !/^AC-/i.test(raw.t)) return null;
+  const fields = ["check", "reason", "acceptedBy", "acceptedAt", "authorization"] as const;
+  for (const field of fields)
+    if (typeof raw[field] !== "string" || !(raw[field] as string).trim()) return null;
+  if (
+    typeof raw.by !== "string" ||
+    !raw.by.trim() ||
+    isoOrNull(raw.at) === null ||
+    !Number.isFinite(Date.parse(raw.acceptedAt as string))
+  )
+    return null;
+  return {
+    ac: raw.t.toUpperCase(),
+    check: (raw.check as string).trim(),
+    reason: (raw.reason as string).trim(),
+    acceptedBy: (raw.acceptedBy as string).trim(),
+    acceptedAt: (raw.acceptedAt as string).trim(),
+    authorization: (raw.authorization as string).trim(),
+    by: raw.by,
+    at: raw.at as string,
+  };
+}
 
 /** A task as its card shows it: SpecWeave's `card.state`, line and raw link. */
 export type SpecweaveCardState = "todo" | "doing" | "waiting" | "done" | "skipped";
@@ -282,6 +312,7 @@ export function foldSpecweaveLedger(
   readonly tasks: ModSpecweaveTask[];
   readonly cards: SpecweaveCard[];
   readonly malformed: number;
+  readonly acceptedSkips: readonly SpecweaveAcceptedSkip[];
 } {
   type State = {
     status: ModSpecweaveTask["status"];
@@ -327,6 +358,7 @@ export function foldSpecweaveLedger(
     line: string | null;
     link: string | null;
     index: number;
+    waiver: SpecweaveAcceptedSkip | null;
   }> = [];
   ledger
     .replace(/^\uFEFF/u, "")
@@ -364,13 +396,27 @@ export function foldSpecweaveLedger(
           line: cardLine(entry.line),
           link: bounded(entry.link, CARD_LINK_CHARS),
           index,
+          waiver: entry.e === "accept-skip" ? acceptedSkip(entry) : null,
         });
       } catch {
         malformed++;
       }
     });
   entries.sort((a, b) => a.at - b.at || (a.by < b.by ? -1 : a.by > b.by ? 1 : a.index - b.index));
+  const acceptedSkips: SpecweaveAcceptedSkip[] = [];
+  const waiverKeys = new Set<string>();
   for (const entry of entries) {
+    if (entry.e === "accept-skip") {
+      const waiver = entry.waiver;
+      if (waiver !== null) {
+        const key = JSON.stringify([waiver.ac, waiver.check.toLowerCase()]);
+        if (!waiverKeys.has(key)) {
+          waiverKeys.add(key);
+          acceptedSkips.push(waiver);
+        }
+      }
+      continue;
+    }
     if (META_EVENTS.has(entry.e)) {
       // A note on a task carries its card line and link; it changes no state.
       if (entry.e === "note" && entry.t !== "*" && (entry.line !== null || entry.link !== null)) {
@@ -473,6 +519,7 @@ export function foldSpecweaveLedger(
       })),
     ],
     malformed,
+    acceptedSkips,
   };
 }
 

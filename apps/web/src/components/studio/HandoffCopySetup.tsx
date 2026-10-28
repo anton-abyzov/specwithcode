@@ -1,8 +1,17 @@
+import { useState } from "react";
 import type { EnvironmentId, FolderCopyMode } from "@specweave-studio/contracts";
 import { copiedProjectFolder } from "../../studio/folderCopy";
+import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
 import { Checkbox } from "../ui/checkbox";
-import { Input } from "../ui/input";
-import { Radio, RadioGroup } from "../ui/radio-group";
+import { HandoffCopyScope, type useCopyScope } from "./HandoffCopyScope";
+import { RemoteFolderBrowser } from "./RemoteFolderBrowser";
+import {
+  FilesTravelChoice,
+  FolderField,
+  MoreOptions,
+  MoveIntentToggle,
+  useProjectMoveDialog,
+} from "./ProjectMoveOptions";
 
 export interface CopyMachine {
   readonly id: EnvironmentId;
@@ -10,7 +19,16 @@ export interface CopyMachine {
   readonly unavailable: string | null;
 }
 
-/** Where the copy goes, what happens after it, and whether to stop and choose what to copy. */
+export const copyMachineOptions = (machines: ReadonlyArray<CopyMachine>): MachineOption[] =>
+  machines.map((entry) => ({
+    value: entry.id,
+    label: entry.label,
+    tone: entry.unavailable ? "off" : "ready",
+    reason: entry.unavailable,
+    disabled: entry.unavailable !== null,
+  }));
+
+/** Screen 1 of the copy: move or copy, the machine, the folder there, and More options. */
 export function HandoffCopySetup({
   machines,
   machine,
@@ -28,6 +46,8 @@ export function HandoffCopySetup({
   onChooseFirstChange,
   disabled,
   folderDisabled = disabled,
+  scope,
+  scopeDisabled = disabled,
 }: {
   readonly machines: ReadonlyArray<CopyMachine>;
   readonly machine: EnvironmentId | null;
@@ -46,127 +66,102 @@ export function HandoffCopySetup({
   readonly disabled: boolean;
   /** Lets only the folder be edited, as when saving a new folder while choosing. */
   readonly folderDisabled?: boolean;
+  /** What to copy from the source; shown under More options. */
+  readonly scope?: ReturnType<typeof useCopyScope>;
+  readonly scopeDisabled?: boolean;
 }) {
+  const dialog = useProjectMoveDialog();
+  // Browsing belongs to one machine: picking another closes the list.
+  const [browsing, setBrowsing] = useState<EnvironmentId | null>(null);
+  const narrowed =
+    scope !== undefined &&
+    scope.selected.kind === "project" &&
+    scope.scopes.some((entry) => entry.kind !== "project");
   return (
     <>
-      <fieldset className="min-w-0 space-y-2" disabled={disabled}>
-        <legend className="mb-2 text-sm font-medium">Copy to</legend>
+      <MoveIntentToggle
+        value={mode === "copy-and-move" ? "move" : "copy"}
+        onChange={(intent) => onModeChange(intent === "move" ? "copy-and-move" : "copy-only")}
+        canMove={canMove}
+        disabled={disabled}
+      />
+      <fieldset className="min-w-0" disabled={disabled}>
+        <legend className="mb-2 text-sm font-medium">Machine</legend>
         {machines.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Connect another machine in Settings &gt; Connections first.
+            No other machine is connected. Pair one in Settings › Connections.
           </p>
         ) : (
-          <RadioGroup
-            aria-label="Copy to"
-            value={machine ?? ""}
-            onValueChange={(value) => onMachineChange(value as EnvironmentId)}
-          >
-            {machines.map((entry) => (
-              <label
-                key={entry.id}
-                data-slot="copy-machine"
-                className={`flex items-start gap-3 rounded-lg border p-3 text-sm ${machine === entry.id ? "border-primary bg-accent/40" : ""} ${entry.unavailable ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
-              >
-                <span className="flex h-5 items-center">
-                  <Radio value={entry.id} disabled={entry.unavailable !== null} />
-                </span>
-                <span className="min-w-0 leading-5">
-                  <span className="block font-medium">{entry.label}</span>
-                  {entry.unavailable && (
-                    <span className="block text-xs text-muted-foreground">{entry.unavailable}</span>
-                  )}
-                </span>
-              </label>
-            ))}
-          </RadioGroup>
+          <MachineOptionRows
+            aria-label="Machine"
+            options={copyMachineOptions(machines)}
+            value={machine}
+            disabled={disabled}
+            onChange={(value) => onMachineChange(value as EnvironmentId)}
+          />
         )}
       </fieldset>
-      <label className="block space-y-1 text-sm" data-slot="copy-folder">
-        <span className="font-medium">Folder on {targetLabel}</span>
-        <Input
-          value={folder}
-          placeholder={
-            findingHome
-              ? "Finding the destination home folder…"
-              : "Absolute path on the destination"
-          }
-          disabled={folderDisabled}
-          spellCheck={false}
-          onChange={(event) => onFolderChange(event.currentTarget.value)}
-          aria-label={`Folder on ${targetLabel}`}
-        />
+      <FolderField
+        slot="copy-folder"
+        machineLabel={targetLabel}
+        value={folder}
+        disabled={folderDisabled}
+        placeholder={findingHome ? "Finding the home folder there…" : "Full path on that machine"}
+        onChange={onFolderChange}
+        onBrowse={
+          machine ? () => setBrowsing((open) => (open === machine ? null : machine)) : undefined
+        }
+        browsing={browsing !== null && browsing === machine}
+      >
         {projectRelativePath !== "." && folder && (
           <span
             className="block text-xs text-muted-foreground"
             data-slot="copy-destination-project"
           >
-            Project / coordinator folder:{" "}
+            The project lands in{" "}
             <span className="font-mono wrap-anywhere">
               {copiedProjectFolder(folder, projectRelativePath)}
             </span>
           </span>
         )}
-        <span className="block text-xs text-muted-foreground">
-          A new or empty folder gets an exact copy. In an existing folder, nothing is replaced
-          without asking you first.
-        </span>
-      </label>
-      <fieldset className="min-w-0 space-y-2" disabled={disabled}>
-        <legend className="mb-2 text-sm font-medium">After the copy</legend>
-        <RadioGroup
-          aria-label="After the copy"
-          value={mode}
-          onValueChange={(value) => onModeChange(value as FolderCopyMode)}
-        >
-          <label className="flex cursor-pointer items-start gap-3 text-sm">
-            <span className="flex h-5 items-center">
-              <Radio value="copy-only" />
-            </span>
-            <span className="leading-5">
-              Copy files only
-              <span className="block text-xs text-muted-foreground">
-                Keeps this coordinator on {sourceLabel}. {targetLabel} gets a separate checkout; you
-                can start its own coordinator in Project settings.
-              </span>
-            </span>
-          </label>
-          <label
-            className={`flex items-start gap-3 text-sm ${canMove ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
-          >
-            <span className="flex h-5 items-center">
-              <Radio value="copy-and-move" disabled={!canMove} />
-            </span>
-            <span className="leading-5">
-              Copy and transfer coordinator context
-              <span className="block text-xs text-muted-foreground">
-                Copies files first, then transfers this coordinator's context and responsibility to{" "}
-                {targetLabel} if work on {sourceLabel} is idle; otherwise you retry once it is. Each
-                machine keeps its own server; running workers and provider processes are not moved.
-              </span>
-            </span>
-          </label>
-        </RadioGroup>
-      </fieldset>
-      <label
-        className="flex cursor-pointer items-start gap-3 text-sm"
-        data-slot="copy-choose-first"
+      </FolderField>
+      {machine && browsing === machine && (
+        <RemoteFolderBrowser
+          key={machine}
+          machine={machine}
+          start={folder || "~/"}
+          disabled={folderDisabled}
+          onPick={onFolderChange}
+        />
+      )}
+      <MoreOptions
+        defaultOpen={chooseFirst || narrowed || (dialog !== null && dialog.method !== "copy")}
       >
-        <span className="flex h-5 items-center">
-          <Checkbox
-            checked={chooseFirst}
-            disabled={disabled}
-            onCheckedChange={(checked) => onChooseFirstChange(checked === true)}
-            aria-label="Choose what to copy"
-          />
-        </span>
-        <span className="leading-5">
-          Choose what to copy
-          <span className="block text-xs text-muted-foreground">
-            Stops after measuring so you can pick the kinds of files, then shows a preview before
-            anything is written.
+        <FilesTravelChoice />
+        {scope && (
+          <HandoffCopyScope scope={scope} sourceLabel={sourceLabel} disabled={scopeDisabled} />
+        )}
+        <label
+          className="flex cursor-pointer items-start gap-3 text-sm"
+          data-slot="copy-choose-first"
+        >
+          <span className="flex h-5 items-center">
+            <Checkbox
+              checked={chooseFirst}
+              disabled={disabled}
+              onCheckedChange={(checked) => onChooseFirstChange(checked === true)}
+              aria-label="Let me choose file types first"
+            />
           </span>
-        </span>
-      </label>
+          <span className="leading-5">
+            Let me choose file types first
+            <span className="block text-xs text-muted-foreground">
+              Stops after measuring so you can pick, then shows what would change before anything is
+              written.
+            </span>
+          </span>
+        </label>
+      </MoreOptions>
     </>
   );
 }

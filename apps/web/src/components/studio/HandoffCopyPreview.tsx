@@ -1,5 +1,11 @@
-import type { ReactNode } from "react";
-import { AlertTriangleIcon, CheckIcon, GitBranchIcon, FolderIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  AlertTriangleIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  GitBranchIcon,
+  FolderIcon,
+} from "lucide-react";
 import {
   folderCopyAllConflictsKey,
   type FolderCopyChoice,
@@ -24,7 +30,9 @@ import {
   ROW_STATUS_TEXT,
   selectedTotals,
 } from "../../studio/folderCopy";
+import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { changedRows } from "./handoffCopyAuto";
 import { Radio, RadioGroup } from "../ui/radio-group";
 
@@ -156,6 +164,35 @@ export function planRepositoryChoices(rows: ReadonlyArray<FolderCopyRow>): Repos
 const skippable = (row: FolderCopyRow) =>
   row.kind === "repository" && row.path !== "." && row.status !== "only-here";
 
+/** A row with a folder choice or a listed file conflict still unanswered. */
+const needsChoice = (row: FolderCopyRow) =>
+  (row.choices.length > 0 && row.decision === null) ||
+  row.conflicts.some((conflict) => conflict.decision === null);
+
+/** Review lists show five rows, then a button for the rest. */
+const COLLAPSED_ROWS = 5;
+
+function CollapsedList({
+  items,
+  render,
+}: {
+  readonly items: ReadonlyArray<FolderCopyRow>;
+  readonly render: (row: FolderCopyRow) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? items : items.slice(0, COLLAPSED_ROWS);
+  return (
+    <>
+      <ul className="space-y-2">{shown.map(render)}</ul>
+      {items.length > shown.length && (
+        <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+          Show {(items.length - shown.length).toLocaleString()} more
+        </Button>
+      )}
+    </>
+  );
+}
+
 /** One row per repository plus the folder's other files, with their decisions. */
 export function CopyPlanPreview({
   status,
@@ -168,6 +205,7 @@ export function CopyPlanPreview({
   machines,
   rootLabel,
   onlyChanges = false,
+  sections = false,
   hideWarnings = false,
 }: {
   readonly status: FolderCopyStatus;
@@ -188,6 +226,11 @@ export function CopyPlanPreview({
   readonly rootLabel?: string;
   /** Lists only rows that change something already there; new and unchanged ones are counted. */
   readonly onlyChanges?: boolean;
+  /**
+   * Review's layout: rows that need a choice first under "Needs your choice", each list
+   * collapsed past five, and the repository controls behind "Adjust repositories (n)".
+   */
+  readonly sections?: boolean;
   /** The caller shows the plan's warnings in its own grouped notices. */
   readonly hideWarnings?: boolean;
 }) {
@@ -206,17 +249,80 @@ export function CopyPlanPreview({
   // Folders only on the destination are kept there, not copied.
   const kept = hidden.filter((row) => row.status === "only-here").length;
   const untouched = hidden.length - kept;
+  const renderRow = (row: FolderCopyRow) => (
+    <CopyRow
+      key={row.id}
+      row={row}
+      onDecide={onDecide}
+      onClone={
+        onRepositories
+          ? (rowId, on) =>
+              onRepositories({
+                ...current,
+                clone: on
+                  ? [...current.clone.filter((id) => id !== rowId), rowId]
+                  : current.clone.filter((id) => id !== rowId),
+              })
+          : onClone
+      }
+      {...(onRepositories && skippable(row)
+        ? {
+            copied: !current.skip.includes(row.id),
+            onCopied: (on: boolean) =>
+              onRepositories({
+                ...current,
+                skip: on ? current.skip.filter((id) => id !== row.id) : [...current.skip, row.id],
+              }),
+          }
+        : {})}
+      cloned={onRepositories ? current.clone.includes(row.id) : row.clone}
+      stale={replanning}
+      disabled={disabled}
+      {...(machines ? { machines } : {})}
+      {...(rootLabel ? { rootLabel } : {})}
+    />
+  );
+  const choosing = rows.filter(needsChoice);
+  const adjustableRow = (row: FolderCopyRow) =>
+    skippable(row) ||
+    (row.kind === "repository" && row.cloneAvailable && !current.skip.includes(row.id));
+  const adjustable = status.rows.filter(adjustableRow).length;
+  const grouped = sections && !!onRepositories && adjustable > 0;
+  // A repository that replaces nothing is listed once, inside Adjust repositories.
+  const quiet = (row: FolderCopyRow) =>
+    grouped && adjustableRow(row) && changedRows([row]).length === 0;
+  const settled = rows.filter((row) => !needsChoice(row) && !quiet(row));
+  const adjustRows = rows.filter((row) => !needsChoice(row) && quiet(row));
+  const repositoryControls = onRepositories && (
+    <RepositoryControls
+      rows={status.rows}
+      current={current}
+      onChange={onRepositories}
+      disabled={disabled}
+      replanning={replanning}
+      machines={machines}
+    />
+  );
   return (
     <div className="space-y-3 text-sm" data-slot="copy-preview">
-      {onRepositories && (
-        <RepositoryControls
-          rows={status.rows}
-          current={current}
-          onChange={onRepositories}
-          disabled={disabled}
-          replanning={replanning}
-          machines={machines}
-        />
+      {sections && repositoryControls && adjustable > 0 ? (
+        <Collapsible data-slot="copy-adjust-repositories">
+          <CollapsibleTrigger className="group inline-flex items-center gap-1 text-sm font-medium">
+            <ChevronRightIcon
+              className="size-4 transition-transform group-data-panel-open:rotate-90"
+              aria-hidden
+            />
+            Adjust repositories ({adjustable})
+          </CollapsibleTrigger>
+          <CollapsiblePanel keepMounted>
+            <div className="space-y-2 pt-2">
+              {repositoryControls}
+              {adjustRows.length > 0 && <CollapsedList items={adjustRows} render={renderRow} />}
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      ) : (
+        repositoryControls
       )}
       {totals && (
         <p data-slot="copy-preview-totals" className={replanning ? "opacity-60" : undefined}>
@@ -230,43 +336,19 @@ export function CopyPlanPreview({
             " Repository content may still arrive through Git; this is not a repository size."}
         </p>
       )}
-      <ul className="space-y-2">
-        {rows.map((row) => (
-          <CopyRow
-            key={row.id}
-            row={row}
-            onDecide={onDecide}
-            onClone={
-              onRepositories
-                ? (rowId, on) =>
-                    onRepositories({
-                      ...current,
-                      clone: on
-                        ? [...current.clone.filter((id) => id !== rowId), rowId]
-                        : current.clone.filter((id) => id !== rowId),
-                    })
-                : onClone
-            }
-            {...(onRepositories && skippable(row)
-              ? {
-                  copied: !current.skip.includes(row.id),
-                  onCopied: (on: boolean) =>
-                    onRepositories({
-                      ...current,
-                      skip: on
-                        ? current.skip.filter((id) => id !== row.id)
-                        : [...current.skip, row.id],
-                    }),
-                }
-              : {})}
-            cloned={onRepositories ? current.clone.includes(row.id) : row.clone}
-            stale={replanning}
-            disabled={disabled}
-            {...(machines ? { machines } : {})}
-            {...(rootLabel ? { rootLabel } : {})}
-          />
-        ))}
-      </ul>
+      {sections ? (
+        <>
+          {choosing.length > 0 && (
+            <section className="space-y-2" data-slot="copy-needs-choice">
+              <h3 className="text-sm font-medium">Needs your choice</h3>
+              <CollapsedList items={choosing} render={renderRow} />
+            </section>
+          )}
+          {settled.length > 0 && <CollapsedList items={settled} render={renderRow} />}
+        </>
+      ) : (
+        <ul className="space-y-2">{rows.map(renderRow)}</ul>
+      )}
       {onlyChanges && (untouched > 0 || kept > 0) && (
         <p className="text-xs text-muted-foreground" data-slot="copy-preview-untouched">
           {[
@@ -292,10 +374,12 @@ export function CopyPlanPreview({
         </Note>
       )}
       {!hideWarnings && status.warnings.map((warning) => <Note key={warning}>{warning}</Note>)}
-      <p className="text-xs text-muted-foreground">
-        Nothing on {machines?.here ?? "this machine"} is overwritten without a backup. Undo restores
-        the folder for 14 days.
-      </p>
+      {!sections && (
+        <p className="text-xs text-muted-foreground">
+          Nothing on {machines?.here ?? "this machine"} is overwritten without a backup. Undo
+          restores the folder for 14 days.
+        </p>
+      )}
     </div>
   );
 }
@@ -629,19 +713,40 @@ function CopyRow({
   );
 }
 
-export function CopyProgress({ status }: { readonly status: FolderCopyStatus }) {
-  const text = progressText(status);
+const STEP_TEXT: Partial<Record<FolderCopyStatus["state"], string>> = {
+  approved: "Starting the copy…",
+  transferring: "Copying files…",
+  verifying: "Checking copied files…",
+  applying: "Applying to the folder…",
+  applied: "Registering the folder…",
+};
+
+/**
+ * The copy's one progress line, with a bar. `line` is Copying {size}… (or what applying is
+ * doing); the live counts sit muted under it.
+ */
+export function CopyProgress({
+  status,
+  line,
+}: {
+  readonly status: FolderCopyStatus;
+  /** Without one, the live counts are the line. */
+  readonly line?: string;
+}) {
+  const counts = progressText(status);
   const fraction = progressFraction(status);
-  const step = {
-    approved: "Starting the copy…",
-    transferring: "Copying files…",
-    verifying: "Checking copied files…",
-    applying: "Applying to the folder…",
-    applied: "Registering the folder…",
-  }[status.state as "approved" | "transferring" | "verifying" | "applying" | "applied"];
+  const detail = line ? counts : null;
+  line ??= counts ?? STEP_TEXT[status.state] ?? "Working…";
   return (
     <div className="space-y-2 text-sm" role="status" aria-live="polite" data-slot="copy-progress">
-      <p>{text ?? step ?? "Working…"}</p>
+      <p>
+        {line}
+        {detail && (
+          <span className="block text-xs text-muted-foreground" data-slot="copy-progress-detail">
+            {detail}
+          </span>
+        )}
+      </p>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div
           className={`h-full bg-primary transition-[width] ${fraction === null ? "w-1/3 animate-pulse" : ""}`}

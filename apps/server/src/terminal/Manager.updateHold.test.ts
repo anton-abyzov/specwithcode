@@ -116,6 +116,30 @@ it.layer(
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a restart outside admission while held and leaves its running shell alone", () =>
+    Effect.gen(function* () {
+      const hold = yield* ServiceUpdateHold.makeWithOptions({
+        agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json",
+      });
+      const { manager, ptyAdapter } = yield* makeManager.pipe(
+        Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, hold),
+      );
+      yield* manager.open(openInput("thread-1"));
+      yield* hold.acquire();
+      const restarting = yield* manager
+        .restart({ ...openInput("thread-1"), cols: 100, rows: 24 })
+        .pipe(Effect.forkScoped);
+      yield* Effect.sleep(Duration.millis(50));
+      // Waiting on the hold cannot itself keep the admission fence waiting.
+      yield* hold.awaitAdmissions;
+      assert.equal(ptyAdapter.processes.length, 1);
+      assert.isFalse(ptyAdapter.processes[0]!.killed);
+      yield* hold.release("cancelled");
+      yield* Fiber.join(restarting);
+      assert.equal(ptyAdapter.processes.length, 2);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("waits to start a terminal until an update install's gate is cleared", () =>
     Effect.gen(function* () {
       const gated = yield* makeGatedHold();

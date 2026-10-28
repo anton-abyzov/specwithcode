@@ -37,6 +37,7 @@ export function useCopyDraft({
   project,
   machines,
   canMove,
+  explicit,
   form,
   latestPending,
   setForm,
@@ -45,6 +46,8 @@ export function useCopyDraft({
   readonly project: { readonly environmentId: string; readonly id: string };
   readonly machines: ReadonlyArray<CopyMachine>;
   readonly canMove: boolean;
+  /** Choices the dialog was opened with (Move project, Move coordinator to X); they win over a draft. */
+  readonly explicit: { readonly mode: boolean; readonly machine: boolean };
   readonly form: CopyForm;
   readonly latestPending: RefObject<PendingCopy | null>;
   readonly setForm: {
@@ -64,10 +67,11 @@ export function useCopyDraft({
   const fill = (draft: CopyDraft) => {
     const known = machines.find((entry) => entry.id === draft.machine && !entry.unavailable);
     if (known) {
-      setForm.machine(known.id);
+      if (!explicit.machine) setForm.machine(known.id);
+      // A folder belongs to its machine, so it only shows when that machine is chosen.
       if (draft.folder) setForm.folder(draft.folder, known.id, draft.copyRoot);
     }
-    if (draft.mode === "copy-only" || canMove) setForm.mode(draft.mode);
+    if (!explicit.mode && (draft.mode === "copy-only" || canMove)) setForm.mode(draft.mode);
     setForm.chooseFirst(draft.chooseFirst);
   };
 

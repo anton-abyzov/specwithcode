@@ -128,6 +128,10 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:worktrees-remove",
       tag: WS_METHODS.projectsWorktreesRemove,
     }),
+    threadsDelete: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:threads-delete",
+      tag: WS_METHODS.projectsThreadsDelete,
+    }),
     changeFolder: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:change-folder",
       execute: (input: ChangeProjectFolderInput) => changeProjectFolder(input),

@@ -204,3 +204,55 @@ describe("an answered coordinator question in the conversation", () => {
     ).toBeTruthy();
   });
 });
+
+it("removes an answered restored question on reconnect and preserves a different open question", async () => {
+  ask();
+  const original = {
+    ...(state.runtimeRequests[0] as object),
+    id: requestId,
+    status: "resolved",
+    answers: { q1: "Use registered binding" },
+  };
+  state.runtimeRequests = [
+    original,
+    { ...(state.runtimeRequests[0] as object), id: `update-reopen:${requestId}` },
+  ];
+  state.turnItems = [{ ...state.turnItems[0]!, requestId: `update-reopen:${requestId}` } as never];
+  await render();
+  expect(container.querySelector("[data-coordinator-question]")).toBeNull();
+  ask();
+  state.runtimeRequests = [
+    original,
+    ...state.runtimeRequests.map((r) => ({ ...(r as object), id: "ask-user:different" })),
+  ];
+  state.turnItems = state.turnItems.map(
+    (i) => ({ ...i, requestId: "ask-user:different" }) as never,
+  );
+  await render();
+  expect(container.querySelector("[data-coordinator-question]")?.textContent).toContain(
+    "Which repository binding should the app use?",
+  );
+});
+
+it("shows the actual coordinator question in attention instead of a circular instruction", async () => {
+  ask();
+  state.shells = state.shells.map((s) => ({ ...s, hasPendingUserInput: true }));
+  await render();
+  expect(container.textContent).not.toContain("The coordinator asked you a question.");
+  expect(container.textContent).toContain("Which repository binding should the app use?");
+});
+
+it.each(["live", "cached", "synchronizing"])(
+  "reconciles an obsolete question only from authoritative %s details",
+  async (status) => {
+    state.detailStatus = status;
+    state.shells = state.shells.map((s) => ({ ...s, hasPendingUserInput: true }));
+    await render();
+    if (status === "live") {
+      expect(container.textContent).not.toContain("The coordinator asked you a question.");
+      expect(state.shellRefresh).toHaveBeenCalledOnce();
+    } else {
+      expect(state.shellRefresh).not.toHaveBeenCalled();
+    }
+  },
+);

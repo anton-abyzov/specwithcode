@@ -6,7 +6,10 @@ import {
   observeProjectThread,
   type AttentionMember,
 } from "./projectAttention.js";
-import { classifyProjectActions } from "@specweave-studio/shared/projectAttention";
+import {
+  classifyProjectActions,
+  answeredRuntimeRequestCopy,
+} from "@specweave-studio/shared/projectAttention";
 const member: AttentionMember = {
   environmentId: "host",
   projectId: "project",
@@ -48,21 +51,93 @@ describe("project conversation aggregation", () => {
       aggregateProjectAttention({ members: [member], roots: [root], threads: [root] }),
     ).toMatchObject({ count: 1, working: 0, complete: true });
   });
-  it("folds report feedback from an app-launched child into its visible parent", () => {
+  // October 27: "Review 0734 and 0850 closure", a delegate_task child that a
+  // worker started on October 21, still held its worker under Waiting on you.
+  it("leaves an app-launched child's report with the worker that started it", () => {
     const root = thread("root");
-    const result = aggregateProjectAttention({
-      members: [member],
-      roots: [root],
-      threads: [
-        root,
-        child("child", "root", {
-          reportedBlocker: "Which option should I use?",
-          source: { creationSource: "mcp" },
-        } as unknown as Partial<EnvironmentThreadShell>),
-      ],
-    });
-    expect(result.count).toBe(1);
-    expect(result.roots[0]?.actions).toMatchObject([{ threadId: "child", reason: "input" }]);
+    const review = child("review", "root", {
+      reportedBlocker: "Both increments should be blocked. Close them, or fix first?",
+      source: { creationSource: "mcp", pendingRuntimeRequest: null },
+    } as unknown as Partial<EnvironmentThreadShell>);
+    expect(classifyProjectActions(observeProjectThread(review))).toEqual([]);
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [root], threads: [root, review] }),
+    ).toMatchObject({ count: 0, complete: true });
+    const asking = {
+      ...review,
+      hasPendingUserInput: true,
+      source: {
+        creationSource: "mcp",
+        pendingRuntimeRequest: { id: "ask-1", kind: "user_input", createdAt: null },
+      },
+    } as unknown as EnvironmentThreadShell;
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [root], threads: [root, asking] })
+        .roots[0]?.actions,
+    ).toMatchObject([{ threadId: "review", reason: "input" }]);
+  });
+  it("keeps a coordinator worker's report blocker waiting on the person", () => {
+    const worker = child("worker", "project-coordinator:project", {
+      reportedBlocker: "Ship 1.0.35 today, or wait for the SQLite fix?",
+      source: { creationSource: "mcp", pendingRuntimeRequest: null },
+    } as unknown as Partial<EnvironmentThreadShell>);
+    expect(classifyProjectActions(observeProjectThread(worker))).toMatchObject([
+      { threadId: "worker", reason: "input" },
+    ]);
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [worker], threads: [worker] }),
+    ).toMatchObject({ count: 1 });
+  });
+  it("removes the disk owner's answered ask across new runs without inheriting its old review report", () => {
+    const review = child("old-review", "disk", {
+      title: "Review 0734 and 0850 closure",
+      reportedBlocker: "For 0734 AC-US6-04, do you waive it?",
+      source: { creationSource: "mcp", pendingRuntimeRequest: null },
+    } as unknown as Partial<EnvironmentThreadShell>);
+    const root = child("disk", "project-coordinator:project", {
+      title: "Complete project work and disk audit",
+      hasPendingUserInput: true,
+      source: {
+        creationSource: "mcp",
+        pendingRuntimeRequest: { id: "0748-recipient", kind: "user_input", createdAt: null },
+      },
+    } as unknown as Partial<EnvironmentThreadShell>);
+    const aggregate = (disk: EnvironmentThreadShell, descendant = review) =>
+      aggregateProjectAttention({ members: [member], roots: [disk], threads: [disk, descendant] });
+    expect(aggregate(root).roots[0]?.actions).toMatchObject([
+      { threadId: "disk", requestId: "0748-recipient" },
+    ]);
+    for (const status of ["queued", "starting", "running"] as const) {
+      const resumed = {
+        ...root,
+        hasPendingUserInput: false,
+        source: { ...root.source, pendingRuntimeRequest: null },
+        runtime: { status, activeRunId: "coordinator-started-run" },
+      } as EnvironmentThreadShell;
+      for (const freshness of ["cached", "live"] as const) {
+        const result = aggregateProjectAttention({
+          members: [{ ...member, freshness }],
+          roots: [resumed],
+          threads: [resumed, review],
+        });
+        expect(result).toMatchObject({
+          count: 0,
+          working: freshness === "live" && status === "running" ? 1 : 0,
+        });
+        expect(result.roots[0]?.actions).toEqual([]);
+      }
+      const approval = {
+        ...review,
+        hasPendingApprovals: true,
+        source: {
+          ...review.source,
+          pendingRuntimeRequest: { id: "real-approval", kind: "command", createdAt: null },
+        },
+      } as unknown as EnvironmentThreadShell;
+      expect(aggregate(resumed, approval).roots[0]?.actions).toMatchObject([
+        { threadId: "old-review", reason: "approval" },
+      ]);
+    }
   });
   // October 26: finished Claude Code subagents ("Close increment 1054", a
   // close review from October 25) ended their reports with Blockers and kept
@@ -373,3 +448,130 @@ it("does not prove zero for a subagent whose parent identity is absent", () => {
     aggregateProjectAttention({ members: [member], roots: [], threads: [orphan] }),
   ).toMatchObject({ count: 0, complete: false });
 });
+
+describe("dependency waiting is not user attention", () => {
+  it.each([
+    "Waiting for CI",
+    "Waiting for review",
+    "Waiting for PR merge",
+    "Waiting for subagents",
+  ])("does not count or notify for %s", (reason) => {
+    const root = thread("root", { reportedBlocker: reason });
+    expect(classifyProjectActions(observeProjectThread(root))).toEqual([]);
+    const result = aggregateProjectAttention({ members: [member], roots: [root], threads: [root] });
+    expect(result.count).toBe(0);
+    expect(result.roots[0]?.waits).toEqual([reason]);
+  });
+  it("keeps an explicit child approval visible while the parent waits for CI", () => {
+    const root = thread("root", { reportedWait: "Waiting for CI" });
+    const approval = child("child", "root", { hasPendingApprovals: true });
+    const result = aggregateProjectAttention({
+      members: [member],
+      roots: [root],
+      threads: [root, approval],
+    });
+    expect(result.count).toBe(1);
+    expect(result.roots[0]?.actions).toMatchObject([{ reason: "approval", threadId: "child" }]);
+  });
+  it("ignores answered flags when the server reports no pending request", () => {
+    const root = thread("root", {
+      hasPendingUserInput: true,
+      source: { pendingRuntimeRequest: null },
+    } as unknown as Partial<EnvironmentThreadShell>);
+    expect(classifyProjectActions(observeProjectThread(root))).toEqual([]);
+  });
+  it("does not carry a dependency through root settlement", () => {
+    const root = thread("root", { settledOverride: "settled", settledAt: "2026-10-27T00:00:00Z" });
+    const waiting = child("child", "root", {
+      runtime: { status: "waiting" } as EnvironmentThreadShell["runtime"],
+    });
+    const result = aggregateProjectAttention({
+      members: [member],
+      roots: [root],
+      threads: [root, waiting],
+    });
+    expect(result.roots[0]?.waits).toEqual([]);
+  });
+});
+
+it("only an actual answer settles all restored copies of that question", () => {
+  const request = { id: "update-reopen:update-reopen-approval:question" };
+  expect(answeredRuntimeRequestCopy(request, [{ id: "question", status: "cancelled" }])).toBe(
+    false,
+  );
+  expect(
+    answeredRuntimeRequestCopy(request, [
+      { id: "question", status: "resolved", decision: "cancel" },
+    ]),
+  ).toBe(false);
+  expect(
+    answeredRuntimeRequestCopy(request, [
+      { id: "other", status: "resolved", answers: { q1: "yes" } },
+    ]),
+  ).toBe(false);
+  expect(
+    answeredRuntimeRequestCopy(request, [
+      { id: "update-reopen:question", status: "resolved", answers: { q1: "Accept both" } },
+    ]),
+  ).toBe(true);
+});
+
+it("a terminal child receipt cannot create a dependency from stale waiting runtime", () => {
+  const root = thread("root");
+  const finished = child("finished", "root", {
+    runtime: { status: "waiting" } as never,
+    source: {
+      creationSource: "provider",
+      nativeSubagentStatus: "completed",
+      pendingRuntimeRequest: null,
+    } as never,
+  });
+  const result = aggregateProjectAttention({
+    members: [member],
+    roots: [root],
+    threads: [root, finished],
+  });
+  expect(result.roots[0]?.waits).toEqual([]);
+  expect(result.working).toBe(0);
+});
+
+it("keeps a resolved parent out of working totals without changing a live descendant", () => {
+  const root = thread("root", { settledOverride: "settled", ...active });
+  const live = child("independent-child", "root", active);
+  const result = aggregateProjectAttention({
+    members: [member],
+    roots: [root],
+    threads: [root, live],
+  });
+  expect(result).toMatchObject({ count: 0, working: 0 });
+  expect(result.roots[0]).toMatchObject({ working: false, actions: [] });
+  expect(live.runtime?.status).toBe("running");
+});
+
+it.each(["queued", "starting", "running"] as const)(
+  "drops only the acknowledged question when its thread becomes %s",
+  (status) => {
+    const coordinator = thread("coordinator", { hasPendingUserInput: true });
+    const worker = thread("worker", { hasPendingUserInput: true });
+    const count = (current: EnvironmentThreadShell) =>
+      aggregateProjectAttention({
+        members: [member],
+        roots: [coordinator, current],
+        threads: [coordinator, current],
+      });
+    expect(count(worker).count).toBe(2);
+    // Starting work before the question resolves must retain the pending ask.
+    expect(count({ ...worker, runtime: { status } as never }).count).toBe(2);
+    const acknowledged = {
+      ...worker,
+      runtime: { status },
+      source: { pendingRuntimeRequest: null },
+    } as unknown as EnvironmentThreadShell;
+    expect(count(acknowledged)).toMatchObject({ count: 1, working: 1 });
+    expect(
+      count(acknowledged)
+        .roots.filter((root) => root.actions.length)
+        .map((root) => root.thread.id),
+    ).toEqual(["coordinator"]);
+  },
+);

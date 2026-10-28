@@ -23,8 +23,11 @@ export interface WorktreeRemovalContext {
     /** Re-read the exact cancelled bootstrap; a retry/replacement revokes this exception. */
     readonly verify: () => Effect.Effect<boolean>;
   };
-  /** Removal of a deleted project's worktree, confirmed by the person in the delete dialog. */
-  readonly projectDeletion?: {
+  /**
+   * Removal of a worktree whose project or threads were deleted, confirmed by
+   * the person in the delete dialog.
+   */
+  readonly confirmedDeletion?: {
     /** They agreed to lose its uncommitted, untracked and ignored files. The branch stays. */
     readonly discardLocalChanges: boolean;
   };
@@ -56,7 +59,7 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
         cwd: input.cwd,
         detail,
       });
-    const discard = context?.projectDeletion?.discardLocalChanges === true;
+    const discard = context?.confirmedDeletion?.discardLocalChanges === true;
     return Effect.scoped(
       Effect.gen(function* () {
         const requestedPath = path.resolve(input.path);
@@ -208,8 +211,8 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
       Effect.retry({
         while: (error) => Schema.is(PendingThreadCleanup)(error),
         schedule: Schedule.spaced("250 millis"),
-        // A whole project's threads were just deleted; their cleanup takes longer.
-        times: context?.projectDeletion === undefined ? 20 : 240,
+        // Many threads were just deleted; their cleanup takes longer.
+        times: context?.confirmedDeletion === undefined ? 20 : 240,
       }),
       Effect.mapError((cause) =>
         Schema.is(GitCommandError)(cause)

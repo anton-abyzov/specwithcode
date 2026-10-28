@@ -97,7 +97,7 @@ const BRAND_BY_ACP_AGENT: ReadonlyArray<readonly [RegExp, ProviderBrand]> = [
   [/^(?:codex|openai)(?:-|$)/, "openai"],
   [/^claude(?:-|$)/, "claude"],
   [/^cursor(?:-|$)/, "cursor"],
-  [/^opencode$/, "opencode"],
+  [/^opencode(?:-|$)/, "opencode"],
   [/^qwen(?:-|$)/, "qwen"],
   [/^kimi(?:-|$)/, "kimi"],
   [/^mistral(?:-|$)/, "mistral"],

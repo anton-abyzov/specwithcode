@@ -1,4 +1,11 @@
-import { type ComponentProps, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  createContext,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import { getClientSettings } from "../hooks/useSettings";
@@ -8,6 +15,9 @@ import { Button } from "./ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { ScrollBar } from "./ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+
+/** True inside a table, where inline code renders each word as its own box. */
+export const InsideMarkdownTable = createContext(false);
 
 function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
@@ -104,7 +114,7 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
           className="h-full max-h-[inherit] overflow-auto overscroll-x-contain overscroll-y-auto rounded-none outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] [--fade-size:1.5rem] scroll-p-[var(--fade-size)]"
         >
           <table ref={tableRef} {...props}>
-            {children}
+            <InsideMarkdownTable value>{children}</InsideMarkdownTable>
           </table>
         </ScrollAreaPrimitive.Viewport>
         <ScrollBar orientation="vertical" />

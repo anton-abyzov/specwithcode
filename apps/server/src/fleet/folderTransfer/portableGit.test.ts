@@ -154,6 +154,7 @@ describe("portable external linked worktrees", () => {
     const scan = await scanFolder(main);
     expect(scan.notices?.join(" ")).toContain("selected");
     expect(scan.notices?.join(" ")).toContain("outside this folder are not copied");
+    expect(scan.notices?.join(" ")).toContain("committed branches come along");
     expect(scan.entries.some((entry) => entry.path.includes("new.txt"))).toBe(false);
     expect(NodeFS.existsSync(NodePath.join(selected, "new.txt"))).toBe(true);
     const prepared = await preparePortableGit(scan, NodePath.join(root, "overlay"));

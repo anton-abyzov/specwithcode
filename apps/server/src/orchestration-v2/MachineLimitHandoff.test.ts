@@ -768,7 +768,7 @@ describe("limit handoff in the fallback sweep", () => {
       expect(asked).toEqual([]);
       expect(result.dispatched).toEqual([]);
       expect(result.shown?.waiting).toBe(
-        "This machine woke after handing its threads off and no other machine answered yet. Choose Continue here anyway to run it here.",
+        "This machine woke after handing its threads off and no other machine answered yet. Choose Resume this Mac to run it here.",
       );
     }),
   );

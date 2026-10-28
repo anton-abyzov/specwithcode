@@ -794,13 +794,24 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
   }
 }
 
+/** A caller's conditional restart lease no longer permits stopping this service. */
+export class BootServiceRestartRefusedError extends Schema.TaggedError<BootServiceRestartRefusedError>()(
+  "BootServiceRestartRefusedError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return `The background service was not restarted: ${this.reason}`;
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
   | BootServiceInstallError
   | BootServicePrerequisiteError
   | BootServiceUpdatePendingError
-  | BootServiceDowngradeRefusedError;
+  | BootServiceDowngradeRefusedError
+  | BootServiceRestartRefusedError;
 
 export interface BootServiceStatus {
   readonly supported: boolean;
@@ -830,6 +841,8 @@ export class BootService extends Context.Service<
        * restart, so a later `specweave-studio service restart` lands on the new version.
        */
       readonly start?: boolean;
+      /** Validate a conditional restart after runtime preparation, immediately before stop. */
+      readonly beforeStop?: Effect.Effect<void, BootServiceError>;
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
     /**
      * Stop and start the installed service on the version its unit names.
@@ -1124,6 +1137,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
     readonly start?: boolean;
+    readonly beforeStop?: Effect.Effect<void, BootServiceError>;
   }) {
     const manager = yield* requireManager;
     yield* fs
@@ -1200,6 +1214,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // written, from the same read the downgrade check uses; the stop that
     // normally serialises against the launcher is skipped on purpose.
     const start = options?.start !== false;
+    if (start && options?.beforeStop !== undefined) {
+      // The CLI checked an installed service before staging. If its unit vanished,
+      // restart could still stop a loaded unit after the files below are rewritten.
+      if (!installed)
+        return yield* new BootServiceRestartRefusedError({
+          reason: "the background service unit changed before its conditional restart",
+        });
+      yield* options.beforeStop;
+    }
     if (installed && start) {
       yield* runSteps(manager.stop);
     }

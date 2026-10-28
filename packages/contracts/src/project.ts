@@ -382,7 +382,14 @@ export class ProjectFolderCheckError extends Schema.TaggedError<ProjectFolderChe
   { message: Schema.String },
 ) {}
 
-export const ProjectWorktreesInput = Schema.Struct({ projectId: ProjectId });
+export const ProjectWorktreesInput = Schema.Struct({
+  projectId: ProjectId,
+  /**
+   * For "Delete all threads": leave out the folders of the coordinator and its
+   * subagent threads, which stay. Ignored once the project is deleted.
+   */
+  threadsOnly: Schema.optional(Schema.Boolean),
+});
 export type ProjectWorktreesInput = typeof ProjectWorktreesInput.Type;
 
 /**
@@ -420,14 +427,16 @@ export const ProjectWorktrees = Schema.Struct({
 export type ProjectWorktrees = typeof ProjectWorktrees.Type;
 
 /**
- * Remove worktrees of a deleted project. Only paths its threads recorded are
- * touched; `discardLocalChanges` names the ones the person agreed to lose
+ * Remove worktrees of a deleted project, or of a live project's deleted
+ * threads. Only paths its threads recorded are touched, and a path a live
+ * thread still records is kept; `discardLocalChanges` names the ones the person agreed to lose
  * uncommitted files in. Branches are always kept.
  */
 export const ProjectWorktreesRemoveInput = Schema.Struct({
   projectId: ProjectId,
   paths: Schema.Array(TrimmedNonEmptyString),
   discardLocalChanges: Schema.Array(TrimmedNonEmptyString),
+  threadsOnly: Schema.optional(Schema.Boolean),
 });
 export type ProjectWorktreesRemoveInput = typeof ProjectWorktreesRemoveInput.Type;
 
@@ -437,6 +446,30 @@ export const ProjectWorktreesRemoval = Schema.Struct({
   kept: Schema.Array(Schema.Struct({ path: Schema.String, reason: Schema.String })),
 });
 export type ProjectWorktreesRemoval = typeof ProjectWorktreesRemoval.Type;
+
+/**
+ * Delete every thread of a live project except its coordinator. Project memory,
+ * plan, routines, connections and files stay; the person types the title.
+ */
+export const ProjectThreadsDeleteInput = Schema.Struct({
+  projectId: ProjectId,
+  commandId: CommandId,
+  confirmationTitle: Schema.String,
+  /** List the threads it would delete without deleting; the title is not checked. */
+  dryRun: Schema.optionalKey(Schema.Boolean),
+});
+export type ProjectThreadsDeleteInput = typeof ProjectThreadsDeleteInput.Type;
+
+export const ProjectThreadsDeletion = Schema.Struct({
+  projectId: ProjectId,
+  deletedThreadIds: Schema.Array(ThreadId),
+});
+export type ProjectThreadsDeletion = typeof ProjectThreadsDeletion.Type;
+
+export class ProjectThreadsDeleteError extends Schema.TaggedError<ProjectThreadsDeleteError>()(
+  "ProjectThreadsDeleteError",
+  { message: Schema.String },
+) {}
 
 export class ProjectWorktreesError extends Schema.TaggedError<ProjectWorktreesError>()(
   "ProjectWorktreesError",

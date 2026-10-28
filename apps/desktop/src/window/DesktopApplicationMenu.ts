@@ -200,7 +200,7 @@ export const make = Effect.gen(function* () {
                 },
                 { type: "separator" as const },
               ]),
-          { label: "Hand Off This Machine...", click: handOffMachineClick },
+          { label: "Move Running Threads...", click: handOffMachineClick },
           { type: "separator" as const },
           { role: environment.platform === "darwin" ? "close" : "quit" },
         ],

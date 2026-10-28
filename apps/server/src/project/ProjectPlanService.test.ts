@@ -957,3 +957,32 @@ it("folds external event order deterministically and keeps a foreign active owne
   );
   assert.throws(() => parseSpecWeavePlan(externalSpec, first.replace("T-01", "T-missing")));
 });
+
+it("reads accept-skip as AC evidence without changing external task state", () => {
+  const claim = ledgerLine("claim", "owner", "2026-10-09T00:00:00Z");
+  const waiver =
+    JSON.stringify({
+      t: "AC-03",
+      e: "accept-skip",
+      by: "worker",
+      at: "2026-10-09T00:01:00Z",
+      check: "entitlement",
+      reason: "No license",
+      acceptedBy: "Anton",
+      acceptedAt: "2026-10-09T00:00:00Z",
+      authorization: "User accepted this skip",
+    }) + "\n";
+  assert.deepEqual(
+    parseSpecWeavePlan(externalSpec, claim + waiver),
+    parseSpecWeavePlan(externalSpec, claim),
+  );
+  // An incomplete waiver grants nothing and must never become a task event.
+  assert.deepEqual(
+    parseSpecWeavePlan(
+      externalSpec,
+      claim +
+        JSON.stringify({ t: "AC-03", e: "accept-skip", by: "worker", at: "2026-10-09T00:01:00Z" }),
+    ),
+    parseSpecWeavePlan(externalSpec, claim),
+  );
+});

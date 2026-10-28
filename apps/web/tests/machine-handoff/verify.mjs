@@ -140,8 +140,20 @@ try {
     await page.goto(`${origin}/?theme=${theme}`, { waitUntil: "networkidle" });
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
+    NodeAssert.ok(await dialog.getByRole("heading", { name: "Move EasyChamp" }).isVisible());
     NodeAssert.ok(
-      await dialog.getByRole("heading", { name: "Continue on another machine" }).isVisible(),
+      await dialog
+        .getByText(
+          "From MacBook Pro M4 to another machine. Nothing there is replaced without asking.",
+        )
+        .isVisible(),
+    );
+    NodeAssert.equal(
+      await dialog
+        .getByRole("group", { name: "What to do" })
+        .locator('button[aria-pressed="true"]')
+        .textContent(),
+      "Move and continue there",
     );
     const m1 = dialog.getByRole("radio", { name: /Mac mini M1/ });
     const m3 = dialog.getByRole("radio", { name: /MacBook Air M3/ });
@@ -156,30 +168,50 @@ try {
     NodeAssert.equal(await m1.isChecked(), true, "radio keyboard navigation skips offline target");
     await m3.check();
     NodeAssert.equal(await m3.isChecked(), true);
+    const folder = dialog.getByRole("textbox", { name: "Folder on MacBook Air M3" });
+    NodeAssert.equal(await folder.inputValue(), "/Users/you/Projects/sw-easychamp");
+    NodeAssert.equal(await folder.getAttribute("readonly"), "", "a saved folder is read-only");
+    NodeAssert.equal(
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).isEnabled(),
+      true,
+    );
     const layouts = { choose: await layout(page, dialog, "choose") };
     const screenshots = { choose: await screenshot(page, `${width}-${theme}-choose`) };
-    await dialog.getByRole("button", { name: "Review handoff", exact: true }).focus();
+    await dialog.getByRole("button", { name: "Move to MacBook Air M3", exact: true }).focus();
     await page.keyboard.press("Enter");
+    const review = dialog.locator('[data-slot="handoff-git-review"]');
+    await review.waitFor();
     const continuation = dialog.getByRole("button", {
-      name: "Continue on MacBook Air M3",
+      name: "Move to MacBook Air M3",
       exact: true,
     });
-    await continuation.waitFor();
     NodeAssert.equal(await continuation.isDisabled(), true, "publishing needs explicit consent");
-    NodeAssert.equal(await m1.isDisabled(), true, "review freezes the selected destination");
-    NodeAssert.equal(await m3.isDisabled(), true);
-    NodeAssert.ok(await dialog.getByText(/3 repositories, 18 retained messages/).isVisible());
-    const details = dialog.locator("details");
-    const summary = details.locator("summary");
-    NodeAssert.equal(await details.getAttribute("open"), null);
+    NodeAssert.equal(await m1.count(), 0, "review hides the machine choice");
+    NodeAssert.match(await review.innerText(), /MacBook Pro M4\s*MacBook Air M3/);
+    NodeAssert.ok(
+      await dialog
+        .getByText(
+          "3 repositories, 18 messages. Committed work only. Uncommitted files, sign-ins and running processes stay here.",
+        )
+        .isVisible(),
+    );
+    // Back discards the preview and brings the choices back.
+    await dialog.getByRole("button", { name: "Back", exact: true }).click();
+    await m3.waitFor();
+    NodeAssert.equal(await m3.isChecked(), true, "Back keeps the chosen machine");
+    await dialog.getByRole("button", { name: "Move to MacBook Air M3", exact: true }).click();
+    await review.waitFor();
+    const details = dialog.locator('[data-slot="handoff-commits"]');
+    const summary = details.getByRole("button", { name: "Details" });
+    NodeAssert.equal(await summary.getAttribute("aria-expanded"), "false");
     layouts.review = await layout(page, dialog, "review");
     screenshots.review = await screenshot(page, `${width}-${theme}-review`);
     await summary.focus();
     await summary.press("Enter");
-    NodeAssert.notEqual(
-      await details.getAttribute("open"),
-      null,
-      "checkpoint is keyboard expandable",
+    NodeAssert.equal(
+      await summary.getAttribute("aria-expanded"),
+      "true",
+      "commit list is keyboard expandable",
     );
     NodeAssert.deepEqual(await details.locator("code").allTextContents(), [
       "aaaaaaaaaaaa",
@@ -194,7 +226,9 @@ try {
     layouts.expanded = await layout(page, dialog, "expanded");
     await details.scrollIntoViewIfNeeded();
     screenshots.expanded = await screenshot(page, `${width}-${theme}-expanded`);
-    const consent = dialog.getByRole("checkbox", { name: /Publish these commits/ });
+    const consent = dialog.getByRole("checkbox", {
+      name: "Push these commits to their remotes and continue the project on MacBook Air M3.",
+    });
     await consent.focus();
     await consent.press("Space");
     NodeAssert.equal(await consent.isChecked(), true);
@@ -220,10 +254,18 @@ try {
     }
     await continuation.focus();
     await page.keyboard.press("Enter");
-    await dialog.getByRole("heading", { name: "Handoff ready" }).waitFor();
+    await dialog.getByRole("heading", { name: "EasyChamp is on MacBook Air M3" }).waitFor();
+    NodeAssert.ok(
+      await dialog.getByText("The coordinator now runs on MacBook Air M3.").isVisible(),
+    );
     NodeAssert.ok(await dialog.getByRole("status").isVisible());
+    NodeAssert.equal(
+      await dialog.locator('[data-slot="handoff-remember-machine"]').count(),
+      0,
+      "the machine is remembered without asking",
+    );
     const open = dialog.getByRole("button", {
-      name: "Open coordinator on MacBook Air M3",
+      name: "Open on MacBook Air M3",
       exact: true,
     });
     NodeAssert.equal(await open.isEnabled(), true);
@@ -243,7 +285,7 @@ try {
     await alert.scrollIntoViewIfNeeded();
     NodeAssert.equal(
       await alert.innerText(),
-      "The destination checkout has local changes. Commit or save them, then retry this handoff.",
+      "The destination checkout has local changes. Commit or save them, then try the move again.",
     );
     NodeAssert.equal(
       await alert.evaluate(
@@ -268,7 +310,7 @@ try {
       focusTrace,
       errors,
       checks:
-        "destination keyboard selection, disabled offline target, review target freeze, checkpoint disclosure, explicit publish consent, modal focus trap, success action, full error, viewport bounds, Escape close",
+        "Move title and helper, machine keyboard selection, disabled offline target, read-only saved folder, review on its own screen with Back, commit Details disclosure, explicit push consent, modal focus trap, Done title and Open action, full error, viewport bounds, Escape close",
     });
     await context.close();
     activePage = undefined;

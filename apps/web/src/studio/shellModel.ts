@@ -1,3 +1,4 @@
+import { threadDependencyWait } from "@specweave-studio/client-runtime/state/projectAttention";
 import type { ProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
 /**
  * View logic for the three-pane shell: the projects and chats sidebar, the
@@ -330,6 +331,8 @@ export type ChatGroup = {
 const STATUS_GROUP_ORDER: readonly ProjectThreadGroup[] = [
   "Waiting on you",
   "Working",
+  "Waiting",
+  "Unavailable",
   "Idle",
   "Resolved",
 ];
@@ -439,9 +442,12 @@ export function buildThreadPaneGroups(
     const root = attention?.roots.find(
       (r) => r.thread.environmentId === thread.environmentId && r.thread.id === thread.id,
     );
-    if (root && root.freshness !== "live") return "Unavailable";
     if (root?.actions.length) return "Waiting on you";
+    if (thread.settledOverride === "settled")
+      return projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
+    if (root && root.freshness !== "live") return "Unavailable";
     if (root?.working) return "Working";
+    if (root?.waits?.length) return "Waiting";
     const group = projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
     return group === "Idle" &&
       (runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0) > 0
@@ -459,7 +465,14 @@ export function buildThreadPaneGroups(
         ? compareByActivity
         : compareChats(sortBy);
   const groups: ThreadPaneGroup[] = [];
-  for (const group of ["Waiting on you", "Working", "Unavailable", "Idle", "Resolved"] as const) {
+  for (const group of [
+    "Waiting on you",
+    "Working",
+    "Waiting",
+    "Unavailable",
+    "Idle",
+    "Resolved",
+  ] as const) {
     const rows = threads
       .filter(
         (thread) =>
@@ -492,13 +505,23 @@ export function threadsSummary(
   runningSubagents?: ReadonlyMap<string, number>,
   attention?: ProjectAttention,
 ): string {
+  const dependencyCount =
+    attention?.roots.filter((root) => !root.actions.length && !root.working && root.waits?.length)
+      .length ?? 0;
+  const coordinatorCount =
+    attention?.roots.filter((root) => root.coordinator && root.actions.length > 0).length ?? 0;
+  const countedScope =
+    coordinatorCount > 0 && attention
+      ? ` (${coordinatorCount} coordinator${coordinatorCount === 1 ? "" : "s"}${attention.count > coordinatorCount ? `, ${attention.count - coordinatorCount} worker${attention.count - coordinatorCount === 1 ? "" : "s"}` : ""})`
+      : "";
   if (attention)
-    return `${attention.complete && attention.count === 0 ? "Nothing is waiting on you" : attention.label}${attention.working > 0 ? ` · ${attention.working} working` : ""}${attention.staleCount > 0 ? ` · ${attention.staleCount} last observed` : ""}.`;
+    return `${attention.complete && attention.count === 0 ? "Nothing is waiting on you" : attention.label}${countedScope}${attention.working > 0 ? ` · ${attention.working} working` : ""}${dependencyCount > 0 ? ` · ${dependencyCount} waiting on dependencies` : ""}${attention.staleCount > 0 ? ` · ${attention.staleCount} last observed` : ""}.`;
   const waiting = waitingCount(threads, unreachable);
   const working = threads.filter(
     (thread) =>
       projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false) === "Working" ||
-      (!unreachable?.has(thread.environmentId) &&
+      (thread.settledOverride !== "settled" &&
+        !unreachable?.has(thread.environmentId) &&
         (runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0) > 0),
   ).length;
   if (threads.length === 0)
@@ -542,10 +565,12 @@ export function threadAttentionWord(
   const root = attention?.roots.find(
     (r) => r.thread.environmentId === thread.environmentId && r.thread.id === thread.id,
   );
+  if (root && !root.working && !root.actions.length && root.waits?.length)
+    return root.waits.join(" · ");
   if (!root || root.actions.some((action) => action.threadId === thread.id)) return null;
   const [first, ...rest] = root.actions;
   if (!first) return null;
-  if (rest.length > 0) return `${root.actions.length} subagents waiting`;
+  if (rest.length > 0) return `${root.actions.length} subagents need your input`;
   return `${attentionActionWord(first.reason)} · ${first.title || "subagent"}`;
 }
 
@@ -578,8 +603,11 @@ export function threadStatusWord(
   // Its last known state is stale; "Blocked" or "Working" would be a guess.
   if (hostOffline) return "Host offline";
   const status = resolveSidebarThreadStatus(thread);
-  if (status === "approval") return "Approval requested";
-  if (status === "input") return "Answer needed";
+  if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
+    return "Approval requested";
+  if (status === "input" && thread.source?.pendingRuntimeRequest !== null) return "Answer needed";
+  const dependency = threadDependencyWait(thread);
+  if (dependency) return dependency;
   if (status === "limited") return "Usage limit reached";
   // Failures are not attention (see projectAttention): say what happened, not
   // ask the reader to act, so the word agrees with the Idle group it sits in.

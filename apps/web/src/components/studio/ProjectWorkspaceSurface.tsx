@@ -1,3 +1,6 @@
+import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAttention";
+import * as DateTime from "effect/DateTime";
+import { environmentShell } from "../../state/shell";
 import { useProjectAttention } from "../../studio/useProjectAttention";
 import { ThreadArtifactsMenu } from "../chat/ThreadArtifacts";
 import { CoordinatorComposerControls } from "./CoordinatorAccessPicker";
@@ -24,7 +27,7 @@ import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { LaptopIcon, PanelRightIcon, SettingsIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
@@ -56,6 +59,7 @@ import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import {
   useAllEnvironmentShellsBootstrapped,
   useThreadProjection,
+  useThreadStatus,
   useThreadShellsForProjectRefs,
 } from "../../state/entities";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
@@ -468,6 +472,8 @@ export function ProjectWorkspaceSurface({
     [project.environmentId, coordinatorId],
   );
   const coordinatorThread = useThreadProjection(coordinatorRef);
+  const coordinatorDetailStatus = useThreadStatus(coordinatorRef);
+  const refreshAttentionShell = useAtomRefresh(environmentShell.stateAtom(project.environmentId));
   // What the coordinator is doing this second; it answers a send before any reply is written.
   const coordinatorWork = coordinatorThread
     ? coordinatorProgress(coordinatorThread.projection)
@@ -745,9 +751,9 @@ export function ProjectWorkspaceSurface({
     }
     setError(null);
     setNotice("Ask the coordinator for a new thread. It starts the thread and links it here.");
-    requestAnimationFrame(() =>
-      document.querySelector<HTMLTextAreaElement>("#project-prompt")?.focus(),
-    );
+    requestAnimationFrame(() => {
+      focusCoordinatorPrompt();
+    });
   }, [phone, setOverviewOpen, setSelected]);
   // The header's Designs button and `?pane=designs` land on the panel's Designs tab.
   const showPaneTab = useCallback(
@@ -1142,7 +1148,46 @@ export function ProjectWorkspaceSurface({
   );
   const coordinatorTone = coordinator ? threadTone(coordinator) : null;
   // Native review controls stay with the coordinator, in this project's main pane.
-  const attention = coordinatorAttention(coordinator ?? null);
+  const detailIsCurrent =
+    coordinatorDetailStatus === "live" &&
+    coordinatorThread !== null &&
+    DateTime.isDateTime(coordinatorThread.projection.updatedAt) &&
+    DateTime.toEpochMillis(coordinatorThread.projection.updatedAt) >=
+      Date.parse(coordinator?.updatedAt ?? "");
+  const obsoleteQuestionAttention =
+    detailIsCurrent &&
+    coordinator?.hasPendingUserInput === true &&
+    coordinatorQuestion === null &&
+    !coordinatorThread!.projection.runtimeRequests.some(
+      (request) =>
+        request.kind === "user_input" &&
+        request.status === "pending" &&
+        !answeredRuntimeRequestCopy(request, coordinatorThread!.projection.runtimeRequests),
+    );
+  // The shell owns every project badge. Refresh that shared read model when
+  // current detail disproves an old flag; do not ask the person to clear it.
+  const refreshedAttention = useRef<string | null>(null);
+  useEffect(() => {
+    if (!obsoleteQuestionAttention) return;
+    const key = `${coordinatorId}:${coordinator?.updatedAt}`;
+    if (refreshedAttention.current === key) return;
+    refreshedAttention.current = key;
+    refreshAttentionShell();
+  }, [obsoleteQuestionAttention, coordinatorId, coordinator?.updatedAt, refreshAttentionShell]);
+  const coordinatorAsk = coordinatorAttention(
+    coordinator
+      ? {
+          ...coordinator,
+          hasPendingUserInput: obsoleteQuestionAttention ? false : coordinator.hasPendingUserInput,
+        }
+      : null,
+  );
+  const questionText =
+    coordinatorQuestion?.active.questions[coordinatorQuestion.questionIndex]?.question;
+  const attention =
+    coordinatorAsk?.reason === "input" && questionText
+      ? { ...coordinatorAsk, message: questionText, action: "View question" }
+      : coordinatorAsk;
   const chipOpens =
     attention?.reason === "input" && answersInChat
       ? "answer"

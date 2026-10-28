@@ -22,9 +22,9 @@ export function runHandoffSleep(environmentId: EnvironmentId) {
 }
 
 /**
- * Desktop menu actions for handoff mode: "Hand Off This Machine..." opens the
- * dialog, and the Mac's 'suspend' asks the local server to hand off running
- * threads to the sleep target.
+ * Desktop menu actions: "Move Running Threads..." opens the dialog, and the
+ * Mac's 'suspend' asks the local server to move running threads to the sleep
+ * target, with no dialog.
  */
 export function HandoffDesktopBridge() {
   const environmentId = usePrimaryEnvironmentId();

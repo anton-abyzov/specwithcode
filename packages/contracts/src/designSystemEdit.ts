@@ -82,8 +82,13 @@ export const DesignTokenEdit = Schema.Struct({
 });
 export type DesignTokenEdit = typeof DesignTokenEdit.Type;
 
-const { provenance: _componentProvenance, ...componentFields } = DesignSystemComponent.fields;
-/** A component as a person writes it; the server stamps provenance. */
+const {
+  provenance: _componentProvenance,
+  previewFile: _componentPreviewFile,
+  previewNote: _componentPreviewNote,
+  ...componentFields
+} = DesignSystemComponent.fields;
+/** A component as a person writes it; the server stamps provenance and builds previews. */
 export const DesignSystemComponentEdit = Schema.Struct(componentFields);
 export type DesignSystemComponentEdit = typeof DesignSystemComponentEdit.Type;
 

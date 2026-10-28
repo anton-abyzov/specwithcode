@@ -12008,6 +12008,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               "This thread can't be resolved after this turn: Stop, newer or pending work, a user override, or automatic resolution policy prevents it.",
           });
         }
+        const previousIntent = projection.thread.deferredResolution;
+        const sameRunIntent = previousIntent?.runId === run.id ? previousIntent : undefined;
+        const userRequested =
+          command.userRequested === true || sameRunIntent?.userRequested === true;
+        const note = command.note ?? sameRunIntent?.note;
         yield* emit(
           events,
           command,
@@ -12019,7 +12024,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...projection.thread,
             deferredResolution: {
               runId: run.id,
-              ...(command.note === undefined ? {} : { note: command.note }),
+              ...(userRequested ? { userRequested: true as const } : {}),
+              ...(note === undefined ? {} : { note }),
             },
             updatedAt: now,
           },
@@ -12103,10 +12109,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       }
       case "thread.deferred-resolution.finish": {
-        if (!deferredResolutionEnabled) break;
         const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
         const intent = projection.thread.deferredResolution;
         if (intent == null || intent.revoked === true || intent.runId !== command.runId) break;
+        if (!deferredResolutionEnabled && intent.userRequested !== true) break;
         const run = projection.runs.find((candidate) => candidate.id === intent.runId);
         if (
           run !== undefined &&
@@ -12119,7 +12125,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
         const acceptanceNow = yield* DateTime.now;
         if (
-          hasCurrentLifecycleAcceptance(projection, DateTime.toEpochMillis(acceptanceNow)) &&
+          (intent.userRequested === true ||
+            hasCurrentLifecycleAcceptance(projection, DateTime.toEpochMillis(acceptanceNow))) &&
           run?.status === "completed" &&
           !deferredResolutionBlocked(projection, intent.runId) &&
           !(yield* stopReachedRun(command, command.threadId, intent.runId))
@@ -12669,28 +12676,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause,
           }),
   });
-  const refuseWhileUpdateHeld = (command: OrchestrationV2ServerCommand) =>
-    ServiceUpdateHold.isHeldCommand(command)
-      ? updateHold.refuse(command.type).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause,
-              }),
-          ),
-        )
-      : Effect.void;
-  const dispatchWithoutPermissionGate = (command: OrchestrationV2ServerCommand) =>
-    refuseWhileUpdateHeld(command).pipe(
-      Effect.andThen(
-        admitCreation(
-          command,
-          threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command)),
-        ),
-      ),
+  const dispatchWithoutPermissionGate = (command: OrchestrationV2ServerCommand) => {
+    const dispatch = admitCreation(
+      command,
+      threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command)),
     );
+    // Count the command through persistence, including admission and thread-lock waits.
+    // A conditional update closes this gate and awaits every previously admitted command.
+    return ServiceUpdateHold.isHeldCommand(command)
+      ? updateHold.admit(command.type, dispatch).pipe(
+          Effect.catchTags({
+            ServiceUpdateInProgressError: (cause) =>
+              Effect.fail(
+                new OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause,
+                }),
+              ),
+          }),
+        )
+      : dispatch;
+  };
 
   // Lock before the per-thread lock. Permission fanout dispatches metadata only,
   // so it never re-enters this creation gate while holding it.
@@ -12705,10 +12712,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const finishDeferredResolution = (threadId: ThreadId) =>
     Effect.gen(function* () {
-      if (!deferredResolutionEnabled) return;
       const thread = yield* projectionStore.getThread(threadId);
       const intent = thread.deferredResolution;
       if (intent == null || intent.revoked === true) return;
+      if (!deferredResolutionEnabled && intent.userRequested !== true) return;
       const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
       const run = runs.find((candidate) => candidate.id === intent.runId);
       if (

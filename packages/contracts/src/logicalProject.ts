@@ -135,3 +135,32 @@ export function isProjectCoordinatorThreadId(
     threadId === project.workspaceSettings?.coordinatorThreadId
   );
 }
+
+interface CoordinatorLineage {
+  readonly parentThreadId: string | null;
+  readonly relationshipToParent: string | null;
+}
+
+/**
+ * Whether deleting a project's threads keeps this one: the coordinator, and the
+ * subagent threads that run inside it (directly or through other subagents).
+ * Its first-class workers are not kept. `lineageOf` finds a parent's lineage.
+ */
+export function staysWithProjectCoordinator(
+  threadId: string,
+  lineage: CoordinatorLineage | null | undefined,
+  project: Parameters<typeof isProjectCoordinatorThreadId>[1],
+  lineageOf: (threadId: string) => CoordinatorLineage | null | undefined,
+): boolean {
+  const seen = new Set<string>();
+  let id: string | null = threadId;
+  let current = lineage;
+  while (id !== null && !seen.has(id)) {
+    if (isProjectCoordinatorThreadId(id, project)) return true;
+    seen.add(id);
+    if (current?.relationshipToParent !== "subagent") return false;
+    id = current.parentThreadId;
+    current = id === null ? null : lineageOf(id);
+  }
+  return false;
+}

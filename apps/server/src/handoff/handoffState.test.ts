@@ -239,7 +239,7 @@ describe("effectiveHandoffMode and badge", () => {
     expect(deriveHandoffBadge({ record, effectiveMode: "off", paused: false })).toBe("continued");
   });
 
-  it("reads ready only once the checkpoint reached origin or every replica", () => {
+  it("reads ready only once the checkpoint reached every replica, never from origin alone", () => {
     const base = leased();
     expect(deriveHandoffBadge({ record: base, effectiveMode: "on", paused: false })).toBeNull();
     const checkpoint = {
@@ -269,9 +269,17 @@ describe("effectiveHandoffMode and badge", () => {
       },
     };
     const withCheckpoint = { ...base, checkpoint };
-    expect(deriveHandoffBadge({ record: withCheckpoint, effectiveMode: "on", paused: false })).toBe(
-      "behind",
-    );
+    // No other machine holds a copy: nothing can continue it, origin backup or not.
+    expect(
+      deriveHandoffBadge({ record: withCheckpoint, effectiveMode: "on", paused: false }),
+    ).toBeNull();
+    expect(
+      deriveHandoffBadge({
+        record: { ...withCheckpoint, checkpoint: { ...checkpoint, pushedToOrigin: true } },
+        effectiveMode: "on",
+        paused: false,
+      }),
+    ).toBeNull();
     const replica = {
       environmentId: minis,
       machineLabel: "Minis",

@@ -41,6 +41,9 @@ import { STUDIO_CLI_NAMES } from "./cliName.ts";
 import { parseShellLauncher, readRegularFile, replaceRegularFile } from "./shellLauncher.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
 import * as CliService from "./service.ts";
+import { prepareRunningService } from "./servicePrepareUpdate.ts";
+import type { ServerPrepareServiceUpdateResult } from "@specweave-studio/contracts";
+import type { LiveServiceConfig } from "./liveService.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
@@ -363,6 +366,12 @@ const updateFlags = {
     ),
     Flag.withDefault(false),
   ),
+  ifIdle: Flag.Boolean("if-idle").pipe(
+    Flag.withDescription(
+      "With --yes, restart the background service only when nothing runs in it. The running service holds itself, so no work starts before the restart; a busy service, or one too old to hold itself, keeps running and the command fails.",
+    ),
+    Flag.withDefault(false),
+  ),
 };
 
 const versionArgument = Argument.String("version").pipe(
@@ -397,6 +406,8 @@ export const updateCommand = Command.make("update", {
         requestedVersion: Option.getOrUndefined(flags.version),
         allowDowngrade: flags.allowDowngrade,
         assumeYes: flags.yes,
+        ifIdle: flags.ifIdle,
+        liveService: config,
       }).pipe(
         Effect.provide(
           Layer.mergeAll(CliService.layer(config), ProcessRunner.layer, FetchHttpClient.layer),
@@ -460,6 +471,41 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
   return false;
 });
 
+/**
+ * Whether `update --if-idle` restarts the service, from the running service's answer to an
+ * if-idle hold: none when it could not be asked, `Option.none()` inside when no service runs from
+ * this home (nothing to interrupt). Only a hold the service took for this caller allows it.
+ */
+export const ifIdleRestart = (
+  answer: Option.Option<Option.Option<ServerPrepareServiceUpdateResult>>,
+): { readonly held: boolean; readonly holdToken?: string; readonly notRestarted?: string } => {
+  if (Option.isNone(answer)) {
+    return {
+      held: false,
+      notRestarted: "the running service could not be asked whether anything runs",
+    };
+  }
+  if (Option.isNone(answer.value)) return { held: false };
+  const result = answer.value.value;
+  if (
+    result.idle === true &&
+    result.openTerminals === 0 &&
+    result.held === true &&
+    typeof result.holdToken === "string" &&
+    result.holdToken.length > 0
+  )
+    return { held: true, holdToken: result.holdToken };
+  return {
+    held: false,
+    notRestarted:
+      (result.openTerminals ?? 0) > 0
+        ? `it still has ${result.openTerminals} open terminals`
+        : result.idle
+          ? "the running service could not hold itself for the restart (it predates update --if-idle)"
+          : `it is still running ${result.blockers.map((blocker) => `${blocker.count} ${blocker.kind}`).join(", ")}`,
+  };
+};
+
 const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
@@ -468,6 +514,8 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly requestedVersion: string | undefined;
   readonly allowDowngrade: boolean;
   readonly assumeYes: boolean;
+  readonly ifIdle?: boolean;
+  readonly liveService?: LiveServiceConfig;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -685,7 +733,57 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // is rewritten either way so a later `specweave-studio service restart` lands on the new
   // version; only the restart itself waits for the user's answer.
   let serviceUpdated = false;
-  if (serviceInstalled && !serviceCurrent) {
+  // --if-idle: the running service holds itself only when nothing runs, right before the restart,
+  // so nothing starts in between (ServiceUpdatePreparation). Without that hold it is not restarted.
+  let notRestarted: string | undefined;
+  let holdToken: string | undefined;
+  if (serviceInstalled && !serviceCurrent && restartService && input.ifIdle === true) {
+    const answer =
+      input.liveService === undefined
+        ? Option.none()
+        : yield* prepareRunningService(input.liveService, {
+            stopWork: false,
+            hold: true,
+            ifIdle: true,
+            reason: "install",
+          }).pipe(Effect.option);
+    const decision = ifIdleRestart(answer);
+    holdToken = decision.holdToken;
+    notRestarted = decision.notRestarted;
+    if (notRestarted !== undefined) restartService = false;
+  }
+  const releaseHold =
+    holdToken !== undefined && input.liveService !== undefined
+      ? prepareRunningService(input.liveService, {
+          stopWork: false,
+          releaseHold: true,
+          holdToken,
+        }).pipe(Effect.ignore)
+      : Effect.void;
+  const beforeStop =
+    holdToken !== undefined && input.liveService !== undefined
+      ? Effect.gen(function* () {
+          const confirmation = yield* prepareRunningService(input.liveService!, {
+            stopWork: false,
+            hold: true,
+            ifIdle: true,
+            holdToken,
+            reason: "install",
+          }).pipe(Effect.option);
+          const decision = ifIdleRestart(confirmation);
+          if (!decision.held || decision.holdToken !== holdToken) {
+            return yield* new BootService.BootServiceRestartRefusedError({
+              reason:
+                decision.notRestarted ?? "the conditional restart lease expired or changed owners",
+            });
+          }
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        )
+      : undefined;
+  // A refused conditional restart must not repoint activeVersion for a later unguarded start.
+  if (serviceInstalled && !serviceCurrent && notRestarted === undefined) {
     yield* Console.log(
       restartService
         ? "Restarting the background service..."
@@ -693,7 +791,11 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
     yield* BootService.BootService.pipe(
       Effect.flatMap((target) =>
-        target.install({ allowDowngrade: input.allowDowngrade, start: restartService }),
+        target.install({
+          allowDowngrade: input.allowDowngrade,
+          start: restartService,
+          ...(beforeStop === undefined ? {} : { beforeStop }),
+        }),
       ),
       Effect.provide(
         BootService.layer({
@@ -708,8 +810,14 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
             reason: `specweave-studio@${targetVersion} is installed but the background service could not be ${restartService ? "updated" : "pointed at it"}: ${error.message}`,
           }),
       ),
+      Effect.onError(() => releaseHold),
     );
     serviceUpdated = restartService;
+  }
+  if (notRestarted !== undefined) {
+    return yield* new CliUpdateError({
+      reason: `specweave-studio@${targetVersion} is installed, but the background service was not restarted: ${notRestarted}. It keeps running ${serviceVersion ?? "its current version"}.`,
+    });
   }
 
   progress.success(`Installed SpecWithCode ${targetVersion}`);

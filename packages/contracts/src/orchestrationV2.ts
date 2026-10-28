@@ -457,6 +457,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
     Schema.NullOr(
       Schema.Struct({
         runId: RunId,
+        /** Explicit user-requested closure, not affirmative delivery acceptance. */
+        userRequested: Schema.optional(Schema.Literal(true)),
         /** A durable tombstone: late tools cannot re-arm this run. */
         revoked: Schema.optional(Schema.Literal(true)),
         note: Schema.optional(OrchestrationV2ThreadSettledNote),
@@ -2246,6 +2248,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    * while nobody has written to the thread since. Null when it names none.
    */
   reportedBlocker: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Explicit dependency named by the latest report; never user attention. */
+  reportedWait: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Latest parent receipt for a provider-native child, even when parent detail is closed. */
+  nativeSubagentStatus: Schema.optional(Schema.NullOr(OrchestrationV2Subagent.fields.status)),
+  nativeSubagentCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   // Normalized post-settlement background work for sidebar Waiting pills.
   // Empty when the latest root run is still active or no pending work remains.
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
@@ -2815,6 +2822,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   ),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
+  nativeSubagentCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
@@ -3501,6 +3509,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    userRequested: Schema.optional(Schema.Literal(true)),
     note: Schema.optional(OrchestrationV2ThreadSettledNote),
   }),
   Schema.Struct({

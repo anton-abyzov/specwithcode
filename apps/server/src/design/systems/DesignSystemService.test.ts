@@ -26,6 +26,7 @@ import {
   makeDesignSystemService,
   userCaller,
 } from "./DesignSystemService.ts";
+import type { PreviewBuilder } from "./previews/buildPreviews.ts";
 import {
   STATUS_COPY,
   UIKIT,
@@ -102,6 +103,61 @@ const memoryFiles = () => {
   return { service, systems, writes, storedFiles };
 };
 
+/** Previews without a child process: every component renders to `previews/<name>.html`. */
+const fakePreviews = (files: ReturnType<typeof memoryFiles>) => {
+  const builds: string[] = [];
+  const stores: string[] = [];
+  // Set to make the next build fail as a package without dependencies would.
+  const next = { fail: false };
+  const builder: PreviewBuilder = {
+    build: async (realRoot, system) => {
+      builds.push(`${realRoot}|${system.id}`);
+      if (next.fail) {
+        next.fail = false;
+        return {
+          files: [],
+          components: new Map(
+            system.components.map((component) => [
+              component.id,
+              { previewNote: "Previews did not build for its package. Rebuild to try again." },
+            ]),
+          ),
+          previews: null,
+          problems: ["kit: install its dependencies to build previews."],
+          complete: false,
+        };
+      }
+      return {
+        files: system.components.map((component) => ({
+          path: `previews/${component.name}.html`,
+          bytes: new TextEncoder().encode(
+            `<section data-swc-story="Default">${component.name}</section>`,
+          ),
+        })),
+        components: new Map(
+          system.components.map((component) => [
+            component.id,
+            { previewFile: `previews/${component.name}.html` },
+          ]),
+        ),
+        previews: {
+          stylesheetFile: "previews/preview.css",
+          builtAt: "2026-10-20T12:00:00.000Z",
+          rendered: system.components.length,
+          total: system.components.length,
+        },
+        problems: [],
+        complete: true,
+      };
+    },
+    store: async (root, id, built) => {
+      stores.push(id);
+      for (const file of built) await files.service.putStoredFile(root, id, file.path, file.bytes);
+    },
+  };
+  return { builder, builds, stores, next };
+};
+
 async function setup(options: { readonly permissiveRoots?: boolean } = {}) {
   const checkout = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "design-service-"));
   temps.push(checkout);
@@ -112,6 +168,7 @@ async function setup(options: { readonly permissiveRoots?: boolean } = {}) {
   await write("design/weave/tokens.json", fixture("weave/tokens.json.fixture"));
   await write("design/weave/weave.css", fixture("weave/weave.css.fixture"));
   const files = memoryFiles();
+  const previews = fakePreviews(files);
   const roots = withWrite({
     resolve: (caller, owner) => {
       if (
@@ -148,6 +205,7 @@ async function setup(options: { readonly permissiveRoots?: boolean } = {}) {
     makeDesignSystemService({
       figmaEndpoint: "http://127.0.0.1:9/mcp",
       now: () => "2026-10-20T12:00:00.000Z",
+      previews: previews.builder,
     }),
   ).pipe(
     Layer.provide(Layer.succeed(DesignSystemRoots, roots)),
@@ -174,7 +232,7 @@ async function setup(options: { readonly permissiveRoots?: boolean } = {}) {
         }),
       ),
     );
-  return { checkout, files, run, runEither, write };
+  return { checkout, files, previews, run, runEither, write };
 }
 
 const APP_THEME = `export const BASE_COLORS = { canvas: "#ffffff", text: "#111111", accent: "#5b6cff", border: "#dddddd", muted: "#777777" };
@@ -218,6 +276,7 @@ describe("DesignSystemService", () => {
     );
     expect(kept.system.tokens.length).toBeGreaterThan(0);
     expect(kept.system.components).toEqual([]);
+    expect(kept.system.previews).toBeUndefined();
     expect([...files.storedFiles.values()].flatMap((stored) => [...stored.keys()])).toEqual([]);
 
     const rescan = await run((service) =>
@@ -250,6 +309,13 @@ describe("DesignSystemService", () => {
       }),
     );
     expect(confirmed.system.components).toHaveLength(3);
+    // Confirming builds previews from the kit's code and records where each one is.
+    expect(confirmed.system.components.map((component) => component.previewFile)).toEqual([
+      "previews/Button.html",
+      "previews/Card.html",
+      "previews/Dialog.html",
+    ]);
+    expect(confirmed.system.previews).toMatchObject({ rendered: 3, total: 3 });
     expect(confirmed.system.sources.map((source) => source.location)).toEqual([
       UIKIT_BARREL,
       UIKIT_TOKENS,
@@ -257,7 +323,12 @@ describe("DesignSystemService", () => {
     const stored = files.storedFiles.get(
       `${NodePath.join(checkout, ".specweave/design")}|${kept.system.id}`,
     );
-    expect([...(stored?.keys() ?? [])]).toEqual(["README.md"]);
+    expect([...(stored?.keys() ?? [])]).toEqual([
+      "README.md",
+      "previews/Button.html",
+      "previews/Card.html",
+      "previews/Dialog.html",
+    ]);
     expect(new TextDecoder().decode(stored!.get("README.md"))).toBe("# UI kit");
 
     // With components and stored files, a rescan only compares hashes again.
@@ -265,6 +336,81 @@ describe("DesignSystemService", () => {
       service.rescan(userCaller, { owner: project, systemId: kept.system.id }),
     );
     expect(again.status).toBe("unchanged");
+  });
+
+  it("rebuilds previews for the user only, and says why when a system has nothing to render", async () => {
+    const { checkout, previews, run, runEither } = await setup();
+    const umbrella = await layOutUmbrella();
+    temps.push(umbrella);
+    await NodeFSP.cp(umbrella, checkout, { recursive: true });
+    const proposal = await run((service) =>
+      service.propose(userCaller, {
+        owner: project,
+        from: { kind: "code", paths: [UIKIT_TOKENS, UIKIT_BARREL], name: "Kit" },
+      }),
+    );
+    const confirmed = await run((service) =>
+      service.confirm(userCaller, {
+        proposalId: proposal.id,
+        excludeTokens: [],
+        excludeComponents: [],
+      }),
+    );
+    expect(previews.builds).toHaveLength(1);
+
+    const refused = await runEither((service) =>
+      service.rebuildPreviews(agent(project), { owner: project, systemId: confirmed.system.id }),
+    );
+    expect(refused.code).toBe("forbidden");
+    expect(previews.builds).toHaveLength(1);
+
+    const rebuilt = await run((service) =>
+      service.rebuildPreviews(userCaller, { owner: project, systemId: confirmed.system.id }),
+    );
+    expect(previews.builds).toHaveLength(2);
+    expect(rebuilt.problems).toEqual([]);
+    expect(rebuilt.system.revision).toBe(confirmed.system.revision + 1);
+    expect(confirmed.system.revision).toBe(0);
+    expect(
+      rebuilt.system.components.every((component) => component.previewFile !== undefined),
+    ).toBe(true);
+
+    // A failed rebuild keeps the previews that built before: nothing is deleted or forgotten.
+    const storesBefore = previews.stores.length;
+    previews.next.fail = true;
+    const failed = await run((service) =>
+      service.rebuildPreviews(userCaller, { owner: project, systemId: confirmed.system.id }),
+    );
+    expect(failed.problems).toEqual([
+      "kit: install its dependencies to build previews.",
+      "Kept the previous previews.",
+    ]);
+    expect(failed.system.previews).toEqual(rebuilt.system.previews);
+    expect(failed.system.components.map((component) => component.previewFile)).toEqual(
+      rebuilt.system.components.map((component) => component.previewFile),
+    );
+    expect(previews.stores).toHaveLength(storesBefore);
+
+    const tokensOnly = await run((service) =>
+      service.propose(userCaller, {
+        owner: project,
+        from: { kind: "code", paths: [UIKIT_TOKENS], name: "Tokens" },
+      }),
+    );
+    const plain = await run((service) =>
+      service.confirm(userCaller, {
+        proposalId: tokensOnly.id,
+        excludeTokens: [],
+        excludeComponents: [],
+      }),
+    );
+    const nothing = await run((service) =>
+      service.rebuildPreviews(userCaller, { owner: project, systemId: plain.system.id }),
+    );
+    expect(nothing.problems).toEqual([
+      "This system has no components from project code to preview.",
+    ]);
+    expect(previews.builds).toHaveLength(3);
   });
 
   it("offers brand files on a rescan while the system stores none (D-03)", async () => {

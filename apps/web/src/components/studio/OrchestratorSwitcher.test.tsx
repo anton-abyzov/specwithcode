@@ -103,7 +103,7 @@ it("opens thread migration as its own action, after the menu closes", async () =
     menuOpenAtMigrate.push(document.querySelector('[role="menu"]') !== null),
   );
   await renderSwitcher({ ...calls, onMigrate });
-  await act(async () => item("menuitem", "Migrate M4's threads")!.click());
+  await act(async () => item("menuitem", "Move M4's running threads…")!.click());
   await vi.waitFor(() => expect(onMigrate).toHaveBeenCalledTimes(1));
   expect(menuOpenAtMigrate).toEqual([false]);
   expect(calls.onView).not.toHaveBeenCalled();
@@ -113,9 +113,9 @@ it("opens thread migration as its own action, after the menu closes", async () =
 
 it("leaves thread migration off while the viewed machine is unreachable", async () => {
   await renderSwitcher(handlers());
-  const migrate = item("menuitem", "Migrate threads");
+  const migrate = item("menuitem", "Move M4's running threads…");
   expect(migrate?.getAttribute("aria-disabled")).toBe("true");
-  expect(migrate?.textContent).toContain("M4 unreachable");
+  expect(migrate?.textContent).toBe("Move M4's running threads… (M4 offline)");
 });
 
 it("lists a linked machine never synced here as Unknown", async () => {

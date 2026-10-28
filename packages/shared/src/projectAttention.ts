@@ -28,6 +28,7 @@ export interface AttentionObservation extends AttentionIdentity {
 export interface ProjectAction extends AttentionIdentity {
   readonly key: string;
   readonly reason: AttentionReason;
+  readonly requestId?: string;
   readonly generation: string;
   readonly revision: string;
   readonly title?: string | undefined;
@@ -52,6 +53,7 @@ export function classifyProjectActions(observation: AttentionObservation): Proje
       threadId: observation.threadId,
       key: JSON.stringify([attentionIdentity(observation), observation.generation, request.id]),
       reason: request.reason,
+      requestId: request.id,
       generation: observation.generation,
       revision: observation.revision,
       title: observation.title,
@@ -66,5 +68,32 @@ export function projectActionIsCurrent(
   return (
     observation.freshness === "live" &&
     classifyProjectActions(observation).some((current) => current.key === action.key)
+  );
+}
+
+/** Forced updates may restore a card repeatedly; all copies keep one identity. */
+export const runtimeRequestFamilyId = (id: string): string =>
+  id.replace(/^(?:update-reopen(?:-approval)?:)+/, "");
+
+export function runtimeRequestWasAnswered(request: {
+  readonly status: string;
+  readonly decision?: string | undefined;
+  readonly answers?: Readonly<Record<string, unknown>> | undefined;
+}): boolean {
+  return (
+    request.status === "resolved" &&
+    ((request.decision !== undefined && request.decision !== "cancel") ||
+      (request.answers !== undefined && Object.keys(request.answers).length > 0))
+  );
+}
+
+export function answeredRuntimeRequestCopy(
+  request: { readonly id: string },
+  requests: readonly ({ readonly id: string } & Parameters<typeof runtimeRequestWasAnswered>[0])[],
+): boolean {
+  const family = runtimeRequestFamilyId(request.id);
+  return requests.some(
+    (candidate) =>
+      runtimeRequestFamilyId(candidate.id) === family && runtimeRequestWasAnswered(candidate),
   );
 }

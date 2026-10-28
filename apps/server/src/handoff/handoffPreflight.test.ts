@@ -235,6 +235,6 @@ describe("turnRefusal", () => {
       },
       { pausedSince: "2026-10-20T14:05:00.000Z" },
     );
-    expect(turnRefusal(document, threadId, m4)).toContain("Continue here anyway");
+    expect(turnRefusal(document, threadId, m4)).toContain("Resume this Mac");
   });
 });

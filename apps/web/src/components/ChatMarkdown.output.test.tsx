@@ -83,6 +83,8 @@ import ChatMarkdown from "./ChatMarkdown";
 import { markdownTableCopyText } from "./MarkdownTable";
 import { serializeRenderedMarkdownFragment } from "../markdown-clipboard";
 import { formatDisplayDate } from "../lib/displayDates";
+import { findTextRanges } from "./chat/reportOutline";
+import { collectFindRanges } from "./find/conversationFind.logic";
 
 function renderOutput(text: string, formatDates = true) {
   return new DOMParser().parseFromString(
@@ -119,6 +121,36 @@ describe("human-readable structured chat output", () => {
     expect(document.querySelector('[role="region"]')?.getAttribute("data-slot")).toBe(
       "scroll-area-viewport",
     );
+  });
+
+  it("boxes each word of a table's inline code, still finds and copies it as written", () => {
+    const command = "node node_modules/vite-plus/bin/vp test run";
+    const document = renderOutput(
+      `\`sw-grill-me\` outside\n\n| Check | Command |\n| --- | --- |\n| Tests | \`${command}\` |`,
+    );
+    const words = [...document.querySelectorAll("td code .chat-markdown-code-word")];
+    expect(words.map((word) => word.textContent)).toEqual([
+      "node",
+      "node_modules/vite-plus/bin/vp",
+      "test",
+      "run",
+    ]);
+    expect(document.querySelector("td code")?.textContent).toBe(command);
+    expect(document.querySelector("p code")?.innerHTML).toBe("sw-grill-me");
+    // The cell's box is inline markup, so a selection across cells copies as before.
+    const row = document.querySelector<HTMLTableRowElement>("tbody tr")!;
+    expect([...row.cells].map((cell) => cell.firstElementChild?.tagName)).toEqual(["SPAN", "SPAN"]);
+    const selected = document.createElement("div");
+    selected.append(...[...row.cells].map((cell) => cell.cloneNode(true)));
+    expect(serializeRenderedMarkdownFragment(selected)).toBe(`Tests\`${command}\``);
+    const table = document.querySelector("table")!;
+    expect(markdownTableCopyText(table, "markdown")).toContain(`| Tests | \`${command}\` |`);
+    expect(markdownTableCopyText(table, "csv")).toContain(`Tests,${command}`);
+    // A phrase across the boxes is one match, in the report reader and in chat.
+    expect(findTextRanges(document.body, "vp test").map((range) => range.toString())).toEqual([
+      "vp test",
+    ]);
+    expect(collectFindRanges(document.body, "bin/vp test run").ranges).toHaveLength(1);
   });
 
   it("preserves an authored row header scope", () => {

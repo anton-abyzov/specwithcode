@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import { logicalProjectTitle, type EnvironmentId } from "@specweave-studio/contracts";
+import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { unwatchCopy, useCopyWatches, watchCopy } from "../../studio/folderCopyActivity";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
@@ -35,6 +36,14 @@ function pendingPointers(): ReadonlyArray<{ environmentId: string; projectId: st
 export function FolderCopyWatchers() {
   const watches = useCopyWatches();
   const { environments } = useEnvironments();
+  const projects = useProjects();
+  // A restored watch has no dialog's name for its project; the project list has it.
+  const projectName = (environmentId: string, projectId: string) => {
+    const found = projects.find(
+      (item) => item.environmentId === environmentId && item.id === projectId,
+    );
+    return found ? logicalProjectTitle(found) : undefined;
+  };
   const label = (environmentId: string) =>
     environments.find((item) => item.environmentId === environmentId)?.label ?? "the other machine";
 
@@ -57,6 +66,7 @@ export function FolderCopyWatchers() {
           projectId={watch.projectId}
           // A restored watch has no dialog's labels; the machines list names the destination.
           machineLabel={watch.restored ? label : watch.machineLabel}
+          projectName={watch.projectName ?? projectName(watch.environmentId, watch.projectId)}
           sourceLabel={
             watch.restored
               ? label(watch.environmentId) === "the other machine"

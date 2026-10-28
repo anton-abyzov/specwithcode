@@ -29,7 +29,7 @@ All automated browser tests, E2E, screenshots, recordings and scrapers explicitl
 
 ## Focused checks
 
-- Read the canonical SpecWeave increment, claim only the assigned task under your own identity and edit its files. One branch/worktree per lane, under SpecWithCode's configured worktree root (never a sibling of the checkout in ~/Projects/github). Before removing a worktree, check no SpecWithCode thread still uses it.
+- Read the canonical SpecWeave increment, claim only the assigned task under your own identity and edit its files. One branch/worktree per lane, under SpecWithCode's configured worktree root (never a sibling of the checkout in ~/Projects/github). Before removing a worktree, check no SpecWithCode thread still uses it. Remove your worktree (`git worktree remove`) once its PR merges or closes; each holds about 6 GB of dependencies, and the cleanup sweep only finds it a day later.
 - Run the smallest focused behavior/contract test and relevant production web/server build. No repo-wide tests, lint or typecheck unless requested.
 - Physical-phone availability, restored native continuity and authenticated subscription capacity require actual outcome evidence; viewport fixtures, a fresh session and prepared slots do not prove them.
 

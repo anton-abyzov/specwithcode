@@ -126,7 +126,6 @@ export type SubagentAwaitingPerson = NonNullable<ReturnType<typeof threadAwaitin
 
 /** What a backing thread's open request asks of the person, while its run is still open. */
 function awaitingPersonOf(thread: EnvironmentThreadShell): SubagentAwaitingPerson | null {
-  if (!threadRuntimeIsActive(thread.runtime)) return null;
   return threadAwaitingPerson(thread)?.kind ?? null;
 }
 
@@ -143,7 +142,8 @@ type ProjectedSubagent = Pick<
   | "result"
   | "startedAt"
   | "completedAt"
->;
+> &
+  Partial<Pick<OrchestrationV2Subagent, "threadId">>;
 
 function iso(value: DateTime.Utc | null): string | null {
   return value === null ? null : DateTime.formatIso(value);
@@ -163,8 +163,13 @@ export function threadSubagentEntries(input: {
   readonly unreachable?: ReadonlySet<string> | undefined;
 }): SubagentEntry[] {
   const coordinatorIds = input.coordinatorIds ?? EMPTY_IDS;
+  // A projection can carry inherited history. Only this parent's records
+  // supplement its explicitly linked subtree; never another thread's records.
+  const projected = input.projected.filter(
+    (agent) => agent.threadId === undefined || agent.threadId === input.parent.id,
+  );
   const byChild = new Map(
-    input.projected
+    projected
       .filter((agent) => agent.childThreadId !== null)
       .map((agent) => [String(agent.childThreadId), agent]),
   );
@@ -185,12 +190,12 @@ export function threadSubagentEntries(input: {
       unreachable: input.unreachable,
     });
     // A run blocked on an approval or a question waits on the person, not on its work.
-    const awaitingPerson = isSubagentEntryActive({ status }) ? awaitingPersonOf(thread) : null;
+    const awaitingPerson = status === "unknown" ? null : awaitingPersonOf(thread);
     entries.push({
       key: thread.id,
       childThreadId: thread.id,
       title: agent?.title?.trim() || thread.title || "Subagent",
-      status: awaitingPerson === null ? status : "waiting",
+      status: awaitingPerson !== null && isSubagentEntryActive({ status }) ? "waiting" : status,
       ...(awaitingPerson === null ? {} : { awaitingPerson }),
       origin: agent?.origin ?? null,
       providerInstanceId: agent?.providerInstanceId ?? thread.modelSelection.instanceId,
@@ -207,13 +212,22 @@ export function threadSubagentEntries(input: {
     });
   }
   // Records whose backing thread has not reached this client yet still count.
-  for (const agent of input.projected) {
-    if (agent.childThreadId !== null && listed.has(String(agent.childThreadId))) continue;
+  const listedRecords = new Set<string>();
+  for (const agent of projected) {
+    if (listedRecords.has(String(agent.id))) continue;
+    listedRecords.add(String(agent.id));
+    if (agent.childThreadId !== null) {
+      if (listed.has(String(agent.childThreadId)) || sameHost.has(String(agent.childThreadId)))
+        continue;
+      listed.add(String(agent.childThreadId));
+    }
     entries.push({
       key: agent.id,
       childThreadId: null,
       title: agent.title?.trim() || firstLine(agent.prompt) || "Subagent",
-      status: subagentExecutionStatus({ record: agent }),
+      status: input.unreachable?.has(input.parent.environmentId)
+        ? "unknown"
+        : subagentExecutionStatus({ record: agent }),
       origin: agent.origin,
       providerInstanceId: agent.providerInstanceId,
       model: agent.model,
@@ -235,9 +249,7 @@ export function isSubagentEntryActive(entry: Pick<SubagentEntry, "status">): boo
 export function workingSubagentEntryCount(entries: readonly SubagentEntry[]): number {
   return entries.filter(
     (entry) =>
-      entry.kind !== "workflow" &&
-      entry.awaitingPerson === undefined &&
-      isSubagentEntryActive(entry),
+      entry.kind !== "workflow" && entry.awaitingPerson === undefined && entry.status === "running",
   ).length;
 }
 
@@ -333,7 +345,7 @@ export function subagentEntryLabel(
 ): string {
   return entry.awaitingPerson === undefined
     ? SUBAGENT_STATUS_LABELS[entry.status]
-    : AWAITING_PERSON_LABELS[entry.awaitingPerson];
+    : `${isSubagentEntryActive(entry) ? "" : `${SUBAGENT_STATUS_LABELS[entry.status]} · `}${AWAITING_PERSON_LABELS[entry.awaitingPerson]}`;
 }
 
 export function subagentStatusTone(
@@ -374,6 +386,7 @@ function workflowDescription(input: unknown): string | null {
  * workflow as background work, with that work's current phase as progress.
  */
 export function threadWorkflowEntries(input: {
+  readonly parentThreadId?: string;
   readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
   readonly pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
 }): SubagentEntry[] {
@@ -381,6 +394,7 @@ export function threadWorkflowEntries(input: {
   const unclaimed = new Set(running.map((task) => task.taskId));
   const entries: SubagentEntry[] = [];
   for (const item of input.turnItems) {
+    if (input.parentThreadId !== undefined && item.threadId !== input.parentThreadId) continue;
     if (item.type !== "dynamic_tool" || item.toolName === null) continue;
     if (!WORKFLOW_TOOL_NAMES.has(item.toolName.split("__").at(-1) ?? "")) continue;
     const name = workflowName(item.input);
@@ -429,4 +443,57 @@ export function threadWorkflowEntries(input: {
     });
   }
   return entries;
+}
+
+/** Keep whole ancestry branches together while promoting any live descendant. */
+export function groupSubagentPopupEntries(
+  entries: readonly SubagentEntry[],
+  now: number,
+): {
+  current: SubagentEntry[];
+  history: SubagentEntry[];
+} {
+  type Branch = { entry: SubagentEntry; children: Branch[]; rank: number; at: number };
+  const roots: Branch[] = [];
+  const stack: Branch[] = [];
+  const recentSince = now - 30 * 60_000;
+  const priority = (entry: SubagentEntry) =>
+    entry.awaitingPerson !== undefined
+      ? 0
+      : ["running", "pending", "waiting"].includes(entry.status)
+        ? 1
+        : entry.status === "unknown"
+          ? 2
+          : Number.isFinite(Date.parse(entry.completedAt ?? "")) &&
+              Date.parse(entry.completedAt!) >= recentSince
+            ? 3
+            : 4;
+  for (const entry of entries) {
+    while (stack.length && stack.at(-1)!.entry.depth >= entry.depth) stack.pop();
+    const branch: Branch = {
+      entry,
+      children: [],
+      rank: priority(entry),
+      at: Date.parse(entry.completedAt ?? entry.startedAt ?? "") || 0,
+    };
+    (stack.at(-1)?.children ?? roots).push(branch);
+    stack.push(branch);
+  }
+  const rank = (branch: Branch) => {
+    for (const child of branch.children) {
+      rank(child);
+      branch.rank = Math.min(branch.rank, child.rank);
+      branch.at = Math.max(branch.at, child.at);
+    }
+    branch.children.sort((a, b) => a.rank - b.rank || b.at - a.at);
+  };
+  roots.forEach(rank);
+  roots.sort((a, b) => a.rank - b.rank || b.at - a.at);
+  const result = { current: [] as SubagentEntry[], history: [] as SubagentEntry[] };
+  const flatten = (branch: Branch, target: SubagentEntry[]) => {
+    target.push(branch.entry);
+    branch.children.forEach((child) => flatten(child, target));
+  };
+  roots.forEach((branch) => flatten(branch, branch.rank < 4 ? result.current : result.history));
+  return result;
 }

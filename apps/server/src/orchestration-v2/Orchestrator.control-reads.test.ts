@@ -1110,7 +1110,7 @@ it.effect.each([
     ),
 );
 
-for (const scenario of [
+const deferredResolutionScenarios = [
   "success",
   "automatic-success",
   "activation-off",
@@ -1135,13 +1135,17 @@ for (const scenario of [
   "raced-finish",
   "stopped-rearm",
   "stopped-finish",
-] as const) {
-  it.effect(`deferred self-resolution: ${scenario}`, () =>
+] as const;
+
+for (const { scenario, userRequested } of deferredResolutionScenarios.flatMap((scenario) =>
+  [false, true].map((userRequested) => ({ scenario, userRequested })),
+)) {
+  it.effect(`deferred self-resolution: ${userRequested ? "user-requested " : ""}${scenario}`, () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const sink = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make(`thread:deferred:${scenario}`);
+      const threadId = ThreadId.make(`thread:deferred:${userRequested}:${scenario}`);
       yield* orchestrator.dispatch({
         type: "thread.create",
         commandId: CommandId.make(`deferred:${scenario}:create`),
@@ -1245,14 +1249,25 @@ for (const scenario of [
       yield* orchestrator.dispatch({
         type: "thread.deferred-resolution.request",
         runId: run.id,
+        ...(userRequested ? { userRequested: true as const } : {}),
         note: "Fix delivered",
         commandId: CommandId.make(`deferred:${scenario}:request`),
         threadId,
       });
+      if (userRequested) {
+        // A routine later self-settle must not downgrade the user's explicit Resolve.
+        yield* orchestrator.dispatch({
+          type: "thread.deferred-resolution.request",
+          runId: run.id,
+          commandId: CommandId.make(`deferred:${scenario}:repeat-without-user-flag`),
+          threadId,
+        });
+      }
       // A real SQL encode/decode roundtrip retains the intent and leaves the current turn alone.
       const persisted = yield* projections.getThreadProjection(threadId);
       assert.deepEqual(persisted.thread.deferredResolution, {
         runId: run.id,
+        ...(userRequested ? { userRequested: true as const } : {}),
         note: "Fix delivered",
       });
       assert.notEqual(persisted.thread.settledOverride, "settled");
@@ -1645,7 +1660,7 @@ for (const scenario of [
         });
       } else if (resolved !== undefined) {
         yield* Fiber.join(resolved);
-      } else if (scenario === "automatic-success") {
+      } else if (scenario === "automatic-success" && !userRequested) {
         yield* orchestrator.dispatch({
           type: "thread.auto-settle",
           commandId: CommandId.make(`deferred:${scenario}:automatic`),
@@ -1669,8 +1684,16 @@ for (const scenario of [
         scenario === "success" ||
         scenario === "automatic-success" ||
         scenario === "success-metadata" ||
-        scenario === "recovery";
-      if (scenario === "activation-off") {
+        scenario === "recovery" ||
+        (userRequested &&
+          [
+            "activation-off",
+            "missing-evidence",
+            "stale-evidence",
+            "partial-evidence",
+            "superseded-evidence",
+          ].includes(scenario));
+      if (scenario === "activation-off" && !userRequested) {
         // No acceptance evidence exists. Neither the completion reactor, a
         // direct finish nor startup recovery may change lifecycle state.
         yield* orchestrator.recoverDelegatedTasks;
@@ -1694,13 +1717,7 @@ for (const scenario of [
           yield* projections.getRecoveryThreadIds("deferred-resolutions"),
           threadId,
         );
-      assert.equal(
-        result.thread.settledOverride === "settled",
-        scenario === "success" ||
-          scenario === "automatic-success" ||
-          scenario === "success-metadata" ||
-          scenario === "recovery",
-      );
+      assert.equal(result.thread.settledOverride === "settled", successful);
       if (successful && scenario !== "automatic-success")
         assert.equal(result.thread.settledNote, "Fix delivered");
       assert.equal(
@@ -1747,7 +1764,7 @@ for (const scenario of [
       Effect.provide(layerTest),
       Effect.provideService(
         DeferredResolutionActivation,
-        scenario !== "activation-off" && scenario !== "automatic-success",
+        !userRequested && scenario !== "activation-off" && scenario !== "automatic-success",
       ),
     ),
   );

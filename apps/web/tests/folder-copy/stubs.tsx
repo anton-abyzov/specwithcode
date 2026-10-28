@@ -10,7 +10,7 @@ const summary = {
   secretFiles: [],
   linksOutside: 0,
   warnings: [
-    "Work is still running in this folder. You can copy now, but files may change during the copy and later edits are not included. Transferring coordinator context waits until this work stops.",
+    "Work is still running here. Files that change during the copy won't be included, and the project moves once that work stops.",
   ],
 };
 export const machineHandoff = new Proxy({}, { get: (_, name) => name });

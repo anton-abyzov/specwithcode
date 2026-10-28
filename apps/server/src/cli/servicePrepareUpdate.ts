@@ -49,7 +49,12 @@ import * as Socket from "effect/socket/Socket";
 import { FetchHttpClient } from "effect/http";
 
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { liveServiceEndpoint, liveWebSocketTicket, runningService } from "./liveService.ts";
+import {
+  liveServiceEndpoint,
+  liveWebSocketTicket,
+  runningService,
+  type LiveServiceConfig,
+} from "./liveService.ts";
 
 /** Longer than the drain's own 70 s deadline plus its settle look (ServiceUpdatePreparation). */
 export const STOP_WORK_TIMEOUT = Duration.seconds(150);
@@ -87,6 +92,7 @@ export class ServicePrepareUpdateCallError extends Schema.TaggedError<ServicePre
 export interface ServicePrepareUpdateFlags {
   readonly stopWork: boolean;
   readonly hold: boolean;
+  readonly ifIdle: boolean;
   readonly releaseHold: boolean;
   readonly reason: Option.Option<ServiceUpdatePrepareReason>;
 }
@@ -108,6 +114,20 @@ export const prepareInputFromFlags = (
           releaseHold: true,
           ...(reason === undefined ? {} : { reason }),
         });
+  }
+  if (flags.ifIdle) {
+    return flags.hold && !flags.stopWork
+      ? Effect.succeed({
+          stopWork: false,
+          hold: true,
+          ifIdle: true,
+          ...(reason === undefined ? {} : { reason }),
+        })
+      : Effect.fail(
+          new ServicePrepareUpdateUsageError({
+            reason: "--if-idle goes with --hold and without --stop-work: it stops nothing.",
+          }),
+        );
   }
   if (flags.hold && !flags.stopWork) {
     return Effect.fail(
@@ -208,6 +228,31 @@ export function formatPrepareResult(
   return lines.join("\n");
 }
 
+/**
+ * One `server.prepareServiceUpdate` call to the service running from this home; none when no
+ * service runs from it. Reads files and asks the service over HTTP and its socket only.
+ */
+export const prepareRunningService = Effect.fn("cli.service.prepareRunningService")(function* (
+  config: LiveServiceConfig,
+  payload: ServerPrepareServiceUpdateInput,
+) {
+  const running = yield* runningService(config);
+  if (Option.isNone(running)) return Option.none<ServerPrepareServiceUpdateResult>();
+  const { origin, token } = yield* liveServiceEndpoint(config, running.value).pipe(
+    Effect.provide(FetchHttpClient.layer),
+  );
+  const ticket = yield* liveWebSocketTicket({ state: { ...running.value, origin }, token }).pipe(
+    Effect.provide(FetchHttpClient.layer),
+  );
+  return Option.some(
+    yield* callPrepareServiceUpdate({
+      url: serviceWebSocketUrl(origin, ticket),
+      payload,
+      timeout: payload.stopWork ? STOP_WORK_TIMEOUT : QUICK_CALL_TIMEOUT,
+    }),
+  );
+});
+
 const runPrepareUpdate = Effect.fn("cli.service.prepareUpdate")(function* (
   flags: ServicePrepareUpdateFlags & {
     readonly baseDir: Option.Option<string>;
@@ -218,21 +263,11 @@ const runPrepareUpdate = Effect.fn("cli.service.prepareUpdate")(function* (
     const payload = yield* prepareInputFromFlags(flags);
     const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
     // Files only: a home no service runs from is left as it is.
-    const running = yield* runningService(config);
-    if (Option.isNone(running)) {
+    const result = yield* prepareRunningService(config, payload);
+    if (Option.isNone(result)) {
       return yield* new ServicePrepareUpdateNotRunningError({ baseDir: config.baseDir });
     }
-    const { origin, token } = yield* liveServiceEndpoint(config, running.value).pipe(
-      Effect.provide(FetchHttpClient.layer),
-    );
-    const ticket = yield* liveWebSocketTicket({ state: { ...running.value, origin }, token }).pipe(
-      Effect.provide(FetchHttpClient.layer),
-    );
-    return yield* callPrepareServiceUpdate({
-      url: serviceWebSocketUrl(origin, ticket),
-      payload,
-      timeout: payload.stopWork ? STOP_WORK_TIMEOUT : QUICK_CALL_TIMEOUT,
-    });
+    return result.value;
   }).pipe(
     // A script reads the last stdout line; the failure still sets the exit code.
     Effect.tapError((error) =>
@@ -253,6 +288,12 @@ export const servicePrepareUpdateCommand = Command.make("prepare-update", {
   hold: Flag.Boolean("hold").pipe(
     Flag.withDescription(
       "With --stop-work, hold the service for the update: new work is refused until the update installs, fails or is cancelled, or the hold runs out. Write the install request right after.",
+    ),
+    Flag.withDefault(false),
+  ),
+  ifIdle: Flag.Boolean("if-idle").pipe(
+    Flag.withDescription(
+      "With --hold and without --stop-work: hold the service only when nothing runs in it, stopping nothing. Busy, it is left unheld.",
     ),
     Flag.withDefault(false),
   ),

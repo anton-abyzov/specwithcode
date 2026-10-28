@@ -545,9 +545,18 @@ const routedCapture = {
   },
 };
 
-it.each([false, true])(
-  "delivers project-pane capture through Settings without creating Scratch (new navigation: %s)",
-  async (navigateElsewhere) => {
+it.each([
+  { navigateElsewhere: false, pane: null },
+  { navigateElsewhere: true, pane: null },
+  { navigateElsewhere: false, pane: "coordinator" },
+  { navigateElsewhere: false, pane: "threads" },
+  { navigateElsewhere: false, pane: "coordinator", keyboard: "Tab" },
+  { navigateElsewhere: false, pane: "coordinator", keyboard: "F6" },
+  { navigateElsewhere: false, pane: "coordinator", command: true },
+  { navigateElsewhere: true, pane: "coordinator" },
+])(
+  "delivers focused $pane capture through Settings without creating Scratch (new navigation: $navigateElsewhere)",
+  async ({ navigateElsewhere, pane, keyboard, command = false }) => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const win = Object.assign(new EventTarget(), {
       localStorage: storage,
@@ -562,6 +571,9 @@ it.each([false, true])(
     );
     const target = scopeThreadRef(environmentId, ThreadId.make("worker"));
     useComposerDraftStore.getState().setPrompt(target, "Keep every user word");
+    const coordinator = getProjectCoordinatorComposer(environmentId, projectRef.projectId);
+    coordinator.setPrompt("Keep coordinator words");
+    coordinator.setAttachments([]);
     routing.knownThread = true;
     routing.projectKey = "repo";
     routing.search = {
@@ -595,6 +607,24 @@ it.each([false, true])(
       await act(() => {
         renderer = create(createElement(SnapShotCoordinator));
       });
+      if (pane) {
+        const event = new Event(command ? "snap-shot-conversation-focus" : "pointerdown");
+        Object.defineProperty(event, "target", {
+          value: {
+            closest: () => ({ getAttribute: () => pane }),
+          },
+        });
+        if (keyboard) {
+          const tab = new Event("keydown");
+          Object.defineProperty(tab, "key", { value: keyboard });
+          document.dispatchEvent(tab);
+          const focus = new Event("focusin");
+          Object.defineProperty(focus, "target", { value: event.target });
+          document.dispatchEvent(focus);
+        } else document.dispatchEvent(event);
+        // A background render must not restore the URL's open side thread.
+        await act(() => renderer!.update(createElement(SnapShotCoordinator)));
+      }
       // Open Settings before the keypress, as in the user's report.
       routing.projectKey = null;
       routing.search = {};
@@ -624,7 +654,11 @@ it.each([false, true])(
           .getState()
           .getComposerDraft(target)
           ?.images.map((i) => i.id),
-      ).toEqual([routedCapture.id]);
+      ).toEqual(pane === "coordinator" ? [] : [routedCapture.id]);
+      expect(coordinator.getSnapshot().prompt).toBe("Keep coordinator words");
+      expect(coordinator.getSnapshot().attachments.map((a) => a.id)).toEqual(
+        pane === "coordinator" ? [routedCapture.id] : [],
+      );
       expect(routing.scratch).not.toHaveBeenCalled();
       expect(routing.openThread).not.toHaveBeenCalled();
       if (navigateElsewhere) expect(routing.router.navigate).not.toHaveBeenCalled();

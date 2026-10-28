@@ -41,6 +41,7 @@ import {
   parseIncrementMetadata,
   parseSpecweaveSpec,
   parseVerifyReport,
+  type SpecweaveAcceptedSkip,
 } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
@@ -225,6 +226,7 @@ export function criteriaWithState(
   options: {
     readonly verify?: { readonly ok: boolean; readonly ranAt: string } | null;
     readonly readable?: boolean;
+    readonly acceptedSkips?: readonly SpecweaveAcceptedSkip[];
   } = {},
 ): ThreadIncrementCriterion[] {
   const verify = options.verify ?? null;
@@ -233,7 +235,7 @@ export function criteriaWithState(
     const citing = tasks.filter((task) => task.criteria.includes(criterion.id));
     const met = citing.length > 0 && citing.every((task) => CLOSED_TASK_STATES.has(task.status));
     const done = citing.filter((task) => task.status === "done");
-    const state: ThreadIncrementCriterionState =
+    let state: ThreadIncrementCriterionState =
       options.readable === false
         ? criterion.checked === true
           ? "declared"
@@ -253,11 +255,28 @@ export function criteriaWithState(
                     done.every((task) => Date.parse(task.doneAt!) <= verifiedAt)
                   ? "verified"
                   : "evidenced";
+    const waivers = (options.acceptedSkips ?? [])
+      .filter((waiver) => waiver.ac === criterion.id.toUpperCase())
+      .map(({ ac: _ac, ...waiver }) => waiver);
+    const doneAsCli = criterion.checked === true || (met && done.length > 0);
+    const unresolved = citing.some((task) => !CLOSED_TASK_STATES.has(task.status));
+    const acceptance = doneAsCli
+      ? waivers.length
+        ? "mixed"
+        : "met"
+      : waivers.length && !unresolved
+        ? "skipped-accepted"
+        : "open";
+    // Older clients still read state. Do not let an overall green verify turn
+    // an accepted but untested portion into a verified AC on those clients.
+    if (waivers.length && state === "verified") state = "evidenced";
     return {
       id: criterion.id,
       text: criterion.text,
       met,
       state,
+      acceptance,
+      waivers,
       tasks: citing.flatMap((task) => (task.id === undefined ? [] : [task.id])),
       ...(criterion.story === undefined ? {} : { story: criterion.story }),
     };
@@ -505,10 +524,13 @@ export async function readIncrementProgress(input: {
   const fromSpec = spec === null ? null : parseSpecweaveSpec(spec);
   // Like SpecWeave's tasksFileFor: a legacy tasks.md, when present, holds the tasks.
   const taskSource = tasksFile !== null ? parseSpecweaveSpec(tasksFile).tasks : fromSpec?.tasks;
-  const folded =
-    taskSource === undefined || taskSource.length === 0 || ledger === null
+  // AC ledger evidence remains meaningful when the spec defines no tasks.
+  const ledgerFold =
+    taskSource === undefined || ledger === null
       ? null
       : foldSpecweaveLedger(taskSource, ledger, input.now, { incrementId: input.incrementId });
+  // Preserve the existing no-task progress/readability semantics.
+  const folded = taskSource?.length ? ledgerFold : null;
   const metadata = parseIncrementMetadata(metadataText);
   const verify = parseVerifyReport(verifyText);
   const cards = new Map((folded?.cards ?? []).map((card) => [card.id, card]));
@@ -542,6 +564,7 @@ export async function readIncrementProgress(input: {
     criteria: criteriaWithState(fromSpec?.criteria ?? [], tasks, {
       verify,
       readable: folded !== null || (taskSource?.length ?? 0) === 0,
+      acceptedSkips: ledgerFold?.acceptedSkips ?? [],
     }),
     verify,
   };

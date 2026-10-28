@@ -232,6 +232,8 @@ describe("buildRuntimeInstructions", () => {
     // show_visual diagrams sit whole in the reply.
     expect(presentation).toContain("show_visual or Mermaid diagram");
     expect(presentation).toContain("UI changes a screenshot");
+    // A comparison written as a table of paragraphs was unreadable at any width (October 27).
+    expect(presentation).toContain("comparisons a table of short cells, then each item's detail");
     expect(presentation).toContain("A decision the user must make");
     expect(presentation).toContain("html_render when available, preview first");
     expect(presentation).toContain("animated explainer video when asked");
@@ -240,20 +242,21 @@ describe("buildRuntimeInstructions", () => {
     expect(presentation).toContain("separate paragraphs with a blank line");
     expect(presentation).toContain("keep a space between a label and its value (HTTP 200)");
     expect(presentation).toContain("put hashes, paths and commands in backticks");
-    // About 190 tokens on every turn.
-    expect(presentation.length).toBeLessThanOrEqual(880);
+    // About 200 tokens on every turn.
+    expect(presentation.length).toBeLessThanOrEqual(920);
   });
 
   it("keeps everything every turn carries within its budget", () => {
     // About 900 tokens with every block; it was about 2,000 before the rules moved into code.
-    // The presentation block added about 190 tokens on purpose (October 21, 2026).
+    // The presentation block added about 190 tokens on purpose (October 21, 2026),
+    // and the short-cell comparison rule about 10 more (October 27, 2026).
     for (const responseStyle of ["concise", "detailed"] as const) {
       const instructions = buildRuntimeInstructions({
         harness: "Claude Code",
         model: "claude-opus-5-5",
         responseStyle,
       });
-      expect(instructions.length).toBeLessThanOrEqual(3_800);
+      expect(instructions.length).toBeLessThanOrEqual(3_850);
     }
   });
 

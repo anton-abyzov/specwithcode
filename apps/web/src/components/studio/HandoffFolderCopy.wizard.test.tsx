@@ -7,13 +7,16 @@ import {
   CopyFixture,
   copyStatus,
   findButton,
+  isDisabled,
+  moreItems,
   newRow,
   noSecrets,
+  openMore,
   stepState,
   type FixtureOptions,
 } from "./HandoffFolderCopy.testkit";
 
-// The step bar as a wizard: passed steps open a read-only look, and looking never acts.
+// The step line shows progress only; Your choices holds the one way to change the copy.
 const state = vi.hoisted(() => ({
   calls: [] as Array<[string, unknown]>,
   handlers: {} as Record<string, (input: unknown) => unknown>,
@@ -75,22 +78,15 @@ const click = async (label: string) => {
 const mount = (overrides: FixtureOptions = {}) =>
   act(async () => root.render(<CopyFixture {...overrides} />));
 const step = (id: string) => {
-  const element = document.querySelector<HTMLButtonElement>(
+  const element = document.querySelector<HTMLElement>(
     `[data-slot="copy-step"][data-step-id="${id}"]`,
   );
   if (!element) throw new Error(`Missing step ${id}`);
   return element;
 };
-const openStep = async (id: string) => {
-  await act(async () => step(id).click());
-  await settle();
-};
-/** Each step id with whether its button can be clicked. */
-const clickable = () =>
-  [...document.querySelectorAll<HTMLButtonElement>('[data-slot="copy-step"]')].map(
-    (element) => `${element.getAttribute("data-step-id")}:${element.disabled ? "off" : "on"}`,
-  );
-const banner = () => document.querySelector('[data-slot="copy-viewing"]')?.textContent ?? null;
+const hasStep = (id: string) =>
+  document.querySelector(`[data-slot="copy-step"][data-step-id="${id}"]`) !== null;
+const changeLink = () => document.querySelector<HTMLButtonElement>('[data-slot="copy-change"]');
 const pageText = () => document.body.textContent ?? "";
 const chooseFirst = () =>
   act(async () =>
@@ -112,19 +108,11 @@ const editFolder = (value: string) =>
     folderInput().dispatchEvent(new Event("input", { bubbles: true }));
   });
 const moveRadio = () =>
-  [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((node) =>
-    node.closest("label")?.textContent?.includes("Copy and transfer coordinator context"),
+  [...document.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
+    (node) => node.textContent === "Move and continue there",
   )!;
-const untracked = () =>
-  document.querySelector<HTMLElement>('[data-class="untracked"] [data-slot="checkbox"]')!;
 const stageNow = () =>
   container.querySelector('[data-slot="handoff-folder-copy"]')?.getAttribute("data-stage");
-/** The change buttons a review can offer; none of them should show after Apply. */
-const CHANGES = [
-  "Change where (cancels this copy)",
-  "Change what to copy (measures again)",
-  "Change folder",
-];
 const measuredWithoutSecrets = () => {
   const offer = state.handlers.copyOffer!;
   state.handlers.copyOffer = (input) => ({
@@ -155,64 +143,26 @@ afterEach(async () => {
   container.remove();
 });
 
-it("shows a one-click copy's skipped steps as done and automatic, and opens each read-only", async () => {
+it("leaves a one-click copy's skipped steps off the line, with nothing to click", async () => {
   measuredWithoutSecrets();
   // The destination keeps the compared rows on every later status.
   const rows = [newRow(".")];
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
   await mount();
   await click("Copy to M3");
-  expect(stepState()).toEqual([
-    "Where:done",
-    "What:done",
-    "Review:done",
-    "Copy:done",
-    "Done:current",
-  ]);
-  expect(step("what").getAttribute("data-auto")).toBe("true");
-  expect(step("review").getAttribute("data-auto")).toBe("true");
-  expect(step("what").getAttribute("aria-label")).toBe("What, chosen automatically");
-  expect(step("copy").hasAttribute("data-auto")).toBe(false);
-  expect(clickable()).toEqual(["where:on", "what:on", "review:on", "copy:on", "done:off"]);
-  const calls = state.calls.length;
-
-  await openStep("what");
-  expect(banner()).toBe("You're viewing What. The copy is at Done.");
-  expect(step("what").getAttribute("data-viewing")).toBe("true");
-  expect(clickable()).toEqual(["where:on", "what:off", "review:on", "copy:on", "done:on"]);
-  const classes = document.querySelector<HTMLFieldSetElement>('[data-slot="copy-classes"]')!;
-  expect(classes.disabled).toBe(true);
-  expect(document.querySelector('[data-slot="copy-review-auto"]')?.textContent).toBe(
-    "Chosen automatically. Turn on Choose what to copy to pick these yourself.",
-  );
-  // The live Done actions are hidden while looking back.
-  expect(pageText()).not.toContain("M3 has a copy in");
-  expect(() => button("Open on M3")).toThrow();
-
-  await openStep("review");
-  expect(banner()).toBe("You're viewing Review. The copy is at Done.");
-  expect(document.querySelector('[data-slot="copy-review-plan"]')?.textContent).toBe(
-    "Plan as approved.Nothing on M3 would be replaced, so it was approved automatically.",
-  );
-  expect(document.querySelectorAll('[data-slot="copy-row"]')).toHaveLength(1);
-
-  await openStep("copy");
-  expect(document.querySelector('[data-slot="copy-review-copied"]')?.textContent).toBe(
-    "5 files (50 B) copied to /Users/me/Projects/project on M3.",
-  );
-
-  await click("Go to Done");
-  expect(banner()).toBeNull();
-  expect(pageText()).toContain("M3 has a copy in /Users/me/Projects/project");
+  expect(stepState()).toEqual(["Where:done", "Copy:done", "Done:current"]);
+  expect(hasStep("what")).toBe(false);
+  expect(hasStep("review")).toBe(false);
+  // The line shows progress only: no step is a button.
+  expect(document.querySelectorAll('[data-slot="copy-steps"] button')).toHaveLength(0);
+  expect(pageText()).toContain("M3 has a copy. The coordinator stays here.");
   expect(button("Open on M3")).toBeTruthy();
-  // Looking at steps never called a machine.
-  expect(state.calls).toHaveLength(calls);
 });
 
-it("opens Where read-only while choosing and comes back to What with the choice kept", async () => {
+it("shows Your choices while choosing, with one Change link that stops the copy", async () => {
   await mount();
   await chooseFirst();
-  await click("Measure the folder");
+  await click("Copy to M3");
   expect(stepState()).toEqual([
     "Where:done",
     "What:current",
@@ -220,69 +170,24 @@ it("opens Where read-only while choosing and comes back to What with the choice 
     "Copy:next",
     "Done:next",
   ]);
-  // The live step and every future step are not buttons that do anything yet.
-  expect(clickable()).toEqual(["where:on", "what:off", "review:off", "copy:off", "done:off"]);
-  const untracked = () =>
-    document.querySelector<HTMLElement>('[data-class="untracked"] [data-slot="checkbox"]')!;
-  await act(async () => untracked().click());
-  expect(untracked().getAttribute("aria-checked")).toBe("false");
-  const calls = state.calls.length;
-
-  await openStep("where");
-  expect(banner()).toBe("You're viewing Where. The copy is at What.");
-  const folder = document.querySelector<HTMLInputElement>('input[aria-label="Folder on M3"]')!;
-  expect(folder.value).toBe("/home/anton/Projects/project");
-  expect(folder.disabled).toBe(true);
-  expect(clickable()).toEqual(["where:off", "what:on", "review:off", "copy:off", "done:off"]);
-  expect(() => button("Preview on M3")).toThrow();
-  expect(() => button("Cancel copy")).toThrow();
-
-  await click("Go to What");
-  expect(banner()).toBeNull();
-  expect(untracked().getAttribute("aria-checked")).toBe("false");
+  const choices = document.querySelector('[data-slot="copy-choices"]')!;
+  expect(choices.textContent).toContain("Copy to M3: /home/anton/Projects/project");
+  expect(choices.textContent).toContain("Copy everything except secrets");
+  expect(choices.querySelectorAll("button")).toHaveLength(1);
+  expect(changeLink()?.textContent).toBe("Change (stops this copy)");
+  expect(changeLink()?.disabled).toBe(false);
   expect(button("Preview on M3").disabled).toBe(false);
-  expect(state.calls).toHaveLength(calls);
-});
-
-it("returns to the live step from the step bar too", async () => {
-  await mount();
-  await chooseFirst();
-  await click("Measure the folder");
-  await openStep("where");
-  expect(banner()).not.toBeNull();
-  await openStep("what");
-  expect(banner()).toBeNull();
-  expect(button("Preview on M3")).toBeTruthy();
-});
-
-it("puts Go to in the dialog footer and keeps live actions out of a review", async () => {
-  await mount({ dialog: true });
-  await chooseFirst();
-  await click("Measure the folder");
-  await openStep("where");
-  const back = button("Go to What");
-  expect(back.closest('[data-slot="dialog-footer"]')).not.toBeNull();
-  expect(back.closest('[data-slot="scroll-area-viewport"]')).toBeNull();
-  expect(() => button("Preview on M3")).toThrow();
-  await act(async () => back.click());
-  await settle();
-  expect(button("Preview on M3").closest('[data-slot="dialog-footer"]')).not.toBeNull();
 });
 
 it("marks Review as yours when a one-click copy stopped at the preview", async () => {
   await mount();
   await click("Copy to M3");
   await click("Copy to M3");
-  expect(stepState().at(-1)).toBe("Done:current");
-  expect(step("what").getAttribute("data-auto")).toBe("true");
-  expect(step("review").hasAttribute("data-auto")).toBe(false);
-  await openStep("review");
-  expect(document.querySelector('[data-slot="copy-review-plan"]')?.textContent).toBe(
-    "Plan as approved.",
-  );
+  expect(stepState()).toEqual(["Where:done", "Review:done", "Copy:done", "Done:current"]);
+  expect(hasStep("what")).toBe(false);
 });
 
-it("locks every step while coordinator context transfers", async () => {
+it("offers no Change while coordinator context transfers", async () => {
   state.handlers.prepare = () => new Promise(() => {});
   statuses = [
     copyStatus("previewed", { mode: "copy-and-move" }),
@@ -292,32 +197,19 @@ it("locks every step while coordinator context transfers", async () => {
     }),
   ];
   await mount();
-  const move = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((node) =>
-    node.closest("label")?.textContent?.includes("Copy and transfer coordinator context"),
-  )!;
-  await act(async () => move.click());
-  await click("Copy to M3");
-  await click("Copy and transfer context to M3");
-  expect(
-    container.querySelector('[data-slot="handoff-folder-copy"]')?.getAttribute("data-stage"),
-  ).toBe("moving");
+  await act(async () => moveRadio().click());
+  await click("Move to M3");
+  await click("Move to M3");
+  expect(stageNow()).toBe("moving");
   expect(stepState()).toEqual([
     "Where:done",
-    "What:done",
     "Review:done",
     "Copy:done",
     "Transfer:current",
     "Done:next",
   ]);
-  expect(clickable()).toEqual([
-    "where:off",
-    "what:off",
-    "review:off",
-    "copy:off",
-    "transfer:off",
-    "done:off",
-  ]);
-  expect(button("Back").disabled).toBe(true);
+  expect(changeLink()).toBeNull();
+  expect(document.querySelectorAll('[data-slot="copy-actions"] button')).toHaveLength(0);
 });
 
 it("marks the step a copy stopped at", async () => {
@@ -332,100 +224,58 @@ it("marks the step a copy stopped at", async () => {
   ];
   await mount();
   await click("Copy to M3");
-  expect(
-    container.querySelector('[data-slot="handoff-folder-copy"]')?.getAttribute("data-stage"),
-  ).toBe("failed");
+  expect(stageNow()).toBe("failed");
   expect(step("copy").getAttribute("data-state")).toBe("current");
   expect(step("copy").getAttribute("data-tone")).toBe("failed");
-  expect(step("copy").getAttribute("aria-label")).toBe("Copy, stopped");
-  expect(step("review").hasAttribute("data-tone")).toBe(false);
-  expect(clickable()).toEqual(["where:on", "what:on", "review:on", "copy:off", "done:off"]);
+  // The state is read out with the label, not by color alone.
+  expect(step("copy").textContent).toBe("Copy, stopped");
+  expect(step("where").hasAttribute("data-tone")).toBe(false);
+  expect(step("done").hasAttribute("data-tone")).toBe(false);
 });
 
-it("puts Back first in the dialog footer and looks back without calling a machine", async () => {
+it("puts Stop copy first in the dialog footer as a ghost while choosing", async () => {
   await mount({ dialog: true });
   await chooseFirst();
-  await click("Measure the folder");
-  const back = button("Back");
-  expect(back.getAttribute("data-slot")).toBe("copy-back");
-  expect(back.className).toContain("mr-auto");
-  expect(back.closest('[data-slot="dialog-footer"]')).not.toBeNull();
-  expect(back.parentElement?.querySelector("button")).toBe(back);
-  const calls = state.calls.length;
-
-  await act(async () => back.click());
-  await settle();
-  expect(banner()).toBe("You're viewing Where. The copy is at What.");
-  // Where has no step before it.
-  expect(() => button("Back")).toThrow();
-  expect(() => button("Cancel copy")).toThrow();
-  await click("Go to What");
-  expect(button("Preview on M3").disabled).toBe(false);
-  expect(state.calls).toHaveLength(calls);
-});
-
-it("offers no Back on Where", async () => {
-  await mount();
+  await click("Copy to M3");
+  const stop = button("Stop copy");
+  expect(stop.hasAttribute("data-leading")).toBe(true);
+  expect(stop.closest('[data-slot="dialog-footer"]')).not.toBeNull();
   expect(() => button("Back")).toThrow();
 });
 
-it("measures again to change what to copy after the compare, keeping the choice", async () => {
+it("offers no Back anywhere", async () => {
   await mount();
+  expect(() => button("Back")).toThrow();
   await chooseFirst();
-  await click("Measure the folder");
-  await act(async () => untracked().click());
-  await click("Preview on M3");
-  expect(stageNow()).toBe("preview");
-  const first = pointerNow().operationId;
-
-  await click("Back");
-  expect(banner()).toBe("You're viewing What. The copy is at Review.");
-  // Looking at What before Apply offers the one change it can make, and says what it costs.
-  expect(() => button("Change where (cancels this copy)")).toThrow();
-  const before = state.calls.length;
-  await click("Change what to copy (measures again)");
-  const after = names().slice(before);
-  expect(after.slice(0, 3)).toEqual(["copyCancel", "copySourceCancel", "copyOffer"]);
-  expect(state.calls.find(([name]) => name === "copyCancel")![1]).toMatchObject({
-    environmentId: "m3",
-    input: { operationId: first },
-  });
-  const offered = state.calls.findLast(([name]) => name === "copyOffer")![1] as {
-    input: { operationId: string };
-  };
-  expect(offered.input.operationId).not.toBe(first);
-  expect(pointerNow()).toMatchObject({ operationId: offered.input.operationId });
-  expect(pointerNow()).not.toHaveProperty("auto");
-  expect(stageNow()).toBe("select");
-  expect(banner()).toBeNull();
-  expect(untracked().getAttribute("aria-checked")).toBe("false");
-  expect(button("Preview on M3").disabled).toBe(false);
+  await click("Copy to M3");
+  expect(() => button("Back")).toThrow();
 });
 
-it("cancels the copy to change where, and opens the form with the same choices", async () => {
+it("cancels the copy from Review's Change setup, and opens the form with the same choices", async () => {
   await mount();
   await act(async () => moveRadio().click());
   await chooseFirst();
-  await click("Measure the folder");
+  await click("Move to M3");
   await click("Preview on M3");
-  await click("Back");
-  await click("Back");
-  expect(banner()).toBe("You're viewing Where. The copy is at Review.");
-  expect(() => button("Change folder")).toThrow();
-  await click("Change where (cancels this copy)");
+  expect(stageNow()).toBe("preview");
+  // Review's footer holds the way back; Your choices has no second one.
+  expect(changeLink()).toBeNull();
+  const change = button("Change setup");
+  expect(change.hasAttribute("data-leading")).toBe(true);
+  expect(change.getAttribute("aria-description")).toBe("Stops this copy and goes back");
+  await click("Change setup");
   expect(names()).toContain("copyCancel");
   expect(names()).toContain("copySourceCancel");
   expect(names()).toContain("copyRelease");
   expect(pointerNow()).toBeNull();
   expect(stageNow()).toBe("setup");
-  expect(banner()).toBeNull();
   expect(document.querySelector('[data-slot="copy-cancelled"]')?.textContent).toBe(
     "Copy cancelled. Nothing on M3 changed.",
   );
   expect(folderInput().disabled).toBe(false);
   expect(folderInput().value).toBe("/home/anton/Projects/project");
-  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
-  expect(button("Measure the folder").disabled).toBe(false);
+  expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
+  expect(button("Move to M3").disabled).toBe(false);
   // Closing right after keeps those choices for the next open.
   expect(JSON.parse(localStorage.getItem(DRAFT_KEY)!)).toMatchObject({
     machine: "m3",
@@ -435,69 +285,19 @@ it("cancels the copy to change where, and opens the form with the same choices",
   });
 });
 
-it("saves a new folder while choosing without measuring again", async () => {
-  await mount();
-  await act(async () => moveRadio().click());
-  await chooseFirst();
-  await click("Measure the folder");
-  const { operationId, projectId } = pointerNow();
-  await openStep("where");
-  // Read-only until the person asks to change the folder.
-  expect(folderInput().disabled).toBe(true);
-  expect(() => button("Change where (cancels this copy)")).toThrow();
-  await click("Change folder");
-  expect(folderInput().disabled).toBe(false);
-  expect(button("Save folder").disabled).toBe(true);
-  await editFolder("relative/path");
-  await click("Save folder");
-  expect(document.querySelector('[role="alert"]')?.textContent).toBe(
-    "Enter the full absolute path of the folder on the destination machine.",
-  );
-  expect(pointerNow().targetFolder).toBe("/home/anton/Projects/project");
-
-  await editFolder("/home/anton/Elsewhere/project");
-  await click("Save folder");
-  expect(banner()).toBeNull();
-  expect(stageNow()).toBe("select");
-  expect(pointerNow()).toMatchObject({
-    operationId,
-    targetFolder: "/home/anton/Elsewhere/project",
-  });
-  // A move registers the copy for the new folder under a fresh id.
-  expect(pointerNow().projectId).not.toBe(projectId);
-  expect(names().filter((name) => name === "copyOffer")).toHaveLength(1);
-  expect(names()).not.toContain("copySourceCancel");
-
-  await click("Preview on M3");
-  const started = state.calls.find(([name]) => name === "copyStart")![1] as {
-    input: { targetFolder: string; projectId: string };
-  };
-  expect(started.input).toMatchObject({
-    targetFolder: "/home/anton/Elsewhere/project",
-    projectId: pointerNow().projectId,
-  });
-});
-
-it("keeps earlier steps read-only after Apply and starts a new copy with the same settings", async () => {
+it("offers no Change once the copy is done, and starts a new copy from the menu", async () => {
   measuredWithoutSecrets();
   const rows = [newRow(".")];
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
   await mount();
   await click("Copy to M3");
   expect(stepState().at(-1)).toBe("Done:current");
-  await click("Back");
-  expect(banner()).toBe("You're viewing Copy. The copy is at Done.");
-  for (const id of ["copy", "review", "what"]) {
-    await openStep(id);
-    for (const label of [...CHANGES, "Start a new copy with these settings"])
-      expect(() => button(label)).toThrow();
-  }
-  await openStep("where");
-  for (const label of CHANGES) expect(() => button(label)).toThrow();
+  expect(changeLink()).toBeNull();
+  await openMore();
+  expect(moreItems()).toEqual(["Copy again", "Start a new copy"]);
   const calls = state.calls.length;
-  await click("Start a new copy with these settings");
+  await click("Start a new copy");
   expect(stageNow()).toBe("setup");
-  expect(banner()).toBeNull();
   expect(pointerNow()).toBeNull();
   expect(folderInput().value).toBe("/Users/me/Projects/project");
   expect(button("Copy to M3").disabled).toBe(false);
@@ -505,7 +305,7 @@ it("keeps earlier steps read-only after Apply and starts a new copy with the sam
   expect(names().slice(calls)).toEqual([]);
 });
 
-it("keeps a failed copy read-only once it reached Apply", async () => {
+it("offers no Change on a copy that failed once it reached Apply", async () => {
   measuredWithoutSecrets();
   statuses = [
     copyStatus("previewed", { rows: [newRow(".")] }),
@@ -518,19 +318,13 @@ it("keeps a failed copy read-only once it reached Apply", async () => {
   await mount();
   await click("Copy to M3");
   expect(stageNow()).toBe("failed");
-  await click("Back");
-  await click("Back");
-  expect(banner()).toBe("You're viewing What. The copy is at Copy.");
-  for (const label of CHANGES) expect(() => button(label)).toThrow();
-  await openStep("where");
-  for (const label of CHANGES) expect(() => button(label)).toThrow();
-  // A partly applied copy is never dropped from a review: Retry is on the live step.
-  expect(() => button("Start a new copy with these settings")).toThrow();
-  await click("Go to Copy");
+  // A partly applied copy is never dropped: Retry comes first.
+  expect(changeLink()).toBeNull();
+  expect(() => button("Stop copy")).toThrow();
   expect(button("Retry").disabled).toBe(false);
 });
 
-it("offers to change where on a copy that failed before Apply", async () => {
+it("offers Change on a copy that failed before Apply", async () => {
   measuredWithoutSecrets();
   statuses = [
     copyStatus("previewed", { rows: [newRow(".")] }),
@@ -542,9 +336,7 @@ it("offers to change where on a copy that failed before Apply", async () => {
   ];
   await mount();
   await click("Copy to M3");
-  await openStep("where");
-  expect(() => button("Start a new copy with these settings")).toThrow();
-  await click("Change where (cancels this copy)");
+  await click("Change (stops this copy)");
   expect(names()).toContain("copySourceCancel");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
@@ -572,8 +364,11 @@ it("locks starting a new copy while a coordinator transfer may need recovering",
   await mount();
   await settle();
   expect(stepState()).toContain("Transfer:current");
-  await openStep("where");
-  expect(button("Start a new copy with these settings").disabled).toBe(true);
+  expect(button("Move coordinator now").disabled).toBe(false);
+  await openMore();
+  expect(isDisabled(button("Start a new copy"))).toBe(true);
+  // Copy again releases the source too, so it is locked the same way.
+  expect(isDisabled(button("Copy again"))).toBe(true);
 });
 
 // Reopening: the dialog checks the copy first, then brings back the step that was on screen.
@@ -603,14 +398,14 @@ const toPreview = async () => {
   measured();
   await mount();
   await chooseFirst();
-  await click("Measure the folder");
+  await click("Copy to M3");
   await click("Preview on M3");
   expect(stageNow()).toBe("preview");
 };
 
 it("shows Checking while a reopened copy waits for the destination, with no form or buttons", async () => {
   await toPreview();
-  expect(pointerNow()).toMatchObject({ seen: "review", viewed: "review" });
+  expect(pointerNow()).toMatchObject({ seen: "review" });
   let answer: (value: unknown) => void = () => {};
   state.handlers.copyStatus = () => new Promise((resolve) => (answer = resolve));
   await reopen();
@@ -618,7 +413,7 @@ it("shows Checking while a reopened copy waits for the destination, with no form
   expect(checkingText()).toBe("Checking the copy to /home/anton/Projects/project on M3…");
   expect(folderInput()).toBeNull();
   expect(document.querySelectorAll('[data-slot="copy-actions"] button')).toHaveLength(0);
-  // The bar holds the step last seen, and nothing in it opens while checking.
+  // The line holds the step last seen while checking.
   expect(stepState()).toEqual([
     "Where:done",
     "What:done",
@@ -626,33 +421,13 @@ it("shows Checking while a reopened copy waits for the destination, with no form
     "Copy:next",
     "Done:next",
   ]);
-  expect(clickable()).toEqual(["where:off", "what:off", "review:off", "copy:off", "done:off"]);
 
   await act(async () => answer(copyStatus("previewed")));
   await settle();
   expect(checkingText()).toBeNull();
   expect(stageNow()).toBe("preview");
   expect(noteText()).toBeNull();
-  expect(banner()).toBeNull();
   expect(button("Copy to M3").disabled).toBe(false);
-});
-
-it("comes back to the step that was on screen when the copy is where it was", async () => {
-  await toPreview();
-  await click("Back");
-  expect(pointerNow()).toMatchObject({ seen: "review", viewed: "what" });
-  state.handlers.copyStatus = () => copyStatus("previewed");
-  await reopen();
-  await settle();
-  expect(noteText()).toBe("Picked up where you left off.");
-  expect(banner()).toBe("You're viewing What. The copy is at Review.");
-  expect(document.querySelector<HTMLFieldSetElement>('[data-slot="copy-classes"]')!.disabled).toBe(
-    true,
-  );
-  await click("Go to Review");
-  expect(noteText()).toBeNull();
-  expect(banner()).toBeNull();
-  expect(pointerNow()).toMatchObject({ viewed: "review" });
 });
 
 it("says a copy finished while closed, then keeps it as the last copy with View and Undo", async () => {
@@ -676,7 +451,7 @@ it("says a copy finished while closed, then keeps it as the last copy with View 
   );
   // The form starts from the last copy's choices.
   expect(folderInput().value).toBe("/home/anton/Projects/project");
-  expect(button("Measure the folder").disabled).toBe(false);
+  expect(button("Copy to M3").disabled).toBe(false);
 
   state.handlers.copyUndo = ({ input }: any) => ({
     status: input.preview ? copyStatus("applied") : copyStatus("undone"),
@@ -740,7 +515,7 @@ it("says Retry before Apply starts the copy again, and notes it on What", async 
   await click("Copy to M3");
   expect(stageNow()).toBe("failed");
   expect(document.querySelector('[data-slot="copy-next"]')?.textContent).toBe(
-    "What happens next: Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on M3 changed, so Cancel copy leaves it as it was.",
+    "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on M3 changed, so Stop copy leaves it as it was.",
   );
   statuses = [copyStatus("previewed")];
   await click("Retry");
@@ -748,10 +523,6 @@ it("says Retry before Apply starts the copy again, and notes it on What", async 
   expect(noteText()).toBe("Retry started this copy again from the beginning.");
   await click("Preview on M3");
   expect(stageNow()).toBe("preview");
-  expect(noteText()).toBeNull();
-  // The note was for that restart only: a later copy does not repeat it.
-  await openStep("what");
-  await click("Go to Review");
   expect(noteText()).toBeNull();
 });
 
@@ -797,8 +568,7 @@ it("shows an old pointer's live step as before, and starts remembering it", asyn
   await settle();
   expect(stageNow()).toBe("preview");
   expect(noteText()).toBeNull();
-  expect(banner()).toBeNull();
-  expect(pointerNow()).toMatchObject({ seen: "review", viewed: "review" });
+  expect(pointerNow()).toMatchObject({ seen: "review" });
 });
 
 it("remembers the setup form while no copy has started", async () => {
@@ -815,8 +585,8 @@ it("remembers the setup form while no copy has started", async () => {
   await reopen();
   await settle();
   expect(folderInput().value).toBe("/home/anton/Elsewhere/project");
-  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
-  await click("Measure the folder");
+  expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
+  await click("Move to M3");
   // The copy's pointer holds the choices from here.
   expect(localStorage.getItem(DRAFT_KEY)).toBeNull();
   expect(pointerNow()).toMatchObject({ targetFolder: "/home/anton/Elsewhere/project" });
@@ -829,6 +599,7 @@ it("keeps a finished copy as the last copy when a new one starts from Done", asy
   await mount();
   await click("Copy to M3");
   expect(stageNow()).toBe("done");
+  await openMore();
   await click("Start a new copy");
   expect(pointerNow()).toBeNull();
   expect(JSON.parse(localStorage.getItem(LAST_KEY)!)).toMatchObject({
@@ -850,12 +621,43 @@ it("keeps Review as yours after a reopen when the plan was shown", async () => {
   await reopen();
   await settle();
   expect(stageNow()).toBe("done");
-  expect(step("what").getAttribute("data-auto")).toBe("true");
-  expect(step("review").hasAttribute("data-auto")).toBe(false);
-  await openStep("review");
-  expect(document.querySelector('[data-slot="copy-review-plan"]')?.textContent).toBe(
-    "Plan as approved.",
-  );
+  expect(hasStep("what")).toBe(false);
+  expect(step("review").getAttribute("data-state")).toBe("done");
+});
+
+it("keeps the move and machine the dialog was opened with over the last copy-only copy", async () => {
+  const last = {
+    operationId: "last",
+    environmentId: "m3",
+    mode: "copy-only",
+    targetFolder: "/home/anton/last",
+    projectId: "copied",
+    selection: ["tracked"],
+    auto: true,
+    finishedAt: "2026-10-19T20:00:00.000Z",
+  };
+  localStorage.setItem(LAST_KEY, JSON.stringify(last));
+  // Opened plainly, the form starts from the last copy: copy only, to M3.
+  await mount();
+  expect(button("Copy to M3").disabled).toBe(false);
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  localStorage.setItem(LAST_KEY, JSON.stringify(last));
+  // "Move coordinator to M1": a move to M1, whatever the last copy was.
+  await mount({
+    m1Available: true,
+    defaultMode: "copy-and-move",
+    preferredMachine: "m1",
+    machineRequested: true,
+  });
+  expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
+  expect(button("Move to M1").disabled).toBe(false);
+  expect(() => button("Copy to M3")).toThrow();
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  // "Move project" with only a remembered machine: still a move; the draft may pick the machine.
+  await mount({ m1Available: true, defaultMode: "copy-and-move", preferredMachine: "m1" });
+  expect(button("Move to M3").disabled).toBe(false);
 });
 
 it("lets the last copy go back to being the last copy when its destination is offline", async () => {
@@ -864,6 +666,7 @@ it("lets the last copy go back to being the last copy when its destination is of
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
   await mount();
   await click("Copy to M3");
+  await openMore();
   await click("Start a new copy");
   expect(localStorage.getItem(LAST_KEY)).not.toBeNull();
   state.handlers.copyStatus = () => {
@@ -910,34 +713,7 @@ it("says a copy cancelled elsewhere copied nothing", async () => {
   expect(document.querySelector('[data-slot="copy-undone"]')?.textContent).toContain(
     "The copy was cancelled.",
   );
-  await openStep("review");
-  expect(document.querySelector('[data-slot="copy-review-plan"]')?.textContent).toBe(
-    "Plan as compared.",
-  );
-  await openStep("copy");
-  expect(document.querySelector('[data-slot="copy-review-copied"]')?.textContent).toBe(
-    "The copy was cancelled. Nothing in /Users/me/Projects/project on M3 changed.",
-  );
-});
-
-it("brings back a What review once the folder summary loads on a reopen", async () => {
-  await toPreview();
-  await click("Back");
-  expect(pointerNow()).toMatchObject({ seen: "review", viewed: "what" });
-  let loaded: (value: unknown) => void = () => {};
-  const summary = new Promise((resolve) => (loaded = resolve));
-  state.handlers.copySourceStatus = () => summary;
-  // Comparing again: the restore fires from the poll, before the summary arrives.
-  state.handlers.copyStatus = () => copyStatus("scanning");
-  await reopen();
-  await settle();
-  expect(checkingText()).toBeNull();
-  await act(async () =>
-    loaded({ state: "scanned", summary: noSecrets, progress: null, error: null }),
-  );
-  await settle();
-  expect(banner()).toBe("You're viewing What. The copy is at Review.");
-  expect(noteText()).toBe("Picked up where you left off.");
+  expect(button("Start a new copy")).toBeTruthy();
 });
 
 it("refreshes a resumed saved scan without cancelling, reoffering or changing stored choices", async () => {
@@ -964,8 +740,8 @@ it("refreshes a resumed saved scan without cancelling, reoffering or changing st
   await settle();
   const saved = pointerNow();
   const calls = state.calls.length;
-  await click("Refresh scan");
-  expect(pageText()).toContain("Your copy choices are unchanged");
+  await click("Measure again");
+  expect(pageText()).toContain("Nothing changed since then, so your choices stay.");
   expect(pointerNow()).toEqual(saved);
   expect(state.calls.slice(calls).map(([name]) => name)).toEqual(["copySourceStatus"]);
   expect(state.calls.at(-1)?.[1]).toMatchObject({ input: { operationId: "saved", refresh: true } });

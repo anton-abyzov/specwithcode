@@ -1,10 +1,12 @@
 import { WS_METHODS, type EnvironmentId, type ThreadEnvMode } from "@specweave-studio/contracts";
-import { subscribe } from "@specweave-studio/client-runtime/rpc";
+import { subscribe, type EnvironmentRpcStreamFailure } from "@specweave-studio/client-runtime/rpc";
+import type { EnvironmentRegistry } from "@specweave-studio/client-runtime/connection";
 import {
   executeAtomQuery,
   followStreamInEnvironment,
 } from "@specweave-studio/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
+import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -14,7 +16,11 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 export function observeNewThreadIsRepo(
   environmentId: EnvironmentId,
   cwd: string,
-) {
+): Effect.Effect<
+  boolean | undefined,
+  EnvironmentRpcStreamFailure<typeof WS_METHODS.subscribeVcsStatus> | Cause.TimeoutError,
+  EnvironmentRegistry.EnvironmentRegistry
+> {
   return followStreamInEnvironment(
     environmentId,
     subscribe(WS_METHODS.subscribeVcsStatus, { cwd }),

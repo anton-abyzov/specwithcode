@@ -9,13 +9,50 @@ identities are in [naming](./naming.md).
 ```sh
 bash scripts/release/release.sh 1.0.37 --dry-run              # every stage and command; runs and writes nothing
 bash scripts/release/release.sh 1.0.37 --stop-after drafts     # everything up to the drafts; nothing published
-bash scripts/release/release.sh 1.0.37 --resume                # continue: publish, M4, desktop, M1/M3, merge
+bash scripts/release/release.sh 1.0.37 --resume                # continue: publish, M4, desktop, M1/M3, merge, Linux workers
 bash scripts/release/release.sh 1.0.37 --status                # stage markers and timings
 ```
 
 Run it from a checkout of `anton-abyzov/specwithcode` on M4 with Node 22.20.0 installed
 through nvm. A run stops at the first failing stage and prints the command to continue. `--resume`
 skips every stage already done; `--self-test` checks the script itself with stubbed commands.
+
+### macOS first, then Linux workers, then Windows and Linux apps
+
+A release ships in three waves, so macOS is never held back by the slower platforms:
+
+1. **macOS and the Mac fleet** (`release.sh`): the signed macOS app, every asset the fleet reads
+   (including the Linux worker archives `studio-<version>-linux-{x64,arm64}-<sha>.tar.gz`), M4, the
+   desktop app, M1 and M3, then the merge.
+2. **Linux workers** (`fleet-linux`, the last stage): each inventory entry with `"os": "linux"` runs
+   its own `specweave-studio update <version> --yes` over SSH (`scripts/studio-fleet/linux_rollout.py`).
+   Best effort: a worker whose service still runs work is skipped, since the update restarts it, and
+   one that is unreachable or fails only warns. An active service is restarted with `--if-idle`: right
+   before the restart it atomically closes admission and waits for already admitted commands to
+   persist and terminal opens/restarts to register. Running terminals refuse the conditional restart
+   and are left running. It holds only an idle service, under a unique lease that is checked again immediately
+   before the stop. Older services without lease acknowledgement are refused. A busy or refused
+   update leaves the service selection unchanged. A worker whose service state cannot be read (no user bus, or a state
+   other than active, inactive or failed) is skipped. A worker counts as updated only when its live
+   server runs the version, healthy, as the launcher selected it, not when the unit names it. Workers
+   on 1.0.105 or earlier cannot hold themselves this way: while their service runs, they are skipped
+   until updated by hand once (docs/user/linux-worker.md). The release is already done and the stage
+   never fails it. Retry with `python3 -B scripts/studio-fleet/linux_rollout.py --version <v>` once
+   the worker is idle; `--dry-run` prints the SSH commands.
+3. **Windows and Linux desktop apps** (Release Windows and Linux, below): built nightly at 07:00
+   UTC for the newest release that lacks them, or on demand with a manual dispatch. Until then
+   Windows and Linux desktop installs stay on their version (their update check finds no feed).
+
+A Linux worker entry in `hosts.json` (kept outside the repository):
+
+```json
+"ministorm": {"os": "linux", "host": "ministorm", "sshConfig": true,
+              "studioHome": "/home/<user>/.specwithcode/ministorm", "unit": "studio.service"}
+```
+
+`"sshConfig": true` reaches `host` as an alias of the M4's own `~/.ssh/config`; without it the
+entry needs `user` and uses the pinned fleet key and `known_hosts`, as M1 and M3 do. `unit`
+defaults to `studio.service`.
 
 ### Before the first release on a Mac
 
@@ -36,10 +73,11 @@ skips every stage already done; `--self-test` checks the script itself with stub
 
 The **Release macOS** workflow (`.github/workflows/release-macos.yml`, run by hand with the
 version) runs `release.sh --ci` on a Mac runner, so a release needs neither the M4 nor anyone at
-it. `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers` and
-`desktop`: each host's update agent installs the release from the public feed on its next hourly
+it. `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
+and `fleet-linux`: each Mac's update agent installs the release from the public feed on its next hourly
 check, and `fleet_rollout.py --version <v>` on the M4 asks them at once and then updates the M1
-and M3 apps ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)). The workflow writes
+and M3 apps ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)); `linux_rollout.py
+--version <v>` does the same for Linux workers, which have no update agent. The workflow writes
 release.env, the certificate, the notarization key, the Google pair and the mirror rules from
 repository secrets into the runner's temp folder and deletes them at the end; its header lists the
 secret names. It runs on GitHub's `macos-15` unless the repository variable
@@ -78,6 +116,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | desktop         | record grants, rollback copy, swap the app in `/Applications`, check its signature, grants and version, open it        | once                    |
 | fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way, then each one's desktop app                | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
+| fleet-linux     | `linux_rollout.py`: Linux workers, best effort; a skipped or failed worker only warns                                  | once                    |
 
 Preflight checks each file and value exists without printing any. The candidate stage fails when
 `pnpm install --frozen-lockfile` would change `pnpm-lock.yaml`; stage 1 runs every workspace
@@ -296,10 +335,17 @@ installer with its blockmap and `latest.yml`, the AppImage and `.deb` with `late
 each package's `app-update.yml` polls `anton-abyzov/specwithcode` and that every file the feeds
 name matches its hash, then adds the files and `SHA256SUMS-windows-linux` to both releases once
 they are published. It never uploads or replaces a name `release.sh` uses and checks afterwards
-that `latest-mac.yml` and `SHA256SUMS` are unchanged. It runs as a dry run (assets kept as a
-workflow artifact) unless `dry_run` is off, and on its own after each release when the repository
-variable `RELEASE_WINDOWS_LINUX_ON_PUBLISH` is `true`. Until it has run, Windows and Linux installs
-of the new release see no `latest.yml` or `latest-linux.yml` and report a failed update check.
+that `latest-mac.yml` and `SHA256SUMS` are unchanged. A manual dispatch is a dry run (assets kept
+as a workflow artifact) unless `dry_run` is off. Every night at 07:00 UTC it runs by itself for the
+newest published `X.Y.Z` release when neither copy of that release has its assets yet and the
+public one is published; otherwise it stops in the plan job within seconds. Versions released in
+between are skipped, since the feeds only need the newest. A nightly run never replaces an asset:
+a release holding only some of them gets a warning to dispatch it with `replace`. Running on every
+published release is opt-in (repository variable `RELEASE_WINDOWS_LINUX_ON_PUBLISH` set to `true`)
+and off, because each run holds a Windows and a Linux runner for about an hour,
+and building several releases a day consumes capacity needed by pull request CI. Until it has run, Windows
+and Linux desktop installs find no `latest.yml` or `latest-linux.yml` on the new Latest release,
+report a failed update check and stay on their version.
 
 Release DMGs are built with `--signed`: Developer ID Application, team `NMCB2JZ7QG`, hardened
 runtime, notarized and stapled. The environment is in

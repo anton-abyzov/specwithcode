@@ -1,3 +1,4 @@
+import type { FolderCopyStatus } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   changedRows,
@@ -17,7 +18,7 @@ import {
   hasNotCopied,
   skippedWorktreeParts,
 } from "./handoffCopyNotices";
-import { nextStepText, sourceProgressText } from "./handoffCopySteps";
+import { nextStepText, sourceProgressText, workingLine } from "./handoffCopySteps";
 
 const row = (overrides: Record<string, unknown> = {}) =>
   ({
@@ -135,7 +136,7 @@ describe("one-click approval", () => {
     expect(secretsLeft([{ path: ".env" }, { path: "key.pem" }], [{ path: ".env" }])).toBe(1);
     expect(secretsLeft(null, [])).toBe(0);
     expect(secretsLeftText(2, "M4")).toBe(
-      "2 secret-like files (.env and similar) stayed on M4. Copy them yourself, or run the copy again with Choose what to copy to send them.",
+      "2 secret-like files (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
     );
     expect(secretsLeftText(0, "M4")).toBeNull();
   });
@@ -368,58 +369,59 @@ describe("grouped notices", () => {
     });
     expect([older.worktreeCount, older.dirtyCount, older.uncheckedWorktrees]).toEqual([1, 1, []]);
   });
+
+  it("says running work in plain words before Apply only, from any source version", () => {
+    const warnings = [
+      "Work is still running in this folder. You can copy now, but files may change during the copy and later edits are not included. Transferring coordinator context waits until this work stops.",
+      "Work is still running here. Files that change during the copy won't be included, and the project moves once that work stops.",
+    ];
+    const lines = (activeWork: "copy-only" | "copy-and-move" | null) =>
+      groupCopyNotices({ warnings, rootLabel: "Project root", activeWork }).lines;
+    expect(lines("copy-and-move")).toEqual([
+      "Work is still running here. Files that change during the copy won't be included, and the project moves once that work stops.",
+    ]);
+    expect(lines("copy-only")).toEqual([
+      "Work is still running here. Files that change during the copy won't be included.",
+    ]);
+    // Copying started: Done and Failed never repeat it.
+    expect(lines(null)).toEqual([]);
+  });
 });
 
 describe("steps and what happens next", () => {
   const base = {
     auto: true,
-    mode: "copy-only" as const,
-    contextTransferred: false,
     targetLabel: "ministorm",
-    sourceLabel: "M4",
-    unfinished: false,
-    bytes: 10_500_000_000,
-    replaced: null,
     approveLabel: "Copy to ministorm",
     failedBeforeApply: false,
-    copyAgain: false,
-    secretFiles: 0,
   };
-  it("says what happens next at every stage", () => {
+  it("says what happens next only while choosing file types or after a copy stopped", () => {
     for (const stage of [
       "setup",
       "scanning",
-      "select",
       "planning",
       "preview",
       "copying",
       "moving",
       "done",
       "undone",
-      "failed",
     ] as const)
-      expect(nextStepText({ ...base, stage })).toBeTruthy();
-    expect(nextStepText({ ...base, stage: "setup" })).toBe(
-      "Measures the folder, then copies it to ministorm. Nothing on ministorm is replaced without asking.",
-    );
-    expect(nextStepText({ ...base, stage: "setup", auto: false, cancelledPending: true })).toBe(
-      "Tells M4 again to drop the cancelled copy. Nothing is copied.",
-    );
+      expect(nextStepText({ ...base, stage })).toBeNull();
     expect(nextStepText({ ...base, stage: "select", auto: false })).toBe(
       "Preview compares with ministorm's folder. Nothing is written until you approve.",
     );
-    expect(nextStepText({ ...base, stage: "copying" })).toBe(
-      "Copying 10.5 GB. You can close this window; you'll get a notice when it's done.",
+    expect(nextStepText({ ...base, stage: "failed", held: true })).toContain(
+      "Move anyway moves the coordinator with these differences.",
     );
   });
 
   it("says Retry before Apply starts the copy again from measuring", () => {
     const failed = { ...base, stage: "failed" as const, failedBeforeApply: true };
     expect(nextStepText(failed)).toBe(
-      "Retry starts the copy again: it measures and compares again, then copies unless it needs you. Nothing on ministorm changed, so Cancel copy leaves it as it was.",
+      "Retry starts the copy again: it measures and compares again, then copies unless it needs you. Nothing on ministorm changed, so Stop copy leaves it as it was.",
     );
     expect(nextStepText({ ...failed, auto: false })).toBe(
-      "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on ministorm changed, so Cancel copy leaves it as it was.",
+      "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on ministorm changed, so Stop copy leaves it as it was.",
     );
     // After Apply the destination resumes the same copy.
     expect(nextStepText({ ...failed, failedBeforeApply: false })).toBe(
@@ -427,53 +429,52 @@ describe("steps and what happens next", () => {
     );
   });
 
-  it("names the real reasons a one-click copy stops and promises no wait for idle", () => {
-    const stops =
-      "It stops for you first if files on ministorm would be replaced, a branch there would move, or ministorm is short of disk space.";
-    expect(nextStepText({ ...base, stage: "scanning" })).toBe(
-      `When measuring finishes, copying starts on its own. ${stops} You can close this window; you'll get a notice when it's done.`,
+  const working = {
+    targetLabel: "ministorm",
+    measured: null,
+    copy: null,
+    recompare: null,
+  } as const;
+  it("shows one progress line: measuring, comparing, then copying with the size", () => {
+    expect(workingLine({ ...working, stage: "scanning" })).toBe("Measuring…");
+    expect(
+      workingLine({ ...working, stage: "scanning", measured: { files: 1204, bytes: 3_000_000 } }),
+    ).toBe("Measuring… 1,204 files, 3.0 MB");
+    expect(workingLine({ ...working, stage: "planning" })).toBe("Comparing with ministorm…");
+    expect(
+      workingLine({
+        ...working,
+        stage: "copying",
+        copy: {
+          state: "transferring",
+          progress: null,
+          totals: {
+            filesToMove: 1,
+            bytesToMove: 1_200_000_000,
+            bytesPresent: 0,
+            decisionsNeeded: 0,
+          },
+        } as unknown as FolderCopyStatus,
+      }),
+    ).toBe("Copying 1.2 GB…");
+    expect(workingLine({ ...working, stage: "copying" })).toBe("Copying…");
+    expect(workingLine({ ...working, stage: "moving" })).toBe(
+      "Starting the coordinator on ministorm…",
     );
-    expect(nextStepText({ ...base, stage: "planning" })).toBe(
-      `Copying starts on its own when comparing finishes. ${stops} You can close this window.`,
-    );
-    expect(nextStepText({ ...base, stage: "setup", mode: "copy-and-move" })).toBe(
-      "Measures the folder, then copies it to ministorm. Nothing on ministorm is replaced without asking. Then transfers coordinator context if work on M4 is idle; otherwise you retry once it is.",
-    );
+    for (const stage of ["setup", "select", "preview", "done", "failed", "undone"] as const)
+      expect(workingLine({ ...working, stage })).toBeNull();
   });
 
   it("promises copying on its own only for the first automatic compare", () => {
-    expect(nextStepText({ ...base, stage: "planning", recompare: "choices" })).toBe(
+    const planning = { ...working, stage: "planning" as const };
+    expect(workingLine({ ...planning, recompare: "choices" })).toBe(
       "Comparing again with your choices…",
     );
-    expect(nextStepText({ ...base, stage: "planning", auto: false, recompare: "choices" })).toBe(
-      "Comparing again with your choices…",
+    expect(workingLine({ ...planning, recompare: "replace-all" })).toBe(
+      "Comparing again, then copying with every conflict replaced…",
     );
-    expect(nextStepText({ ...base, stage: "planning", recompare: "replace-all" })).toBe(
-      "Comparing again, then copying with every conflict replaced.",
-    );
-    expect(nextStepText({ ...base, stage: "planning", recompare: "replace-kept" })).toBe(
-      "Comparing again, then copying with every other conflict replaced and your choices kept.",
-    );
-    expect(nextStepText({ ...base, stage: "planning", recompare: null })).toContain(
-      "Copying starts on its own when comparing finishes.",
-    );
-  });
-
-  it("does not promise Replace all copies while unlisted conflicts stay open", () => {
-    const preview = { ...base, stage: "preview" as const, replaced: "1 file" };
-    expect(nextStepText(preview)).toContain("Replace all starts copying now.");
-    const left = nextStepText({
-      ...preview,
-      replaceLeft: "4 more conflicts in Other files still need a choice.",
-    });
-    expect(left).toBe(
-      "Replace all takes M4's version of what it can and does not copy yet. 4 more conflicts in Other files still need a choice. Answer them with an “All” choice below, then Copy with these choices.",
-    );
-  });
-
-  it("leads with Copy again after a copy with problems", () => {
-    expect(nextStepText({ ...base, stage: "done", copyAgain: true })).toBe(
-      "Copy again to bring over what changed since; it compares first and moves only changed files.",
+    expect(workingLine({ ...planning, recompare: "replace-kept" })).toBe(
+      "Comparing again, then copying with your choices kept and the rest replaced…",
     );
   });
 
@@ -487,8 +488,6 @@ describe("steps and what happens next", () => {
         "M4",
       ),
     ).toBe("Reading the selected files on M4… 3 of 10 files, 3.0 KB of 10.0 KB");
-    expect(sourceProgressText({ files: 1, bytes: 5 }, "M4")).toBe(
-      "Measuring the folder… 1 file, 5 B",
-    );
+    expect(sourceProgressText({ files: 1, bytes: 5 }, "M4")).toBe("Measuring… 1 file, 5 B");
   });
 });

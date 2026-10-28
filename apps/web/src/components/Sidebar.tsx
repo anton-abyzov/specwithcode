@@ -18,7 +18,7 @@ import {
   setThreadHandoffMode,
   threadHandoffMenuState,
 } from "../studio/handoffMode";
-import { requestHandOffThread } from "./handoff/HandOffThreadDialog";
+import { requestHandOffThread, requestSwitchModel } from "./handoff/HandOffThreadDialog";
 import { threadMoveBlockedReason } from "./threadMove.logic";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
@@ -192,6 +192,8 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  threadHandoffInherited,
+  withInheritedHandoff,
 } from "./threadActionMenu.logic";
 import {
   animateSidebarLayoutChanges,
@@ -4700,7 +4702,10 @@ export default function Sidebar() {
                 projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
               )
                 ? undefined
-                : threadHandoffMenuState(handoffSnapshot, thread.id, thread.projectId),
+                : withInheritedHandoff(
+                    threadHandoffMenuState(handoffSnapshot, thread.id, thread.projectId),
+                    threadHandoffInherited(handoffSnapshot, thread.projectId),
+                  ),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -4861,13 +4866,16 @@ export default function Sidebar() {
             if (!result.ok)
               toastManager.add({
                 type: "error",
-                title: "Couldn't change handoff mode",
+                title: "Couldn't change Keep ready to move",
                 description: result.error,
               });
             return;
           }
           case "hand-off":
             requestHandOffThread(threadRef);
+            return;
+          case "switch-model":
+            requestSwitchModel(threadRef);
             return;
           case "move-to-project":
             await requestThreadMove(threadRef);

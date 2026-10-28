@@ -1104,17 +1104,17 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "handoff-mode",
-    title: "Handoff mode",
+    title: "Moving work between machines",
     to: "/settings/machines",
     searchTerms: [
-      "handoff hand off continue another machine model checkpoint replicate note push origin project default takeover unreachable",
+      "move threads another machine keep ready to move handoff hand off continue sync checkpoint replicate turn summary note push origin back up project default",
     ],
   },
   {
     id: "handoff-sleep-target",
-    title: "When this Mac sleeps, hand off running threads",
+    title: "When this Mac sleeps, move running threads",
     to: "/settings/machines",
-    searchTerms: ["sleep suspend lid close laptop hand off threads machine handoff"],
+    searchTerms: ["sleep suspend lid close laptop move hand off running threads machine handoff"],
   },
   {
     id: "private-machines-auto-connect",

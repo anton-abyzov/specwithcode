@@ -10,7 +10,7 @@ export default defineConfig({
       enforce: "pre",
       resolveId(id, importer) {
         if (
-          importer?.endsWith("HandoffFolderPicker.tsx") &&
+          /(HandoffFolderPicker|RemoteFolderBrowser)\.tsx$/.test(importer ?? "") &&
           /\/state\/(filesystem|query|projects|use-atom-command)$/.test(id)
         )
           return fileURLToPath(new URL("./mocks.ts", import.meta.url));

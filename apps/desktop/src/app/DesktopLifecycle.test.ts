@@ -123,6 +123,8 @@ function layerDesktopWindow(
     prepareCaptureReveal: Effect.void,
     dispatchMenuAction: () => Effect.void,
     dispatchSnapShotEvent: () => Effect.void,
+    snapShotOwner: () => Effect.succeedNone,
+    forgetSnapShotOwner: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
   });

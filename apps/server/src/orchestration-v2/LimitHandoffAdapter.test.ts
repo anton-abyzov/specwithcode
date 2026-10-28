@@ -346,7 +346,7 @@ describe("heldOutcome", () => {
     expect(heldOutcome(document, threadId, m4)).toEqual({
       type: "in-doubt",
       message:
-        "This machine woke after handing its threads off and no other machine answered yet. Choose Continue here anyway to run it here.",
+        "This machine woke after handing its threads off and no other machine answered yet. Choose Resume this Mac to run it here.",
       heldByState: true,
     });
   });

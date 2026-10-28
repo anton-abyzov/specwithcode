@@ -74,6 +74,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsWorktreesRead]: AuthFilesystemReadScope,
   // Same scope as vcs.removeWorktree: it removes checkouts.
   [WS_METHODS.projectsWorktreesRemove]: AuthSourceControlWriteScope,
+  // Same scope as thread.delete and project.delete.
+  [WS_METHODS.projectsThreadsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsWorkspaceRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsStarterSuggestions]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsConnectionsRead]: AuthOrchestrationReadScope,

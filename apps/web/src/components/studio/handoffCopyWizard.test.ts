@@ -1,15 +1,12 @@
-import type { FolderCopySourceSummary, FolderCopyStatus } from "@specweave-studio/contracts";
+import type { FolderCopyStatus } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import type { CopyStage } from "./handoffCopySteps";
 import {
   COPY_STEP_IDS,
-  canRevisit,
   copyStepList,
-  editActionFor,
   isCopyStepId,
   laterStep,
   progressStep,
-  restoredView,
   resumeNote,
   stepTone,
   type CopyStepId,
@@ -25,8 +22,6 @@ const copy = (overrides: Partial<FolderCopyStatus> = {}) =>
     unstable: [],
     ...overrides,
   }) as FolderCopyStatus;
-
-const summary = {} as FolderCopySourceSummary;
 
 describe("copyStepList", () => {
   it("is the same for one-click and choosing copies, with Transfer only for a move", () => {
@@ -104,176 +99,6 @@ describe("stepTone", () => {
   });
 });
 
-describe("canRevisit", () => {
-  const none = { summary: null, copy: null, contextTransferred: false };
-
-  it("always allows Where", () => {
-    expect(canRevisit("where", none)).toBe(true);
-  });
-
-  it("needs a measured summary for What", () => {
-    expect(canRevisit("what", none)).toBe(false);
-    expect(canRevisit("what", { ...none, summary })).toBe(true);
-  });
-
-  it("needs a compared plan for Review", () => {
-    expect(canRevisit("review", { ...none, copy: copy({ state: "planned" }) })).toBe(false);
-    expect(canRevisit("review", { ...none, copy: copy({ state: "scanning" }) })).toBe(false);
-    expect(canRevisit("review", { ...none, copy: copy({ state: "previewed" }) })).toBe(true);
-    expect(
-      canRevisit("review", {
-        ...none,
-        copy: copy({ state: "failed", rows: [{} as FolderCopyStatus["rows"][number]] }),
-      }),
-    ).toBe(true);
-    expect(canRevisit("review", { ...none, copy: copy({ state: "failed" }) })).toBe(false);
-  });
-
-  it("needs a copy for Copy and a transferred context for Transfer", () => {
-    expect(canRevisit("copy", none)).toBe(false);
-    expect(canRevisit("copy", { ...none, copy: copy({ state: "applied" }) })).toBe(true);
-    expect(canRevisit("transfer", none)).toBe(false);
-    expect(canRevisit("transfer", { ...none, contextTransferred: true })).toBe(true);
-    expect(canRevisit("done", { summary, copy: copy(), contextTransferred: true })).toBe(false);
-  });
-});
-
-describe("editActionFor", () => {
-  const base = { copy: null, failedBeforeApply: false, transferRecovery: false };
-
-  it("offers Save folder on Where only while choosing", () => {
-    expect(editActionFor("where", { ...base, stage: "select" })).toBe("save-folder");
-    for (const stage of ["scanning", "planning", "preview"] as const)
-      expect(editActionFor("where", { ...base, stage })).toBe("change-where");
-  });
-
-  it("offers Change where and Change what only before Apply", () => {
-    expect(editActionFor("what", { ...base, stage: "preview" })).toBe("rechoose");
-    expect(editActionFor("what", { ...base, stage: "planning" })).toBe("rechoose");
-    expect(editActionFor("what", { ...base, stage: "select" })).toBeNull();
-    expect(editActionFor("what", { ...base, stage: "scanning" })).toBeNull();
-    const transferring = {
-      ...base,
-      stage: "copying",
-      copy: copy({ state: "transferring" }),
-    } as const;
-    expect(editActionFor("where", transferring)).toBe("change-where");
-    expect(editActionFor("what", transferring)).toBe("rechoose");
-    const failedEarly = { ...base, stage: "failed", failedBeforeApply: true } as const;
-    expect(editActionFor("where", failedEarly)).toBe("change-where");
-    expect(editActionFor("what", failedEarly)).toBe("rechoose");
-    expect(editActionFor("review", { ...base, stage: "copying" })).toBeNull();
-  });
-
-  it("offers nothing while the destination applies or has applied", () => {
-    for (const state of ["applying", "applied"] as const) {
-      const input = { ...base, stage: "copying", copy: copy({ state }) } as const;
-      expect(editActionFor("where", input)).toBeNull();
-      expect(editActionFor("what", input)).toBeNull();
-    }
-    expect(editActionFor("where", { ...base, stage: "moving" })).toBeNull();
-    expect(editActionFor("where", { ...base, stage: "setup" })).toBeNull();
-  });
-
-  it("starts a new copy with these settings after Apply, unless a transfer needs recovering", () => {
-    for (const stage of ["done", "undone"] as const) {
-      expect(editActionFor("where", { ...base, stage })).toBe("start-new-with-settings");
-      expect(editActionFor("what", { ...base, stage })).toBeNull();
-      expect(editActionFor("review", { ...base, stage })).toBeNull();
-    }
-    expect(editActionFor("where", { ...base, stage: "done", transferRecovery: true })).toBeNull();
-  });
-
-  it("offers nothing on a copy that failed or is held after Apply: Retry or Undo come first", () => {
-    for (const failedStep of ["applying", "applied"] as const) {
-      const input = {
-        ...base,
-        stage: "failed",
-        copy: copy({ state: "failed", failedStep }),
-      } as const;
-      for (const id of ["where", "what", "review", "copy"] as const)
-        expect(editActionFor(id, input)).toBeNull();
-    }
-  });
-});
-
-describe("restoredView", () => {
-  const all = () => true;
-
-  it("brings back the reviewed step while the copy is where it was (5a)", () => {
-    expect(
-      restoredView({
-        viewed: "what",
-        seen: "review",
-        live: "review",
-        stage: "preview",
-        revisitable: all,
-      }),
-    ).toEqual({ view: "what", note: false });
-  });
-
-  it("does not bring back a step that has nothing to show", () => {
-    expect(
-      restoredView({
-        viewed: "what",
-        seen: "review",
-        live: "review",
-        stage: "preview",
-        revisitable: (id) => id !== "what",
-      }),
-    ).toEqual({ view: null, note: false });
-  });
-
-  it("shows the live step with a note when the copy moved on (5b)", () => {
-    expect(
-      restoredView({
-        viewed: "what",
-        seen: "review",
-        live: "done",
-        stage: "done",
-        revisitable: all,
-      }),
-    ).toEqual({ view: null, note: true });
-  });
-
-  it("always shows a failure, a held move or an Undo live (5c)", () => {
-    for (const stage of ["failed", "undone"] as const)
-      expect(
-        restoredView({
-          viewed: "where",
-          seen: stage === "failed" ? "copy" : "done",
-          live: stage === "failed" ? "copy" : "done",
-          stage,
-          revisitable: all,
-        }),
-      ).toEqual({ view: null, note: false });
-  });
-
-  it("shows the live step when the live step was on screen", () => {
-    expect(
-      restoredView({
-        viewed: "review",
-        seen: "review",
-        live: "review",
-        stage: "preview",
-        revisitable: all,
-      }),
-    ).toEqual({ view: null, note: false });
-  });
-
-  it("behaves as before for a pointer without remembered steps", () => {
-    expect(
-      restoredView({
-        viewed: undefined,
-        seen: undefined,
-        live: "done",
-        stage: "done",
-        revisitable: all,
-      }),
-    ).toEqual({ view: null, note: false });
-  });
-});
-
 describe("resumeNote", () => {
   const base = { copy: null, held: false, sourceLabel: "M4" };
 
@@ -297,7 +122,7 @@ describe("resumeNote", () => {
       "This copy finished while the window was closed.",
     );
     expect(resumeNote({ ...base, seen: "copy", live: "transfer", stage: "done" })).toBe(
-      "The files finished copying while the window was closed. Coordinator context has not transferred yet.",
+      "The files finished copying while the window was closed. The coordinator has not moved yet.",
     );
     expect(resumeNote({ ...base, seen: "copy", live: "done", stage: "undone" })).toBe(
       "This copy was undone while the window was closed.",

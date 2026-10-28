@@ -92,6 +92,7 @@ const layerProjects = Layer.succeed(ProjectService.ProjectService, {
   bootstrap: () => Effect.die("unused"),
   update: () => Effect.die("unused"),
   delete: () => Effect.die("unused"),
+  deleteThreads: () => Effect.die("unused"),
   getById: (id) => Effect.succeed(Option.fromNullishOr(projectsById.get(id))),
   getByWorkspaceRoot: () => Effect.succeed(Option.none()),
   snapshot: Effect.die("unused"),

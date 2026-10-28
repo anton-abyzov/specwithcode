@@ -38,10 +38,8 @@ export function HandoffSecretsStep({
     <fieldset className="min-w-0 space-y-2 text-sm" data-slot="copy-secrets" disabled={disabled}>
       <legend className="mb-1 font-medium">Secret files</legend>
       <p className="text-xs text-muted-foreground">
-        These files look like passwords, keys or tokens (.env files, private keys, .NET appsettings
-        overrides and secrets.json, Spring profiles, .dev.vars, Terraform variables, service-account
-        JSON), so they stay here unless you tick them. Sign-ins to Claude, Codex and GitHub are
-        never copied; sign in on {targetLabel} instead.
+        These look like passwords, keys or tokens, so they stay here unless you tick them. Sign-ins
+        to Claude, Codex and GitHub are never copied; sign in on {targetLabel} instead.
       </p>
       {files.length > 1 && (
         <div className="flex flex-wrap gap-2 text-xs" data-slot="copy-secrets-all">
@@ -97,9 +95,8 @@ export function HandoffSecretsStep({
             />
           </span>
           <span className="leading-5">
-            Send{" "}
-            {selected.length === 1 ? "this secret file" : `these ${selected.length} secret files`}{" "}
-            to {targetLabel}. They arrive readable only by your user there.
+            Send {selected.length} secret {selected.length === 1 ? "file" : "files"} to{" "}
+            {targetLabel}. Only your user can read {selected.length === 1 ? "it" : "them"} there.
           </span>
         </label>
       )}

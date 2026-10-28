@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@specweave-studio/contracts";
@@ -264,6 +265,133 @@ const pageWholeThread = Effect.fn("pageWholeThread")(function* (input: {
 });
 
 it.layer(layerTest)("ProjectionStoreV2 long turns", (it) => {
+  it.effect(
+    "retains an old pending question outside the history page and releases it after answering",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread:old-restored-question");
+        const oldRun = RunId.make("run:old-question");
+        const newRun = RunId.make("run:new-work");
+        yield* createThread(threadId, null);
+        yield* putRun({ threadId, runId: oldRun, ordinal: 687, status: "completed" });
+        yield* insertTurn({ threadId, runId: oldRun, firstOrdinal: 687000001, steps: 2 });
+        yield* putRun({ threadId, runId: newRun, ordinal: 699, status: "completed" });
+        yield* insertTurn({ threadId, runId: newRun, firstOrdinal: 699000001, steps: 1000 });
+        const now = yield* DateTime.now;
+        const requestId = RuntimeRequestId.make(`${"update-reopen:".repeat(10)}ask-user:relay`);
+        yield* store.apply({
+          id: EventId.make("event:old-question:request"),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: requestId,
+            nodeId: NodeId.make("node:old-question"),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+        const card = {
+          id: "card:old-question",
+          threadId,
+          runId: oldRun,
+          nodeId: NodeId.make("node:old-question"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 687000029,
+          status: "waiting",
+          title: null,
+          startedAt: DateTime.formatIso(now),
+          completedAt: null,
+          updatedAt: DateTime.formatIso(now),
+          type: "user_input_request",
+          requestId,
+          responseMode: "message",
+          questions: [
+            {
+              id: "q1",
+              header: "Owner relay",
+              question: "Can you relay the existing owner request?",
+              options: [],
+              allowCustomAnswer: true,
+            },
+          ],
+        };
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert({ turn_item_id: card.id, thread_id: threadId, run_id: oldRun, node_id: card.nodeId, provider_thread_id: null, provider_turn_id: null, parent_item_id: null, ordinal: 687000029, type: card.type, status: card.status, updated_at: card.updatedAt, payload_json: encodeUnknownJsonString(card) })}`;
+        const read = () =>
+          store.getThreadSnapshotWindow(threadId, {
+            rowLimit: 20,
+            userTurnLimit: 1,
+            boundLongTurns: true,
+          });
+        const first = yield* read();
+        assert.isTrue(
+          first.projection.runtimeRequests.some(
+            (r) => r.id === requestId && r.status === "pending",
+          ),
+        );
+        assert.isTrue(
+          first.projection.turnItems.some(
+            (i) =>
+              i.id === card.id &&
+              i.type === "user_input_request" &&
+              i.questions[0]?.question === card.questions[0]!.question,
+          ),
+        );
+        assert.isFalse(first.projection.visibleTurnItems.some((r) => r.sourceItemId === card.id));
+        assert.isAtMost(first.projection.visibleTurnItems.length, 20);
+        const wire = buildBoundedThreadProjection({ ...first, projection: first.projection });
+        assert.isTrue(
+          wire.projection.turnItems.some(
+            (i) =>
+              i.id === card.id &&
+              i.type === "user_input_request" &&
+              i.questions[0]?.question === card.questions[0]!.question,
+          ),
+        );
+        assert.isFalse(wire.projection.visibleTurnItems.some((r) => r.sourceItemId === card.id));
+        // An answer receipt can predate the retained page too. It must travel
+        // with a restored pending copy so all request consumers can reject it.
+        const originalId = RuntimeRequestId.make("ask-user:relay");
+        yield* store.apply({
+          id: EventId.make("event:old-question:answer"),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: originalId,
+            nodeId: NodeId.make("node:answer-outside-page"),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "resolved",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: now,
+            answers: { q1: "Relayed" },
+          },
+        });
+        const answered = yield* read();
+        assert.isTrue(
+          answered.projection.runtimeRequests.some(
+            (r) => r.id === originalId && r.answers?.q1 === "Relayed",
+          ),
+        );
+        yield* sql`UPDATE orchestration_v2_projection_runtime_requests SET status='resolved', payload_json=json_set(payload_json,'$.status','resolved') WHERE runtime_request_id=${requestId}`;
+        const settled = yield* read();
+        assert.isFalse(settled.projection.turnItems.some((i) => i.id === card.id));
+      }),
+  );
+
   for (const boundLongTurns of [true, false]) {
     it.effect(
       `pages a fork whose source turn has 1,000 rows back to its first row (${boundLongTurns ? "bounded" : "whole"} turns)`,

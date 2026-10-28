@@ -5,14 +5,13 @@ import type {
   FolderCopyChoice,
   FolderCopyFileClass,
   FolderCopyMode,
-  FolderCopyOffer,
   FolderCopySourceStatus,
   FolderCopySourceSummary,
   FolderCopyStatus,
   FolderCopyUndoResult,
 } from "@specweave-studio/contracts";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
-import { copiedProjectFolder, formatBytes } from "../../studio/folderCopy";
+import { formatBytes } from "../../studio/folderCopy";
 import { HandoffSecretsStep } from "./HandoffSecretsStep";
 import {
   CopyClassPicker,
@@ -21,14 +20,14 @@ import {
   planRepositoryChoices,
   type RepositoryChoices,
 } from "./HandoffCopyPreview";
-import { HandoffCopyScope, CopyScopeMapping, type useCopyScope } from "./HandoffCopyScope";
+import type { useCopyScope } from "./HandoffCopyScope";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopySetup, type CopyMachine } from "./HandoffCopySetup";
 import { HandoffCopyDone, HandoffCopyFailed, HandoffCopyUndone } from "./HandoffCopyDone";
 import { sourceProgressText, type CopyStage } from "./handoffCopySteps";
 import { replacesNothing } from "./handoffCopyAuto";
 import type { CopyNotices } from "./handoffCopyNotices";
-import { CopyNextStep, CopyNoticesBlock } from "./HandoffCopyGuide";
+import { CopyNextStep, CopyNoticesBlock, CopyWorkingHint } from "./HandoffCopyGuide";
 import { Button } from "../ui/button";
 
 /** Secret files outside the repositories left out of the copy: those stay here anyway. */
@@ -53,7 +52,6 @@ export function HandoffCopyStepPanels({
   targetLabel,
   busy,
   pending,
-  offer,
   summary,
   measured,
   copy,
@@ -97,6 +95,8 @@ export function HandoffCopyStepPanels({
   sourceDropped,
   notices,
   next,
+  working,
+  choices,
   lastCopy,
   onViewLast,
 }: {
@@ -107,7 +107,6 @@ export function HandoffCopyStepPanels({
   readonly targetLabel: string;
   readonly busy: boolean;
   readonly pending: PendingCopy | null;
-  readonly offer: FolderCopyOffer | null;
   readonly summary: FolderCopySourceSummary | null;
   readonly measured: FolderCopySourceStatus["progress"];
   readonly copy: FolderCopyStatus | null;
@@ -155,6 +154,10 @@ export function HandoffCopyStepPanels({
   readonly sourceDropped: boolean;
   readonly notices: CopyNotices;
   readonly next: ReactNode;
+  /** The one progress line while measuring, comparing, copying or moving. */
+  readonly working: string | null;
+  /** Your choices, with its Change link, once a copy has started. */
+  readonly choices: ReactNode;
   /** The last finished copy, kept for View and Undo while a new one is set up. */
   readonly lastCopy: { readonly targetFolder: string; readonly label: string } | null;
   readonly onViewLast: () => void;
@@ -178,12 +181,8 @@ export function HandoffCopyStepPanels({
               </Button>
             </div>
           )}
-          <HandoffCopyScope
-            scope={scope}
-            sourceLabel={sourceLabel}
-            disabled={busy || pending !== null}
-          />
           <HandoffCopySetup
+            scope={scope}
             machines={machines}
             machine={machine}
             onMachineChange={onMachineChange}
@@ -212,19 +211,7 @@ export function HandoffCopyStepPanels({
         </>
       )}
 
-      {stage !== "setup" && stage !== "scanning" && pending && (
-        <CopyScopeMapping
-          source={copy?.copyRoot ?? offer?.copyRoot ?? pending.copyRoot ?? project.workspaceRoot}
-          target={copy?.targetFolder ?? pending.targetFolder}
-          projectFolder={
-            copy?.projectFolder ??
-            copiedProjectFolder(
-              copy?.targetFolder ?? pending.targetFolder,
-              copy?.projectRelativePath ?? pending.projectRelativePath,
-            )
-          }
-        />
-      )}
+      {choices}
 
       {stage === "select" && summary && (
         <CopyClassPicker
@@ -236,40 +223,47 @@ export function HandoffCopyStepPanels({
         />
       )}
 
-      {stage === "scanning" && (
-        <p
-          role="status"
-          aria-live="polite"
-          className="text-sm text-muted-foreground"
-          data-slot="copy-measuring"
-        >
-          {measured ? sourceProgressText(measured, sourceLabel) : "Measuring the folder…"}
-        </p>
-      )}
-
-      {stage === "planning" && (
-        <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
-          Comparing with {pending?.targetFolder ?? "the folder"} on {targetLabel}…
-          {measured?.step && measured.step !== "listing" && (
-            <span className="block text-xs" data-slot="copy-source-step">
-              {sourceProgressText(measured, sourceLabel)}
-            </span>
+      {working && (
+        <div className="space-y-1.5">
+          {stage === "copying" && copy ? (
+            <CopyProgress status={copy} line={working} />
+          ) : (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm"
+              data-slot={stage === "scanning" ? "copy-measuring" : "copy-working"}
+            >
+              {working}
+              {stage === "planning" && measured?.step && measured.step !== "listing" && (
+                <span className="block text-xs text-muted-foreground" data-slot="copy-source-step">
+                  {sourceProgressText(measured, sourceLabel)}
+                </span>
+              )}
+            </p>
           )}
-        </p>
+          {/* Moving the coordinator must finish here; everything else carries on closed. */}
+          {stage !== "moving" && <CopyWorkingHint />}
+        </div>
       )}
 
       {stage === "preview" && copy && (
         <>
           <p className="text-sm font-medium" data-slot="copy-preview-headline">
             {replacingFiles !== null && replacingFiles > 0
-              ? `${replacingFiles.toLocaleString()} ${replacingFiles === 1 ? "file" : "files"} on ${targetLabel} would be replaced. Old versions are kept so you can undo.`
+              ? `${replacingFiles.toLocaleString()} ${replacingFiles === 1 ? "file" : "files"} on ${targetLabel} would be replaced.`
               : replaced
-                ? `${replaced} on ${targetLabel} would be replaced. Old versions are kept so you can undo.`
+                ? `${replaced} on ${targetLabel} would be replaced.`
                 : replacesNothing(copy)
                   ? `Nothing on ${targetLabel} would be replaced.`
                   : replacingFiles === 0
                     ? `Nothing on ${targetLabel} would be replaced. Check the changes below before copying.`
                     : `${targetLabel} already has some of these folders. Check the changes below before copying.`}
+            {(replaced || (replacingFiles ?? 0) > 0) && (
+              <span className="block font-normal text-muted-foreground">
+                Old versions are kept for 14 days so you can undo.
+              </span>
+            )}
             {replaceLeft && <span className="block font-normal">{replaceLeft}</span>}
           </p>
           <CopyPlanPreview
@@ -278,6 +272,7 @@ export function HandoffCopyStepPanels({
             machines={{ here: targetLabel, source: sourceLabel }}
             rootLabel={rootLabel}
             onlyChanges={auto}
+            sections
             hideWarnings
             onDecide={(decisions) => onChange({ decisions })}
             repositories={repositoryChoices}
@@ -315,22 +310,11 @@ export function HandoffCopyStepPanels({
         </>
       )}
 
-      {(stage === "copying" || stage === "moving") && copy && (
-        <>
-          {stage === "moving" ? (
-            <p role="status" aria-live="polite" className="text-sm">
-              Files are in place. Starting the coordinator on {targetLabel}…
-            </p>
-          ) : (
-            <CopyProgress status={copy} />
-          )}
-        </>
-      )}
-
       {stage === "failed" && copy && (
         <HandoffCopyFailed
           copy={copy}
           sourceLabel={sourceLabel}
+          targetLabel={targetLabel}
           failedBeforeApply={failedBeforeApply}
           undoPreview={undoPreview}
         />

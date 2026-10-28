@@ -13,6 +13,7 @@ import {
   linkedIncrementRoot,
   listProjectIncrements,
   readRequireIncrementMode,
+  readIncrementProgress,
   readThreadIncrementProgress,
   resolveIncrementRef,
   resolveRegisteredIncrementRef,
@@ -170,10 +171,28 @@ describe("readThreadIncrementProgress", () => {
         text: "The card shows done, current and next",
         met: false,
         state: "open",
+        acceptance: "open",
+        waivers: [],
         tasks: ["T-01", "T-02"],
       },
-      { id: "AC-02", text: "Lists show 3/5", met: false, state: "open", tasks: ["T-02", "T-03"] },
-      { id: "AC-03", text: "Nobody cites this one", met: false, state: "uncovered", tasks: [] },
+      {
+        id: "AC-02",
+        text: "Lists show 3/5",
+        met: false,
+        state: "open",
+        acceptance: "open",
+        waivers: [],
+        tasks: ["T-02", "T-03"],
+      },
+      {
+        id: "AC-03",
+        text: "Nobody cites this one",
+        met: false,
+        state: "uncovered",
+        acceptance: "open",
+        waivers: [],
+        tasks: [],
+      },
     ]);
     // A done task carries the time the ledger accepted it, the anchor for "verified".
     expect(progress!.tasks.find((task) => task.id === "T-01")!.doneAt).toMatch(/^2026-/u);
@@ -813,4 +832,175 @@ describe("unplanned-work inputs", () => {
     await NodeFSP.writeFile(file, JSON.stringify({ ...marker, kind: "increment" }));
     expect(await threadDeclaredSmallFix(threadId, home)).toBe(false);
   });
+});
+
+it("keeps mixed accepted skips out of verified while preserving open sibling requirements", () => {
+  const waiver = {
+    ac: "AC-03",
+    check: "wonder-full-shown-when-entitled",
+    reason: "No license",
+    acceptedBy: "Anton",
+    acceptedAt: "2026-10-27T12:00:00Z",
+    authorization: "User accepted skipping Wonder Full",
+    by: "worker",
+    at: "2026-10-27T12:01:00Z",
+  };
+  const criteria = [
+    { id: "AC-01", text: "Verified alone" },
+    { id: "AC-02", text: "Decline unobserved" },
+    { id: "AC-03", text: "Wonder Full" },
+    { id: "AC-04", text: "Waived check" },
+    { id: "AC-05", text: "Partially waived" },
+  ];
+  const result = criteriaWithState(
+    criteria,
+    [
+      { id: "T-01", status: "done", criteria: ["AC-01", "AC-03"], doneAt: "2026-10-27T10:00:00Z" },
+      { id: "T-02", status: "skipped", criteria: ["AC-04"] },
+      { id: "T-03", status: "blocked", criteria: ["AC-05"] },
+    ],
+    {
+      verify: { ok: true, ranAt: "2026-10-27T13:00:00Z" },
+      acceptedSkips: [waiver, { ...waiver, ac: "AC-04" }, { ...waiver, ac: "AC-05" }],
+    },
+  );
+  expect(result[0]?.state).toBe("verified");
+  expect(result[1]).toMatchObject({ state: "uncovered", acceptance: "open", waivers: [] });
+  expect(result[2]).toMatchObject({
+    state: "evidenced",
+    acceptance: "mixed",
+    waivers: [{ check: waiver.check, acceptedBy: "Anton" }],
+  });
+  expect(result[3]).toMatchObject({ state: "skipped", acceptance: "skipped-accepted" });
+  expect(result[4]).toMatchObject({
+    state: "open",
+    acceptance: "open",
+    waivers: [{ check: waiver.check }],
+  });
+  expect(result.filter((criterion) => criterion.state === "verified")).toHaveLength(1);
+});
+
+it("reads waiver evidence from the real ledger without changing task or failed verify receipts", async () => {
+  const root = await temp("accepted-skip-plan-");
+  const home = await temp("accepted-skip-home-");
+  const id = "1097-accepted-skip-test";
+  const waiver = {
+    t: "AC-01",
+    e: "accept-skip",
+    by: "worker",
+    at: "2026-10-27T12:01:00Z",
+    check: "wonder-full-shown-when-entitled",
+    reason: "No license",
+    acceptedBy: "Anton",
+    acceptedAt: "2026-10-27T12:00:00Z",
+    authorization: "User accepted the named skip",
+  };
+  const ledger =
+    line({
+      t: "T-01",
+      e: "done",
+      by: "worker",
+      at: "2026-10-27T10:00:00Z",
+      evidence: "observed PASS",
+    }) +
+    line({
+      t: "T-02",
+      e: "done",
+      by: "worker",
+      at: "2026-10-27T10:01:00Z",
+      evidence: "observed PASS",
+    }) +
+    JSON.stringify(waiver) +
+    "\n";
+  const folder = await increment(root, id, ledger);
+  await NodeFSP.mkdir(NodePath.join(folder, "reports"));
+  const failed = JSON.stringify({
+    ok: false,
+    ranAt: "2026-10-27T13:00:00Z",
+    commands: [{ exit: 1, cmd: "retained failure" }],
+  });
+  const verifyPath = NodePath.join(folder, "reports/verify.json");
+  await NodeFSP.writeFile(verifyPath, failed);
+  const [progress] = await readThreadIncrementProgress(
+    root,
+    [
+      {
+        threadId: "waiver-thread",
+        title: null,
+        branch: null,
+        worktreePath: null,
+        home,
+        link: { incrementId: id },
+      },
+    ],
+    NOW,
+  );
+  expect(progress?.readable).toBe(true);
+  expect(progress?.tasks).toHaveLength(4);
+  expect(progress?.criteria[0]).toMatchObject({
+    acceptance: "mixed",
+    state: "evidenced",
+    waivers: [{ check: waiver.check, authorization: waiver.authorization }],
+  });
+  expect(progress?.verify?.ok).toBe(false);
+  expect(await NodeFSP.readFile(verifyPath, "utf8")).toBe(failed);
+  expect(await NodeFSP.readFile(NodePath.join(folder, "ledger.jsonl"), "utf8")).toBe(ledger);
+});
+
+it("retains a taskless criterion's accepted skip without inventing task progress", async () => {
+  const root = await temp("taskless-accepted-skip-");
+  const id = "1097-taskless-skip";
+  const waiver = {
+    t: "AC-01",
+    e: "accept-skip",
+    by: "worker",
+    at: "2026-10-27T12:01:00Z",
+    check: "wonder-full-shown-when-entitled",
+    reason: "No license",
+    acceptedBy: "Anton",
+    acceptedAt: "2026-10-27T12:00:00Z",
+    authorization: "User accepted the named uncovered skip",
+  };
+  const ledger = line(waiver);
+  const folder = await increment(root, id, ledger);
+  await NodeFSP.writeFile(
+    NodePath.join(folder, "spec.md"),
+    "# Taskless plan\n\n## Acceptance criteria\n- [ ] AC-01: Wonder Full shown when entitled\n- [ ] AC-02: Decline unobserved\n",
+  );
+  const input = { root, incrementId: id, threadId: "taskless-thread", now: NOW };
+  const progress = await readIncrementProgress(input);
+  expect(progress?.readable).toBe(false);
+  expect(progress?.tasks).toEqual([]);
+  expect(progress?.criteria[0]).toMatchObject({
+    state: "uncovered",
+    met: false,
+    acceptance: "skipped-accepted",
+    tasks: [],
+    waivers: [
+      {
+        check: waiver.check,
+        reason: waiver.reason,
+        acceptedBy: waiver.acceptedBy,
+        acceptedAt: waiver.acceptedAt,
+        authorization: waiver.authorization,
+        by: waiver.by,
+        at: waiver.at,
+      },
+    ],
+  });
+  expect(progress?.criteria[1]).toMatchObject({
+    state: "uncovered",
+    acceptance: "open",
+    met: false,
+    waivers: [],
+  });
+  expect(progress?.criteria.some((criterion) => criterion.state === "verified")).toBe(false);
+  expect(await NodeFSP.readFile(NodePath.join(folder, "ledger.jsonl"), "utf8")).toBe(ledger);
+  // An unreadable ledger must not grant a waiver or change taskless progress.
+  await NodeFSP.unlink(NodePath.join(folder, "ledger.jsonl"));
+  await NodeFSP.mkdir(NodePath.join(folder, "ledger.jsonl"));
+  const unreadable = await readIncrementProgress(input);
+  expect(unreadable?.readable).toBe(false);
+  expect(unreadable?.tasks).toEqual([]);
+  expect(unreadable?.criteria[0]).toMatchObject({ acceptance: "open", waivers: [] });
 });

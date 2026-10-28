@@ -4,6 +4,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   ThreadId as CoordinatorThreadId,
   logicalProjectTitle,
+  staysWithProjectCoordinator,
   projectNameKey,
   repositoryGroupingKeyOf,
   type LogicalProject,
@@ -132,6 +133,16 @@ export interface ProjectDeleteInput {
    * burst limit. Never copied from a client payload.
    */
   readonly initiator?: "client" | "server";
+}
+
+/** Delete every thread of a live project except its coordinator, keeping the project. */
+export interface ProjectThreadsDeleteInput {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  /** The project's title, typed by the person. */
+  readonly confirmationTitle: string;
+  /** List the threads it would delete, deleting nothing; needs no title. */
+  readonly dryRun?: boolean;
 }
 
 /**
@@ -340,6 +351,13 @@ export class ProjectService extends Context.Service<
     >;
     readonly update: (input: ProjectUpdateInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly delete: (input: ProjectDeleteInput) => Effect.Effect<Project, ProjectServiceError>;
+    /**
+     * Delete a live project's threads but keep the project: its coordinator,
+     * memory, plan, routines and connections stay. Returns the deleted threads.
+     */
+    readonly deleteThreads: (
+      input: ProjectThreadsDeleteInput,
+    ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectServiceError>;
     readonly getById: (
       projectId: ProjectId,
       options?: { readonly includeDeleted?: boolean },
@@ -873,6 +891,23 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /** Unfinished runs, held or queued ones included, or a pending request other than the asking card. */
+  const recordsShowActiveWork = (
+    projection: {
+      readonly runs: ReadonlyArray<{ readonly status: string }>;
+      readonly runtimeRequests: ReadonlyArray<{ readonly status: string; readonly id: string }>;
+    },
+    approvalRequestId: RuntimeRequestId | undefined,
+  ) =>
+    projection.runs.some((run) =>
+      ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+    ) ||
+    projection.runtimeRequests.some(
+      (request) =>
+        request.status === "pending" &&
+        (approvalRequestId === undefined || request.id !== approvalRequestId),
+    );
+
   /** Delete one child thread durably; a stable command id makes a retry resume the cascade. */
   const deleteChildThread = Effect.fn("ProjectService.deleteChildThread")(function* (
     input: ProjectDeleteInput,
@@ -893,16 +928,7 @@ export const make = Effect.gen(function* () {
     // This read and refusal run under ThreadCommandExecutor.withLock. Ordinary
     // message dispatch uses that same lock, so it cannot admit work between
     // this check and the durable deletion command.
-    if (
-      projection.runs.some((run) =>
-        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
-      ) ||
-      projection.runtimeRequests.some(
-        (request) =>
-          request.status === "pending" &&
-          (input.approvalRequestId === undefined || request.id !== input.approvalRequestId),
-      )
-    ) {
+    if (recordsShowActiveWork(projection, input.approvalRequestId)) {
       return yield* new ProjectRequestDeniedError({
         projectId: input.projectId,
         reason: "active_work",
@@ -962,8 +988,17 @@ export const make = Effect.gen(function* () {
       return yield* new ProjectNotEmptyError({ projectId });
     }
     // Delete children durably before the project so a failed cascade can be retried.
-    yield* Effect.forEach(
-      projectThreads,
+    yield* deleteEachThread(input, projectThreads);
+  });
+
+  /** One at a time, each under its thread lock, so dispatch cannot admit work in between. */
+  const deleteEachThread = (
+    input: ProjectDeleteInput,
+    threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>,
+  ) => {
+    const { projectId } = input;
+    return Effect.forEach(
+      threads,
       (thread) =>
         threadCommands
           .withLock(thread.id, deleteChildThread(input, thread.id))
@@ -976,7 +1011,7 @@ export const make = Effect.gen(function* () {
           ),
       { concurrency: 1, discard: true },
     );
-  });
+  };
 
   /**
    * Take one slot of the client delete burst limit, or refuse. Deletes for
@@ -1071,6 +1106,82 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const deleteThreads: ProjectService["Service"]["deleteThreads"] = Effect.fn(
+    "ProjectService.deleteThreads",
+  )(function* (input) {
+    const { projectId } = input;
+    const existing = yield* readRow(projectId);
+    if (Option.isNone(existing)) {
+      return yield* new ProjectNotFoundError({ projectId });
+    }
+    const project = existing.value;
+    if (input.dryRun !== true && input.confirmationTitle !== project.title) {
+      return yield* new ProjectRequestDeniedError({ projectId, reason: "confirmation_required" });
+    }
+    const snapshot = yield* threadProjections
+      .getShellSnapshot()
+      .pipe(
+        Effect.mapError(
+          (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
+        ),
+      );
+    const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].filter(
+      (thread) => thread.projectId === projectId,
+    );
+    // The coordinator and the subagent threads inside it hold the project's
+    // conversation; they stay. Its first-class workers are deleted.
+    const coordinatorOf = {
+      id: projectId,
+      workspaceSettings: project.workspaceSettings ?? undefined,
+    };
+    const lineageById = new Map(projectThreads.map((thread) => [thread.id, thread.lineage]));
+    const threads = projectThreads.filter(
+      (thread) =>
+        !staysWithProjectCoordinator(thread.id, thread.lineage, coordinatorOf, (id) =>
+          lineageById.get(CoordinatorThreadId.make(id)),
+        ),
+    );
+    if (input.dryRun === true) return threads.map((thread) => thread.id);
+    // Any running work refuses, the coordinator's included: its subagents may be
+    // streaming into threads this would delete.
+    if (
+      projectThreads.some(
+        (thread) =>
+          threadHasActiveWork(thread) ||
+          (thread.activityRunStatus !== undefined && thread.activityRunStatus !== null),
+      )
+    ) {
+      return yield* new ProjectRequestDeniedError({ projectId, reason: "active_work" });
+    }
+    // The shell leaves out held queued runs; read every target before deleting any,
+    // so a refusal never leaves the threads half deleted.
+    for (const thread of threads) {
+      const records = yield* threadProjections
+        .getThreadRecords(thread.id, ["runs", "runtimeRequests"])
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
+          ),
+        );
+      if (recordsShowActiveWork(records, undefined)) {
+        return yield* new ProjectRequestDeniedError({ projectId, reason: "active_work" });
+      }
+    }
+    if (threads.length === 0) return [];
+    const slot = yield* reserveClientDelete(projectId);
+    yield* deleteEachThread({ commandId: input.commandId, projectId }, threads).pipe(
+      Effect.onError(() => releaseClientDelete(slot)),
+    );
+    // Deletion cannot be undone; this line is how the next incident shows who and what.
+    yield* Effect.logInfo("project.threads-deleted", {
+      projectId,
+      title: project.title,
+      threadCount: threads.length,
+      commandId: input.commandId,
+    });
+    return threads.map((thread) => thread.id);
+  });
+
   const enrichShell = (shell: OrchestrationProjectShell) =>
     projectEnrichment.getAvailable(shell.workspaceRoot).pipe(
       Effect.map((enrichment) => ({
@@ -1128,6 +1239,7 @@ export const make = Effect.gen(function* () {
         ? update(input)
         : admission.withLock(input.projectId, update(input)),
     delete: (input) => admission.withLock(input.projectId, deleteProject(input)),
+    deleteThreads: (input) => admission.withLock(input.projectId, deleteThreads(input)),
     getById,
     getByWorkspaceRoot,
     snapshot,

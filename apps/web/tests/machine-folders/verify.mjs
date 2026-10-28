@@ -58,35 +58,47 @@ try {
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/?theme=${theme}`);
     await page.getByRole("dialog").waitFor();
-    assert.equal(await page.locator('[data-slot="handoff-machine"]').count(), 2);
-    // Expanded by default, preselected, with the matching folder found and prefilled.
-    assert.equal(await page.getByLabel("Folder machine").inputValue(), "m3");
+    // Screen 1: title, helper, segmented intent, machine rows, the folder, More options.
+    assert.equal(await page.getByRole("heading").last().textContent(), "Move EasyChamp");
+    await page
+      .getByText(
+        "From MacBook Pro M4 to another machine. Nothing there is replaced without asking.",
+      )
+      .waitFor();
+    assert.equal(
+      await page
+        .getByRole("button", { name: "Move and continue there" })
+        .getAttribute("aria-pressed"),
+      "true",
+    );
+    assert.equal(await page.locator('[data-slot="machine-option"]').count(), 3);
+    assert.equal(
+      await page.getByRole("radio", { name: "MacBook Pro M3" }).getAttribute("aria-checked"),
+      "true",
+    );
+    // M3 has no saved folder: the picker reads only M3 and fills the matching checkout.
     assert.equal(await page.evaluate(() => window.browsedMachine), "m3");
     assert.equal(
-      await page.getByLabel("Remote project folder").inputValue(),
+      await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
       "/Users/you/Projects/sw-easychamp",
     );
-    await page
-      .getByText("Found this project's folder on MacBook Pro M3.", { exact: false })
-      .waitFor();
-    const options = await page.getByLabel("Folder machine").locator("option").allTextContents();
-    assert.deepEqual(options, [
-      "Choose a machine",
-      "MacBook Pro M1 — Online · Project folder saved",
-      "MacBook Pro M3 — Online · No project folder yet",
-      "Mac mini — Offline · No project folder yet",
-    ]);
+    await page.getByText("Found this project on MacBook Pro M3.", { exact: false }).waitFor();
+    assert.equal(await page.locator("details").count(), 0);
+    assert.equal(await page.locator("select").count(), 0);
     await page.getByText("2 uncommitted files on MacBook Pro M4.", { exact: false }).waitFor();
+    assert.equal(await page.getByRole("checkbox", { name: /Remember/ }).count(), 0);
+    assert.equal(
+      await page.getByRole("button", { name: "Move to MacBook Pro M3" }).isDisabled(),
+      true,
+    );
     await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
     await page.getByRole("button", { name: "Commit for me", exact: true }).click();
     await page.getByText("No uncommitted changes on MacBook Pro M4.", { exact: false }).waitFor();
-    await page.getByRole("checkbox").first().click();
-    assert.equal(await page.getByRole("checkbox").first().getAttribute("aria-checked"), "true");
     assert.equal(await page.getByRole("button", { name: "Up one folder" }).count(), 0);
-    await page.getByRole("button", { name: "Browse folder", exact: true }).click();
+    await page.getByRole("button", { name: "Browse…", exact: true }).click();
     await page.getByRole("button", { name: "Up one folder" }).click();
     assert.equal(
-      await page.getByLabel("Remote project folder").inputValue(),
+      await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
       "/Users/you/Projects",
     );
     await page.getByRole("button", { name: "another-project", exact: true }).click();
@@ -100,11 +112,14 @@ try {
       })),
       { environmentId: "m3", path: "/Users/you/Projects/another-project", create: false },
     );
-    assert.equal(await page.locator('[data-slot="handoff-machine"]').count(), 2);
-    await page.getByRole("button", { name: "Review handoff", exact: true }).click();
-    await page
-      .getByText("Code advances in the selected project folder.", { exact: false })
-      .waitFor();
+    // The saved folder now shows read-only, with Browse… to change it.
+    assert.equal(
+      await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
+      "/Users/you/Projects/another-project",
+    );
+    await page.getByRole("button", { name: "Move to MacBook Pro M3", exact: true }).click();
+    await page.getByText("Committed work only.", { exact: false }).waitFor();
+    assert.equal(await page.locator('[data-slot="machine-option"]').count(), 0);
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth + 1,
     );

@@ -127,7 +127,13 @@ To update, run `STUDIO_ENABLE_SELF_UPDATE=true specwithcode update --yes` on the
 host, or update it from the main computer. It installs the next release the same way,
 under `~/.specwithcode/runtime/versions/<version>`, switches the `specwithcode`
 command to it and restarts the service; `--yes` allows the restart from a
-script.
+script; with `--if-idle` as well, the service restarts only when nothing runs in
+it, and otherwise keeps running its version while the command fails. A release
+run from the main Mac does this for each Linux worker in its fleet inventory
+once the Macs have the release, and skips a worker whose service still runs
+work. A worker on 1.0.105 or earlier is skipped while its service runs, because
+that version cannot hold itself for the restart: update it by hand once, with
+the command above, when it is idle.
 
 [Running in the background](./background-service.md) covers the systemd
 details and troubleshooting.

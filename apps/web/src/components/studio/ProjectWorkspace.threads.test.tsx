@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import * as DateTime from "effect/DateTime";
 import { act } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
@@ -407,7 +408,7 @@ describe("the coordinator stays in the main column", () => {
     await openFirstThread();
     await prompt("Keep my coordinator draft");
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
-    await click("Handoff");
+    await click("Move project");
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(true);
     expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(
@@ -423,7 +424,47 @@ describe("the coordinator stays in the main column", () => {
     "reviews %s in a dialog while preserving the coordinator, worker, and draft",
     async (attention) => {
       state.shells = state.shells.map((t) => (t.id === "coord" ? { ...t, [attention]: true } : t));
+      if (attention === "hasPendingUserInput") {
+        // A real pending question, with its display card. The disconnected
+        // composer cannot answer, so the chip offers its native review dialog.
+        state.connected = false;
+        state.runtimeRequests = [
+          {
+            id: "ask-user:review",
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: DateTime.makeUnsafe("2026-10-27T12:00:00Z"),
+          },
+        ];
+        state.turnItems = [
+          {
+            type: "user_input_request",
+            threadId: "coord",
+            requestId: "ask-user:review",
+            runId: "run-1",
+            ordinal: 1,
+            status: "waiting",
+            responseMode: "message",
+            questions: [
+              {
+                id: "q1",
+                header: "Review",
+                question: "Which repository should this review use?",
+                options: [],
+                allowCustomAnswer: true,
+              },
+            ],
+          } as never,
+        ];
+      }
       await render();
+      if (attention === "hasPendingUserInput") {
+        expect(container.querySelector("[data-coordinator-question]")?.textContent).toContain(
+          "Which repository should this review use?",
+        );
+        expect(state.shellRefresh).not.toHaveBeenCalled();
+      }
       await openFirstThread();
       await prompt("Keep my coordinator draft");
       const chip = container.querySelector<HTMLButtonElement>(".sws-state")!;

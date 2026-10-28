@@ -7,7 +7,6 @@ import {
   type FolderCopyFileClass,
   type FolderCopyMode,
   type FolderCopyOffer,
-  type FolderCopyRow,
   type FolderCopySourceStatus,
   type FolderCopySourceSummary,
   type FolderCopyStatus,
@@ -15,23 +14,19 @@ import {
   ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/filesystem";
-import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
-import { linkCopyAsWorkers, projectLink, type CopyLinkOutcome } from "../../studio/projectLink";
 import {
   cloneableRows,
   copySettled,
   copyDestinationKey,
   copiedProjectFolder,
-  savedCopyRoot,
-  suggestedCopyFolder,
   DEFAULT_COPY_SELECTION,
   type HandoffFolderMethod,
 } from "../../studio/folderCopy";
 import { randomUUID } from "../../lib/utils";
 import { useCopyScope } from "./HandoffCopyScope";
+import { useCopyDestination } from "./useCopyDestination";
 import {
   abortError,
   APPROVED,
@@ -53,7 +48,7 @@ import { copyHeld } from "./HandoffCopyDone";
 import { messageOf, useCoordinatorTransfer } from "./useCoordinatorTransfer";
 import {
   nextStepText,
-  CLOSABLE_WHILE_WORKING,
+  workingLine,
   recompareFor,
   stageForStatus,
   transferRefusal,
@@ -74,20 +69,28 @@ import {
   undecidedCloneRows,
 } from "./handoffCopyAuto";
 import { copyProblem, groupCopyNotices } from "./handoffCopyNotices";
-import { CopyCheckingStep, CopyResumeNote, CopyStepLine } from "./HandoffCopyGuide";
-import { editActionFor } from "./handoffCopyWizard";
+import {
+  CopyCheckingStep,
+  CopyChoicesSummary,
+  CopyResumeNote,
+  CopyStepLine,
+} from "./HandoffCopyGuide";
 import { useCopyStepView } from "./useCopyStepView";
 import { useCopyDraft } from "./useCopyDraft";
 import { HandoffCopyScanFreshness } from "./HandoffCopyScanFreshness";
 import { HandoffCopyStepPanels } from "./HandoffCopyStepPanels";
 import {
-  copyActivityFromSource,
-  copyActivityFromStatus,
-  copyActivityKey,
-  setCopyActivity,
-} from "../../studio/folderCopyActivity";
+  absolute,
+  APPLYING,
+  insideSkipped,
+  NOT_ABSOLUTE,
+  POLL_MS,
+  REPOSITORY_SETTLE_MS,
+  useCopyReporting,
+  type CopyChoices,
+} from "./handoffFolderCopyRules";
+import { useCopyLink } from "./useCopyLink";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
-import { HandoffCopyReview } from "./HandoffCopyReview";
 import type { RepositoryChoices } from "./HandoffCopyPreview";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
@@ -95,45 +98,10 @@ export type { CopyMachine };
 
 type Stage = CopyStage;
 
-/** What a copy is started with; Copy again reuses the last copy's. */
-interface CopyChoices {
-  readonly machine: EnvironmentId;
-  readonly folder: string;
-  readonly mode: FolderCopyMode;
-  readonly selection: ReadonlyArray<FolderCopyFileClass>;
-  readonly auto: boolean;
-  readonly method: "copy" | "clone";
-  readonly copyRoot: string;
-  readonly projectRelativePath: string;
-}
-
-const POLL_MS = 1000;
-/** Repository clicks closer together than this re-compare once. */
-const REPOSITORY_SETTLE_MS = 400;
-
-/** True when `path` sits inside a repository row the person left out. */
-function insideSkipped(
-  path: string,
-  skip: ReadonlyArray<string>,
-  rows: ReadonlyArray<FolderCopyRow>,
-): boolean {
-  return rows.some(
-    (row) => skip.includes(row.id) && row.path !== "." && path.startsWith(`${row.path}/`),
-  );
-}
-const NOT_ABSOLUTE = "Enter the full absolute path of the folder on the destination machine.";
-const absolute = (folder: string) => folder.startsWith("/") || /^[A-Za-z]:[\\/]/.test(folder);
 /**
  * Copies the project folder to another machine: the destination pulls the files from
  * this machine, previews what changes, and applies only after approval.
  */
-/** What a running step is called on the sidebar row before its status first arrives. */
-const STAGE_ACTIVITY: Partial<Record<Stage, string>> = {
-  scanning: "Measuring the folder",
-  planning: "Comparing folders",
-  copying: "Copying files",
-  moving: "Transferring context",
-};
 
 export function HandoffFolderCopy({
   project,
@@ -144,6 +112,9 @@ export function HandoffFolderCopy({
   savedFolder,
   savedProject,
   preferredMachine = null,
+  machineRequested = false,
+  defaultMode,
+  onChoicesChange,
   canMove,
   onBusyChange,
   onCloseLockChange,
@@ -161,6 +132,16 @@ export function HandoffFolderCopy({
   ) => EnvironmentProject | null;
   /** The remembered or last-used machine, preselected when it can take the copy. */
   readonly preferredMachine?: EnvironmentId | null;
+  /** True when the dialog was opened for that machine (Move coordinator to X): a draft keeps it. */
+  readonly machineRequested?: boolean;
+  /** Move or copy, as the dialog was opened; it wins over a draft, a resumed copy keeps its own. */
+  readonly defaultMode?: FolderCopyMode;
+  /** The live choices and stage, so the dialog can title itself and remember the machine. */
+  readonly onChoicesChange?: (choices: {
+    readonly mode: FolderCopyMode;
+    readonly machine: EnvironmentId | null;
+    readonly done: boolean;
+  }) => void;
   readonly canMove: boolean;
   readonly onBusyChange: (busy: boolean) => void;
   /** True only while closing the dialog would interrupt a step that must finish here. */
@@ -185,41 +166,13 @@ export function HandoffFolderCopy({
   const cancel = useAtomCommand(machineHandoff.copyCancel, { reportFailure: false });
   const undo = useAtomCommand(machineHandoff.copyUndo, { reportFailure: false });
   const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
-  const linkPreview = useAtomCommand(projectLink.preview, { reportFailure: false });
-  const linkPrepare = useAtomCommand(projectLink.prepare, { reportFailure: false });
-  const linkAccept = useAtomCommand(projectLink.accept, { reportFailure: false });
-  const linkCommit = useAtomCommand(projectLink.commit, { reportFailure: false });
 
   const storageKey = folderCopyStorageKey(project.environmentId, project.id);
-  const firstMachine =
-    machines.find((machine) => machine.id === preferredMachine && !machine.unavailable)?.id ??
-    machines.find((machine) => !machine.unavailable)?.id ??
-    null;
-  const [machine, setMachine] = useState<EnvironmentId | null>(firstMachine);
-  const [folderDraft, setFolderDraft] = useState<{
-    machine: EnvironmentId;
-    value: string;
-    copyRoot?: string;
-  } | null>(null);
-  const access = useFilesystemReadAccess(machine);
-  const home = useEnvironmentQuery(
-    machine && access.canReadFiles
-      ? filesystemEnvironment.browse({ environmentId: machine, input: { partialPath: "~/" } })
-      : null,
+  const { machine, setMachine, folderDraft, setFolderDraft, folder, setFolder, findingHome } =
+    useCopyDestination({ machines, preferredMachine, savedFolder, scope });
+  const [mode, setMode] = useState<FolderCopyMode>(
+    canMove ? (defaultMode ?? "copy-only") : "copy-only",
   );
-  // The query belongs to the selected machine. A late home response never replaces a typed path.
-  const folder = machine
-    ? folderDraft?.machine === machine &&
-      (!folderDraft.copyRoot || folderDraft.copyRoot === scope.selected.copyRoot)
-      ? folderDraft.value
-      : (savedCopyRoot(savedFolder(machine), scope.selected.projectRelativePath) ??
-        suggestedCopyFolder(scope.selected.copyRoot, home.data?.parentPath))
-    : "";
-  const setFolder = (value: string, environmentId = machine, copyRoot?: string) => {
-    if (environmentId)
-      setFolderDraft({ machine: environmentId, value, ...(copyRoot ? { copyRoot } : {}) });
-  };
-  const [mode, setMode] = useState<FolderCopyMode>("copy-only");
   // Off: one click measures, compares and copies; on: stop after measuring to choose.
   const [chooseFirst, setChooseFirst] = useState(false);
   const [stage, setStage] = useState<Stage>("setup");
@@ -253,7 +206,6 @@ export function HandoffFolderCopy({
   const repositoryDraft = useRef<RepositoryChoices | null>(null);
   const repositoryTimer = useRef<number | null>(null);
   const repositorySending = useRef(false);
-  const [link, setLink] = useState<CopyLinkOutcome | { readonly status: "linking" } | null>(null);
   const [linkDialog, setLinkDialog] = useState(false);
   // The machine a copy was just cancelled for before Apply, said once on the setup form.
   const [cancelledFor, setCancelledFor] = useState<string | null>(null);
@@ -288,47 +240,22 @@ export function HandoffFolderCopy({
     };
   }, []);
 
-  const busy =
-    working ||
-    stage === "scanning" ||
-    stage === "planning" ||
-    stage === "copying" ||
-    stage === "moving";
-  useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
-  // Measuring, comparing and copying run on the machines; only the short context
-  // transfer and the steps that release a fence keep the dialog open.
-  const closeLocked = stage === "moving" || (working && !CLOSABLE_WHILE_WORKING.has(stage));
-  useEffect(() => onCloseLockChange?.(closeLocked), [closeLocked, onCloseLockChange]);
-  // Unmounting ends this view of the copy; the parent must not keep a stale busy or lock.
-  // The parent reads its running flag when the dialog closes, before this runs.
-  // The sidebar row and project banner show a running copy; once the dialog closes on a
-  // running copy, the app-wide watcher keeps them current.
-  const machineName = machines.find((item) => item.id === machine)?.label ?? "the other machine";
-  const activityKey = copyActivityKey(project.environmentId, project.id);
-  useEffect(() => {
-    if (!busy) return setCopyActivity(activityKey, null);
-    const fromCopy = copy ? copyActivityFromStatus(copy, machineName) : null;
-    const fromSource = scanStatus ? copyActivityFromSource(scanStatus, machineName) : null;
-    const label = STAGE_ACTIVITY[stage];
-    setCopyActivity(
-      activityKey,
-      fromCopy ??
-        (fromSource && !fromSource.waiting ? fromSource : null) ??
-        (label ? { machine: machineName, label, fraction: null, waiting: false } : null),
-    );
-  }, [activityKey, busy, copy, scanStatus, machineName, stage]);
-  const reporters = useRef({ onBusyChange, onCloseLockChange });
-  reporters.current = { onBusyChange, onCloseLockChange };
-  useEffect(
-    () => () => {
-      reporters.current.onBusyChange(false);
-      reporters.current.onCloseLockChange?.(false);
-    },
-    [],
-  );
-
   const target = machines.find((entry) => entry.id === machine) ?? null;
   const targetLabel = target?.label ?? "the other machine";
+  const { busy, closeLocked } = useCopyReporting({
+    environmentId: project.environmentId,
+    projectId: project.id,
+    stage,
+    working,
+    mode,
+    machine,
+    copy,
+    scanStatus,
+    machineName: targetLabel,
+    onBusyChange,
+    onChoicesChange,
+    onCloseLockChange,
+  });
 
   const remember = (value: PendingCopy | null) => {
     latestPending.current = value;
@@ -340,6 +267,17 @@ export function HandoffFolderCopy({
       /* The copy still runs; only resuming after a reload needs the pointer. */
     }
   };
+  const { link, setLink, markLinked } = useCopyLink({
+    project,
+    sourceLabel,
+    targetLabel,
+    machine,
+    stage,
+    mode,
+    copyProjectId: copy?.projectId,
+    latestPending,
+    remember,
+  });
 
   // A one-click copy runs straight through; a pointer from an earlier session keeps its own kind.
   const auto = pending ? pending.auto === true : !chooseFirst;
@@ -348,10 +286,8 @@ export function HandoffFolderCopy({
     mode,
     auto,
     contextTransferred,
-    summary,
     copy,
     held: stage === "failed" && copyHeld(copy),
-    closeLocked,
     working,
     pending,
     latestPending,
@@ -365,8 +301,6 @@ export function HandoffFolderCopy({
       copyProblem(copy, sourceLabel) === null &&
       link?.status === "linked",
   });
-  const { live, viewing } = stepView;
-
   const run = async (step: () => Promise<void>) => {
     if (running.current) return;
     running.current = true;
@@ -724,7 +658,6 @@ export function HandoffFolderCopy({
       ) {
         // A prior request may already have fenced the source. Keep its recovery pointer.
         setTransferRecovery(true);
-        setTransferNotice("The files are copied. Transfer coordinator context when you are ready.");
       }
     });
   };
@@ -732,50 +665,12 @@ export function HandoffFolderCopy({
     project,
     machines,
     canMove,
+    explicit: { mode: defaultMode !== undefined, machine: machineRequested },
     form: { machine, folderDraft, mode, chooseFirst },
     latestPending,
     setForm: { machine: setMachine, folder: setFolder, mode: setMode, chooseFirst: setChooseFirst },
     onResume: resume,
   });
-
-  /** Records the link on the copy's pointer, so a reopen does not link it again. */
-  const markLinked = (operationId: string | undefined) => {
-    const saved = latestPending.current;
-    if (saved && saved.operationId === operationId && !saved.linked)
-      remember({ ...saved, linked: true });
-  };
-
-  // "Copy files only" ends with the copy linked as a member that runs workers; the coordinator stays here.
-  const linkCopy = async (environmentId: EnvironmentId, projectId: ProjectId) => {
-    const operationId = latestPending.current?.operationId;
-    setLink({ status: "linking" });
-    try {
-      const outcome = await linkCopyAsWorkers(
-        {
-          preview: linkPreview,
-          prepare: linkPrepare,
-          accept: linkAccept,
-          commit: linkCommit,
-        },
-        {
-          kept: { environmentId: project.environmentId, projectId: project.id },
-          joining: { environmentId, projectId },
-          keptLabel: sourceLabel,
-          joiningLabel: targetLabel,
-          newOperationId: randomUUID,
-        },
-      );
-      setLink(outcome);
-      if (outcome.status === "linked") markLinked(operationId);
-    } catch (cause) {
-      setLink({ status: "review", reason: messageOf(cause) });
-    }
-  };
-  const linkTarget =
-    stage === "done" && mode === "copy-only" && copy?.projectId ? copy.projectId : null;
-  useEffect(() => {
-    if (linkTarget && machine && link === null) void linkCopy(machine, linkTarget);
-  }, [linkTarget, machine]);
 
   /**
    * After the files are applied, the coordinator continues on the destination. Differences
@@ -790,9 +685,7 @@ export function HandoffFolderCopy({
   ) => {
     if (!anyway && applied && copyProblem(applied, sourceLabel) !== null) {
       setCopyAgain(true);
-      setTransferNotice(
-        "The files are copied with changes or checks still unresolved. Copy again before transferring coordinator context.",
-      );
+      setTransferNotice("Copy again before moving the coordinator.");
       setStage("done");
       return;
     }
@@ -1186,7 +1079,6 @@ export function HandoffFolderCopy({
   /** Cancels this copy and opens the setup form with its choices, ready to edit. */
   const changeWhere = () => {
     const saved = latestPending.current;
-    stepView.look(null);
     if (saved) {
       fillSetup(saved);
       draft.keepDraftOf(saved);
@@ -1203,7 +1095,6 @@ export function HandoffFolderCopy({
   const rechoose = () => {
     const saved = latestPending.current;
     if (!saved) return;
-    stepView.look(null);
     void run(async () => {
       await cancelBeforeApply();
       const chosen = saved.selection ?? DEFAULT_COPY_SELECTION;
@@ -1220,33 +1111,6 @@ export function HandoffFolderCopy({
         projectRelativePath: saved.projectRelativePath ?? scope.selected.projectRelativePath,
       });
     });
-  };
-
-  /**
-   * While choosing, the destination has not started: a new folder is only written to the
-   * pointer, which the compare reads. A move registers the copy for that folder.
-   */
-  const saveFolderOnly = (value: string) => {
-    const saved = latestPending.current;
-    if (!saved || stage !== "select") return;
-    const next = value.trim();
-    if (!absolute(next)) {
-      setError(NOT_ABSOLUTE);
-      return;
-    }
-    const environmentId = saved.environmentId as EnvironmentId;
-    const projectFolder = copiedProjectFolder(
-      next,
-      saved.projectRelativePath ?? scope.selected.projectRelativePath,
-    );
-    setError(null);
-    remember({
-      ...saved,
-      targetFolder: next,
-      projectId: destinationProjectId(environmentId, saved.mode, projectFolder),
-    });
-    setFolder(next, environmentId, saved.copyRoot);
-    stepView.look(null);
   };
 
   const undoCopy = (force: boolean, previewOnly: boolean) =>
@@ -1361,19 +1225,6 @@ export function HandoffFolderCopy({
 
   const fresh = () => run(() => startOver());
 
-  /** After Apply: a new copy with this one's machine, mode and choices, not measured yet. */
-  const startNewWithSettings = () => {
-    const saved = latestPending.current;
-    stepView.look(null);
-    void run(async () => {
-      await startOver(true);
-      if (!saved) return;
-      setMachine(saved.environmentId as EnvironmentId);
-      setMode(saved.mode);
-      setChooseFirst(saved.auto !== true);
-    });
-  };
-
   /**
    * Starts a fresh copy of the same folder to the same machine with the same choices. The
    * destination compares with what the last copy left there, so only changed files move.
@@ -1415,10 +1266,7 @@ export function HandoffFolderCopy({
     (pending?.projectRelativePath ?? scope.selected.projectRelativePath) !== "."
       ? "Umbrella root"
       : "Project root";
-  const approveLabel =
-    mode === "copy-and-move"
-      ? `Copy and transfer context to ${targetLabel}`
-      : `Copy to ${targetLabel}`;
+  const approveLabel = `${mode === "copy-and-move" ? "Move" : "Copy"} to ${targetLabel}`;
   const replaced = stage === "preview" && copy ? replacementText(copy.rows) : null;
   const replaceLeft = stage === "preview" && copy ? replaceAllLeftText(copy.rows, rootLabel) : null;
   // Files changed on the source while copying, or a failed check: copying again fixes it.
@@ -1433,39 +1281,20 @@ export function HandoffFolderCopy({
       ? secretsLeftText(secretsLeft(summary?.secretFiles, copy?.secrets), sourceLabel)
       : null;
   const secretsUnconfirmed = secretPaths.length > 0 && !secretsConfirmed;
-  // Start a new copy shows locked, as on Done, while a coordinator transfer may need recovering.
-  const editAction = viewing
-    ? editActionFor(viewing, { stage, copy, failedBeforeApply, transferRecovery: false })
-    : null;
-  const editDisabled =
-    closeLocked ||
-    (editAction === "start-new-with-settings"
-      ? busy || transferRecovery
-      : working && stage !== "scanning");
   const next = nextStepText({
     stage,
     auto,
-    mode,
-    contextTransferred,
     targetLabel,
-    sourceLabel,
-    unfinished: pending !== null && pending.cancelled !== true,
-    cancelledPending: pending?.cancelled === true,
-    bytes: copy?.progress?.bytesTotal || copy?.totals?.bytesToMove || null,
-    replaced,
     approveLabel,
     failedBeforeApply,
     held: stage === "failed" && copyHeld(copy),
-    copyAgain: offerCopyAgain,
-    secretFiles: summary?.secretFiles.length ?? 0,
-    replaceLeft,
-    recompare,
   });
   const notices = groupCopyNotices({
     skipped: summary?.skipped,
     linksOutside: summary?.linksOutside,
     warnings: [...(summary?.warnings ?? []), ...(copy?.warnings ?? [])],
     rootLabel,
+    activeWork: stage === "select" || stage === "preview" ? mode : null,
   });
   // Transfer and Open act on the applied copy shown on Done; only Done renders them.
   const transfer =
@@ -1491,12 +1320,7 @@ export function HandoffFolderCopy({
 
   return (
     <div className="space-y-4" data-slot="handoff-folder-copy" data-stage={stage}>
-      <CopyStepLine
-        steps={stepView.steps}
-        viewing={viewing}
-        onStepChange={stepView.look}
-        isStepDisabled={stepView.stepDisabled}
-      />
+      <CopyStepLine steps={stepView.steps} />
       {stepView.note && <CopyResumeNote>{stepView.note}</CopyResumeNote>}
       {stepView.checking ? (
         <CopyCheckingStep
@@ -1515,53 +1339,12 @@ export function HandoffFolderCopy({
               : undefined
           }
         />
-      ) : viewing ? (
-        <HandoffCopyReview
-          key={viewing}
-          step={viewing}
-          live={live}
-          error={error}
-          scope={scope}
-          sourceLabel={sourceLabel}
-          targetLabel={targetLabel}
-          machines={machines}
-          pending={pending}
-          machine={machine}
-          folder={folder}
-          mode={mode}
-          canMove={canMove}
-          chooseFirst={chooseFirst}
-          summary={summary}
-          selection={selection}
-          copy={copy}
-          auto={auto}
-          reviewAuto={auto && !stepView.planShown}
-          rootLabel={rootLabel}
-          contextTransferred={contextTransferred}
-          editAction={editAction}
-          editDisabled={editDisabled}
-          backDisabled={closeLocked}
-          onReturn={() => stepView.look(null)}
-          onBack={stepView.backFrom(viewing)}
-          onChangeWhere={changeWhere}
-          onRechoose={rechoose}
-          onSaveFolder={saveFolderOnly}
-          onStartNew={startNewWithSettings}
-        />
       ) : (
         <>
           {stage === "setup" && cancelledFor && (
             <p role="status" className="text-sm" data-slot="copy-cancelled">
               Copy cancelled. Nothing on {cancelledFor} changed.
             </p>
-          )}
-          {(stage === "select" || stage === "preview") && (
-            <HandoffCopyScanFreshness
-              status={scanStatus}
-              busy={busy}
-              onRefresh={() => void refreshScan()}
-              onCompareAgain={rechoose}
-            />
           )}
           <HandoffCopyStepPanels
             stage={stage}
@@ -1571,7 +1354,6 @@ export function HandoffFolderCopy({
             targetLabel={targetLabel}
             busy={busy}
             pending={pending}
-            offer={offer}
             summary={summary}
             measured={measured}
             copy={copy}
@@ -1587,7 +1369,7 @@ export function HandoffFolderCopy({
               setFolder(value);
               draft.keepDraft({ folder: value });
             }}
-            findingHome={home.isPending}
+            findingHome={findingHome}
             mode={mode}
             onModeChange={(next) => {
               setMode(next);
@@ -1631,9 +1413,42 @@ export function HandoffFolderCopy({
             sourceDropped={sourceDropped}
             notices={notices}
             next={next}
+            working={workingLine({ stage, targetLabel, measured, copy, recompare })}
+            choices={
+              // Not on Review (its footer has Change setup) or after Apply: nothing to change.
+              pending &&
+              stage !== "setup" &&
+              stage !== "preview" &&
+              stage !== "done" &&
+              stage !== "undone" &&
+              (stage !== "failed" || failedBeforeApply) ? (
+                <CopyChoicesSummary
+                  pending={pending}
+                  copy={copy}
+                  sourceRoot={offer?.copyRoot ?? project.workspaceRoot}
+                  targetLabel={targetLabel}
+                  method={pending.method ?? method}
+                  // Before Apply only.
+                  onChange={
+                    (stage !== "copying" || !APPLYING.has(copy?.state ?? "")) && stage !== "moving"
+                      ? changeWhere
+                      : null
+                  }
+                  changeDisabled={closeLocked || (working && stage !== "scanning")}
+                />
+              ) : null
+            }
             lastCopy={draft.lastCopy}
             onViewLast={draft.viewLastCopy}
           />
+          {(stage === "select" || stage === "preview") && (
+            <HandoffCopyScanFreshness
+              status={scanStatus}
+              busy={busy}
+              onRefresh={() => void refreshScan()}
+              onCompareAgain={rechoose}
+            />
+          )}
           <HandoffCopyFooter
             sourceChanged={scanStatus?.freshness?.current === false}
             stage={stage}
@@ -1674,8 +1489,7 @@ export function HandoffFolderCopy({
             onOpen={openCopy}
             onLink={() => setLinkDialog(true)}
             onStartNew={fresh}
-            onBack={stepView.backFrom(live)}
-            backDisabled={closeLocked}
+            onChangeSetup={changeWhere}
           />
         </>
       )}

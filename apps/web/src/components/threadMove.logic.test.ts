@@ -194,9 +194,9 @@ describe("threadMoveBanner", () => {
       }),
     ).toEqual({
       id: `thread-moved-to:${sourceId}`,
-      title: "Continued on Minis",
+      title: "Moved to Minis",
       description:
-        "Hit 95% of Claude on M4 · continued on Minis with Claude Opus 5.5. This thread is read-only now; its work goes on there.",
+        "Hit 95% of Claude on M4 · continued on Minis with Claude Opus 5.5. You can read it here. New messages go to Minis.",
       actionLabel: "Open on Minis",
       // The continuation lives on Minis, so the link opens it there.
       target: { environmentId: minis, threadId: remoteId },
@@ -208,12 +208,13 @@ describe("threadMoveBanner", () => {
     const banner = on({
       movedTo: { ...link, kind: "handoff", environmentId: minis, machineLabel: "Minis" },
     });
-    expect(banner?.title).toBe("Continued on Minis");
-    expect(banner?.description).toBe("This thread is read-only now; its work goes on there.");
+    expect(banner?.title).toBe("Moved to Minis");
+    expect(banner?.description).toBe("You can read it here. New messages go to Minis.");
     expect(banner?.description).not.toMatch(/archived/);
     // A handoff to another model on this machine has no machine to name.
     expect(on({ movedTo: { ...link, kind: "handoff" } })).toMatchObject({
       title: "Continued in a new thread",
+      description: "You can read it here. New messages go to the new thread.",
       target: { environmentId: here, threadId: remoteId },
     });
   });
@@ -249,7 +250,7 @@ describe("threadMoveBanner", () => {
     expect(on({ execution })).toEqual({
       id: `thread-moved-from:${sourceId}`,
       title: "Continued here from M4",
-      description: "Its files and a handoff note came from the last checkpoint there.",
+      description: "Its conversation and file changes came from M4's last sync.",
       actionLabel: "Open original",
       target: { environmentId: fromM4, threadId: ThreadId.make("thread-on-m4") },
       targetArchived: false,
@@ -269,7 +270,7 @@ describe("threadMoveBanner", () => {
     ).toMatchObject({
       title: "Continued here from M4",
       description:
-        "Hit 95% of Claude on M4 · continued on Minis with Claude Opus 5.5. Its files and a handoff note came from the last checkpoint there.",
+        "Hit 95% of Claude on M4 · continued on Minis with Claude Opus 5.5. Its conversation and file changes came from M4's last sync.",
       target: { environmentId: fromM4, threadId: remoteId },
     });
     // The source, once it moves on again, shows where it went instead.
@@ -278,7 +279,7 @@ describe("threadMoveBanner", () => {
         execution,
         movedTo: { ...link, kind: "handoff", environmentId: minis, machineLabel: "Minis" },
       })?.title,
-    ).toBe("Continued on Minis");
+    ).toBe("Moved to Minis");
   });
 
   it("ignores an execution record that came from nowhere else", () => {

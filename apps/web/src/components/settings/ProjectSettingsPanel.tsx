@@ -41,6 +41,7 @@ import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectIconPicker, useLatestIconSave } from "./ProjectIconPicker";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ProjectOverrides } from "./ProjectOverrides";
+import { ProjectHandoffModeSettings } from "./ProjectHandoffModeSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { ProjectCheckoutMissing } from "./ProjectCheckoutMissing";
 import { ProjectKeyFollowHold } from "./projectKeyFollow";
@@ -620,6 +621,7 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="integrations" onProjectPage />
         <ProjectOverrides checkouts={group.memberProjects} />
         <ProjectMachinesSettings members={domainMembers} />
+        <ProjectHandoffModeSettings members={domainMembers} />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">

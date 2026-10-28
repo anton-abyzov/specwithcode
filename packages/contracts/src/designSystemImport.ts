@@ -8,6 +8,7 @@ import {
   DesignSystemComponent,
   DesignSystemId,
   DesignSystemLineage,
+  DesignSystemRef,
   DesignSystemSource,
   DesignToken,
 } from "./design.ts";
@@ -353,6 +354,23 @@ export const DesignSystemRescanResult = Schema.Union([
   }),
 ]);
 export type DesignSystemRescanResult = typeof DesignSystemRescanResult.Type;
+
+/** Builds a code-imported system's component previews again. Runs the kit's code; only the user asks. */
+export const DesignSystemRebuildPreviewsInput = Schema.Struct({
+  owner: DesignOwnerInput,
+  systemId: DesignSystemId,
+});
+export type DesignSystemRebuildPreviewsInput = typeof DesignSystemRebuildPreviewsInput.Type;
+
+export const DesignSystemRebuildPreviewsResult = Schema.Struct({
+  ref: DesignSystemRef,
+  system: DesignSystem,
+  /** What kept previews from building, in plain words; empty when all went well. */
+  problems: Schema.Array(Schema.String.check(Schema.isMaxLength(1_000))).check(
+    Schema.isMaxLength(50),
+  ),
+});
+export type DesignSystemRebuildPreviewsResult = typeof DesignSystemRebuildPreviewsResult.Type;
 
 // ---------------------------------------------------------------------------
 // Figma desktop

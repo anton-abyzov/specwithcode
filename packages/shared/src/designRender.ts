@@ -402,6 +402,45 @@ export function designComponentSrcdoc(
   return `<!doctype html><html data-theme="${escapeHtml(context.mode)}"><head>${DESIGN_FRAME_CSP_META}<meta charset="utf-8"><style>html,body{margin:0}${css}</style></head><body>${body}</body></html>`;
 }
 
+/**
+ * Built component previews (a kit's stories rendered to static HTML) run no script
+ * at all, so their frames can be same-origin and measured for height.
+ */
+export const DESIGN_PREVIEW_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:";
+
+/** Light or dark, the way kits switch: a `data-theme` attribute, a `dark` class and the color scheme. */
+export type DesignPreviewTheme = "light" | "dark";
+
+const PREVIEW_GROUND: Record<DesignPreviewTheme, { ground: string; ink: string; caption: string }> =
+  {
+    light: { ground: "#ffffff", ink: "#16181d", caption: "#7a7f89" },
+    dark: { ground: "#101114", ink: "#eceef2", caption: "#8b919c" },
+  };
+
+/**
+ * The document a built preview frame shows: a plain page in the chosen theme, the
+ * kit's stylesheet (which wins on any clash), then each story as a captioned
+ * section. SVG fragments get their viewBox from the frame's owner once laid out.
+ */
+export function designPreviewSrcdoc(input: {
+  readonly html: string;
+  readonly css: string;
+  readonly theme: DesignPreviewTheme;
+}): string {
+  const colors = PREVIEW_GROUND[input.theme];
+  const base =
+    `html,body{margin:0}` +
+    `html{color-scheme:${input.theme};background:${colors.ground};color:${colors.ink}}` +
+    `body{padding:20px;display:flex;flex-direction:column;gap:28px;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}` +
+    `section[data-swc-story]{min-width:0}` +
+    `section[data-swc-story]::before{content:attr(data-swc-story);display:block;margin:0 0 10px;font:500 11px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;letter-spacing:.02em;color:${colors.caption}}` +
+    `svg[data-swc-fragment]{display:block;width:auto;max-width:100%;height:240px;overflow:visible}`;
+  const css = input.css.replace(/<\/style/gi, "<\\/style");
+  const theme = escapeHtml(input.theme);
+  return `<!doctype html><html data-theme="${theme}" class="${theme}"><head><meta http-equiv="Content-Security-Policy" content="${DESIGN_PREVIEW_CSP}"><meta charset="utf-8"><style>${base}</style><style>${css}</style></head><body>${input.html}</body></html>`;
+}
+
 function renderNodeHtml(
   node: DesignNode,
   children: ReadonlyMap<string | null, readonly DesignNode[]>,

@@ -10,8 +10,13 @@
 # Stages, in order (docs/studio/releasing.md has the runbook):
 #   preflight trees prev bump candidate stage1 [server starts here, in the background]
 #   build bundle sign helpers plan drafts server-wait
-#   quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge
+#   quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux
 #
+# macOS ships first: this script publishes the macOS app and every asset the fleet reads, rolls the
+# Macs out and merges. Linux workers in the fleet inventory ("os": "linux") follow in fleet-linux,
+# best effort: a worker that is busy, unreachable or fails is a warning, never a failed release
+# (retry: scripts/studio-fleet/linux_rollout.py --version X.Y.Z). The Windows and Linux desktop
+# apps are built later by .github/workflows/release-windows-linux.yml, nightly or on dispatch.
 # publish-public comes before the fleet stages: the hosts' update agents read the public feed
 # (update_agent.DEFAULT_REPOSITORY), so a release only on the private one is invisible to them.
 # The desktop app is swapped right after M4 installs: a new app opened against an older M4
@@ -43,7 +48,7 @@
 #               for its stricter whole-database check; only when no host upgrades across a
 #               migration. Give it on the run that reaches the plan stage.
 # --ci          a release on a CI Mac (.github/workflows/release-macos.yml): no fleet SSH files are
-#               needed and quit-desktop, fleet-m4, fleet-workers and desktop are skipped. Each host's
+#               needed and quit-desktop, fleet-m4, fleet-workers, desktop and fleet-linux are skipped. Each host's
 #               update agent installs the release from the public feed on its next hourly check;
 #               `fleet_rollout.py --version X.Y.Z` on the M4 asks them at once.
 #
@@ -68,7 +73,7 @@ RELEASE_ENV="${RELEASE_ENV:-$HOME/.config/skill-studio-release/release.env}"
 STAGING_ROOT="${RELEASE_STAGING_ROOT:-$HOME/.specwithcode/release-staging}"
 TREES="${RELEASE_TREES:-$HOME/.specwithcode/release.noindex}"
 APP="${RELEASE_DESKTOP_APP:-/Applications/SpecWithCode.app}"
-STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge"
+STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
 VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 POLICY_RE='^1\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 STUB_SHA_DEFAULT=1111111111111111111111111111111111111111
@@ -1448,6 +1453,22 @@ stage_fleet_workers() {
   x fleet-workers -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers
 }
 
+# Linux workers, after the release is merged: best effort, so it never fails or delays macOS. A
+# busy worker is skipped (the update restarts its service), an unreachable or failing one only
+# warns; linux_rollout.py exits 0 when the inventory has no Linux worker. The stage is done either
+# way, and --resume does not retry it: run the command it prints instead.
+stage_fleet_linux() {
+  if [ "$MODE" = real ] && [ ! -f "$BUILD/scripts/studio-fleet/linux_rollout.py" ]; then
+    say "WARNING: fleet-linux: $BUILD has no scripts/studio-fleet/linux_rollout.py; Linux workers keep their version"
+    return 0
+  fi
+  if x fleet-linux -C "$BUILD" -- python3 -B scripts/studio-fleet/linux_rollout.py --version "$VERSION"; then
+    return 0
+  fi
+  say "WARNING: fleet-linux: not every Linux worker runs $VERSION (see above); the macOS release is done."
+  say "         Retry once they are idle: python3 -B scripts/studio-fleet/linux_rollout.py --version $VERSION"
+}
+
 stage_publish_public() {
   x public-notes -- python3 -B "$TOOLS" public-notes --in "$STAGE/notes.md" --out "$STAGE/notes-public.md" --rules "$PUBLIC_RULES"
   if [ -z "$(q public-tag --may-fail -- git ls-remote --tags "https://github.com/$PUBLIC_REPO.git" "refs/tags/v$VERSION")" ]; then
@@ -1460,6 +1481,7 @@ stage_publish_public() {
     x mirror-publish -C "$BUILD" -- node scripts/public-mirror/publish.mjs --public "$PUBLIC_CLONE" --ref "$SHA" --tag --push
   fi
   publish "$PUBLIC_REPO" "$STAGE/notes-public.md" public
+  prune_after_publish
 }
 
 # The pid of the ShipIt that Squirrel.Mac runs from this app's own bundle, when one runs. Matched
@@ -1621,6 +1643,30 @@ prune_old_staging() {
     if ! [[ $name =~ $VERSION_RE ]] || ! version_before "$name" "$PREV"; then continue; fi
     x staging-prune -- rm -rf "$dir" || say "(could not remove $dir)"
   done
+}
+
+# A candidate replaced on --resume leaves its assets, runtimes and verify folders behind (about
+# 2 GB each); once the version is published only the published candidate's are needed.
+prune_superseded_candidates() {
+  local dir name published
+  [ "$MODE" = dry ] && return 0
+  [ -f "$STAGE/published.sha" ] || return 0
+  published="$(cut -c1-12 "$STAGE/published.sha")"
+  [[ $published =~ ^[0-9a-f]{12}$ ]] || return 0
+  for dir in "$STAGE"/*; do
+    name="${dir##*/}"
+    if [ ! -d "$dir" ] || [ -L "$dir" ]; then continue; fi
+    [[ $name =~ ^(assets|runtime|runtime-linux-(arm64|x64)|google-verify|verify-runtime|verify-runtime-linux-(arm64|x64))-([0-9a-f]{12})$ ]] || continue
+    [ "${BASH_REMATCH[4]}" = "$published" ] && continue
+    x staging-prune -- rm -rf "$dir" || say "(could not remove $dir)"
+  done
+}
+
+# Old versions go as soon as this one is public: a fleet host that fails later stops the run
+# before merge, and three releases in a row kept 11 GB that way.
+prune_after_publish() {
+  prune_superseded_candidates
+  prune_old_staging
 }
 
 # A plain call: on the left of || bash would turn off set -e inside merge_release_pr.
@@ -1790,6 +1836,11 @@ main() {
     say "= fleet-m4, desktop, fleet-workers: skipped (--ci); the hosts install v$VERSION on their next update check"
   fi
   run_stage merge once
+  if [ "$CI_MODE" -eq 0 ]; then
+    run_stage fleet-linux once
+  else
+    say "= fleet-linux: skipped (--ci); update Linux workers with linux_rollout.py --version $VERSION on the M4"
+  fi
   if [ "$MODE" = dry ]; then
     say "Dry-run done: nothing was run or written."
     return 0

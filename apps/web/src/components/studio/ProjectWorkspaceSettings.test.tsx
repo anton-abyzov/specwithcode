@@ -13,8 +13,12 @@ const state = vi.hoisted(() => ({
   remove: vi.fn(),
   worktreesRead: vi.fn(),
   worktreesRemove: vi.fn(),
+  threadsDelete: vi.fn(),
+  refreshArchived: vi.fn(),
+  threadCount: 3,
   write: vi.fn(),
   deleteMemory: vi.fn(),
+  fetchMemory: vi.fn(),
   close: vi.fn(),
   saved: vi.fn(),
   deleted: vi.fn(),
@@ -60,6 +64,12 @@ vi.mock("./ProjectIconEditor", () => ({
   }),
 }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("../../lib/archivedThreadsState", () => ({
+  refreshArchivedThreadsForEnvironment: state.refreshArchived,
+}));
+vi.mock("../ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <div data-testid="markdown">{text}</div>,
+}));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: state.fleet, loading: false, failed: false, refresh() {} }),
 }));
@@ -75,6 +85,7 @@ vi.mock("../../state/projects", () => ({
     delete: "remove",
     worktreesRead: "worktreesRead",
     worktreesRemove: "worktreesRemove",
+    threadsDelete: "threadsDelete",
   },
 }));
 vi.mock("../../studio/projectWorkspace", () => ({
@@ -82,6 +93,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
     memoryRead: () => "read",
     memoryWrite: "write",
     memoryDelete: "deleteMemory",
+    memoryFetch: "fetchMemory",
     environmentRead: () => "environment",
     environmentPrepare: "prepare",
     connections: () => "connections",
@@ -253,6 +265,17 @@ beforeEach(() => {
   for (const value of Object.values(state)) if (typeof value === "function") value.mockReset();
   state.update.mockResolvedValue({ _tag: "Success", value: {} });
   state.fleet = null;
+  state.threadCount = 3;
+  // A dry run lists the threads a delete would remove.
+  state.threadsDelete.mockImplementation(async ({ input }: { input: { dryRun?: boolean } }) => ({
+    _tag: "Success",
+    value: {
+      projectId: "project",
+      deletedThreadIds: input.dryRun
+        ? Array.from({ length: state.threadCount }, (_, index) => `t${index}`)
+        : [],
+    },
+  }));
   delete (project as { workspaceSettings?: unknown }).workspaceSettings;
   state.prepare.mockResolvedValue({
     _tag: "Success",
@@ -307,6 +330,13 @@ async function click(text: string) {
   );
   expect(button).toBeDefined();
   await act(async () => button!.click());
+}
+async function openMemory(name: string) {
+  const row = container.querySelector<HTMLButtonElement>(
+    `.project-memory-list button[data-memory-file="${name}"]`,
+  );
+  expect(row).not.toBeNull();
+  await act(async () => row!.click());
 }
 async function input(selector: string, value: string) {
   const field = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
@@ -557,6 +587,94 @@ describe("project settings and memory", () => {
     });
     expect(state.deleted).toHaveBeenCalledOnce();
   });
+  it("deletes every thread but keeps the project, then removes only confirmed worktrees", async () => {
+    state.worktreesRead.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        projectId: "project",
+        worktrees: [
+          {
+            path: "/wt/old",
+            branch: "old",
+            threadCount: 2,
+            sizeBytes: 3_000_000_000,
+            localCommits: 0,
+            status: "removable",
+            detail: null,
+          },
+        ],
+      },
+    });
+    const realDelete = state.threadsDelete.getMockImplementation()!;
+    state.threadsDelete.mockImplementation(async (args: { input: { dryRun?: boolean } }) =>
+      args.input.dryRun
+        ? realDelete(args)
+        : { _tag: "Success", value: { projectId: "project", deletedThreadIds: ["a", "b", "c"] } },
+    );
+    state.worktreesRemove.mockResolvedValue({
+      _tag: "Success",
+      value: { projectId: "project", removed: ["/wt/old"], kept: [] },
+    });
+    await render();
+    expect(container.textContent).toContain("project memory, plan, routines and connections stay");
+    const button = () =>
+      [...container.querySelectorAll("button")].find((b) => b.textContent === "Delete 3 threads")!;
+    expect(button().disabled).toBe(true);
+    expect(state.worktreesRead).not.toHaveBeenCalled();
+    await input('[aria-label="Confirm deleting all threads"]', "Atlas");
+    expect(state.worktreesRead).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "host",
+      input: { projectId: "project", threadsOnly: true },
+    });
+    expect(container.textContent).toContain("Also delete 1 worktree (3.0 GB)");
+    await click("Delete 3 threads");
+    expect(state.threadsDelete).toHaveBeenCalledWith({
+      environmentId: "host",
+      input: {
+        projectId: "project",
+        commandId: expect.stringMatching(/^delete-threads:/),
+        confirmationTitle: "Atlas",
+      },
+    });
+    expect(state.refreshArchived).toHaveBeenCalledWith("host");
+    expect(state.remove).not.toHaveBeenCalled();
+    expect(state.deleted).not.toHaveBeenCalled();
+    expect(state.worktreesRemove).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "host",
+      input: {
+        projectId: "project",
+        paths: ["/wt/old"],
+        discardLocalChanges: [],
+        threadsOnly: true,
+      },
+    });
+  });
+  it("shows why deleting the threads was refused and removes no worktrees", async () => {
+    const realDelete = state.threadsDelete.getMockImplementation()!;
+    state.threadsDelete.mockImplementation(async (args: { input: { dryRun?: boolean } }) =>
+      args.input.dryRun
+        ? realDelete(args)
+        : {
+            _tag: "Failure",
+            error: new Error("Some threads are still working. Stop them, then delete the threads."),
+          },
+    );
+    await render();
+    await input('[aria-label="Confirm deleting all threads"]', "Atlas");
+    await click("Delete 3 threads");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Some threads are still working",
+    );
+    expect(state.worktreesRemove).not.toHaveBeenCalled();
+  });
+  it("cannot delete threads when the project has none", async () => {
+    state.threadCount = 0;
+    await render();
+    const button = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Delete 0 threads",
+    )!;
+    expect(button.disabled).toBe(true);
+  });
   it("offers the project's worktrees and removes only the confirmed ones after deletion", async () => {
     const worktree = (path: string, status: string, sizeBytes: number) => ({
       path,
@@ -610,7 +728,8 @@ describe("project settings and memory", () => {
   });
   it("keeps an edited memory file across tab switches and guards closing", async () => {
     await render("memory");
-    await click("MEMORY.md40 bytes · revision 3");
+    await openMemory("MEMORY.md");
+    await click("Edit");
     await input('textarea[aria-label="Content of MEMORY.md"]', "Unsaved decision");
     await click("General");
     await click("Memory");
@@ -628,7 +747,8 @@ describe("project settings and memory", () => {
       error: new Error("Memory revision conflict"),
     });
     await render("memory");
-    await click("MEMORY.md40 bytes · revision 3");
+    await openMemory("MEMORY.md");
+    await click("Edit");
     await input('textarea[aria-label="Content of MEMORY.md"]', "New decision");
     await click("Save memory");
     expect(state.write).toHaveBeenCalledWith({
@@ -647,6 +767,65 @@ describe("project settings and memory", () => {
     ).toBe("New decision");
     await click("Reload file and discard edit");
     expect(state.refresh).toHaveBeenCalledOnce();
+  });
+  it("opens a memory file as a readable page with copy and download", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const createObjectURL = vi.fn(() => "blob:memory");
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    await render("memory");
+    await openMemory("MEMORY.md");
+    expect(container.querySelector(`textarea[aria-label="Content of MEMORY.md"]`)).toBeNull();
+    expect(container.querySelector('[data-testid="markdown"]')?.textContent).toBe(
+      "Keep provider choices independent.",
+    );
+    expect(container.querySelector(".project-memory-viewer h3")?.textContent).toBe("Memory index");
+    await click("Copy");
+    expect(writeText).toHaveBeenCalledWith("Keep provider choices independent.");
+    expect(container.textContent).toContain("Copied");
+    await click("Download");
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    await click("Edit");
+    expect(
+      container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Content of MEMORY.md"]')!
+        .value,
+    ).toBe("Keep provider choices independent.");
+    await click("Discard edit");
+    expect(container.querySelector(`textarea[aria-label="Content of MEMORY.md"]`)).toBeNull();
+    expect(container.querySelector('[data-testid="markdown"]')).not.toBeNull();
+  });
+  it("shows the saved text right after a save, before the file is read again", async () => {
+    state.write.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { name: "MEMORY.md", content: "Saved decision", revision: 4 },
+    });
+    await render("memory");
+    await openMemory("MEMORY.md");
+    await click("Edit");
+    await input('textarea[aria-label="Content of MEMORY.md"]', "Saved decision");
+    await click("Save memory");
+    expect(container.querySelector('[data-testid="markdown"]')?.textContent).toBe("Saved decision");
+    expect(container.textContent).toContain("version 4");
+  });
+  it("downloads every memory file as one zip", async () => {
+    state.fetchMemory.mockImplementation(async ({ input }: { input: { name: string } }) => ({
+      _tag: "Success",
+      value: { name: input.name, content: `# ${input.name}`, revision: 1 },
+    }));
+    const createObjectURL = vi.fn(() => "blob:zip");
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    await render("memory");
+    await click("Download all (.zip)");
+    // The zip library loads on first use, which can take seconds under a full parallel run.
+    await vi.waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce(), { timeout: 15_000 });
+    expect(state.fetchMemory).toHaveBeenCalledWith({
+      environmentId: "host",
+      input: { projectId: "project", name: "MEMORY.md" },
+    });
+    const JSZip = (await import("jszip")).default;
+    const blob = (createObjectURL.mock.calls[0] as unknown as [Blob])[0];
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+    expect(await zip.file("index/MEMORY.md")?.async("string")).toBe("# MEMORY.md");
   });
   it("keeps folders and repositories together in a revisioned draft", async () => {
     await render("environment");

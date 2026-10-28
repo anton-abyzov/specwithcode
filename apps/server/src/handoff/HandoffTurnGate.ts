@@ -61,7 +61,7 @@ export function turnRefusal(
     record.replicas.length > 0 &&
     effectiveHandoffMode(document, record.projectId, record.mode) !== "off"
   ) {
-    return "This machine woke after handing its threads off and no other machine answered yet. Choose Continue here anyway to run it here.";
+    return "This machine woke after handing its threads off and no other machine answered yet. Choose Resume this Mac to run it here.";
   }
   return null;
 }

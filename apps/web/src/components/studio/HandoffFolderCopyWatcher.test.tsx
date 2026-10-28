@@ -95,6 +95,7 @@ it("tells a person who closed the dialog when measuring or the copy is ready", a
       <HandoffFolderCopyWatcher
         environmentId={"m4" as never}
         projectId="source"
+        projectName="Project"
         machineLabel={(id) => (id === "m3" ? "M3" : "Machine")}
       />
     );
@@ -106,7 +107,7 @@ it("tells a person who closed the dialog when measuring or the copy is ready", a
     expect(state.toasts).toEqual([
       {
         type: "success",
-        title: "Folder measured. Open Continue on another machine to choose what to copy.",
+        title: "Folder measured. Open Move Project to choose what to copy.",
       },
     ]);
     // It stops after telling once.
@@ -166,6 +167,7 @@ const renderWatcher = () =>
       <HandoffFolderCopyWatcher
         environmentId={"m4" as never}
         projectId="source"
+        projectName="Project"
         machineLabel={() => "M3"}
       />,
     ),
@@ -181,7 +183,7 @@ it("asks to reopen the dialog to finish linking a copy-only copy", async () => {
     expect(state.toasts).toEqual([
       {
         type: "success",
-        title: "Copy to M3 is done. Open Continue on another machine to finish setting it up.",
+        title: "Copy to M3 is done. Open Move Project to finish setting it up.",
       },
     ]);
   } finally {
@@ -211,6 +213,7 @@ it.each([
         <HandoffFolderCopyWatcher
           environmentId={"m4" as never}
           projectId="source"
+          projectName="Project"
           machineLabel={() => "M3"}
           sourceLabel="M4"
           onOpenDialog={onOpenDialog}
@@ -292,7 +295,7 @@ it("carries a one-click copy from measured through approval while the dialog is 
     expect(state.toasts).toEqual([
       {
         type: "success",
-        title: "Copy to M3 is done. Open Continue on another machine to finish setting it up.",
+        title: "Copy to M3 is done. Open Move Project to finish setting it up.",
       },
     ]);
   } finally {
@@ -326,7 +329,7 @@ it("never approves a one-click copy that would replace files; it asks for review
     expect(state.toasts).toEqual([
       {
         type: "success",
-        title: "Copy to M3 would replace 1 file. Open Continue on another machine to review.",
+        title: "Copy to M3 would replace 1 file. Open Move Project to review.",
       },
     ]);
   } finally {
@@ -342,6 +345,7 @@ const renderWatcherFrom = (sourceLabel: string) =>
       <HandoffFolderCopyWatcher
         environmentId={"m4" as never}
         projectId="source"
+        projectName="Project"
         machineLabel={() => "M3"}
         sourceLabel={sourceLabel}
       />,
@@ -391,9 +395,9 @@ it("approves a Replace all left running once the re-compare has nothing open, an
     expect(state.toasts).toEqual([
       {
         type: "success",
-        title: "Copy to M3 is done. Open Continue on another machine to finish setting it up.",
+        title: "Copy to M3 is done. Open Move Project to finish setting it up.",
         description:
-          "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with Choose what to copy to send them.",
+          "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
       },
     ]);
   } finally {
@@ -416,7 +420,7 @@ it("drops a pending Replace all whose re-compare still needs a choice and asks f
     expect(state.toasts).toEqual([
       {
         type: "success",
-        title: "Copy to M3 would replace 1 repository. Open Continue on another machine to review.",
+        title: "Copy to M3 would replace 1 repository. Open Move Project to review.",
       },
     ]);
   } finally {
@@ -452,7 +456,7 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
     expect(approvals).toBe(1);
     expect(state.toasts).toHaveLength(1);
     expect((state.toasts[0] as { title: string }).title).toBe(
-      "Copy to M3 is done. Open Continue on another machine to finish setting it up.",
+      "Copy to M3 is done. Open Move Project to finish setting it up.",
     );
   } finally {
     vi.useRealTimers();
@@ -481,7 +485,7 @@ it("never approves a one-click copy whose unchanged folder would overwrite files
     expect(state.toasts).toEqual([
       {
         type: "success",
-        title: "Copy to M3 would replace 2 files. Open Continue on another machine to review.",
+        title: "Copy to M3 would replace 2 files. Open Move Project to review.",
       },
     ]);
   } finally {
@@ -546,6 +550,7 @@ it("shows a background copy's progress app wide and clears it once the copy is d
         <HandoffFolderCopyWatcher
           environmentId={"m4" as never}
           projectId="source"
+          projectName="Project"
           machineLabel={() => "ministorm"}
           onDone={() => (done += 1)}
         />,
@@ -580,6 +585,7 @@ it("never announces again a copy that finished before a reload", async () => {
         <HandoffFolderCopyWatcher
           environmentId={"m4" as never}
           projectId="source"
+          projectName="Project"
           machineLabel={() => "M3"}
           restored
           onDone={() => (done += 1)}

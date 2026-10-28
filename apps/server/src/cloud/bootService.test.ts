@@ -793,6 +793,42 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect(
+    "rechecks the restart lease before stop and leaves the service unchanged on refusal",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, commands } = yield* makeHarness();
+        const plan = yield* service.install();
+        const state = yield* fs.readFileString(statePath);
+        const unit = yield* fs.readFileString(plan.unitPath);
+        commands.length = 0;
+        const error = yield* service
+          .install({
+            beforeStop: Effect.fail(
+              new BootService.BootServiceRestartRefusedError({ reason: "expired lease" }),
+            ),
+          })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("BootServiceRestartRefusedError");
+        expect(error.message).toContain("was not restarted");
+        expect(commands.some((command) => /systemctl --user (stop|restart)/.test(command))).toBe(
+          false,
+        );
+        expect(yield* fs.readFileString(statePath)).toBe(state);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+
+        commands.length = 0;
+        yield* service.install({
+          beforeStop: Effect.sync(() => {
+            commands.push("lease-confirmed");
+          }),
+        });
+        const stop = commands.indexOf("systemctl --user stop studio.service");
+        expect(stop).toBeGreaterThan(0);
+        expect(commands[stop - 1]).toBe("lease-confirmed");
+      }),
+  );
+
   it.effect("installs, reports current state, and uninstalls on Windows", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands, timeouts, runtime, control } =

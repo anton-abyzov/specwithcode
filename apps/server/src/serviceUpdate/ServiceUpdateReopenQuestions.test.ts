@@ -637,3 +637,37 @@ it.effect("reopens nothing that was answered, nor on a closed thread, and waits 
     }),
   ),
 );
+
+it.effect("does not reopen an answered restored copy after another update", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const world = newWorld({ continues: false });
+      const { store, reopener } = yield* reopenerFor(world, recordPath);
+      yield* store.record([closed("q1")]);
+      world.projection = {
+        ...world.projection,
+        runtimeRequests: [
+          {
+            id: RuntimeRequestId.make("q1"),
+            status: "cancelled",
+            kind: "user_input",
+            createdAt: at,
+          },
+          {
+            id: RuntimeRequestId.make("update-reopen:q1"),
+            status: "resolved",
+            kind: "user_input",
+            createdAt: later,
+            answers: { q1: "Accept both" },
+          },
+        ],
+      } as never;
+      const outcomes = yield* reopener.reopenPending;
+      assert.deepEqual(outcomes[0]?.outcome, {
+        type: "skipped",
+        reason: "request-family-answered",
+      });
+      assert.lengthOf(world.cards, 0);
+    }),
+  ),
+);

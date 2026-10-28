@@ -51,9 +51,54 @@ export function orphanWorktreeRemovable(
   return facts.pullRequestState === "closed" && facts.unpushedCommits === 0;
 }
 
-/** `git ls-files --others --ignored --directory -z` output holds only dependency installs. */
+/**
+ * Ignored paths a fresh checkout rebuilds: dependency installs (a pnpm workspace
+ * can link `node_modules` as a symlink, listed without a slash),
+ * TypeScript build info, git hook shims and Finder's `.DS_Store`, which
+ * something writes into every worktree within a minute of its creation.
+ * `.cache/`, `.env*` and anything else may hold secrets or local data and still
+ * keep the folder.
+ */
+// Git collapses whole ignored directories, hiding any secrets or local data in
+// them. Only dependency installs retain the existing directory-level exemption.
+const REBUILDABLE_DIRECTORY = /(^|\/)node_modules\/$/;
+const REBUILDABLE_FILE = /(^|\/)(node_modules|\.DS_Store|[^/]+\.tsbuildinfo)$/;
+// The hook installer's shims; hooks a person adds beside them stay.
+const HOOK_SHIMS = /^\.vite-hooks\/_\//;
+
+function rebuildable(entry: string): boolean {
+  return (
+    entry === "" ||
+    REBUILDABLE_DIRECTORY.test(entry) ||
+    REBUILDABLE_FILE.test(entry) ||
+    HOOK_SHIMS.test(entry)
+  );
+}
+
+/** `git ls-files --others --ignored --directory -z` output holds only rebuildable files. */
 export function onlyDependencyIgnores(stdout: string): boolean {
-  return stdout.split("\0").every((entry) => entry === "" || /(^|\/)node_modules\/$/.test(entry));
+  return stdout.split("\0").every(rebuildable);
+}
+
+/**
+ * `git ls-files --others --exclude-standard --directory -z` output holds nothing
+ * but the hook installer's `.vite-hooks/_/`, which carries its own `*` ignore
+ * yet still lists as untracked.
+ */
+export function onlyRebuildableUntracked(stdout: string): boolean {
+  return stdout.split("\0").every((entry) => entry === "" || HOOK_SHIMS.test(entry));
+}
+
+/**
+ * The time of the newest entry in a reflog file (`<old> <new> <who> <epoch> <tz>\t<message>`),
+ * in milliseconds. Its mtime is no reading: `git gc` rewrites every worktree's
+ * reflog when it expires entries. Null when the last line has no time.
+ */
+export function newestReflogEntryMs(reflog: string): number | null {
+  const line = reflog.trimEnd().split("\n").at(-1) ?? "";
+  // `git update-ref` without -m writes no tab and no message.
+  const match = /\s(\d+) [+-]\d{4}(\t|$)/.exec(line);
+  return match ? Number(match[1]) * 1000 : null;
 }
 
 /** The gitdir a linked worktree's `.git` file points at, or null for anything else. */

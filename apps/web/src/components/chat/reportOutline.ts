@@ -1,4 +1,5 @@
 import { type RefObject, useCallback, useEffect, useState } from "react";
+import { FIND_JOINED_TEXT_ATTRIBUTE } from "../find/conversationFind.logic";
 
 export interface OutlineHeading {
   readonly id: string;
@@ -97,18 +98,52 @@ function highlightRegistry(): {
   return css?.highlights && Highlight ? { registry: css.highlights, Highlight } : null;
 }
 
-/** Every case-insensitive match of `query` in the element's text. */
+/** Lowercase that keeps every offset: a letter that grows ("İ") keeps its case. */
+function foldKeepingLength(value: string): string {
+  const lower = value.toLowerCase();
+  if (lower.length === value.length) return lower;
+  return Array.from(value, (char) => {
+    const folded = char.toLowerCase();
+    return folded.length === char.length ? folded : char;
+  }).join("");
+}
+
+/**
+ * Every case-insensitive match of `query` in the element's text. Text under
+ * `data-path-wrap` (a wrapped path, a table's boxed code) is one run, though it
+ * spans several text nodes.
+ */
 export function findTextRanges(root: HTMLElement, query: string): Range[] {
-  const needle = query.trim().toLowerCase();
+  const needle = foldKeepingLength(query.trim());
   if (needle.length === 0) return [];
   const ranges: Range[] = [];
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const text = node.nodeValue?.toLowerCase() ?? "";
+  let node = walker.nextNode();
+  while (node) {
+    const nodes = [node];
+    const owner = node.parentElement?.closest(`[${FIND_JOINED_TEXT_ATTRIBUTE}]`);
+    node = walker.nextNode();
+    if (owner && root.contains(owner)) {
+      for (; node && owner.contains(node); node = walker.nextNode()) nodes.push(node);
+    }
+    const starts: number[] = [];
+    let text = "";
+    for (const part of nodes) {
+      starts.push(text.length);
+      text += foldKeepingLength(part.nodeValue ?? "");
+    }
+    // The node holding `position`; a match's end stays in the node it ends.
+    const at = (position: number, isEnd: boolean): [Node, number] => {
+      let index = nodes.length - 1;
+      while (index > 0 && (isEnd ? position <= starts[index]! : position < starts[index]!)) {
+        index -= 1;
+      }
+      return [nodes[index]!, position - starts[index]!];
+    };
     for (let index = text.indexOf(needle); index >= 0; index = text.indexOf(needle, index + 1)) {
       const range = root.ownerDocument.createRange();
-      range.setStart(node, index);
-      range.setEnd(node, index + needle.length);
+      range.setStart(...at(index, false));
+      range.setEnd(...at(index + needle.length, true));
       ranges.push(range);
     }
   }

@@ -7,8 +7,12 @@ import * as Option from "effect/Option";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import {
+  listPendingSnapShots,
+  readSnapShot,
+  acknowledgeSnapShot,
   checkSnapShotShortcut,
   requestSnapShotPermissions,
   setupSnapShot,
@@ -30,6 +34,88 @@ describe("window capture IPC", () => {
     shortcut: "Ctrl+Shift+2",
     operation: "install" as const,
   };
+  it.effect(
+    "filters pending captures and rejects reads and acknowledgments from another app window",
+    () => {
+      const owner = { isDestroyed: () => false, webContents: { id: 7 } };
+      const other = { isDestroyed: () => false, webContents: { id: 8 } };
+      const owned = {
+        id: "12345678-1234-1234-1234-123456789abc",
+        name: "Window.png",
+        mimeType: "image/png" as const,
+        sizeBytes: 3,
+        source: {
+          kind: "snap-shot" as const,
+          capturedAt: "2026-10-27T00:00:00.000Z",
+          appName: "Editor",
+          windowTitle: "File",
+        },
+      };
+      const unknown = { ...owned, id: "22345678-1234-1234-1234-123456789abc" };
+      const calls: string[] = [];
+      let forgotten = false;
+      return Effect.gen(function* () {
+        assert.deepEqual(
+          yield* listPendingSnapShots.handler(undefined, { sender: other.webContents }),
+          [],
+        );
+        assert.deepEqual(
+          yield* listPendingSnapShots.handler(undefined, { sender: owner.webContents }),
+          [owned],
+        );
+        assert(
+          Exit.isFailure(
+            yield* Effect.exit(readSnapShot.handler(owned.id, { sender: other.webContents })),
+          ),
+        );
+        assert(
+          Exit.isFailure(
+            yield* Effect.exit(
+              acknowledgeSnapShot.handler(owned.id, { sender: other.webContents }),
+            ),
+          ),
+        );
+        assert.deepEqual(calls, []);
+        yield* readSnapShot.handler(owned.id, { sender: owner.webContents });
+        yield* acknowledgeSnapShot.handler(owned.id, { sender: owner.webContents });
+        assert.deepEqual(calls, ["read", "ack"]);
+        assert.isTrue(forgotten);
+        assert.deepEqual(
+          yield* listPendingSnapShots.handler(undefined, { sender: owner.webContents }),
+          [],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(ElectronWindow.ElectronWindow, {
+              appWindows: Effect.succeed([owner, other]),
+            } as unknown as ElectronWindow.ElectronWindow["Service"]),
+            Layer.succeed(DesktopWindow.DesktopWindow, {
+              snapShotOwner: (id: string) =>
+                id === owned.id && !forgotten ? Effect.succeedSome(owner) : Effect.succeedNone,
+              forgetSnapShotOwner: () =>
+                Effect.sync(() => {
+                  forgotten = true;
+                }),
+            } as unknown as DesktopWindow.DesktopWindow["Service"]),
+            Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
+              listPending: Effect.succeed([owned, unknown]),
+              read: () =>
+                Effect.sync(() => {
+                  calls.push("read");
+                  return { ...owned, dataUrl: "data:image/png;base64,AQID" };
+                }),
+              acknowledge: () =>
+                Effect.sync(() => {
+                  calls.push("ack");
+                }),
+            } as unknown as DesktopSnapShot.DesktopSnapShot["Service"]),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("requires a trusted renderer for both config read and write approval", () => {
     const calls: string[] = [];
     return Effect.gen(function* () {
@@ -152,17 +238,19 @@ describe("window capture IPC", () => {
   it.effect("forwards a trusted renderer animation destination in screen coordinates", () => {
     let received: unknown;
     const webContents = { id: 7, getZoomFactor: () => 1.25 };
+    const owner = {
+      isDestroyed: () => false,
+      getBounds: () => ({ x: 100, y: 80, width: 1_000, height: 700 }),
+      getContentBounds: () => ({ x: 100, y: 118, width: 1_000, height: 662 }),
+      webContents,
+    };
     const layer = Layer.mergeAll(
-      Layer.succeed(
-        ElectronWindow.ElectronWindow,
-        ElectronWindow.ElectronWindow.of({
-          main: Effect.succeedSome({
-            getBounds: () => ({ x: 100, y: 80, width: 1_000, height: 700 }),
-            getContentBounds: () => ({ x: 100, y: 118, width: 1_000, height: 662 }),
-            webContents,
-          }),
-        } as ElectronWindow.ElectronWindow["Service"]),
-      ),
+      Layer.succeed(ElectronWindow.ElectronWindow, {
+        appWindows: Effect.succeed([owner]),
+      } as unknown as ElectronWindow.ElectronWindow["Service"]),
+      Layer.succeed(DesktopWindow.DesktopWindow, {
+        snapShotOwner: () => Effect.succeedSome(owner),
+      } as unknown as DesktopWindow.DesktopWindow["Service"]),
       Layer.succeed(
         DesktopSnapShot.DesktopSnapShot,
         DesktopSnapShot.DesktopSnapShot.of({

@@ -33,6 +33,13 @@ try {
   await page.screenshot({ path: path.join(output, "0888-project-settings.png"), fullPage: true });
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await page.getByRole("button", { name: /MEMORY\.md.*128 bytes/ }).click();
+  // A file opens as a readable page first; editing is one step further.
+  await page.getByRole("button", { name: "Copy", exact: true }).waitFor();
+  await page.screenshot({
+    path: path.join(output, "0888-project-memory-view.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByLabel("Content of MEMORY.md").fill("Keep this unsaved decision");
   await page.getByRole("button", { name: "General", exact: true }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();

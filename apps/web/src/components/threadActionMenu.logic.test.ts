@@ -1,8 +1,10 @@
+import { ProjectId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  threadHandoffInherited,
   type ThreadActionMenuState,
 } from "./threadActionMenu.logic";
 
@@ -41,20 +43,30 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers Handoff mode and Hand off to… only where the server has handoff mode", () => {
+  it("offers the move, model switch and Keep ready to move only where the server has handoff mode", () => {
     expect(allIds(baseState)).not.toContain("handoff-mode");
+    expect(allIds(baseState)).not.toContain("switch-model");
     const items = buildThreadActionMenuItems({
       ...baseState,
       handoff: { mode: "inherit", effective: "on", continued: false },
     });
+    const handoffIds = items
+      .map((item) => item.id)
+      .filter((id) => ["hand-off", "switch-model", "handoff-mode"].includes(id));
+    expect(handoffIds).toEqual(["hand-off", "switch-model", "handoff-mode"]);
     const mode = items.find((item) => item.id === "handoff-mode");
+    expect(mode?.label).toBe("Keep ready to move");
     expect(mode?.children?.map((child) => [child.label, child.checked])).toEqual([
       ["Default (On)", true],
       ["On", false],
       ["Off", false],
     ]);
     expect(items.find((item) => item.id === "hand-off")).toMatchObject({
-      label: "Hand off to…",
+      label: "Move to another machine…",
+      disabled: false,
+    });
+    expect(items.find((item) => item.id === "switch-model")).toMatchObject({
+      label: "Switch model and continue…",
       disabled: false,
     });
     const continued = buildThreadActionMenuItems({
@@ -62,12 +74,42 @@ describe("buildThreadActionMenuItems", () => {
       handoff: { mode: "on", effective: "on", continued: true },
     });
     expect(continued.find((item) => item.id === "hand-off")?.disabled).toBe(true);
+    expect(continued.find((item) => item.id === "switch-model")?.disabled).toBe(true);
     const readOnly = buildThreadActionMenuItems({
       ...baseState,
       canOperate: false,
       handoff: { mode: "on", effective: "on", continued: false },
     });
     expect(readOnly.find((item) => item.id === "hand-off")?.disabled).toBe(true);
+    expect(readOnly.find((item) => item.id === "switch-model")?.disabled).toBe(true);
+  });
+
+  it("names where Keep ready to move's Default comes from", () => {
+    const snapshot = (projectModes: Record<string, "on" | "off">) =>
+      ({
+        config: { defaultMode: "off" },
+        projectModes,
+      }) as unknown as Parameters<typeof threadHandoffInherited>[0];
+    const project = ProjectId.make("project-1");
+    expect(threadHandoffInherited(null, project)).toBeUndefined();
+    const fromProject = threadHandoffInherited(snapshot({ "project-1": "on" }), project);
+    expect(fromProject).toEqual({ mode: "on", from: "project" });
+    const fromSettings = threadHandoffInherited(snapshot({}), project);
+    expect(fromSettings).toEqual({ mode: "off", from: "settings" });
+    const label = (handoff: NonNullable<ThreadActionMenuState["handoff"]>) =>
+      buildThreadActionMenuItems({ ...baseState, handoff }).find(
+        (item) => item.id === "handoff-mode",
+      )?.children?.[0]?.label;
+    expect(
+      label({ mode: "inherit", effective: "on", continued: false, inherited: fromProject }),
+    ).toBe("Default (On, from project)");
+    // A thread's own setting still shows what Default would be.
+    expect(label({ mode: "on", effective: "on", continued: false, inherited: fromSettings })).toBe(
+      "Default (Off, from settings)",
+    );
+    expect(label({ mode: "off", effective: "off", continued: false })).toBe(
+      "Default (project or app setting)",
+    );
   });
 
   it("keeps rename and regenerate out of a coordinator-named thread's menu", () => {

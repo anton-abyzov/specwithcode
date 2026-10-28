@@ -59,7 +59,8 @@ export type HandoffConfig = typeof HandoffConfig.Type;
 export const DEFAULT_HANDOFF_CONFIG: HandoffConfig = {
   defaultMode: "off",
   noteModel: "cheap",
-  pushToOrigin: true,
+  // Off by default: it pushes uncommitted and untracked files, and moves never read it.
+  pushToOrigin: false,
   sleepTarget: null,
   autoTakeoverMinutes: 0,
 };

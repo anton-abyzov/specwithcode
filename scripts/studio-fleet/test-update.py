@@ -392,6 +392,33 @@ class WaitingThreadActivity(unittest.TestCase):
   mutate_state(self.state,"UPDATE orchestration_events SET payload_json='edited' WHERE sequence=2")
   rows,carried=REAL_ROWS_SINCE(self.state,self.before)
   with self.assertRaisesRegex(AssertionError,'History'):update.assert_migration_preserved(self.before,rows,carried)
+ def resume_after_update(self,label):
+  """What startup recovery writes for each run a forced update interrupted
+  (ProviderRuntimeRecoveryService continueUpdateInterruptedRuns): a receipt-backed
+  command and a provider-runtime.continue effect, settled before the next snapshot."""
+  db=sqlite3.connect(self.state/'statev2.sqlite')
+  for thread in ['t-wait','t-idle']:
+   cursor=db.execute("INSERT INTO orchestration_events(event_id,stream_id,event_type,payload_json) VALUES (?,?,'run.updated','{}')",('continue-'+label+thread,thread))
+   db.execute("INSERT INTO orchestration_command_receipts VALUES (?,?,?,'accepted')",('command:update-continue:'+label+thread,thread,cursor.lastrowid))
+   db.execute("INSERT INTO orchestration_v2_effect_outbox VALUES ('failed')")
+  db.commit();db.close()
+ def test_continuations_enqueued_before_the_post_restart_proof_fail_the_guard(self):
+  # 1.0.37 on M4: the restarted service continued the held threads before the helper's
+  # after-snapshot; the outbox grew, which no allowance covers, and the update rolled back.
+  waiting_check(self.state,'a');self.resume_after_update('early')
+  rows,carried=REAL_ROWS_SINCE(self.state,self.before)
+  self.assertTrue(rows['nativeWorkIdle'])
+  self.assertEqual(rows['counts']['orchestration_v2_effect_outbox'],self.before['counts']['orchestration_v2_effect_outbox']+2)
+  with self.assertRaisesRegex(AssertionError,'History, provider, schedule or pairing rows changed'):
+   update.assert_migration_preserved(self.before,rows,carried)
+ def test_continuations_deferred_past_the_post_restart_proof_pass_the_guard(self):
+  # Behind the install gate the service writes nothing to the outbox; the guard stays strict.
+  waiting_check(self.state,'a')
+  rows,carried=REAL_ROWS_SINCE(self.state,self.before)
+  update.assert_migration_preserved(self.before,rows,carried)
+  self.resume_after_update('late')  # After the helper removed its gate.
+  later,carried=REAL_ROWS_SINCE(self.state,self.before)
+  with self.assertRaisesRegex(AssertionError,'History'):update.assert_migration_preserved(self.before,later,carried)
 class ApplyRecovery(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory(prefix='studio-update-apply-');self.home=pathlib.Path(self.temp.name).resolve()

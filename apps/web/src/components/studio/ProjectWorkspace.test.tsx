@@ -262,6 +262,7 @@ describe("project coordinator surface", () => {
     expect(groups).toEqual([
       ["Waiting on you", 1],
       ["Working", 0],
+      ["Waiting", 0],
       ["Unavailable", 0],
       ["Idle", 1],
       ["Resolved", 0],

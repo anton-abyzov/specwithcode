@@ -93,6 +93,70 @@ try {
       await page.close();
     }
   }
+  // Delete all threads: the project and its memory stay; worktrees go after the threads.
+  for (const [label, viewport, dark] of [
+    ["desktop", { width: 1440, height: 1000 }, false],
+    ["phone", { width: 390, height: 844 }, true],
+  ]) {
+    const page = await browser.newPage({ viewport });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(`http://127.0.0.1:${port}`);
+    await page.waitForLoadState("networkidle");
+    if (dark) await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await page.getByLabel("Project settings", { exact: true }).dispatchEvent("click");
+    await page.getByRole("dialog").waitFor();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "General", exact: true })
+      .dispatchEvent("click");
+    const dialogText = await page.getByRole("dialog").innerText();
+    assert.match(dialogText, /Delete all threads/);
+    assert.match(dialogText, /project memory, plan, routines and connections stay/);
+    const button = page.getByRole("button", { name: /^Delete \d+ threads?$/ });
+    assert.equal(await button.isDisabled(), true);
+    await page.getByLabel("Confirm deleting all threads").evaluate((node) => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      setValue.call(node, "Atlas Studio");
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const section = page.getByTestId("project-deletion-worktrees");
+    await section.waitFor();
+    assert.match(await section.innerText(), /Also delete 2 worktrees \(12\.0 GB\)/);
+    assert.equal(await button.isDisabled(), false);
+    await section.evaluate((node) => node.scrollIntoView({ block: "center" }));
+    await page.screenshot({
+      path: `${output}/delete-all-threads-${label}-${dark ? "dark" : "light"}.png`,
+      animations: "disabled",
+    });
+    if (!dark) {
+      await button.dispatchEvent("click");
+      await page.waitForFunction(() =>
+        window.__projectCalls.some((c) => c.command === "worktreesRemove"),
+      );
+      const all = await page.evaluate(() => window.__projectCalls);
+      // The dialog counts with dry runs; the delete is the call without one.
+      const removeThreads = all.findIndex(
+        (c) => c.command === "threadsDelete" && c.args.input.dryRun !== true,
+      );
+      assert(all.some((c) => c.command === "threadsDelete" && c.args.input.dryRun === true));
+      const removeWorktrees = all.findIndex((c) => c.command === "worktreesRemove");
+      assert(removeThreads >= 0 && removeThreads < removeWorktrees, "worktrees before threads");
+      assert.equal(all[removeThreads].args.input.confirmationTitle, "Atlas Studio");
+      assert(!all.some((c) => c.command === "delete"), "the project itself was deleted");
+      assert(
+        all.some((c) => c.command === "refreshArchived"),
+        "archived threads not refreshed",
+      );
+      assert.equal(all[removeWorktrees].args.input.paths.length, 2);
+      assert.equal(all[removeWorktrees].args.input.threadsOnly, true);
+      assert.deepEqual(all[removeWorktrees].args.input.discardLocalChanges, []);
+      // The fixture mounts no toast host; a cleared confirmation shows the success path ran.
+      assert.equal(await page.getByLabel("Confirm deleting all threads").inputValue(), "");
+    }
+    assert.deepEqual(errors, []);
+    await page.close();
+  }
   console.log(`deletion worktrees check passed; screenshots in ${output}`);
 } finally {
   await browser.close();

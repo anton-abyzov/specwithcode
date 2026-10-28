@@ -28,7 +28,12 @@ import {
 import { projectWorkspaceSearch } from "../../studio/projectPaneThreads";
 import { randomUUID } from "../../lib/utils";
 import { derivePhysicalProjectKeyFromPath } from "../../logicalProject";
-import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDialog";
+import {
+  MachineHandoffButton,
+  MachineHandoffDialog,
+  type MoveIntent,
+} from "./MachineHandoffDialog";
+import type { MachineOption } from "../handoff/MachineOptionRows";
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
@@ -113,6 +118,11 @@ export function ProjectMachineHandoff({
   const [canRestart, setCanRestart] = useState(false);
   // A safe copy of the folder is the default; Git-only handoff stays available.
   const [method, setMethod] = useState<HandoffFolderMethod>("copy");
+  // Opening the dialog means moving the project; "Copy files only" is the other choice.
+  const [intent, setIntent] = useState<MoveIntent>("move");
+  // The copy flow's machine, so switching to Git keeps it.
+  const [copyMachine, setCopyMachine] = useState<EnvironmentId | null>(null);
+  const [copyDone, setCopyDone] = useState(false);
   const [copyBusy, setCopyBusyState] = useState(false);
   const [copyLocked, setCopyLocked] = useState(false);
   // Read when the dialog closes: a measure or copy still running is watched until it is ready.
@@ -225,9 +235,7 @@ export function ProjectMachineHandoff({
       }
     : undefined;
   const showError = (cause: unknown) =>
-    setError(
-      cause instanceof Error ? cause.message : "The handoff could not finish. Retry this handoff.",
-    );
+    setError(cause instanceof Error ? cause.message : "The move could not finish. Try it again.");
   const reviewed =
     snapshot?.publication === "unpublished" &&
     phase === "review" &&
@@ -293,6 +301,7 @@ export function ProjectMachineHandoff({
           environments.find((item) => item.environmentId === environmentId)?.label ??
           "the other machine",
         sourceLabel: source?.label ?? "this machine",
+        projectName: logicalProjectTitle(project),
       });
     // An open dialog follows the copy itself.
     if (value) unwatchCopy(activityKey);
@@ -311,6 +320,8 @@ export function ProjectMachineHandoff({
   );
   useEffect(() => {
     if (!requestedTarget) return;
+    // "Move coordinator to X": move, with X chosen whichever way the files travel.
+    setIntent("move");
     setSelected(requestedTarget);
     setPickerMachine(null);
     setSnapshot(null);
@@ -320,6 +331,14 @@ export function ProjectMachineHandoff({
     setError(null);
     changeOpen(true);
   }, [requestedTarget]);
+  // Saved silently on success: the next move preselects this machine.
+  const rememberMachine = (environmentId: string) =>
+    setPreference(
+      writeHandoffMachinePreference(preferenceKey, {
+        remembered: environmentId,
+        lastUsed: environmentId,
+      }),
+    );
   const forgetCompleted = () => {
     try {
       localStorage.removeItem(storageKey);
@@ -353,7 +372,7 @@ export function ProjectMachineHandoff({
       });
       if (acknowledged._tag === "Failure") throw squashAtomCommandFailure(acknowledged);
     }
-    setPreference(writeHandoffMachinePreference(preferenceKey, { lastUsed: target.environmentId }));
+    rememberMachine(target.environmentId);
     markUnpublished(null);
     setReceipt(completed);
     setPhase("complete");
@@ -378,7 +397,7 @@ export function ProjectMachineHandoff({
       const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
       if (pending?.publishing && pending.targetKey !== selected)
         throw new Error(
-          "An earlier handoff stopped while publishing. Select its folder again to finish it.",
+          "An earlier move stopped while publishing. Pick its folder again to finish it.",
         );
       const operationId = pending?.targetKey === selected ? pending.operationId : randomUUID();
       // Persist before either RPC: an ambiguous response retries the same operation.
@@ -434,26 +453,22 @@ export function ProjectMachineHandoff({
         setCanRestart(prepared.value.publication === "unpublished" && !!pending);
         throw new Error(
           pending
-            ? "This earlier handoff uses a temporary checkout. Restart an unpublished preview to use the saved folder; recover a published handoff from its retained transfer."
-            : "Update the source machine to support handoff into saved project folders.",
+            ? "This earlier move used a temporary folder. Start it again to use the saved folder, or finish the published move first."
+            : "Update this machine to move projects into saved folders.",
         );
       }
       if (
         prepared.value.bundle.destination.environmentId !== target.environmentId ||
         prepared.value.bundle.destination.projectId !== target.id
       )
-        throw new Error(
-          "The retained handoff targets a different folder. Recover that transfer first.",
-        );
+        throw new Error("An earlier move went to a different folder. Finish that move first.");
       const checked = await receive({
         environmentId: target.environmentId,
         input: previewInput(target.id, prepared.value.bundle),
       });
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
       if (checked.value.executionMode !== "project-folder")
-        throw new Error(
-          "Update the destination machine to support handoff into saved project folders.",
-        );
+        throw new Error("Update the other machine to move projects into saved folders.");
       setSnapshot(prepared.value);
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
         await complete(checked.value, prepared.value.bundle);
@@ -481,9 +496,7 @@ export function ProjectMachineHandoff({
       });
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
       if (checked.value.executionMode !== "project-folder")
-        throw new Error(
-          "Update the destination machine to support handoff into saved project folders.",
-        );
+        throw new Error("Update the other machine to move projects into saved folders.");
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
         await complete(checked.value, snapshot.bundle);
         return;
@@ -531,7 +544,7 @@ export function ProjectMachineHandoff({
       if (started._tag === "Failure") throw squashAtomCommandFailure(started);
       if (started.value.phase !== "started" || !started.value.coordinatorThreadId)
         throw new Error(
-          "The checkpoint is retained, but the coordinator has not started. Retry this handoff.",
+          "The files are saved, but the coordinator has not started. Try the move again.",
         );
       await complete(started.value, published.value.bundle);
     } catch (cause) {
@@ -548,17 +561,35 @@ export function ProjectMachineHandoff({
     enabled: open && phase === "choose",
     canCommit: canGit.has(project.environmentId),
   });
-  const rememberedId = target?.environmentId ?? pickerMachine;
   const suggestedMachine = pickHandoffMachine(machines, preference) as EnvironmentId | null;
-  const rememberedCandidate = machines.find((machine) => machine.id === rememberedId) ?? null;
+  const requestedMachine =
+    candidates.find((item) => `${item.environmentId}:${item.id}` === requestedTarget)
+      ?.environmentId ?? null;
+  // The Git move's machine: the saved folder's, or one chosen without a saved folder yet.
+  const gitMachine = target?.environmentId ?? pickerMachine;
+  const machineOptions = machines.map((item): MachineOption => ({
+    value: item.id,
+    label: item.label,
+    tone: item.unavailable ? "off" : "ready",
+    reason: !item.online ? "Offline" : item.unavailable ? "Needs permission" : null,
+    disabled: item.unavailable !== null,
+  }));
+  /** Chooses a machine for the Git move: its usable saved folder, else the folder picker. */
+  const chooseGitMachine = (environmentId: EnvironmentId | null) => {
+    const saved =
+      destinations.find((item) => item.environmentId === environmentId && !item.unavailable) ??
+      destinations.find((item) => item.environmentId === environmentId);
+    setSelected(saved?.key ?? "");
+    setPickerMachine(saved ? null : environmentId);
+  };
 
   return (
     <>
       <Tip
         label={
           sourceReady
-            ? "Continue this project on another machine"
-            : "Connect this machine and open its coordinator to hand off work"
+            ? "Move this project to another machine"
+            : "Connect this machine and open its coordinator to move this project"
         }
       >
         <MachineHandoffButton
@@ -566,6 +597,7 @@ export function ProjectMachineHandoff({
           onClick={() => {
             changeOpen(true);
             if (!snapshot) {
+              setIntent("move");
               try {
                 const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
                 // An unfinished Git handoff resumes in the method that started it, an
@@ -613,14 +645,34 @@ export function ProjectMachineHandoff({
           setSelected(key);
           setPickerMachine(null);
         }}
+        machines={machineOptions}
+        machine={gitMachine}
+        onMachineChange={(environmentId) => {
+          if (discardPreview() === "failed") return;
+          chooseGitMachine(environmentId as EnvironmentId);
+        }}
+        intent={method === "folder" ? "move" : intent}
+        onIntentChange={(next) => {
+          // Git always continues the project there; copying files only uses the copy flow.
+          if (next !== "copy" || discardPreview() === "failed") return;
+          setIntent("copy");
+          setMethod("copy");
+        }}
         sourceChanges={sourceChanges}
         method={method}
         onMethodChange={(next) => {
           if (discardPreview() === "failed") return;
+          if (next === "folder") {
+            setIntent("move");
+            if (method !== "folder" && copyMachine) chooseGitMachine(copyMachine);
+          }
           setMethod(next);
         }}
         copyBusy={copyBusy}
         copyLocked={copyLocked}
+        copyDoneOn={
+          copyDone ? (machines.find((item) => item.id === copyMachine)?.label ?? null) : null
+        }
         copyFlow={
           method === "folder" ? undefined : (
             <HandoffFolderCopy
@@ -637,7 +689,15 @@ export function ProjectMachineHandoff({
                 candidates.find((item) => item.environmentId === environmentId)?.workspaceRoot ??
                 null
               }
-              preferredMachine={suggestedMachine}
+              preferredMachine={requestedMachine ?? gitMachine ?? suggestedMachine}
+              machineRequested={requestedMachine !== null}
+              defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
+              onChoicesChange={({ mode, machine, done }) => {
+                setIntent(mode === "copy-and-move" ? "move" : "copy");
+                setCopyMachine(machine);
+                setCopyDone(done);
+                if (done && machine) rememberMachine(machine);
+              }}
               savedProject={(environmentId, folder) =>
                 projects.find(
                   (item) =>
@@ -660,42 +720,21 @@ export function ProjectMachineHandoff({
             />
           )
         }
-        rememberMachine={
-          rememberedCandidate
-            ? {
-                label: rememberedCandidate.label,
-                checked: preference.remembered === rememberedCandidate.id,
-                onChange: (checked) =>
-                  setPreference(
-                    writeHandoffMachinePreference(preferenceKey, {
-                      remembered: checked ? rememberedCandidate.id : null,
-                    }),
-                  ),
-              }
-            : null
-        }
         folderPicker={
           phase === "choose" ? (
             <HandoffFolderPicker
               // Each opening, and each machine, starts from a fresh folder.
-              key={`${open}:${pickerMachine ?? ""}`}
+              key={`${open}:${gitMachine ?? ""}`}
               title={logicalProjectTitle(project)}
               existingFolders={projects}
               machines={machines}
-              machine={pickerMachine}
-              suggestedMachine={suggestedMachine}
-              onMachineChange={(machine) => {
-                setPickerMachine(machine);
-                if (machine) setSelected("");
-              }}
-              defaultOpen={
-                pickerMachine !== null || !destinations.some((item) => !item.unavailable)
-              }
+              machine={gitMachine}
               sourceFolder={project.workspaceRoot}
               onSaved={(environmentId, projectId) => {
                 // A save that lands during or after a review must not retarget that review.
                 if (latestDiscard.current() === "failed") return;
                 setSelected(`${environmentId}:${projectId}`);
+                setPickerMachine(null);
                 setError(null);
               }}
             />
@@ -718,9 +757,7 @@ export function ProjectMachineHandoff({
         onOpenDestination={() => {
           if (!receipt || !target) return;
           if (typeof receipt.workspacePath !== "string" || !receipt.workspacePath.trim()) {
-            setError(
-              "The destination workspace is missing from the handoff receipt. Retry this handoff.",
-            );
+            setError("The other machine did not report where the project is. Try the move again.");
             return;
           }
           void navigate({

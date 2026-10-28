@@ -76,12 +76,32 @@ export const ThreadIncrementCriterionState = Schema.Literals([
 ]);
 export type ThreadIncrementCriterionState = typeof ThreadIncrementCriterionState.Type;
 
+/** Acceptance is separate from evidence: a waiver never verifies a check. */
+export const ThreadIncrementAcAcceptance = Schema.Literals([
+  "met",
+  "mixed",
+  "skipped-accepted",
+  "open",
+]);
+export const ThreadIncrementAcWaiver = Schema.Struct({
+  check: Schema.String,
+  reason: Schema.String,
+  acceptedBy: Schema.String,
+  acceptedAt: Schema.String,
+  authorization: Schema.String,
+  by: Schema.String,
+  at: Schema.String,
+});
+export type ThreadIncrementAcWaiver = typeof ThreadIncrementAcWaiver.Type;
+
 export const ThreadIncrementCriterion = Schema.Struct({
   id: TrimmedNonEmptyString,
   text: Schema.String,
   /** Every task citing it is done or skipped (and at least one cites it). Kept for older clients. */
   met: Schema.Boolean,
   state: Schema.optional(ThreadIncrementCriterionState),
+  acceptance: Schema.optional(ThreadIncrementAcAcceptance),
+  waivers: Schema.optional(Schema.Array(ThreadIncrementAcWaiver)),
   /** Ids of the tasks that cite it, in spec order. */
   tasks: Schema.optional(Schema.Array(Schema.String)),
   /** The user story it belongs to, such as `US-001`, when the spec names one. */

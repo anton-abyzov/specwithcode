@@ -42,10 +42,18 @@ export interface ConfirmedProjectWorktrees {
 
 /**
  * The delete dialog's worktree section: reads the project's worktrees when the
- * dialog opens, and removes the confirmed ones after the project is deleted.
- * Worktrees are removed only after deletion, so no live thread still uses them.
+ * dialog opens, and removes the confirmed ones after the project, or its
+ * threads, are deleted. Worktrees are removed only after deletion, so no live
+ * thread still uses them.
  */
-export function useProjectDeletionWorktrees() {
+export function useProjectDeletionWorktrees({
+  failureTitle = "The project was deleted, but its worktrees were kept",
+  threadsOnly = false,
+}: {
+  failureTitle?: string;
+  /** Deleting only the threads: the coordinator's folders are not offered. */
+  threadsOnly?: boolean;
+} = {}) {
   const readWorktrees = useAtomCommand(projectEnvironment.worktreesRead, { reportFailure: false });
   const removeWorktrees = useAtomCommand(projectEnvironment.worktreesRemove, {
     reportFailure: false,
@@ -69,7 +77,7 @@ export function useProjectDeletionWorktrees() {
       setPreview({ status: "loading" });
       const result = await readWorktrees({
         environmentId: target.environmentId,
-        input: { projectId: target.projectId },
+        input: { projectId: target.projectId, ...(threadsOnly ? { threadsOnly } : {}) },
       });
       if (current !== generation.current) return;
       if (result._tag === "Failure") {
@@ -88,7 +96,7 @@ export function useProjectDeletionWorktrees() {
       });
       setChoice(defaultProjectWorktreeChoice(summary));
     },
-    [readWorktrees],
+    [readWorktrees, threadsOnly],
   );
 
   const reset = useCallback(() => {
@@ -108,20 +116,24 @@ export function useProjectDeletionWorktrees() {
     async (target: ProjectWorktreeTarget, worktrees: ConfirmedProjectWorktrees) => {
       const result = await removeWorktrees({
         environmentId: target.environmentId,
-        input: { projectId: target.projectId, ...worktrees.request },
+        input: {
+          projectId: target.projectId,
+          ...worktrees.request,
+          ...(threadsOnly ? { threadsOnly } : {}),
+        },
       });
       if (result._tag === "Failure") {
         const cause = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: "The project was deleted, but its worktrees were kept",
+          title: failureTitle,
           description: cause instanceof Error ? cause.message : "Removing them failed.",
         });
         return;
       }
       toastManager.add(projectWorktreeRemovalToast(result.value, worktrees.sizes));
     },
-    [removeWorktrees],
+    [failureTitle, removeWorktrees, threadsOnly],
   );
 
   const section = (

@@ -25,6 +25,8 @@ export interface CopyWatch {
   readonly projectId: string;
   readonly machineLabel: (environmentId: string) => string;
   readonly sourceLabel: string;
+  /** The project's name, for "Open Move {project}" in the toasts. */
+  readonly projectName?: string;
   /** Restored after a reload: a copy already finished is not announced again. */
   readonly restored?: boolean;
 }

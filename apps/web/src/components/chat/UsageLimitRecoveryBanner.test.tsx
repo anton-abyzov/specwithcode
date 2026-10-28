@@ -32,6 +32,9 @@ vi.mock("../ui/menu", () => ({
   MenuPopup: "menupopup",
   MenuItem: "menuitem",
 }));
+vi.mock("./LimitHandoffCandidates", () => ({
+  LimitHandoffCandidates: () => <section data-slot="machines" />,
+}));
 vi.mock("../settings/AddApiCreditAccountDialog", () => ({
   AddApiCreditAccountDialog: ({ open, driver }: { open: boolean; driver: string }) =>
     open ? <dialog data-driver={driver} /> : null,
@@ -168,7 +171,7 @@ it("explains a disabled auto-continue when the provider gave no reset time", asy
   });
   expect(autoContinue().props.disabled).toBe(true);
   expect(rendered()).toContain("did not say when this limit resets");
-  expect(rendered()).not.toContain("Hand off now");
+  expect(rendered()).not.toContain("Continue elsewhere");
 });
 it("auto-continues a Claude thread at its reset when the box is ticked", async () => {
   const change = vi.fn().mockResolvedValue(undefined);
@@ -204,8 +207,8 @@ it("offers to continue the stopped turn with another ready provider", async () =
   });
   // No reset time and no check: the provider switch is the only way forward.
   expect(autoContinue().props.disabled).toBe(true);
-  expect(rendered()).toContain("Hand off now instead of waiting:");
-  expect(rendered()).toContain("Hand it off now, or send a message after the reset.");
+  expect(rendered()).toContain("Continue elsewhere instead of waiting:");
+  expect(rendered()).toContain("Continue elsewhere now, or send a message after the reset.");
   await act(async () => button("Continue with Codex · GPT-6").props.onClick());
   expect(onContinue).toHaveBeenCalledOnce();
   expect(change).not.toHaveBeenCalled();
@@ -267,6 +270,23 @@ it("offers a new thread on another device", async () => {
   });
   await act(async () => button("Continue on MacBook M3").props.onClick());
   expect(onContinue).toHaveBeenCalledOnce();
+});
+it("names the summary-only device start apart from moving to another machine", async () => {
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    canCheck: false,
+    resetAt: null,
+    onChange: async () => {},
+    device: { label: "MacBook M3", model: "Opus", onContinue },
+    machines: { environmentId: "env-m4" as never, threadId: "thread-1" as never },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  await act(async () => button("Start fresh on MacBook M3 (summary only)").props.onClick());
+  expect(onContinue).toHaveBeenCalledOnce();
+  expect(renderer!.root.findAllByProps({ "data-slot": "machines" })).toHaveLength(1);
 });
 it("disarms the source before a handoff and stops if cancellation fails", async () => {
   const onContinue = vi.fn().mockResolvedValue(undefined);

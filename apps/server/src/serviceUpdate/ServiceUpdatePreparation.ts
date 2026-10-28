@@ -79,6 +79,7 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -210,6 +211,12 @@ const atOrBefore = (value: string | null, cutoffMs: number) => {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && parsed <= cutoffMs;
 };
+
+/**
+ * An if-idle hold covers only the restart right after it (`update --if-idle`); if its caller
+ * dies first, work may start again soon.
+ */
+export const IF_IDLE_HOLD_TTL_MS = 120_000;
 
 export interface ServiceUpdatePreparationTimings {
   /** How long Stop gets before a turn that is still running is ended locally. */
@@ -973,7 +980,11 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           });
         }
         if (input.releaseHold === true) {
-          if (Option.isSome(hold)) yield* hold.value.release("cancelled");
+          if (Option.isSome(hold)) {
+            if (input.holdToken !== undefined)
+              yield* hold.value.releaseLease(input.holdToken, "cancelled");
+            else yield* hold.value.release("cancelled");
+          }
           return {
             ...(yield* report(yield* readBlockerRows)),
             stoppedThreads: 0,
@@ -981,6 +992,56 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
             openTerminals: yield* openTerminals,
           };
         }
+        if (!input.stopWork && input.hold === true && input.ifIdle === true) {
+          if (Option.isNone(hold))
+            return {
+              ...(yield* report(yield* readBlockerRows)),
+              stoppedThreads: 0,
+              held: false,
+              openTerminals: yield* openTerminals,
+            };
+          const owner = hold.value;
+          return yield* Effect.acquireUseRelease(
+            input.holdToken === undefined
+              ? owner.acquireIfUnheld(IF_IDLE_HOLD_TTL_MS)
+              : owner.confirmLease(input.holdToken, IF_IDLE_HOLD_TTL_MS),
+            (lease) =>
+              Effect.gen(function* () {
+                if (Option.isNone(lease) || lease.value.leaseToken === undefined)
+                  return {
+                    ...(yield* report(yield* readBlockerRows)),
+                    stoppedThreads: 0,
+                    held: false,
+                    openTerminals: yield* openTerminals,
+                  };
+                const token = lease.value.leaseToken;
+                // Waiting commands may still be in project admission or at a thread lock.
+                // Closing admission and awaiting those commits is a fence; timed looks are not.
+                yield* owner.awaitAdmissions;
+                const rows = yield* readBlockerRows;
+                const terminalCount = yield* openTerminals;
+                const confirmed =
+                  rows.length === 0 && terminalCount === 0
+                    ? yield* owner.confirmLease(token, IF_IDLE_HOLD_TTL_MS)
+                    : Option.none();
+                const held = Option.isSome(confirmed);
+                if (!held) yield* owner.releaseLease(token, "busy");
+                return {
+                  ...(yield* report(rows)),
+                  idle: rows.length === 0 && terminalCount === 0,
+                  stoppedThreads: 0,
+                  held,
+                  ...(held ? { ...(yield* holdUntil), holdToken: token } : {}),
+                  openTerminals: terminalCount,
+                };
+              }),
+            (lease, exit) =>
+              Exit.isFailure(exit) && Option.isSome(lease) && lease.value.leaseToken !== undefined
+                ? owner.releaseLease(lease.value.leaseToken, "if-idle-aborted")
+                : Effect.void,
+          );
+        }
+
         if (!input.stopWork) {
           const held = yield* isHeld;
           let rows = yield* readBlockerRows;

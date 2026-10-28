@@ -33,7 +33,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. settle accepts an optional one-line note, shown with the resolved thread, such as where the work landed. Resolving your own running thread requires expectedRunId from studio_thread_read, so a delayed call cannot adopt a newer turn. It records intent tied to that exact turn. Recording intent does not resolve anything by itself: resolution needs delivery evidence that another thread records with studio_thread_record_delivery. Deliver your final answer normally. New messages, newer runs, pending questions/approvals, child work, user reopens and auto-settle opt-out prevent deferred resolution. Other threads retain the explicit lifecycle guards.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. settle accepts an optional one-line note shown with the resolved thread. Resolving your own running thread requires expectedRunId from studio_thread_read. Only when the user explicitly asks to resolve this thread, set userRequested=true to resolve after that exact turn succeeds, independently of automatic delivery evidence. This schedules resolution; it does not confirm resolution or verify that work shipped. Without userRequested, another thread must record delivery evidence with studio_thread_record_delivery. Deliver your final answer normally. New messages, newer runs, pending questions/approvals, child work, Stop, user reopens, pin and auto-settle opt-out prevent deferred resolution. Do not claim the thread is resolved without settled-state readback. Other threads retain the explicit lifecycle guards.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -51,6 +51,8 @@ const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
     note: Schema.optional(OrchestrationV2ThreadSettledNote),
     /** Required for self-settle; binds this call to the turn the caller observed. */
     expectedRunId: Schema.optional(RunId),
+    /** Only for an explicit user instruction to resolve this running thread. */
+    userRequested: Schema.optional(Schema.Literal(true)),
   }),
   success: OrchestrationV2DispatchCommandResult,
   failure: OrchestratorMcpFailure,

@@ -488,7 +488,7 @@ it("refuses destination navigation if the receipt omits its isolated workspace",
   await transfer();
   await act(async () => props().onOpenDestination());
   expect(state.navigate).not.toHaveBeenCalled();
-  expect(props().error).toContain("destination workspace is missing");
+  expect(props().error).toContain("did not report where the project is");
 });
 
 it("binds the picker destination and retains a fenced transfer until source acknowledgment succeeds", async () => {
@@ -621,7 +621,8 @@ it("opens the folder picker on the only online machine allowed for workers when 
   state.fleet = allowWorkers("m3");
   await mount();
   expect(props().selected).toBe("");
-  expect(picker()).toMatchObject({ machine: "m3", defaultOpen: true, sourceFolder: "/source" });
+  expect(props().machine).toBe("m3");
+  expect(picker()).toMatchObject({ machine: "m3", sourceFolder: "/source" });
   const machines = picker()!.machines as Array<Record<string, unknown>>;
   expect(machines.map((machine) => [machine.id, machine.online, machine.hasProjectFolder])).toEqual(
     [
@@ -630,7 +631,14 @@ it("opens the folder picker on the only online machine allowed for workers when 
       ["m2", false, false],
     ],
   );
-  expect(props().rememberMachine).toMatchObject({ label: "M3", checked: false });
+  expect(props().machines?.map((machine) => [machine.value, machine.tone, machine.reason])).toEqual(
+    [
+      ["m1", "ready", null],
+      ["m3", "ready", null],
+      ["m2", "off", "Offline"],
+    ],
+  );
+  expect("rememberMachine" in props()).toBe(false);
 });
 
 it("prefers the remembered machine, then the last handoff target, over worker heuristics", async () => {
@@ -638,37 +646,93 @@ it("prefers the remembered machine, then the last handoff target, over worker he
   state.fleet = allowWorkers("m3");
   localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m1", lastUsed: "m3" }));
   await mount();
-  // M1 has the saved project folder, so its destination is selected and the picker stays closed.
+  // M1 has the saved project folder, so its destination is selected and the picker targets it.
   expect(props().selected).toBe("m1:target");
-  expect(picker()).toMatchObject({ machine: null, defaultOpen: false });
-  expect(props().rememberMachine).toMatchObject({ label: "M1", checked: true });
+  expect(props().machine).toBe("m1");
+  expect(picker()).toMatchObject({ machine: "m1" });
 
   await act(async () => props().onOpenChange(false));
   localStorage.setItem(preferenceKey, JSON.stringify({ lastUsed: "m3" }));
   await act(async () => container.querySelector("button")!.click());
   expect(props().selected).toBe("");
-  expect(picker()).toMatchObject({ machine: "m3", defaultOpen: true });
+  expect(props().machine).toBe("m3");
+  expect(picker()).toMatchObject({ machine: "m3" });
 });
 
-it("remembers the chosen machine and records the last handoff target", async () => {
+it("remembers the machine silently, only once a move succeeds", async () => {
   await mount();
   expect(props().selected).toBe("m1:target");
-  await act(async () => props().rememberMachine!.onChange(true));
-  expect(JSON.parse(localStorage.getItem(preferenceKey)!)).toEqual({
-    remembered: "m1",
-    lastUsed: null,
-  });
-  expect(props().rememberMachine!.checked).toBe(true);
-  await act(async () => props().rememberMachine!.onChange(false));
-  expect(localStorage.getItem(preferenceKey)).toBeNull();
   await review();
   await consent();
+  expect(localStorage.getItem(preferenceKey)).toBeNull();
   await transfer();
   expect(props().phase).toBe("complete");
   expect(JSON.parse(localStorage.getItem(preferenceKey)!)).toEqual({
-    remembered: null,
+    remembered: "m1",
     lastUsed: "m1",
   });
+});
+
+it("remembers the copy flow's machine once its copy is done", async () => {
+  state.environments = machineEnvironments;
+  await mount();
+  const copy = () =>
+    (props().copyFlow as { props: Record<string, (...args: never[]) => void> }).props;
+  await act(async () =>
+    copy().onChoicesChange!({ mode: "copy-only", machine: "m3", done: false } as never),
+  );
+  expect(localStorage.getItem(preferenceKey)).toBeNull();
+  expect(props().intent).toBe("copy");
+  await act(async () =>
+    copy().onChoicesChange!({ mode: "copy-only", machine: "m3", done: true } as never),
+  );
+  expect(JSON.parse(localStorage.getItem(preferenceKey)!)).toEqual({
+    remembered: "m3",
+    lastUsed: "m3",
+  });
+});
+
+it("opens as a move, and switching the Git move to files only uses the copy flow", async () => {
+  state.environments = machineEnvironments;
+  await mount();
+  expect(props().intent).toBe("move");
+  expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
+    "copy-and-move",
+  );
+  await act(async () => props().onMethodChange!("folder"));
+  expect(props().intent).toBe("move");
+  await act(async () => props().onIntentChange!("copy"));
+  expect(props().method).toBe("copy");
+  expect(props().intent).toBe("copy");
+  expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
+    "copy-only",
+  );
+});
+
+it("chooses a machine's saved folder, or the folder picker when it has none", async () => {
+  state.environments = machineEnvironments;
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  await act(async () => props().onMachineChange!("m3"));
+  expect(props().selected).toBe("");
+  expect(props().machine).toBe("m3");
+  expect(picker()).toMatchObject({ machine: "m3" });
+  await act(async () => props().onMachineChange!("m1"));
+  expect(props().selected).toBe("m1:target");
+  expect(props().machine).toBe("m1");
+});
+
+it("keeps the copy flow's machine when switching to Git", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
+  await mount();
+  const copy = (props().copyFlow as { props: Record<string, (...args: never[]) => void> }).props;
+  await act(async () =>
+    copy.onChoicesChange!({ mode: "copy-and-move", machine: "m3", done: false } as never),
+  );
+  await act(async () => props().onMethodChange!("folder"));
+  expect(props().selected).toBe("m3:m3-target");
+  expect(props().machine).toBe("m3");
 });
 
 it("goes back from an unpublished review to editable choices and a fresh operation", async () => {
@@ -735,7 +799,7 @@ it("suggests the preferred machine in the folder picker and the copy flow", asyn
   state.environments = machineEnvironments;
   localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m3" }));
   await mount();
-  expect(picker()).toMatchObject({ suggestedMachine: "m3" });
+  expect(picker()).toMatchObject({ machine: "m3" });
   const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
   expect(copy.preferredMachine).toBe("m3");
 });
@@ -911,4 +975,28 @@ it("lets a running folder copy close, keeps it, and watches it app wide until th
   expect(currentCopyWatches().size).toBe(0);
   await act(async () => props().onOpenChange(false));
   expect(currentCopyWatches().has("m4:source")).toBe(true);
+});
+
+it("opens Move coordinator to X as a move with X chosen for the copy and the Git move", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
+  localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m1" }));
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={source as never}
+        coordinatorId={"coordinator" as never}
+        requestedTarget="m3:m3-target"
+      />,
+    ),
+  );
+  expect(props().open).toBe(true);
+  expect(props().intent).toBe("move");
+  expect(props().selected).toBe("m3:m3-target");
+  expect(props().machine).toBe("m3");
+  const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
+  expect(copy.preferredMachine).toBe("m3");
+  // Requested, so a saved draft or last copy cannot swap the machine or the move.
+  expect(copy.machineRequested).toBe(true);
+  expect(copy.defaultMode).toBe("copy-and-move");
 });

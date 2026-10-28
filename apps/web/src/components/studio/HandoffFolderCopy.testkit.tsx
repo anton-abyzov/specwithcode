@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { vi } from "vite-plus/test";
+import { act, useCallback, useState } from "react";
+import { vi, type Mock } from "vite-plus/test";
 import { HandoffFolderCopy } from "./HandoffFolderCopy";
 import { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
@@ -74,18 +74,23 @@ export const newRow = (path: string, overrides: Record<string, unknown> = {}) =>
 });
 export const noSecrets = { ...summary, secretFiles: [] };
 
-export const onOpenProject = vi.fn();
-export const onBusyChange = vi.fn();
-export const onDialogClose = vi.fn();
+export const onOpenProject: Mock = vi.fn();
+export const onBusyChange: Mock = vi.fn();
+export const onDialogClose: Mock = vi.fn();
 export const stepState = () =>
   [...document.querySelectorAll('[data-slot="copy-step"]')].map(
-    (step) => `${step.textContent}:${step.getAttribute("data-state")}`,
+    (step) =>
+      `${step.querySelector('[data-slot="copy-step-label"]')?.textContent}:${step.getAttribute("data-state")}`,
   );
-/** The button in `scope` whose whole text is `label`; throws with the scope's text if none. */
+/**
+ * The button in `scope` whose whole text is `label`, or an item of an open ⋯ menu (menus
+ * render in a portal); throws with the scope's text if none.
+ */
 export const findButton = (scope: ParentNode, label: string) => {
-  const element = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
-    (node) => node.textContent?.trim() === label,
-  );
+  const element = [
+    ...scope.querySelectorAll<HTMLButtonElement>("button"),
+    ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+  ].find((node) => node.textContent?.trim() === label);
   if (!element) throw new Error(`Missing button ${label}: ${scope.textContent}`);
   return element;
 };
@@ -162,10 +167,15 @@ export interface FixtureOptions {
   savedProject?: (environmentId: string, folder: string) => Record<string, unknown> | null;
   dialog?: boolean;
   workspaceRoot?: string;
+  /** As the dialog passes them when opened for Move project or Move coordinator to X. */
+  defaultMode?: "copy-only" | "copy-and-move";
+  preferredMachine?: string;
+  machineRequested?: boolean;
 }
 export function CopyFixture(overrides: FixtureOptions) {
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [doneOn, setDoneOn] = useState<string | null>(null);
   const updateBusy = useCallback((value: boolean) => {
     onBusyChange(value);
     setBusy(value);
@@ -189,9 +199,20 @@ export function CopyFixture(overrides: FixtureOptions) {
       savedFolder={() => overrides.savedFolder ?? null}
       savedProject={overrides.savedProject as never}
       canMove={overrides.canMove ?? true}
+      {...(overrides.defaultMode ? { defaultMode: overrides.defaultMode } : {})}
+      {...(overrides.preferredMachine
+        ? { preferredMachine: overrides.preferredMachine as never }
+        : {})}
+      {...(overrides.machineRequested ? { machineRequested: true } : {})}
       onBusyChange={overrides.dialog ? updateBusy : onBusyChange}
       onCloseLockChange={setLocked}
       onOpenProject={onOpenProject}
+      {...(overrides.dialog
+        ? {
+            onChoicesChange: ({ machine, done }: { machine: string | null; done: boolean }) =>
+              setDoneOn(done ? (machine === "m1" ? "M1" : "M3") : null),
+          }
+        : {})}
     />
   );
   return overrides.dialog ? (
@@ -207,6 +228,7 @@ export function CopyFixture(overrides: FixtureOptions) {
       onMethodChange={() => {}}
       copyBusy={busy}
       copyLocked={locked}
+      copyDoneOn={doneOn}
       copyFlow={flow}
       preview={null}
       phase="choose"
@@ -221,3 +243,22 @@ export function CopyFixture(overrides: FixtureOptions) {
     flow
   );
 }
+
+/** Opens the Done screen's ⋯ menu, whose items `findButton` then finds too. */
+export const openMore = async () => {
+  const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="More actions"]');
+  if (!trigger) throw new Error(`Missing More actions: ${document.body.textContent}`);
+  await act(async () => trigger.click());
+};
+
+/** The ⋯ menu's items while it is open. */
+export const moreItems = () =>
+  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((item) =>
+    item.textContent?.trim(),
+  );
+
+/** A button's or a menu item's disabled state. */
+export const isDisabled = (element: HTMLElement) =>
+  (element as HTMLButtonElement).disabled === true ||
+  element.getAttribute("aria-disabled") === "true" ||
+  element.hasAttribute("data-disabled");
