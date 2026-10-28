@@ -11,9 +11,9 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // "Update now" and a Cancel the agent's work came first: a Cancel once the
-// agent started installing (in this window or another), and another window's
+// agent started installing (in this window or another), another window's
 // Cancel the agent's pass then refused the request after, without saying
-// "Update cancelled".
+// "Update cancelled", and this window's Cancel that could not be saved.
 
 const state = vi.hoisted(() => ({
   app: null as DesktopUpdateState | null,
@@ -49,7 +49,7 @@ vi.mock("../ui/tooltip", () => ({
 }));
 
 import { resetConfirmDialogForTests } from "../../confirmDialog";
-import { resetServiceUpdateFlowForTests } from "../serviceUpdateFlow";
+import { resetServiceUpdateFlowForTests, SERVICE_REQUEST_EXPIRED } from "../serviceUpdateFlow";
 import { SidebarRestartToUpdate } from "./SidebarRestartToUpdate";
 
 const downloaded: DesktopUpdateState = {
@@ -464,6 +464,40 @@ describe("Update now: a Cancel once the agent started installing", () => {
     expect(reload).toHaveBeenCalled();
     expect(errorToasts()).toEqual([]);
   });
+
+  it("never restarts the app after a reload when another window's Cancel came once the agent started installing", async () => {
+    const store = useSessionStorage();
+    await pressUpdateNow();
+    agentStartsInstalling();
+    reloadWindow(store);
+    // Another window cancels too late, and the install restarts the service:
+    // the reloaded window's looks get no answer.
+    agent = { ...agent, pendingInstall: null };
+    state.service = agent;
+    lookFails = true;
+    render();
+    await advance(12_000);
+    lookFails = false;
+    await serviceInstalled();
+    expect(calls).not.toContain("installUpdate:0.2.5");
+    expect(store.has(FOLLOW_UP_KEY)).toBe(false);
+  });
+
+  it("still restarts the app after a reload when the agent installs for the window's own request while its restart cuts off looks", async () => {
+    const store = useSessionStorage();
+    await pressUpdateNow();
+    agentStartsInstalling();
+    reloadWindow(store);
+    // The desktop still reports the request the agent installs for.
+    state.service = agent;
+    lookFails = true;
+    render();
+    await advance(12_000);
+    expect(store.has(FOLLOW_UP_KEY)).toBe(true);
+    lookFails = false;
+    await serviceInstalled();
+    expect(calls).toContain("installUpdate:0.2.5");
+  });
 });
 
 describe("The app's install after an install no request asks for", () => {
@@ -490,6 +524,30 @@ describe("The app's install after an install no request asks for", () => {
     await serviceInstalled();
     expect(calls).not.toContain("installUpdate:0.2.5");
     expect(reload).toHaveBeenCalled();
+  });
+
+  it("never follows an install the agent runs on its own while its restart cuts off looks, after a reload", async () => {
+    const store = useSessionStorage();
+    store.set(
+      FOLLOW_UP_KEY,
+      JSON.stringify({ appVersion: "0.2.5", serviceVersion: "0.2.5", at: Date.now() }),
+    );
+    agent = {
+      ...m4Refusal(),
+      status: "installing",
+      message: "Installing SpecWithCode 0.2.5",
+      updatedAt: iso(Date.now() + 500),
+    };
+    state.service = agent;
+    // The install restarts the service: the reloaded window's looks get no answer.
+    lookFails = true;
+    render();
+    await advance(12_000);
+    lookFails = false;
+    await serviceInstalled();
+    expect(calls).not.toContain("installUpdate:0.2.5");
+    expect(store.has(FOLLOW_UP_KEY)).toBe(false);
+    expect(label()).toBe("Restart to update");
   });
 });
 
@@ -568,6 +626,9 @@ describe("Update now: another window's Cancel that the agent's pass refused the 
     expect(calls).toContain("prepare:release");
     expect(held).toBe(false);
     expect(label()).toBe("Update now");
+    // The refusal read while the Cancel was written is not shown, nor withdrawn again.
+    expect(errorToasts()).toEqual([]);
+    expect(calls.filter((call) => call === "cancelServiceUpdate")).toHaveLength(1);
   });
 
   it("fails when the agent refuses the request after an install it tried for it", async () => {
@@ -597,5 +658,77 @@ describe("Update now: another window's Cancel that the agent's pass refused the 
     expect(lastToast().type).toBe("error");
     expect(lastToast().description).toContain(DETACHED_SHOWN);
     expect(label()).toBe("Retry update");
+  });
+});
+
+describe("Update now: this window's Cancel that could not be saved", () => {
+  /** Update now with the service held for the request, which is pending. */
+  async function pressed() {
+    agent = { ...serviceWaiting, updatedAt: iso(Date.now() - 60_000) };
+    state.service = agent;
+    render();
+    await advance(0);
+    await click();
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    calls.length = 0;
+    await advance(2_000);
+  }
+
+  /** The agent lets the request lapse unstarted, as it writes that. */
+  const lapsed = (): StudioServiceUpdateState => ({
+    ...agent,
+    status: "error",
+    message: SERVICE_REQUEST_EXPIRED,
+    updatedAt: iso(Date.now() + 500),
+    pendingInstall: null,
+  });
+
+  /** Cancel, which the desktop cannot save; `meanwhile` runs as it tries. */
+  async function cancelNotSaved(meanwhile: () => void = () => undefined) {
+    bridge.cancelServiceUpdate.mockImplementationOnce(async () => {
+      calls.push("cancelServiceUpdate");
+      meanwhile();
+      throw new Error("The update could not be cancelled. Try again in a moment.");
+    });
+    await pressCancelInToast();
+    await advance(0);
+    expect(state.addToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", title: "Could not cancel the update" }),
+    );
+  }
+
+  const asksAgain = () =>
+    calls.filter((call) => call === "prepare:true+hold" || call.startsWith("installServiceUpdate"));
+
+  it("asks for nothing again once the agent let the request lapse as it was cancelled", async () => {
+    await pressed();
+    await cancelNotSaved(() => (agent = lapsed()));
+    await advance(30_000);
+    expect(asksAgain()).toEqual([]);
+    // The next read shows the agent's answer, and the work is let go.
+    expect(lastToast()).toMatchObject({ type: "error", description: SERVICE_REQUEST_EXPIRED });
+    expect(held).toBe(false);
+    expect(label()).toBe("Retry update");
+  });
+
+  it("asks for nothing again when the agent lets the request lapse after that Cancel", async () => {
+    await pressed();
+    await cancelNotSaved();
+    await advance(4_000);
+    expect(label()).toBe("Updating…");
+    agent = lapsed();
+    await advance(30_000);
+    expect(asksAgain()).toEqual([]);
+    expect(held).toBe(false);
+    expect(label()).toBe("Retry update");
+  });
+
+  it("asks again for a request the agent let lapse when nobody cancelled", async () => {
+    await pressed();
+    agent = lapsed();
+    await advance(6_000);
+    expect(asksAgain().filter((call) => call.startsWith("installServiceUpdate"))).toEqual([
+      "installServiceUpdate:force",
+    ]);
   });
 });

@@ -3,12 +3,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   finishedFollowUp,
+  forgetAnsweredFollowUp,
   forgetLackedRelease,
   forgetSavedFollowUp,
   forgetSavedLackedRelease,
   forgetSavedOwnRequest,
   readLackedRelease,
   readSavedFollowUp,
+  readSavedOwnRequest,
   rememberLackedRelease,
   saveFollowUp,
   saveLackedRelease,
@@ -56,13 +58,46 @@ describe("a window's saved update", () => {
       saveOwnRequest({
         version: "0.2.5",
         holdUntil: "2026-10-20T10:15:00.000Z",
+        refused: false,
         holdAskedAgain: false,
         held: false,
         refusedAgain: false,
+        askedUnderHoldAt: null,
       }),
     ).not.toThrow();
     expect(() => forgetSavedOwnRequest()).not.toThrow();
     expect(readSavedFollowUp()).toBeNull();
+  });
+});
+
+describe("the window's own request a reload takes up", () => {
+  it("keeps whether the work was held for it and when it was asked again under a hold", () => {
+    useSessionStorage();
+    const request = {
+      version: "0.2.5",
+      holdUntil: "2026-10-20T10:15:00.000Z",
+      refused: true,
+      holdAskedAgain: true,
+      held: true,
+      refusedAgain: false,
+      askedUnderHoldAt: Date.parse("2026-10-20T10:01:00.000Z"),
+    };
+    saveOwnRequest(request);
+    expect(readSavedOwnRequest()).toEqual(request);
+    // Saved by a window that kept less: nothing was refused or asked again.
+    sessionStorage.setItem(
+      "specwithcode.serviceUpdate.ownRequest",
+      JSON.stringify({ version: "0.2.5", holdUntil: request.holdUntil }),
+    );
+    expect(readSavedOwnRequest()).toEqual({
+      version: "0.2.5",
+      holdUntil: request.holdUntil,
+      refused: false,
+      holdAskedAgain: false,
+      held: false,
+      refusedAgain: false,
+      askedUnderHoldAt: null,
+    });
   });
 });
 
@@ -109,5 +144,55 @@ describe("the app's install a reloaded window saved", () => {
       },
     };
     expect(finishedFollowUp(installed)).toBeNull();
+  });
+
+  it("is forgotten once the agent installs for no request, after it was saved", () => {
+    useSessionStorage();
+    saveFollowUp({ appVersion: "0.2.5", serviceVersion: "0.2.5" });
+    const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const installing: StudioServiceUpdateState = {
+      ...upToDate,
+      status: "installing",
+      updatedAt: at(1_000),
+      pendingInstall: null,
+    };
+    // Written before the press: not the agent's answer to it.
+    forgetAnsweredFollowUp({ ...installing, updatedAt: at(-1_000) });
+    expect(readSavedFollowUp()).not.toBeNull();
+    // The press's own request, which the agent installs for.
+    const pendingInstall = {
+      requestedAt: at(0),
+      mode: "force" as const,
+      version: "0.2.5",
+      holdUntil: at(15 * 60_000),
+      handled: true,
+    };
+    forgetAnsweredFollowUp({ ...installing, pendingInstall });
+    expect(readSavedFollowUp()).not.toBeNull();
+    forgetAnsweredFollowUp(installing);
+    expect(readSavedFollowUp()).toBeNull();
+  });
+
+  it("is kept while the service still holds the work for a request the desktop no longer reports", () => {
+    useSessionStorage();
+    saveFollowUp({ appVersion: "0.2.5", serviceVersion: "0.2.5" });
+    const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+    // The request's hold ended unstarted, while the agent's last snapshot for it still runs.
+    const snapshotting: StudioServiceUpdateState = {
+      ...upToDate,
+      status: "waiting-for-quiet",
+      availableVersion: "0.2.5",
+      downloadedVersion: "0.2.5",
+      updatedAt: at(1_000),
+      pendingInstall: null,
+    };
+    forgetAnsweredFollowUp(snapshotting, true);
+    expect(readSavedFollowUp()).not.toBeNull();
+    // Nothing said yet of whether the service holds it.
+    forgetAnsweredFollowUp(snapshotting);
+    expect(readSavedFollowUp()).not.toBeNull();
+    // The service holds nothing: the request was withdrawn, or lapsed.
+    forgetAnsweredFollowUp(snapshotting, false);
+    expect(readSavedFollowUp()).toBeNull();
   });
 });

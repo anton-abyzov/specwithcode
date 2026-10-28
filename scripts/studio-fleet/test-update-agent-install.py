@@ -508,6 +508,55 @@ class InstallNow(AgentCase):
                          ('failed', self.receipt_of(self.apply_calls()[0]), True))
         self.assertEqual(len(self.apply_calls()), 1)
 
+    def test_a_request_asked_again_while_its_snapshot_refused_is_served_without_that_refusal(self):
+        """Update now before the agent had the release: its stop held nothing, so the snapshot for
+        that request refuses, and while it ran the window held the work and asked again. Written
+        then, the refusal would read as the answer to the request asked under the hold (the window
+        and the service's hold time it against that request); the pass serves that one instead."""
+        self.fake.add_release()
+        self.request()
+        lost = 'AssertionError: The SpecWithCode service lost its SQLite locks on its database.'
+        self.control(snapshotFailCalls=[1], snapshotError=lost + '\nREFUSAL restart-needed locks-lost')
+        snapshot, set_status, statuses = update_agent.Agent.take_snapshot, update_agent.Agent.set_status, []
+
+        def asked_again(agent, *args):
+            result = snapshot(agent, *args)
+            if len(self.snapshot_calls()) == 1:
+                self.request(installRequestedAt=self.NEWER)
+            return result
+
+        def recorded(agent, status, message=None):
+            statuses.append(status)
+            set_status(agent, status, message)
+        with mock.patch.object(update_agent.Agent, 'take_snapshot', asked_again), \
+                mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            self.assertEqual(self.run_agent(), 0)
+        self.assertNotIn('error', statuses)
+        self.assertEqual([call['argv'][call['argv'].index('--request') + 1] for call in self.snapshot_calls()],
+                         [self.REQUESTED, self.NEWER])
+        self.assert_installed_for_the_newer_request(applies=1)
+
+    def test_a_request_for_another_version_asked_as_the_snapshot_refused_is_left_to_its_own_pass(self):
+        """The refusing pass neither serves nor settles it: the next pass fetches that release and installs it."""
+        self.fake.add_release()
+        self.request()
+        lost = 'AssertionError: The SpecWithCode service lost its SQLite locks on its database.'
+        self.control(snapshotFailCalls=[1], snapshotError=lost + '\nREFUSAL restart-needed locks-lost',
+                     newVersion='0.3.0')
+        snapshot, newer = update_agent.Agent.take_snapshot, later()
+
+        def asked_for_another(agent, *args):
+            result = snapshot(agent, *args)
+            if len(self.snapshot_calls()) == 1:
+                self.fake.add_release('0.3.0')
+                self.request(installRequestedAt=newer, installRequest={'at': newer, 'version': '0.3.0'})
+            return result
+        with mock.patch.object(update_agent.Agent, 'take_snapshot', asked_for_another):
+            self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual((state['status'], state['installedVersion'], state['handledInstallRequestAt']),
+                         ('installed', '0.3.0', newer))
+
     def automatic_passes_after(self, **failing):
         """A plain request that ends failed, then two automatic passes with Install automatically on."""
         self.fake.add_release()

@@ -29,6 +29,7 @@ import * as ThreadIncrementProgressService from "./ThreadIncrementProgressServic
 import * as ProjectService from "./ProjectService.ts";
 import { applyWorkspaceImport } from "./ProjectEnvironmentAdoption.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
+import * as ProjectWorktreeCleanup from "./ProjectWorktreeCleanup.ts";
 export const handlers = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const handoff = yield* MachineHandoff.MachineHandoff;
@@ -66,17 +67,23 @@ export const handlers = Effect.gen(function* () {
   };
 });
 
-/** The folder check and SpecWeave increment handlers (see `WsProjectPlanningRpcGroup`). */
+/**
+ * The folder check, project worktree, and SpecWeave increment handlers (see
+ * `WsProjectPlanningRpcGroup`).
+ */
 export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
   RpcInstrumentation,
 ).toLayer(
   Effect.gen(function* () {
     const incrementProgress = yield* ThreadIncrementProgressService.ThreadIncrementProgressService;
     const folders = yield* ProjectFolderService;
+    const worktrees = yield* ProjectWorktreeCleanup.make;
     return {
       [WS_METHODS.projectsFolderCheck]: (
         input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
       ) => folders.check(input),
+      [WS_METHODS.projectsWorktreesRead]: worktrees.read,
+      [WS_METHODS.projectsWorktreesRemove]: worktrees.remove,
       [WS_METHODS.projectsThreadIncrementProgressRead]: incrementProgress.read,
       [WS_METHODS.projectsIncrementsList]: incrementProgress.listIncrements,
       [WS_METHODS.projectsThreadIncrementLink]: incrementProgress.link,

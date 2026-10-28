@@ -481,14 +481,19 @@ function automaticChecksOff(configText: string | null | undefined): boolean {
  * agent's own rules: a cancelled request is gone, and one tied to a version
  * lapses unstarted after SERVICE_INSTALL_REQUEST_TTL_MS. The agent applies
  * that lapse only when a pass starts, so a forced request the pass it started
- * keeps retrying stays pending until its hold ends. One the agent took up
- * (`handledInstallRequestAt`) stays pending only while it installs; after that
- * the agent's `lastInstall` is the answer.
+ * keeps retrying stays pending until its hold ends, and none lapses while the
+ * agent installs. One the agent took up (`handledInstallRequestAt`) stays
+ * pending only while it installs that request; after that the agent's
+ * `lastInstall` is the answer. The request stays in the config, so a later
+ * install of another version (the agent's own) is not that request's: the
+ * agent installs only the version a request names.
  */
 export function pendingServiceInstall(input: {
   readonly configText: string | null | undefined;
   readonly handledAt: unknown;
   readonly status: StudioServiceUpdateStatus;
+  /** The release the agent fetched: the one it installs while "installing". */
+  readonly downloadedVersion?: string | null;
   readonly nowMs: number;
 }): StudioServicePendingInstall | null {
   if (!input.configText) return null;
@@ -504,12 +509,15 @@ export function pendingServiceInstall(input: {
   const cancelled = isoMillis(config.installCancelledAt);
   if (cancelled !== null && cancelled > requested) return null;
   const handled = input.handledAt === requestedAt;
-  if (handled && input.status !== "installing") return null;
+  const installing = input.status === "installing";
+  if (handled && !installing) return null;
   const bound = installRequestRecord(config.installRequest);
   const version = bound !== null && bound.at === requestedAt ? bound.version : null;
+  const installs = input.downloadedVersion ?? null;
+  if (handled && version !== null && installs !== null && installs !== version) return null;
   const mode: ServiceInstallMode = config.installMode === "force" ? "force" : "normal";
   const holdUntil = mode === "force" ? stringOrNullValue(config.installHoldUntil) : null;
-  if (!handled && version !== null) {
+  if (!handled && version !== null && !installing) {
     const servedUntil = Math.max(
       requested + SERVICE_INSTALL_REQUEST_TTL_MS,
       isoMillis(holdUntil) ?? Number.NEGATIVE_INFINITY,
@@ -552,8 +560,18 @@ export function toServiceUpdateState(input: {
     installedVersion: input.installation.version,
   };
   const nowMs = input.nowMs ?? DateTime.toEpochMillis(DateTime.nowUnsafe());
-  const pending = (status: StudioServiceUpdateStatus, handledAt: unknown) =>
-    pendingServiceInstall({ configText: input.configText, handledAt, status, nowMs });
+  const pending = (
+    status: StudioServiceUpdateStatus,
+    handledAt: unknown,
+    downloadedVersion: string | null = null,
+  ) =>
+    pendingServiceInstall({
+      configText: input.configText,
+      handledAt,
+      status,
+      downloadedVersion,
+      nowMs,
+    });
   if (input.stateText === null) {
     const status = automaticChecksOff(input.configText) ? "disabled" : base.status;
     return { ...base, status, pendingInstall: pending(status, null) };
@@ -588,18 +606,19 @@ export function toServiceUpdateState(input: {
           result: lastInstallRecord.result as "updated" | "failed",
         }
       : null;
+  const downloadedVersion = stringOrNull(record.downloadedVersion);
   return {
     status,
     identity: input.installation.identity,
     installedVersion: stringOrNull(record.installedVersion) ?? input.installation.version,
     availableVersion: stringOrNull(record.availableVersion),
-    downloadedVersion: stringOrNull(record.downloadedVersion),
+    downloadedVersion,
     checkedAt: stringOrNull(record.checkedAt),
     quietSince: stringOrNull(record.quietSince),
     message: stringOrNull(record.message),
     lastInstall,
     updatedAt: stringOrNull(record.updatedAt),
-    pendingInstall: pending(status, record.handledInstallRequestAt),
+    pendingInstall: pending(status, record.handledInstallRequestAt, downloadedVersion),
     ...(input.run ? { run: input.run } : {}),
     ...automaticPauseField(record.automaticPauseAt, input.configText),
   };

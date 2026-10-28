@@ -475,6 +475,42 @@ describe("A window following a request the agent refused before its window held 
     expect(calls).not.toContain("prepare:release");
   });
 
+  const cancels = () => calls.filter((call) => call === "cancelServiceUpdate").length;
+
+  it("withdraws it once and shows no error when Cancel is pressed there", async () => {
+    agent = otherWindowsRequest(5_000);
+    state.service = agent;
+    render();
+    await advance(0);
+    calls.length = 0;
+    await click();
+    await releaseFetched();
+    await advance(2_000);
+    await refuses();
+    await advance(4_000);
+    expect(label()).toBe("Updating…");
+    await pressCancelInToast();
+    await advance(4_000);
+    expect({ cancels: cancels(), errors: errorToasts() }).toEqual({ cancels: 1, errors: [] });
+    expect(label()).toBe("Update now");
+  });
+
+  it("withdraws it once and shows no error when Cancel is pressed there after it took it up from a held service", async () => {
+    held = true;
+    agent = { ...otherWindowsRequest(5_000), status: "downloaded", downloadedVersion: "0.2.5" };
+    state.service = agent;
+    render();
+    await advance(0);
+    calls.length = 0;
+    await refuses({ updatedAt: iso(Date.now() - 500) });
+    await advance(4_000);
+    expect(label()).toBe("Updating…");
+    await pressCancelInToast();
+    await advance(4_000);
+    expect({ cancels: cancels(), errors: errorToasts() }).toEqual({ cancels: 1, errors: [] });
+    expect(label()).toBe("Update now");
+  });
+
   it("takes it up from the refusal without failing, and closing its toast withdraws nothing", async () => {
     // Open and idle, as the window that asked holds the work once the agent
     // has the release.
@@ -724,6 +760,122 @@ describe("Update now after a reload once the stop taken for the agent's release 
   });
 });
 
+describe("Update now after a reload once the work was stopped again for the agent's release", () => {
+  /**
+   * Update now while the agent lacks the release: the service refuses the
+   * press's hold. The agent fetches 0.2.5, the window stops the work again,
+   * and the agent's unheld pass refuses the request while that stop drains.
+   * Returns the stop's end.
+   */
+  async function stopForReleaseDrains(): Promise<(holds?: boolean) => Promise<void>> {
+    agent = lacksRelease();
+    state.service = agent;
+    render();
+    await advance(0);
+    stopHolds.push(false);
+    await click();
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    calls.length = 0;
+    const finishStop = slowStop();
+    await releaseFetched();
+    await advance(2_000);
+    expect(calls).toEqual(["prepare:true+hold"]);
+    await refuses();
+    await advance(4_000);
+    expect(errorToasts()).toEqual([]);
+    return finishStop;
+  }
+
+  /** The window reloads, its request still pending, and looks at the service. */
+  async function reloads(store: Map<string, string>) {
+    reloadWindow(store);
+    state.service = agent;
+    render();
+    await advance(0);
+  }
+
+  it("asks again under the hold when it reloaded before it did, and installs both", async () => {
+    const store = useSessionStorage();
+    const finishStop = await stopForReleaseDrains();
+    // The stop holds the work; the read before the request is asked again
+    // under that hold gets no answer before the window reloads.
+    bridge.getServiceUpdateState.mockImplementationOnce(() => new Promise(() => undefined));
+    await finishStop(true);
+    expect(held).toBe(true);
+    await reloads(store);
+    await advance(4_000);
+    expect(errorToasts()).toEqual([]);
+    expect(asksAgain()).toEqual(["installServiceUpdate:force"]);
+    expect(held).toBe(true);
+    await installAndFinish();
+    expect(calls).toContain("installUpdate:0.2.5");
+  });
+
+  it("asks again under the hold a stop the reload cut off took all the same", async () => {
+    const store = useSessionStorage();
+    const finishStop = await stopForReleaseDrains();
+    reloadWindow(store);
+    await finishStop(true);
+    expect(held).toBe(true);
+    state.service = agent;
+    render();
+    await advance(4_000);
+    expect(errorToasts()).toEqual([]);
+    expect(asksAgain()).toEqual(["installServiceUpdate:force"]);
+    await installAndFinish();
+    expect(calls).toContain("installUpdate:0.2.5");
+  });
+
+  it("stops the work again when the service let go of the hold the reload cut off", async () => {
+    const store = useSessionStorage();
+    await stopForReleaseDrains();
+    // The service ends the drain the reload cut off, and the hold it took.
+    await reloads(store);
+    await advance(4_000);
+    expect(errorToasts()).toEqual([]);
+    expect(asksAgain()).toEqual(["prepare:true+hold", "installServiceUpdate:force"]);
+    expect(held).toBe(true);
+    await installAndFinish();
+    expect(calls).toContain("installUpdate:0.2.5");
+  });
+
+  it("fails on a refusal written after the request was asked again under the hold, after a reload", async () => {
+    const store = useSessionStorage();
+    const finishStop = await stopForReleaseDrains();
+    await finishStop(true);
+    expect(asksAgain()).toEqual(["prepare:true+hold", "installServiceUpdate:force"]);
+    await reloads(store);
+    await advance(4_000);
+    expect(errorToasts()).toEqual([]);
+    // Asked under the hold before the reload: not asked again.
+    expect(asksAgain()).toEqual([]);
+    await refuses();
+    await advance(4_000);
+    expect(errorToasts()).toEqual([DETACHED_SHOWN]);
+  });
+
+  it("fails on the agent's refusal after a reload once that stop was refused too, though the work is held since", async () => {
+    const store = useSessionStorage();
+    agent = lacksRelease();
+    state.service = agent;
+    render();
+    await advance(0);
+    stopHolds.push(false, false);
+    await click();
+    calls.length = 0;
+    await releaseFetched();
+    await advance(2_000);
+    expect(calls).toEqual(["prepare:true+hold"]);
+    // A hold this window did not take.
+    held = true;
+    await reloads(store);
+    await refuses();
+    await advance(4_000);
+    expect(asksAgain()).toEqual([]);
+    expect(errorToasts()).toEqual([DETACHED_SHOWN]);
+  });
+});
+
 describe("Update now when the agent's refusal of the unheld request is still its state after the hold", () => {
   it("waits for the agent's answer to the request asked again under the hold, then installs both", async () => {
     agent = lacksRelease();
@@ -748,6 +900,34 @@ describe("Update now when the agent's refusal of the unheld request is still its
     expect(errorToasts()).toEqual([]);
     expect(calls).not.toContain("cancelServiceUpdate");
     expect(calls).not.toContain("prepare:release");
+    expect(held).toBe(true);
+    await installAndFinish();
+    expect(calls.filter((call) => call.startsWith("installUpdate"))).toEqual([
+      "installUpdate:0.2.5",
+    ]);
+  });
+});
+
+describe("Update now when the agent's refusal of the unheld request is written as the request is asked again", () => {
+  it("waits for the agent's answer to the request asked under the hold, then installs both", async () => {
+    agent = lacksRelease();
+    state.service = agent;
+    render();
+    await advance(0);
+    stopHolds.push(false);
+    await click();
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    calls.length = 0;
+    const finishStop = slowStop();
+    await releaseFetched();
+    await advance(2_000);
+    // The agent's unheld pass refuses in the very millisecond the stop holds
+    // the work and the window asks again: it never read that request.
+    agent = { ...agent, status: "error", message: DETACHED, updatedAt: iso(Date.now()) };
+    await finishStop(true);
+    expect(asksAgain()).toEqual(["prepare:true+hold", "installServiceUpdate:force"]);
+    await advance(6_000);
+    expect(errorToasts()).toEqual([]);
     expect(held).toBe(true);
     await installAndFinish();
     expect(calls.filter((call) => call.startsWith("installUpdate"))).toEqual([
@@ -900,5 +1080,165 @@ describe("Update now when the agent's refusal under the hold says nothing of whe
     await advance(4_000);
     expect(errorToasts()).toEqual([DETACHED_SHOWN]);
     expect(label()).toBe("Retry update");
+  });
+});
+
+describe("Update now when another window cancels while the stop taken for the release drains", () => {
+  /**
+   * Update now while the agent lacks the release: the service refuses the
+   * press's hold, and the agent fetches 0.2.5, so the window stops and holds
+   * the work again. Returns the end of that stop's drain.
+   */
+  async function stopForReleaseDrains(): Promise<(holds?: boolean) => Promise<void>> {
+    agent = lacksRelease();
+    state.service = agent;
+    render();
+    await advance(0);
+    stopHolds.push(false);
+    await click();
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    calls.length = 0;
+    const finishStop = slowStop();
+    await releaseFetched();
+    await advance(2_000);
+    expect(calls).toEqual(["prepare:true+hold"]);
+    return finishStop;
+  }
+
+  /** Another window's Cancel: the desktop withdraws the request, and the hold is let go. */
+  function otherWindowCancels() {
+    agent = { ...agent, pendingInstall: null };
+    held = false;
+  }
+
+  it("lets go of the hold the stop takes after the agent refused the withdrawn request", async () => {
+    const finishStop = await stopForReleaseDrains();
+    // The agent's unheld pass refuses on the detached log.
+    await refuses();
+    await advance(2_000);
+    // The drain ends after that Cancel and takes the hold, answering before
+    // the window reads the agent again.
+    otherWindowCancels();
+    await finishStop(true);
+    await advance(4_000);
+    expect(calls).toContain("prepare:release");
+    expect(held).toBe(false);
+    expect(calls).not.toContain("installServiceUpdate:force");
+    expect(errorToasts()).toEqual([]);
+    expect(label()).toBe("Update now");
+  });
+
+  it("lets go of that hold when a read saw the Cancel before the stop answered", async () => {
+    const finishStop = await stopForReleaseDrains();
+    await refuses();
+    await advance(2_000);
+    otherWindowCancels();
+    await advance(2_000);
+    expect(label()).toBe("Update now");
+    await finishStop(true);
+    await advance(4_000);
+    expect(calls).toContain("prepare:release");
+    expect(held).toBe(false);
+    expect(calls).not.toContain("installServiceUpdate:force");
+  });
+
+  it("lets go of that hold when the agent has only fetched the release", async () => {
+    const finishStop = await stopForReleaseDrains();
+    otherWindowCancels();
+    await finishStop(true);
+    await advance(4_000);
+    expect(calls).toContain("prepare:release");
+    expect(held).toBe(false);
+    expect(calls).not.toContain("installServiceUpdate:force");
+    expect(label()).toBe("Update now");
+  });
+});
+
+describe("Update now when this window cancels while the agent's refusal of the unheld request waits on the hold", () => {
+  const cancels = () => calls.filter((call) => call === "cancelServiceUpdate").length;
+
+  /**
+   * Update now while the agent lacks the release; the agent fetches it, and its
+   * unheld pass refuses on the detached log while the stop taken for the
+   * release drains. Returns the end of that drain.
+   */
+  async function refusedWhileStopDrains(): Promise<(holds?: boolean) => Promise<void>> {
+    agent = lacksRelease();
+    state.service = agent;
+    render();
+    await advance(0);
+    stopHolds.push(false);
+    await click();
+    expect(calls).toEqual(STOP_AND_INSTALL);
+    calls.length = 0;
+    const finishStop = slowStop();
+    await releaseFetched();
+    await advance(2_000);
+    await refuses();
+    await advance(2_000);
+    expect(errorToasts()).toEqual([]);
+    return finishStop;
+  }
+
+  it("withdraws the request once and shows no error", async () => {
+    const finishStop = await refusedWhileStopDrains();
+    await pressCancelInToast();
+    await advance(0);
+    expect({ cancels: cancels(), errors: errorToasts() }).toEqual({ cancels: 1, errors: [] });
+    expect(label()).toBe("Update now");
+    // The drain ends after the Cancel: its hold serves nothing.
+    await finishStop(true);
+    await advance(4_000);
+    expect({ cancels: cancels(), errors: errorToasts() }).toEqual({ cancels: 1, errors: [] });
+    expect(held).toBe(false);
+    expect(calls).not.toContain("installServiceUpdate:force");
+  });
+
+  it("withdraws the request once and shows no error when a read comes while the desktop writes the Cancel", async () => {
+    const finishStop = await refusedWhileStopDrains();
+    // The desktop withdraws the request at once, but answers only later.
+    let answerCancel: () => void = () => undefined;
+    bridge.cancelServiceUpdate.mockImplementationOnce(() => {
+      calls.push("cancelServiceUpdate");
+      agent = { ...agent, pendingInstall: null };
+      return new Promise<StudioServiceUpdateState>((resolve) => {
+        answerCancel = () => resolve({ ...agent });
+      });
+    });
+    await pressCancelInToast();
+    await advance(2_000);
+    expect({ cancels: cancels(), errors: errorToasts() }).toEqual({ cancels: 1, errors: [] });
+    await act(async () => answerCancel());
+    await advance(0);
+    await finishStop(true);
+    await advance(4_000);
+    expect({ cancels: cancels(), errors: errorToasts() }).toEqual({ cancels: 1, errors: [] });
+    expect(held).toBe(false);
+    expect(label()).toBe("Update now");
+  });
+
+  it("goes on with the update when the Cancel could not be saved", async () => {
+    const finishStop = await refusedWhileStopDrains();
+    bridge.cancelServiceUpdate.mockImplementationOnce(async () => {
+      calls.push("cancelServiceUpdate");
+      throw new Error("The update could not be cancelled. Try again in a moment.");
+    });
+    await pressCancelInToast();
+    await advance(2_000);
+    expect(state.addToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", title: "Could not cancel the update" }),
+    );
+    expect(label()).toBe("Updating…");
+    // The stop taken for the release holds the work; a look finds it held, and
+    // once the agent stays silent the request is asked again under that hold.
+    await finishStop(true);
+    await advance(40_000);
+    expect(asksAgain()).toEqual(["prepare:true+hold", "installServiceUpdate:force"]);
+    expect(held).toBe(true);
+    expect(label()).toBe("Updating…");
+    expect({ cancels: cancels(), errors: errorToasts() }).toEqual({
+      cancels: 1,
+      errors: ["The update could not be cancelled. Try again in a moment."],
+    });
   });
 });

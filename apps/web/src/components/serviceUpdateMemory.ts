@@ -26,11 +26,15 @@ export interface SavedOwnRequest {
   readonly version: string | null;
   /** ISO time the request's hold ends (`installOptions.holdUntil`). */
   readonly holdUntil: string;
+  /** The press's stop was refused: its agent lacked the release then. */
+  readonly refused: boolean;
   /** The work was stopped and held again once the agent had the release. */
   readonly holdAskedAgain: boolean;
   /** That stop held the work, or was refused (both false until it answered). */
   readonly held: boolean;
   readonly refusedAgain: boolean;
+  /** When the request was first written again under a hold taken since (ms). */
+  readonly askedUnderHoldAt: number | null;
 }
 
 // Where a window keeps "then install the app" across a reload.
@@ -128,8 +132,11 @@ export function finishedFollowUp(serviceState: StudioServiceUpdateState): AppFol
  * agent starts on its own later never installs (and quits) the app without a
  * press. A failure no window showed (it reloaded meanwhile) ends it this way,
  * and so does a request withdrawn (or lapsed) since: the desktop reports none
- * pending, the service holds nothing (`held` false), and the agent neither
- * installs nor fetches a release.
+ * pending, the service holds nothing (`held` false), and the agent fetches no
+ * release (a pass that took the request up outlives its lapse). So does an
+ * install the desktop reports no request for (the agent's own, or one
+ * cancelled once it began), as in a window that follows it: the install's
+ * restart of the service can cut off every look until it is over.
  */
 export function forgetAnsweredFollowUp(
   serviceState: StudioServiceUpdateState,
@@ -143,11 +150,9 @@ export function forgetAnsweredFollowUp(
   if (serviceState.installedVersion === saved.serviceVersion) return;
   const settled = AGENT_SETTLED.has(serviceState.status) && !hasPendingRequest(serviceState);
   const withdrawn =
-    held === false &&
-    !hasPendingRequest(serviceState) &&
-    serviceState.status !== "installing" &&
-    serviceState.status !== "downloading";
-  if (settled || withdrawn) forgetSavedFollowUp();
+    held === false && !hasPendingRequest(serviceState) && serviceState.status !== "downloading";
+  const unasked = serviceState.status === "installing" && !hasPendingRequest(serviceState);
+  if (settled || withdrawn || unasked) forgetSavedFollowUp();
 }
 
 export function saveLackedRelease(version: string): void {
@@ -208,9 +213,11 @@ export function readSavedOwnRequest(): SavedOwnRequest | null {
   return {
     version: text(saved.version),
     holdUntil,
+    refused: saved.refused === true,
     holdAskedAgain: saved.holdAskedAgain === true,
     held: saved.held === true,
     refusedAgain: saved.refusedAgain === true,
+    askedUnderHoldAt: typeof saved.askedUnderHoldAt === "number" ? saved.askedUnderHoldAt : null,
   };
 }
 

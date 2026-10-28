@@ -10,7 +10,16 @@ import {
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
-import { ProjectFolderCheck, ProjectFolderCheckError, ProjectFolderCheckInput } from "./project.ts";
+import {
+  ProjectFolderCheck,
+  ProjectFolderCheckError,
+  ProjectFolderCheckInput,
+  ProjectWorktrees,
+  ProjectWorktreesError,
+  ProjectWorktreesInput,
+  ProjectWorktreesRemoval,
+  ProjectWorktreesRemoveInput,
+} from "./project.ts";
 import {
   ProjectPlanReadInput,
   ProjectPlanAuthorityReadResult,
@@ -81,6 +90,8 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentImportPreview: "projects.environmentImportPreview",
   projectsEnvironmentImport: "projects.environmentImport",
   projectsFolderCheck: "projects.folderCheck",
+  projectsWorktreesRead: "projects.worktreesRead",
+  projectsWorktreesRemove: "projects.worktreesRemove",
   projectsPlanRead: "projects.planRead",
   projectsPlanAuthorityRead: "projects.planAuthorityRead",
   projectsPlanReplace: "projects.planReplace",
@@ -272,7 +283,7 @@ export const projectWorkspaceRpcs = [
 
 /**
  * SpecWeave planning: the folder check (which reports the planning root a
- * change would read) and increment progress, listing and links. Registered as
+ * change would read), the project worktree preview and removal, and increment progress, listing and links. Registered as
  * their own group for the same depth reason (see `WsProjectPlanningRpcGroup`).
  */
 export const projectPlanningRpcs = [
@@ -280,6 +291,17 @@ export const projectPlanningRpcs = [
     payload: ProjectFolderCheckInput,
     success: ProjectFolderCheck,
     error: Schema.Union([ProjectFolderCheckError, EnvironmentAuthorizationError]),
+  }),
+  // A project's worktrees, read before deleting it and removed after.
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsWorktreesRead, {
+    payload: ProjectWorktreesInput,
+    success: ProjectWorktrees,
+    error: Schema.Union([ProjectWorktreesError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsWorktreesRemove, {
+    payload: ProjectWorktreesRemoveInput,
+    success: ProjectWorktreesRemoval,
+    error: Schema.Union([ProjectWorktreesError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementProgressRead, {
     payload: ThreadIncrementProgressInput,

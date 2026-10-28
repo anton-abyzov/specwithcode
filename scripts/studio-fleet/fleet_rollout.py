@@ -34,6 +34,13 @@ the middle of M4's snapshot and apply fail its guarded prestate, so they are ask
 M4 completes verification of the new version, and then together with a plain version-bound
 request. They are never drained or held.
 
+Once a worker's service is confirmed on the version (installed, or already on it), its desktop
+app is updated to the same version over the same ssh (desktop_app_rollout.py, which runs
+desktop_app_update_remote.sh there), and the rollout reports its version before and after and
+how: already current, the app's own updater on quit, or swapped. A failed app update fails the
+rollout after every service is done, naming the host and the reason; --no-desktop-apps skips the
+step. M4's app is release.sh's desktop stage's.
+
 Each request is written by update_request.py, streamed with studio_paths.py to the host's
 /usr/bin/python3 (over the pinned fleet SSH key for M1 and M3, the network-transition.py
 convention), so a host needs neither this repository nor a newer agent. Hosts come from
@@ -43,8 +50,10 @@ fleet_hosts.load_hosts(); nothing here names an address.
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only m4
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only m4 --no-hold
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --dry-run
+    python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --no-desktop-apps
 
-Exit 0 when every host chosen has finalized the version, 1 when one has not, 2 for bad arguments.
+Exit 0 when every host chosen has finalized the version and every worker's app is on it, 1 when
+one has not, 2 for bad arguments.
 """
 import argparse
 import datetime
@@ -57,6 +66,7 @@ import sys
 import threading
 import time
 
+import desktop_app_rollout
 import fleet_hosts
 import service_hold
 import update_request
@@ -95,6 +105,14 @@ class RolloutError(Exception):
     reply = None  # The host's error answer; it names a request written before a kickstart failed.
 
 
+class DesktopAppsFailed(RolloutError):
+    """Every service chosen is on the version, but a worker's desktop app is not; `results` holds them."""
+
+    def __init__(self, message, results):
+        RolloutError.__init__(self, message)
+        self.results = results
+
+
 UNSUPPORTED_PATH = (
     "Hold M4 with Update now in the SpecWithCode app on M4 instead (it drains and holds the service through "
     "the same prepareServiceUpdate call and asks for a forced install), wait until `fleet_rollout.py --version "
@@ -114,21 +132,24 @@ def program(argv):
     return 'argv = %r\nsources = %r\n%s' % (list(argv), sources, BOOT)
 
 
-def ssh_command(home, user, host):
+def ssh_command(home, user, host, remote='/usr/bin/python3 -B -'):
+    """The pinned fleet ssh to `user@host`, running `remote`, a fixed command that reads its program on stdin."""
     fleet = pathlib.Path(home) / '.local/share/specweave/fleet'
     return ['/usr/bin/ssh', '-F', '/dev/null', '-i', str(fleet / 'id_ed25519'), '-o', 'IdentitiesOnly=yes',
             '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
             '-o', 'UserKnownHostsFile=' + str(fleet / 'known_hosts'), '-o', 'ConnectTimeout=8',
-            '-o', 'ControlMaster=no', user + '@' + host, '/usr/bin/python3 -B -']
+            '-o', 'ControlMaster=no', user + '@' + host, remote]
 
 
 class Host(object):
-    """Runs update_request.py on one host. `command` reads the program on stdin."""
+    """Runs update_request.py on one host. `command` reads the program on stdin; a worker's
+    `app_command` runs the desktop app script (desktop_app_rollout.REMOTE_COMMAND) the same way."""
 
-    def __init__(self, identity, command, extra=()):
+    def __init__(self, identity, command, extra=(), app_command=None):
         self.identity = identity
         self.command = list(command)
         self.extra = list(extra)  # Tests: --home for a temporary private home.
+        self.app_command = list(app_command) if app_command else None
 
     def __call__(self, argv):
         argv = list(argv) + self.extra
@@ -159,7 +180,8 @@ def fleet(home=None):
     home = pathlib.Path(home or pathlib.Path.home())
     hosts = {LOCAL: Host(LOCAL, [SYSTEM_PYTHON, '-B', '-'])}
     for identity, user, host, _tunnel, _https in fleet_hosts.worker_plans():
-        hosts[identity] = Host(identity, ssh_command(home, user, host))
+        hosts[identity] = Host(identity, ssh_command(home, user, host),
+                               app_command=ssh_command(home, user, host, desktop_app_rollout.REMOTE_COMMAND))
     return hosts
 
 
@@ -487,9 +509,11 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
 
 
 def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=75 * 60, worker_deadline=30 * 60,
-            worker_force=False, poll=15, clock=time.time, sleep=time.sleep, say=None, hold=None):
+            worker_force=False, poll=15, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None):
     """M4 first (drained and held through `hold`, its ServiceHold, when given), then M1 and M3
-    together, never held. Returns {identity: result}; raises RolloutError."""
+    together, never held. With `desktop` (desktop_app_rollout.DesktopApps), each worker's desktop app
+    follows once its service is confirmed on `version`. Returns {identity: result}; raises
+    RolloutError, or DesktopAppsFailed once every service is done when only an app update failed."""
     say = say or Printer(clock=clock)
     results = {}
     if only in ('all', LOCAL):
@@ -501,7 +525,20 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=75 * 60,
             if status.get('version') != version or status.get('installFinalized') is not True:
                 raise RolloutError('M4 has not finalized %s (descriptor %s): install it first (--only m4); '
                                    'M1 and M3 never go while M4 is updating' % (version, status.get('version')))
-        errors, lock = [], threading.Lock()
+        errors, app_errors, lock = [], [], threading.Lock()
+
+        def update_app(identity):
+            """The worker's desktop app, once its service runs `version`; a failure is reported, not raised."""
+            try:
+                return desktop(identity, say)
+            except desktop_app_rollout.DesktopAppError as error:
+                reason = str(error)
+            except Exception as error:  # noqa: BLE001 - an app step never drops out of the results unreported.
+                reason = 'stopped on an unexpected %s: %s' % (type(error).__name__, error)
+            say('%s: desktop app not updated to %s: %s' % (identity, version, reason))
+            with lock:
+                app_errors.append('%s: desktop app not updated to %s: %s' % (identity, version, reason))
+            return {'result': 'failed', 'error': reason}
 
         def worker(identity):
             try:
@@ -512,9 +549,15 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=75 * 60,
             except RolloutError as error:
                 with lock:
                     errors.append(str(error))
+                return
             except Exception as error:  # noqa: BLE001 - a host never drops out of the results unreported.
                 with lock:
                     errors.append('%s stopped on an unexpected %s: %s' % (identity, type(error).__name__, error))
+                return
+            if desktop is not None:
+                app = update_app(identity)
+                with lock:
+                    result['desktopApp'] = app
 
         threads = [threading.Thread(target=worker, args=(identity,), name='rollout-' + identity)
                    for identity in WORKERS]
@@ -523,7 +566,9 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=75 * 60,
         for thread in threads:
             thread.join()
         if errors:
-            raise RolloutError('; '.join(sorted(errors)))
+            raise RolloutError('; '.join(sorted(errors) + sorted(app_errors)))
+        if app_errors:
+            raise DesktopAppsFailed('; '.join(sorted(app_errors)), results)
     return results
 
 
@@ -540,6 +585,8 @@ def main(argv=None):
     parser.add_argument('--poll-seconds', type=int, default=15)
     parser.add_argument('--no-hold', action='store_true',
                         help="do not drain and hold M4's service first (a busy M4 then waits for its work)")
+    parser.add_argument('--no-desktop-apps', action='store_true',
+                        help="leave M1's and M3's desktop apps as they are (by default each follows its service)")
     parser.add_argument('--dry-run', action='store_true', help='print the order and commands; contact no host')
     args = parser.parse_args(argv)
     if _tuple(args.version) is None:
@@ -553,6 +600,14 @@ def main(argv=None):
     except SystemExit as error:  # fleet_hosts reports a missing or bad inventory this way.
         print('fleet_rollout: %s' % error, file=sys.stderr)
         return 1
+    desktop = None
+    if args.only != LOCAL and not args.no_desktop_apps:
+        try:
+            desktop = desktop_app_rollout.DesktopApps(args.version, {
+                name: host.app_command for name, host in hosts.items() if getattr(host, 'app_command', None)})
+        except desktop_app_rollout.DesktopAppError as error:  # RELEASE_PUBLIC_REPO is not owner/name.
+            print('fleet_rollout: %s' % error, file=sys.stderr)
+            return 2
     hold = None if args.no_hold or args.only == 'workers' else ServiceHold()
     supported, reason = hold.support() if hold else (True, None)
     if args.dry_run:
@@ -565,13 +620,19 @@ def main(argv=None):
         if not supported:
             planned = 'unsupported: %s' % reason
         print(json.dumps({'version': args.version, 'order': order, 'hold': planned,
-                          'commands': {name: host.command for name, host in hosts.items()}}))
+                          'commands': {name: host.command for name, host in hosts.items()},
+                          'desktopApps': desktop.plan() if desktop else None}))
         return 0
     # An old M4 is refused in roll_host, after its status shows whether Update now already
     # asked for this version (then the rollout joins that install instead).
     try:
         results = rollout(args.version, hosts, args.only, args.hold_minutes, args.m4_deadline_minutes * 60,
-                          args.worker_deadline_minutes * 60, args.worker_force, args.poll_seconds, hold=hold)
+                          args.worker_deadline_minutes * 60, args.worker_force, args.poll_seconds, hold=hold,
+                          desktop=desktop)
+    except DesktopAppsFailed as error:
+        print('fleet_rollout: every service is on %s, but %s' % (args.version, error), file=sys.stderr)
+        print(json.dumps({'version': args.version, 'result': 'failed', 'error': str(error), 'hosts': error.results}))
+        return 1
     except RolloutError as error:
         print('fleet_rollout: %s' % error, file=sys.stderr)
         print(json.dumps({'version': args.version, 'result': 'failed', 'error': str(error)}))

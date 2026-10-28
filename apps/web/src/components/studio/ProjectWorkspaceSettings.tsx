@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { ProjectLocation } from "./ProjectLocation";
 import { ProjectFolderChange } from "./ProjectFolderChange";
+import { useProjectDeletionWorktrees } from "./ProjectDeletionWorktrees";
 import { ProjectEnvironment } from "./ProjectEnvironment";
 import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
@@ -203,6 +204,21 @@ export function ProjectWorkspaceSettings({
   });
   const update = useAtomCommand(projectEnvironment.update);
   const remove = useAtomCommand(projectEnvironment.delete);
+  const {
+    load: loadWorktrees,
+    reset: resetWorktrees,
+    remove: removeWorktrees,
+    section: worktreeSection,
+    confirmed: confirmedWorktrees,
+  } = useProjectDeletionWorktrees();
+  // Reading worktree sizes walks their folders, so wait until deletion starts.
+  const typeConfirmation = (value: string) => {
+    if ((confirmation === "") !== (value === "")) {
+      if (value === "") resetWorktrees();
+      else void loadWorktrees({ environmentId: project.environmentId, projectId: project.id });
+    }
+    setConfirmation(value);
+  };
   const disabled = !canOperate || busy || environmentBusy;
   const icon = useProjectIconEditor({
     project,
@@ -294,6 +310,12 @@ export function ProjectWorkspaceSettings({
       failure(result);
       return;
     }
+    const confirmed = confirmedWorktrees();
+    if (confirmed !== null)
+      void removeWorktrees(
+        { environmentId: project.environmentId, projectId: project.id },
+        confirmed,
+      );
     onDeleted();
   }
   return (
@@ -566,8 +588,8 @@ export function ProjectWorkspaceSettings({
                       Permanently delete this project and all of its threads. This cannot be undone.
                     </p>
                     <p className="project-muted">
-                      Project memory, plans, and routines are removed. Your source folders and
-                      remote Git branches stay intact. Active work must stop first.
+                      Project memory, plans, and routines are removed. Your project folder and Git
+                      branches stay intact. Active work must stop first.
                     </p>
                     <label>
                       Type {project.title} to confirm
@@ -575,10 +597,11 @@ export function ProjectWorkspaceSettings({
                         aria-label="Confirm project deletion"
                         autoComplete="off"
                         value={confirmation}
-                        onChange={(e) => setConfirmation(e.target.value)}
+                        onChange={(e) => typeConfirmation(e.target.value)}
                         disabled={disabled}
                       />
                     </label>
+                    {worktreeSection}
                     <button
                       className="project-control project-danger"
                       disabled={

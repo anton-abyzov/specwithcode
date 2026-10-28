@@ -1188,7 +1188,8 @@ interface SidebarProjectItemProps {
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
-  const { confirmDeletion, deletionDialog } = useProjectDeletionConfirmation();
+  const { confirmDeletion, deletionDialog, removeConfirmedWorktrees } =
+    useProjectDeletionConfirmation();
   const {
     project,
     isThreadListExpanded,
@@ -1579,6 +1580,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const typed = await confirmDeletion(member);
       if (typed !== member.title || !checkTaskPermission(member.environmentId)) return;
       const result = await removeProject(member, typed);
+      if (result._tag === "Success") void removeConfirmedWorktrees(member);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
@@ -1590,7 +1592,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         );
       }
     },
-    [confirmDeletion, removeProject],
+    [confirmDeletion, removeConfirmedWorktrees, removeProject],
   );
 
   const handleProjectButtonContextMenu = useCallback(

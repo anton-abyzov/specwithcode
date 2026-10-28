@@ -183,6 +183,9 @@ let toastId: string | null = null;
 let dismissedPhase: ServiceUpdateProgress["phase"] | null = null;
 // Times this window renewed its install request after the agent let it lapse.
 let renewals = 0;
+// The attempt whose Cancel the desktop could not save: the person meant to end
+// it, so a lapse of its request is shown instead of renewed.
+let cancelNotSavedFor: number | null = null;
 // The failed attempt's request was withdrawn and the work let go when it
 // failed, or left to the window that pressed: closing its toast only ends it.
 let failureDealtWith = false;
@@ -229,9 +232,11 @@ function rememberOwnRequest() {
   saveOwnRequest({
     version,
     holdUntil,
+    refused: hold.refused,
     holdAskedAgain: hold.askedAgain,
     held: hold.askedAgain && hold.seen,
     refusedAgain: hold.refusedAgain,
+    askedUnderHoldAt: hold.askedUnderHoldAt,
   });
 }
 
@@ -347,6 +352,7 @@ function updateProgress(
     (previous.phase === "waiting" || previous.phase === "requesting") &&
     installOptions !== undefined &&
     !cancelling &&
+    cancelNotSavedFor !== attempt &&
     renewals < MAX_REQUEST_RENEWALS
   ) {
     renewals += 1;
@@ -382,6 +388,10 @@ function updateProgress(
   ) {
     return;
   }
+  // A Cancel under way owns the attempt: it ends it, or when it could not
+  // withdraw the request, the next read shows the agent's answer. Shown now,
+  // a failure would flash its error and withdraw the request a second time.
+  if (next?.phase === "failed" && cancelling) return;
   setState({ progress: next });
   if (next?.phase !== "failed" || previous.phase === "failed") return;
   // Withdrawing the request or letting the work go would undo the renewal,
@@ -954,6 +964,7 @@ export async function cancelServiceUpdate(): Promise<void> {
     if (state.progress !== null && !canRetryServiceUpdate(state.progress)) return;
     if (!withdrawn) {
       // The agent may still install, so the service stays held for it.
+      cancelNotSavedFor = current;
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -1081,11 +1092,12 @@ async function adoptHeldUpdate(
     // The pending request gives its time, version and hold; without a live
     // one, the agent's own state is followed.
     const pendingVersion = agent.pendingInstall?.version ?? null;
+    let own: SavedOwnRequest | null = null;
     if (followPendingRequest(agent, pendingVersion, checked.blockers)) {
       // The window that pressed reloaded: the request is its own again, so a
       // lapse renews it and a hold that runs out says so. Another window's
       // request is only followed: nothing is asked again for it.
-      const own = savedOwnRequestFor(agent);
+      own = savedOwnRequestFor(agent);
       if (own !== null) takeUpOwnRequest(own);
     } else {
       const now = Date.now();
@@ -1100,11 +1112,29 @@ async function adoptHeldUpdate(
     }
     // Seen held: it ends once the hold does (see checkBlockers).
     hold.seen = true;
+    if (own?.refused === true) resumeHeldOwnRequest(own, current);
     // A window reloaded during "Update now" for both still installs the app after.
     restoreSavedFollowUp();
   } finally {
     adopting = false;
   }
+}
+
+/**
+ * The window that pressed Update now reloaded while the service holds the
+ * work for its request, after the press's own hold was refused: the agent's
+ * refusal of the request written before any hold is not its answer (see
+ * refusedBeforeHeld). Unless that was done before the reload, the request is
+ * written again under this hold, as holdOnceAgentHasRelease does once its
+ * stop holds the work. A second stop that was refused leaves the refusal
+ * standing, as it did before the reload.
+ */
+function resumeHeldOwnRequest(saved: SavedOwnRequest, current: number): void {
+  hold.refused = true;
+  hold.askedAgain = true;
+  hold.refusedAgain = saved.refusedAgain;
+  hold.askedUnderHoldAt = saved.askedUnderHoldAt;
+  if (!saved.refusedAgain && saved.askedUnderHoldAt === null) askAgain(current);
 }
 
 /**
@@ -1272,6 +1302,7 @@ export function resetServiceUpdateFlowForTests(): void {
   waitingSince = null;
   lastAgentState = null;
   renewals = 0;
+  cancelNotSavedFor = null;
   failureDealtWith = false;
   readBusy = false;
   checkBusy = false;

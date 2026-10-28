@@ -414,11 +414,13 @@ export function agentVerdictForHold(input: {
   if (handled && !busy) return { type: "settled", status };
   const updatedAtMs = reading.updatedAtMs;
   // Some failures end the pass without marking the request handled; holding
-  // the service on until the time limit would only block its users.
+  // the service on until the time limit would only block its users. One
+  // written in the request's own millisecond is not about it: the agent had
+  // not read it yet.
   if (
     (status === "error" || status === "manual-required") &&
     updatedAtMs !== null &&
-    updatedAtMs >= requestedAtMs
+    updatedAtMs > requestedAtMs
   )
     return { type: "settled", status };
   // Freshness is measured from the hold, not the latest request: a window that

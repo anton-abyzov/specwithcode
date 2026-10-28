@@ -209,7 +209,8 @@ function ProjectDetail({
   hasOtherMembers: boolean;
 }) {
   const navigate = useNavigate({ from: "/settings" });
-  const { confirmDeletion, deletionDialog } = useProjectDeletionConfirmation();
+  const { confirmDeletion, deletionDialog, removeConfirmedWorktrees } =
+    useProjectDeletionConfirmation();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const environmentById = useMemo(
@@ -478,6 +479,7 @@ function ProjectDetail({
           return;
         }
         removed += 1;
+        void removeConfirmedWorktrees(member);
         const projectRef = scopeProjectRef(member.environmentId, member.id);
         releaseProjectDraftUploads(
           projectRef,
@@ -496,6 +498,7 @@ function ProjectDetail({
     },
     [
       confirmDeletion,
+      removeConfirmedWorktrees,
       checkProjectAccess,
       deleteProject,
       group.memberProjects.length,
@@ -630,10 +633,10 @@ function ProjectDetail({
             }
             description={
               hasOtherMembers
-                ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+                ? "Deletes the selected machine's checkout entries and their threads. Other machines are not touched. The project folder is kept, and you can choose to delete its worktrees."
                 : group.memberProjects.length > 1
-                  ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                  : "Deletes the project entry and its threads. Files on disk are not touched."
+                  ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Project folders are kept, and you can choose to delete their worktrees.`
+                  : "Deletes the project entry and its threads. The project folder is kept, and you can choose to delete its worktrees."
             }
             control={
               <Button

@@ -120,6 +120,14 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:folder-check",
       tag: WS_METHODS.projectsFolderCheck,
     }),
+    worktreesRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:worktrees-read",
+      tag: WS_METHODS.projectsWorktreesRead,
+    }),
+    worktreesRemove: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:worktrees-remove",
+      tag: WS_METHODS.projectsWorktreesRemove,
+    }),
     changeFolder: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:change-folder",
       execute: (input: ChangeProjectFolderInput) => changeProjectFolder(input),

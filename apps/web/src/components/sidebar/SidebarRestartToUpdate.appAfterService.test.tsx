@@ -591,6 +591,23 @@ describe("SidebarRestartToUpdate", () => {
       checked = { idle: true, stoppedThreads: 0, blockers: [], held: true };
     });
 
+    /**
+     * The agent installs 0.2.5 for the press made at `pressedAt`: the desktop
+     * reports that request pending, taken up, until the install ends.
+     */
+    const installingFor = (pressedAt: number): StudioServiceUpdateState => ({
+      ...serviceWaiting,
+      status: "installing",
+      updatedAt: new Date().toISOString(),
+      pendingInstall: {
+        requestedAt: new Date(pressedAt).toISOString(),
+        mode: "force",
+        version: "0.2.5",
+        holdUntil: new Date(pressedAt + 15 * 60_000).toISOString(),
+        handled: true,
+      },
+    });
+
     it("still installs the app after a reload when the service holds nothing any more", async () => {
       const store = useSessionStorage();
       store.set(
@@ -600,7 +617,7 @@ describe("SidebarRestartToUpdate", () => {
       state.app = downloaded;
       // The install gate lifted, so the service answers that nothing is held.
       checked = { idle: true, stoppedThreads: 0, blockers: [], held: false };
-      agent = { ...serviceWaiting, status: "installing", updatedAt: new Date().toISOString() };
+      agent = installingFor(Date.now() - 60_000);
       state.service = agent;
       render();
       await advance(0);
@@ -621,7 +638,7 @@ describe("SidebarRestartToUpdate", () => {
       );
       state.app = downloaded;
       checked = { idle: true, stoppedThreads: 0, blockers: [], held: false };
-      agent = { ...serviceWaiting, status: "installing", updatedAt: new Date().toISOString() };
+      agent = installingFor(Date.now() - ago);
       state.service = agent;
       render();
       await advance(0);
@@ -654,7 +671,7 @@ describe("SidebarRestartToUpdate", () => {
         JSON.stringify({ appVersion: "0.2.5", serviceVersion: "0.2.5", at: Date.now() - 60_000 }),
       );
       state.app = downloaded;
-      agent = { ...serviceWaiting, status: "installing", updatedAt: new Date().toISOString() };
+      agent = installingFor(Date.now() - 60_000);
       state.service = agent;
       // The helper is restarting the service: it cannot answer yet.
       let answering = false;
@@ -677,6 +694,48 @@ describe("SidebarRestartToUpdate", () => {
       await advance(2_000);
       expect(calls.at(-1)).toBe("installUpdate:0.2.5");
       expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("installs the app after a reload while the agent's last snapshot for the request outlives its hold", async () => {
+      const store = useSessionStorage();
+      const pressedAt = Date.now() - 15 * 60_000 - 20_000;
+      store.set(
+        FOLLOW_UP_KEY,
+        JSON.stringify({ appVersion: "0.2.5", serviceVersion: "0.2.5", at: pressedAt }),
+      );
+      state.app = downloaded;
+      // The request's hold ended 20 s ago and the agent has not taken it up,
+      // so the desktop no longer reports it; but the agent's last snapshot
+      // for it still runs, and the service keeps the work held meanwhile.
+      agent = {
+        ...serviceWaiting,
+        message: "Waiting for a quiet moment before installing SpecWithCode 0.2.5 (attempt 41)",
+        updatedAt: new Date(pressedAt + 15 * 60_000 - 30_000).toISOString(),
+        pendingInstall: null,
+      };
+      state.service = agent;
+      render();
+      await advance(0);
+      expect(store.has(FOLLOW_UP_KEY)).toBe(true);
+      // The snapshot answers: the agent takes the request up and installs it.
+      agent = installingFor(pressedAt);
+      state.service = agent;
+      rerender();
+      await advance(2_000);
+      expect(label()).toBe("Installing…");
+      agent = {
+        ...serviceWaiting,
+        status: "installed",
+        installedVersion: "0.2.5",
+        updatedAt: new Date().toISOString(),
+        lastInstall: { version: "0.2.5", at: new Date().toISOString(), result: "updated" },
+        pendingInstall: null,
+      };
+      state.service = agent;
+      rerender();
+      await advance(2_000);
+      await advance(5_000);
+      expect(calls).toContain("installUpdate:0.2.5");
     });
 
     it("installs the app after a reload that missed the end of the service update", async () => {

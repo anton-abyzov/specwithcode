@@ -23,6 +23,11 @@ export interface WorktreeRemovalContext {
     /** Re-read the exact cancelled bootstrap; a retry/replacement revokes this exception. */
     readonly verify: () => Effect.Effect<boolean>;
   };
+  /** Removal of a deleted project's worktree, confirmed by the person in the delete dialog. */
+  readonly projectDeletion?: {
+    /** They agreed to lose its uncommitted, untracked and ignored files. The branch stays. */
+    readonly discardLocalChanges: boolean;
+  };
 }
 
 class PendingThreadCleanup extends Schema.TaggedError<PendingThreadCleanup>()(
@@ -51,6 +56,7 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
         cwd: input.cwd,
         detail,
       });
+    const discard = context?.projectDeletion?.discardLocalChanges === true;
     return Effect.scoped(
       Effect.gen(function* () {
         const requestedPath = path.resolve(input.path);
@@ -146,9 +152,13 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
           if (!registered.includes(worktreePath))
             return yield* reject("This path is not a linked worktree of the requested repository.");
           const status = yield* git.statusDetailsLocal(worktreePath);
-          if (!status.isRepo || status.branch === null || status.hasWorkingTreeChanges)
+          if (!status.isRepo || status.branch === null)
             return yield* reject(
-              "The worktree has local changes or no retained branch. Commit or preserve its files first.",
+              "The worktree has no retained branch. Commit or preserve its files first.",
+            );
+          if (status.hasWorkingTreeChanges && !discard)
+            return yield* reject(
+              "The worktree has local changes. Commit or preserve its files first.",
             );
           const ignored = yield* git.execute({
             operation: "WorktreeRemoval.ignoredFiles",
@@ -157,10 +167,11 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
             maxOutputBytes: 64 * 1024,
           });
           if (
-            ignored.stdoutTruncated ||
-            ignored.stdout
-              .split("\0")
-              .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
+            !discard &&
+            (ignored.stdoutTruncated ||
+              ignored.stdout
+                .split("\0")
+                .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry)))
           )
             return yield* reject(
               "The worktree contains ignored local files. Preserve them before removing it.",
@@ -179,9 +190,10 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
           if (before.head !== after.head || before.branch !== after.branch)
             return yield* reject("The worktree changed during inspection. Its files were kept.");
           yield* assertUnowned();
-          // Client force flags never authorize discarding data. Git is the final dirty check.
+          // Client force flags never authorize discarding data; only the confirmed
+          // project deletion does. Otherwise Git is the final dirty check.
           // External processes do not participate in Studio's lease; no cross-process lock is claimed.
-          yield* git.removeWorktree({ cwd: input.cwd, path: worktreePath, force: false });
+          yield* git.removeWorktree({ cwd: input.cwd, path: worktreePath, force: discard });
         });
         // Cover the caller's spelling and canonical spelling in a stable order.
         const leasePaths = [...new Set([requestedPath, worktreePath])].sort();
@@ -196,7 +208,8 @@ export const makeWorktreeRemovalGuard = Effect.gen(function* () {
       Effect.retry({
         while: (error) => Schema.is(PendingThreadCleanup)(error),
         schedule: Schedule.spaced("250 millis"),
-        times: 20,
+        // A whole project's threads were just deleted; their cleanup takes longer.
+        times: context?.projectDeletion === undefined ? 20 : 240,
       }),
       Effect.mapError((cause) =>
         Schema.is(GitCommandError)(cause)

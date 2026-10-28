@@ -51,6 +51,7 @@ const state = vi.hoisted(() => ({
       }) => Promise<AsyncResult.Success<void>>
     >(),
   confirm: vi.fn<() => Promise<boolean>>(),
+  removeWorktrees: vi.fn(async (_target: { id: string }) => undefined),
   updateSettings: vi.fn(),
   upsertKeybinding: vi.fn(),
   removeKeybinding: vi.fn(),
@@ -123,6 +124,7 @@ vi.mock("../studio/useProjectDeletionConfirmation", () => ({
     confirmDeletion: async (target: { title: string }) =>
       (await state.confirm()) ? target.title : null,
     deletionDialog: null,
+    removeConfirmedWorktrees: state.removeWorktrees,
   }),
 }));
 vi.mock("~/composerDraftStore", () => ({
@@ -524,6 +526,10 @@ describe("project settings permissions", () => {
         confirmationTitle: state.projects[0]!.title,
       },
     });
+    // Worktrees the user ticked go only after their project is deleted.
+    expect(state.removeWorktrees).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: state.projects[0]!.id }),
+    );
     expect(state.releaseUploads).toHaveBeenCalledOnce();
     expect(state.clearDraft).toHaveBeenCalledOnce();
   });
