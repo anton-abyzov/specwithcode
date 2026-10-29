@@ -10,12 +10,17 @@ import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
+  loaded: new Set<string>(),
   readScope: vi.fn(),
+  awaitScope: vi.fn(),
   run: vi.fn(),
 }));
 
 vi.mock("react", () => ({ useCallback: (callback: unknown) => callback }));
-vi.mock("./session", () => ({ readEnvironmentScope: state.readScope }));
+vi.mock("./session", () => ({
+  readEnvironmentScope: state.readScope,
+  awaitEnvironmentScope: state.awaitScope,
+}));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => state.run }));
 
 import { useOrchestrationCommand } from "./use-orchestration-command";
@@ -31,13 +36,31 @@ const target = (environmentId: EnvironmentId): Target => ({
 
 beforeEach(() => {
   state.allowed.clear();
+  state.loaded.clear();
   state.run.mockReset().mockResolvedValue(AsyncResult.success("receipt"));
   state.readScope
     .mockReset()
     .mockImplementation(
       (environmentId, scope) =>
+        scope === AuthOrchestrationOperateScope &&
+        state.allowed.has(environmentId) &&
+        !state.loaded.has(environmentId),
+    );
+  state.awaitScope
+    .mockReset()
+    .mockImplementation(
+      async (environmentId, scope) =>
         scope === AuthOrchestrationOperateScope && state.allowed.has(environmentId),
     );
+});
+
+it("loads an expired grant before deciding instead of reporting a denial", async () => {
+  state.allowed.add(first);
+  state.loaded.add(first);
+  const mutate = useOrchestrationCommand(command);
+  expect(await mutate(target(first))).toMatchObject({ _tag: "Success", value: "receipt" });
+  expect(state.awaitScope).toHaveBeenCalledWith(first, AuthOrchestrationOperateScope);
+  expect(state.run).toHaveBeenCalledWith(target(first));
 });
 
 it("checks the command's environment instead of borrowing the primary grant", async () => {
