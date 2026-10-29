@@ -4,7 +4,9 @@ import {
   EnvironmentId,
   EventId,
   type LinkedMemoryExport,
+  PROJECT_LINK_MAX_BYTES,
   PROJECT_MEMORY_FILE_BYTES,
+  type ProjectCoordinatorBinding,
   ProjectId,
   type ProjectLinkError,
   ThreadId,
@@ -47,12 +49,14 @@ const machine = (
     members,
   },
   kind: "code" | "personal" = "code",
+  coordinatorBinding?: ProjectCoordinatorBinding,
 ) =>
   Effect.gen(function* () {
     const project = projectFixture(self.projectId, {
       workspaceSettings: {
         ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
         kind,
+        ...(coordinatorBinding ? { coordinatorBinding } : {}),
         ...(logicalProject
           ? {
               logicalProject: {
@@ -168,6 +172,12 @@ const machine = (
     const exported = sync.pipe(
       Effect.flatMap((service) => service.memoryExport({ projectId: self.projectId })),
     );
+    const exportPage = (options: { cursor?: string; digestOnly?: boolean }) =>
+      sync.pipe(
+        Effect.flatMap((service) =>
+          service.memoryExport({ projectId: self.projectId, ...options }),
+        ),
+      );
     const merge = (peer: typeof alpha, memory: LinkedMemoryExport, peerLabel = "Peer") =>
       sync.pipe(
         Effect.flatMap((service) =>
@@ -183,7 +193,7 @@ const machine = (
         Effect.flatMap((service) => service.read(self.projectId)),
       ),
     );
-    return { self, write, remove, contents, exported, merge, history };
+    return { self, write, remove, contents, exported, exportPage, merge, history };
   });
 
 type Machine = Effect.Success<ReturnType<typeof machine>>;
@@ -250,6 +260,62 @@ it.effect("exports MEMORY.md first with hashes, versions and tombstones", () =>
 );
 
 // Live: the memory store stamps writes with the wall clock.
+it.live("pages memory beyond one message so the whole store reaches the peer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* machine(alpha, "Alpha");
+      const b = yield* machine(beta, "Beta");
+      yield* a.write("gone.md", "bye");
+      yield* a.remove("gone.md");
+      const names = Array.from({ length: 9 }, (_, index) => `big-${index}.md`);
+      for (const [index, name] of names.entries())
+        yield* a.write(name, String(index).repeat(PROJECT_MEMORY_FILE_BYTES));
+      yield* a.write("MEMORY.md", "# index");
+
+      const first = yield* a.exported;
+      assert.strictEqual(first.files[0]?.name, "MEMORY.md");
+      assert.isTrue(first.truncated);
+      assert.isString(first.nextCursor);
+      assert.deepStrictEqual(
+        first.tombstones.map((tombstone) => tombstone.name),
+        ["gone.md"],
+      );
+      let bytes = 0;
+      for (const file of first.files) bytes += file.content.length;
+      assert.isAtMost(bytes, PROJECT_LINK_MAX_BYTES);
+
+      const pages = [first];
+      while (pages.at(-1)!.nextCursor)
+        pages.push(yield* a.exportPage({ cursor: pages.at(-1)!.nextCursor! }));
+      assert.isAbove(pages.length, 1);
+      const last = pages.at(-1)!;
+      assert.isFalse(last.truncated);
+      assert.deepStrictEqual(last.tombstones, []);
+      assert.deepStrictEqual(
+        pages.flatMap((page) => page.files.map((file) => file.name)).toSorted(),
+        ["MEMORY.md", ...names].toSorted(),
+      );
+      // Every page and a digest-only export describe the same whole memory.
+      const summary = yield* a.exportPage({ digestOnly: true });
+      assert.deepStrictEqual(summary.files, []);
+      assert.isString(summary.digest);
+      for (const page of pages) assert.strictEqual(page.digest, summary.digest);
+
+      for (const page of pages) yield* b.merge(alpha, page);
+      const copied = yield* b.contents;
+      assert.deepStrictEqual(Object.keys(copied).toSorted(), ["MEMORY.md", ...names].toSorted());
+      assert.strictEqual(copied["big-8.md"], "8".repeat(PROJECT_MEMORY_FILE_BYTES));
+      // b took a's files and deletion, so both copies now report one digest.
+      assert.strictEqual((yield* b.exportPage({ digestOnly: true })).digest, summary.digest);
+
+      assert.strictEqual(
+        refusal(yield* Effect.exit(a.exportPage({ cursor: "not a cursor" }))),
+        "invalid",
+      );
+    }),
+  ),
+);
+
 it.live("replicates memory both ways and keeps the losing edit as a conflict copy", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -288,6 +354,34 @@ it.live("replicates memory both ways and keeps the losing edit as a conflict cop
         kept: [],
         skipped: [],
       });
+    }),
+  ),
+);
+
+it.effect("replicates a bulk delete larger than one page of tombstones", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* machine(alpha, "Alpha");
+      const b = yield* machine(beta, "Beta");
+      const names = Array.from({ length: 300 }, (_, index) => `receipt-${index}.md`);
+      for (const name of names) yield* a.write(name, name);
+      yield* a.write("MEMORY.md", "# index");
+      yield* pass(a, b);
+      for (const name of names) yield* a.remove(name);
+      assert.strictEqual(Object.keys((yield* a.history).tombstones).length, 300);
+
+      const pages = [yield* a.exported];
+      while (pages.at(-1)!.nextCursor)
+        pages.push(yield* a.exportPage({ cursor: pages.at(-1)!.nextCursor! }));
+      assert.deepStrictEqual(
+        pages.map((page) => page.tombstones.length),
+        [256, 44],
+      );
+      for (const page of pages) yield* b.merge(alpha, page);
+      // Every deletion reached b, so none can come back on the next pass.
+      assert.deepStrictEqual(yield* b.contents, { "MEMORY.md": "# index" });
+      yield* pass(a, b);
+      assert.deepStrictEqual(yield* a.contents, { "MEMORY.md": "# index" });
     }),
   ),
 );
@@ -375,6 +469,26 @@ it.effect("never exports a personal assistant's memory nor merges another machin
         "not_code_project",
       );
       assert.deepStrictEqual(yield* household.contents, { "notes.md": "groceries" });
+    }),
+  ),
+);
+
+it.effect("refuses a peer's memory while this copy moves to another machine", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const moving = yield* machine(alpha, "Alpha", undefined, "code", {
+        epoch: 1,
+        state: "transferring",
+        operationId: "11111111-1111-4111-8111-111111111111",
+      });
+      const b = yield* machine(beta, "Beta");
+      yield* moving.write("notes.md", "before the move");
+      yield* b.write("notes.md", "late from beta");
+      assert.strictEqual(
+        refusal(yield* Effect.exit(moving.merge(beta, yield* b.exported))),
+        "handoff_in_progress",
+      );
+      assert.deepStrictEqual(yield* moving.contents, { "notes.md": "before the move" });
     }),
   ),
 );

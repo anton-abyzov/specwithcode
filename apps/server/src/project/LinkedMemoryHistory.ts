@@ -29,6 +29,8 @@ export class LinkedMemoryHistory extends Context.Service<
       projectId: ProjectId,
       update: (state: MemoryHistoryState) => MemoryHistoryState,
     ) => Effect.Effect<MemoryHistoryState, LinkedMemoryHistoryError>;
+    /** Forgets a deleted project's versions; a missing file is already forgotten. */
+    readonly remove: (projectId: ProjectId) => Effect.Effect<void, LinkedMemoryHistoryError>;
   }
 >()("specweave-studio/project/LinkedMemoryHistory") {}
 
@@ -98,6 +100,10 @@ export const layer = Layer.effect(
           yield* write(projectId, next);
           return next;
         }).pipe(lock.withPermits(1)),
+      remove: (projectId) =>
+        fileSystem
+          .remove(fileOf(projectId), { force: true })
+          .pipe(Effect.mapError(failed), lock.withPermits(1)),
     });
   }),
 );
@@ -114,5 +120,6 @@ export const layerMemory = Layer.sync(LinkedMemoryHistory, () => {
         states.set(projectId, next);
         return next;
       }),
+    remove: (projectId) => Effect.sync(() => void states.delete(projectId)),
   });
 });

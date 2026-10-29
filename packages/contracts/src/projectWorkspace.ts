@@ -205,6 +205,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       "transferred",
       "update_in_progress",
       "operation_failed",
+      "moving",
     ]),
     projectId: ProjectId,
     /** With `update_in_progress`: the update is installed and its release is being checked. */
@@ -245,6 +246,8 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
           ? SERVICE_UPDATE_VERIFYING_MESSAGE
           : SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
       operation_failed: "The project operation failed. Reload and try again.",
+      moving:
+        "This project is moving to another machine, so its memory is read-only until the move finishes. Save the change on the machine it moves to.",
     };
     return messages[this.code];
   }

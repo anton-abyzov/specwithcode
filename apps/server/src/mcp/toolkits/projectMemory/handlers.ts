@@ -5,6 +5,8 @@ import {
   type ProjectWorkspaceReadResult,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as MachineHandoff from "../../../fleet/MachineHandoff.ts";
 import * as Workspace from "../../../project/ProjectWorkspaceService.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller, resolveProjectId } from "../../threadAccess.ts";
@@ -108,7 +110,13 @@ export const layer = Access.toLayer(ProjectMemoryToolkit, {
       if (refusal) {
         return yield* new OrchestratorMcpFailure({ code: "invalid_request", message: refusal });
       }
-      return yield* workspace.writeMemory({ ...input, projectId, expectedRevision }).pipe(
+      const write = workspace.writeMemory({ ...input, projectId, expectedRevision });
+      // A project moving to another machine takes no new memory until the move finishes.
+      // Hosts built without machine moves (focused test layers) have nothing to fence.
+      const handoff = yield* Effect.serviceOption(MachineHandoff.MachineHandoff);
+      return yield* (
+        Option.isSome(handoff) ? handoff.value.guardMemoryWrite(projectId, write) : write
+      ).pipe(
         Effect.catch((error) =>
           error.code === "conflict"
             ? workspace.readMemory({ projectId, name: input.name }).pipe(

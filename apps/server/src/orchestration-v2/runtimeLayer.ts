@@ -6,6 +6,7 @@ import * as CoordinatorReplicas from "../project/CoordinatorReplicas.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
+import * as ProjectLinkStateCleanup from "../project/ProjectLinkStateCleanup.ts";
 import * as MachineHandoffStore from "../fleet/MachineHandoffStore.ts";
 import * as HandoffGit from "../fleet/handoffGit.ts";
 import * as ProjectConnectionService from "../project/ProjectConnectionService.ts";
@@ -490,6 +491,16 @@ export const layerProduction = Layer.mergeAll(
   LinkedMemorySync.layer.pipe(
     Layer.provide(
       Layer.mergeAll(layerProjectService, layerProjectWorkspaceProvided, LinkedMemoryHistory.layer),
+    ),
+  ),
+  ProjectLinkStateCleanup.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectStore.layer,
+        layerEventInfrastructure,
+        LinkedMemoryHistory.layer,
+        CoordinatorReplicas.layer,
+      ),
     ),
   ),
   HandoffMode.layer.pipe(

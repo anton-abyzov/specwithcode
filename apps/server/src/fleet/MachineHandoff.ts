@@ -6,12 +6,16 @@ import {
   machineHandoffDigest,
   comparableContext,
   checkBundle,
+  contextWithinLimits,
+  importDestinationNotes,
+  planDestinationNotes,
 } from "./handoffBundle.ts";
 export { machineHandoffDigest } from "./handoffBundle.ts";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   MACHINE_HANDOFF_MAX_BYTES,
+  MACHINE_HANDOFF_MEMORY_MAX_BYTES,
   MachineHandoffBundle,
   MachineHandoffContext,
   MachineHandoffError,
@@ -20,6 +24,7 @@ import {
   MachineHandoffReceiveResult,
   type Project,
   ProjectId,
+  ProjectWorkspaceError,
   MessageId,
   ThreadId,
   type MachineHandoffPrepareInput,
@@ -131,6 +136,7 @@ const PreparedLaunch = Schema.Struct({
   workspacePath: Schema.String,
   contextPath: Schema.String,
   prompt: Schema.String,
+  verifiedNotes: Schema.optional(Schema.Number),
 });
 const DestinationRecord = Schema.Struct({
   digest: MachineHandoffBundle.fields.digest,
@@ -157,6 +163,11 @@ export class MachineHandoff extends Context.Service<
     readonly receive: (
       input: MachineHandoffReceiveInput,
     ) => Effect.Effect<MachineHandoffReceiveResult, MachineHandoffError>;
+    /** Runs a person's or agent's memory write, refused while the project moves. */
+    readonly guardMemoryWrite: <A, E, R>(
+      projectId: ProjectId,
+      write: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | ProjectWorkspaceError, R>;
     readonly copyScopes: (
       input: FolderCopyScopesInput,
     ) => Effect.Effect<FolderCopyScopes, FolderCopyError>;
@@ -291,7 +302,7 @@ const make = Effect.gen(function* () {
         const chosen = candidates.filter(
           (t) => selected === coordinatorId || t.id === selected || t.id === coordinatorId,
         );
-        if (chosen.length > 100 || metadata.memory.totalBytes > MACHINE_HANDOFF_MAX_BYTES)
+        if (chosen.length > 100 || metadata.memory.totalBytes > MACHINE_HANDOFF_MEMORY_MAX_BYTES)
           return yield* new MachineHandoffError({ code: "too_large" });
         const notes = yield* Effect.forEach(metadata.memory.files, (file) =>
           workspace
@@ -362,10 +373,7 @@ const make = Effect.gen(function* () {
           notes,
           threads: [...segments.values()],
         };
-        if (
-          Buffer.byteLength(stringifyJson(result)) > MACHINE_HANDOFF_MAX_BYTES ||
-          !isHandoffContext(result)
-        )
+        if (!contextWithinLimits(result) || !isHandoffContext(result))
           return yield* new MachineHandoffError({ code: "too_large" });
         return result;
       }),
@@ -970,6 +978,21 @@ const make = Effect.gen(function* () {
         return yield* new MachineHandoffError({ code: "conflict" });
       return bundle;
     });
+  // The fence is written under this same lock, so no write lands after the bundle was read.
+  const guardMemoryWrite: MachineHandoff["Service"]["guardMemoryWrite"] = (projectId, write) =>
+    admission.withLock(
+      projectId,
+      Effect.gen(function* () {
+        const refuse = (code: "moving" | "operation_failed") =>
+          new ProjectWorkspaceError({ projectId, code });
+        const found = yield* Effect.mapError(projects.getById(projectId), () =>
+          refuse("operation_failed"),
+        );
+        const binding = Option.getOrUndefined(found)?.workspaceSettings?.coordinatorBinding;
+        if (binding?.state === "transferring") return yield* refuse("moving");
+        return yield* write;
+      }),
+    );
   const receive: MachineHandoff["Service"]["receive"] = (input) =>
     locks.withLock(
       `destination:${input.operationId}`,
@@ -979,21 +1002,7 @@ const make = Effect.gen(function* () {
           const metadata = yield* Effect.try({
             try: () => {
               if (input.mode === "start") checkBundle(input.bundle);
-              const value =
-                input.mode === "start"
-                  ? previewMetadata(input.bundle)
-                  : {
-                      manifest: input.manifest,
-                      sourceEnvironmentId: input.sourceEnvironmentId,
-                      sourceProjectId: input.sourceProjectId,
-                      sourceThreadId: input.sourceThreadId,
-                      digest: input.digest,
-                      ...(input.logicalProject ? { logicalProject: input.logicalProject } : {}),
-                      ...(input.coordinatorBinding
-                        ? { coordinatorBinding: input.coordinatorBinding }
-                        : {}),
-                      ...(input.destination ? { destination: input.destination } : {}),
-                    };
+              const value = previewMetadata(input.mode === "start" ? input.bundle : input);
               if (!isPreviewMetadata(value) || !validManifest(value.manifest))
                 throw new MachineHandoffError({ code: "invalid" });
               if (Buffer.byteLength(stringifyJson(value)) > MACHINE_HANDOFF_MAX_BYTES)
@@ -1177,6 +1186,9 @@ const make = Effect.gen(function* () {
                 workspacePath: launch.workspacePath,
                 contextPath: launch.contextPath,
                 replayed: true,
+                ...(launch.verifiedNotes === undefined
+                  ? {}
+                  : { verifiedNotes: launch.verifiedNotes }),
               };
               yield* store.write(`destination-${input.operationId}`, {
                 ...saved,
@@ -1227,6 +1239,17 @@ const make = Effect.gen(function* () {
               contextPath: null,
               replayed: false,
             };
+          const noteSteps = saved?.configured
+            ? null
+            : yield* planDestinationNotes(workspace, {
+                projectId: executionProjectId,
+                notes: input.bundle.context.notes,
+                sourceEnvironmentId: metadata.sourceEnvironmentId,
+                nicknames: yield* serverSettings.getSettings.pipe(
+                  Effect.map((settings) => settings.machineNicknames),
+                  Effect.orElseSucceed(() => ({})),
+                ),
+              });
           if (!saved)
             yield* store.write(`destination-${input.operationId}`, {
               digest: metadata.digest,
@@ -1356,22 +1379,9 @@ const make = Effect.gen(function* () {
               "storage_failed",
             );
           }
-          if (!saved?.configured)
-            for (const note of input.bundle.context.notes) {
-              const currentNote = yield* workspace
-                .readMemory({ projectId, name: note.name })
-                .pipe(Effect.option);
-              if (Option.isNone(currentNote))
-                yield* guarded(
-                  workspace.writeMemory({
-                    projectId,
-                    name: note.name,
-                    content: note.content,
-                    expectedRevision: null,
-                  }),
-                  "storage_failed",
-                );
-            }
+          const verifiedNotes = noteSteps
+            ? yield* importDestinationNotes(workspace, projectId, noteSteps)
+            : saved?.launch?.verifiedNotes;
           const prompt = launchPrompt(
             input.operationId,
             contextPath,
@@ -1389,6 +1399,7 @@ const make = Effect.gen(function* () {
             workspacePath: materialized.workspaceRoot,
             contextPath,
             prompt,
+            ...(verifiedNotes === undefined ? {} : { verifiedNotes }),
           };
           // This is intent, never proof of a started turn. Recovery requires the accepted event.
           yield* store.write(`destination-${input.operationId}`, {
@@ -1419,6 +1430,7 @@ const make = Effect.gen(function* () {
             workspacePath: materialized.workspaceRoot,
             contextPath,
             replayed: false,
+            ...(verifiedNotes === undefined ? {} : { verifiedNotes }),
           };
           yield* store.write(`destination-${input.operationId}`, {
             digest: metadata.digest,
@@ -1435,6 +1447,7 @@ const make = Effect.gen(function* () {
   return MachineHandoff.of({
     prepare,
     receive,
+    guardMemoryWrite,
     copyScopes,
     copyOffer,
     copySourceStatus,
