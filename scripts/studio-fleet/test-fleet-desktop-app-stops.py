@@ -216,8 +216,12 @@ exec "$(dirname "$0")/codesign" "$@"
         # while the app still ran, and once it quit it stayed closed.
         make_app(self.app, OLD)
         self.serve()
-        app = self.start(quit_after=2)
-        script = self.spawn(own_group=True)
+        # Generous quit margin: both signals must land in pgrep waits while
+        # the app is still quitting, and a loaded runner can take seconds to
+        # schedule the held stub between the two. The run's quit deadline
+        # rises with it so the wait itself does not expire first.
+        app = self.start(quit_after=10)
+        script = self.spawn(own_group=True, SWC_QUIT_WAIT='30')
         lines = []
         for line in script.stdout:
             lines.append(line.rstrip('\n'))

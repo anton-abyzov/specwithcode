@@ -1,3 +1,4 @@
+import { LifecycleGoal } from "./threadLifecycleEvidence.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -108,6 +109,21 @@ export const OrchestratorMcpDelegation = Schema.Struct({
     "Set by SpecWithCode between machines; agents never pass it. The machines this launch came through and its hop count.",
 });
 export type OrchestratorMcpDelegation = typeof OrchestratorMcpDelegation.Type;
+
+/**
+ * Who on the sending machine asked for a launch there: the outside client's
+ * name, or the thread that started it. Display text for the new thread's
+ * badge only; the machine that runs it trusts nothing else in it, and a
+ * machine from before it ignores it.
+ */
+export const OrchestratorMcpOriginHint = Schema.Struct({
+  clientLabel: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  parentThreadId: Schema.optional(ThreadId),
+}).annotate({
+  description:
+    "Set by SpecWithCode between machines; agents never pass it. Who on the sending machine started this launch, shown on the new thread.",
+});
+export type OrchestratorMcpOriginHint = typeof OrchestratorMcpOriginHint.Type;
 
 /**
  * OpenCode 1.15 has been observed serializing nested MCP union objects as JSON
@@ -303,7 +319,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "Defaults to async. Use wait only when this turn needs the child's result before you can continue.",
     }),
   ),
-  timeoutMs: Schema.optional(Schema.Number).annotate({
+  timeoutMs: Schema.optional(Schema.Finite).annotate({
     description:
       "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
@@ -569,6 +585,8 @@ export const OrchestratorMcpThreadListResult = Schema.Struct({
 export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListResult.Type;
 
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
+  /** False reads without acknowledging a delegated result; omitted keeps normal read behavior. */
+  acknowledgeResult: Schema.optional(Schema.Boolean),
   machine: Schema.optional(OrchestratorMcpMachineTarget),
   threadId: ThreadId,
   itemId: Schema.optional(TurnItemId),
@@ -582,6 +600,8 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
 export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
 
 export const OrchestratorMcpThreadDetail = Schema.Struct({
+  /** Durable required goal work, including stable IDs for independent evidence updates. */
+  goal: Schema.optional(LifecycleGoal),
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
@@ -712,7 +732,7 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   machine: Schema.optional(OrchestratorMcpMachineTarget),
   threadId: ThreadId,
   runId: Schema.optional(RunId),
-  timeoutMs: Schema.optional(Schema.Number),
+  timeoutMs: Schema.optional(Schema.Finite),
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 
@@ -942,6 +962,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     batchThreadCreation: Schema.Boolean,
     threadManagement: Schema.Boolean,
     incrementalThreadRead: Schema.Boolean,
+    /** Positive support is required before forwarding acknowledgeResult: false. */
+    readThreadWithoutAcknowledgement: Schema.optional(Schema.Boolean),
     scheduledTasks: Schema.Boolean,
     maxBatchThreads: Schema.Number,
     /** Most unfinished delegate_task children one parent run may hold at once. */
@@ -995,6 +1017,8 @@ export const OrchestratorMcpMachine = Schema.Struct({
   grantExpiresAt: Schema.NullOr(IsoDateTime),
   project: Schema.optional(OrchestratorMcpMachineProject),
   providers: Schema.optional(Schema.Array(OrchestratorMcpMachineProvider)),
+  /** Whether the machine answered just now; absent when it was not asked (no usable grant). */
+  reachable: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpMachine = typeof OrchestratorMcpMachine.Type;
 

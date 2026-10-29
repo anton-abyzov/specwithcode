@@ -9,7 +9,11 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
-import { GitCommandError, SourceControlProviderError } from "@specweave-studio/contracts";
+import {
+  GitCommandError,
+  SourceControlProviderError,
+  type SourceControlCloneRepositoryInput,
+} from "@specweave-studio/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -409,6 +413,117 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+function rejectingSsh(
+  urls: Array<string>,
+  httpsFails: boolean,
+  reason: GitCommandError["reason"] = "authentication_failed",
+) {
+  return {
+    execute: (input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.gen(function* () {
+        const url = input.args.at(-2)!;
+        urls.push(url);
+        if (url.startsWith("https://") && !httpsFails) return processOutput();
+        yield* (
+          input.progress?.onStderrLine?.(
+            url.startsWith("https://")
+              ? "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+              : "git@github.com: Permission denied (publickey).",
+          ) ?? Effect.void
+        );
+        return yield* new GitCommandError({
+          operation: input.operation,
+          command: "git",
+          cwd: input.cwd,
+          reason,
+          detail: "Git command exited with a non-zero status.",
+        });
+      }),
+  } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+}
+
+const cloneInTemporaryDirectory = (
+  git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
+  input: Omit<SourceControlCloneRepositoryInput, "destinationPath">,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs
+      .makeTempDirectoryScoped({ prefix: "studio-clone-fallback-" })
+      .pipe(Effect.orDie);
+    return yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.cloneRepository({
+        ...input,
+        destinationPath: path.join(parent, "studio"),
+      });
+    }).pipe(Effect.provide(layer({ git }).pipe(Layer.orDie)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.effect("retries a clone over HTTPS when the SSH login is refused", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* cloneInTemporaryDirectory(rejectingSsh(urls, false), {
+      remoteUrl: CLONE_URLS.sshUrl,
+    });
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl, "https://github.com/octocat/studio.git"]);
+    assert.strictEqual(result.remoteUrl, "https://github.com/octocat/studio.git");
+  }),
+);
+
+it.effect("retries a looked-up repository over the provider's own HTTPS URL", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* cloneInTemporaryDirectory(
+      rejectingSsh(urls, false, "host_key_unverified"),
+      { provider: "github", repository: "octocat/studio" },
+    );
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl, CLONE_URLS.url]);
+    assert.strictEqual(result.remoteUrl, CLONE_URLS.url);
+  }),
+);
+
+it.effect("reports both failures when the HTTPS retry fails too", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const error = yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, true), { remoteUrl: CLONE_URLS.sshUrl }),
+    );
+
+    assert.strictEqual(urls.length, 2);
+    assert.strictEqual(
+      error.detail,
+      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    );
+  }),
+);
+
+it.effect.each([
+  ["the caller asked for SSH", "ssh", "authentication_failed", CLONE_URLS.sshUrl],
+  ["git failed for another reason", undefined, "remote_unreachable", CLONE_URLS.sshUrl],
+  [
+    "the SSH URL has a custom port",
+    undefined,
+    "authentication_failed",
+    "ssh://git@host.example:2222/a/b.git",
+  ],
+] as const)("does not retry over HTTPS when %s", ([, protocol, reason, remoteUrl]) =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, false, reason), {
+        remoteUrl,
+        ...(protocol === undefined ? {} : { protocol }),
+      }),
+    );
+
+    assert.deepStrictEqual(urls, [remoteUrl]);
+  }),
+);
+
 it.effect("strips embedded credentials from the remote URL it reports", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -737,6 +852,78 @@ it.effect("checks remote access with git ls-remote before a clone", () =>
       ),
     ),
   ),
+);
+
+function lsRemote(urls: Array<string>, answers: (url: string) => "ok" | "denied" | "timeout") {
+  return {
+    execute: (input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.gen(function* () {
+        const url = input.args.at(-1)!;
+        urls.push(url);
+        const answer = answers(url);
+        if (answer === "timeout") {
+          return yield* new GitCommandError({
+            operation: input.operation,
+            command: "git",
+            cwd: input.cwd,
+            detail: "Git command timed out.",
+          });
+        }
+        return answer === "ok"
+          ? processOutput()
+          : {
+              ...processOutput(),
+              exitCode: ChildProcessSpawner.ExitCode(128),
+              stderr: "git@github.com: Permission denied (publickey).\n",
+            };
+      }),
+  } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+}
+
+const checkAccess = (git: Partial<GitVcsDriver.GitVcsDriver["Service"]>, remoteUrl: string) =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    return yield* service.checkRemoteAccess({ remoteUrl });
+  }).pipe(Effect.provide(layer({ git })));
+
+it.effect("checks the HTTPS form when the SSH key is refused, as a clone would", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* checkAccess(
+      lsRemote(urls, (url) => (url.startsWith("https://") ? "ok" : "denied")),
+      CLONE_URLS.sshUrl,
+    );
+    assert.deepStrictEqual(result, { status: "ok", detail: null });
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl, "https://github.com/octocat/studio.git"]);
+  }),
+);
+
+it.effect("reports the SSH refusal when neither form answers", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* checkAccess(
+      lsRemote(urls, () => "denied"),
+      CLONE_URLS.sshUrl,
+    );
+    assert.strictEqual(result.status, "no-access");
+    assert.strictEqual(result.detail, "git@github.com: Permission denied (publickey).");
+    assert.strictEqual(urls.length, 2);
+  }),
+);
+
+it.effect.each([
+  ["an HTTPS URL", "https://github.com/octocat/studio.git", "denied"],
+  ["an SSH URL that timed out", CLONE_URLS.sshUrl, "timeout"],
+  ["an SSH URL with a custom port", "ssh://git@host.example:2222/a/b.git", "denied"],
+] as const)("asks only once for %s", ([, remoteUrl, answer]) =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    yield* checkAccess(
+      lsRemote(urls, () => answer),
+      remoteUrl,
+    );
+    assert.deepStrictEqual(urls, [remoteUrl]);
+  }),
 );
 
 it("keeps credentials and tokens out of the remote access detail", () => {

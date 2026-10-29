@@ -259,31 +259,9 @@ set `STUDIO_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
 
 ## Connect an outside agent
 
-An agent SpecWithCode did not start, such as Claude Code in your own terminal, can
-drive threads on an environment through its MCP server. In **Settings →
-Connections**, open a saved environment's menu and choose **Copy MCP URL**, then
-add it to the agent. For example:
-
-```sh
-claude mcp add --transport http specweave-studio https://<environment-address>/mcp
-```
-
-The first time the agent connects, it opens a sign-in page on the environment.
-Enter a pairing code from **Settings → Connections** on a device that can manage
-access, or from `specwithcode auth pairing create` on the host, and choose what the agent
-may do. A browser already signed in to that environment as an administrator can
-approve without a code.
-
-- **Read only** lets the agent read projects and threads in every project, and
-  see which providers and models are available. It cannot change anything.
-- **Supervised** through **Full access** also let it start, message and stop
-  threads in every project, but it cannot start or steer a thread with more
-  permissions than the mode you chose.
-
-Use an HTTPS address: SpecWithCode Connect, Tailscale Serve, or `localhost` on the host
-itself. Agents refuse to sign in through a plain `http://` LAN or tailnet
-address. The agent appears under **Settings → Connections** like any other
-client; revoke it there. Sign-ins last 30 days.
+Claude Code, Codex, ChatGPT, Claude.ai, Grok and other agents SpecWithCode did
+not start can drive threads on an environment, and on your other machines,
+through its MCP server. See [outside agents](./outside-agents.md) for setup.
 
 ## Manage or revoke access
 

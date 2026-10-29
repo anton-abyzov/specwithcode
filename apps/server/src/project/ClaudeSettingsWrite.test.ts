@@ -123,7 +123,9 @@ describe("planClaudeSkillOverride and applyClaudeSkillOverride", () => {
       expect(readSkillOverrides(after)).toEqual({ status: "ok", map: { "sw-do": "off" } });
       expect(applied.hash).toBe(settingsFileHash(after));
       const stat = yield* Effect.promise(() => NodeFSP.stat(target));
-      expect(stat.mode & 0o777).toBe(0o600);
+      // Windows exposes the writable flag through emulated mode bits, not POSIX ACLs.
+      // Still require owner read/write; POSIX must preserve the exact private mode.
+      expect(stat.mode & (NodeOS.platform() === "win32" ? 0o600 : 0o777)).toBe(0o600);
       const backups = yield* Effect.promise(() => NodeFSP.readdir(backupDir));
       expect(backups).toEqual([`${applied.backupId}.json`]);
       const backup = yield* read(join(backupDir, backups[0]!));

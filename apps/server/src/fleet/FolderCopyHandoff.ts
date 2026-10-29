@@ -59,6 +59,7 @@ export function folderCopyError(failure: unknown): FolderCopyError {
     const detail = text(cause.message, 3000);
     return new FolderCopyError({
       code: cause.code === "cancelled" ? "refused" : cause.code,
+      ...(cause.detail.recovery === "compare_again" ? { recovery: "compare_again" as const } : {}),
       ...(detail ? { detail } : {}),
     });
   }
@@ -103,6 +104,7 @@ export function sourceStatus(record: SourceOperationRecord): FolderCopySourceSta
     mode: record.mode,
     state: record.state,
     ...(record.scanCompletedAt !== undefined ? { scanCompletedAt: record.scanCompletedAt } : {}),
+    ...(record.capturedSource ? { capturedAt: record.capturedSource.capturedAt } : {}),
     ...(record.freshness
       ? {
           freshness: {
@@ -219,6 +221,7 @@ function row(planRow: Plan["rows"][number]): FolderCopyRow {
 /** The destination record as the browser sees it; the transfer token never leaves the server. */
 export function copyStatus(record: DestinationRecord, plan: Plan | null): FolderCopyStatus {
   return {
+    ...(record.capturedAt !== undefined ? { capturedAt: record.capturedAt } : {}),
     ...(record.copyRoot ? { copyRoot: record.copyRoot } : {}),
     projectRelativePath: record.projectRelativePath ?? ".",
     projectFolder: copiedProjectFolder(record.targetFolder, record.projectRelativePath),

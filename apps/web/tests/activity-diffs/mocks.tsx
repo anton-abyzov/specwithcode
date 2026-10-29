@@ -1,3 +1,4 @@
+import { INTERNAL_RECEIPTS } from "../agent-messages/internalReceipts";
 /* Synthetic threads, a fake RPC server and the store stand-ins vite.config.ts routes here. */
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
@@ -1009,10 +1010,86 @@ const refThinking = referenceThread("thread-ref-thinking", "Plan the flush chang
   );
 });
 
+// 1106: screenshot-shaped conversations, with real provider wire projection.
+const conciseWorker = new ThreadBuilder("thread-concise-worker", "Investigate command noise", 0);
+conciseWorker.user("Investigate concise mode noise.");
+conciseWorker.startRun(CODEX, "failed");
+for (let index = 0; index < 6; index++) {
+  conciseWorker.assistant(`Checking routine step ${index + 1}.`);
+  conciseWorker.command(`echo routine-${index + 1}`, "ok");
+}
+conciseWorker.command("false", "Focused check failed", { status: "failed", exitCode: 1 });
+conciseWorker.assistant("Credit balance is too low");
+conciseWorker.endRun();
+
+const conciseCoordinator = new ThreadBuilder(
+  "thread-concise-coordinator",
+  "Project coordinator",
+  0,
+);
+for (let index = 0; index < 3; index++) {
+  conciseCoordinator.item({
+    type: "user_message",
+    messageId: MessageId.make(`relay-${index}`),
+    text: INTERNAL_RECEIPTS[index],
+    inputIntent: "turn_start",
+    attachments: [],
+    createdBy: "agent",
+    creationSource: "mcp",
+  });
+  conciseCoordinator.startRun(CODEX);
+  conciseCoordinator.command("echo received", "ok");
+  conciseCoordinator.assistant("  \n\t");
+  conciseCoordinator.endRun();
+}
+conciseCoordinator.user("What needs my decision?");
+conciseCoordinator.startRun(CODEX);
+conciseCoordinator.assistant(
+  "The failing check is preserved. Full activity remains available under each turn.",
+);
+conciseCoordinator.endRun();
+
+// 1106 overlap follow-up: long user steer and a streaming reply through real rows.
+const overlap = new ThreadBuilder("thread-overlap", "Disk-owner layout reproduction", 0);
+for (let index = 0; index < 24; index++) {
+  overlap.user(`Earlier question ${index + 1}.`);
+  overlap.startRun(CODEX);
+  overlap.assistant(
+    `Earlier result ${index + 1}. ` + "Retained history for reader position. ".repeat(4),
+  );
+  overlap.endRun();
+}
+overlap.user("Rank the remaining storage by cleanup value.");
+overlap.startRun(CODEX, "running");
+overlap.item({
+  type: "user_message",
+  messageId: MessageId.make("overlap-steer"),
+  text: ".cargo .ocr, /Users/fixture/.lmstudio-home-pointer and many others. Maybe I don't need this: log files and a couple of other things. From what's left, provide me with the rating of what occupies the most, so that we could take a look at this with the first priority.",
+  inputIntent: "steer",
+  attachments: [],
+  createdBy: "user",
+  creationSource: "web",
+});
+overlap.assistant(
+  "I’ll rank the remaining storage by size and cleanup value before making further broad removals. I’ll also distinguish installed tools and tiny pointers from the files that would meaningfully free space.",
+);
+overlap.command("sed -n '1,160p' /fixture/disk-report.md", "", { status: "running" });
+
 export const threads: Record<string, FixtureThread> = Object.fromEntries(
-  [activity, subagent, fork, states, refSed, refRead, refBrief, refGroup, refThinking].map(
-    (builder) => [builder.thread.id, builder.thread],
-  ),
+  [
+    activity,
+    subagent,
+    fork,
+    states,
+    refSed,
+    refRead,
+    refBrief,
+    refGroup,
+    refThinking,
+    conciseWorker,
+    conciseCoordinator,
+    overlap,
+  ].map((builder) => [builder.thread.id, builder.thread]),
 );
 export const ids = {
   activity: activity.thread.id,
@@ -1156,7 +1233,7 @@ export function useThreadShell(ref: { environmentId: string; threadId: string } 
     ? {
         id: thread.id,
         environmentId: HOST,
-        projectId: null,
+        projectId: thread.id.startsWith("thread-concise-") ? "fixture-project" : null,
         title: thread.title,
         worktreePath: thread.worktreePath,
         providerInstanceId: thread.providerInstanceId,
@@ -1216,3 +1293,22 @@ export function useLatest<T>(value: T): T {
   useEffect(() => setState(value), [value]);
   return state;
 }
+
+// Reply settings for the concise regression headers only. No live settings I/O.
+export const useSettingsProjectGroups = () => [
+  {
+    projectKey: "fixture-project",
+    memberProjects: [{ environmentId: HOST, id: "fixture-project" }],
+  },
+];
+export const SettingsScopeProvider = ({ children }: { children: import("react").ReactNode }) =>
+  children;
+export const useScopedSettings = (select: (settings: any) => unknown) =>
+  select({ responseStyle: "concise" });
+export const useScopedSettingsMixed = () => false;
+export const useScopedSettingsWriteAllowed = () => false;
+export const useUpdateScopedSettings = () => () => {};
+
+export const readThreadShell = useThreadShell;
+
+Object.assign(window, { internalReceiptTexts: INTERNAL_RECEIPTS });

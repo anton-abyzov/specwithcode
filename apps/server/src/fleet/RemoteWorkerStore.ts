@@ -22,9 +22,29 @@ import * as ServerConfig from "../config.ts";
 const FILE_NAME = "remote-workers.json";
 const PRUNE_AFTER = Duration.days(30);
 
+/**
+ * Who started a worker: a thread here, or an MCP client signed in from
+ * outside SpecWithCode. Only a thread is woken when its worker finishes; a
+ * client follows its workers by reading and waiting on them.
+ */
+export const RemoteWorkerLauncher = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("thread"), threadId: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("client"),
+    /** The MCP client session (OAuth or static token) that launched it. */
+    sessionId: Schema.String,
+    label: Schema.String,
+  }),
+]);
+export type RemoteWorkerLauncher = typeof RemoteWorkerLauncher.Type;
+
 export const RemoteWorkerRecord = Schema.Struct({
   id: Schema.String,
+  /** The launching thread; empty for a worker an MCP client launched. */
   callerThreadId: Schema.String,
+  /** Rows written before clients could launch have none: their launcher is `callerThreadId`. */
+  launchedBy: Schema.optionalKey(RemoteWorkerLauncher),
+  /** The local project it was launched for; empty for a projectless (scratch) launch. */
   projectId: Schema.String,
   machineId: Schema.String,
   environmentId: Schema.String,
@@ -57,6 +77,15 @@ export const RemoteWorkerRecord = Schema.Struct({
   readOnly: Schema.optionalKey(Schema.Boolean),
 });
 export type RemoteWorkerRecord = typeof RemoteWorkerRecord.Type;
+
+/** Who launched the row's worker, for rows written before and after clients could. */
+export const launcherOf = (row: RemoteWorkerRecord): RemoteWorkerLauncher =>
+  row.launchedBy ?? { kind: "thread", threadId: row.callerThreadId };
+
+export const sameLauncher = (left: RemoteWorkerLauncher, right: RemoteWorkerLauncher) =>
+  left.kind === "thread"
+    ? right.kind === "thread" && left.threadId === right.threadId
+    : right.kind === "client" && left.sessionId === right.sessionId;
 
 const StoreFile = Schema.Struct({
   version: Schema.Literal(1),

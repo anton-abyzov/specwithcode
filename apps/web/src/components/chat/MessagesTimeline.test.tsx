@@ -1594,7 +1594,7 @@ describe("MessagesTimeline", () => {
     expect(fromCoordinator).toContain('data-relayed-message="coordinator"');
     expect(fromCoordinator).toContain("Message from coordinator");
     expect(fromCoordinator).toContain("View coordinator");
-    expect(fromCoordinator).toContain("Reminder: the release thread owns 1.0.89.");
+    expect(fromCoordinator).not.toContain("Reminder: the release thread owns 1.0.89.");
     expect(fromCoordinator).toContain("<time");
     expect(fromCoordinator).not.toContain("data-message-bubble");
     expect(fromCoordinator).not.toContain("Show full message");
@@ -3794,11 +3794,12 @@ describe("messages another agent sent (1068)", () => {
     }
   };
 
-  it("folds a long one to its verbatim opening in Concise, under its provenance", async () => {
+  it("folds a long relay without a visible preview in Results only, under its provenance", async () => {
     const markup = await render("concise", [agentEntry(REPORT)]);
     expect(markup).toContain("Message from another agent");
     expect(markup).toContain('"data-worker-message":"folded"');
-    expect(markup).toContain("control-desk-0611.spec.ts:74.");
+    expect(markup).not.toContain("control-desk-0611.spec.ts:74.");
+    expect(markup).toContain('"hidden":true');
     expect(markup).not.toContain("ENOSPC");
     // The disclosure is the only fold control: no button row under the text.
     expect(markup).toContain("Message from another agent. Show full message, ");
@@ -3817,20 +3818,20 @@ describe("messages another agent sent (1068)", () => {
     expect(verbose).toContain("Show less");
   });
 
-  it("shows a short one whole and open, with no fold controls", async () => {
+  it("folds a short relay in Results only", async () => {
     const markup = await render("concise", [agentEntry("Done. The PR is green.")]);
-    expect(markup).toContain("Done. The PR is green.");
-    expect(markup).toContain('"data-relayed-message-state":"open"');
+    expect(markup).not.toContain("Done. The PR is green.");
+    expect(markup).toContain('"data-relayed-message-state":"folded"');
     expect(markup).not.toContain("Show full message");
     expect(markup).not.toContain("data-worker-message");
   });
 
-  it("clips a long one with no opening to cut, rather than showing it whole", async () => {
+  it("hides a long code-only preview in Results only", async () => {
     const log = ["```text", ...Array.from({ length: 30 }, (_, i) => `ok gate-${i} 0.${i}s`), "```"];
     const markup = await render("concise", [agentEntry(log.join("\n"))]);
     expect(markup).toContain('"data-worker-message":"folded"');
     expect(markup).toContain('"data-worker-message-clamp":"true"');
-    expect(markup).toContain("max-h-24");
+    expect(markup).toContain('"hidden":true');
     expect(markup).toContain("Show full message");
     expect(markup).not.toContain('"data-user-message-collapsed":"true"');
   });
@@ -3893,4 +3894,25 @@ describe("messages another agent sent (1068)", () => {
       expect(markup).not.toContain("data-worker-message");
     }
   });
+});
+
+describe("empty assistant output", () => {
+  it.each(["", "  \n\t"])(
+    "does not render message chrome for a settled empty completion: %j",
+    async (text) => {
+      let renderer!: ReactTestRenderer;
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[buildAssistantTimelineEntry(text)]}
+          />,
+        );
+      });
+      const markup = JSON.stringify(renderer.toJSON());
+      expect(markup).not.toContain('"data-message-role":"assistant"');
+      expect(markup).not.toContain("(empty response)");
+      await act(() => renderer.unmount());
+    },
+  );
 });

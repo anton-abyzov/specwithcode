@@ -2264,6 +2264,113 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live(
+    "retires a native session whose restored history the model rejects and recovers on a fresh one",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("acp-test-poisoned-history");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { STUDIO_ACP_FAIL_PROMPT_ON_LOADED_SESSION: "1" },
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-poisoned-history");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-poisoned-history"),
+          modelSelection,
+          runtimePolicy,
+          initialNativeThreadId: "poisoned-session",
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(providerThread.nativeThreadRef?.nativeId, "poisoned-session");
+
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 1,
+          }),
+        );
+        const firstTerminal = Array.from(
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        ).find((event) => event.type === "turn.terminal");
+        assert.equal(firstTerminal?.status, "failed");
+        if (firstTerminal?.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        assert.equal(firstTerminal.failure?.code, "native_history_invalid");
+        assert.notInclude(firstTerminal.failure?.message ?? "", "thought_signature");
+
+        // Turn start now refuses to resume the retired session and binds a
+        // fresh native one instead (its handoff runs above the adapter).
+        const resumeError = yield* runtime
+          .resumeThread({ providerThread, modelSelection, runtimePolicy })
+          .pipe(Effect.flip);
+        assert.equal(resumeError._tag, "ProviderAdapterResumeThreadError");
+        const replacementThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notEqual(replacementThread.nativeThreadRef?.nativeId, "poisoned-session");
+
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: replacementThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+          }),
+        );
+        const secondTerminal = Array.from(
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        ).find((event) => event.type === "turn.terminal");
+        assert.equal(secondTerminal?.status, "completed");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("cleans detached fixtures when an assertion aborts the test scope", () =>
     Effect.gen(function* () {
       if ((yield* HostProcessPlatform) !== "linux") return;

@@ -19,10 +19,12 @@ import {
   OrchestratorMcpLaunchIncrement,
   OrchestratorMcpMachineRef,
   OrchestratorMcpDelegation,
+  OrchestratorMcpOriginHint,
   OrchestratorMcpMachineTarget,
   OrchestratorMcpTaskClassHint,
   OrchestratorMcpTaskLaneHint,
   TaskRoutingDecision,
+  SourceControlCloneProtocol,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   OrchestratorMcpModelPreferenceInput,
@@ -158,6 +160,60 @@ const ProjectCloneTool = Tool.make("studio_project_clone", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+const ProjectAddToMachineTool = Tool.make("studio_project_add_to_machine", {
+  ...shared,
+  description:
+    "Put a repository on another machine in the owner's fleet and register it there as a project, so studio_thread_launch can run work on that machine. Pass projectId to copy a project from here (its fork's clone URL is used), or cloneUrl for any repository. The other machine clones with its own git credentials and needs a worker grant that covers all of its projects; otherwise it refuses and the user widens the grant there. Returns the project's id on that machine: launch with machine and machineProjectId set to it. For a branch, launch with workspaceStrategy {type:\"worktree\",baseRef:branch,startFromOrigin:true}. Only the repository's tracked files arrive; ignored files such as .env stay here.",
+  parameters: Schema.Struct({
+    machine: OrchestratorMcpMachineTarget.annotate({
+      description:
+        'The machine to add the project to: its id or label from studio_machine_list. Not "local": use studio_project_clone and studio_project_create for this machine.',
+    }),
+    projectId: Schema.optional(
+      ProjectId.annotate({
+        description:
+          "A project on this machine whose repository to clone there. Its origin remote (the fork, when it is one) is cloned. Not with cloneUrl.",
+      }),
+    ),
+    cloneUrl: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(2048)).annotate({
+        description: "A git URL to clone there, when no project here has the repository.",
+      }),
+    ),
+    destinationPath: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description:
+          "The folder on that machine, ~ meaning its home. Omitted: the project's folder relative to home here, or ~/<repository name>. It must not exist yet.",
+      }),
+    ),
+    title: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description:
+          "The project's title there. Omitted: this project's title, or the repository name.",
+      }),
+    ),
+    branch: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description:
+          "The branch the work there needs. The clone fetches every branch; the answer says how to launch on this one.",
+      }),
+    ),
+    protocol: Schema.optional(SourceControlCloneProtocol),
+  }),
+  success: Schema.Struct({
+    machine: OrchestratorMcpMachineRef,
+    projectId: ProjectId.annotate({
+      description: "The project's id on that machine. Pass it as machineProjectId.",
+    }),
+    title: Schema.String,
+    workspaceRoot: Schema.String,
+    remoteUrl: Schema.String,
+    branch: Schema.optional(Schema.String),
+    next: Schema.String.annotate({ description: "How to start work there. Follow it." }),
+  }),
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
 const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
   description:
@@ -222,6 +278,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
     increment: Schema.optional(OrchestratorMcpIncrementRef),
     delegation: Schema.optional(OrchestratorMcpDelegation),
+    originHint: Schema.optional(OrchestratorMcpOriginHint),
   }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -401,6 +458,7 @@ export const ProjectToolkit = Toolkit.make(
   ProjectRequestTool,
   ProjectDeleteTool,
   ProjectCloneTool,
+  ProjectAddToMachineTool,
   RouteTargetsTool,
   ProjectRouteTool,
   ModelPreferenceTool,

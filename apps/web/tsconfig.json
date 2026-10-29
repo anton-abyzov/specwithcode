@@ -34,6 +34,7 @@
     "scripts/warm-dep-cache.ts",
     "scripts/studio-module-preload.ts",
     "scripts/studio-module-preload.test.ts",
+    "tests/agent-messages/internalReceipts.ts",
     "../../scripts/lib/public-config.ts",
     "../../scripts/lib/third-party-licenses.ts"
   ]

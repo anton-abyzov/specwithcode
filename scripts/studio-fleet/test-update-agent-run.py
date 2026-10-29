@@ -15,6 +15,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import types
 import unittest
 from unittest import mock
 
@@ -235,6 +236,355 @@ class OneClock(RunCase):
         self.assertEqual(record['phase'], 'failed')
         self.assertIn('did not install', record['message'])
         self.assertEqual(record['receipt'], self.state()['lastInstall']['receipt'])
+
+    def test_a_fleet_or_cli_request_for_a_newer_release_as_the_install_starts_ends_the_run_replaced(self):
+        """A request from the fleet or the CLI (no run: a press while a run is live only follows it) for a
+        release published after the pass checked, written as the pass starts installing the run's release: the
+        pass leaves the newer request pending, as when it comes during a snapshot, and ends the run cancelled,
+        naming that release, never failed: the next pass installs the newer release."""
+        self.fake.add_release()
+        self.write_run()
+        self.request()
+        self.control(newVersion='0.3.0')
+        set_status, newer = update_agent.Agent.set_status, {}
+
+        def status_as_a_newer_request_arrives(agent, status, message=None):
+            set_status(agent, status, message)
+            if status == 'installing' and not newer:
+                self.fake.add_release('0.3.0')
+                newer['at'] = iso_in(seconds=30)
+                self.config(installAutomatically=False, quietMinutes=60, installMode='force',
+                            installRequestedAt=newer['at'], installHoldUntil=iso_in(minutes=15),
+                            installRequest={'at': newer['at'], 'version': '0.3.0'})
+        with mock.patch.object(update_agent.Agent, 'set_status', status_as_a_newer_request_arrives):
+            self.assertEqual(self.run_agent(), 0)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['message'], record['owner']),
+                         ('cancelled', runs.REPLACED % '0.3.0', None), record)
+        self.assertIsNotNone(record['endedAt'])
+        state = self.state()
+        self.assertEqual((state['status'], state['installedVersion'], state['handledInstallRequestAt']),
+                         ('installed', '0.3.0', newer['at']))
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_request_for_a_newer_release_during_retries_ends_the_run_replaced_for_good(self):
+        """A rollout's request for a newer release (no installRunId), written while the pass retries the run's
+        request, ends that pass and the run, cancelled and naming that release: config.json no longer names the
+        run, so no pass takes it on again, and left open it would wait without an owner until its deadline. It
+        stays ended when the next pass refuses that request, as it does for a release not published yet."""
+        self.fake.add_release()
+        self.write_run()
+        self.request()
+        self.control(snapshotFailures=1)
+        newer = {}
+
+        def write_newer():
+            newer['at'] = iso_in(seconds=30)
+            self.config(installAutomatically=False, quietMinutes=60, installMode='force',
+                        installRequestedAt=newer['at'], installHoldUntil=iso_in(minutes=15),
+                        installRequest={'at': newer['at'], 'version': '0.2.1'})
+            self.on_sleep = None
+        self.on_sleep = write_newer
+        self.assertEqual(self.run_agent(), 1)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['message'], record['owner']),
+                         ('cancelled', runs.REPLACED % '0.2.1', None), record)
+        self.assertIsNotNone(record['endedAt'])
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt']), ('error', newer['at']))
+        self.assertIn('SpecWithCode 0.2.1 was asked for', state['message'])
+        self.assertEqual(self.apply_calls(), [])
+        self.run_agent()  # The desktop's re-kick: a later pass leaves the ended run as it is.
+        self.assertEqual(self.run_record(), record)
+
+
+class TakenOn(RunCase):
+    """A run whose request a pass takes on part way, while it serves an earlier request that names no run
+    (a plain request from the fleet or the CLI, which no window follows, so Update now makes a run), and a
+    request for the same release that names no run (the fleet asks once more), taken on while a pass owns a run."""
+
+    def at(self, minutes=0):
+        """A time on the agent's clock, which the retry sleeps move on."""
+        return (update_agent.utcnow() + datetime.timedelta(minutes=minutes)).isoformat().replace('+00:00', 'Z')
+
+    def plain(self, force=False):
+        """A request from the fleet or the CLI for the run's release: no run, held 15 minutes when forced."""
+        at = self.at()
+        self.config(installAutomatically=False, quietMinutes=60, installMode='force' if force else 'normal',
+                    installRequestedAt=at, installHoldUntil=self.at(15) if force else None,
+                    installRequest={'at': at, 'version': '0.2.0'}, installRunId=None)
+        return at
+
+    def press(self, deadline=30):
+        """Update now: the window makes the run and asks for its request, held until the run's deadline."""
+        self.requested, until = self.at(), self.at(deadline)
+        self.write_run(requestedAt=self.requested, deadlineAt=until)
+        self.request(installHoldUntil=until)
+
+    def serve_a_plain_request_then_press(self, then=None, deadline=30):
+        self.fake.add_release()
+        plain = self.plain()
+        steps = []
+
+        def on_sleep():
+            steps.append(len(steps) + 1)
+            if len(steps) == 1:
+                self.press(deadline)
+            elif then is not None:
+                then()
+                self.on_sleep = None
+        self.on_sleep = on_sleep
+        return plain
+
+    def while_the_helper_runs(self, write, minutes):
+        """The first apply's helper runs `minutes` (on the agent's clock), and `write` lands as it starts."""
+        real, written = runs.apply_env, []
+
+        def apply_env(agent):
+            if not written:
+                written.append(write())
+                self.offset += datetime.timedelta(minutes=minutes)
+            return real(agent)
+        return mock.patch.object(runs, 'apply_env', apply_env)
+
+    def test_the_pass_claims_the_run_of_a_request_it_takes_on(self):
+        self.control(snapshotFailures=1)
+        self.serve_a_plain_request_then_press()
+        self.assertEqual(self.run_agent(), 0)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['owner']), ('verified', None), record)
+        self.assertEqual(record['receipt'], self.state()['lastInstall']['receipt'])
+        self.assertEqual(self.state()['handledInstallRequestAt'], self.requested)
+
+    def test_a_newer_releases_request_ends_a_run_taken_on_part_way(self):
+        """The run is this pass's once it takes the run's request on, so a request for a newer release that
+        ends the pass ends that run too, instead of leaving it live for a later install to mark it verified."""
+        self.control(snapshotFailures=2, newVersion='0.3.0')
+        newer = {}
+
+        def write_newer():
+            self.fake.add_release('0.3.0')
+            newer['at'] = iso_in(seconds=30)
+            self.config(installAutomatically=False, quietMinutes=60, installMode='force',
+                        installRequestedAt=newer['at'], installHoldUntil=iso_in(minutes=15),
+                        installRequest={'at': newer['at'], 'version': '0.3.0'})
+        self.serve_a_plain_request_then_press(then=write_newer)
+        self.assertEqual(self.run_agent(), 0)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['message'], record['owner']),
+                         ('cancelled', runs.REPLACED % '0.3.0', None), record)
+        state = self.state()
+        self.assertEqual((state['status'], state['installedVersion'], state['handledInstallRequestAt']),
+                         ('installed', '0.3.0', newer['at']))
+
+    def assert_failed_once(self, again):
+        """The run ended failed with the pass; the request the pass took on since keeps that failure as its
+        answer instead of the run's request, so no later pass installs the release that failed again."""
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['owner']), ('failed', None), record)
+        self.assertIn('did not install', record['message'])
+        self.assertEqual(self.state()['handledInstallRequestAt'], again['at'])
+        self.offset += datetime.timedelta(minutes=1)
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_same_release_request_taken_on_after_the_run_keeps_its_failure(self):
+        self.control(snapshotFailures=2, applyRolledBack=1)
+        again = {}
+        self.serve_a_plain_request_then_press(then=lambda: again.update(at=self.plain()))
+        self.run_agent()
+        self.assert_failed_once(again)
+
+    def test_a_same_release_request_taken_on_after_a_run_claimed_at_the_start_keeps_its_failure(self):
+        self.fake.add_release()
+        self.press()
+        self.control(snapshotFailures=1, applyRolledBack=1)
+        again = {}
+
+        def ask_again():
+            again['at'] = self.plain()
+            self.on_sleep = None
+        self.on_sleep = ask_again
+        self.run_agent()
+        self.assert_failed_once(again)
+
+    def test_a_forced_request_taken_on_after_the_run_keeps_its_held_window(self):
+        """The fleet asks once more, forced, after the pass took on a run with 2 minutes to go: the pass
+        retries that request through its own window, not only until the run's deadline, and ends the run."""
+        self.control(snapshotFail=True)
+        again = {}
+
+        def ask_again():
+            again['at'], again['offset'] = self.plain(force=True), self.offset
+        self.serve_a_plain_request_then_press(then=ask_again, deadline=2)
+        with mock.patch.object(update_agent, 'FORCE_WINDOW', datetime.timedelta(minutes=6)):
+            self.run_agent()
+        served = self.offset - again['offset']
+        self.assertGreater(served, datetime.timedelta(minutes=5), served)
+        self.assertLessEqual(served, datetime.timedelta(minutes=6), served)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['owner']), ('failed', None), record)
+
+    def test_a_plain_request_taken_on_after_the_run_is_retried_as_long_as_the_presss_hold(self):
+        """The fleet asks once more without force (a 2-minute window) after the pass took on a run with 6
+        minutes to go. The service's hold, taken for the press just before its request was written, times a
+        plain request from its own start (HOLD_TTL_MS, FORCE_WINDOW here) and reads a waiting-for-quiet as the
+        give-up only from RETRY_SECONDS before then: the pass retries it until FORCE_WINDOW after the press,
+        past its own window and the run's deadline, so the hold ends with the pass instead of staying on.
+        The run ends with the pass instead of being left live and ownerless, which no later pass claims."""
+        self.control(snapshotFail=True)
+        again = {}
+
+        def ask_again():
+            again['at'] = self.plain()
+        self.serve_a_plain_request_then_press(then=ask_again, deadline=6)
+        with mock.patch.object(update_agent, 'FORCE_WINDOW', datetime.timedelta(minutes=8)):
+            self.run_agent()
+        state, pressed = self.state(), update_agent.parse_time(self.requested)
+        gave_up = update_agent.parse_time(state['updatedAt'])
+        self.assertEqual((state['status'], state['answeredInstallRequestAt']), ('waiting-for-quiet', again['at']))
+        self.assertGreaterEqual(gave_up, pressed + datetime.timedelta(minutes=8, seconds=-update_agent.RETRY_SECONDS))
+        self.assertLessEqual(gave_up, pressed + datetime.timedelta(minutes=8))
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['message'], record['owner']),
+                         ('failed', state['message'], None), record)
+
+    def test_a_runs_request_taken_on_part_way_lapses_at_the_runs_deadline(self):
+        """Update now pressed as the helper starts applying a fleet request, which it refuses before the
+        restart 12 minutes later: the run's request, older than REQUEST_TTL by then, is judged by the run's
+        deadline, as at the start of a pass, so the pass claims the run and installs."""
+        self.fake.add_release()
+        self.plain(force=True)
+        self.control(applyRefusals=1)
+        with self.while_the_helper_runs(self.press, 12):
+            self.assertEqual(self.run_agent(), 0)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['owner']), ('verified', None), record)
+        self.assertEqual(self.state()['handledInstallRequestAt'], self.requested)
+        self.assertEqual(len(self.apply_calls()), 2)
+
+    def test_a_runs_request_taken_on_past_its_deadline_ends_the_run_with_the_reason(self):
+        """As above, with the run's deadline passed by then: this pass claims the run and ends it failed,
+        saying the request expired, instead of leaving it for a later pass to fail without a reason."""
+        self.fake.add_release()
+        self.plain(force=True)
+        self.control(applyRefusals=1)
+        with self.while_the_helper_runs(lambda: self.press(deadline=10), 12):
+            self.assertEqual(self.run_agent(), 1)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['message'], record['owner']),
+                         ('failed', update_request.EXPIRED, None), record)
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_same_release_request_taken_on_while_a_run_is_owned_keeps_its_own_life(self):
+        """The CLI asks once more as the helper starts applying the run's request, which it refuses before
+        the restart 12 minutes later: that request, older than REQUEST_TTL by then, lapses as it would
+        without the run, instead of being served under the run's deadline past the window the service's
+        hold gives it, and the run ends with the pass, saying why."""
+        self.fake.add_release()
+        self.press()
+        self.control(applyRefusals=1)
+        again = {}
+        with self.while_the_helper_runs(lambda: again.update(at=self.plain()), 12):
+            self.assertEqual(self.run_agent(), 1)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['message'], record['owner']),
+                         ('failed', update_request.EXPIRED, None), record)
+        self.assertEqual(self.state()['handledInstallRequestAt'], again['at'])
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_far_future_request_taken_on_while_a_run_is_owned_is_settled(self):
+        """A request dated far ahead (a broken clock or writer), taken on while the pass owns a run, is
+        settled as it would be without the run, instead of failing the pass on its date."""
+        self.fake.add_release()
+        self.press()
+        self.control(snapshotFailures=1)
+        far = '9999-12-31T23:59:59.000Z'
+
+        def write_far():
+            self.config(installAutomatically=False, quietMinutes=60, installMode='normal', installRequestedAt=far,
+                        installHoldUntil=None, installRequest={'at': far, 'version': '0.2.0'}, installRunId=None)
+            self.on_sleep = None
+        self.on_sleep = write_far
+        self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt']), ('downloaded', far), state)
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['owner']), ('failed', None), record)
+        self.assertIn('did not install', record['message'])
+
+    def test_a_same_release_request_taken_on_past_the_runs_deadline_keeps_its_own_life(self):
+        """As above, with a run 5 minutes from its deadline and a helper that runs 7: the fleet's request,
+        7 minutes old, is served within its own 10 minutes though the run's deadline has passed."""
+        self.fake.add_release()
+        self.press(deadline=5)
+        self.control(applyRefusals=1)
+        again = {}
+        with self.while_the_helper_runs(lambda: again.update(at=self.plain()), 7):
+            self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.run_record()['phase'], 'verified')
+        self.assertEqual(self.state()['handledInstallRequestAt'], again['at'])
+        self.assertEqual(len(self.apply_calls()), 2)
+
+
+def _retry_deadline_before_this_module(agent, started, applied=False):
+    """Agent.retry_deadline as update_agent.py had it from 1.0.69 to 1.0.112, and on main after."""
+    if runs.retry_until(agent) is not None:
+        return runs.retry_until(agent)  # A run's one clock.
+    hold = update_agent.parse_time(agent.config['installHoldUntil']) if agent.config['installMode'] == 'force' else None
+    return min(hold, started + update_agent.FORCE_WINDOW) if hold else started + update_agent.REQUEST_WINDOW
+
+
+class OlderAgentScript(RunCase):
+    """install_launch_agent writes the companion modules before update_agent.py, so an install cut off part
+    way (a full disk, its timeout, a crash) leaves an older update_agent.py beside this module, and the
+    desktop starts a pass of it anyway. That script asks retry_until with no window of its own."""
+
+    def test_retry_until_asked_without_a_window_answers_as_it_did(self):
+        deadline = update_agent.utcnow()
+        agent = types.SimpleNamespace(run=None, config={'installRequestedAt': 'fleet'})
+        self.assertIsNone(runs.retry_until(agent))
+        agent.run = types.SimpleNamespace(deadline=deadline, requested_at='press')
+        self.assertEqual(runs.retry_until(agent), deadline)
+        agent.config['installRequestedAt'] = 'press'
+        self.assertEqual(runs.retry_until(agent), deadline)
+
+    def test_an_older_script_retries_a_runs_request_and_installs(self):
+        self.fake.add_release()
+        self.write_run()
+        self.request()
+        self.control(snapshotFailures=1)
+        with mock.patch.object(update_agent.Agent, 'retry_deadline', _retry_deadline_before_this_module):
+            self.assertEqual(self.run_agent(), 0)
+        self.assertEqual((self.run_record()['phase'], self.state()['status']), ('verified', 'installed'))
+
+    def test_the_release_an_older_scripts_pass_before_named_does_not_replace_its_own_run(self):
+        """Its run_once resets only state (and serving) between passes, so the release whose request ended its
+        first pass is still named as its second claims that release's own run, which no newer one replaced: the
+        run ends as the pass decided it, failed here (with Try again), not cancelled as replaced by itself."""
+        self.fake.add_release()
+        self.write_run(deadlineAt=iso_in(minutes=2))
+        self.request(installHoldUntil=iso_in(minutes=2))
+        self.control(snapshotFail=True)
+        claim = runs.claim
+
+        def claim_after_a_pass_that_named_it(agent):
+            agent.newer_release = '0.2.0'
+            return claim(agent)
+        with mock.patch.object(runs, 'claim', claim_after_a_pass_that_named_it):
+            self.run_agent()
+        record = self.run_record()
+        self.assertEqual((record['phase'], record['owner']), ('failed', None), record)
+
+    def test_an_older_script_retries_a_request_without_a_run_and_installs(self):
+        self.fake.add_release()
+        self.config(installAutomatically=False, quietMinutes=60, installMode='force', installRequestedAt=self.requested,
+                    installHoldUntil=iso_in(minutes=15), installRequest={'at': self.requested, 'version': '0.2.0'},
+                    installRunId=None)
+        self.control(snapshotFailures=1)
+        with mock.patch.object(update_agent.Agent, 'retry_deadline', _retry_deadline_before_this_module):
+            self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'installed')
 
 
 class Handshake(RunCase):

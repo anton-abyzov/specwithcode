@@ -6,6 +6,8 @@ import {
   ProjectId,
   type LearnedModelPreference,
   type ModelSelection,
+  type OrchestrationV2ThreadShell,
+  type Project as ProjectRecord,
   type ProjectRepository,
 } from "@specweave-studio/contracts";
 import { sameRunModel } from "@specweave-studio/shared/threadModelIdentity";
@@ -55,6 +57,7 @@ import * as Repositories from "../../../sourceControl/SourceControlRepositorySer
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import { launchOriginOf } from "../../threadOrigin.ts";
 import { projectInGrant } from "../../../fleet/workGrantPolicy.ts";
 import {
   admitLaunch,
@@ -65,6 +68,7 @@ import {
   refuseRevoked,
   workGrantOf,
 } from "../../workGrantAccess.ts";
+import { addProjectToMachine } from "./addToMachine.ts";
 import { launchRemote, launchTarget, placementSkippable } from "./remoteLaunch.ts";
 import { routeTargets, routeToProject } from "./route.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -169,6 +173,29 @@ const withRequestedEffort = Effect.fn("mcp.withRequestedEffort")(function* (
   } satisfies ModelSelection;
 });
 
+/**
+ * Work asked for in a project stays in it: the user finds it there, and it
+ * runs with that project's context. Only a request the user made without a
+ * project becomes a chat outside every project, here or on another machine.
+ */
+const projectThreadStaysInProject = Effect.fn("mcp.projectThreadStaysInProject")(function* (
+  caller: OrchestrationV2ThreadShell,
+  targetProject: ProjectRecord | undefined,
+) {
+  const callerTitle =
+    targetProject?.id === caller.projectId
+      ? targetProject.title
+      : yield* Project.ProjectService.pipe(
+          Effect.flatMap((projects) => projects.getById(caller.projectId)),
+          Effect.map((found) => Option.getOrUndefined(found)?.title),
+          Effect.orElseSucceed(() => undefined),
+        );
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: `This thread belongs to project "${callerTitle ?? caller.projectId}", so the threads it starts stay there: omit scratch to launch in the project (its root, or one of its worktrees with workspaceStrategy). For work in a repository the project does not list, launch in the project anyway and use that repository by its absolute path, or ask the user to add it to the project. Pass projectless:true with scratch only when the user asked for a chat outside any project.`,
+  });
+});
+
 const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
@@ -185,9 +212,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // A scratch thread has its own project; its coordinator's project still decides.
         const scratchCoordinator =
           input.scratch === true && input.machine === undefined ? caller : undefined;
+        // A client naming no project starts a scratch thread on another machine.
         const targetProject =
           (input.scratch === true && scratchCoordinator === undefined) ||
-          (input.projectId === undefined && caller === undefined && input.machine === undefined)
+          (input.projectId === undefined && caller === undefined)
             ? undefined
             : yield* Effect.gen(function* () {
                 const projectId =
@@ -221,6 +249,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         }
         if (placed.target.kind === "remote") {
           const machine = placed.target;
+          // A project thread's scratch work elsewhere follows the same rule as here.
+          if (
+            input.scratch === true &&
+            caller !== undefined &&
+            input.projectless !== true &&
+            !(yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
+              Effect.flatMap((folders) => folders.isScratch(caller.projectId)),
+            ))
+          )
+            return yield* projectThreadStaysInProject(caller, targetProject);
           if (input.effort !== undefined)
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
@@ -292,20 +330,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           caller !== undefined &&
           caller.projectId !== scratchProjectId &&
           input.projectless !== true
-        ) {
-          const callerTitle =
-            targetProject?.id === caller.projectId
-              ? targetProject.title
-              : yield* Project.ProjectService.pipe(
-                  Effect.flatMap((projects) => projects.getById(caller.projectId)),
-                  Effect.map((found) => Option.getOrUndefined(found)?.title),
-                  Effect.orElseSucceed(() => undefined),
-                );
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: `This thread belongs to project "${callerTitle ?? caller.projectId}", so the threads it starts stay there: omit scratch to launch in the project (its root, or one of its worktrees with workspaceStrategy). For work in a repository the project does not list, launch in the project anyway and use that repository by its absolute path, or ask the user to add it to the project. Pass projectless:true with scratch only when the user asked for a chat outside any project.`,
-          });
-        }
+        )
+          return yield* projectThreadStaysInProject(caller, targetProject);
         const projectId = scratchProjectId ?? (yield* resolveProjectId(context, input.projectId));
         yield* assertPersonalChatBoundary(caller?.projectId, projectId);
         const readProject = Project.ProjectService.pipe(
@@ -502,6 +528,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // Same rule as delegate_task: a routed move to another model ends the stand-in.
         const launchFallbackFrom =
           standsInFor !== null && sameRunModel(routedModel, modelSelection) ? standsInFor : null;
+        // The header badge names the outside client or machine that started it.
+        const origin = launchOriginOf(context, work, input.originHint);
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -510,6 +538,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection: launchSelection,
           ...(routing === undefined ? {} : { routing }),
           ...(launchFallbackFrom === null ? {} : { launchFallbackFrom }),
+          ...(origin === undefined ? {} : { origin }),
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
@@ -611,13 +640,35 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   studio_project_create: McpToolAccess.writesEnvironment(({ workspaceRoot, ...input }) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
+      const work = yield* workGrantOf(yield* readCaller());
       // A named personal create can return private existing state. Refuse remote
       // work before either create path reaches a service or changes the machine.
-      if (input.kind === "personal" && (yield* workGrantOf(yield* readCaller())) !== undefined)
+      if (input.kind === "personal" && work !== undefined)
         return yield* new OrchestratorMcpFailure({
           code: "outside_grant_scope",
           message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
         });
+      // Another machine adds projects here (studio_project_add_to_machine) only
+      // under a grant covering every project, as for a clone.
+      if (work !== undefined) yield* refuseRevoked(work);
+      if (work !== undefined && work.grant.projects.kind !== "all")
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot add projects here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work on this Mac.`,
+        });
+      // As for studio_project_update: scripts and new folders run or land on
+      // this machine, so only its user sets them; a model default stays
+      // within the sign-ins the grant allows.
+      if (
+        work !== undefined &&
+        (input.scripts !== undefined || input.createWorkspaceRootIfMissing !== undefined)
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: `Project scripts run on this machine and new folders are made on it, so only its user sets them; ${work.coordinatorLabel}'s work cannot. Register an existing folder with title and workspaceRoot, and ask the user here to set scripts in project settings.`,
+        });
+      if (work !== undefined && input.defaultModelSelection != null)
+        yield* assertAccountInGrant(work, input.defaultModelSelection.instanceId);
       if (workspaceRoot === undefined) {
         // Project creation records no model default (only an update does), so
         // reject what this mode would otherwise drop silently.
@@ -772,7 +823,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       if (work !== undefined && work.grant.projects.kind !== "all")
         return yield* new OrchestratorMcpFailure({
           code: "outside_grant_scope",
-          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot clone repositories here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Connections > Who can run work on this Mac.`,
+          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot clone repositories here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work on this Mac.`,
         });
       const repositories = yield* Repositories.SourceControlRepositoryService;
       return yield* repositories.cloneRepository(input).pipe(
@@ -785,6 +836,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         ),
       );
     }),
+  ),
+  studio_project_add_to_machine: McpToolAccess.writesEnvironment((input) =>
+    addProjectToMachine(input),
   ),
   studio_model_preference: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {

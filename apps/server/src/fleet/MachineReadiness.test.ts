@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { git } from "./folderTransfer/folderFixture.testkit.ts";
 import {
   checkMachineReadiness,
+  credentialHelperReadiness,
   commandsIn,
   findRepositories,
   gitHubReadiness,
@@ -169,9 +170,37 @@ describe("checkMachineReadiness", () => {
         missing: false,
         stdout: JSON.stringify({ hosts: {} }),
       }),
+      gitCredentialHelper: async () => ({ code: 1, stdout: "" }),
     });
     expect(report.repositories).toEqual([]);
+    expect(report.credentialHelper).toEqual({ status: "missing", usesGh: false });
     expect(report.github.status).toBe("signed-out");
+  });
+});
+
+describe("credentialHelperReadiness", () => {
+  it("says whether git hands GitHub credentials to gh, never the helper's text", async () => {
+    expect(
+      await credentialHelperReadiness(async () => ({
+        code: 0,
+        stdout: "\n!/opt/homebrew/bin/gh auth git-credential\n",
+      })),
+    ).toEqual({ status: "configured", usesGh: true });
+    const other = await credentialHelperReadiness(async () => ({
+      code: 0,
+      stdout: "osxkeychain\n",
+    }));
+    expect(other).toEqual({ status: "configured", usesGh: false });
+    expect(JSON.stringify(other)).not.toContain("osxkeychain");
+    expect(await credentialHelperReadiness(async () => ({ code: 1, stdout: "" }))).toEqual({
+      status: "missing",
+      usesGh: false,
+    });
+    expect(
+      await credentialHelperReadiness(async () => {
+        throw new Error("no git");
+      }),
+    ).toEqual({ status: "unknown", usesGh: false });
   });
 });
 

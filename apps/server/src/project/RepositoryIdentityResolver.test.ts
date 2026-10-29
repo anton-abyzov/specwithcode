@@ -492,6 +492,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.displayName).toBe("studiotools/studio");
       expect(identity?.origin).toEqual({
         canonicalKey: "github.com/acme/studio-fork",
+        remoteUrl: "git@github.com:acme/studio-fork.git",
         displayName: "acme/studio-fork",
       });
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),

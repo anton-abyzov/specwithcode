@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { AiError, McpProtocol, McpSchema, McpServer, Tool, type Toolkit } from "effect/ai";
+import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { OrchestratorMcpFailure, PreviewAutomationError } from "@specweave-studio/contracts";
 
@@ -516,6 +516,22 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   return screenshotPath;
 });
 
+/**
+ * Hosted clients send null for optional fields from the full JSON codec schema
+ * previously advertised by MCP. Keep those inputs compatible even when the
+ * advertised schema is compacted. Standard preview tools keep their original
+ * strict target validation; image tools retain their nullable display options.
+ */
+const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+): Toolkit.Toolkit<Tools> =>
+  // The clones keep each tool's id, name and decoded parameter type, so handlers still match.
+  Toolkit.make(
+    ...Object.values(toolkit.tools).map((tool) =>
+      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
+    ),
+  ) as unknown as Toolkit.Toolkit<Tools>;
+
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
@@ -562,7 +578,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   const saveServices = yield* Effect.context<
     ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >();
-  const built = yield* PreviewSnapshotToolkit;
+  const built = yield* decodeAsAdvertised(PreviewSnapshotToolkit);
   const tool = PreviewSnapshotTool;
   yield* server.addTool({
     tool: new McpSchema.Tool({
@@ -819,7 +835,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
 const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreenshot")(function* () {
   const devices = yield* DeviceService.DeviceService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const built = yield* DeviceScreenshotToolkit;
+  const built = yield* decodeAsAdvertised(DeviceScreenshotToolkit);
   yield* registerImageTool(
     DeviceScreenshotTool,
     (payload) =>
@@ -841,7 +857,7 @@ const registerChromeScreenshot = Effect.fn("McpHttpServer.registerChromeScreensh
   const threads = yield* ThreadManagementService.ThreadManagementService;
   // A thread here may take the screenshot in Chrome paired on another machine.
   const environment = yield* ServerEnvironment.ServerEnvironment;
-  const built = yield* ChromeScreenshotToolkit;
+  const built = yield* decodeAsAdvertised(ChromeScreenshotToolkit);
   yield* registerImageTool(
     ChromeScreenshotTool,
     (payload) =>
@@ -872,7 +888,7 @@ const registerComputerScreenshot = Effect.fn("McpHttpServer.registerComputerScre
   function* () {
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    const built = yield* ComputerScreenshotToolkit;
+    const built = yield* decodeAsAdvertised(ComputerScreenshotToolkit);
     yield* registerImageTool(
       ComputerScreenshotTool,
       (payload) =>
@@ -899,7 +915,7 @@ const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(function* () {
   const htmlRender = yield* HtmlRender.HtmlRender;
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const built = yield* HtmlPreviewToolkit;
+  const built = yield* decodeAsAdvertised(HtmlPreviewToolkit);
   yield* registerImageTool(
     HtmlPreviewTool,
     (payload) =>
@@ -925,7 +941,7 @@ const registerDesignScreenshot = Effect.fn("McpHttpServer.registerDesignScreensh
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
-  const built = yield* DesignScreenshotToolkit;
+  const built = yield* decodeAsAdvertised(DesignScreenshotToolkit);
   yield* registerImageTool(
     DesignScreenshotTool,
     (payload) =>
@@ -979,8 +995,13 @@ const withAdvertisedSchemas = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
 export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+  inputDecoding: "json" | "schema" = "json",
 ) =>
-  Layer.effectDiscard(withAdvertisedSchemas(McpServer.registerToolkit(toolkit))).pipe(
+  Layer.effectDiscard(
+    withAdvertisedSchemas(
+      McpServer.registerToolkit(inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit),
+    ),
+  ).pipe(
     Layer.provide(McpServer.McpServer.layer),
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
@@ -1008,6 +1029,8 @@ export const layerHtmlToolkit = Layer.mergeAll(
 const layerPreviewStandardToolkitRegistration = toolkitRegistration(
   PreviewStandardToolkit,
   PreviewHandlers.layerStandard,
+  // Preview targets retain strict validation: null must not select the current tab.
+  "schema",
 );
 
 const layerPreviewSnapshotRegistration = imageToolRegistration(

@@ -14,6 +14,8 @@ import {
   type EnvironmentThreadShell,
 } from "./models.js";
 
+/** Request ids of the cards an update records to ask a closed question again. */
+const REOPENED_REQUEST_PREFIX = "update-reopen";
 const millis = (value: string | null | undefined): number | null => {
   const n = value ? Date.parse(value) : NaN;
   return Number.isFinite(n) ? n : null;
@@ -72,8 +74,11 @@ export function observeProjectThread(
       reason:
         person.kind === "answer" ? "input" : person.kind === "sign-in" ? "signin" : "approval",
       id: pending?.id ?? `legacy:${person.kind}`,
-      createdAt:
-        pending && DateTime.isDateTime(pending.createdAt)
+      // Reopening is not a fresh ask. New cards retain original chronology;
+      // legacy reopened cards with no provenance remain conservatively unknown.
+      createdAt: pending?.id.startsWith(REOPENED_REQUEST_PREFIX)
+        ? millis(pending.reopenedFromAskedAt)
+        : pending && DateTime.isDateTime(pending.createdAt)
           ? DateTime.toEpochMillis(pending.createdAt)
           : null,
     });

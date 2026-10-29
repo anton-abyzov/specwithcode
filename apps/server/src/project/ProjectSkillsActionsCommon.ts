@@ -1,7 +1,7 @@
 /**
  * Pieces the Skills control center's version actions, switches and fleet
  * push share: the folder and row an action is about, a fixed-argv process
- * run without a shell, and how a failed run becomes a named refusal.
+ * run through the platform adapter, and how a failed run becomes a named refusal.
  *
  * @module project/ProjectSkillsActionsCommon
  */
@@ -19,7 +19,8 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 
-import * as FileSystem from "effect/FileSystem";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { resolveCommandPath } from "@specweave-studio/shared/shell";
 
 import { vskillSearchDirs } from "../fleet/fleetSkills.ts";
 import type { ProviderSkillsControl } from "../provider/ProviderDriver.ts";
@@ -121,16 +122,19 @@ export function cliFailure(projectId: ProjectId, run: CliRun, what: string) {
 }
 
 /**
- * Runs `command args` in `cwd` with no shell. The binary's own folder leads
+ * Runs `command args` in `cwd` through the platform adapter. The binary's own folder leads
  * PATH, so a node script finds its `node`; colour is turned off.
  */
 export const makeRunCli = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
   const run: RunCli = ({ command, args, cwd, timeout, env }) => {
     const basePath = env?.PATH ?? "";
     const pathEnv = path.isAbsolute(command)
-      ? [path.dirname(command), basePath].filter((entry) => entry !== "").join(":")
+      ? [path.dirname(command), basePath]
+          .filter((entry) => entry !== "")
+          .join(platform === "win32" ? ";" : ":")
       : basePath;
     return runner
       .run({
@@ -161,26 +165,23 @@ export const makeRunCli = Effect.gen(function* () {
   return run;
 });
 
-/**
- * The vskill binary, looked for as the fleet worker does: PATH, then
- * `~/.local/bin`, Homebrew and `/usr/local/bin`. Null when none is installed.
- */
+/** The vskill binary, using the fleet search locations and platform executable rules. */
 export const findVskillBinary = Effect.fn("projectSkills.findVskillBinary")(function* (input: {
   readonly home: string;
   readonly pathEnv: string | undefined;
+  readonly platform?: NodeJS.Platform;
+  readonly appData?: string | undefined;
+  readonly pathExt?: string | undefined;
 }) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  for (const dir of vskillSearchDirs({ home: input.home, pathEnv: input.pathEnv })) {
-    const candidate = path.join(dir, "vskill");
-    const executable = yield* fs.stat(candidate).pipe(
-      Effect.map((info) => info.type === "File" && (Number(info.mode) & 0o111) !== 0),
-      Effect.orElseSucceed(() => false),
-    );
-    if (executable) return candidate;
-  }
-  return null;
+  const platform = input.platform ?? (yield* HostProcessPlatform);
+  const dirs = vskillSearchDirs({ ...input, platform });
+  return yield* resolveCommandPath("vskill", {
+    env: { PATH: dirs.join(platform === "win32" ? ";" : ":"), PATHEXT: input.pathExt },
+  }).pipe(
+    Effect.provideService(HostProcessPlatform, platform),
+    Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
+  );
 });
 
 export const VSKILL_MISSING =
-  "vskill is not installed (looked on PATH, ~/.local/bin, /opt/homebrew/bin and /usr/local/bin). Install it with npm i -g vskill.";
+  "vskill is not installed (looked on PATH and standard user installation folders). Install it with npm i -g vskill.";

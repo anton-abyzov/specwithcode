@@ -101,6 +101,53 @@ describe("Muse native MSP runtime", () => {
     expect(calls).toContain("session/setReasoningEffort");
     expect(calls).toContain("muse-wonder-full");
   });
+  it("attaches native MCP servers at session start only when the host grants sessionMcp", async () => {
+    const mcpServers = [
+      {
+        name: "studio-code",
+        command: "/bin/echo",
+        args: ["acp-mcp-bridge"],
+        env: [{ name: "STUDIO_ACP_MCP_ENDPOINT", value: "http://127.0.0.1/mcp" }],
+      },
+    ] as const;
+    const granted = await fixture({ MUSE_TEST_GRANT_SESSION_MCP: "1" });
+    await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({ ...granted, mcpServers });
+        yield* runtime.start();
+        yield* listen(runtime);
+        expect(
+          (yield* runtime.prompt({ prompt: [{ type: "text", text: "hello" }] })).stopReason,
+        ).toBe("end_turn");
+      }),
+    );
+    const grantedCalls = await requests(granted.cwd);
+    const start = grantedCalls.find((call) => call.method === "session/start");
+    expect(start?.params.config).toEqual({
+      mcpServers: {
+        "studio-code": {
+          transport: "stdio",
+          command: "/bin/echo",
+          args: ["acp-mcp-bridge"],
+          env: { STUDIO_ACP_MCP_ENDPOINT: "http://127.0.0.1/mcp" },
+        },
+      },
+    });
+
+    const ungranted = await fixture();
+    await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({ ...ungranted, mcpServers });
+        yield* runtime.start();
+        yield* listen(runtime);
+        expect(
+          (yield* runtime.prompt({ prompt: [{ type: "text", text: "hello" }] })).stopReason,
+        ).toBe("end_turn");
+      }),
+    );
+    const ungrantedCalls = await requests(ungranted.cwd);
+    expect(ungrantedCalls.some((call) => "config" in call.params)).toBe(false);
+  });
   it("surfaces only native once-scoped approval choices", async () => {
     const input = await fixture();
     await run(

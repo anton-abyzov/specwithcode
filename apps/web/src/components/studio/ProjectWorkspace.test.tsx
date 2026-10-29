@@ -23,6 +23,58 @@ import {
 } from "./ProjectWorkspace.test-fixtures";
 
 describe("project coordinator surface", () => {
+  it("replaces settled empty coordinator chrome with activity access", async () => {
+    state.messages = [
+      {
+        id: "receipt",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: "CI receipt: 8b9b6da6ceccdca502e74454143d114324b36421",
+        streaming: false,
+        attachments: [],
+        createdAt: "2026-10-28T16:00:00Z",
+      },
+      {
+        id: "empty-ack",
+        role: "assistant",
+        createdBy: "agent",
+        text: " ",
+        streaming: false,
+        runId: "receipt-run",
+        attachments: [],
+        createdAt: "2026-10-28T16:00:13Z",
+        updatedAt: "2026-10-28T16:00:13Z",
+      },
+    ];
+    await render();
+    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
+    expect(conversation.querySelectorAll(".project-message-assistant").length).toBe(0);
+    expect(conversation.querySelector("[data-metadata-only-activity]")?.textContent).toBe(
+      "View activity",
+    );
+    expect(conversation.textContent).not.toContain("Worked for");
+  });
+  it("keeps failed empty turns explicit without model-only chrome", async () => {
+    state.messages = [
+      {
+        id: "failed-empty",
+        role: "assistant",
+        createdBy: "agent",
+        text: "",
+        streaming: false,
+        runId: "failed-run",
+        attachments: [],
+      },
+    ];
+    state.runs = [
+      { id: "failed-run", ordinal: 1, status: "failed", requestedAt: "2026-10-28T16:00:00Z" },
+    ];
+    await render();
+    expect(container.querySelector("[data-metadata-only-activity]")?.textContent).toBe(
+      "Turn failed · View activity",
+    );
+  });
   it("keeps a thread's meta on one line: model first, its error last", async () => {
     state.shells = [
       shell("coord"),
@@ -718,7 +770,7 @@ describe("project coordinator surface", () => {
     expect(relay.querySelector("h3")!.textContent).toBe("Message from Thread worker");
     expect(conversation.textContent).not.toContain("Sent by");
     expect(conversation.textContent).toContain("View thread");
-    expect(conversation.textContent).toContain(
+    expect(conversation.textContent).not.toContain(
       "Both machines are back and the UI no longer freezes.",
     );
     expect(conversation.textContent).not.toContain("Nothing needs you right now.");
@@ -729,7 +781,7 @@ describe("project coordinator surface", () => {
         toggle.getAttribute("aria-label")!,
       );
     expect(Number(hidden![1]!.replaceAll(",", ""))).toBeGreaterThan(answer.length / 2);
-    expect(Number(hidden![1]!.replaceAll(",", ""))).toBeLessThan(answer.length);
+    expect(Number(hidden![1]!.replaceAll(",", ""))).toBe(answer.length);
     expect(document.getElementById(toggle.getAttribute("aria-controls")!)).not.toBeNull();
     await act(async () => toggle.click());
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -833,13 +885,15 @@ describe("project coordinator surface", () => {
     // Normal shows it whole: it is under 600 characters and 8 lines.
     await render();
     expect(fold()).toBeUndefined();
-    expect(conversation().textContent).toContain("Nothing was published.");
+    expect(conversation().textContent).not.toContain("Nothing was published.");
     // Concise folds it to its opening, still sent by the worker.
     state.timelineDetail = "concise";
     await render();
     expect(fold()).toBe("folded");
     expect(conversation().textContent).toContain("Message from Thread worker");
-    expect(conversation().textContent).toContain("Checked the release branch end to end today.");
+    expect(conversation().textContent).not.toContain(
+      "Checked the release branch end to end today.",
+    );
     expect(conversation().textContent).not.toContain("Nothing was published.");
     // Verbose shows every word, and Show less still folds it.
     state.timelineDetail = "verbose";
@@ -859,7 +913,7 @@ describe("project coordinator surface", () => {
     expect(fold()).toBe("open");
     expect(footer().className).toContain("sticky");
   });
-  it("shows a short worker message whole, with no fold controls", async () => {
+  it("keeps a short worker receipt available on request", async () => {
     state.messages = [
       {
         id: "worker-short",
@@ -873,6 +927,12 @@ describe("project coordinator surface", () => {
     ];
     await render();
     const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
+    expect(conversation.textContent).not.toContain(
+      "Done. The PR is green and the evidence is saved.",
+    );
+    await act(async () =>
+      conversation.querySelector<HTMLButtonElement>("[data-relayed-message] h3 button")!.click(),
+    );
     expect(conversation.textContent).toContain("Done. The PR is green and the evidence is saved.");
     expect(conversation.textContent).not.toContain("Show full message");
     expect(conversation.textContent).not.toContain("Copy original");

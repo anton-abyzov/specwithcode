@@ -160,20 +160,20 @@ extension LiveEngine {
     for environment in environments {
       guard let route = ConnectAuthorizer.route(for: environment.endpoint) else { continue }
       let env = environment.environmentId
-      var record = await registry.machine(env) ?? MachineRecord(environmentId: env, label: environment.label, routes: [])
-      let changed = record.connectRoute != route
-      record.connectRoute = route
-      if record.routes.isEmpty, !environment.label.isEmpty { record.label = environment.label }
+      let changed = machines[env]?.record.connectRoute != route
+      var record: MachineRecord
       do {
-        try await registry.upsert(record)
+        record = try await registry.recordConnect(environmentId: env, label: environment.label, route: route)
       } catch {
         Self.log.error("Could not save \(env, privacy: .public): \(String(describing: error), privacy: .public)")
+        continue
       }
       if let entry = machines[env] {
-        guard changed else { continue }
+        // Local intent wins even if this actor result was queued before Disconnect.
+        record.enabled = entry.record.enabled
         entry.record = record
         await entry.connection.update(record)
-        await entry.connection.reconnect()
+        if changed { await entry.connection.reconnect() }
       } else {
         addMachine(record, credential: nil)
       }
@@ -234,10 +234,9 @@ extension LiveEngine {
       if machines[env] != nil { removeMachine(id: env) } else { _ = try? await registry.remove(env) }
       return
     }
-    var updated = record
-    updated.connectRoute = nil
-    _ = try? await registry.upsert(updated)
+    guard var updated = try? await registry.update(env, { $0.connectRoute = nil }) else { return }
     if let entry = machines[env] {
+      updated.enabled = entry.record.enabled
       entry.record = updated
       await entry.connection.update(updated)
       await entry.connection.reconnect()

@@ -2,16 +2,22 @@ import { EnvironmentId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
-import { BearerConnectionProfile, type ConnectionCatalogEntry } from "./catalog.ts";
+import {
+  BearerConnectionProfile,
+  type ConnectionCatalogEntry,
+  type ConnectionRoute,
+} from "./catalog.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
   ConnectionTransientError,
+  RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
   connectionCatalogDisplayUrl,
   environmentMcpUrl,
+  environmentPublicMcpUrl,
   isLoopbackHttpBaseUrl,
   connectionStatusText,
   connectionStatusTitle,
@@ -106,6 +112,111 @@ describe("connection presentation", () => {
     );
     // A plain-http LAN or tailnet address is refused by MCP clients' token checks.
     expect(environmentMcpUrl({ entry: withBase("http://100.81.102.68:8319") })).toBeNull();
+  });
+
+  const bearerRoute = (connectionId: string, httpBaseUrl: string): ConnectionRoute => ({
+    target: new BearerConnectionTarget({ ...TARGET, connectionId }),
+    profile: Option.some(
+      new BearerConnectionProfile({
+        connectionId,
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        httpBaseUrl,
+        wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+      }),
+    ),
+  });
+  const relayTarget = new RelayConnectionTarget({
+    environmentId: TARGET.environmentId,
+    label: TARGET.label,
+  });
+
+  it("copies the MCP address of the route this device is connected over", () => {
+    const loopback = bearerRoute("loopback", "http://127.0.0.1:8319/");
+    const serve = bearerRoute("serve", "https://machine.tailnet.ts.net/");
+    const other = bearerRoute("other", "https://other.example.test/");
+    const entry: ConnectionCatalogEntry = {
+      ...ENTRY,
+      target: loopback.target,
+      profile: loopback.profile,
+      alternateRoutes: [serve, other],
+    };
+
+    expect(environmentMcpUrl({ entry, connectedTarget: serve.target })).toBe(
+      "https://machine.tailnet.ts.net/mcp",
+    );
+    expect(environmentMcpUrl({ entry, connectedTarget: other.target })).toBe(
+      "https://other.example.test/mcp",
+    );
+    // Not connected: the preferred route.
+    expect(environmentMcpUrl({ entry })).toBe("http://127.0.0.1:8319/mcp");
+    expect(environmentMcpUrl({ entry, connectedTarget: null })).toBe("http://127.0.0.1:8319/mcp");
+  });
+
+  it("passes over plain-http routes MCP clients cannot sign in through", () => {
+    const lan = bearerRoute("lan", "http://192.168.4.53:8319/");
+    const tailnet = bearerRoute("tailnet", "http://100.115.1.44:8319/");
+    const serve = bearerRoute("serve", "https://machine.tailnet.ts.net/");
+    const entry: ConnectionCatalogEntry = {
+      ...ENTRY,
+      target: lan.target,
+      profile: lan.profile,
+      alternateRoutes: [tailnet, serve],
+    };
+
+    // Connected over plain-http tailnet: falls through to the first safe route.
+    expect(environmentMcpUrl({ entry, connectedTarget: tailnet.target })).toBe(
+      "https://machine.tailnet.ts.net/mcp",
+    );
+    expect(
+      environmentMcpUrl({
+        entry: { ...entry, alternateRoutes: [tailnet] },
+        connectedTarget: tailnet.target,
+      }),
+    ).toBeNull();
+  });
+
+  it("passes over routes without an address of their own", () => {
+    const entry: ConnectionCatalogEntry = {
+      ...ENTRY,
+      target: relayTarget,
+      profile: Option.none(),
+      alternateRoutes: [{ target: ENTRY.target, profile: ENTRY.profile }],
+    };
+
+    // Relay discovery has not reported the tunnel address yet.
+    expect(environmentMcpUrl({ entry, connectedTarget: relayTarget })).toBe(
+      "https://environment.example.test/mcp",
+    );
+    expect(
+      environmentMcpUrl({
+        entry,
+        connectedTarget: relayTarget,
+        relayHttpBaseUrl: "https://tunnel.example.test",
+      }),
+    ).toBe("https://tunnel.example.test/mcp");
+  });
+
+  it("offers the public Connect MCP address when a relay route exists", () => {
+    const loopback = bearerRoute("loopback", "http://127.0.0.1:8319/");
+    const entry: ConnectionCatalogEntry = {
+      ...ENTRY,
+      target: loopback.target,
+      profile: loopback.profile,
+      alternateRoutes: [{ target: relayTarget, profile: Option.none() }],
+    };
+    const relayHttpBaseUrl = "https://tunnel.example.test/base?x=1";
+
+    expect(environmentMcpUrl({ entry, relayHttpBaseUrl, connectedTarget: loopback.target })).toBe(
+      "http://127.0.0.1:8319/mcp",
+    );
+    expect(environmentPublicMcpUrl({ entry, relayHttpBaseUrl })).toBe(
+      "https://tunnel.example.test/mcp",
+    );
+    expect(environmentPublicMcpUrl({ entry })).toBeNull();
+    expect(environmentPublicMcpUrl({ entry, relayHttpBaseUrl: "http://127.0.0.1:9/" })).toBeNull();
+    // No Connect route: no public address, whatever discovery says.
+    expect(environmentPublicMcpUrl({ entry: ENTRY, relayHttpBaseUrl })).toBeNull();
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {

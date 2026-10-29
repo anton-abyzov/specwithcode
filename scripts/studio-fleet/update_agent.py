@@ -71,6 +71,8 @@ RETRY_SECONDS = 10
 FORCE_WINDOW = datetime.timedelta(minutes=15)
 REQUEST_WINDOW = datetime.timedelta(minutes=2)
 APPLY_RETRIES = 2
+# run_once's passes at most: one more for a request written meanwhile, and one after each newer release's request.
+RUN_ONCE_PASSES = 4
 # A refused apply's retry snapshots for at least this long, even once installHoldUntil has passed:
 # with a 40-minute APPLY_TIMEOUT the refusal can come long after it. Its statuses begin with
 # APPLY_RETRY_MESSAGE, which the service keeps its hold for (ServiceUpdateHold.ts).
@@ -682,6 +684,7 @@ class Agent(object):
         self.lock_fd = lock_fd  # Passed to the helper, which keeps the pass lock while it runs.
         self.run = None  # The run.json record this pass owns (update_agent_run.claim).
         self.serving = None  # The install request this pass serves, '' for none; None until run_pass names it.
+        self.newer_release = None  # The newer release whose request ended this pass (update_agent_recovery.withdrawn).
         self._token = None
         self._token_resolved = False
 
@@ -998,12 +1001,11 @@ class Agent(object):
             remove_path(newest, self.home)
         return None, None, refusal_reason(refusal, outcome)
 
-    def retry_deadline(self, started):
-        """Until when a pending install request snapshots again within this pass."""
-        if runs.retry_until(self) is not None:
-            return runs.retry_until(self)  # A run's one clock.
+    def retry_deadline(self, started, applied=False):
+        """Until when a pending request snapshots again in this pass (runs.retry_until); `applied`: a refused apply's."""
         hold = parse_time(self.config['installHoldUntil']) if self.config['installMode'] == 'force' else None
-        return min(hold, started + FORCE_WINDOW) if hold else started + REQUEST_WINDOW
+        own = min(hold, started + FORCE_WINDOW) if hold else started + REQUEST_WINDOW
+        return runs.retry_until(self, max(own, started + APPLY_RETRY_WINDOW) if applied else own)
 
     def quiet_then_install(self, verified, install_request):
         version = verified['version']
@@ -1033,9 +1035,7 @@ class Agent(object):
                 if os.path.lexists(str(baseline_path)):
                     remove_path(baseline_path, self.home)
                 self.state['quietSince'] = None
-                retry_by = self.retry_deadline(window) if install_request else started
-                if refused_apply is not None and runs.retry_until(self) is None:  # A run keeps its one clock.
-                    retry_by = max(retry_by, window + APPLY_RETRY_WINDOW)
+                retry_by = self.retry_deadline(window, refused_apply is not None) if install_request else started
                 if refused[0] != 'waiting-for-quiet':
                     self.state['automaticRetry'] = None
                 if refused[0] != 'waiting-for-quiet' or utcnow() + datetime.timedelta(seconds=RETRY_SECONDS) >= retry_by:
@@ -1337,8 +1337,8 @@ def run_once(home, identity, test_mode, out):
     try:
         agent = Agent(home, identity, test_mode, out, lock_fd)
         agent.rotate_log()
-        for again in (True, False):  # Once more for a request written while this pass held the lock.
-            agent.state, agent.serving = load_state(agent.state_path, home), None
+        for passes in range(1, RUN_ONCE_PASSES + 1):
+            agent.state, agent.serving, agent.newer_release = load_state(agent.state_path, home), None, None
             try:
                 agent.config = load_config(updates, home)
                 agent.inst = load_installation(home, identity)
@@ -1352,7 +1352,9 @@ def run_once(home, identity, test_mode, out):
                 agent.state['automaticRetry'] = None
                 code = agent.finish('error', 'Unexpected updater failure (%s)' % type(error).__name__)
             runs.release(agent)
-            if not (again and update_request.arrived(agent, lambda: load_config(updates, home))):
+            # Once more for a request written while the first pass held the lock, and after a newer release's request.
+            if not ((passes == 1 or agent.newer_release) and passes < RUN_ONCE_PASSES
+                    and update_request.arrived(agent, lambda: load_config(updates, home))):
                 return code
     finally:
         os.close(lock_fd)

@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeEffectPath from "@effect/platform-node/NodePath";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -9,14 +10,17 @@ import {
   ProviderInstanceId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { afterEach } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- a stand-in vskill and real lock files.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { writeFakeCli } from "../testUtils/fakeCli.ts";
 
 import { sha256 } from "../nodeCrypto.ts";
-import { join } from "../nodePath.ts";
+import { dirname, join } from "../nodePath.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   makeProjectSkillsActions,
@@ -28,9 +32,83 @@ import type {
   ProjectSkillsActionsDeps,
   SkillsActionContext,
 } from "./ProjectSkillsActionsCommon.ts";
+import { findVskillBinary, makeRunCli } from "./ProjectSkillsActionsCommon.ts";
 
 const projectId = ProjectId.make("project-skills-actions");
 const skillId = "anton-abyzov/vskill/sw-do";
+
+it.effect.each(["win32", "linux"] as const)(
+  "returns null when vskill is absent on %s",
+  (platform) =>
+    findVskillBinary({
+      home: platform === "win32" ? "C:\\Missing" : "/missing",
+      pathEnv: "",
+      platform,
+    }).pipe(
+      Effect.tap((found) => Effect.sync(() => expect(found).toBe(null))),
+      Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+      Effect.provide(platform === "win32" ? NodeEffectPath.layerWin32 : NodeEffectPath.layerPosix),
+    ),
+);
+
+it.effect("prepends the command folder with a Windows PATH delimiter", () =>
+  Effect.gen(function* () {
+    const calls: ProcessRunner.ProcessRunInput[] = [];
+    const run = yield* makeRunCli.pipe(
+      Effect.provide(
+        Layer.mock(ProcessRunner.ProcessRunner)({
+          run: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return {
+                code: 0,
+                stdout: "",
+                stderr: "",
+                timedOut: false,
+              } as ProcessRunner.ProcessRunOutput;
+            }),
+        }),
+      ),
+    );
+    yield* run({
+      command: "C:\\Tools\\vskill.cmd",
+      args: ["versions"],
+      cwd: "C:\\Project",
+      timeout: "1 second",
+      env: { PATH: "C:\\Node;D:\\Bin" },
+    });
+    expect(calls[0]?.env?.PATH).toBe("C:\\Tools;C:\\Node;D:\\Bin");
+  }).pipe(
+    Effect.provide(NodeEffectPath.layerWin32),
+    Effect.provideService(HostProcessPlatform, "win32"),
+  ),
+);
+
+it.live.each([false, true])("finds a Windows npm shim with user-folder fallback=%s", (fallback) =>
+  Effect.gen(function* () {
+    const bin = `C:\\Program Files\\project-skills-${fallback}`;
+    const appData = "D:\\User Apps";
+    const expected = `${fallback ? `${appData}\\npm` : bin}\\vskill.cmd`;
+    const noop = FileSystem.makeNoop({});
+    const fs = FileSystem.makeNoop({
+      stat: (file) =>
+        file === expected
+          ? Effect.succeed({ type: "File", size: 100n, mode: 0 } as never)
+          : noop.stat(file),
+    });
+    const found = yield* findVskillBinary({
+      home: "C:\\User",
+      pathEnv: fallback ? "" : bin,
+      platform: "win32",
+      appData,
+      pathExt: ".CMD",
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provide(NodeEffectPath.layerWin32),
+    );
+    expect(found).toBe(expected);
+  }),
+);
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -57,19 +135,23 @@ const readOr = (file: string) =>
  * for writes copies `next.lock` over the lock in its working folder, or fails
  * with exit 3 when a `fail` file is there.
  */
-const FAKE_VSKILL = [
-  "#!/bin/sh",
-  'dir="${0%/*}"',
-  'printf "%s|%s\\n" "$PWD" "$*" >> "$dir/argv.log"',
-  'case "$1" in',
-  '  versions) /bin/cat "$dir/versions.json" ;;',
-  '  outdated) /bin/cat "$dir/outdated.json"; exit 1 ;;',
-  "  install|pin|unpin)",
-  '    if [ -f "$dir/fail" ]; then echo "registry said no" >&2; exit 3; fi',
-  '    if [ -f "$dir/next.lock" ]; then /bin/cp "$dir/next.lock" "$PWD/vskill.lock"; fi ;;',
-  "esac",
-  "",
-].join("\n");
+const FAKE_VSKILL = String.raw`
+import { appendFileSync, readFileSync, existsSync, copyFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const dir = dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+appendFileSync(join(dir, 'argv.log'), process.cwd() + '|' + args.join(' ') + '\n');
+if (args[0] === 'versions') process.stdout.write(readFileSync(join(dir, 'versions.json')));
+if (args[0] === 'outdated') {
+  process.stdout.write(readFileSync(join(dir, 'outdated.json')));
+  process.exit(1);
+}
+if (['install', 'pin', 'unpin'].includes(args[0])) {
+  if (existsSync(join(dir, 'fail'))) { process.stderr.write('registry said no'); process.exit(3); }
+  if (existsSync(join(dir, 'next.lock'))) copyFileSync(join(dir, 'next.lock'), join(process.cwd(), 'vskill.lock'));
+}
+`;
 
 const lockText = (entry: { version: string; pinnedVersion?: string }) =>
   `${JSON.stringify(
@@ -156,7 +238,10 @@ const fixture = (options: {
     const bin = join(root, "bin");
     const home = join(root, "home");
     const project = join(root, "project");
-    yield* write(join(bin, "vskill"), FAKE_VSKILL, 0o755);
+    const platform = yield* HostProcessPlatform;
+    yield* Effect.sync(() =>
+      writeFakeCli({ directory: bin, name: "vskill", source: FAKE_VSKILL, platform }),
+    );
     yield* write(join(bin, "versions.json"), VERSIONS);
     yield* write(join(bin, "outdated.json"), OUTDATED);
     yield* Effect.promise(() => NodeFSP.mkdir(home, { recursive: true }));
@@ -172,8 +257,14 @@ const fixture = (options: {
     };
     const deps: ProjectSkillsActionsDeps = {
       home,
-      environment: { PATH: bin },
-      platform: "linux",
+      environment: {
+        PATH: [
+          bin,
+          dirname(process.execPath),
+          ...(platform === "win32" ? [] : ["/usr/bin", "/bin"]),
+        ].join(platform === "win32" ? ";" : ":"),
+      },
+      platform,
       backupDir: undefined,
       resolveRow: () => Effect.succeed(ctx),
       agentControl: () => Effect.succeed(undefined),

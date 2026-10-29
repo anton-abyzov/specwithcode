@@ -104,6 +104,78 @@ function overridesClaudeToken(environment: NodeJS.ProcessEnv): boolean {
     return value.length > 0 && value !== "0" && value !== "false";
   });
 }
+export interface ClaudeConsoleProfile {
+  readonly email: string | undefined;
+  readonly organization: string | undefined;
+}
+
+/** `Email:` and `Organization:` from `claude auth status --text` for a Console profile. */
+export function parseClaudeConsoleProfile(stdout: string): ClaudeConsoleProfile {
+  const line = (label: string) =>
+    new RegExp(`^${label}:\\s*(.+)$`, "m").exec(stdout)?.[1]?.trim() || undefined;
+  return {
+    email: line("Email"),
+    // "EasyChamp · 3f9b…": the name is enough, the id is noise.
+    organization: line("Organization")?.split("\u00b7")[0]?.trim() || undefined,
+  };
+}
+
+export interface ClaudeAiLogin {
+  readonly email: string;
+  readonly subscription: boolean;
+}
+
+/**
+ * The claude.ai login the CLI keeps in its global config, read without
+ * spawning anything or touching the keychain. Only the account's email and
+ * billing kind are read; tokens never live in this file.
+ */
+const readClaudeAiLogin = Effect.fn("readClaudeAiLogin")(function* (
+  claudeSettings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ClaudeAiLogin | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const root = claudeEnvironment.CLAUDE_CONFIG_DIR?.trim() || claudeEnvironment.HOME?.trim();
+  if (!root) return undefined;
+  const raw = yield* fs
+    .readFileString(path.join(root, ".claude.json"))
+    .pipe(Effect.orElseSucceed(() => undefined));
+  return raw === undefined ? undefined : parseClaudeAiLogin(raw);
+});
+
+export function parseClaudeAiLogin(raw: string): ClaudeAiLogin | undefined {
+  try {
+    const account = (JSON.parse(raw) as { readonly oauthAccount?: unknown }).oauthAccount;
+    if (typeof account !== "object" || account === null) return undefined;
+    const { emailAddress, billingType } = account as {
+      readonly emailAddress?: unknown;
+      readonly billingType?: unknown;
+    };
+    if (typeof emailAddress !== "string" || emailAddress.trim().length === 0) return undefined;
+    return {
+      email: emailAddress.trim(),
+      subscription: typeof billingType === "string" && billingType.includes("subscription"),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Why a Console sign-in shows no limits, and which subscription it is hiding. */
+export function claudeConsoleOverrideMessage(
+  profile: ClaudeConsoleProfile | undefined,
+  login: ClaudeAiLogin | undefined,
+): string {
+  const who = [profile?.email, profile?.organization].filter(Boolean).join(", ");
+  const head = `Claude Code here uses a Claude Console API sign-in${who ? ` (${who})` : ""}, so turns bill the API and no subscription limits apply.`;
+  if (!login || (profile?.email && login.email.toLowerCase() === profile.email.toLowerCase())) {
+    return head;
+  }
+  return `${head} It takes precedence over the claude.ai ${login.subscription ? "subscription" : "login"} ${login.email}. Sign out of the Console profile (~/.config/anthropic) to use that ${login.subscription ? "subscription" : "login"} again.`;
+}
+
 export const CLAUDE_CONSOLE_AUTH = {
   type: "apiKey",
   label: "Claude Console (API Usage Billing)",
@@ -716,6 +788,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   // Claude home. Initialization reports no plan, token or key source for it,
   // so only the CLI's own status for this home can name it.
   let consoleBilling = false;
+  let consoleProfile: ClaudeConsoleProfile | undefined;
   if (
     (authMethod === undefined || authMethod === "profile") &&
     !capabilities.subscriptionType &&
@@ -742,8 +815,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         Option.isSome(text.success) &&
         text.success.value.code === 0 &&
         CONSOLE_PROFILE_STATUS_LINE.test(text.success.value.stdout);
+      if (consoleBilling && Result.isSuccess(text) && Option.isSome(text.success)) {
+        consoleProfile = parseClaudeConsoleProfile(text.success.value.stdout);
+      }
     }
   }
+  // The profile outranks a claude.ai login in the same home, which stays
+  // signed in but unused. Naming it is how the user finds the missing plan.
+  const shadowedLogin = consoleBilling
+    ? yield* readClaudeAiLogin(claudeSettings, resolvedEnvironment)
+    : undefined;
   const resolvedAuthMetadata = consoleBilling
     ? CLAUDE_CONSOLE_AUTH
     : (apiProviderAuthMetadata(capabilities.apiProvider) ??
@@ -758,14 +839,20 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const authUnverified =
     authMetadata?.type === "subscription-auth-unverified" ||
     authMetadata?.type === CLAUDE_STATUS_CHECK_FAILED;
-  const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
-    : scopedLimitNames
-      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
-          checkedAt,
-        })
-      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
+  const usageLimits = consoleBilling
+    ? makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: claudeConsoleOverrideMessage(consoleProfile, shadowedLogin),
+      })
+    : !capabilities.usage
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+      : scopedLimitNames
+        ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+            response: capabilities.usage,
+            checkedAt,
+          })
+        : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
   // Which subscription this read belongs to, so a sign-in to another one in
   // the same CLI is told apart from the old one (see subscriptionIdentity.ts).
   const subscriptionKey =
@@ -797,7 +884,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: authUnverified ? "warning" : "ready",
       auth: {
         status: authUnverified ? "unknown" : "authenticated",
-        ...(capabilities.email ? { email: capabilities.email } : {}),
+        ...(capabilities.email
+          ? { email: capabilities.email }
+          : consoleProfile?.email
+            ? { email: consoleProfile.email }
+            : {}),
         ...(authMetadata ? authMetadata : {}),
         // Turns go straight to Anthropic's API and draw the organization's credits.
         ...(consoleBilling ? { apiKeyBilling: true } : {}),

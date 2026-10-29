@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegation,
+  type OrchestratorMcpOriginHint,
   type OrchestratorMcpMachine,
   type OrchestratorMcpMachineListResult,
   type OrchestratorMcpMachineProvider,
@@ -70,11 +71,38 @@ export type MachineTarget =
   | { readonly kind: "local" }
   | { readonly kind: "remote"; readonly machine: OrchestratorMcpMachineRef };
 
-export interface RemoteLaunchInput {
+export type RemoteWorkerLauncher = RemoteWorkerStore.RemoteWorkerLauncher;
+
+/**
+ * Who launched a worker: `launchedBy`, or a thread here by its id as before
+ * MCP clients could launch. A key naming neither names no worker.
+ */
+export interface LauncherKey {
+  readonly callerThreadId?: ThreadId | undefined;
+  readonly launchedBy?: RemoteWorkerLauncher | undefined;
+}
+
+export const launcherFrom = (key: LauncherKey): RemoteWorkerLauncher | undefined =>
+  key.launchedBy ??
+  (key.callerThreadId === undefined ? undefined : { kind: "thread", threadId: key.callerThreadId });
+
+/** Whether `row` was launched by the launcher `key` names. */
+const launchedByKey = (row: RemoteWorkerStore.RemoteWorkerRecord, key: LauncherKey) => {
+  const launcher = launcherFrom(key);
+  return (
+    launcher !== undefined &&
+    RemoteWorkerStore.sameLauncher(RemoteWorkerStore.launcherOf(row), launcher)
+  );
+};
+
+export interface RemoteLaunchInput extends LauncherKey {
   readonly machine: OrchestratorMcpMachineRef;
   readonly commandId: string;
-  readonly callerThreadId: ThreadId;
-  readonly localProject: Project;
+  /**
+   * The project here it maps to there. Undefined launches in `machineProjectId`
+   * there, or without one starts a scratch (projectless) thread there.
+   */
+  readonly localProject: Project | undefined;
   readonly machineProjectId: ProjectId | undefined;
   readonly title: string;
   /** What the agent asked for; an unavailable model is then an error. */
@@ -88,9 +116,12 @@ export interface RemoteLaunchInput {
   readonly message: string | undefined;
   /** The SpecWeave increment ref, passed on unresolved. */
   readonly increment?: string | undefined;
+  /** Wakes the launching thread on completion; always false for an MCP client's launch. */
   readonly reportBack: boolean;
   /** The machines this launch came through, ending with this one. */
   readonly delegation: OrchestratorMcpDelegation;
+  /** Who here asked for it, shown on the thread there; an older machine ignores it. */
+  readonly originHint?: OrchestratorMcpOriginHint | undefined;
 }
 
 const RemoteLaunchAnswer = Schema.Struct({
@@ -104,6 +135,13 @@ const decodeLaunchAnswer = Schema.decodeUnknownOption(RemoteLaunchAnswer);
 const decodeRunStatus = Schema.decodeUnknownOption(OrchestrationV2RunStatus);
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 const decodeRunId = Schema.decodeUnknownOption(RunId);
+const decodeProjectId = Schema.decodeUnknownOption(ProjectId);
+
+/** Where a launch goes there: a project, or none for a scratch thread. */
+interface LaunchTarget {
+  readonly projectId: ProjectId | undefined;
+  readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
+}
 
 export interface RemoteLaunchResult {
   readonly threadId: ThreadId;
@@ -148,8 +186,9 @@ export interface RemoteWorkersShape {
   >;
   /**
    * The configured machines and this server's grant on each. Only `probe`
-   * asks each machine for its providers and matching project; callers
-   * outside a Studio thread get the grant status alone.
+   * asks each machine for its providers and matching project and says
+   * whether it answered (`reachable`); without it a row has the grant
+   * status alone.
    */
   readonly listMachines: (input: {
     readonly projectId: ProjectId | undefined;
@@ -174,29 +213,32 @@ export interface RemoteWorkersShape {
    * A new run on a followed thread, such as after a message sent to it. Only
    * the thread that launched the worker moves its follower.
    */
-  readonly noteRun: (input: {
-    readonly callerThreadId: ThreadId;
-    readonly machineId: string;
-    readonly remoteThreadId: string;
-    readonly runId: string;
-  }) => Effect.Effect<void>;
+  readonly noteRun: (
+    input: LauncherKey & {
+      readonly machineId: string;
+      readonly remoteThreadId: string;
+      readonly runId: string;
+    },
+  ) => Effect.Effect<void>;
   /**
    * A run the launching thread already saw finish, so its wake is not sent
    * again. Anyone else seeing it finish changes nothing.
    */
-  readonly noteFinished: (input: {
-    readonly callerThreadId: ThreadId;
-    readonly machineId: string;
-    readonly remoteThreadId: string;
-    readonly runId: string | null;
-    readonly status: string;
-  }) => Effect.Effect<void>;
-  /** Whether `callerThreadId` launched `remoteThreadId` on that machine, for steering it there. */
-  readonly launchedBy: (input: {
-    readonly callerThreadId: ThreadId;
-    readonly machineId: string;
-    readonly remoteThreadId: string;
-  }) => Effect.Effect<boolean>;
+  readonly noteFinished: (
+    input: LauncherKey & {
+      readonly machineId: string;
+      readonly remoteThreadId: string;
+      readonly runId: string | null;
+      readonly status: string;
+    },
+  ) => Effect.Effect<void>;
+  /** Whether that launcher launched `remoteThreadId` on that machine, for steering it there. */
+  readonly launchedBy: (
+    input: LauncherKey & {
+      readonly machineId: string;
+      readonly remoteThreadId: string;
+    },
+  ) => Effect.Effect<boolean>;
   /** The machine the user chose for this project's workers, when the caller is its coordinator. */
   readonly coordinatorWorkerMachine: (input: {
     readonly projectId: ProjectId;
@@ -353,6 +395,7 @@ const readLaunchAnswer = (value: unknown) => {
   if (!isRecord(value)) return Option.none();
   return Option.map(decodeThreadId(value.threadId), (threadId) => ({
     threadId,
+    projectId: Option.getOrUndefined(decodeProjectId(value.projectId)),
     runId: Option.getOrNull(decodeRunId(value.runId)),
     status: Option.getOrNull(decodeRunStatus(value.status)),
     modelSelection: Option.getOrUndefined(decodeModelSelection(value.modelSelection)),
@@ -594,8 +637,9 @@ const make = Effect.gen(function* () {
                           ? "needs_grant"
                           : "grant_revoked"
                       : "unreachable";
-              return { ...row, status };
+              return { ...row, status, reachable: false };
             }
+            row.reachable = true;
             row.providers = probed.success.providers;
             if (project !== undefined) {
               const { reason: _reason, ...match } = matchFor(
@@ -770,14 +814,30 @@ const make = Effect.gen(function* () {
           "runtime_mode_escalation_denied",
           `${machine.label} allows workers up to ${credential.access}; ${input.requestedRuntimeMode} is broader.`,
         );
+      const launcher = launcherFrom(input);
+      if (launcher === undefined)
+        return yield* failure(
+          "invalid_request",
+          "A remote launch needs the thread or client starting it.",
+        );
       if (clamped.loweredFrom !== undefined)
         yield* Effect.logWarning("Remote worker starts below its caller's mode", {
           machineId: machine.id,
-          callerThreadId: input.callerThreadId,
+          launchedBy: launcher.kind,
           runtimeMode: clamped.mode,
           loweredFrom: clamped.loweredFrom,
         });
-      const target = yield* remoteProjectId(machine, input.localProject, input.machineProjectId);
+      // Without a project here there is nothing to map: the project named
+      // there, or none, and that machine makes its own scratch folder.
+      const target: LaunchTarget =
+        input.localProject === undefined
+          ? {
+              projectId: input.machineProjectId,
+              providers: (yield* probe(machine).pipe(
+                Effect.mapError((error) => remoteFailure(machine, error)),
+              )).providers,
+            }
+          : yield* remoteProjectId(machine, input.localProject, input.machineProjectId);
 
       let modelSelection: ModelSelection | undefined;
       if (input.explicitModelSelection !== undefined) {
@@ -803,16 +863,18 @@ const make = Effect.gen(function* () {
       const startedAt = yield* isoNow;
       yield* writeRow(rowId, () => ({
         id: rowId,
-        callerThreadId: input.callerThreadId,
-        projectId: input.localProject.id,
+        callerThreadId: launcher.kind === "thread" ? launcher.threadId : "",
+        launchedBy: launcher,
+        projectId: input.localProject?.id ?? "",
         machineId: machine.id,
         environmentId: machine.environmentId,
-        remoteProjectId: target.projectId,
+        remoteProjectId: target.projectId ?? null,
         remoteThreadId: null,
         title: input.title,
         launchStartedAt: startedAt,
         followedRunId: null,
-        reportBack: input.reportBack,
+        // Only a thread can be woken; a client follows by reading and waiting.
+        reportBack: launcher.kind === "thread" && input.reportBack,
         state: "launching",
         lastStatus: null,
         deliveredRunIds: [],
@@ -834,10 +896,7 @@ const make = Effect.gen(function* () {
   }: {
     readonly input: RemoteLaunchInput;
     readonly rowId: string;
-    readonly target: {
-      readonly projectId: ProjectId;
-      readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
-    };
+    readonly target: LaunchTarget;
     readonly modelSelection: ModelSelection | undefined;
     readonly clamped: { readonly mode: RuntimeMode; readonly loweredFrom?: RuntimeMode };
   }) =>
@@ -858,7 +917,9 @@ const make = Effect.gen(function* () {
           machineId: machine.id,
           tool: "studio_thread_launch",
           arguments: {
-            projectId: target.projectId,
+            ...(target.projectId === undefined
+              ? { scratch: true }
+              : { projectId: target.projectId }),
             title: input.title,
             ...(selection === undefined ? {} : { modelSelection: selection }),
             runtimeMode: clamped.mode,
@@ -869,6 +930,7 @@ const make = Effect.gen(function* () {
             ...(input.message === undefined ? {} : { message: input.message }),
             ...(input.increment === undefined ? {} : { increment: input.increment }),
             delegation: input.delegation,
+            ...(input.originHint === undefined ? {} : { originHint: input.originHint }),
           },
           timeoutMs: LAUNCH_TIMEOUT_MS,
         });
@@ -881,7 +943,7 @@ const make = Effect.gen(function* () {
         modelSelection === undefined &&
         /Pass modelSelection/u.test(attempt.failure.remoteMessage ?? "")
       ) {
-        const fallback = input.localProject.defaultModelSelection;
+        const fallback = input.localProject?.defaultModelSelection ?? null;
         const translated =
           fallback === null
             ? undefined
@@ -900,6 +962,8 @@ const make = Effect.gen(function* () {
 
       let launched: {
         readonly threadId: ThreadId;
+        /** The project there, which a scratch launch learns only from the answer. */
+        readonly projectId: ProjectId | undefined;
         readonly runId: RunId | null;
         readonly status: OrchestrationV2RunStatus | null;
         readonly modelSelection: ModelSelection | undefined;
@@ -908,7 +972,11 @@ const make = Effect.gen(function* () {
       };
       if (attempt._tag === "Success") {
         const answer = readLaunchAnswer(attempt.success);
-        if (Option.isNone(answer)) {
+        // A scratch thread's project there is known only from the answer.
+        if (
+          Option.isNone(answer) ||
+          (target.projectId === undefined && answer.value.projectId === undefined)
+        ) {
           yield* dispose("Unreadable launch answer.");
           return yield* failure(
             "remote_launch_unconfirmed",
@@ -960,6 +1028,7 @@ const make = Effect.gen(function* () {
             : undefined;
         launched = {
           threadId: ThreadId.make(found.threadId),
+          projectId: target.projectId,
           runId: found.runId === null ? null : RunId.make(found.runId),
           status: Option.getOrNull(decodeRunStatus(found.status)),
           modelSelection: foundModel ?? modelSelection,
@@ -979,6 +1048,7 @@ const make = Effect.gen(function* () {
                 ? {
                     ...row,
                     remoteThreadId: launched.threadId,
+                    remoteProjectId: launched.projectId ?? row.remoteProjectId,
                     followedRunId: runId,
                     state: runId === null ? "idle" : "following",
                     lastStatus: launched.status,
@@ -992,7 +1062,8 @@ const make = Effect.gen(function* () {
       );
       return {
         threadId: launched.threadId,
-        projectId: target.projectId,
+        // Set for every launch: a scratch launch without one was refused as unreadable above.
+        projectId: (launched.projectId ?? target.projectId) as ProjectId,
         ...(launched.modelSelection === undefined
           ? {}
           : { modelSelection: launched.modelSelection }),
@@ -1001,7 +1072,7 @@ const make = Effect.gen(function* () {
         machine,
         threadRef: formatStudioThreadHref(launched.threadId, machine.environmentId),
         threadLink: formatStudioThreadLink(launched.threadId, input.title, machine.environmentId),
-        reportsBack: input.reportBack,
+        reportsBack: launcherFrom(input)?.kind === "thread" && input.reportBack,
         runtimeMode: clamped.mode,
         ...(clamped.loweredFrom === undefined
           ? {}
@@ -1063,17 +1134,13 @@ const make = Effect.gen(function* () {
       return (yield* remoteProjectId(machine, project, undefined)).projectId;
     });
 
-  const noteRun: RemoteWorkersShape["noteRun"] = ({
-    callerThreadId,
-    machineId,
-    remoteThreadId,
-    runId,
-  }) =>
+  const noteRun: RemoteWorkersShape["noteRun"] = (key) =>
     Effect.gen(function* () {
+      const { machineId, remoteThreadId, runId } = key;
       const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
       const row = rows.find(
         (candidate) =>
-          candidate.callerThreadId === callerThreadId &&
+          launchedByKey(candidate, key) &&
           candidate.machineId === machineId &&
           candidate.remoteThreadId === remoteThreadId &&
           candidate.state !== "disposed",
@@ -1095,7 +1162,7 @@ const make = Effect.gen(function* () {
       Effect.map((rows) =>
         rows.some(
           (row) =>
-            row.callerThreadId === input.callerThreadId &&
+            launchedByKey(row, input) &&
             row.machineId === input.machineId &&
             row.remoteThreadId === input.remoteThreadId &&
             row.state !== "disposed",
@@ -1110,7 +1177,7 @@ const make = Effect.gen(function* () {
       const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
       const row = rows.find(
         (candidate) =>
-          candidate.callerThreadId === input.callerThreadId &&
+          launchedByKey(candidate, input) &&
           candidate.machineId === input.machineId &&
           candidate.remoteThreadId === input.remoteThreadId &&
           candidate.state === "following" &&
@@ -1151,7 +1218,13 @@ const make = Effect.gen(function* () {
       const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
       const configured = yield* machines.pipe(Effect.orElseSucceed(() => []));
       const relevant = rows
-        .filter((row) => row.projectId === projectId && row.state !== "disposed")
+        // A project's list names the thread that started each worker; a client's have none.
+        .filter(
+          (row) =>
+            row.projectId === projectId &&
+            row.state !== "disposed" &&
+            RemoteWorkerStore.launcherOf(row).kind === "thread",
+        )
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
         .slice(0, 50);
       return yield* Effect.forEach(relevant, (row) =>

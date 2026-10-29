@@ -7,10 +7,12 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type {
   MachineReadiness,
+  MachineReadinessCredentialHelper,
   MachineReadinessGitHub,
   MachineReadinessRepository,
   MachineReadinessTool,
@@ -38,8 +40,43 @@ export interface ReadinessOptions {
   readonly env?: NodeJS.ProcessEnv;
   /** Replaces `gh auth status --json hosts` in tests. */
   readonly ghAuthStatus?: () => Promise<GhResult>;
+  /** Replaces `git config --get-urlmatch credential.helper https://github.com` in tests. */
+  readonly gitCredentialHelper?: () => Promise<GitHelperResult>;
   readonly now?: () => Date;
 }
+
+export interface GitHelperResult {
+  readonly code: number | null;
+  readonly stdout: string;
+}
+
+/** The helper pattern `gh auth setup-git` writes. */
+const GH_CREDENTIAL_HELPER = /(^|[\s/!])gh(\.exe)?\s+auth\s+git-credential\b/u;
+
+/**
+ * Whether git here has a credential helper for GitHub, and whether it is gh's.
+ * The helper's own text (a path, maybe more) never enters the report.
+ */
+export async function credentialHelperReadiness(
+  probe: () => Promise<GitHelperResult>,
+): Promise<MachineReadinessCredentialHelper> {
+  const result = await probe().catch(() => null);
+  if (!result) return { status: "unknown", usesGh: false };
+  const helper = result.stdout.trim().split(/\r?\n/u).at(-1)?.trim() ?? "";
+  if (result.code === 0 && helper.length > 0)
+    return { status: "configured", usesGh: GH_CREDENTIAL_HELPER.test(helper) };
+  // git config exits 1 when the key is not set.
+  return result.code === 1
+    ? { status: "missing", usesGh: false }
+    : { status: "unknown", usesGh: false };
+}
+
+const runGitCredentialHelper = (): Promise<GitHelperResult> =>
+  runGit(
+    NodeOS.homedir(),
+    ["config", "--get-urlmatch", "credential.helper", "https://github.com"],
+    { allowFailure: true, timeoutMs: 10_000, env: { GIT_TERMINAL_PROMPT: "0" } },
+  );
 
 export interface GhResult {
   readonly code: number | null;
@@ -342,5 +379,8 @@ export async function checkMachineReadiness(options: ReadinessOptions): Promise<
     repositories,
     repositoriesTruncated: truncated,
     tools: await toolReadiness(options.scripts, options.folder, env),
+    credentialHelper: await credentialHelperReadiness(
+      options.gitCredentialHelper ?? runGitCredentialHelper,
+    ),
   };
 }

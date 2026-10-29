@@ -27,13 +27,19 @@
  * request made during this hold. The file is removed when the hold ends.
  *
  * One hold outlives its process: when the helper restarts a service held for a
- * forced request because it lost its database locks (`database_restart.py`),
- * it records that request, its run and the hold's end in
- * `updates/database-restart.json`. The restarted service holds itself again
- * for that request at startup (`carriedHoldFor`) while the request is still
- * open and the old hold's time has not run out, and never past it. Its
- * `hold.json` then names the request, which `update_service.assert_held`
- * accepts for that request only.
+ * forced request because it lost its database locks or runs on a deleted
+ * database log (`database_restart.py`), it records that request, its run,
+ * where the hold ended (`until`) and how far it could have moved (`ceiling`:
+ * `HOLD_MAX_MS` from its start, or from the request for a hold that was
+ * itself carried, never past the `ceiling` that
+ * hold names nor the end of one that names none, and never short of `until`)
+ * in `updates/database-restart.json`. The restarted service holds
+ * itself again for that request at startup (`carriedHoldFor`) while the
+ * request is still open and `ceiling` is ahead: from where the old hold ended,
+ * moving with the agent as the old one moved, never past `ceiling`. Its
+ * `hold.json` then names the request and `ceiling`, and
+ * `update_service.assert_held` accepts it for that request only. Services from
+ * 1.0.108 that predate `ceiling` read only `until` and hold to it.
  *
  * @module ServiceUpdateHold
  */
@@ -159,13 +165,17 @@ export const holdMarkerContent = (hold: ServiceUpdateHoldState, pid: number) => 
   startedAt: DateTime.formatIso(DateTime.makeUnsafe(hold.startedAtMs)),
   expiresAt: DateTime.formatIso(DateTime.makeUnsafe(hold.expiresAtMs)),
   ...(hold.request === undefined ? {} : { request: hold.request }),
+  ...(hold.carriedCeilingMs === undefined
+    ? {}
+    : { ceiling: DateTime.formatIso(DateTime.makeUnsafe(hold.carriedCeilingMs)) }),
 });
 
 /**
  * `updates/database-restart.json`, written by the update helper before it
  * restarts the service (`database_restart.py` restart_marker): the restarted
  * pid and when, and for a held service the forced request (`request:`), its
- * `installRunId:` and the old hold's end (`until:`).
+ * `installRunId:`, where the old hold ended (`until:`) and how far it could
+ * have moved (`ceiling:`; helpers before this release name none).
  */
 export const DATABASE_RESTART_MARKER_FILE = "database-restart.json";
 
@@ -177,6 +187,7 @@ const decodeRestartMarker = Schema.decodeUnknownOption(
       request: Schema.optional(Schema.Unknown),
       installRunId: Schema.optional(Schema.Unknown),
       until: Schema.optional(Schema.Unknown),
+      ceiling: Schema.optional(Schema.Unknown),
     }),
   ),
 );
@@ -189,6 +200,7 @@ export interface CarriedHoldInput {
     readonly request?: unknown;
     readonly installRunId?: unknown;
     readonly until?: unknown;
+    readonly ceiling?: unknown;
   };
   readonly config: {
     readonly installMode?: unknown;
@@ -208,12 +220,23 @@ export interface CarriedHoldInput {
  * helper restarted it under, or null. Only when the marker names another pid,
  * a restart at or before now, a request that `config.json` still asks to
  * force-install with the same run and has not cancelled, that the agent has
- * not finished with and whose `installHoldUntil` is ahead, and an `until` still
- * ahead. The hold ends at `until`: the old hold's end, never later.
+ * not finished with, and a `ceiling` still ahead. A helper naming a ceiling
+ * carries an extended hold even after the original `installHoldUntil` passed.
+ * `until` is where the old hold ended, and `ceiling` as far as it
+ * could have moved (`database_restart.restart_marker`; a carried hold counts
+ * from the request, as `carriedFromMs` does): the carried hold's end starts at
+ * `until`, or four agent polls after startup when that is later (`until`
+ * passed during the restart, or comes sooner), and moves with the agent as the
+ * old one did, never past `ceiling`. A marker from
+ * a helper before this release names no `ceiling`: the hold then ends at
+ * `until`, within the original request window, as it did there.
  */
-export function carriedHoldFor(
-  input: CarriedHoldInput,
-): { readonly request: string; readonly requestedAtMs: number; readonly untilMs: number } | null {
+export function carriedHoldFor(input: CarriedHoldInput): {
+  readonly request: string;
+  readonly requestedAtMs: number;
+  readonly endMs: number;
+  readonly ceilingMs: number;
+} | null {
   const { marker, config, nowMs } = input;
   const request = marker.request;
   if (typeof request !== "string" || request !== config.installRequestedAt) return null;
@@ -222,16 +245,20 @@ export function carriedHoldFor(
   if ((marker.installRunId ?? null) !== (config.installRunId ?? null)) return null;
   const requestedAtMs = epochMillis(request);
   const restartedAtMs = epochMillis(marker.restartedAt);
-  const untilMs = epochMillis(marker.until);
-  if (requestedAtMs === null || restartedAtMs === null || untilMs === null) return null;
-  if (requestedAtMs > restartedAtMs || restartedAtMs > nowMs || nowMs >= untilMs) return null;
+  const endMs = epochMillis(marker.until);
+  const ceilingMs = marker.ceiling === undefined ? endMs : epochMillis(marker.ceiling);
+  if (requestedAtMs === null || restartedAtMs === null || endMs === null || ceilingMs === null)
+    return null;
+  if (requestedAtMs > restartedAtMs || restartedAtMs > nowMs || nowMs >= ceilingMs) return null;
   if (config.installCancelledAt !== undefined && config.installCancelledAt !== null) {
     const cancelledAtMs = epochMillis(config.installCancelledAt);
     if (cancelledAtMs === null || cancelledAtMs > requestedAtMs) return null;
   }
   const holdUntilMs = epochMillis(config.installHoldUntil);
-  if (holdUntilMs !== null && holdUntilMs <= nowMs) return null;
-  return { request, requestedAtMs, untilMs };
+  // The initial request window does not bound an active apply retry. The helper
+  // carried its live hold's ceiling; older helpers still use the original gate.
+  if (marker.ceiling === undefined && holdUntilMs !== null && holdUntilMs <= nowMs) return null;
+  return { request, requestedAtMs, endMs, ceilingMs };
 }
 
 export interface ServiceUpdateHoldState {
@@ -244,6 +271,8 @@ export interface ServiceUpdateHoldState {
   readonly leaseToken?: string | undefined;
   /** A hold carried across a database restart: the forced request it holds for. */
   readonly request?: string;
+  /** A carried hold: as far as the old hold could have moved; it never moves past this. */
+  readonly carriedCeilingMs?: number;
 }
 
 export interface ServiceUpdateHoldShape {
@@ -594,7 +623,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       readonly reason: string;
       /** With no install request by then (and an idle agent) the hold ends. */
       readonly requestDueAtMs: number;
-      /** A carried hold: when its request was made; it never moves past its end. */
+      /** A carried hold: when its request was made. */
       readonly carriedFromMs?: number;
     };
     const state = yield* Ref.make<Option.Option<HeldState>>(Option.none());
@@ -650,7 +679,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
     );
 
     // Read before anything can start: a service the helper restarted while it was held for a
-    // forced request holds itself again for that request, up to the old hold's end.
+    // forced request holds itself again for that request, as long as the old hold could have.
     const readDecoded = <A>(file: string, decode: (input: string) => Option.Option<A>) =>
       fileSystem.readFileString(file).pipe(
         Effect.map(decode),
@@ -682,20 +711,24 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         const value = {
           holdId: `service-update-hold:${now}:${(holds += 1)}`,
           startedAtMs: now,
-          expiresAtMs: carried.untilMs,
+          // Where the old hold ended, or four polls on when it ends sooner (a restart that outlasted
+          // it): check moves it on while the agent works on the request, as it moved the old one.
+          expiresAtMs: Math.min(carried.ceilingMs, Math.max(carried.endMs, now + 4 * pollMs)),
           released: yield* Deferred.make<void>(),
           reason: "install",
           // A cancel clears the request: the hold then ends like any without one.
-          requestDueAtMs: Math.min(carried.untilMs, now + noRequestMs),
+          requestDueAtMs: Math.min(carried.ceilingMs, now + noRequestMs),
           request: carried.request,
           carriedFromMs: carried.requestedAtMs,
+          carriedCeilingMs: carried.ceilingMs,
         };
         yield* Ref.set(state, Option.some(value));
         yield* writeMarker(value);
         yield* Effect.logWarning("service-update.hold.carried", {
           holdId: value.holdId,
           request: carried.request,
-          untilMs: carried.untilMs,
+          endMs: carried.endMs,
+          ceilingMs: carried.ceilingMs,
         });
       }
     }
@@ -956,11 +989,11 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       const reading = yield* readAgentState;
       if (Option.isNone(reading)) return;
       // A carried hold's request came before it began: it counts from the request.
-      const carriedFromMs = Option.match(yield* Ref.get(state), {
+      const carried = Option.match(yield* Ref.get(state), {
         onNone: () => undefined,
-        onSome: (value) => (value.holdId === held.value.holdId ? value.carriedFromMs : undefined),
+        onSome: (value) => (value.holdId === held.value.holdId ? value : undefined),
       });
-      const sinceMs = carriedFromMs ?? held.value.startedAtMs;
+      const sinceMs = carried?.carriedFromMs ?? held.value.startedAtMs;
       // A hold nobody asked the agent to install for (an app restart that did
       // not take the service down, a closed window) would refuse work until its
       // time runs out. Once the request had time to arrive, end it.
@@ -994,12 +1027,16 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         yield* release(`agent-${verdict.status}`);
         return;
       }
-      // A carried hold ends at the old hold's end, never later.
-      if (verdict.type !== "busy" || carriedFromMs !== undefined) return;
+      if (verdict.type !== "busy") return;
       // The agent does not rewrite its state during a long snapshot or install,
-      // so the hold stays a few polls ahead while it is on this request.
+      // so the hold stays a few polls ahead while it is on this request. A
+      // carried hold never moves past where the old hold could have.
       const now = yield* Clock.currentTimeMillis;
-      const extended = Math.min(verdict.untilMs, now + 4 * pollMs);
+      const extended = Math.min(
+        verdict.untilMs,
+        now + 4 * pollMs,
+        carried?.carriedCeilingMs ?? Number.POSITIVE_INFINITY,
+      );
       const moved = yield* Ref.modify(state, (value) => {
         if (
           Option.isNone(value) ||

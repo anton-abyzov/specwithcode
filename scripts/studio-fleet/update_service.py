@@ -66,9 +66,9 @@ def assert_held(service, request, now=None):
     while it was held for `request` (database_restart) holds itself again at startup, and its
     hold.json names that `request`. It counts when `updates/database-restart.json` records that
     restart for `request` of another pid, the request came before the restart, the restart before
-    this process's start and the hold, and the hold ends by the marker's `until` (the old hold's
-    end). The service's runtime record is written once it serves, after the hold, so the restart,
-    not the record, bounds when the hold may begin."""
+    this process's start and the hold, and the hold ends by the marker's `ceiling` (as far as the
+    old hold could have moved), or its `until` in a marker without one. The service's runtime record is written once it serves, after
+    the hold, so the restart, not the record, bounds when the hold may begin."""
     updates = service['own'] / 'updates'
     hold, config = (_small_json(updates / name, service['home']) for name in ('hold.json', 'config.json'))
     runtime = service['runtime']
@@ -83,11 +83,11 @@ def assert_held(service, request, now=None):
         assert launched <= began and requested <= now and began <= requested, HOLD_REFUSAL
         return began
     marker = _small_json(updates / 'database-restart.json', service['home'])
-    restarted, until = _utc(marker.get('restartedAt')), _utc(marker.get('until'))
+    restarted, ceiling = _utc(marker.get('restartedAt')), _utc(marker.get('ceiling', marker.get('until')))
     assert hold['request'] == request and marker.get('request') == request, HOLD_REFUSAL
     assert type(marker.get('servicePid')) is int and marker['servicePid'] != runtime['pid'], HOLD_REFUSAL
-    assert None not in (restarted, until) and requested <= restarted <= began and restarted <= launched, HOLD_REFUSAL
-    assert ends <= until, HOLD_REFUSAL
+    assert None not in (restarted, ceiling) and requested <= restarted <= began and restarted <= launched, HOLD_REFUSAL
+    assert ends <= ceiling, HOLD_REFUSAL
     return began
 
 # The install gate's settle when the running service holds itself for this very forced request:

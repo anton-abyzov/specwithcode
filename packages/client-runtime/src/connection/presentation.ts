@@ -2,7 +2,12 @@ import type { ServerConfig } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import type { ConnectionBlockedReason, SupervisorConnectionState } from "./model.ts";
+import type {
+  ConnectionBlockedReason,
+  ConnectionTarget,
+  SupervisorConnectionState,
+} from "./model.ts";
+import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -133,22 +138,57 @@ export function isLoopbackHttpBaseUrl(httpBaseUrl: string | null | undefined): b
 
 /**
  * The address an agent outside Studio (Claude Code, Codex) uses to reach this
- * environment's MCP server. Only HTTPS and loopback addresses qualify: MCP
- * clients refuse to sign in through a plain-http token endpoint elsewhere.
+ * environment's MCP server: the route this device is connected over, since an
+ * agent beside this client can reach it too, else the first route in
+ * preference order that has a usable address. Only HTTPS and loopback
+ * addresses qualify: MCP clients refuse to sign in through a plain-http token
+ * endpoint elsewhere, so a plain-http LAN or tailnet route is passed over.
  * SSH connections ride a local forward that disappears with the client, so
  * they have no stable address to hand out.
  */
 export function environmentMcpUrl(input: {
   readonly entry: ConnectionCatalogEntry;
   readonly relayHttpBaseUrl?: string | undefined;
+  readonly connectedTarget?: ConnectionTarget | null | undefined;
 }): string | null {
-  const httpBaseUrl =
-    input.entry.target._tag === "RelayConnectionTarget"
-      ? (input.relayHttpBaseUrl ?? null)
-      : input.entry.target._tag === "SshConnectionTarget"
-        ? null
-        : connectionCatalogDisplayUrl(input.entry);
-  if (httpBaseUrl === null) return null;
+  const connectedRouteId = input.connectedTarget ? connectionRouteId(input.connectedTarget) : null;
+  const routes = connectionRoutes(input.entry);
+  const connectedRoute =
+    connectedRouteId === null
+      ? undefined
+      : routes.find((route) => connectionRouteId(route.target) === connectedRouteId);
+  for (const route of connectedRoute ? [connectedRoute, ...routes] : routes) {
+    const httpBaseUrl =
+      route.target._tag === "RelayConnectionTarget"
+        ? (input.relayHttpBaseUrl ?? null)
+        : routeHttpBaseUrl(route);
+    const mcpUrl = httpBaseUrl === null ? null : signInSafeMcpUrl(httpBaseUrl);
+    if (mcpUrl !== null) return mcpUrl;
+  }
+  return null;
+}
+
+/**
+ * The internet-reachable MCP address of an environment saved with a Studio
+ * Connect route: the relay tunnel's https address. Hosted connectors (a
+ * cloud agent, a web client) need this one even when this device reaches
+ * the environment over a LAN or loopback route. Null without a Connect route
+ * or before relay discovery reports an https address.
+ */
+export function environmentPublicMcpUrl(input: {
+  readonly entry: ConnectionCatalogEntry;
+  readonly relayHttpBaseUrl?: string | undefined;
+}): string | null {
+  if (!input.relayHttpBaseUrl) return null;
+  const hasRelayRoute = connectionRoutes(input.entry).some(
+    (route) => route.target._tag === "RelayConnectionTarget",
+  );
+  if (!hasRelayRoute) return null;
+  const mcpUrl = signInSafeMcpUrl(input.relayHttpBaseUrl);
+  return mcpUrl !== null && mcpUrl.startsWith("https:") ? mcpUrl : null;
+}
+
+function signInSafeMcpUrl(httpBaseUrl: string): string | null {
   let url: URL;
   try {
     url = new URL(httpBaseUrl);

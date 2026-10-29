@@ -49,18 +49,53 @@ it("never claims a real legacy root beside a fresh branded profile", () =>
     assert.isNull(legacyStudioPathAlias("/srv/worktrees", NodePath));
   }));
 
-it("resolves modes without moving or reinterpreting saved legacy roots", () => {
-  assert.equal(resolveWorktreesDirectory("/old", "/managed", NodePath), "/old");
-  assert.equal(
-    resolveWorktreesDirectory("/old", "/managed", NodePath, "managed", "/repo"),
-    "/managed",
-  );
-  assert.equal(
-    resolveWorktreesDirectory("/old", "/managed", NodePath, "project", "/repo"),
-    "/repo/.specwithcode/worktrees",
-  );
-  assert.isNull(resolveWorktreesDirectory("", "/managed", NodePath, "custom", "/repo"));
-  assert.isNull(resolveWorktreesDirectory("relative", "/managed", NodePath, "custom", "/repo"));
-  assert.isNull(resolveWorktreesDirectory("/", "/managed", NodePath, "custom", "/repo"));
-  assert.isNull(resolveWorktreesDirectory("", "/managed", NodePath, "project"));
-});
+it.each([
+  {
+    label: "POSIX",
+    path: NodePath.posix,
+    old: "/old",
+    managed: "/managed",
+    repo: "/repo",
+    project: "/repo/.specwithcode/worktrees",
+    root: "/",
+  },
+  {
+    label: "Windows",
+    path: NodePath.win32,
+    old: "C:\\old",
+    managed: "C:\\managed",
+    repo: "C:\\repo",
+    project: "C:\\repo\\.specwithcode\\worktrees",
+    root: "C:\\",
+  },
+])(
+  "resolves $label modes without moving or reinterpreting saved legacy roots",
+  ({ path, old, managed, repo, project, root }) => {
+    assert.equal(resolveWorktreesDirectory(old, managed, path), old);
+    assert.equal(resolveWorktreesDirectory(old, managed, path, "managed", repo), managed);
+    assert.equal(resolveWorktreesDirectory(old, managed, path, "project", repo), project);
+    assert.isNull(resolveWorktreesDirectory("", managed, path, "custom", repo));
+    assert.isNull(resolveWorktreesDirectory("relative", managed, path, "custom", repo));
+    assert.isNull(resolveWorktreesDirectory(root, managed, path, "custom", repo));
+    assert.isNull(resolveWorktreesDirectory("", managed, path, "project"));
+  },
+);
+
+it("resolves modes without moving or reinterpreting saved legacy roots", () =>
+  withHome((home) => {
+    const old = NodePath.join(home, "old");
+    const managed = NodePath.join(home, "managed");
+    const repository = NodePath.join(home, "repo");
+    assert.equal(resolveWorktreesDirectory(old, managed, NodePath), old);
+    assert.equal(resolveWorktreesDirectory(old, managed, NodePath, "managed", repository), managed);
+    assert.equal(
+      resolveWorktreesDirectory(old, managed, NodePath, "project", repository),
+      NodePath.join(repository, ".specwithcode", "worktrees"),
+    );
+    assert.isNull(resolveWorktreesDirectory("", managed, NodePath, "custom", repository));
+    assert.isNull(resolveWorktreesDirectory("relative", managed, NodePath, "custom", repository));
+    assert.isNull(
+      resolveWorktreesDirectory(NodePath.resolve("/"), managed, NodePath, "custom", repository),
+    );
+    assert.isNull(resolveWorktreesDirectory("", managed, NodePath, "project"));
+  }));

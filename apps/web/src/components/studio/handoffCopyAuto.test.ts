@@ -13,6 +13,7 @@ import {
   secretsLeftText,
 } from "./handoffCopyAuto";
 import {
+  copyNoticeWarnings,
   copyProblem,
   groupCopyNotices,
   hasNotCopied,
@@ -319,6 +320,28 @@ describe("problems after a copy", () => {
 });
 
 describe("grouped notices", () => {
+  it("uses fresh inventory totals rather than unioning old worktree names", () => {
+    const fresh =
+      "repos/x: 22 worktree(s) outside this folder are not copied: current-a, current-b and 20 more. Their committed branches come along.";
+    const old =
+      "repos/x: 36 worktree(s) outside this folder are not copied: old-a, old-b. Copy those working folders separately.";
+    const notices = groupCopyNotices({ warnings: [fresh, old], rootLabel: "Root" });
+    expect(notices.outsideWorktreeCount).toBe(22);
+    expect(notices.outsideWorktreeTotals).toEqual({ "repos/x": 22 });
+    expect(notices.outsideWorktrees).toEqual(["current-a (repos/x)", "current-b (repos/x)"]);
+  });
+
+  it("drops removed repositories from fresh inventory but preserves destination warnings", () => {
+    const old =
+      "repos/removed: 1 worktree(s) outside this folder are not copied: gone. Copy it separately.";
+    const copy = { warnings: [old, "Destination contains local edits."] };
+    const warnings = copyNoticeWarnings({ warnings: [] }, copy, true);
+    expect(warnings).toEqual(["Destination contains local edits."]);
+    expect(copyNoticeWarnings(null, copy, false)).toEqual(copy.warnings);
+    const notices = groupCopyNotices({ warnings, rootLabel: "Root" });
+    expect(notices.outsideWorktreeCount).toBe(0);
+    expect(notices.outsideWorktrees).toEqual([]);
+  });
   it("reads worktree names from an older source's notice and names the root", () => {
     const notices = groupCopyNotices({
       warnings: [
@@ -383,6 +406,14 @@ describe("grouped notices", () => {
     expect(lines("copy-only")).toEqual([
       "Work is still running here. Files that change during the copy won't be included.",
     ]);
+    expect(
+      groupCopyNotices({
+        warnings,
+        rootLabel: "Project root",
+        activeWork: "copy-only",
+        captured: true,
+      }).lines,
+    ).toEqual(["Work is still running here. Later changes stay on the source."]);
     // Copying started: Done and Failed never repeat it.
     expect(lines(null)).toEqual([]);
   });

@@ -386,13 +386,24 @@ public actor MachineConnection {
     return .unreachable(error.redactedDescription)
   }
 
-  /// Direct routes first when the record has paired ones; the Connect tunnel
-  /// when there are none or none of them answered.
+  /// SpecWithCode Connect is primary. Independently paired direct routes
+  /// remain a fallback when Connect cannot reach the machine.
   private func establish(_ gen: Int) async throws -> (RpcSocket, MachineRoute, EnvironmentDescriptorLite, MachineCredential) {
     guard let authorizer, let connectRoute = record.connectRoute else {
       return try await establishDirect(gen)
     }
-    if !record.routes.isEmpty {
+    do {
+      return try await establishConnect(gen, route: connectRoute, authorizer: authorizer)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      try check(gen)
+      let connectError = error
+      switch error as? TransportError {
+      case .appTooOld?, .serverTooOld?: throw error
+      default: break
+      }
+      guard !record.routes.isEmpty else { throw connectError }
       do {
         return try await establishDirect(gen)
       } catch is CancellationError {
@@ -401,11 +412,10 @@ public actor MachineConnection {
         try check(gen)
         switch error as? TransportError {
         case .appTooOld?, .serverTooOld?: throw error
-        default: break
+        default: throw connectError
         }
       }
     }
-    return try await establishConnect(gen, route: connectRoute, authorizer: authorizer)
   }
 
   private func establishConnect(_ gen: Int, route: MachineRoute, authorizer: any ConnectAuthorizing) async throws -> (RpcSocket, MachineRoute, EnvironmentDescriptorLite, MachineCredential) {

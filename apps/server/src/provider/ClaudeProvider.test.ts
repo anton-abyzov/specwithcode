@@ -75,6 +75,8 @@ const checkNative = (
     capabilities?: Partial<typeof nativeCapabilities> | null;
     lastKnownCatalog?: ClaudeModelCatalog;
     record?: (command: Command, configDir: string, cwd: string) => void;
+    /** Written to the instance's `.claude.json`, where the CLI keeps its claude.ai login. */
+    claudeJson?: string;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -83,6 +85,9 @@ const checkNative = (
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "studio-claude-auth-" });
     const configDir = path.join(cwd, "profile");
     yield* fs.makeDirectory(configDir);
+    if (input.claudeJson !== undefined) {
+      yield* fs.writeFileString(path.join(configDir, ".claude.json"), input.claudeJson);
+    }
     const encoder = new TextEncoder();
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
@@ -357,6 +362,38 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
         label: "Claude Console (API Usage Billing)",
         apiKeyBilling: true,
       });
+    }),
+  );
+
+  it.effect("names the Console account and the subscription it takes precedence over", () =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({
+        capabilities: consoleCapabilities,
+        stdout: consoleStatus,
+        textStdout: consoleText,
+        claudeJson: JSON.stringify({
+          oauthAccount: { emailAddress: "plan@example.com", billingType: "stripe_subscription" },
+        }),
+      });
+      expect(status.auth.email).toBe("console@example.com");
+      expect(status.usageLimits?.unavailable).toEqual({
+        reason: "unsupported",
+        message:
+          "Claude Code here uses a Claude Console API sign-in (console@example.com, Example Org), so turns bill the API and no subscription limits apply. It takes precedence over the claude.ai subscription plan@example.com. Sign out of the Console profile (~/.config/anthropic) to use that subscription again.",
+      });
+    }),
+  );
+
+  it.effect("explains a Console sign-in without a claude.ai login behind it", () =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({
+        capabilities: consoleCapabilities,
+        stdout: consoleStatus,
+        textStdout: consoleText,
+      });
+      expect(status.usageLimits?.unavailable?.message).toBe(
+        "Claude Code here uses a Claude Console API sign-in (console@example.com, Example Org), so turns bill the API and no subscription limits apply.",
+      );
     }),
   );
 

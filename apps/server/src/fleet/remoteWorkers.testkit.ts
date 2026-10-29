@@ -221,9 +221,10 @@ export const setup = (
   return { world, remote, auth, layer };
 };
 
+/** A thread's project launch; pass `localProject: undefined` to the launch itself for scratch. */
 export const launchInput = (
-  overrides: Partial<RemoteWorkers.RemoteLaunchInput> = {},
-): RemoteWorkers.RemoteLaunchInput => ({
+  overrides: Partial<RemoteWorkers.RemoteLaunchInput> & { readonly localProject?: Project } = {},
+): RemoteWorkers.RemoteLaunchInput & { readonly localProject: Project } => ({
   machine: M1,
   commandId: "command-1",
   callerThreadId: ThreadId.make("coordinator"),

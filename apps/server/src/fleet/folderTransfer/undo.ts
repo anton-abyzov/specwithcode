@@ -429,7 +429,9 @@ export async function undoApply(input: {
     intents.set(path, intent);
   };
   const finishFile = async (path: string) => {
-    await journal.append({ t: "undo-file-done", path }, true);
+    // The next durable intent (or close) flushes this completion too. A crash
+    // before that is reconciled from the already-synced intent and original digest.
+    await journal.append({ t: "undo-file-done", path });
     completed.add(path);
   };
   try {

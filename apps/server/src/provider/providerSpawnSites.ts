@@ -38,6 +38,8 @@ export const NON_AGENT_PROVIDER_SPAWNS: Readonly<Record<string, string>> = {
   "provider/CodexInstallation.ts": "codex install and version checks",
   "provider/GrokProvider.ts": "grok CLI version and model probes",
   "provider/Drivers/GrokSkills.ts": "grok inspect --json skill listing",
+  "provider/Drivers/MuseDriver.ts":
+    "muse usage --json fallback probe when the Muse host reports no usage",
   "provider/PiProvider.ts": "pi --version probe",
   "provider/providerDiscovery.ts": "startup grok and opencode version and sign-in probes",
   "provider/OpenCodeServerLedger.ts": "stops leftover opencode servers",

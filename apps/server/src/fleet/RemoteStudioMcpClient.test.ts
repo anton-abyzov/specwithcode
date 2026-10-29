@@ -40,6 +40,13 @@ const setup = (
     tools: {
       studio_thread_read: () => ({ result: { thread: remoteThread } }),
       studio_thread_send: () => ({ failure: "Thread thread-remote is archived." }),
+      studio_project_clone: () => ({
+        result: {
+          cwd: "/home/example/widgets",
+          remoteUrl: "git@example.com:o/w.git",
+          repository: null,
+        },
+      }),
       studio_thread_list: () => ({
         raw: new Response("x".repeat(5 * 1024 * 1024), {
           headers: { "content-type": "application/json" },
@@ -106,6 +113,33 @@ describe("RemoteStudioMcpClient", () => {
         { name: "studio_thread_read", args: { threadId: "x" } },
       ]);
       expect(accepted()).toBe(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("forwards a clone for studio_project_add_to_machine, never update or delete", () => {
+    const { remote, layer } = setup();
+    return Effect.gen(function* () {
+      expect(RemoteStudioMcpClient.REMOTE_TOOL_ALLOWLIST).toEqual(
+        expect.arrayContaining(["studio_project_clone", "studio_project_create"]),
+      );
+      for (const tool of [
+        "studio_project_update",
+        "studio_project_delete",
+        "studio_project_request",
+      ])
+        expect(RemoteStudioMcpClient.REMOTE_TOOL_ALLOWLIST as ReadonlyArray<string>).not.toContain(
+          tool,
+        );
+      const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+      const args = { remoteUrl: "git@example.com:o/w.git", destinationPath: "~/widgets" };
+      expect(
+        yield* client.call({ machineId: "m1", tool: "studio_project_clone", arguments: args }),
+      ).toEqual({
+        cwd: "/home/example/widgets",
+        remoteUrl: "git@example.com:o/w.git",
+        repository: null,
+      });
+      expect(remote.toolCalls).toEqual([{ name: "studio_project_clone", args }]);
     }).pipe(Effect.provide(layer));
   });
 

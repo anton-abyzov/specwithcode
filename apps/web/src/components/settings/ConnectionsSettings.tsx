@@ -59,6 +59,7 @@ import {
   connectionRoutes,
   connectionStatusText,
   environmentMcpUrl,
+  environmentPublicMcpUrl,
 } from "@specweave-studio/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
@@ -1580,21 +1581,24 @@ function SavedBackendListRow({
   ) {
     setLastRelayHttpBaseUrl(discoveredRelayHttpBaseUrl);
   }
+  const prepared = usePreparedConnection(environmentId);
+  const connectedTarget = isConnected && prepared._tag === "Some" ? prepared.value.target : null;
+  const relayHttpBaseUrl = discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl;
   const mcpUrl = environmentMcpUrl({
     entry: environment.entry,
-    relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
+    relayHttpBaseUrl,
+    connectedTarget,
   });
+  // Hosted connectors need the internet-reachable Connect address even when
+  // this device reaches the machine over a LAN or loopback route.
+  const publicMcpUrl = environmentPublicMcpUrl({ entry: environment.entry, relayHttpBaseUrl });
   const machineKind = resolveEnvironmentMachineKind(
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
-  const prepared = usePreparedConnection(environmentId);
   const routeCount = connectionRoutes(environment.entry).length;
   const subtitleText = [
-    environmentTransportLabel(
-      environment,
-      isConnected && prepared._tag === "Some" ? prepared.value.target : null,
-    ),
+    environmentTransportLabel(environment, connectedTarget),
     resumingServerUpdate ? "Restarting" : status.text,
     lastSeen,
     enabled && versionMismatch ? serverVersion : null,
@@ -1764,6 +1768,11 @@ function SavedBackendListRow({
           </MenuItem>
           {mcpUrl ? (
             <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
+          ) : null}
+          {publicMcpUrl && publicMcpUrl !== mcpUrl ? (
+            <MenuItem onClick={() => copyMcpUrl(publicMcpUrl, { url: publicMcpUrl })}>
+              Copy public MCP URL
+            </MenuItem>
           ) : null}
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>

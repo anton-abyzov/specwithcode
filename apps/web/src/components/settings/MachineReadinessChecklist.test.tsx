@@ -127,6 +127,7 @@ beforeEach(() => {
       { name: "pnpm", action: "Dev", found: true },
       { name: "cargo", action: "Build", found: false },
     ],
+    credentialHelper: { status: "missing", usesGh: false },
   };
   container = document.createElement("div");
   document.body.append(container);
@@ -150,6 +151,8 @@ it("checks the machine and project, and lists what still needs a sign-in or acce
   expect(text).toContain("repositories/private");
   expect(text).toContain("Permission denied (publickey).");
   expect(text).toContain("Missing tools: cargo");
+  expect(text).toContain("Git has no credential helper for GitHub");
+  expect(text).toContain("gh auth setup-git --hostname github.com");
   expect(text).toContain("Coding-agent sign-ins are never copied between machines");
 });
 

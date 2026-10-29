@@ -1,3 +1,4 @@
+import { isMetadataOnlyAssistantMessage } from "../../studio/messagePresentation";
 import {
   isSettledRunStatus,
   worktreeSetupAgentStarted,
@@ -959,6 +960,8 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
     if (message.role !== "assistant") {
       continue;
     }
+    // A provider's empty completion marker cannot displace the last answer.
+    if (!message.text.trim() && !message.attachments?.length) continue;
 
     const responseKey = message.runId
       ? `turn:${message.runId}`
@@ -1324,7 +1327,7 @@ function deriveTurnFolds(input: {
     if (
       input.unfoldedRunIds.has(runId) ||
       interruptedRunIds.has(runId) ||
-      runlessFailedKeys.has(runId) ||
+      (!input.includeActivitySummary && runlessFailedKeys.has(runId)) ||
       (input.runlessWorkActive && runId === runlessKey)
     ) {
       continue;
@@ -1340,6 +1343,12 @@ function deriveTurnFolds(input: {
       if (entry.id === group.terminalEntry?.id) {
         continue;
       }
+      if (
+        entry.kind === "message" &&
+        !entry.message.text.trim() &&
+        !entry.message.attachments?.length
+      )
+        continue;
       const isCompaction =
         entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction";
       const isFoldableTrailingActivity =
@@ -1349,6 +1358,17 @@ function deriveTurnFolds(input: {
       if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
         continue;
       }
+      // Results only folds routine work even when the run failed. Keep the
+      // actual failure visible, independently of the disclosure.
+      if (
+        input.includeActivitySummary &&
+        entry.kind === "work" &&
+        (workEntryShowsFailureSignal(entry.entry) ||
+          entry.entry.tone === "error" ||
+          entry.entry.sourceActivityKind === "runtime.error" ||
+          entry.entry.itemType === "error")
+      )
+        continue;
       // Linked resources can outlive their launching run and stay visible
       // after the surrounding work folds.
       if (timelineEntryIsPersistentResourceCard(entry)) {
@@ -1401,7 +1421,9 @@ function deriveTurnFolds(input: {
         : "Worked";
     const failures = toolFailureCounts(
       group.entries.flatMap((entry) =>
-        entry.kind === "work" && hiddenEntryIds.has(entry.id) ? [entry.entry] : [],
+        entry.kind === "work" && (input.includeActivitySummary || hiddenEntryIds.has(entry.id))
+          ? [entry.entry]
+          : [],
       ),
     );
     const foldedTools = input.includeActivitySummary
@@ -1720,7 +1742,10 @@ export function deriveMessagesTimelineRows(input: {
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
-    unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+    unfoldedRunIds: new Set([
+      ...activeVisualResponseRunIds,
+      ...(detail === "concise" ? [] : failedRunIds),
+    ]),
     runlessWorkActive,
     includeActivitySummary: detail === "concise",
   });
@@ -2181,6 +2206,16 @@ export function deriveMessagesTimelineRows(input: {
       assistantTurnDiffSummary === undefined
         ? undefined
         : turnActivityByRunId().get(assistantTurnDiffSummary.runId);
+    // Empty provider completion items still participate in folds and terminal
+    // selection above, but have no message body or metadata to display. Keep
+    // attachment and changed-file carriers, and live placeholders.
+    if (
+      isMetadataOnlyAssistantMessage(
+        timelineEntry.message,
+        Boolean(assistantTurnDiffSummary?.files.length),
+      )
+    )
+      continue;
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
@@ -2190,8 +2225,8 @@ export function deriveMessagesTimelineRows(input: {
         ? {}
         : { projectedItem: timelineEntry.projectedItem }),
       durationStart,
-      showAssistantMeta,
-      showAssistantCopyButton: showAssistantMeta,
+      showAssistantMeta: showAssistantMeta && Boolean(timelineEntry.message.text.trim()),
+      showAssistantCopyButton: showAssistantMeta && Boolean(timelineEntry.message.text.trim()),
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
       assistantTurnDiffSummary,
       ...(assistantTurnDiffSummary === undefined

@@ -223,6 +223,61 @@ describe("project conversation aggregation", () => {
     );
     expect(fresh.roots[0]?.actions).toMatchObject([{ threadId: "review", reason: "input" }]);
   });
+  it("keeps a resolved thread resolved when an update asks its subagent's question again", () => {
+    const root = thread("root", {
+      settledOverride: "settled",
+      settledAt: "2026-10-28T02:36:25Z",
+    } as Partial<EnvironmentThreadShell>);
+    const sub = child("review", "root", {
+      hasPendingUserInput: true,
+      source: {
+        pendingRuntimeRequest: {
+          id: "update-reopen-approval:update-reopen-approval:runtime-request:exec-1",
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe("2026-10-28T10:17:02Z"),
+        },
+      },
+    } as unknown as Partial<EnvironmentThreadShell>);
+    const attention = aggregateProjectAttention({
+      members: [member],
+      roots: [root],
+      threads: [root, sub],
+    });
+    expect(attention.count).toBe(0);
+    expect(attention.roots[0]?.actions).toEqual([]);
+  });
+  it("preserves a genuine post-settlement ask across updates without reviving older asks", () => {
+    const root = thread("root", {
+      settledOverride: "settled",
+      settledAt: "2026-10-29T12:00:00Z",
+    } as Partial<EnvironmentThreadShell>);
+    for (const [askedAt, count] of [
+      ["2026-10-29T11:00:00Z", 0],
+      ["2026-10-29T12:00:00Z", 0],
+      ["2026-10-29T13:00:00Z", 1],
+      [null, 0],
+    ] as const) {
+      const sub = child("review", "root", {
+        hasPendingUserInput: true,
+        source: {
+          pendingRuntimeRequest: {
+            id: "update-reopen:update-reopen:question",
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe("2026-10-29T15:00:00Z"),
+            reopenedFromAskedAt: askedAt,
+          },
+        },
+      } as Partial<EnvironmentThreadShell>);
+      const result = aggregateProjectAttention({
+        members: [member],
+        roots: [root],
+        threads: [root, sub],
+      });
+      expect(result.count, String(askedAt)).toBe(count);
+      if (count)
+        expect(result.roots[0]?.actions).toMatchObject([{ threadId: "review", reason: "input" }]);
+    }
+  });
   it("keeps cached report feedback stale until the host reconnects", () => {
     const root = thread("root", { reportedBlocker: "Choose a signing account?" });
     const aggregate = (freshness: AttentionMember["freshness"]) =>

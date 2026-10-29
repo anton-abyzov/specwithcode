@@ -3,7 +3,7 @@
  *
  * Versions come from vskill: `vskill versions <owner/repo/name> --json` and
  * `vskill outdated --json`. Version changes run vskill with a fixed argv and
- * no shell, then read the version back from the lock file instead of trusting
+ * the platform process adapter, then read the version back from the lock file instead of trusting
  * vskill's words (its `pin`, `unpin` and `update` print no JSON):
  *
  *   vskill install <owner/repo/name>@<X.Y.Z> -y [--global]   (installs and pins)
@@ -184,8 +184,15 @@ export const makeProjectSkillsActions = Effect.fn("ProjectSkillsActions.make")(f
   };
 
   const vskillEnv = { PATH: deps.environment.PATH ?? "", HOME: deps.home };
+  const vskillLocation = {
+    home: deps.home,
+    pathEnv: deps.environment.PATH,
+    platform: deps.platform,
+    appData: deps.environment.APPDATA,
+    pathExt: deps.environment.PATHEXT,
+  };
   const findVskill = (projectId: SkillsActionContext["projectId"]) =>
-    findVskillBinary({ home: deps.home, pathEnv: deps.environment.PATH }).pipe(
+    findVskillBinary(vskillLocation).pipe(
       Effect.flatMap((found) =>
         found === null
           ? Effect.fail(actionError(projectId, "agent_unavailable", VSKILL_MISSING))
@@ -508,7 +515,7 @@ export const makeProjectSkillsActions = Effect.fn("ProjectSkillsActions.make")(f
 
   const registryVersions = (skillId: string) =>
     Effect.gen(function* () {
-      const vskill = yield* findVskillBinary({ home: deps.home, pathEnv: deps.environment.PATH });
+      const vskill = yield* findVskillBinary(vskillLocation);
       if (vskill === null) return undefined;
       const result = yield* run({
         command: vskill,

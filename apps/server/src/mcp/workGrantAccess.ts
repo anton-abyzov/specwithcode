@@ -168,8 +168,8 @@ export const assertProjectInGrant = (work: WorkGrantContext | undefined, project
           message: isPersonalAssistantProject(project)
             ? `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} ${work.coordinatorLabel} cannot reach this machine's assistant.`
             : work.grant.projects.kind === "linked"
-              ? `Project "${project.title}" on this machine is not linked to ${work.coordinatorLabel}, and this machine lets ${work.coordinatorLabel} run work only in linked projects. Link the projects, or widen what ${work.coordinatorLabel} may use here in Settings > Connections > Who can run work on this Mac.`
-              : `This machine does not let ${work.coordinatorLabel} run work in project "${project.title}". The user can add it in Settings > Connections > Who can run work on this Mac.`,
+              ? `Project "${project.title}" on this machine is not linked to ${work.coordinatorLabel}, and this machine lets ${work.coordinatorLabel} run work only in linked projects. Link the projects, or widen what ${work.coordinatorLabel} may use here in Settings > Machines > Who can run work on this Mac.`
+              : `This machine does not let ${work.coordinatorLabel} run work in project "${project.title}". The user can add it in Settings > Machines > Who can run work on this Mac.`,
         }),
       );
 
@@ -185,8 +185,8 @@ export const assertAccountInGrant = (
       code: "account_not_allowed",
       message:
         allowed.length === 0
-          ? `This machine lets ${work.coordinatorLabel} use none of its sign-ins, so it cannot start work here. The user can allow sign-ins in Settings > Connections > Who can run work on this Mac.`
-          : `This machine lets ${work.coordinatorLabel} use only these sign-ins: ${allowed.join(", ")}. Pass modelSelection with one of them (orchestrator_capabilities lists their models), or the user can allow ${instanceId} in Settings > Connections > Who can run work on this Mac.`,
+          ? `This machine lets ${work.coordinatorLabel} use none of its sign-ins, so it cannot start work here. The user can allow sign-ins in Settings > Machines > Who can run work on this Mac.`
+          : `This machine lets ${work.coordinatorLabel} use only these sign-ins: ${allowed.join(", ")}. Pass modelSelection with one of them (orchestrator_capabilities lists their models), or the user can allow ${instanceId} in Settings > Machines > Who can run work on this Mac.`,
     }),
   );
 };

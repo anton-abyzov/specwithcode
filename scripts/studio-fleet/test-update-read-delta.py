@@ -545,7 +545,7 @@ class ApplyWithALiveService(unittest.TestCase):
 
 
     def held(self, at_stop=()):
-        """The live harness as a held admission: the helper takes its own baseline. The held
+        """The legacy fallback after an unsupported page admission takes its own baseline. The held
         service appends an event while the release stages (the tail of a turn it interrupted),
         then only what `at_stop` commits while the server browser stops. Returns the full reads,
         the receipt, the after-proof mark as confirmed, and every -wal position taken and every
@@ -579,11 +579,22 @@ class ApplyWithALiveService(unittest.TestCase):
         def rereading(state, base, since, **kwargs):
             events.append(('reread', base['position']))
             return reread(state, base, since, **kwargs)
+        # These cases measure the full/delta protocol, which still runs when page admission
+        # is unavailable. Exercise that decision rather than substituting PageMode.prepare;
+        # the separate test-update-page-mode.py harness covers the real admitted page path.
+        unavailable = update.update_apply.read_cache.Unavailable('synthetic unsupported page admission')
         with patch.object(update, '_service', return_value=service), patch.object(update.after_proof, 'confirm', side_effect=confirming), \
-                patch.object(read_delta, 'position', side_effect=positioned), patch.object(read_delta, 'reread', side_effect=rereading):
-            reads, _ = self.run_apply(allow_existing_browser_heartbeat=True)
+                patch.object(read_delta, 'position', side_effect=positioned), patch.object(read_delta, 'reread', side_effect=rereading), \
+                patch.object(update.update_apply.PageMode, 'read', side_effect=unavailable) as page_read:
+            try:
+                reads, _ = self.run_apply(allow_existing_browser_heartbeat=True)
+            finally:
+                page_read.assert_called_once_with()  # Also checked on protected-write refusal.
         result = json.loads(self.fixture.output.read_text())
         self.assertEqual(result['phase'], 'verified')
+        self.assertNotIn('databasePageProof', result)
+        self.assertIn('databaseCapture', result['before'])
+        self.assertIn('databaseCapture', result['after'])
         self.assertEqual(len(marks), 1)
         self.assertIn('reader', marks[0])  # A mark the proof after the restart may start from.
         return reads, result, marks[0], events

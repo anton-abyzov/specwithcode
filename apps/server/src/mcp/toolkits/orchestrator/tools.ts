@@ -51,6 +51,7 @@ import { DELEGATED_RESULT_VERIFY_SENTENCE } from "../../../orchestration-v2/Dele
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+import { ThreadsWaitInput, ThreadsWaitResult } from "./threadsWait.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -182,7 +183,7 @@ const RequestSecretTool = Tool.make("request_secret", {
 
 const AskUserTool = Tool.make("ask_user", {
   description:
-    "Ask the user a question you cannot answer from the request, the code or sensible defaults. It shows a decision card in this thread: your question as the title, then lettered options (A, B, C) with a bold label and a one-line description, your recommended choice badged, and a 'reply in chat' link for a free answer. The thread shows as Waiting on you and the user is notified. This returns at once: the user's answer arrives as your next user message (the question, then the chosen label or their text), so end your turn or keep working on something else. Never repeat the question in chat. Write repository paths as `path/to/file` and full URLs so they open from the card.",
+    "Ask the user a question you cannot answer from the request, the code or sensible defaults. Never ask the user to relay internal agent messages or handoff receipts, or repeat an answered destination decision. Use supported thread messaging for internal coordination. Ask only a necessary user-only decision or external action, explaining the exact missing capability when relevant. It shows a decision card in this thread: your question as the title, then lettered options (A, B, C) with a bold label and a one-line description, your recommended choice badged, and a 'reply in chat' link for a free answer. The thread shows as Waiting on you and the user is notified. This returns at once: the user's answer arrives as your next user message (the question, then the chosen label or their text), so end your turn or keep working on something else. Never repeat the question in chat. Write repository paths as `path/to/file` and full URLs so they open from the card.",
   parameters: OrchestratorMcpAskUserInput,
   success: OrchestratorMcpAskUserResult,
   failure: OrchestratorMcpFailure,
@@ -273,6 +274,21 @@ const ThreadWaitTool = Tool.make("studio_thread_wait", {
   dependencies: [...dependencies, ProjectService.ProjectService],
 })
   .annotate(Tool.Title, "Wait for a SpecWithCode thread")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const ThreadsWaitTool = Tool.make("studio_threads_wait", {
+  description:
+    "Wait on several SpecWithCode threads at once, here or on other machines, such as one worker per machine started with studio_thread_launch. Pass each thread's threadRef or threadLink. mode='all' (default) returns when every thread is done, mode='any' as soon as one is. Returns one row per thread: machine, status, done, and an excerpt of its last reply (lastReplyTruncated=true means studio_thread_read has the rest). A thread that cannot be reached is reported in its row with error, not as a failure of the call. timedOut=true means the budget ran out; nothing is interrupted, so call again. Waiting reports status only and does not acknowledge a delegated result. Older machines without non-acknowledging reads return status only, with lastReply null.",
+  parameters: ThreadsWaitInput,
+  success: ThreadsWaitResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  // Another machine's work reaches only the projects its grant here covers.
+  dependencies: [...dependencies, ProjectService.ProjectService],
+})
+  .annotate(Tool.Title, "Wait for several SpecWithCode threads")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -374,6 +390,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadUpdateTool,
   ThreadSendTool,
   ThreadWaitTool,
+  ThreadsWaitTool,
   ThreadInterruptTool,
   ThreadsStopAllTool,
   ThreadsContinueAllTool,

@@ -153,7 +153,7 @@ def at_default(column):
     return '(0)'
 
 
-def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=None):
+def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=None, reuse=None):
     """Capture the complete database inside the caller's open read transaction. With
     `widen_from`, also measure tables that gained columns since then (widened_tables).
     `visit(table, rows)` is handed each table's rows from this scan, so a caller that
@@ -171,6 +171,11 @@ def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=N
     structure = schema(db)
     tables, legacy, sequences = {}, {}, None
     for table in structure['columns']:
+        if reuse and table in reuse:
+            assert prefixes is None and widen_from is None and table != 'sqlite_sequence', 'Cache needs an unchanged-schema full-table read'
+            tables[table], legacy[table] = copy.deepcopy(reuse[table]['typed']), copy.deepcopy(reuse[table]['legacy'])
+            if visit is not None: visit(table, None)
+            continue
         rows = None  # The previous table's rows go before this table is read and hashed.
         typed_keep, legacy_keep = (keep.keeper(table, 'typed'), keep.keeper(table, 'legacy')) if keep is not None else (None, None)
         if prefixes is not None and table in prefixes:
@@ -310,6 +315,8 @@ def verify_update_database(update, final, state, *, allow_existing_browser_heart
             assert value.get('webSessionPolicy') == web_session_policy, 'Generic database proof requires bound policy'
     assert final['artifactSourceCommit'] == after['artifactSourceCommit']
     assert final['archiveSha256'] == after['archiveSha256']
+    assert update.get('databaseProofMode') != 'stopped-clone-pages-v1', \
+        'Historical page-proof replay requires the original immutable stopped baseline; legacy hash replay is unavailable'
     assert all('databaseCapture' in value for value in (before, after, final)), 'Complete database proof missing'
     assert update['rowPreservation'] in {'byte-identical', 'verified-existing-browser-heartbeat'}, \
         'Only non-migration updates have a complete continuity proof'

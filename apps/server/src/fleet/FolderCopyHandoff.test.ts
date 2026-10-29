@@ -7,6 +7,7 @@ import {
 import * as Schema from "effect/Schema";
 import { copyStatus, folderCopyError, sourceAddresses, sourceStatus } from "./FolderCopyHandoff.ts";
 import { CopyError, type DestinationRecord } from "./folderTransfer/destinationService.ts";
+import { StaleScanError } from "./folderTransfer/sourceClient.ts";
 import { emptyTotals } from "./folderTransfer/manifest.ts";
 import { planReconcile } from "./folderTransfer/reconcile.ts";
 import { SourceTransferError, type SourceOperationRecord } from "./folderTransfer/sourceService.ts";
@@ -81,6 +82,19 @@ describe("FolderCopyHandoff", () => {
     expect(folderCopyError(new Error("boom")).code).toBe("copy_failed");
     const same = new FolderCopyError({ code: "busy" });
     expect(folderCopyError(same)).toBe(same);
+  });
+
+  it("preserves actionable stale-preview recovery through the wire error", () => {
+    const failure = folderCopyError(new StaleScanError("refused", 409, "Source changed"));
+    expect(Schema.is(FolderCopyError)(failure)).toBe(true);
+    expect(failure).toMatchObject({
+      code: "refused",
+      recovery: "compare_again",
+      detail: "Source changed",
+    });
+    expect(folderCopyError(new CopyError("refused", "Destination changed"))).not.toHaveProperty(
+      "recovery",
+    );
   });
 
   it("caps skipped worktree lists at 200 and keeps their true counts", () => {

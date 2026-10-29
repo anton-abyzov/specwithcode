@@ -274,10 +274,10 @@ describe("A copy-and-move whose checks fail", () => {
     const readme = NodePath.join(fixture.root, "README.md");
     const original = NodeFS.readFileSync(readme);
     // Change after the approval freshness check, exercising the existing during-transfer recovery.
-    const checkScan = transfers.checkScan.bind(transfers);
-    const check = vi.spyOn(transfers, "checkScan");
+    const validateReviewed = transfers.validateReviewed.bind(transfers);
+    const check = vi.spyOn(transfers, "validateReviewed");
     check.mockImplementationOnce(async (id) => {
-      const result = await checkScan(id);
+      const result = await validateReviewed(id);
       check.mockRestore();
       NodeFS.writeFileSync(readme, "# Umbrella, changed during the copy\n");
       return result;

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { resolveDesignRoot, writeDesignSystem } from "../../DesignStore.ts";
 import { listSystemFiles, putSystemFile, readSystemFile } from "../SystemFilesStore.ts";
 import { PREVIEW_STYLESHEET, buildPreviews, nodePreviewBuilder } from "./buildPreviews.ts";
+import { previewTestPackageRoot } from "./previewTestPaths.ts";
 
 // The fixture kit borrows React and esbuild from the web app's install, as a kit has its own.
 const fromWeb = NodeModule.createRequire(
@@ -18,11 +19,7 @@ const fromWeb = NodeModule.createRequire(
 );
 const packageDir = (resolve: () => string, name: string) => {
   try {
-    const entry = resolve();
-    return entry.slice(
-      0,
-      entry.lastIndexOf(`/node_modules/${name}/`) + `/node_modules/${name}`.length,
-    );
+    return previewTestPackageRoot(resolve(), name);
   } catch {
     return null;
   }
@@ -54,7 +51,11 @@ const checkout = async (files: Record<string, string>, withModules = true) => {
   if (withModules) {
     for (const [name, dir] of Object.entries(DEPENDENCIES)) {
       await NodeFSP.mkdir(NodePath.join(root, "kit/node_modules"), { recursive: true });
-      await NodeFSP.symlink(dir!, NodePath.join(root, "kit/node_modules", name), "dir");
+      await NodeFSP.symlink(
+        dir!,
+        NodePath.join(root, "kit/node_modules", name),
+        NodePath.sep === "\\" ? "junction" : "dir",
+      );
     }
   }
   return root;

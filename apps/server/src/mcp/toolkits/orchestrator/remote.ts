@@ -1,5 +1,6 @@
 import {
   OrchestratorMcpFailure,
+  type OrchestrationV2ThreadShell,
   type OrchestratorMcpMachineRef,
   OrchestratorMcpThreadDetail,
   OrchestratorMcpThreadInterruptResult,
@@ -22,9 +23,14 @@ import type * as ThreadManagement from "../../../orchestration-v2/ThreadManageme
 import type { RemoteTool } from "../../../fleet/RemoteStudioMcpClient.ts";
 import { isTerminalThreadStatus } from "../../../fleet/remoteWorkerMatching.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { refuseReadOnlyClient } from "../../McpToolAccess.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
-import { delegationRefusal, outgoingDelegation } from "../../../fleet/workGrantPolicy.ts";
-import { loadCaller, readCaller } from "../../threadAccess.ts";
+import {
+  coordinatorOfWorkerLabel,
+  delegationRefusal,
+  outgoingDelegation,
+} from "../../../fleet/workGrantPolicy.ts";
+import { type Caller, loadCaller, readCaller } from "../../threadAccess.ts";
 import { explainThreadNotFound } from "../../threadNotFoundHint.ts";
 import { refuseRevoked, workGrantOf } from "../../workGrantAccess.ts";
 
@@ -89,21 +95,80 @@ const withoutMachine = <I extends { readonly machine?: unknown }>(input: I) => {
 };
 
 /**
- * Work on another machine is only for agents running in a Studio thread here:
- * that machine allowed this server, not the outside clients approved on it,
- * whatever they may read or do here. Returns the calling thread.
+ * Who does work on another machine from here: an agent running in a Studio
+ * thread here, or an outside agent the user approved on this machine (an
+ * OAuth or static-token MCP client). That machine allowed this server, so
+ * either works within this server's grant there, and a client also within
+ * the access it was approved with: `loadCaller` caps its limits at that
+ * ceiling and the grant caps what the other machine runs. Another machine's
+ * own credential is neither: its work reaches a third machine only through
+ * the threads it starts here, which carry its path.
  */
-const requireThreadCaller = Effect.gen(function* () {
-  const scope = yield* McpInvocationContext.McpInvocationContext;
-  const context = scope.thread === undefined ? undefined : yield* readCaller();
-  if (context?.caller === undefined)
+export type FleetPrincipal =
+  | {
+      readonly kind: "thread";
+      readonly caller: OrchestrationV2ThreadShell;
+      readonly launchedBy: RemoteWorkers.RemoteWorkerLauncher;
+    }
+  | {
+      readonly kind: "client";
+      readonly client: McpInvocationContext.McpClientCaller;
+      readonly launchedBy: RemoteWorkers.RemoteWorkerLauncher;
+    };
+
+const outsideFleet = () =>
+  new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message:
+      "Work on another machine is for an agent running inside a SpecWithCode thread on this one, or an MCP client the user approved on it.",
+  });
+
+/** A client signed in as another machine's coordinator, or under a worker grant's label. */
+export const isOtherMachineCredential = (client: McpInvocationContext.McpClientCaller) =>
+  client.principal?.kind === "coordinator" || coordinatorOfWorkerLabel(client.label) !== undefined;
+
+/**
+ * The principal `context` acts as on another machine. `act` work (launch,
+ * send, interrupt) is refused to a read-only client; it may still list, read
+ * and wait.
+ */
+export const fleetPrincipalOf = Effect.fn("mcp.fleetPrincipalOf")(function* (
+  context: Caller,
+  access: "observe" | "act",
+) {
+  if (context.scope.thread !== undefined) {
+    if (context.caller === undefined) return yield* outsideFleet();
+    return {
+      kind: "thread",
+      caller: context.caller,
+      launchedBy: { kind: "thread", threadId: context.caller.id },
+    } satisfies FleetPrincipal as FleetPrincipal;
+  }
+  const client = context.scope.client;
+  if (client === undefined) return yield* outsideFleet();
+  // Another machine's own credential, known by its principal or its reserved
+  // label even with grants off, never passes as an outside client.
+  if (isOtherMachineCredential(client) || (yield* workGrantOf(context)) !== undefined)
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message:
-        "Work on another machine is only for an agent running inside a SpecWithCode thread on this one.",
+        "Another machine's work reaches a third machine only through the threads it starts on this one.",
     });
-  return context.caller;
+  if (access === "act") yield* refuseReadOnlyClient;
+  return {
+    kind: "client",
+    client,
+    launchedBy: { kind: "client", sessionId: client.sessionId, label: client.label },
+  } satisfies FleetPrincipal as FleetPrincipal;
 });
+
+/** The calling principal, for a tool that works on another machine. */
+const requireFleetPrincipal = (access: "observe" | "act") =>
+  Effect.gen(function* () {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    if (scope.thread === undefined && scope.client === undefined) return yield* outsideFleet();
+    return yield* fleetPrincipalOf(yield* readCaller(), access);
+  });
 
 /**
  * Work another machine started here reaches a thread on a third machine only
@@ -116,7 +181,7 @@ const requireThreadCaller = Effect.gen(function* () {
  * interrupt, which acts on the thread, is kept off the path it came by.
  */
 const assertGrantMayReach = (
-  caller: { readonly id: ThreadId },
+  principal: FleetPrincipal,
   machine: OrchestratorMcpMachineRef,
   remoteThreadId: string | undefined,
   access: "observe" | "act",
@@ -149,7 +214,7 @@ const assertGrantMayReach = (
     const launched =
       remoteThreadId !== undefined &&
       (yield* workers.launchedBy({
-        callerThreadId: caller.id,
+        launchedBy: principal.launchedBy,
         machineId: machine.id,
         remoteThreadId,
       }));
@@ -224,8 +289,25 @@ export const readRemote = (
   input: { readonly threadId: string } & Record<string, unknown>,
 ) =>
   Effect.gen(function* () {
-    const caller = yield* requireThreadCaller;
-    yield* assertGrantMayReach(caller, machine, input.threadId, "observe");
+    const principal = yield* requireFleetPrincipal("observe");
+    yield* assertGrantMayReach(principal, machine, input.threadId, "observe");
+    if (input.acknowledgeResult === false) {
+      // Older peers silently strip unknown read arguments. Never let a wait's
+      // preview fall back to their acknowledging read path.
+      const supported = yield* proxied(
+        Schema.Struct({
+          features: Schema.Struct({ readThreadWithoutAcknowledgement: Schema.Literal(true) }),
+        }),
+        machine,
+        "orchestrator_capabilities",
+        {},
+      ).pipe(Effect.result);
+      if (supported._tag === "Failure")
+        return yield* new OrchestratorMcpFailure({
+          code: "machine_unsupported",
+          message: `${machine.label} does not advertise non-acknowledging thread reads.`,
+        });
+    }
     return yield* proxied(OrchestratorMcpThreadReadResult, machine, "studio_thread_read", input);
   });
 
@@ -237,8 +319,8 @@ export const waitRemote = (
   >,
 ) =>
   Effect.gen(function* () {
-    const caller = yield* requireThreadCaller;
-    yield* assertGrantMayReach(caller, machine, input.threadId, "observe");
+    const principal = yield* requireFleetPrincipal("observe");
+    yield* assertGrantMayReach(principal, machine, input.threadId, "observe");
     const timeoutMs = Math.min(MAX_WAIT_MS, Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_MS));
     const result = yield* proxied(
       OrchestratorMcpThreadWaitResult,
@@ -250,7 +332,7 @@ export const waitRemote = (
     if (!result.timedOut && result.status !== "idle" && isTerminalThreadStatus(result.status)) {
       const workers = yield* RemoteWorkers.RemoteWorkers;
       yield* workers.noteFinished({
-        callerThreadId: caller.id,
+        launchedBy: principal.launchedBy,
         machineId: machine.id,
         remoteThreadId: result.threadId,
         runId: result.runId,
@@ -265,8 +347,8 @@ export const sendRemote = (
   input: { readonly threadId: string } & Record<string, unknown>,
 ) =>
   Effect.gen(function* () {
-    const caller = yield* requireThreadCaller;
-    yield* assertGrantMayReach(caller, machine, input.threadId, "act");
+    const principal = yield* requireFleetPrincipal("act");
+    yield* assertGrantMayReach(principal, machine, input.threadId, "act");
     yield* assertWithinCallerModes(machine, input.threadId);
     const workers = yield* RemoteWorkers.RemoteWorkers;
     // A run started there is always followed: the send and noting its run are not cut apart.
@@ -279,7 +361,7 @@ export const sendRemote = (
           input,
         );
         yield* workers.noteRun({
-          callerThreadId: caller.id,
+          launchedBy: principal.launchedBy,
           machineId: machine.id,
           remoteThreadId: result.threadId,
           runId: result.runId,
@@ -301,8 +383,8 @@ export const interruptRemote = (
   input: { readonly threadId: string } & Record<string, unknown>,
 ) =>
   Effect.gen(function* () {
-    const caller = yield* requireThreadCaller;
-    yield* assertGrantMayReach(caller, machine, input.threadId, "act");
+    const principal = yield* requireFleetPrincipal("act");
+    yield* assertGrantMayReach(principal, machine, input.threadId, "act");
     yield* assertWithinCallerModes(machine, input.threadId);
     return yield* proxied(
       OrchestratorMcpThreadInterruptResult,
@@ -318,16 +400,19 @@ export const listRemote = (
   input: { readonly projectId?: ProjectId | undefined } & Record<string, unknown>,
 ) =>
   Effect.gen(function* () {
-    const caller = yield* requireThreadCaller;
-    yield* assertGrantMayReach(caller, machine, undefined, "observe");
+    const principal = yield* requireFleetPrincipal("observe");
+    yield* assertGrantMayReach(principal, machine, undefined, "observe");
     const workers = yield* RemoteWorkers.RemoteWorkers;
+    // A client has no project here to match; that machine lists what it names.
     const projectId =
       input.projectId ??
-      (yield* workers.remoteProjectFor({ machine, localProjectId: caller.projectId }));
+      (principal.kind === "thread"
+        ? yield* workers.remoteProjectFor({ machine, localProjectId: principal.caller.projectId })
+        : undefined);
     return yield* proxied(OrchestratorMcpThreadListResult, machine, "studio_thread_list", {
       ...input,
       machine: "local",
-      projectId,
+      ...(projectId === undefined ? {} : { projectId }),
     });
   });
 

@@ -303,9 +303,11 @@ const WORKTREE_OF = /^(.+) \(([^()]+)\)$/;
 function GroupedNames({
   names,
   label,
+  totals,
 }: {
   readonly names: ReadonlyArray<string>;
   readonly label: string;
+  readonly totals: Readonly<Record<string, number>>;
 }) {
   const groups = new Map<string, Array<string>>();
   for (const name of names) {
@@ -315,7 +317,8 @@ function GroupedNames({
     list.push(match?.[1] ?? name);
     groups.set(repository, list);
   }
-  if (groups.size < 2) return <Names names={names} label={label} />;
+  if (groups.size < 2 && Object.values(totals).every((total) => total <= names.length))
+    return <Names names={names} label={label} />;
   const sorted = [...groups].toSorted((a, b) => b[1].length - a[1].length);
   return (
     <ul aria-label={label} className="mt-1 space-y-0.5" data-slot="copy-names-grouped">
@@ -324,7 +327,7 @@ function GroupedNames({
           <details>
             <summary className="cursor-pointer text-muted-foreground">
               <span className="font-mono">{repository.split("/").at(-1) || "this folder"}</span>:{" "}
-              {list.length.toLocaleString()}
+              {(totals[repository] ?? list.length).toLocaleString()}
             </summary>
             <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto pl-3 font-mono">
               {list.map((name) => (
@@ -332,6 +335,9 @@ function GroupedNames({
                   {name}
                 </li>
               ))}
+              {(totals[repository] ?? 0) > list.length && (
+                <li>{totals[repository]! - list.length} more names not included in this scan</li>
+              )}
             </ul>
           </details>
         </li>
@@ -439,14 +445,15 @@ export function CopyNoticesBlock({
                 />
               </li>
             )}
-            {notices.outsideWorktrees.length > 0 && (
+            {notices.outsideWorktreeCount > 0 && (
               <li data-slot="copy-not-copied-outside">
-                {count(notices.outsideWorktrees.length, "worktree", "worktrees")} outside the
-                folder. Their branches travel with a repository copied whole; copy a worktree folder
+                {count(notices.outsideWorktreeCount, "worktree", "worktrees")} outside the folder.
+                Their branches travel with a repository copied whole; copy a worktree folder
                 separately only to keep its uncommitted changes.
                 <GroupedNames
                   names={notices.outsideWorktrees}
                   label="Worktrees outside the folder"
+                  totals={notices.outsideWorktreeTotals}
                 />
               </li>
             )}

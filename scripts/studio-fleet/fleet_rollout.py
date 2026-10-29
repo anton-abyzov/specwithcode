@@ -22,7 +22,12 @@ way, then `--only workers`. `--no-hold` is the explicit opt-in to an unheld forc
 The script polls the installed version and finalized guarded receipt, never 'downloaded',
 and asks again (holding again first) only after the hold has ended, because each new request
 restarts the agent's escalation. An install already under way for the version is joined, not
-asked again or held, and its failure stops the rollout like a failure of its own request. A
+asked again or held, and its failure stops the rollout like a failure of its own request. So is
+one Update now asks for while the rollout waits: while that held request stands, the rollout
+neither holds nor asks again, which would replace it (the service's hold and the agent then follow
+the rollout's request instead of the press's run), and asks once more only after it ended, which it
+has once the agent answered it without installing it (a failed download, say). Nor is a host asked
+again while its agent installs, whoever asked for that install. A
 rollout that gives up cancels the forced request it wrote, while that is still the pending one
 (update_request.py cancel), and on M4 then releases the hold it took, as Cancel update does, once
 the state read again shows nothing needs it: the hold stays while the agent installs and while a
@@ -556,8 +561,14 @@ def agent_note(identity, reply, say, check=False):
 
 def requested_by_update_now(status, version, now=None):
     """True while a forced, held request for `version` stands on the host, as Update now (or an
-    earlier rollout) writes it: not cancelled since, and its hold not yet run out."""
-    return (status.get('installRequest') or {}).get('version') == version and forced_pending(status, now)
+    earlier rollout) writes it: not cancelled since, its hold not yet run out, and not answered. One
+    the agent handled stands only while it installs it (studioServiceUpdates.pendingServiceInstall),
+    or its helper, left to finish, still may: otherwise it failed before any install, which no
+    lastInstall records."""
+    if (status.get('installRequest') or {}).get('version') != version or not forced_pending(status, now):
+        return False
+    return (status.get('handledInstallRequestAt') != status.get('installRequestedAt')
+            or status.get('status') == 'installing' or 'left to finish' in (status.get('message') or ''))
 
 
 def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say, hold=None):
@@ -578,6 +589,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     took = [False]  # This rollout holds (or held) the service.
     sent = [0]  # Requests this rollout wrote.
     written = [None]  # installRequestedAt of the last forced request this rollout wrote.
+    waited = [None]  # installRequestedAt of the last held request someone else wrote that this rollout waits on.
 
     def unheld(reason):
         """A wanted hold that cannot be taken stops the rollout before any further forced request."""
@@ -594,6 +606,16 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             reply = holder[0].prepare()
         except HoldUnavailable as error:
             raise unheld(error) from None
+        if getattr(holder[0], 'wait_for_idle', False):
+            # The service closes admission before checking work. A busy answer releases
+            # only its temporary lease; we neither interrupt work nor send an install.
+            if (type(reply.get('idle')) is not bool or type(reply.get('held')) is not bool
+                    or reply.get('stoppedThreads') != 0 or reply.get('interruptedRuns', 0) != 0):
+                raise unheld('invalid idle-only preparation result')
+            if reply['held'] is False:
+                return False
+            if not reply['idle'] or reply.get('openTerminals') != 0:
+                raise unheld('idle-only hold did not prove quiet')
         if reply.get('held') is not True:
             raise unheld('it did not hold: %s' % describe_hold(reply))
         took[0] = True
@@ -633,6 +655,17 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         if first[0] is None:  # It may install what it finds on its own; a failure from here on counts.
             first[0] = update_request._time((reply.get('request') or {}).get('checkRequestedAt'))
         return clock()
+
+    def pressed(status):
+        """True while a forced, held request for `version` that this rollout did not write stands: Update
+        now pressed meanwhile (or another rollout). Its install is joined, as one under way at the start."""
+        at = status.get('installRequestedAt')
+        if at == written[0] or not requested_by_update_now(status, version):
+            return False
+        if waited[0] != at:
+            waited[0] = at
+            say('%s: Update now asked for %s; waiting for that install instead of asking again' % (identity, version))
+        return True
 
     def busy(status):
         """Why the hold is the service's now, or None: an install under way ends it, a restart ended it."""
@@ -674,6 +707,12 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             say('%s: left the hold to the forced request still pending (asked at %s), so it never runs unheld; '
                 'it ends with that install, on its own within 15 minutes, or with Cancel update in the app on %s'
                 % (identity, status.get('installRequestedAt'), identity.upper()))
+            return
+        if getattr(hold, 'wait_for_idle', False):
+            # Older installed CLIs cannot release a specific lease token. An unconditional
+            # release could remove a replacement owner's hold. Cancellation settles our
+            # request; without a request the service expires its two-minute idle lease.
+            say("%s: left idle lease expiry to its service; no other owner's hold was released" % identity)
             return
         try:
             hold.release()
@@ -758,15 +797,20 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 seen = line
             if joined or status.get('version') == version:
                 continue
-            if not held_request and drain(status):
+            if not held_request and not pressed(status) and drain(status):
                 # The agent offers the release now: the forced request follows the hold, so the
                 # snapshot its apply is checked against already counts the hold's session row.
                 held_request, asked, requests = True, ask(), requests + 1
                 continue
             if clock() - asked < window:
                 continue
-            if holder[0] is not None and status.get('status') == 'installing':
-                continue  # The install under way ends the hold; a request now would follow no drain.
+            if pressed(status):  # Its own window from here, once that request no longer stands.
+                asked = clock()
+                continue
+            if status.get('status') == 'installing':
+                # A request now would replace the one under way (a press's past its hold among them), and
+                # on M4 would follow no drain: that install ends the hold.
+                continue
             if holder[0] is not None and not held_request:
                 asked = check()  # Still not offered.
                 continue
@@ -885,12 +929,17 @@ def main(argv=None):
     parser.add_argument('--worker-deadline-minutes', type=int, default=60)
     parser.add_argument('--worker-force', action='store_true', help='force the M1 and M3 requests too')
     parser.add_argument('--poll-seconds', type=int, default=15)
+    parser.add_argument('--wait-for-idle', action='store_true',
+                        default=os.environ.get('STUDIO_FLEET_WAIT_FOR_IDLE') == '1',
+                        help='acquire a service-owned idle hold; never interrupt running work')
     parser.add_argument('--no-hold', action='store_true',
                         help="do not drain and hold M4's service first (a busy M4 then waits for its work)")
     parser.add_argument('--no-desktop-apps', action='store_true',
                         help="leave M1's and M3's desktop apps as they are (by default each follows its service)")
     parser.add_argument('--dry-run', action='store_true', help='print the order and commands; contact no host')
     args = parser.parse_args(argv)
+    if args.wait_for_idle and args.no_hold:
+        parser.error('--wait-for-idle cannot be combined with --no-hold')
     if _tuple(args.version) is None:
         parser.error('--version must be X.Y.Z')
     if not 1 <= args.hold_minutes <= update_request.HOLD_MAX_MINUTES:
@@ -911,13 +960,15 @@ def main(argv=None):
             print('fleet_rollout: %s' % error, file=sys.stderr)
             return 2
     hold = None if args.no_hold or args.only == 'workers' else ServiceHold()
+    if hold is not None:
+        hold.wait_for_idle = args.wait_for_idle
     supported, reason = hold.support() if hold else (True, None)
     if args.dry_run:
         order = ([LOCAL] if args.only in ('all', LOCAL) else []) + (
             ['+'.join(name for name in hosts if name != LOCAL) or '+'.join(WORKERS)]
             if args.only in ('all', 'workers') else [])
         try:
-            planned = hold.command(['--stop-work', '--hold', '--reason', 'install']) if hold else None
+            planned = hold.command(hold.prepare_flags()) if hold else None
         except HoldUnavailable as error:
             planned = 'unavailable: %s' % error
         if not supported:

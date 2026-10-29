@@ -406,6 +406,29 @@ export const OrchestrationV2LimitPreswitchOrigin = Schema.Struct({
 });
 export type OrchestrationV2LimitPreswitchOrigin = typeof OrchestrationV2LimitPreswitchOrigin.Type;
 
+/**
+ * Who outside this machine's own UI started a thread: an outside agent signed
+ * in through MCP (OAuth or a static token), or another machine's fleet work.
+ * Optional, so rows written before it existed still decode; never changed
+ * after the thread is created.
+ */
+export const OrchestrationV2ThreadOrigin = Schema.Struct({
+  kind: Schema.Literals(["mcp_client", "fleet_machine"]),
+  /** The MCP client's name, or the app that sent the fleet work. */
+  label: TrimmedNonEmptyString,
+  /** The machine the work came from, when known. */
+  machineLabel: Schema.optional(TrimmedNonEmptyString),
+  environmentId: Schema.optional(EnvironmentId),
+  /** The thread that started it, on the origin machine. */
+  parentThreadRef: Schema.optional(
+    Schema.Struct({
+      environmentId: Schema.optional(EnvironmentId),
+      threadId: ThreadId,
+    }),
+  ),
+});
+export type OrchestrationV2ThreadOrigin = typeof OrchestrationV2ThreadOrigin.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -425,6 +448,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
+  origin: Schema.optional(OrchestrationV2ThreadOrigin),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -657,6 +681,15 @@ export const ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE = "provider_unav
  * not help. `provider_unavailable` takes precedence.
  */
 export const ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE = "provider_open_failed";
+
+/**
+ * Failure code on a `provider_error` whose native session history can no
+ * longer be replayed to the model (for example Gemini rejecting a restored
+ * conversation whose tool calls lost their thought signatures). The native
+ * session is unusable as-is; the next turn starts a fresh native session
+ * with a context handoff instead of loading it again.
+ */
+export const ORCHESTRATION_V2_NATIVE_HISTORY_INVALID_FAILURE_CODE = "native_history_invalid";
 
 export const OrchestrationV2Run = Schema.Struct({
   manualCodexCreditIntent: Schema.optional(ManualCodexCreditIntent),
@@ -1169,26 +1202,11 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 
-/**
- * The provider turn a run attempt is on or ended with. A Codex goal keeps one
- * run open across several native turns, so an attempt's first turn is not
- * always its last.
- */
-export function latestProviderTurnForAttempt<
-  Turn extends Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "ordinal">,
->(
-  providerTurns: ReadonlyArray<Turn>,
-  attemptId: RunAttemptId | null | undefined,
-): Turn | undefined {
-  let latest: Turn | undefined;
-  for (const turn of providerTurns) {
-    if (attemptId == null || turn.runAttemptId !== attemptId) continue;
-    if (latest === undefined || turn.ordinal > latest.ordinal) latest = turn;
-  }
-  return latest;
-}
+export { latestProviderTurnForAttempt } from "./latestProviderTurnForAttempt.ts";
 
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
+  /** Original ask time of an update-reopened card; null means unknown, never the reopen time. */
+  reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
   id: RuntimeRequestId,
   nodeId: NodeId,
   providerTurnId: Schema.NullOr(ProviderTurnId),
@@ -2139,6 +2157,12 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   id: RuntimeRequestId,
   kind: OrchestrationV2RuntimeRequest.fields.kind,
   createdAt: Schema.DateTimeUtc,
+  /**
+   * Original ask time of a card reopened by an update, when recorded.
+   * Attention chronology compares it with settlement; without it the card
+   * would look freshly asked (or never actionable) after every update.
+   */
+  reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2193,6 +2217,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
+  origin: Schema.optional(OrchestrationV2ThreadOrigin),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3650,6 +3675,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
    */
   Schema.Struct({
     type: Schema.Literal("user_input_request.record"),
+    reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
@@ -3664,7 +3690,15 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 
 /** Everything the server's orchestrator accepts: client commands plus internal ones. */
 export type OrchestrationV2ServerCommand =
-  | Exclude<OrchestrationV2Command, { readonly type: "thread.metadata.update" }>
+  | Exclude<OrchestrationV2Command, { readonly type: "thread.metadata.update" | "thread.create" }>
+  | (Extract<OrchestrationV2Command, { readonly type: "thread.create" }> & {
+      /**
+       * Server only: who outside this machine's UI started the thread. Absent
+       * from the public command schema and stripped at transport decoding, so
+       * no client can set a thread's origin badge.
+       */
+      readonly origin?: OrchestrationV2ThreadOrigin;
+    })
   | (Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }> & {
       /** Server only: absent from the public command schema and stripped at transport decoding. */
       readonly limitRecoveryPolicyArm?: true;

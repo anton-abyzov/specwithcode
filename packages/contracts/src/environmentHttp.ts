@@ -71,6 +71,7 @@ import {
   AuthBrowserSessionRequest,
   AuthBrowserSessionResult,
   AuthClientSession,
+  AuthCreateMcpClientTokenInput,
   AuthCreatePairingCredentialInput,
   AuthMcpApprovalDecisionRequest,
   AuthMcpApprovalDetails,
@@ -79,6 +80,7 @@ import {
   AuthMcpAuthorizationRequest,
   AuthMcpAuthorizationServerMetadata,
   AuthMcpClientRegistration,
+  AuthMcpClientTokenResult,
   AuthMcpProtectedResourceMetadata,
   AuthMcpRegisteredClient,
   AuthMcpRegistrationError,
@@ -726,6 +728,15 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalBearerHeaders,
       payload: AuthCreatePairingCredentialInput,
       success: AuthPairingCredentialResult,
+      error: EnvironmentPairingCredentialErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /** Mints a static MCP client token; it is shown once and revoked like any client. */
+    HttpApiEndpoint.post("mcpClientToken", "/api/auth/mcp-tokens", {
+      headers: OptionalBearerHeaders,
+      payload: AuthCreateMcpClientTokenInput,
+      success: AuthMcpClientTokenResult,
       error: EnvironmentPairingCredentialErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

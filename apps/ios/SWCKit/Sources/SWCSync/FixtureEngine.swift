@@ -33,6 +33,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Office Mac and the build box, for the device viewer's chrome. Nothing
   /// streams: the device hub address leads nowhere.
   case devices
+  /// Cold-start outage with a long machine name, matching the phone regression.
+  case offlineRecovery = "offline-recovery"
+  /// Paired machines are offline and no project/chat cache has loaded yet.
+  case offlineStartup = "offline-startup"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -168,6 +172,20 @@ public final class FixtureEngine: AppEngine {
     }
     model.threadsByProject = Dictionary(grouping: threads) { $0.projectRef ?? FixtureSample.specweave }
     if scenario == .devices { model.devices = FixtureSample.devices }
+    if scenario == .offlineRecovery || scenario == .offlineStartup {
+      model.connect = ConnectState(methods: [.apple])
+      for i in model.machines.indices {
+        model.machines[i].label = "MacBook Pro M1Max with a long machine name"
+        model.machines[i].displayName = model.machines[i].label
+        model.machines[i].status = .offline
+        unreachable.insert(model.machines[i].id)
+      }
+      if scenario == .offlineStartup {
+        model.projects = []
+        model.aide = nil
+        model.threadsByProject = [:]
+      }
+    }
     recompute()
   }
 
@@ -200,6 +218,7 @@ public final class FixtureEngine: AppEngine {
     }
     if let address, let index = model.machines.firstIndex(where: { $0.address == address }) {
       model.machines[index].status = .connected
+      model.machines[index].isDisconnected = false
       model.machines[index].tokenDaysLeft = 30
       unreachable.remove(model.machines[index].id)
       recompute()
@@ -230,8 +249,17 @@ public final class FixtureEngine: AppEngine {
     recompute()
   }
 
+  public func setConnectionEnabled(_ enabled: Bool, machineId: String) async throws {
+    guard let model, let index = model.machines.firstIndex(where: { $0.id == machineId }) else { throw SyncError.unknownMachine }
+    model.machines[index].isDisconnected = !enabled
+    model.machines[index].status = .offline
+    recompute()
+    if enabled { reconnect(machineId: machineId) }
+  }
+
   public func reconnect(machineId: String) {
     guard let model, let index = model.machines.firstIndex(where: { $0.id == machineId }) else { return }
+    guard !model.machines[index].isDisconnected else { return }
     model.machines[index].status = .reconnecting
     recompute()
     let delay = latency * 2
@@ -465,7 +493,8 @@ public final class FixtureEngine: AppEngine {
     let machine = model.machine(target.environmentId)
     let online = machine?.status.isOnline ?? false
     session.rows = rows
-    session.isLoaded = true
+    session.isLoaded = scenario != .offlineRecovery
+    if scenario == .offlineRecovery { session.rows = [] }
     session.isRunning = running.contains(target)
     session.queuedCount = queued[target] ?? 0
     session.plan = Self.plan(in: rows, running: running.contains(target))
@@ -488,6 +517,7 @@ public final class FixtureEngine: AppEngine {
 
   private func finishReconnect(_ machineId: String) {
     guard let model, let index = model.machines.firstIndex(where: { $0.id == machineId }) else { return }
+    guard !model.machines[index].isDisconnected else { return }
     model.machines[index].status = unreachable.contains(machineId) ? .offline : .connected
     recompute()
   }
@@ -513,7 +543,7 @@ public final class FixtureEngine: AppEngine {
     guard let model, let index = model.machines.firstIndex(where: { $0.id == machineId }) else { return }
     if reachable {
       unreachable.remove(machineId)
-      model.machines[index].status = .connected
+      model.machines[index].status = model.machines[index].isDisconnected ? .offline : .connected
     } else {
       unreachable.insert(machineId)
       lastSeen[machineId] = Date()

@@ -2,13 +2,15 @@ import { listFederatedProjectThreads } from "./federatedProjectThreads.ts";
 import { continueHere, listHandoffReady } from "./continueHere.ts";
 import { migrateThreads } from "./migrate.ts";
 import { OrchestratorToolkit } from "./tools.ts";
+import { waitThreads } from "./threadsWait.ts";
 import * as Effect from "effect/Effect";
-import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
+import { OrchestratorMcpFailure, ThreadId } from "@specweave-studio/contracts";
 import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/threadReport";
 import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { untilClientSessionEnds } from "../../untilClientSessionEnds.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 import {
@@ -279,17 +281,51 @@ const handlers = {
           }),
       ),
   ),
+  // A wait runs up to an hour, so a client whose sign-in is revoked meanwhile stops waiting.
   studio_thread_wait: McpToolAccess.reads((input) =>
-    routeThread(
-      input,
-      (local) =>
-        Effect.gen(function* () {
-          yield* guardThread(local.threadId);
-          const scope = yield* McpInvocationContext.McpInvocationContext;
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          return yield* service.waitForThread(scope, local);
-        }),
-      waitRemote,
+    untilClientSessionEnds(
+      routeThread(
+        input,
+        (local) =>
+          Effect.gen(function* () {
+            yield* guardThread(local.threadId);
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            return yield* service.waitForThread(scope, local);
+          }),
+        waitRemote,
+      ),
+    ),
+  ),
+  // Each thread goes through the same routed wait and read as the single-thread tools.
+  studio_threads_wait: McpToolAccess.reads((input) =>
+    untilClientSessionEnds(
+      waitThreads(input, {
+        wait: (ref, timeoutMs) =>
+          routeThread(
+            { threadId: ThreadId.make(ref), timeoutMs },
+            (local) =>
+              Effect.gen(function* () {
+                yield* guardThread(local.threadId);
+                const scope = yield* McpInvocationContext.McpInvocationContext;
+                const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+                return yield* service.waitForThread(scope, local);
+              }),
+            waitRemote,
+          ),
+        read: (ref, page) =>
+          routeThread(
+            { threadId: ThreadId.make(ref), ...page, acknowledgeResult: false },
+            (local) =>
+              Effect.gen(function* () {
+                yield* guardThread(local.threadId);
+                const scope = yield* McpInvocationContext.McpInvocationContext;
+                const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+                return yield* service.readThread(scope, local);
+              }),
+            readRemote,
+          ),
+      }),
     ),
   ),
   studio_thread_interrupt: McpToolAccess.writesThreads(

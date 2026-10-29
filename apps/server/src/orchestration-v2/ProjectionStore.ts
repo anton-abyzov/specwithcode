@@ -1715,6 +1715,7 @@ export function threadShellFromProjection(
     ...(projection.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: projection.thread.historyOrigin }),
+    ...(projection.thread.origin === undefined ? {} : { origin: projection.thread.origin }),
     latestRunId: latestRun?.id ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -1760,6 +1761,9 @@ export function threadShellFromProjection(
             id: pendingRuntimeRequest.id,
             kind: pendingRuntimeRequest.kind,
             createdAt: pendingRuntimeRequest.createdAt,
+            ...(pendingRuntimeRequest.reopenedFromAskedAt === undefined
+              ? {}
+              : { reopenedFromAskedAt: pendingRuntimeRequest.reopenedFromAskedAt }),
           },
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
@@ -2116,6 +2120,7 @@ function shellFromState(input: {
     ...(input.state.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: input.state.thread.historyOrigin }),
+    ...(input.state.thread.origin === undefined ? {} : { origin: input.state.thread.origin }),
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
@@ -2137,6 +2142,9 @@ function shellFromState(input: {
             id: input.state.pendingRuntimeRequest.id,
             kind: input.state.pendingRuntimeRequest.kind,
             createdAt: input.state.pendingRuntimeRequest.createdAt,
+            ...(input.state.pendingRuntimeRequest.reopenedFromAskedAt === undefined
+              ? {}
+              : { reopenedFromAskedAt: input.state.pendingRuntimeRequest.reopenedFromAskedAt }),
           },
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,

@@ -370,6 +370,42 @@ describe("work started here by another machine", () => {
     }).pipe(Effect.provide(world.layer));
   });
 
+  it.live("shows the sending machine's originHint on the badge, as display text only", () => {
+    const world = setup({ prefix: "studio-work-grant-origin-hint-" });
+    return Effect.gen(function* () {
+      const started = yield* world.launch(world.clientScope(M4), {
+        title: "Fix",
+        projectId: linkedProject,
+        message: "go",
+        delegation: { path: [M4], hops: 1 },
+        originHint: { clientLabel: " Grok ", parentThreadId: "m4-thread" },
+      });
+      expect(started).toMatchObject({ projectId: linkedProject });
+      expect(world.launched.at(-1)?.origin).toEqual({
+        kind: "fleet_machine",
+        label: "Grok",
+        machineLabel: "M4MAX",
+        environmentId: M4,
+        parentThreadRef: { environmentId: M4, threadId: "m4-thread" },
+      });
+      // A thread here cannot pass one on as if it came from that machine.
+      const workerThread = ThreadId.make(String(started.threadId));
+      world.addThread(workerThread, linkedProject, codex);
+      yield* world.launch(world.threadScope(workerThread), {
+        title: "Child",
+        projectId: linkedProject,
+        message: "go",
+        originHint: { clientLabel: "Fake" },
+      });
+      expect(world.launched.at(-1)?.origin).toEqual({
+        kind: "fleet_machine",
+        label: "SpecWithCode",
+        machineLabel: "M4MAX",
+        environmentId: M4,
+      });
+    }).pipe(Effect.provide(world.layer));
+  });
+
   it.live("starts linked work, records where it came from, and passes it to its threads", () => {
     const world = setup({ prefix: "studio-work-grant-origin-" });
     return Effect.gen(function* () {
@@ -448,6 +484,64 @@ describe("work started here by another machine", () => {
       // Marking it another person's machine withdraws every sign-in.
       expect(otherPerson).toMatchObject({ code: "account_not_allowed" });
       expect(world.launched).toHaveLength(1);
+    }).pipe(Effect.provide(world.layer));
+  });
+
+  it.live("lets only a grant covering every project clone or register projects here", () => {
+    const world = setup({ prefix: "studio-work-grant-add-project-" });
+    return Effect.gen(function* () {
+      // A machine allowed after the update starts scoped to linked projects.
+      const clone = yield* world.call("studio_project_clone", world.clientScope(M4), {
+        remoteUrl: "git@example.com:o/w.git",
+        destinationPath: "~/widgets",
+      });
+      expect(clone).toMatchObject({ code: "outside_grant_scope" });
+      const create = yield* world.call("studio_project_create", world.clientScope(M4), {
+        title: "Widgets",
+        workspaceRoot: "/fictional/widgets",
+      });
+      expect(create).toMatchObject({ code: "outside_grant_scope" });
+      expect(String(create.message)).toContain("cannot add projects here");
+    }).pipe(Effect.provide(world.layer));
+  });
+
+  it.live("keeps scripts, new folders and other sign-ins off a project it registers", () => {
+    // A grant from before scopes covers every project, so it may register one.
+    const world = setup({ prefix: "studio-work-grant-create-fields-", legacy: [M4] });
+    return Effect.gen(function* () {
+      const base = { title: "Widgets", workspaceRoot: "/fictional/widgets" };
+      for (const extra of [
+        {
+          scripts: [
+            {
+              id: "setup",
+              name: "Setup",
+              command: "make",
+              icon: "play",
+              runOnWorktreeCreate: true,
+            },
+          ],
+        },
+        { createWorkspaceRootIfMissing: true },
+      ]) {
+        const refused = yield* world.call("studio_project_create", world.clientScope(M4), {
+          ...base,
+          ...extra,
+        });
+        expect(refused, Object.keys(extra)[0]).toMatchObject({ code: "outside_grant_scope" });
+        expect(String(refused.message)).toContain("only its user sets them");
+      }
+      yield* world.workGrants((grants) =>
+        grants.update({
+          coordinatorEnvironmentId: M4,
+          accounts: { kind: "listed", instanceIds: [claude] },
+        }),
+      );
+      const wrongAccount = yield* world.call("studio_project_create", world.clientScope(M4), {
+        ...base,
+        defaultModelSelection: selection(codex),
+      });
+      expect(wrongAccount).toMatchObject({ code: "account_not_allowed" });
     }).pipe(Effect.provide(world.layer));
   });
 

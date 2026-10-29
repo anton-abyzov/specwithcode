@@ -1,6 +1,6 @@
 import type { ThreadPullRequestLink } from "@specweave-studio/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // A zone west of UTC exposes a clock read as local time (it once ran 4h fast).
 process.env.TZ = "America/New_York";
@@ -28,6 +28,22 @@ const folder = {
 };
 
 describe("ThreadMetaRow", () => {
+  beforeEach(() => vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-15T12:00:00Z")));
+  afterEach(() => vi.restoreAllMocks());
+  it("labels settled timing as the last turn, not cumulative work", () => {
+    const html = renderToStaticMarkup(
+      <ThreadMetaRow
+        origin={null}
+        folder={null}
+        run={{ startedAt: "2026-10-15T10:00:00Z", completedAt: "2026-10-15T10:01:30Z" }}
+        pullRequests={[]}
+        onOpenPullRequest={() => {}}
+      />,
+    );
+    expect(html).toContain("Last turn 1m");
+    expect(html).toContain("Timing details");
+    expect(html).not.toContain("Ran 1m");
+  });
   it("names the machine first, even with nothing else to show", () => {
     const html = renderToStaticMarkup(
       <ThreadMetaRow
@@ -99,7 +115,7 @@ describe("ThreadMetaRow", () => {
     // The folder chip shows its name only; the path waits in the tooltip.
     expect(html).toMatch(/data-thread-meta="folder"[\s\S]*?>specweave</);
     expect(html).not.toContain("repositories/anton-abyzov/specweave<");
-    expect(html).toContain("Running 3h 55m");
+    expect(html).toContain("Running · 3h 55m elapsed");
     const numbers = [...html.matchAll(/>#(\d+)</g)].map((match) => match[1]);
     expect(numbers).toEqual(["2062", "2061", "2060"]);
     expect(html).toContain("+1");
@@ -119,7 +135,7 @@ describe("ThreadMetaRow", () => {
     expect(html).toContain("Subagent of");
     expect(html).toContain("Release macOS app");
     expect(html).not.toContain("Worker");
-    expect(html).toContain("Ran 31m");
+    expect(html).toContain("Last turn 31m");
   });
 
   it("times a running turn from its start in UTC, whatever the local zone", () => {
@@ -132,7 +148,7 @@ describe("ThreadMetaRow", () => {
         onOpenPullRequest={vi.fn()}
       />,
     );
-    expect(html).toContain("Running 3m");
+    expect(html).toContain("Running · 3m elapsed");
   });
 
   it("reads a turn blocked on the person as waiting on you, in the waiting tone", () => {
@@ -148,15 +164,15 @@ describe("ThreadMetaRow", () => {
         />,
       );
     const approval = render("approval");
-    expect(approval).toContain("Waiting on you 15h 10m");
+    expect(approval).toContain("Waiting on you");
     expect(approval).not.toContain("Running");
     expect(approval).toContain('data-run-state="waiting"');
     expect(approval).toContain("text-warning-foreground");
-    expect(render("answer")).toContain("Waiting on you 15h 10m");
-    expect(render("sign-in")).toContain("Waiting on you 15h 10m");
+    expect(render("answer")).toContain("Waiting on you");
+    expect(render("sign-in")).toContain("Waiting on you");
     // With nothing asked of the person the same turn is still running.
     const running = render(null);
-    expect(running).toContain("Running 15h 10m");
+    expect(running).toContain("Running · 15h 10m elapsed");
     expect(running).not.toContain("text-warning-foreground");
   });
 
@@ -171,7 +187,7 @@ describe("ThreadMetaRow", () => {
         onOpenPullRequest={vi.fn()}
       />,
     );
-    expect(html).toContain("Ran 31m");
+    expect(html).toContain("Last turn 31m");
     expect(html).not.toContain("Waiting on you");
   });
 

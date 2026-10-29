@@ -68,6 +68,8 @@ export interface PendingCopy {
   readonly planShown?: true;
   /** The last copy, opened again with View: it can go back to being the last copy. */
   readonly reopened?: true;
+  /** Source validation refused this preview; reopening must not retry its old approval. */
+  readonly needsComparison?: true;
 }
 
 export const CANCELLED_WHILE_MEASURING = "The copy was cancelled while measuring.";
@@ -114,6 +116,7 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     linked,
     planShown,
     reopened,
+    needsComparison,
     ...fields
   } = pointer;
   const rest: PendingCopy = {
@@ -133,6 +136,7 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     ...(linked === true ? { linked } : {}),
     ...(planShown === true ? { planShown } : {}),
     ...(reopened === true ? { reopened } : {}),
+    ...(needsComparison === true ? { needsComparison } : {}),
   };
   // Secret-like files are never part of the class selection.
   const kept: unknown[] = Array.isArray(selection)

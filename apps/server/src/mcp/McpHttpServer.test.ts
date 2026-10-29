@@ -28,7 +28,10 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
+import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
@@ -123,16 +126,54 @@ const serveSnapshots = (clientId: string, result: unknown) =>
     return inputs;
   });
 
-const callSnapshot = (args: Record<string, unknown>) =>
+const callTool = (name: string, args: Record<string, unknown>) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     return yield* server
-      .callTool({ name: "preview_snapshot", arguments: args })
+      .callTool({ name, arguments: args })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
   });
+
+const callSnapshot = (args: Record<string, unknown>) => callTool("preview_snapshot", args);
+
+// Real tool definitions with handlers that record what they decoded.
+const layerRecordingTools = (calls: Array<unknown>) => {
+  const RecordingToolkit = Toolkit.make(
+    OrchestratorToolkit.tools.delegate_task,
+    OrchestratorToolkit.tools.studio_thread_read,
+    OrchestratorToolkit.tools.studio_thread_wait,
+    ProjectToolkit.tools.studio_project_update,
+  );
+  const record = McpToolAccess.reads((params: unknown) =>
+    Effect.sync(() => calls.push(params)).pipe(
+      Effect.andThen(
+        Effect.fail(new OrchestratorMcpFailure({ code: "thread_not_found", message: "Recorded." })),
+      ),
+    ),
+  );
+  return McpHttpServer.toolkitRegistration(
+    RecordingToolkit,
+    McpToolAccess.toLayer(RecordingToolkit, {
+      delegate_task: record,
+      studio_thread_read: record,
+      studio_thread_wait: record,
+      studio_project_update: record,
+    }),
+  ).pipe(
+    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provide(
+      Layer.mergeAll(
+        McpToolAccessTestkit.liveThreadsLayer,
+        Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
+        Layer.mock(ProjectService.ProjectService)({}),
+        NodeServices.layer,
+      ),
+    ),
+  );
+};
 
 it("normalizes empty successful notification responses to accepted", () => {
   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
@@ -422,7 +463,7 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
 it.effect("rejects non-boolean snapshot image options before selecting a browser host", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    for (const includeImage of ["false", 0, null]) {
+    for (const includeImage of ["false", 0]) {
       const result = yield* server
         .callTool({
           name: "preview_snapshot",
@@ -483,6 +524,58 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("treats null snapshot options like omitted ones", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const inputs = yield* serveSnapshots("mcp-null-options-client", snapshotResult);
+
+      const omitted = yield* callSnapshot({});
+      const nulls = yield* callSnapshot({ tabId: null, includeImage: null, save: null });
+
+      expect(nulls).toEqual(omitted);
+      expect(inputs).toEqual([{}, {}]);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+// Hosted clients such as ChatGPT send null for optional parameters the advertised schema allows.
+it.effect("decodes null optional arguments the way it decodes omitted ones", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const thread = { threadId: "thread-null-arguments" };
+    yield* callTool("studio_thread_read", thread);
+    yield* callTool("studio_thread_read", { ...thread, afterPosition: null, view: null });
+    yield* callTool("delegate_task", { task: "Inspect", target: {} });
+    yield* callTool("delegate_task", { task: "Inspect", title: null, target: { model: null } });
+    // A null the schema declares keeps its meaning: here it clears the project icon.
+    yield* callTool("studio_project_update", { projectId: "project-1", projectIcon: null });
+
+    expect(calls).toHaveLength(5);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[3]).toEqual(calls[2]);
+    expect(calls[4]).toStrictEqual({ projectId: "project-1", projectIcon: null });
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
+it.effect("accepts finite wait budgets and refuses non-finite ones", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    yield* callTool("delegate_task", { task: "Inspect", timeoutMs: 1500.5 });
+    yield* callTool("studio_thread_wait", { threadId: "thread-wait", timeoutMs: 5000 });
+    expect(calls).toMatchObject([{ timeoutMs: 1500.5 }, { timeoutMs: 5000 }]);
+
+    for (const [name, args] of [
+      ["delegate_task", { task: "Inspect", timeoutMs: "Infinity" }],
+      ["studio_thread_wait", { threadId: "thread-wait", timeoutMs: "NaN" }],
+      ["studio_thread_wait", { threadId: "thread-wait", timeoutMs: "-Infinity" }],
+      ["studio_thread_read", { threadId: "thread-wait", afterPosition: "2" }],
+    ] as const) {
+      const refused = yield* callTool(name, args).pipe(Effect.flip);
+      expect(refused._tag, `${name} ${JSON.stringify(args)}`).toBe("InvalidParams");
+    }
+    expect(calls).toHaveLength(2);
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
 it.effect("reports a tagged error when the screenshot cannot be saved", () =>
   Effect.scoped(
     Effect.gen(function* () {

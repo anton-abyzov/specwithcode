@@ -20,7 +20,16 @@ export default defineConfig({
       resolveId(id, importer) {
         if (!importer) return;
         if (panelOwner.test(importer) && panelMocked.test(id)) return mocks;
-        if (timelineOwner.test(importer) && /\/state\/entities$/.test(id)) return mocks;
+        if (
+          (timelineOwner.test(importer) || /\/components\/chat\/ChatHeader\.tsx$/.test(importer)) &&
+          /\/state\/entities$/.test(id)
+        )
+          return mocks;
+        if (
+          /\/components\/chat\/TimelineDetailMenu\.tsx$/.test(importer) &&
+          /\/settings\/(SettingsScopeContext|useSettingsProjectGroups|useScopedSettings)$/.test(id)
+        )
+          return mocks;
         if (queryOwners.test(importer) && /\/state\/queries$/.test(id)) return mocks;
       },
     },

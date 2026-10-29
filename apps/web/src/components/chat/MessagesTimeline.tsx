@@ -3174,7 +3174,7 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const messageText = row.message.text;
   const reportMode = ctx.collapseLongReports && ctx.timelineDetail !== "verbose";
   const cited = ctx.citationRequest?.citation.messageId === row.message.id;
   // Once a report is opened in chat (asked for, or shown for a citation) it stays there

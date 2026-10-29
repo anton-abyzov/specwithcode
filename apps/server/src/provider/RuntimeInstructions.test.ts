@@ -247,7 +247,7 @@ describe("buildRuntimeInstructions", () => {
   });
 
   it("keeps everything every turn carries within its budget", () => {
-    // About 900 tokens with every block; it was about 2,000 before the rules moved into code.
+    // Bounded shared guidance includes 1130's assignment/goal and no-manual-relay rules.
     // The presentation block added about 190 tokens on purpose (October 21, 2026),
     // and the short-cell comparison rule about 10 more (October 27, 2026).
     for (const responseStyle of ["concise", "detailed"] as const) {
@@ -256,7 +256,7 @@ describe("buildRuntimeInstructions", () => {
         model: "claude-opus-5-5",
         responseStyle,
       });
-      expect(instructions.length).toBeLessThanOrEqual(3_850);
+      expect(instructions.length).toBeLessThanOrEqual(5_050);
     }
   });
 
@@ -289,4 +289,17 @@ describe("agent instructions", () => {
       "<agent_instructions>",
     );
   });
+});
+
+it("separates finite assignments from durable user goals in both response styles", () => {
+  for (const style of ["concise", "detailed"] as const) {
+    const text = responseStyleInstructions(style);
+    expect(text).toContain("never ask the user to carry internal messages or handoff receipts");
+    expect(text).toContain("An answered destination decision stays answered");
+    expect(text).toContain("does not release a live owner's work");
+    expect(text).toContain("Keep the overall user goal open");
+    expect(text).toContain("studio_thread_record_delivery");
+    expect(text).toContain("acknowledgment-only turns");
+    expect(text).toContain("Required CI and readiness gates remain required");
+  }
 });

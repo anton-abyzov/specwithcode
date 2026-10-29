@@ -396,19 +396,39 @@ def automatic_retry(agent, verified):
 
 def withdrawn(agent, version):
     """Re-reads the settings: the (status, message) ending the pass once the request is gone or changed.
-    A newer request that may install `version` is taken on: agent.config becomes its settings."""
+    A newer request that may install `version` is taken on: agent.config becomes its settings, and a
+    pass that owns no run claims the run that request names, so the pass ends that run too. It lapses
+    by update_agent_run.ttl_until's clock, as at the start of a pass: a run's request at the run's deadline. One
+    for a newer release than `version` (published after this pass checked) ends the pass and is not
+    taken on (agent.newer_release names that release): the pass's run ends replaced, and run_once
+    serves the request in a pass of its own, even after its last, whose fresh check finds that release."""
     ua = _ua(agent)
     try:
         config = ua.load_config(agent.updates, agent.home)
     except ua.AgentError:
         return None
-    request, agent.config = agent.config['installRequestedAt'], config
+    request = agent.config['installRequestedAt']
+    if config['installRequestedAt'] not in (None, request) and not ua.install_cancelled(config) \
+            and _for_a_newer_release(ua, config, version):
+        agent.state['quietSince'] = None
+        agent.newer_release = ua.update_request.bound(config)['version']
+        return 'downloaded', None
+    agent.config = config
     if config['installRequestedAt'] is not None and not ua.install_cancelled(config):
         agent.serving = config['installRequestedAt']  # Taken on or ended here: a failure from now on names it.
-        return ua.update_request.replaced(request, config, agent.state, version, ua.utcnow())
+        if getattr(agent, 'run', None) is None:
+            agent.run = ua.runs.claim(agent)  # Its run, if it names one: no later pass would claim it; this one
+            if agent.run is not None:  # ends it, also when the request is turned down below.
+                agent.run.mirror(agent.state['status'], agent.state['message'])
+        return ua.update_request.replaced(request, config, agent.state, version, ua.utcnow(), ua.runs.ttl_until(agent))
     agent.state['handledInstallRequestAt'] = config['installRequestedAt'] or request
     agent.state['quietSince'] = None
     return 'downloaded', ua.CANCELLED
+
+
+def _for_a_newer_release(ua, config, version):
+    wanted = (ua.update_request.bound(config) or {}).get('version')
+    return wanted is not None and (ua.version_tuple(wanted) or ()) > (ua.version_tuple(version) or ())
 
 
 def asked_again(agent, version, serving):

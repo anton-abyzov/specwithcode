@@ -97,6 +97,18 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
   });
 
+  it("explains a subscription whose limits were not read", () => {
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: { rate_limits_available: true, rate_limits: null },
+      }).limits.unavailable,
+    ).toEqual({
+      reason: "unsupported",
+      message: "Signed in to a subscription, but Claude did not return its usage.",
+    });
+  });
+
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({

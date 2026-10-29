@@ -75,6 +75,7 @@ function StopCopyButton({
 export function HandoffCopyFooter({
   stage,
   sourceChanged = false,
+  onCompareAgain,
   error,
   busy,
   working,
@@ -116,6 +117,7 @@ export function HandoffCopyFooter({
 }: {
   readonly stage: CopyStage;
   readonly sourceChanged?: boolean;
+  readonly onCompareAgain?: () => void;
   readonly error: string | null;
   readonly busy: boolean;
   readonly working: boolean;
@@ -231,6 +233,11 @@ export function HandoffCopyFooter({
               !replaceBlocked &&
               " Replace everything is available and uses the source versions for the remaining choices."}
           </p>
+          {sourceChanged && onCompareAgain && (
+            <Button disabled={busy} onClick={onCompareAgain}>
+              Measure and compare again
+            </Button>
+          )}
           <Button
             disabled={copyBlocked}
             aria-describedby={availabilityId}

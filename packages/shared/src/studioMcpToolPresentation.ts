@@ -155,6 +155,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     ["Wait", "Waiting", "Waited", "for a SpecWithCode thread"],
     "thread-wait",
   ),
+  studio_threads_wait: tool(
+    ["Wait", "Waiting", "Waited", "for SpecWithCode threads"],
+    "thread-wait",
+  ),
   studio_thread_interrupt: tool(
     ["Interrupt", "Interrupting", "Requested an interrupt of", "a SpecWithCode thread"],
     "thread-interrupt",
@@ -411,6 +415,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "project-delete",
   ),
   studio_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
+  studio_project_add_to_machine: tool(
+    ["Add", "Adding", "Added", "a project to another machine"],
+    "project-clone",
+  ),
   studio_project_knowledge_search: tool(
     ["Search", "Searching", "Searched", "project knowledge"],
     "knowledge-search",

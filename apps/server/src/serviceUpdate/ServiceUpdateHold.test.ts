@@ -203,6 +203,21 @@ describe("agentVerdictForHold", () => {
     ).toEqual(until);
   });
 
+  it("times a plain request from the hold's own start, which a pass beside a run retries it to", () => {
+    // installHoldUntil counts only for a forced request. A pass that took a plain one on beside a press's
+    // run retries it until FORCE_WINDOW after the press (update_agent_run.retry_until), whose drain took
+    // this hold just before: its give-up then lands at or after deadline - AGENT_RETRY_MS and ends the hold.
+    const plain = { installHoldUntilMs: null };
+    const deadline = startedAtMs + Hold.HOLD_TTL_MS;
+    expect(verdict({ ...plain, updatedAtMs: startedAtMs + 2 * 60_000 })).toEqual({
+      type: "busy",
+      untilMs: deadline + Hold.AGENT_SNAPSHOT_TIMEOUT_MS,
+    });
+    expect(verdict({ ...plain, updatedAtMs: deadline - Hold.AGENT_RETRY_MS })).toEqual({
+      type: "none",
+    });
+  });
+
   it("keeps the hold through a retry of an install refused long after installHoldUntil", () => {
     // M4 1.0.112: a forced request held 15 minutes, its apply refused before the
     // restart about 28 minutes in, as the 40-minute APPLY_TIMEOUT now allows.
@@ -762,6 +777,7 @@ describe("carriedHoldFor", () => {
   const nowMs = Date.parse("2026-10-28T06:05:30.000Z");
   const request = "2026-10-28T06:04:56.998Z";
   const until = "2026-10-28T06:19:51.000Z";
+  const ceiling = "2026-10-28T06:49:51.000Z";
   const input = (
     marker: Partial<Hold.CarriedHoldInput["marker"]> = {},
     config: Partial<Hold.CarriedHoldInput["config"]> = {},
@@ -773,6 +789,7 @@ describe("carriedHoldFor", () => {
       request,
       installRunId: "run-1",
       until,
+      ceiling,
       ...marker,
     },
     config: {
@@ -788,11 +805,21 @@ describe("carriedHoldFor", () => {
     ...rest,
   });
 
-  it("carries the hold for the open forced request it was restarted under, to the old end", () => {
+  it("carries the hold for the open forced request it was restarted under, up to its ceiling", () => {
     expect(Hold.carriedHoldFor(input())).toEqual({
       request,
       requestedAtMs: Date.parse(request),
-      untilMs: Date.parse(until),
+      endMs: Date.parse(until),
+      ceilingMs: Date.parse(ceiling),
+    });
+    // Its old end may have passed during the restart while its ceiling is ahead.
+    expect(Hold.carriedHoldFor(input({ until: "2026-10-28T06:05:20.000Z" }))).not.toBe(null);
+    // A marker from a helper before 0957 names no ceiling: the hold ends where the old one did.
+    expect(Hold.carriedHoldFor(input({ ceiling: undefined }))).toEqual({
+      request,
+      requestedAtMs: Date.parse(request),
+      endMs: Date.parse(until),
+      ceilingMs: Date.parse(until),
     });
     // A cancel made before the request does not count; neither does a request without a run.
     expect(Hold.carriedHoldFor(input({}, { installCancelledAt: "2026-10-28T06:00:00Z" }))).not.toBe(
@@ -803,7 +830,26 @@ describe("carriedHoldFor", () => {
     ).not.toBe(null);
   });
 
-  it("starts normally for anything but that open, uncancelled, unexpired request", () => {
+  it("carries an extended hold after the original request deadline", () => {
+    const late = input(
+      { restartedAt: "2026-10-28T06:33:00Z" },
+      { installHoldUntil: "2026-10-28T06:19:56.998Z" },
+      {
+        nowMs: Date.parse("2026-10-28T06:33:30Z"),
+      },
+    );
+    expect(Hold.carriedHoldFor(late)?.ceilingMs).toBe(Date.parse(ceiling));
+    expect(Hold.carriedHoldFor({ ...late, handledInstallRequestAt: request })).toBe(null);
+    expect(
+      Hold.carriedHoldFor({
+        ...late,
+        config: { ...late.config, installCancelledAt: "2026-10-28T06:33:10Z" },
+      }),
+    ).toBe(null);
+    expect(Hold.carriedHoldFor({ ...late, nowMs: Date.parse(ceiling) })).toBe(null);
+  });
+
+  it("starts normally for anything but that open, uncancelled request within its ceiling", () => {
     const cases: Record<string, Hold.CarriedHoldInput> = {
       "no request in the marker": input({ request: undefined }),
       "another request": input({}, { installRequestedAt: "2026-10-28T06:05:10.000Z" }),
@@ -812,8 +858,18 @@ describe("carriedHoldFor", () => {
       cancelled: input({}, { installCancelledAt: "2026-10-28T06:05:05Z" }),
       "unreadable cancel": input({}, { installCancelledAt: "later" }),
       "handled by the agent": input({}, {}, { handledInstallRequestAt: request }),
-      "hold already ended": input({ until: "2026-10-28T06:05:30.000Z" }),
-      "request window over": input({}, { installHoldUntil: "2026-10-28T06:05:00.000Z" }),
+      "hold already as far as it could move": input({ ceiling: "2026-10-28T06:05:30.000Z" }),
+      "older helper's hold already ended": input({
+        until: "2026-10-28T06:05:30.000Z",
+        ceiling: undefined,
+      }),
+      "unreadable ceiling": input({ ceiling: "later" }),
+      "legacy request window over": input(
+        { ceiling: undefined },
+        {
+          installHoldUntil: "2026-10-28T06:05:00.000Z",
+        },
+      ),
       "this very process": input({}, {}, { pid: 66303 }),
       "request after the restart": input({ restartedAt: "2026-10-28T06:04:50+00:00" }),
       "restart in the future": input({ restartedAt: "2026-10-28T06:06:00+00:00" }),
@@ -825,31 +881,40 @@ describe("carriedHoldFor", () => {
   });
 });
 
-const carriedFiles = (dir: string, path: Path.Path, marker: Record<string, unknown> = {}) =>
+const carriedFiles = (
+  dir: string,
+  path: Path.Path,
+  marker: Record<string, unknown> = {},
+  state: Record<string, unknown> = {},
+  requestAgeMs = 30_000,
+) =>
   Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
-    const request = iso(now - 30_000);
+    const request = iso(now - requestAgeMs);
     yield* writeJson(path.join(dir, "state.json"), {
       status: "waiting-for-quiet",
       updatedAt: iso(now - 20_000),
+      ...state,
     });
     yield* writeJson(path.join(dir, "config.json"), {
       installMode: "force",
       installRequestedAt: request,
-      installHoldUntil: iso(now + Hold.HOLD_TTL_MS),
+      installHoldUntil: iso(now - requestAgeMs + Hold.HOLD_TTL_MS),
       installRunId: "run-1",
     });
-    const untilMs = now + 600_000;
+    const endMs = now + 600_000;
+    const ceilingMs = now + 900_000;
     yield* writeJson(path.join(dir, Hold.DATABASE_RESTART_MARKER_FILE), {
       schemaVersion: 1,
       servicePid: process.pid + 1,
       restartedAt: iso(now - 10_000),
       request,
       installRunId: "run-1",
-      until: iso(untilMs),
+      until: iso(endMs),
+      ceiling: iso(ceilingMs),
       ...marker,
     });
-    return { request, untilMs };
+    return { request, endMs, ceilingMs };
   });
 
 it.live("a service restarted while held starts held for the same request", () =>
@@ -857,26 +922,127 @@ it.live("a service restarted while held starts held for the same request", () =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-carried-" });
-    const { request, untilMs } = yield* carriedFiles(dir, path);
+    const { request, endMs, ceilingMs } = yield* carriedFiles(dir, path);
     const hold = yield* holdAt(path.join(dir, "state.json"), { pollMs: 10, noRequestMs: 50 });
     assert.isTrue(yield* hold.isHeld);
     const current = Option.getOrThrow(yield* hold.current);
     assert.equal(current.request, request);
-    assert.equal(current.expiresAtMs, untilMs);
+    // It starts where the old hold ended.
+    assert.equal(current.expiresAtMs, endMs);
     // The helper's reap reads the request it may accept from hold.json.
     const marker = JSON.parse(yield* fs.readFileString(path.join(dir, Hold.HOLD_MARKER_FILE)));
     assert.equal(marker.pid, process.pid);
     assert.equal(marker.request, request);
-    assert.equal(marker.expiresAt, iso(untilMs));
-    // The request is there, made before this hold began: polls keep the hold, never past its end.
+    assert.equal(marker.expiresAt, iso(endMs));
+    assert.equal(marker.ceiling, iso(ceilingMs));
+    // The request is there, made before this hold began: polls keep the hold. The agent's few polls ahead fall
+    // short of the old end, so it stays there; the tests below move it past that end, up to its ceiling.
     yield* Effect.sleep(Duration.millis(150));
     assert.isTrue(yield* hold.isHeld);
-    assert.equal(Option.getOrThrow(yield* hold.current).expiresAtMs, untilMs);
+    assert.equal(Option.getOrThrow(yield* hold.current).expiresAtMs, endMs);
     // A new Update now makes it an ordinary hold.
     const again = yield* hold.acquire();
     assert.isUndefined(again.request);
     const rewritten = JSON.parse(yield* fs.readFileString(path.join(dir, Hold.HOLD_MARKER_FILE)));
     assert.isUndefined(rewritten.request);
+    assert.isUndefined(rewritten.ceiling);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "a carried hold whose old end passed during the restart starts a few polls ahead and ends with a pass that gave up",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({
+        prefix: "service-update-hold-carried-late-",
+      });
+      const before = yield* Clock.currentTimeMillis;
+      // The pass gave up on the request: its last status is not one the agent works under.
+      yield* carriedFiles(
+        dir,
+        path,
+        { until: iso(before - 1_000), ceiling: iso(before + Hold.HOLD_MAX_MS) },
+        { status: "downloaded", updatedAt: iso(before - 5_000) },
+      );
+      const hold = yield* holdAt(path.join(dir, "state.json"), { pollMs: 250 });
+      const after = yield* Clock.currentTimeMillis;
+      const { expiresAtMs } = Option.getOrThrow(yield* hold.current);
+      assert.isAtLeast(expiresAtMs, before + 1_000);
+      assert.isAtMost(expiresAtMs, after + 1_000);
+      // Not a fresh 15 minutes: nothing moves it, so it ends within those polls.
+      assert.isTrue(yield* awaitSelfRelease(hold));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("a carried hold under an older helper's marker ends where the old one did", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-carried-old-" });
+    const statePath = path.join(dir, "state.json");
+    const endMs = (yield* Clock.currentTimeMillis) + 1_500;
+    const { request } = yield* carriedFiles(dir, path, { until: iso(endMs), ceiling: undefined });
+    const hold = yield* holdAt(statePath, { pollMs: 100 });
+    assert.equal(Option.getOrThrow(yield* hold.current).expiresAtMs, endMs);
+    // The agent installs the request, yet the hold never moves past the old end.
+    yield* writeJson(statePath, {
+      status: "installing",
+      updatedAt: yield* isoIn(0),
+      handledInstallRequestAt: request,
+    });
+    yield* Effect.sleep(Duration.millis(500));
+    assert.equal(Option.getOrThrow(yield* hold.current).expiresAtMs, endMs);
+    const marker = JSON.parse(yield* fs.readFileString(path.join(dir, Hold.HOLD_MARKER_FILE)));
+    assert.equal(marker.ceiling, iso(endMs));
+    assert.isTrue(yield* awaitSelfRelease(hold));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("a carried hold moves with the agent as the old hold did, never past its ceiling", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-carried-busy-" });
+    const statePath = path.join(dir, "state.json");
+    // A restart late in a long pass: the old hold ended 1.2 s on, and could still move for
+    // 2.5 s. Polls every 250 ms keep the hold four polls (1 s) ahead, as in "outlasts its time
+    // limit while the agent installs", so the check at 1.5 s is past the old end and only the
+    // extension keeps the hold. The 28-minute-old request's initial 15-minute
+    // deadline passed before this retry, which must not drop the carried hold.
+    const now = yield* Clock.currentTimeMillis;
+    const untilMs = now + 2_500;
+    const { request } = yield* carriedFiles(
+      dir,
+      path,
+      { until: iso(now + 1_200), ceiling: iso(untilMs) },
+      { message: Hold.AGENT_APPLY_RETRY_MESSAGE },
+      28 * 60_000,
+    );
+    const hold = yield* holdAt(statePath, { pollMs: 250 });
+    const first = Option.getOrThrow(yield* hold.current).expiresAtMs;
+    assert.isBelow(first, untilMs);
+    // The agent's pass took the request after the restart and installs it, writing nothing
+    // more until the install ends.
+    yield* writeJson(statePath, {
+      status: "installing",
+      updatedAt: yield* isoIn(0),
+      handledInstallRequestAt: request,
+    });
+    yield* Effect.sleep(Duration.millis(1_500));
+    assert.isTrue(yield* hold.isHeld);
+    const moved = Option.getOrThrow(yield* hold.current).expiresAtMs;
+    assert.isAbove(moved, first);
+    assert.isAtMost(moved, untilMs);
+    // hold.json follows the hold and still names how far it may move.
+    const marker = JSON.parse(yield* fs.readFileString(path.join(dir, Hold.HOLD_MARKER_FILE)));
+    assert.equal(marker.request, request);
+    assert.equal(marker.ceiling, iso(untilMs));
+    assert.isAbove(Date.parse(marker.expiresAt), first);
+    assert.isAtMost(Date.parse(marker.expiresAt), untilMs);
+    // An agent that never finishes does not hold the service past its ceiling.
+    assert.isTrue(yield* awaitSelfRelease(hold));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -909,7 +1075,8 @@ it.live("a restart for another request, an expired hold or a cancel starts unhel
     const path = yield* Path.Path;
     const cases: ReadonlyArray<Record<string, unknown>> = [
       { request: "2026-10-28T06:00:00.000Z" },
-      { until: yield* isoIn(-1_000) },
+      { until: yield* isoIn(-2_000), ceiling: yield* isoIn(-1_000) },
+      { until: yield* isoIn(-1_000), ceiling: undefined },
       { request: undefined },
       { installRunId: "run-0" },
     ];

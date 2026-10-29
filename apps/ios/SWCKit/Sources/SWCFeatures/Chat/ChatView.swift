@@ -60,7 +60,12 @@ private struct ChatScreen: View {
         deviceViewer = pending
       }
       .onAppear { model.openSession(session) }
-      .onDisappear { model.closeSession(session) }
+      .onDisappear {
+        // Navigation must not restore a keyboard over a hidden safe-area bar.
+        // The draft belongs to the router and survives losing focus.
+        composerFocused = false
+        model.closeSession(session)
+      }
       .task(id: router.pendingComposerFocus) {
         guard router.pendingComposerFocus == target else { return }
         // Let the drawer finish closing before the keyboard comes up.
@@ -104,6 +109,7 @@ private struct ChatScreen: View {
               .frame(maxWidth: .infinity)
               .padding(.top, WeaveSpacing.s8)
               .accessibilityLabel("Loading messages")
+            recoveryButton
           }
         } else if session.rows.isEmpty {
           if let error = session.loadError {
@@ -136,12 +142,13 @@ private struct ChatScreen: View {
             .id(Self.typingId)
         }
       }
+      .containerRelativeFrame(.horizontal) { width, _ in max(0, width - 2 * WeaveSpacing.gutter) }
       .padding(.horizontal, WeaveSpacing.gutter)
       .padding(.top, WeaveSpacing.s4)
       .padding(.bottom, WeaveSpacing.s4)
     }
     .scrollPosition($position)
-    .defaultScrollAnchor(.bottom)
+    .defaultScrollAnchor(session.rows.isEmpty ? .top : .bottom)
     .scrollDismissesKeyboard(.interactively)
     .onScrollGeometryChange(for: Bool.self) { geometry in
       geometry.visibleRect.maxY >= geometry.contentSize.height - 120
@@ -182,47 +189,37 @@ private struct ChatScreen: View {
 
   @ViewBuilder private var offlineTranscript: some View {
     let machineId = target.environmentId
-    let machine = model.machine(machineId)
-    switch machine?.status {
-    case .needsRepair where machine?.needsSignIn == true:
-      transcriptPlaceholder(
-        title: "Sign in again",
-        message: "This conversation loads once you sign in to SpecWithCode on this phone.",
-        actionTitle: "Show machine",
-        action: { nav.push(.machine(machineId)) }
-      )
-    case .needsRepair:
-      transcriptPlaceholder(
-        title: "Pair \(machineLabel) again",
-        message: "This conversation loads once this phone is paired with it again.",
-        actionTitle: "Show machine",
-        action: { nav.push(.machine(machineId)) }
-      )
-    case .unsupported:
-      transcriptPlaceholder(
-        title: "Update SpecWithCode on \(machineLabel)",
-        message: "This conversation loads once the machine runs a version this phone supports.",
-        actionTitle: "Show machine",
-        action: { nav.push(.machine(machineId)) }
-      )
-    default:
-      if let other = reachableOrchestrator {
-        // One machine being out never stops a project on several machines.
+    if let machine = model.machine(machineId) {
+      if let other = reachableOrchestrator, !machine.isDisconnected {
         transcriptPlaceholder(
-          title: "\(machineLabel) is offline",
-          message: "This orchestrator loads when \(machineLabel) reconnects. \(other.machineLabel)'s orchestrator for this project is available now.",
+          title: machine.recoveryTitle,
+          message: "This machine is unavailable. \(other.machineLabel)'s coordinator for this project is available now.",
           actionTitle: "View on \(other.machineLabel)",
           action: { router.open(.project(other.ref)) }
         )
       } else {
         transcriptPlaceholder(
-          title: "\(machineLabel) is offline",
-          message: "This conversation loads when \(session.machineLabel.isEmpty ? "the machine" : session.machineLabel) reconnects.",
-          actionTitle: "Reconnect",
-          action: { model.engine.reconnect(machineId: machineId) }
+          title: machine.recoveryTitle,
+          message: machine.recoveryMessage,
+          actionTitle: model.connect != nil && !machine.viaConnect ? "SpecWithCode Connect" : machine.canRetryConnection ? "Reconnect" : nil,
+          action: model.connect != nil && !machine.viaConnect
+            ? { router.sheet = .globalSettings }
+            : machine.canRetryConnection ? { model.engine.reconnect(machineId: machineId) } : nil
         )
       }
+      recoveryButton
+    } else {
+      transcriptPlaceholder(title: "Machine unavailable", message: "Choose a machine or pair again.")
+      WeaveButton("Machines", kind: .secondary) { nav.push(.machines) }
     }
+  }
+
+  private var recoveryButton: some View {
+    WeaveButton("Connection options", systemImage: "laptopcomputer", kind: .secondary) {
+      nav.push(.machine(target.environmentId))
+    }
+    .frame(maxWidth: .infinity)
+    .accessibilityIdentifier("chat.connection-options-body")
   }
 
   /// Another machine's copy of this project whose orchestrator is reachable.
@@ -237,11 +234,13 @@ private struct ChatScreen: View {
         .weaveFont(.title)
         .foregroundStyle(Color.weave.ink)
         .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityAddTraits(.isHeader)
       Text(message)
         .weaveFont(.callout)
         .foregroundStyle(Color.weave.muted)
         .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
       if let actionTitle, let action {
         WeaveButton(actionTitle, kind: .secondary, action: action)
           .padding(.top, WeaveSpacing.s2)
@@ -297,23 +296,30 @@ private struct ChatScreen: View {
     } center: {
       titleCapsule
     } trailing: {
-      switch target {
-      case let .aide(project), let .project(project):
-        let needsYou = model.threads(in: project).contains { $0.needsAttention }
-        HStack(spacing: 0) {
-          if case .project = target { OrchestratorSwitcher(current: project) }
-          Button {
-            nav.push(.overview(project))
-          } label: {
-            Label("Threads", systemImage: "bubble.left.and.bubble.right")
-              .font(.weave(.caption, weight: .semibold))
-              .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
-              .frame(minHeight: WeaveSize.minTap)
-          }
-          .accessibilityIdentifier("chat.threads")
+      if !session.machineOnline && target.threadRef == nil {
+        WeaveIconButton("laptopcomputer", label: "Connection options") {
+          nav.push(.machine(target.environmentId))
         }
-      case let .thread(thread):
-        threadControls(thread)
+        .accessibilityIdentifier("chat.connection-options")
+      } else {
+        switch target {
+        case let .aide(project), let .project(project):
+          let needsYou = model.threads(in: project).contains { $0.needsAttention }
+          HStack(spacing: 0) {
+            if case .project = target { OrchestratorSwitcher(current: project) }
+            Button {
+              nav.push(.overview(project))
+            } label: {
+              Label("Threads", systemImage: "bubble.left.and.bubble.right")
+                .font(.weave(.caption, weight: .semibold))
+                .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
+                .frame(minHeight: WeaveSize.minTap)
+            }
+            .accessibilityIdentifier("chat.threads")
+          }
+        case let .thread(thread):
+          threadControls(thread)
+        }
       }
     }
   }
@@ -346,8 +352,9 @@ private struct ChatScreen: View {
           .contentShape(Rectangle())
       }
       .buttonStyle(PressableStyle())
-      .accessibilityLabel("\(session.machineLabel), \(status.label)")
+      .accessibilityLabel(session.machineOnline ? "\(session.machineLabel), \(status.label)" : "Connection options")
       .accessibilityHint("Shows the machine")
+      .accessibilityIdentifier(session.machineOnline ? "chat.machine" : "chat.connection-options")
 
       Menu {
         threadMenu(ref, summary: summary)
@@ -477,7 +484,7 @@ private struct ChatScreen: View {
         text: draft,
         isRunning: session.isRunning && !session.isStale,
         placeholder: session.isRunning ? nil : placeholder,
-        blockedReason: session.sendBlockedReason,
+        blockedReason: session.machineOnline ? session.sendBlockedReason : "Machine unavailable. Your draft is kept.",
         focus: $composerFocused,
         onSend: { send() },
         onStop: session.isStale ? nil : { stop() }
@@ -513,6 +520,9 @@ private struct ChatScreen: View {
     if !session.machineOnline {
       // The transcript itself says the machine is offline and offers Reconnect.
       if showsOfflineTranscript { return nil }
+      if let machine = model.machine(machineId), machine.isDisconnected || !machine.canRetryConnection {
+        return ConnectionNotice(message: machine.recoveryTitle, kind: .info, actionTitle: "Connection options", action: { nav.push(.machine(machineId)) })
+      }
       // The composer already explains a blocked send; the banner adds the way
       // out, and only mentions saved messages when there are some.
       let message = session.rows.isEmpty

@@ -8,15 +8,13 @@ import {
   formatJsonBlocks,
   workerMessagePresentation,
   workerMessageSizeLabel,
+  relayAttentionText,
 } from "../../studio/workerMessagePresentation";
-import { findTextOffsets, textMatchesQuery } from "../find/conversationFind.logic";
+import { textMatchesQuery } from "../find/conversationFind.logic";
 import { useConversationFindQueryWithin } from "../find/conversationFindStore";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { collapsibleFooterClassName, revealCollapsedTop } from "../chat/CollapsibleReport";
-
-/** A clipped message fades out at its bottom edge, as a person's long prompt does. */
-const CLAMP_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2rem), transparent)";
 
 /** A footer riding over the text gets a backing, as the shared fold toggle does. */
 const STICKY_BACKING =
@@ -32,13 +30,10 @@ export type RelayedMessageSource = "coordinator" | "thread" | "agent";
  * page: a muted "Message from …" disclosure, the text in muted prose, then a
  * link to where it came from and when.
  *
- * The disclosure is its only fold control. A long message folded shows its
- * opening sentences and the sentence asking for a decision, cut verbatim from
- * the text (or its clipped top when there is no opening to cut); a short one
- * folded shows nothing. The timeline detail sets the default: Verbose opens a
- * long one, the others fold it; a short one starts open. Find in the
- * conversation opens it when the hidden part matches. "Copy original" copies
- * the message exactly as it was received.
+ * Non-verbose detail folds internal receipts without routine previews. Candidate
+ * questions, decisions and failure prose stay visible; this is presentation,
+ * not the attention/blocker classifier. Find and disclosure reveal the original.
+ * Verbose opens the body. Copy preserves the exact original bytes.
  */
 export function RelayedMessage({
   label,
@@ -80,7 +75,8 @@ export function RelayedMessage({
   const [root, setRoot] = useState<HTMLElement | null>(null);
   const { excerpt, clamp } = presentation;
   const long = excerpt !== null || clamp;
-  const openByDefault = !long || detail === "verbose";
+  const openByDefault = detail === "verbose";
+  const attention = useMemo(() => relayAttentionText(text), [text]);
   const [expanded, setExpanded] = useState(openByDefault);
   // The reader opened it: only then does "Show less" follow the reader down the message.
   const [openedByReader, setOpenedByReader] = useState(false);
@@ -111,12 +107,8 @@ export function RelayedMessage({
     !expanded &&
     findQuery.length > 0 &&
     findQuery !== foldedForQuery &&
-    (!long || excerpt === null
-      ? textMatchesQuery(text, findQuery)
-      : findTextOffsets(text, findQuery).length > findTextOffsets(excerpt, findQuery).length ||
-        (!textMatchesQuery(excerpt, findQuery) && textMatchesQuery(text, findQuery)));
+    textMatchesQuery(text, findQuery);
   const open = expanded || findOpens;
-  const clipped = !open && clamp && excerpt === null;
   const hasText = text.trim().length > 0;
   const toggle = () => {
     setExpanded(!open);
@@ -127,7 +119,7 @@ export function RelayedMessage({
   const toggleLabel = open
     ? `${label}. Show less`
     : long
-      ? `${label}. Show full message, ${workerMessageSizeLabel(presentation)}`
+      ? `${label}. Show full message, ${workerMessageSizeLabel({ ...presentation, hidden: presentation.characters })}`
       : `${label}. Show message`;
   const time =
     createdAt === undefined ? "" : formatDayAwareTimestamp(createdAt, timestampFormat) || "";
@@ -158,26 +150,23 @@ export function RelayedMessage({
           <Chevron aria-hidden className="size-3.5 shrink-0" />
         </button>
       </h3>
-      <div id={bodyId} hidden={!open && !long ? true : undefined}>
-        {hasText ? (
-          <div
-            className={
-              clipped
-                ? `mt-0.5 overflow-hidden text-muted-foreground ${detail === "concise" ? "max-h-24" : "max-h-44"}`
-                : "mt-0.5 text-muted-foreground"
-            }
-            style={
-              clipped ? { maskImage: CLAMP_FADE_MASK, WebkitMaskImage: CLAMP_FADE_MASK } : undefined
-            }
-            data-relayed-message-body
-          >
-            {renderMarkdown(open || excerpt === null ? body : excerpt)}
+      {!open && attention ? (
+        <div data-relayed-attention={true} className="mt-0.5 text-muted-foreground">
+          {renderMarkdown(attention)}
+        </div>
+      ) : null}
+      <div id={bodyId} hidden={!open}>
+        {open && hasText ? (
+          <div className="mt-0.5 text-muted-foreground" data-relayed-message-body>
+            {renderMarkdown(body)}
           </div>
         ) : null}
         {open && attachments ? <div className="mt-2">{attachments}</div> : null}
       </div>
       <div
         className={`mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums ${sticky ? `-mx-1.5 w-fit rounded-md px-1.5 py-0.5 ${STICKY_BACKING} ${collapsibleFooterClassName(true)}` : ""}`}
+        hidden={!open}
+        style={!open ? { display: "none" } : undefined}
         data-relayed-message-footer
       >
         {view ? (

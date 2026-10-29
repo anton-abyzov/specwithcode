@@ -130,6 +130,7 @@ import {
 } from "../Notification.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { limitReplyTurnFailure, usageLimitErrorFailure } from "./acpLimitReply.ts";
+import { missingThoughtSignatureFailure } from "./acpHistoryError.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   decideToolItemPersist,
@@ -1949,6 +1950,11 @@ export function makeAcpAdapterV2(
           new Map<string, StudioAcpInstructionState>(),
         );
         const runtimeRestartRequired = yield* Ref.make(false);
+        // Native sessions whose restored history the model rejected (for
+        // example a missing Gemini thought signature). Loading one again
+        // only repeats the failure, so activation refuses it and turn start
+        // replaces it with a fresh native session plus a context handoff.
+        const poisonedNativeSessionIds = yield* Ref.make(new Set<string>());
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
         const runtimeCallbackGenerationCounter = yield* Ref.make(0);
@@ -6674,6 +6680,20 @@ export function makeAcpAdapterV2(
           if (initialFailure !== undefined) {
             return yield* initialFailure;
           }
+          if ((yield* Ref.get(poisonedNativeSessionIds)).has(sessionId)) {
+            // The model rejected this session's restored history, so loading
+            // it again would fail the same way. The poisoned turn marked the
+            // runtime for restart, so this runtime started without a resume
+            // id: starting it mints the fresh native session turn start
+            // binds when this refusal routes it through ensureThread.
+            const fresh = yield* runtime.start();
+            yield* Ref.set(activeSessionId, fresh.sessionId);
+            yield* Ref.set(activeSessionSetup, fresh);
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: `ACP session ${sessionId} was retired: its restored history is invalid for the model`,
+            });
+          }
           const activationOptions = acpMcpActivation(threadId, self);
           prepareTerminalEnvironment(threadId, sessionId);
           const activated = canLoadSession
@@ -7555,27 +7575,55 @@ export function makeAcpAdapterV2(
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
+                    const promptCause = Cause.squash(cause);
                     const failure =
-                      flavor.promptFailure?.(Cause.squash(cause)) ??
+                      flavor.promptFailure?.(promptCause) ??
                       makeProviderFailure({
-                        cause: Cause.squash(cause),
+                        cause: promptCause,
                         class: "provider_error",
                       });
+                    // Display text is rebuilt from a closed set, so the
+                    // agent's raw error wording survives only on the cause;
+                    // classification below reads it without surfacing it.
+                    const promptCauseMessage =
+                      typeof promptCause === "object" &&
+                      promptCause !== null &&
+                      typeof (promptCause as { readonly errorMessage?: unknown }).errorMessage ===
+                        "string"
+                        ? (promptCause as { readonly errorMessage: string }).errorMessage
+                        : failure.message;
                     // An agent that rejects the prompt with its quota notice
                     // stopped on a usage limit, so the limit fallback moves on.
+                    const limitNowMs =
+                      flavor.specweaveTool === "copilot"
+                        ? DateTime.toEpochMillis(yield* DateTime.now)
+                        : null;
                     const limitError =
                       failure.class === "provider_error"
-                        ? usageLimitErrorFailure(
-                            failure.message,
-                            flavor.specweaveTool === "copilot"
-                              ? DateTime.toEpochMillis(yield* DateTime.now)
-                              : null,
-                          )
+                        ? (usageLimitErrorFailure(failure.message, limitNowMs) ??
+                          usageLimitErrorFailure(promptCauseMessage, limitNowMs))
                         : null;
+                    // A model that rejects the restored history itself (a
+                    // missing Gemini thought signature) will reject every
+                    // later prompt on this native session. Retire the
+                    // session and restart the runtime so the next turn
+                    // starts fresh with a context handoff.
+                    const historyError =
+                      failure.class === "provider_error"
+                        ? (missingThoughtSignatureFailure(promptCauseMessage) ??
+                          missingThoughtSignatureFailure(failure.message))
+                        : null;
+                    if (historyError !== null) {
+                      yield* Ref.update(
+                        poisonedNativeSessionIds,
+                        (current) => new Set(current).add(requestedSessionId),
+                      );
+                      yield* Ref.set(runtimeRestartRequired, true);
+                    }
                     yield* finalizeTurn(
                       context,
                       context.interrupted ? "interrupted" : "failed",
-                      limitError ?? failure,
+                      historyError ?? limitError ?? failure,
                     ).pipe(
                       Effect.andThen(
                         Effect.logWarning("orchestration-v2.acp-prompt-failed", {

@@ -1,10 +1,16 @@
 import {
   AuthAdministrativeScopes,
+  type AuthClientSession,
+  AuthMcpClientAccess,
+  type AuthMcpClientTokenResult,
   AuthSessionId,
+  AUTH_MCP_CLIENT_TOKEN_MAX_TTL_SECONDS,
   EnvironmentId,
   AuthStandardClientScopes,
 } from "@specweave-studio/contracts";
 import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -30,6 +36,7 @@ import {
   liveServiceClient,
   liveServiceRefusal,
   liveServiceRequestError,
+  LiveServiceUnsupportedError,
   pairingGrantScopes,
 } from "./liveService.ts";
 import {
@@ -381,7 +388,188 @@ const sessionCommand = Command.make("session").pipe(
   Command.withSubcommands([sessionIssueCommand, sessionListCommand, sessionRevokeCommand]),
 );
 
+/** Formats a freshly minted static MCP client token; the only time it is shown. */
+export function formatIssuedMcpClientToken(
+  issued: AuthMcpClientTokenResult,
+  options?: { readonly json?: boolean },
+): string {
+  const expiresAt = DateTime.formatIso(issued.expiresAt);
+  if (options?.json) {
+    return `${JSON.stringify(
+      {
+        sessionId: issued.sessionId,
+        token: issued.token,
+        tokenType: issued.tokenType,
+        label: issued.label,
+        access: issued.access,
+        expiresAt,
+      },
+      null,
+      2,
+    )}\n`;
+  }
+  return (
+    [
+      `Issued MCP client token ${issued.sessionId} for ${issued.label}.`,
+      `Access: ${issued.access}`,
+      `Expires: ${expiresAt}`,
+      "",
+      `Authorization: Bearer ${issued.token}`,
+      "",
+      "Send that header to this machine's /mcp URL. The token is shown only now; store it",
+      `in the client's secret settings. Revoke it with \`auth mcp-token revoke ${issued.sessionId}\`.`,
+    ].join("\n") + "\n"
+  );
+}
+
+const mcpClientsOnly = (sessions: ReadonlyArray<AuthClientSession>) =>
+  sessions.filter((session) => session.subject === EnvironmentAuth.MCP_CLIENT_SUBJECT);
+
+/** `--ttl` as whole seconds, within what a static MCP token may last. */
+const mcpTokenTtlSeconds = (
+  ttl: Option.Option<Duration.Duration>,
+): Effect.Effect<{ readonly ttlSeconds?: number }, LiveServiceUnsupportedError> => {
+  if (Option.isNone(ttl)) return Effect.succeed({});
+  const ttlSeconds = Math.ceil(Duration.toMillis(ttl.value) / 1000);
+  return ttlSeconds >= 60 && ttlSeconds <= AUTH_MCP_CLIENT_TOKEN_MAX_TTL_SECONDS
+    ? Effect.succeed({ ttlSeconds })
+    : Effect.fail(
+        new LiveServiceUnsupportedError({
+          reason: `--ttl ${Duration.format(ttl.value)} is outside what an MCP client token may last (1 minute to 90 days).`,
+        }),
+      );
+};
+
+const mcpTokenCreateCommand = Command.make("create", {
+  ...authLocationFlags,
+  access: Flag.Literals("access", AuthMcpClientAccess.literals).pipe(
+    Flag.withDescription(
+      "The most the client may do: read-only, or run threads up to this runtime mode.",
+    ),
+    Flag.withDefault("auto" as const),
+  ),
+  label: Flag.String("label").pipe(
+    Flag.withDescription("Who holds the token, shown in Connections (for example `Grok`)."),
+  ),
+  ttl: Flag.String("ttl").pipe(
+    Flag.withSchema(DurationFromString),
+    Flag.withDescription("Lifetime, for example `7d` or `30d` (the default). At most 90 days."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Mint a static MCP client token for a client that can only send an Authorization header.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const ttl = yield* mcpTokenTtlSeconds(flags.ttl);
+      return yield* runWithEnvironmentAuth(
+        flags,
+        (environmentAuth) =>
+          EnvironmentAuth.mintStaticMcpClientToken(environmentAuth, {
+            label: flags.label,
+            access: flags.access,
+            ...(ttl.ttlSeconds === undefined ? {} : { ttl: Duration.seconds(ttl.ttlSeconds) }),
+          }).pipe(
+            Effect.flatMap((issued) =>
+              Console.log(formatIssuedMcpClientToken(issued, { json: flags.json })),
+            ),
+          ),
+        (access) =>
+          callLive(access, "issue an MCP client token", (client, headers) =>
+            client.auth.mcpClientToken({
+              headers,
+              payload: { label: flags.label, access: flags.access, ...ttl },
+            }),
+          ).pipe(
+            Effect.flatMap((issued) =>
+              Console.log(formatIssuedMcpClientToken(issued, { json: flags.json })),
+            ),
+          ),
+        { quietLogs: true },
+      );
+    }),
+  ),
+);
+
+const mcpTokenListCommand = Command.make("list", {
+  ...authLocationFlags,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "List MCP client sign-ins, static tokens and OAuth-approved agents, without their tokens.",
+  ),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(
+      flags,
+      (environmentAuth) =>
+        environmentAuth
+          .listSessions()
+          .pipe(
+            Effect.flatMap((sessions) =>
+              Console.log(formatSessionList(mcpClientsOnly(sessions), { json: flags.json })),
+            ),
+          ),
+      (access) =>
+        callLive(access, "list sessions", (client, headers) =>
+          client.auth.clients({ headers }),
+        ).pipe(
+          Effect.flatMap((sessions) =>
+            Console.log(formatSessionList(mcpClientsOnly(sessions), { json: flags.json })),
+          ),
+        ),
+      { quietLogs: flags.json },
+    ),
+  ),
+);
+
+const mcpTokenRevokeCommand = Command.make("revoke", {
+  ...authLocationFlags,
+  sessionId: Argument.String("id").pipe(
+    Argument.withDescription("MCP client session id to revoke (from `auth mcp-token list`)."),
+    Argument.withSchema(AuthSessionId),
+  ),
+}).pipe(
+  Command.withDescription("Revoke an MCP client token or OAuth sign-in; /mcp refuses it at once."),
+  Command.withHandler((flags) => {
+    const notFound = `No active MCP client found for ${flags.sessionId}.\n`;
+    const revokedLine = `Revoked MCP client ${flags.sessionId}.\n`;
+    const isMcpClient = (sessions: ReadonlyArray<AuthClientSession>) =>
+      mcpClientsOnly(sessions).some((session) => session.sessionId === flags.sessionId);
+    return runWithEnvironmentAuth(
+      flags,
+      (environmentAuth) =>
+        Effect.gen(function* () {
+          if (!isMcpClient(yield* environmentAuth.listSessions())) {
+            return yield* Console.log(notFound);
+          }
+          const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+          yield* Console.log(revoked ? revokedLine : notFound);
+        }),
+      (access) =>
+        Effect.gen(function* () {
+          const sessions = yield* callLive(access, "list sessions", (client, headers) =>
+            client.auth.clients({ headers }),
+          );
+          if (!isMcpClient(sessions)) return yield* Console.log(notFound);
+          const { revoked } = yield* callLive(access, "revoke the MCP client", (client, headers) =>
+            client.auth.revokeClient({ headers, payload: { sessionId: flags.sessionId } }),
+          );
+          yield* Console.log(revoked ? revokedLine : notFound);
+        }),
+    );
+  }),
+);
+
+const mcpTokenCommand = Command.make("mcp-token").pipe(
+  Command.withDescription(
+    "Manage static MCP client tokens for bots and hosted agents that cannot sign in with OAuth.",
+  ),
+  Command.withSubcommands([mcpTokenCreateCommand, mcpTokenListCommand, mcpTokenRevokeCommand]),
+);
+
 export const authCommand = Command.make("auth").pipe(
   Command.withDescription("Manage the local auth control plane for headless deployments."),
-  Command.withSubcommands([pairingCommand, sessionCommand]),
+  Command.withSubcommands([pairingCommand, sessionCommand, mcpTokenCommand]),
 );

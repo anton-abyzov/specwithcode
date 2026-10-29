@@ -1,3 +1,4 @@
+import { userInputRuntimeRequest } from "./userInputRuntimeRequest.ts";
 import * as InactiveThreadArchiveGuard from "./InactiveThreadArchiveGuard.ts";
 import {
   hasCurrentLifecycleAcceptance,
@@ -5,7 +6,11 @@ import {
   lifecycleAcceptanceDecision,
   settledNoteFromScope,
 } from "./ThreadLifecycleAcceptance.ts";
-import { currentLifecycleRequest } from "@specweave-studio/shared/threadLifecycleEvidence";
+import {
+  currentLifecycleRequest,
+  lifecycleGoalUpdateError,
+  pendingLifecycleGoalObligations,
+} from "@specweave-studio/shared/threadLifecycleEvidence";
 import {
   deferredResolutionBlocked,
   DeferredResolutionActivation,
@@ -2813,7 +2818,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   const dispatchThreadCreate = Effect.fn("orchestrationV2.dispatch.threadCreate")(function* (
-    command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     yield* Effect.annotateCurrentSpan({
@@ -2846,6 +2851,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.launchFallbackFrom == null
         ? {}
         : { launchFallbackFrom: command.launchFallbackFrom }),
+      ...(command.origin === undefined ? {} : { origin: command.origin }),
       activeProviderThreadId: null,
       lineage: {
         parentThreadId: null,
@@ -3252,6 +3258,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (command.type === "thread.settle") {
+      // Shared by direct, automatic, deferred and independently verified delivery.
+      // A source milestone never erases the broader goal, even after a new run.
+      const goalReceipt = extra?.lifecycleReceipt ?? thread.lifecycleReceipt;
+      const pendingGoal = pendingLifecycleGoalObligations(
+        goalReceipt?.goal,
+        DateTime.toEpochMillis(yield* DateTime.now),
+        Date.parse(goalReceipt?.recordedAt ?? ""),
+      );
+      if (pendingGoal.length > 0) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `The goal is still open: ${pendingGoal.map((item) => `${item.reason} (owner: ${item.owner})`).join("; ")}. Record verified completion evidence before resolving it.`,
+        });
+      }
       const projection = yield* loadProjectionForCommand(
         command,
         ["runs", "runtimeRequests", "messages"],
@@ -3540,7 +3561,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             settledOverride: "active",
-            lifecycleReceipt: null,
+            // Reopening invalidates turn acceptance, not recorded goal obligations.
+            lifecycleReceipt: thread.lifecycleReceipt?.goal ? thread.lifecycleReceipt : null,
             lifecycleRevision: command.commandId,
             settledAt: null,
             settledNote: null,
@@ -8205,17 +8227,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       startedAt: now,
       completedAt: null,
     };
-    const request: OrchestrationV2RuntimeRequest = {
-      id: command.requestId,
-      nodeId: command.requestNodeId,
-      providerTurnId,
-      nativeRequestRef: null,
-      kind: "user_input",
-      status: "pending",
-      responseCapability: { type: "message" },
-      createdAt: now,
-      resolvedAt: null,
-    };
+    const request = userInputRuntimeRequest(command, providerTurnId, now);
     const turnItem: OrchestrationV2TurnItem = {
       id: command.turnItemId,
       threadId: command.threadId,
@@ -12067,12 +12079,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "Delivery evidence must name this thread's latest completed turn. A running, newer or unfinished turn supersedes it.",
           );
         }
+        const goalError = lifecycleGoalUpdateError(
+          projection.thread.lifecycleReceipt?.goal,
+          command.report.goal,
+          nowMs,
+        );
+        if (goalError !== null) return yield* refuse(goalError);
+        const goal = command.report.goal ?? projection.thread.lifecycleReceipt?.goal;
         const receipt: LifecycleReceipt = {
           requestId: latest.userMessageId,
           runId: latest.id,
           acceptanceRevision: projection.thread.lifecycleRevision ?? latest.id,
           requestedAt: DateTime.formatIso(latest.requestedAt),
           ...command.report,
+          ...(goal === undefined ? {} : { goal }),
           recordedAt: DateTime.formatIso(now),
           reportedBy: command.reportedBy,
         };
@@ -12117,7 +12137,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           type: "thread.metadata-updated",
           threadId: command.threadId,
           occurredAt: now,
-          payload: { ...projection.thread, lifecycleReceipt: receipt, updatedAt: now },
+          payload: {
+            ...projection.thread,
+            // A newly recorded pending goal reopens delivery, never execution or Stop.
+            ...(projection.thread.settledOverride === "settled" &&
+            pendingLifecycleGoalObligations(receipt.goal, nowMs, nowMs).length > 0
+              ? { settledOverride: null, settledAt: null, settledNote: null }
+              : {}),
+            lifecycleReceipt: receipt,
+            updatedAt: now,
+          },
         });
         break;
       }

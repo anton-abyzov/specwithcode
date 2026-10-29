@@ -336,7 +336,16 @@ export function claudeUsageResponseToLimits(input: {
   // quota or grants permission. Missing fields are not the documented null.
   if (typeof response.rate_limits_available === "boolean" && response.rate_limits === null) {
     return {
-      limits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+      limits: makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        // True with no windows: limits apply but none were read. Admission
+        // treats both as an empty lookup; the Limits view must still say so
+        // rather than hide a subscription as if it had no limits.
+        ...(response.rate_limits_available
+          ? { message: "Signed in to a subscription, but Claude did not return its usage." }
+          : {}),
+      }),
       names: { overageIncluded: undefined },
     };
   }

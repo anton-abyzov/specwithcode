@@ -9,6 +9,7 @@ Run: cd scripts/studio-fleet && python3 -B test-state-backup-prune.py
 import contextlib,importlib.util,json,os,pathlib,re,subprocess,sys,tempfile,time,unittest,warnings
 from unittest.mock import patch
 import state_backup_prune
+import release_retention
 import studio_paths
 from installation_descriptor import installation_lock
 HERE=pathlib.Path(__file__).resolve().parent
@@ -34,6 +35,7 @@ class StateBackupPrune(updater_base.ApplyRecovery):
    folder=self.root/('pre-abc123def456-2026100%dT000000Z-%s'%(day,'0'*32));folder.mkdir(parents=True)
    with open(folder/'statev2.sqlite','wb') as handle:handle.truncate(size)  # Sparse: its size, not its blocks.
    os.utime(folder,(time.time()-DAY,)*2);old.append(folder)
+   (self.output.parent/('update-old-%d.json'%day)).write_text(json.dumps({'phase':'verified','stateBackup':str(folder/'statev2.sqlite')}))
   return old
  def spawned(self,calls):
   def spawn(identity,home,receipt,script):
@@ -53,10 +55,10 @@ class StateBackupPrune(updater_base.ApplyRecovery):
   self.assertEqual(calls[0]['copies'],sorted([p.name for p in old]+[new.name]))  # Nothing deleted while the service was held.
   # What the started process does once this helper has exited and released the installation lock:
   removed=state_backup_prune.after_install('m4',self.home,self.output)
-  self.assertEqual(sorted(removed),[old[0].name])
-  self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[1].name,new.name]))
+  self.assertEqual(sorted(removed),[p.name for p in old])
+  self.assertEqual(sorted(p.name for p in self.root.iterdir()),[new.name])
   receipt=json.loads(self.output.read_text())
-  self.assertEqual(sorted(receipt['prunedStateBackups']),[old[0].name])
+  self.assertEqual(sorted(receipt['prunedStateBackups']),[p.name for p in old])
   self.assertIsInstance(receipt['stateBackupPruneAfterInstall']['milliseconds'],int)
   self.assertEqual({key:value for key,value in receipt.items() if key not in ('prunedStateBackups','stateBackupPruneAfterInstall')},
                    {key:value for key,value in result.items() if key!='prunedStateBackups'})
@@ -120,20 +122,81 @@ class StateBackupPrune(updater_base.ApplyRecovery):
    sleeps=[]
    def sleep(seconds):sleeps.append(seconds);held.close()  # The helper exits.
    removed=state_backup_prune.after_install('m4',self.home,self.output,sleep=sleep)
-  self.assertEqual(sleeps,[0.5]);self.assertEqual(sorted(removed),[old[0].name,old[1].name])
-  self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[2].name,new.name]))
+  self.assertEqual(sleeps,[0.5]);self.assertEqual(sorted(removed),[p.name for p in old])
+  self.assertEqual(sorted(p.name for p in self.root.iterdir()),[new.name])
  def test_after_install_keeps_a_copy_a_held_rollback_names(self):
   old=self.old_copies(3);new=self.verified_receipt(old)
   (self.output.parent/'update-0.0.9-20261001T000000Z.json').write_text(json.dumps({'rollback':'held-new-release-state-restore-failed','stateBackup':str(old[0]/'statev2.sqlite')}))
-  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[1].name])
-  self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[0].name,old[2].name,new.name]))
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[1].name,old[2].name])
+  self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[0].name,new.name]))
  def test_finder_view_files_do_not_keep_a_copy_but_other_extras_and_links_do(self):
   old=self.old_copies(4);new=self.verified_receipt(old)
   (old[0]/'.DS_Store').write_bytes(b'Bud1');(old[1]/'notes.txt').write_text('added')
   os.symlink('statev2.sqlite',old[2]/'.DS_Store')  # A link is never Finder's.
   for folder in old[:3]:os.utime(folder,(time.time()-DAY,)*2)
-  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[0].name])
-  self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[1].name,old[2].name,old[3].name,new.name]))
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[0].name,old[3].name])
+  self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[1].name,old[2].name,new.name]))
+ def test_verified_recent_copy_goes_but_unfinished_other_identity_recovery_stays(self):
+  old=self.old_copies(3);new=self.verified_receipt(old)
+  remote=studio_paths.identity_home(self.home,'m3')/'updates'/'receipts';remote.mkdir(parents=True)
+  (remote/'update-1.0.0.json').write_text(json.dumps({'phase':'restart-requested','rollbackError':'restore failed','stateBackup':str(old[0]/'statev2.sqlite')}))
+  (self.output.parent/'update-0.0.9.json').write_text(json.dumps({'phase':'verified','stateBackup':str(old[1]/'statev2.sqlite')}))
+  (self.output.parent/'update-old-3.json').unlink()
+  for folder in old:os.utime(folder,None)
+  # Only an explicitly finished receipt releases a recent copy. Unknown recent copies stay.
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[1].name])
+  self.assertTrue(old[0].is_dir() and old[2].is_dir() and new.is_dir())
+ def test_unreadable_foreign_receipt_keeps_every_copy_and_legacy_alias_is_accepted(self):
+  old=self.old_copies(2);new=self.verified_receipt(old)
+  studio_paths.legacy_root(self.home).symlink_to(studio_paths.branded_root(self.home))
+  remote=studio_paths.identity_home(self.home,'m3')/'updates'/'receipts';remote.mkdir(parents=True)
+  broken=remote/'update-unfinished.json';broken.write_text('{partial')
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[])
+  self.assertTrue(all(p.is_dir() for p in old))
+  broken.write_text('{}')
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[p.name for p in old])
+  self.assertTrue(new.is_dir())
+ def test_foreign_or_symlink_backup_reference_never_authorizes_local_deletion(self):
+  old=self.old_copies(2);new=self.verified_receipt(old)
+  source=self.output.parent/'update-old-1.json'
+  source.write_text(json.dumps({'phase':'verified','stateBackup':str(self.home/'outside'/old[0].name/'statev2.sqlite')}))
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[])
+  self.assertTrue(all(p.is_dir() for p in old))
+  source.write_text(json.dumps({'phase':'verified','stateBackup':str(old[0]/'statev2.sqlite')}))
+  outside=self.home/'unrelated.sqlite';outside.write_bytes(b'private')
+  (old[0]/'statev2.sqlite').unlink();(old[0]/'statev2.sqlite').symlink_to(outside)
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[])
+  self.assertEqual(outside.read_bytes(),b'private')
+  self.assertTrue(old[1].is_dir() and new.is_dir())
+ def test_archived_links_hold_their_names_without_blocking_verified_local_pruning(self):
+  old=self.old_copies(6);new=self.verified_receipt(old)
+  archive_links=[]
+  for folder in old[:4]:
+   for entry in folder.iterdir():entry.unlink()
+   folder.rmdir()
+   destination='/Volumes/Offline Archive/Archive/specwithcode/db-backups-20261028/'+folder.name
+   folder.symlink_to(destination);archive_links.append((folder,destination))
+  # One local copy has no verified receipt and must stay, alongside the newest recovery copy.
+  (self.output.parent/'update-old-6.json').unlink()
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[4].name])
+  self.assertTrue(new.is_dir() and old[5].is_dir())
+  self.assertTrue(all(p.is_symlink() and os.readlink(p)==target for p,target in archive_links))
+  held,finished=release_retention.state_backup_references(self.home)
+  self.assertTrue({p.name for p,_ in archive_links}<=held)
+  self.assertFalse({p.name for p,_ in archive_links}&finished)
+ def test_unknown_directory_link_keeps_every_local_copy(self):
+  old=self.old_copies(2);new=self.verified_receipt(old)
+  for entry in old[0].iterdir():entry.unlink()
+  old[0].rmdir();old[0].symlink_to(self.home/'unknown-archive')
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[])
+  self.assertTrue(old[0].is_symlink() and old[1].is_dir() and new.is_dir())
+ def test_archive_link_with_different_backup_name_is_not_trusted(self):
+  old=self.old_copies(2);new=self.verified_receipt(old)
+  for entry in old[0].iterdir():entry.unlink()
+  old[0].rmdir()
+  old[0].symlink_to('/Volumes/Archive/Archive/specwithcode/db-backups-20261028/'+old[1].name)
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[])
+  self.assertTrue(old[1].is_dir() and new.is_dir())
 class Spawn(unittest.TestCase):
  def setUp(self):
   # spawn never waits for its child to exit (it runs on after the helper): no warning for that here.

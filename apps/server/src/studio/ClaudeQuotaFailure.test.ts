@@ -115,7 +115,12 @@ describe("Claude failure observation expiry", () => {
       expect(native.usageLimits).toEqual({
         checkedAt: claude().checkedAt,
         windows: [],
-        unavailable: { reason: "unsupported" },
+        unavailable: {
+          reason: "unsupported",
+          ...(available
+            ? { message: "Signed in to a subscription, but Claude did not return its usage." }
+            : {}),
+        },
       });
       expect(snapshot(account, native).accounts[0]).toMatchObject({
         status: "unknown",

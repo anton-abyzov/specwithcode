@@ -12,6 +12,9 @@ import {
   CircleAlertIcon,
   ChevronDownIcon,
   CircleDashedIcon,
+  CircleDollarSignIcon,
+  CoinsIcon,
+  GaugeIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -62,7 +65,14 @@ import {
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AppSheet } from "../ui/app-sheet";
-import { SidebarInset } from "../ui/sidebar";
+import {
+  SidebarContent,
+  SidebarGroup,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -452,21 +462,23 @@ export function UsagePage({
         </span>
       ) : null}
       <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 xl:flex">
-        <ToggleGroup
-          aria-label="Usage metric"
-          variant="segmented"
-          value={[metric]}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (isUsageMetric(value)) selectMetric(value);
-          }}
-        >
-          {METRIC_OPTIONS.map((option) => (
-            <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
-              {option.label}
-            </Toggle>
-          ))}
-        </ToggleGroup>
+        {sheet ? null : (
+          <ToggleGroup
+            aria-label="Usage metric"
+            variant="segmented"
+            value={[metric]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (isUsageMetric(value)) selectMetric(value);
+            }}
+          >
+            {METRIC_OPTIONS.map((option) => (
+              <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
+                {option.label}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        )}
         {/* The period does not apply to Limits, so it stays in place but
             disabled; unmounting it shifted the metric toggle ~300px. */}
         <ToggleGroup
@@ -497,30 +509,32 @@ export function UsagePage({
         </Button>
       </div>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
-        <Select
-          value={metric}
-          onValueChange={(value) => {
-            if (isUsageMetric(value)) selectMetric(value);
-          }}
-        >
-          <SelectTrigger
-            aria-label="Usage metric"
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
+        {sheet ? null : (
+          <Select
+            value={metric}
+            onValueChange={(value) => {
+              if (isUsageMetric(value)) selectMetric(value);
+            }}
           >
-            <SelectValue>
-              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {METRIC_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+            <SelectTrigger
+              aria-label="Usage metric"
+              size="compact"
+              variant="ghost"
+              className="w-auto min-w-0"
+            >
+              <SelectValue>
+                {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {METRIC_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        )}
         <Select
           value={String(windowDays)}
           disabled={showingLimits}
@@ -1059,9 +1073,38 @@ export function UsagePage({
   );
 
   if (sheet) {
+    // Like Settings: the sections on the left, the page on the right.
+    const nav = (
+      <SidebarContent className="overflow-x-hidden">
+        <SidebarGroup>
+          <nav aria-label="Usage sections">
+            <SidebarMenu>
+              {METRIC_OPTIONS.map((option) => {
+                const Icon = METRIC_ICONS[option.value];
+                const active = option.value === metric;
+                return (
+                  <SidebarMenuItem key={option.value}>
+                    <SidebarMenuButton
+                      isActive={active}
+                      aria-current={active ? "page" : undefined}
+                      title={shortcutTitle(option)}
+                      onClick={() => selectMetric(option.value)}
+                    >
+                      <Icon />
+                      <span className="truncate">{option.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </nav>
+        </SidebarGroup>
+      </SidebarContent>
+    );
     return (
       <AppSheet
         title="Usage"
+        nav={nav}
         closeLabel="Close usage"
         slot="usage-sheet"
         popupProps={{ "data-usage-sheet": "" }}
@@ -1080,6 +1123,12 @@ export function UsagePage({
     </SidebarInset>
   );
 }
+
+const METRIC_ICONS: Record<UsageMetric, typeof CircleDollarSignIcon> = {
+  cost: CircleDollarSignIcon,
+  tokens: CoinsIcon,
+  limits: GaugeIcon,
+};
 
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 

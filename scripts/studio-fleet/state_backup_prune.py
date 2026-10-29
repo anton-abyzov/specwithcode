@@ -2,13 +2,13 @@
 """Old pre-update state copies, pruned once a verified update has finished.
 
 Each update clones the state database before the new release can migrate it (state_backup) and
-keeps the newest older copy beside the new one. Deleting an older clone took 15-18 s of 1.0.86's
+retains one newest verified rollback copy; unfinished recovery copies also stay. Deleting an older clone took 15-18 s of 1.0.86's
 19 s backupSpace on M4, all of it while the service was held and the desktop waited. The helper
 now prunes before the copy only when the disk is too short for it (update._apply's shortfall
 branch, which may drop every older copy). Otherwise, once a verified update's receipt is written,
 spawn starts after_install in its own session: it waits for the helper to exit and release the
-installation lock, keeps what the prune before the copy kept (the new copy, the newest older one,
-any copy a held rollback names and anything from the last hour), and adds the removed folders to
+installation lock, keeps the new copy and every identity's unresolved recovery copies. Older verified
+copies can go immediately; unclassified copies still have the existing age guard, and adds the removed folders to
 the receipt's prunedStateBackups. A refused or failed update prunes nothing.
 """
 import datetime
@@ -30,7 +30,8 @@ LOCK_WAIT_SECONDS = 300
 READY_WAIT_SECONDS = 10
 READY = b'ready\n'
 # The new copy and the newest older one: what keep_newest=1 kept before the copy was made.
-KEPT_AFTER_INSTALL = 2
+KEPT_AFTER_INSTALL = 2  # Before the next copy: do not delete on the update's critical path.
+KEPT_AFTER_VERIFIED = 1
 
 
 def agent_receipt(home, identity, receipt):
@@ -120,7 +121,7 @@ def after_install(identity, home, receipt, wait=LOCK_WAIT_SECONDS, sleep=time.sl
                     return None
                 try:
                     removed, error = prune_state_backups(home, keep=held_state_backups(own) + [value['stateBackup']],
-                                                         keep_newest=KEPT_AFTER_INSTALL), None
+                                                         keep_newest=KEPT_AFTER_VERIFIED, verified_install=True), None
                 except Exception as failure:  # prune_state_backups never raises; recorded if it does.
                     removed, error = [], type(failure).__name__
                 value['prunedStateBackups'] = list(value.get('prunedStateBackups') or []) + removed

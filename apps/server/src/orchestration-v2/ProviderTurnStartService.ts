@@ -18,6 +18,7 @@ import { projectComposerContextForProvider } from "@specweave-studio/shared/comp
 import {
   CommandId,
   latestProviderTurnForAttempt,
+  ORCHESTRATION_V2_NATIVE_HISTORY_INVALID_FAILURE_CODE,
   ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE,
   ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
   ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
@@ -705,6 +706,34 @@ export const layer: Layer.Layer<
                   DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
               )[0]?.providerInstanceId;
       const manualCodexCreditIntent = run.manualCodexCreditIntent;
+      // The latest run on this native session failed because the model
+      // rejected the session's restored history (a missing Gemini thought
+      // signature). Loading that session again fails identically, so this
+      // turn opens fresh and resumes through the handoff fallback below.
+      const nativeHistoryInvalid =
+        providerThread.nativeThreadRef === null
+          ? false
+          : yield* projectionStore.getTurnStartHistory(projection.thread.id).pipe(
+              Effect.map((items) => {
+                const latestPriorRun = projection.runs
+                  .filter(
+                    (candidate) =>
+                      candidate.providerThreadId === providerThread.id &&
+                      candidate.ordinal < run.ordinal,
+                  )
+                  .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+                if (latestPriorRun === undefined || latestPriorRun.status !== "failed") {
+                  return false;
+                }
+                return items.some(
+                  (item) =>
+                    item.type === "error" &&
+                    item.runId === latestPriorRun.id &&
+                    item.failure.code === ORCHESTRATION_V2_NATIVE_HISTORY_INVALID_FAILURE_CODE,
+                );
+              }),
+              Effect.orElseSucceed(() => false),
+            );
       const sessionResult = yield* Effect.result(
         Effect.gen(function* () {
           if (
@@ -733,7 +762,7 @@ export const layer: Layer.Layer<
             ...(existingSessionProjection === undefined
               ? {}
               : { resumeFromSession: existingSessionProjection }),
-            ...(providerThread.nativeThreadRef?.nativeId == null
+            ...(providerThread.nativeThreadRef?.nativeId == null || nativeHistoryInvalid
               ? {}
               : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
             ...(nativeThreadSourceInstanceId === undefined
@@ -1020,16 +1049,18 @@ export const layer: Layer.Layer<
             ),
           });
         const resumed = yield* Effect.result(
-          uncertainDelivery || sessionFull
+          uncertainDelivery || sessionFull || nativeHistoryInvalid
             ? Effect.fail(
                 new ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: uncertainDelivery
-                    ? "Uncertain native history injection"
-                    : "Native session too full for the context handoff",
+                  cause: nativeHistoryInvalid
+                    ? "Native session history is invalid for the model"
+                    : uncertainDelivery
+                      ? "Uncertain native history injection"
+                      : "Native session too full for the context handoff",
                 }),
               )
             : session.resumeThread({
@@ -1048,11 +1079,13 @@ export const layer: Layer.Layer<
           driver: session.driver,
           providerThreadId: providerThread.id,
           runId,
-          reason: uncertainDelivery
-            ? "uncertain_history_delivery"
-            : sessionFull
-              ? "native_session_full"
-              : "resume_failed",
+          reason: nativeHistoryInvalid
+            ? "native_history_invalid"
+            : uncertainDelivery
+              ? "uncertain_history_delivery"
+              : sessionFull
+                ? "native_session_full"
+                : "resume_failed",
           errorTag: resumed.failure._tag,
         });
         const replacement = yield* loadFromProvider(

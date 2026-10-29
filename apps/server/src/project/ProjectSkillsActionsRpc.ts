@@ -15,6 +15,7 @@ import {
   WsProjectSkillsActionsRpcGroup,
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -158,21 +159,38 @@ export const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.midd
         isAlive: processAlive,
         startStudio: (cwd) =>
           Effect.gen(function* () {
-            const vskill = yield* findVskillBinary({ home, pathEnv: hostEnvironment.PATH });
+            const vskill = yield* findVskillBinary({
+              home,
+              pathEnv: hostEnvironment.PATH,
+              platform,
+              appData: hostEnvironment.APPDATA,
+              pathExt: hostEnvironment.PATHEXT,
+            });
             if (vskill === null) return false;
+            const env = {
+              PATH: [path.dirname(vskill), hostEnvironment.PATH ?? ""].join(
+                platform === "win32" ? ";" : ":",
+              ),
+              NO_COLOR: "1",
+            };
+            const launch = yield* resolveSpawnCommand(vskill, ["studio", "--root", cwd], {
+              env,
+              extendEnv: true,
+            }).pipe(
+              Effect.provideService(HostProcessPlatform, platform),
+              Effect.provideService(HostProcessEnvironment, hostEnvironment),
+            );
             // Detached and let go: Studio outlives this request and is found again by its lock.
             return yield* spawner
               .spawn(
-                ChildProcess.make(vskill, ["studio", "--root", cwd], {
+                ChildProcess.make(launch.command, launch.args, {
+                  shell: launch.shell,
                   cwd,
                   detached: true,
                   stdin: "ignore",
                   stdout: "ignore",
                   stderr: "ignore",
-                  env: {
-                    PATH: [path.dirname(vskill), hostEnvironment.PATH ?? ""].join(":"),
-                    NO_COLOR: "1",
-                  },
+                  env,
                   extendEnv: true,
                 }),
               )

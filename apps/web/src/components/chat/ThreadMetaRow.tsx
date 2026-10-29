@@ -10,18 +10,30 @@
  * pull requests show, the rest wait behind "+N", newest first.
  */
 import type { ThreadPullRequestLink } from "@specweave-studio/contracts";
-import type { RunAwaitingPerson } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
-import { BotIcon, FolderOpenIcon, TimerIcon } from "lucide-react";
+import type {
+  RunAwaitingPerson,
+  RunHealth,
+} from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
+import { BotIcon, ChevronDownIcon, FolderOpenIcon, TimerIcon } from "lucide-react";
 import { memo, useState, type ComponentType, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { nowMinuteMs, useNowMinute } from "~/hooks/useNowMinute";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ThreadMachine } from "./threadMachine";
+
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import {
+  deriveThreadTiming,
+  formatRunDuration,
+  type ThreadTimingRun,
+  type ThreadTimingInput,
+} from "./threadTiming";
+export { formatRunDuration } from "./threadTiming";
 
 const VISIBLE_PULL_REQUESTS = 3;
 
@@ -50,17 +62,6 @@ export function folderBasename(path: string): string {
   );
 }
 
-/** "45s" under a minute, then "31m", "3h 55m", "2d 4h". */
-export function formatRunDuration(ms: number): string {
-  const minutes = Math.floor(Math.max(0, ms) / 60_000);
-  if (minutes < 1) return "<1m";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
-}
-
 /** Provenance worth a chip: a subagent's parent. A coordinator's worker has none. */
 export type ThreadOrigin = {
   readonly kind: "subagent";
@@ -68,10 +69,7 @@ export type ThreadOrigin = {
   readonly onOpen: () => void;
 };
 
-export interface ThreadMetaRun {
-  readonly startedAt: string | null;
-  readonly completedAt: string | null;
-}
+export type ThreadMetaRun = ThreadTimingRun;
 
 const CHIP =
   "inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/60 lane-surface px-2 text-xs text-muted-foreground shadow-xs";
@@ -132,52 +130,74 @@ function MetaChip(props: {
   );
 }
 
-const AWAITING_PERSON_TIPS: Record<RunAwaitingPerson, string> = {
-  approval: "your approval",
-  answer: "your answer",
-  "sign-in": "your sign-in",
-};
-
-/**
- * How long the latest turn ran, live while it runs. A turn blocked on the
- * person reads "Waiting on you", in the waiting tone, not "Running".
- */
-function RunDurationChip({
-  run,
-  awaitingPerson,
-}: {
-  run: ThreadMetaRun & { readonly startedAt: string };
-  awaitingPerson: RunAwaitingPerson | null;
-}) {
-  const nowMinute = useNowMinute();
-  const running = run.completedAt === null;
-  const end = running ? nowMinuteMs(nowMinute) : Date.parse(run.completedAt!);
-  const duration = formatRunDuration(end - Date.parse(run.startedAt));
-  const waiting = running && awaitingPerson !== null;
+/** Elapsed is recorded wall clock, never an estimate of active work. */
+function RunDurationChip(props: Omit<ThreadTimingInput, "nowMs">) {
+  useNowMinute(); // One shared minute tick; read the precise current clock on each render.
+  const timing = deriveThreadTiming({ ...props, nowMs: Date.now() });
+  if (timing === null) return null;
+  const waitingOnPerson = timing.live && props.awaitingPerson != null;
+  const shown = (value: number | null) =>
+    value === null ? "Not recorded" : formatRunDuration(value);
   return (
-    <MetaChip
-      meta="duration"
-      icon={TimerIcon}
-      {...(waiting ? { iconClassName: "text-warning-foreground" } : {})}
-      tip={
-        waiting
-          ? `The current turn has run for ${duration} and waits on ${AWAITING_PERSON_TIPS[awaitingPerson]}.`
-          : running
-            ? `The current turn has run for ${duration}.`
-            : `The last turn ran ${duration}.`
-      }
-    >
-      <span
-        className={cn("shrink-0 tabular-nums", waiting && "font-medium text-warning-foreground")}
-        data-run-state={waiting ? "waiting" : running ? "running" : "done"}
-      >
-        {waiting
-          ? `Waiting on you ${duration}`
-          : running
-            ? `Running ${duration}`
-            : `Ran ${duration}`}
-      </span>
-    </MetaChip>
+    <div role="listitem" className="min-w-0">
+      <Popover>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              className={cn(CHIP, CHIP_ACTION)}
+              data-thread-meta="duration"
+              aria-label={`Timing details: ${timing.label}`}
+            />
+          }
+        >
+          <TimerIcon
+            aria-hidden
+            className={cn("size-3.5 shrink-0", waitingOnPerson && "text-warning-foreground")}
+          />
+          <span
+            className={cn(
+              "min-w-0 truncate tabular-nums",
+              waitingOnPerson && "font-medium text-warning-foreground",
+            )}
+            data-run-state={timing.state}
+          >
+            {timing.label}
+          </span>
+          <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+        </PopoverTrigger>
+        <PopoverPopup width="md" align="start" padding="compact" aria-label="Turn timing">
+          <div className="space-y-3 text-sm" data-thread-timing-details>
+            <h3 className="font-medium">Turn timing</h3>
+            {timing.statusDetail ? (
+              <p className="text-muted-foreground">{timing.statusDetail}</p>
+            ) : null}
+            <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1.5">
+              <dt>{timing.live ? "Current turn elapsed" : "Last turn elapsed"}</dt>
+              <dd className="tabular-nums">
+                {timing.notStarted ? "Not started" : shown(timing.elapsedMs)}
+              </dd>
+              <dt>Recorded turn elapsed</dt>
+              <dd className="tabular-nums">{shown(timing.recordedMs)}</dd>
+              <dt>Turns with timing</dt>
+              <dd>
+                {timing.timedCount} of {timing.recordedCount} recorded
+              </dd>
+            </dl>
+            <p className="text-xs text-muted-foreground">
+              Start-to-finish elapsed time includes tool, provider and answer waits. It is not
+              measured active work. Gaps between turns and background watch time outside a turn are
+              excluded; overlapping spans count once.
+            </p>
+            {timing.partial ? (
+              <p className="text-xs text-muted-foreground">
+                Only the available history is included. This is not a lifetime total.
+              </p>
+            ) : null}
+          </div>
+        </PopoverPopup>
+      </Popover>
+    </div>
   );
 }
 
@@ -187,6 +207,10 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
   folder,
   run,
   awaitingPerson = null,
+  recordedRuns,
+  historyComplete = false,
+  runHealth = null,
+  background = null,
   pullRequests,
   onOpenPullRequest,
 }: {
@@ -201,6 +225,10 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
   run: ThreadMetaRun | null;
   /** What the running turn waits on from the person, if anything. */
   awaitingPerson?: RunAwaitingPerson | null;
+  recordedRuns?: readonly ThreadTimingRun[] | undefined;
+  historyComplete?: boolean;
+  runHealth?: RunHealth | null;
+  background?: ThreadTimingInput["background"];
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest: (url: string) => void;
 }) {
@@ -210,13 +238,12 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
     onCopy: ({ path }) =>
       toastManager.add({ type: "success", title: "Path copied", description: path }),
   });
-  const startedRun =
-    run !== null && run.startedAt !== null ? { ...run, startedAt: run.startedAt } : null;
+  const hasTiming = run !== null || (recordedRuns?.length ?? 0) > 0 || background !== null;
   if (
     machine === null &&
     origin === null &&
     folder === null &&
-    startedRun === null &&
+    !hasTiming &&
     pullRequests.length === 0
   ) {
     return null;
@@ -273,7 +300,16 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
           </span>
         </MetaChip>
       ) : null}
-      {startedRun ? <RunDurationChip run={startedRun} awaitingPerson={awaitingPerson} /> : null}
+      {hasTiming ? (
+        <RunDurationChip
+          run={run}
+          awaitingPerson={awaitingPerson}
+          recordedRuns={recordedRuns}
+          historyComplete={historyComplete}
+          health={runHealth}
+          background={background}
+        />
+      ) : null}
       {shown.map((link) => {
         const state = pullRequestPillState(link);
         const branch = link.snapshot?.headBranch ?? link.repository;

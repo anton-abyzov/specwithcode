@@ -33,6 +33,10 @@ if (
     // Effect's file system captures node:fs at import.
     ensureServerThreadPoolSize();
     installLiveDatabaseGuard();
+    // Before anything reads stdin: a desktop CLI launcher on Windows starts
+    // the CLI without one. Never for the fast paths, whose stdin is a pipe.
+    const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
+    attachConsoleStdin();
     const { runCli } = await import("./binCli.ts");
     runCli();
   }

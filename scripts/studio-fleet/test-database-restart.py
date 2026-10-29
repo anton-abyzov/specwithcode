@@ -166,9 +166,12 @@ class RestartFallback(unittest.TestCase):
     def marker(self):
         return json.loads((self.own / 'updates' / database_restart.MARKER).read_text())
 
-    def test_a_held_restart_carries_the_request_to_the_new_service_until_the_hold_ends(self):
+    def test_a_held_restart_carries_the_request_to_the_new_service_and_how_far_the_hold_could_move(self):
         # M4, 2026-10-28: the restart marker held only the pid and time, so the restarted
-        # service started unheld, resumed the interrupted turn and every reap refused.
+        # service started unheld, resumed the interrupted turn and every reap refused. Then the
+        # carried hold could not move past the old hold's end, so a restart late in a long pass
+        # left the service unheld while the agent still worked on the request. `until` stays the
+        # old hold's end: services from 1.0.108 that predate `ceiling` read only that and hold to it.
         self.live_request(installRunId='run-1')
         (self.own / 'updates/hold.json').write_text(json.dumps(
             {'schemaVersion': 1, 'pid': 100, 'startedAt': '2026-10-19T08:58:50Z', 'expiresAt': '2026-10-19T09:13:50Z'}))
@@ -176,7 +179,41 @@ class RestartFallback(unittest.TestCase):
         self.assertEqual(self.refuse(0), 'REFUSAL restart-needed locks-lost restarted=1')
         self.assertEqual(self.marker(), {'schemaVersion': 1, 'servicePid': 100, 'restartedAt': T0.isoformat(),
                                          'request': REQUEST, 'installRunId': 'run-1',
-                                         'until': '2026-10-19T09:13:50+00:00'})
+                                         'until': '2026-10-19T09:13:50+00:00', 'ceiling': '2026-10-19T10:48:50+00:00'})
+
+    def test_a_hold_that_ends_past_where_it_could_move_is_carried_to_its_end(self):
+        self.live_request(installRunId='run-1')
+        (self.own / 'updates/hold.json').write_text(json.dumps(
+            {'schemaVersion': 1, 'pid': 100, 'startedAt': '2026-10-19T08:58:50Z', 'expiresAt': '2026-10-19T10:55:00Z'}))
+        update.assert_held.side_effect = None
+        self.assertEqual(self.refuse(0), 'REFUSAL restart-needed locks-lost restarted=1')
+        self.assertEqual((self.marker()['until'], self.marker()['ceiling']),
+                         ('2026-10-19T10:55:00+00:00', '2026-10-19T10:55:00+00:00'))
+
+    def test_a_carried_hold_restarted_again_is_carried_no_further(self):
+        """A carried hold's own start is its restart, so its hold.json names how far it may move:
+        a second restart carries it no further than the first one did."""
+        self.live_request(installRunId='run-1')
+        (self.own / 'updates/hold.json').write_text(json.dumps(
+            {'schemaVersion': 1, 'pid': 100, 'startedAt': '2026-10-19T08:59:30Z', 'expiresAt': '2026-10-19T09:14:30Z',
+             'request': REQUEST, 'ceiling': '2026-10-19T09:30:00Z'}))
+        update.assert_held.side_effect = None
+        self.assertEqual(self.refuse(0), 'REFUSAL restart-needed locks-lost restarted=1')
+        self.assertEqual((self.marker()['until'], self.marker()['ceiling']),
+                         ('2026-10-19T09:14:30+00:00', '2026-10-19T09:30:00+00:00'))
+
+    def test_an_older_services_carried_hold_restarted_again_is_carried_to_its_end(self):
+        """A service from 1.0.108 that predates `ceiling` names none in a carried hold's hold.json,
+        and that hold never moves: a second restart carries it to its end and no further, not HOLD_MAX
+        from its restart."""
+        self.live_request(installRunId='run-1')
+        (self.own / 'updates/hold.json').write_text(json.dumps(
+            {'schemaVersion': 1, 'pid': 100, 'startedAt': '2026-10-19T08:59:30Z', 'expiresAt': '2026-10-19T09:14:30Z',
+             'request': REQUEST}))
+        update.assert_held.side_effect = None
+        self.assertEqual(self.refuse(0), 'REFUSAL restart-needed locks-lost restarted=1')
+        self.assertEqual((self.marker()['until'], self.marker()['ceiling']),
+                         ('2026-10-19T09:14:30+00:00', '2026-10-19T09:14:30+00:00'))
 
     def test_a_restart_without_a_held_request_carries_nothing(self):
         hold = {'schemaVersion': 1, 'pid': 100, 'startedAt': '2026-10-19T08:58:50Z', 'expiresAt': '2026-10-19T09:13:50Z'}
@@ -185,6 +222,8 @@ class RestartFallback(unittest.TestCase):
             'not held': (False, hold),
             'hold already ended': (True, dict(hold, expiresAt='2026-10-19T08:59:59Z')),
             'hold end unreadable': (True, dict(hold, expiresAt='soon')),
+            'hold start unreadable': (True, dict(hold, startedAt='soon')),
+            'carried hold ceiling unreadable': (True, dict(hold, request=REQUEST, ceiling='soon')),
             'no hold file': (True, None),
         }
         for name, (held, content) in cases.items():
@@ -205,8 +244,11 @@ class RestartFallback(unittest.TestCase):
     def test_the_marker_the_helper_writes_is_the_one_the_service_reads(self):
         source = (HERE.parent.parent / 'apps/server/src/serviceUpdate/ServiceUpdateHold.ts').read_text()
         self.assertIn('export const DATABASE_RESTART_MARKER_FILE = "%s";' % database_restart.MARKER, source)
-        for key in ('request', 'installRunId', 'until', 'servicePid', 'restartedAt'):
+        for key in ('request', 'installRunId', 'until', 'ceiling', 'servicePid', 'restartedAt'):
             self.assertIn(key + ':', source)
+        # The marker's `ceiling` is as far as the service lets a hold move.
+        self.assertEqual(database_restart.HOLD_MAX, datetime.timedelta(minutes=110))
+        self.assertIn('export const HOLD_MAX_MS = 110 * 60_000;', source)
 
     def test_update_now_without_a_hold_restarts_an_idle_service_without_the_quiet_window(self):
         self.settings(installMode='force', installRequestedAt=REQUEST)

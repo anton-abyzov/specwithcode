@@ -2382,3 +2382,15 @@ video.artifact-viewer-media {
     animation: none;
   }
 }
+
+/* Usage limit cards settle in once when the Limits tab opens. */
+@keyframes usage-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

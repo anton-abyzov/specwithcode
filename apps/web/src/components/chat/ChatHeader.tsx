@@ -1,4 +1,5 @@
 import { ThreadArtifactsMenu } from "./ThreadArtifacts";
+import { ThreadOriginBadge } from "./ThreadOriginBadge";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -382,6 +383,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <ThreadOriginBadge origin={activeThreadShell?.source?.origin} />
       <RoutingDecisionChip
         routing={activeThreadShell?.routing}
         entries={providerEntries}

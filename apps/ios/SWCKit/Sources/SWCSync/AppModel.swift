@@ -84,6 +84,8 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var checkedAt: Date?
   /// Paired with a link or QR code, so it has a pairing that expires.
   public var hasDirectPairing: Bool
+  /// This phone has paused the connection without forgetting its credentials.
+  public var isDisconnected: Bool = false
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)
@@ -431,6 +433,7 @@ public protocol AppEngine: AnyObject {
   func removeMachine(id: String)
   /// Tries again now, closing a live connection first.
   func reconnect(machineId: String)
+  func setConnectionEnabled(_ enabled: Bool, machineId: String) async throws
   /// Skips the rest of a dropped connection's backoff. A live connection,
   /// an attempt in flight and pairings that need the person are left alone.
   func wake(machineId: String)

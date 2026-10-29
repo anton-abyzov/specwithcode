@@ -2,7 +2,7 @@
  * `specweave-studio triage` - hand a misbehaving install to the user's own coding agent.
  *
  * The command is deliberately thin: it writes a `context.md` with machine facts
- * (version, paths, server liveness), then launches claude or codex
+ * (versions, paths, server liveness, which source to clone), then launches claude or codex
  * interactively, seeded with the playbook from `triagePrompt.ts`. The agent
  * asks the user what went wrong, investigates, and files the issue; the
  * harness's own permission prompts gate anything it wants to run. With no
@@ -36,13 +36,20 @@ import {
   withClaudeAgentSecretDenySettings,
 } from "../provider/AgentProtectedPaths.ts";
 import { withHeadlessBrowserEnvironment } from "../provider/RuntimeInstructions.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  type PersistedServerRuntimeState,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
+import { interactiveStdin } from "./consoleStdin.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import {
   buildTriageContext,
   buildTriageLaunchPrompt,
   buildTriageSeedPrompt,
+  TRIAGE_PUBLIC_REPO,
+  TRIAGE_PUBLIC_REPO_URL,
 } from "./triagePrompt.ts";
 
 interface TriageAgent {
@@ -116,21 +123,102 @@ export class TriageAgentSpawnError extends Schema.TaggedError<TriageAgentSpawnEr
   }
 }
 
-/** One human-readable line about the local server, for `context.md`. */
-const describeServerProcess = Effect.fn("triage.describeServerProcess")(function* (
+/**
+ * One human-readable line about the local server, for `context.md`. Includes
+ * the version the server recorded, which can differ from this CLI's version.
+ */
+export const formatServerProcess = (state: Option.Option<PersistedServerRuntimeState>) => {
+  if (Option.isNone(state)) {
+    return "not running (no server-runtime.json; the server may never have started here)";
+  }
+  const version =
+    state.value.serverVersion === undefined
+      ? "version not recorded"
+      : `version ${state.value.serverVersion}`;
+  if (!isProcessAlive(state.value.pid)) {
+    return `not running (state file is stale: pid ${String(state.value.pid)} is dead; last origin ${state.value.origin}, ${version})`;
+  }
+  return `running (pid ${String(state.value.pid)}, ${state.value.origin}, ${version})`;
+};
+
+export const describeServerProcess = Effect.fn("triage.describeServerProcess")(function* (
   serverRuntimeStatePath: string,
 ) {
   // readPersistedServerRuntimeState swallows read/decode failures itself and
   // returns none, so a corrupt state file reads as "not running" here.
-  const state = yield* readPersistedServerRuntimeState(serverRuntimeStatePath);
-  if (Option.isNone(state)) {
-    return "not running (no server-runtime.json; the server may never have started here)";
-  }
-  if (!isProcessAlive(state.value.pid)) {
-    return `not running (state file is stale: pid ${String(state.value.pid)} is dead; last origin ${state.value.origin})`;
-  }
-  return `running (pid ${String(state.value.pid)}, ${state.value.origin})`;
+  return formatServerProcess(yield* readPersistedServerRuntimeState(serverRuntimeStatePath));
 });
+
+/** Whether a release tag exists on the public repo; "unknown" when it could not be checked. */
+export type PublicTagStatus = "published" | "missing" | "unknown";
+
+/**
+ * Ask the public repo whether `tag` exists, with `git ls-remote`. Dev and
+ * branch builds carry versions whose tags exist only on the private dev repo,
+ * which users cannot clone. Offline, no git, or a slow network all read as
+ * "unknown" and never fail triage.
+ */
+export const checkPublicReleaseTag = (input: {
+  readonly tag: string;
+  readonly repoUrl?: string;
+  readonly timeoutMs?: number;
+}) =>
+  Effect.callback<PublicTagStatus>((resume) => {
+    let child: NodeChildProcess.ChildProcess;
+    try {
+      child = NodeChildProcess.execFile(
+        "git",
+        [
+          "ls-remote",
+          "--exit-code",
+          "--tags",
+          input.repoUrl ?? TRIAGE_PUBLIC_REPO_URL,
+          `refs/tags/${input.tag}`,
+        ],
+        {
+          timeout: input.timeoutMs ?? 10_000,
+          // Never stop to ask for credentials: the public repo needs none.
+          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+          windowsHide: true,
+        },
+        (error, stdout) => {
+          if (error === null) {
+            resume(
+              Effect.succeed(stdout.includes(`refs/tags/${input.tag}`) ? "published" : "missing"),
+            );
+            return;
+          }
+          // --exit-code: 2 means the remote answered and has no such ref.
+          resume(Effect.succeed(error.code === 2 && !error.killed ? "missing" : "unknown"));
+        },
+      );
+    } catch {
+      resume(Effect.succeed("unknown"));
+      return;
+    }
+    return Effect.sync(() => {
+      child.kill();
+    });
+  });
+
+/** The context line telling the agent which source to clone, and why. */
+export const describeSourceToClone = (input: {
+  readonly version: string;
+  readonly versionSource: "server" | "cli";
+  readonly status: PublicTagStatus;
+}) => {
+  const tag = `v${input.version}`;
+  const whose =
+    input.versionSource === "server" ? "the local server's version" : "this CLI's version";
+  switch (input.status) {
+    case "published":
+      return `tag ${tag} (${whose}; published on ${TRIAGE_PUBLIC_REPO})`;
+    case "missing":
+      return `main. Tag ${tag} (${whose}) is not published on ${TRIAGE_PUBLIC_REPO}: this is a development, branch or not-yet-mirrored build, and its tag exists only in the private development repo, which users cannot clone. Clone main and treat file and line references as approximate.`;
+    case "unknown":
+      return `tag ${tag} (${whose}) if it exists. Triage could not reach ${TRIAGE_PUBLIC_REPO} to check (offline, no git, or GitHub unreachable); if the tag clone fails, clone main and treat file and line references as approximate.`;
+  }
+};
 
 const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
   Effect.promise(async () => {
@@ -174,7 +262,9 @@ export const runInteractiveSession = (input: {
       cwd: input.cwd,
       // The agent may run browser checks, so the headless variables win.
       env: withHeadlessBrowserEnvironment(process.env),
-      stdio: "inherit",
+      // The agent reads the user's terminal; under a desktop CLI launcher on
+      // Windows that is the reopened console, not the (missing) inherited stdin.
+      stdio: [interactiveStdin(), "inherit", "inherit"],
       shell: input.shell,
     });
     child.once("error", (cause) =>
@@ -224,20 +314,27 @@ export const triageCommand = Command.make("triage", {
       );
       yield* fs.makeDirectory(scratchDir, { recursive: true });
 
-      const version = packageJson.version;
+      const serverState = yield* readPersistedServerRuntimeState(paths.serverRuntimeStatePath);
+      // The bug most likely happened on the running server's build; the CLI
+      // running triage can be a different one.
+      const serverVersion = Option.getOrUndefined(serverState)?.serverVersion;
+      const sourceVersion = serverVersion ?? packageJson.version;
+      const sourceToClone = describeSourceToClone({
+        version: sourceVersion,
+        versionSource: serverVersion === undefined ? "cli" : "server",
+        status: yield* checkPublicReleaseTag({ tag: `v${sourceVersion}` }),
+      });
       const contextFilePath = path.join(scratchDir, "context.md");
       yield* fs.writeFileString(
         contextFilePath,
         buildTriageContext({
           generatedAt: DateTime.formatIso(now),
-          version,
-          releaseTag: /^[^-+]+-(?:nightly|preview)\./.test(version)
-            ? `v${version} (prerelease build; if this tag does not exist, clone main)`
-            : `v${version}`,
+          cliVersion: packageJson.version,
+          sourceToClone,
           os: `${yield* HostProcessPlatform} ${yield* HostProcessArchitecture} (${NodeOS.release()})`,
           nodeVersion: process.version,
           launchedAs: yield* resolveCliCommand("triage"),
-          server: yield* describeServerProcess(paths.serverRuntimeStatePath),
+          server: formatServerProcess(serverState),
           paths: {
             stateDir: paths.stateDir,
             dbPath: paths.dbPath,

@@ -37,7 +37,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Installed specweave-studio version or commit.
+      description: The version the bug happened on (specweave-studio version or commit).
       placeholder: 0.0.33
     validations:
       required: true

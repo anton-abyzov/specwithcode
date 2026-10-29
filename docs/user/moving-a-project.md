@@ -51,6 +51,48 @@ atomic snapshot. Only the final coordinator-context transfer requires idle work;
 it never silently stops an active provider session. If files have changed since
 the copied snapshot, copy again before transferring context.
 
+## When a saved comparison is out of date
+
+For **Copy files only**, a new comparison captures the selected non-secret files
+on the source before it becomes ready. Review the captured-file timestamp and
+approve the comparison explicitly. Active agents can keep working: later edits,
+new files and changing project logs do not invalidate these captured bytes, even
+when the destination already has files. This is a per-file capture, not an atomic
+snapshot of every file at one instant. If a file keeps changing while it is being
+captured, the comparison fails without changing the source or destination.
+
+**Measure again** checks the live source. Its current sizes and worktree notices
+do not change the captured comparison or add newer files to it. Choose **Measure
+and compare again** to capture newer work. The machine, folder and file types stay
+selected; review the new comparison and choose what to keep again. Earlier
+conflict choices and secret approvals are not reused against different files.
+Destination edits after review still stop Apply until you review them again.
+
+Older saved jobs and **Copy and transfer coordinator context** retain strict live
+freshness checks. If those files changed, or captured files are missing or damaged,
+the copy stops and offers **Measure and compare again**. Reopening the dialog keeps
+that recovery step rather than retrying a refused copy. Updating the source enables
+new captured copies; older destination servers can consume them through the same
+validated transfer protocol. Both apps should be updated to show the capture wording.
+
+Capturing needs temporary space on the source for the selected bytes and metadata.
+If space runs out, source files stay untouched. Captured files survive an app restart
+and are removed when the copy finishes or is cancelled. A paused review keeps them
+until you finish or stop that copy. Secret-like files remain outside this capture
+and still need their separate explicit approval.
+
+Captured copies require a verified local filesystem: APFS, ext4, XFS, Btrfs, tmpfs,
+or a local NTFS drive. The app refuses unknown, network and coarse-timestamp
+filesystems instead of promising a stable capture. A folder mounted from another
+filesystem must be copied separately. These checks do not create a globally atomic
+filesystem snapshot.
+
+If **Measure again** has not replied after two minutes, the dialog unlocks and keeps
+your saved copy and choices. A timeout never marks the scan current or approves a
+copy. After a refresh, worktree notices describe the new scan rather than combining
+it with the saved list. Counts include worktrees whose names were shortened from
+the preview; the list says when additional names were not included.
+
 ## Which folder moves
 
 Copy preserves the selected source folder and its relative layout. A single
@@ -116,7 +158,8 @@ only answers requests that carry a grant for this one copy, and the grant ends
 when the copy ends. Every file is checked against the source's checksum before it
 is used.
 
-Files that change during transfer are retried. Files that keep changing or
+For older saved jobs and coordinator moves, files that change during transfer are
+retried. Files that keep changing or
 disappear are listed and skipped during Apply. New files created after the scan
 may be absent. Review the warnings and copy again after work settles when you
 need a complete snapshot. An incomplete or stale copy cannot be used to transfer

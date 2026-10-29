@@ -804,3 +804,192 @@ it("refreshes a resumed saved scan without cancelling, reoffering or changing st
   expect(state.calls.slice(calls).map(([name]) => name)).toEqual(["copySourceStatus"]);
   expect(state.calls.at(-1)?.[1]).toMatchObject({ input: { operationId: "saved", refresh: true } });
 });
+
+it("replaces saved worktree notices with current counts after refreshing", async () => {
+  const old =
+    "repos/old: 36 worktree(s) outside this folder are not copied: removed-a, removed-b. Copy those folders separately.";
+  const fresh =
+    "repos/current: 22 worktree(s) outside this folder are not copied: current-a, current-b and 20 more. Their committed branches come along.";
+  statuses = [
+    copyStatus("previewed", {
+      rows: [newRow(".")],
+      warnings: [old, "Destination contains local edits."],
+    }),
+  ];
+  await toPreview();
+  expect(pageText()).toContain("36 worktrees outside the folder.");
+  const saved = pointerNow();
+  state.handlers.copySourceStatus = () => ({
+    state: "ready",
+    summary: noSecrets,
+    freshness: {
+      checkedAt: Date.now(),
+      current: false,
+      summary: { ...noSecrets, warnings: [fresh] },
+    },
+  });
+  await click("Measure again");
+  expect(pageText()).toContain("22 worktrees outside the folder.");
+  expect(pageText()).toContain("20 more names not included in this scan");
+  expect(pageText()).not.toContain("removed-a");
+  expect(pageText()).toContain("Destination contains local edits.");
+  expect(pointerNow()).toEqual(saved);
+  state.handlers.copySourceStatus = () => ({
+    state: "ready",
+    summary: noSecrets,
+    freshness: { checkedAt: Date.now(), current: false, summary: { ...noSecrets, warnings: [] } },
+  });
+  await click("Measure again");
+  expect(document.querySelector('[data-slot="copy-not-copied-outside"]')).toBeNull();
+  expect(pageText()).toContain("Destination contains local edits.");
+  expect(pointerNow()).toEqual(saved);
+});
+
+it("unlocks a stalled read-only refresh without changing choices or accepting a late reply", async () => {
+  await toPreview();
+  const saved = pointerNow();
+  const calls = state.calls.length;
+  let finish!: (value: unknown) => void;
+  state.handlers.copySourceStatus = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  vi.useFakeTimers();
+  try {
+    await act(async () => button("Measure again").click());
+    expect(isDisabled(button("Measure again"))).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(pageText()).toContain("Checking this scan took too long.");
+    expect(isDisabled(button("Measure again"))).toBe(false);
+    expect(pointerNow()).toEqual(saved);
+    await act(async () =>
+      finish({
+        state: "ready",
+        summary: noSecrets,
+        freshness: { checkedAt: Date.now(), current: true },
+      }),
+    );
+    expect(pageText()).not.toContain("Nothing changed since then, so your choices stay.");
+    expect(pointerNow()).toEqual(saved);
+    expect(state.calls.slice(calls).map(([name]) => name)).toEqual(["copySourceStatus"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each(["typed", "legacy"])(
+  "recovers a %s stale refusal across reopening without another approval",
+  async (protocol) => {
+    await toPreview();
+    const old = pointerNow();
+    state.handlers.copyStatus = () => copyStatus("previewed", { rows: [newRow(".")] });
+    state.handlers.copyApprove = () => {
+      throw Object.assign(new Error("Source changed"), {
+        _tag: "FolderCopyError",
+        code: "refused",
+        ...(protocol === "typed"
+          ? { recovery: "compare_again" }
+          : {
+              detail:
+                "The source changed or this saved scan has no freshness evidence. Refresh the scan and review a new comparison before copying.",
+            }),
+      });
+    };
+    await click("Copy to M3");
+    expect(stageNow()).toBe("preview");
+    expect(pointerNow()).toMatchObject({
+      operationId: old.operationId,
+      needsComparison: true,
+      planShown: true,
+    });
+    expect(button("Copy to M3").disabled).toBe(true);
+    const footer = document.querySelector('[data-slot="copy-actions"]');
+    expect(footer?.textContent).toContain("Measure and compare again");
+    expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
+    expect(names()).not.toContain("copyCancel");
+    await reopen();
+    await settle();
+    expect(stageNow()).toBe("preview");
+    expect(button("Copy to M3").disabled).toBe(true);
+    expect(names()).not.toContain("copyApprove");
+    const before = state.calls.length;
+    await click("Measure and compare again");
+    expect(stageNow()).toBe("select");
+    expect(pointerNow().operationId).not.toBe(old.operationId);
+    expect(pointerNow()).not.toHaveProperty("needsComparison");
+    expect(pointerNow()).not.toHaveProperty("replaceAll");
+    expect(pointerNow()).toMatchObject({
+      environmentId: old.environmentId,
+      targetFolder: old.targetFolder,
+      selection: old.selection,
+    });
+    expect(state.calls.slice(before).map(([name]) => name)).not.toContain("copyApprove");
+    await click("Preview on M3");
+    expect(stageNow()).toBe("preview");
+    expect(button("Copy to M3").disabled).toBe(false);
+  },
+);
+
+it("requires approval of captured files and keeps later live changes separate from that copy", async () => {
+  measuredWithoutSecrets();
+  const capturedAt = 1793061000000;
+  state.handlers.copySourceStatus = ({ input }: any) => ({
+    state: "ready",
+    summary: noSecrets,
+    capturedAt,
+    ...(input.refresh
+      ? {
+          freshness: {
+            checkedAt: capturedAt + 1000,
+            current: false,
+            summary: { ...noSecrets, warnings: ["New source-only measurement notice."] },
+          },
+        }
+      : {}),
+  });
+  statuses = [copyStatus("previewed", { capturedAt, rows: [newRow(".")] }), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  expect(stageNow()).toBe("preview");
+  expect(state.calls.filter(([name]) => name === "copyApprove")).toHaveLength(0);
+  expect(pageText()).toContain("This copy uses files captured");
+  const saved = pointerNow();
+  await click("Measure again");
+  expect(pageText()).toContain("You can still copy the captured files");
+  expect(pageText()).toContain(
+    "measurements and notices show the current source, not new copy contents",
+  );
+  expect(pageText()).toContain("New source-only measurement notice.");
+  expect(pointerNow()).toEqual(saved);
+  expect(isDisabled(button("Copy to M3"))).toBe(false);
+  expect(state.calls.filter(([name]) => name === "copyApprove")).toHaveLength(0);
+  await click("Copy to M3");
+  expect(state.calls.filter(([name]) => name === "copyApprove")).toHaveLength(1);
+  expect(stageNow()).toBe("done");
+});
+
+it("does not auto-approve a captured destination preview when source diagnostics are unavailable", async () => {
+  measuredWithoutSecrets();
+  state.handlers.copySourceStatus = () => {
+    throw new Error("source diagnostics unavailable");
+  };
+  statuses = [copyStatus("previewed", { capturedAt: 1793061000000, rows: [newRow(".")] })];
+  await mount();
+  await click("Copy to M3");
+  expect(stageNow()).toBe("preview");
+  expect(pageText()).toContain("This copy uses files captured");
+  expect(state.calls.filter(([name]) => name === "copyApprove")).toHaveLength(0);
+});
+
+it("keeps manual review with an older destination and unavailable source diagnostics", async () => {
+  measuredWithoutSecrets();
+  state.handlers.copySourceStatus = () => {
+    throw new Error("source diagnostics unavailable");
+  };
+  statuses = [copyStatus("previewed", { rows: [newRow(".")] })];
+  await mount();
+  await click("Copy to M3");
+  expect(stageNow()).toBe("preview");
+  expect(state.calls.filter(([name]) => name === "copyApprove")).toHaveLength(0);
+  expect(button("Copy to M3").disabled).toBe(false);
+});

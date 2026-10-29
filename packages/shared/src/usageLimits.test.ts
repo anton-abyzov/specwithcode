@@ -17,6 +17,7 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
+  collectUnreportedLimitAccounts,
   describeLimitAccount,
   displayLimitWindows,
   elapsedShare,
@@ -976,6 +977,80 @@ describe("collectLimitNotices", () => {
       "Claude Work: Not signed in, so no limits to show.",
       "codex: Could not check the sign-in, so no limits to show.",
     ]);
+  });
+});
+
+describe("collectUnreportedLimitAccounts", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const console = provider({
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    driver: claude,
+    auth: {
+      status: "authenticated",
+      type: "apiKey",
+      email: "console@example.com",
+      apiKeyBilling: true,
+    },
+    usageLimits: {
+      checkedAt,
+      windows: [],
+      unavailable: {
+        reason: "unsupported",
+        message: "Billed to the API instead of plan@example.com.",
+      },
+    },
+  });
+  const pooled = provider({
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    driver: claude,
+    auth: { status: "authenticated", email: "plan@example.com" },
+    usageLimits: { checkedAt, windows: [window] },
+  });
+  const signedOut = provider({ auth: { status: "unauthenticated" } });
+  const presentations = new Map([
+    [
+      EnvironmentId.make("desk"),
+      { entry: { target: { label: "Desk" } }, serverConfig: { providers: [console] } },
+    ],
+    [
+      EnvironmentId.make("laptop"),
+      {
+        entry: { target: { label: "Laptop" } },
+        connection: { phase: "disconnected" },
+        serverConfig: { providers: [pooled, signedOut] },
+      },
+    ],
+  ]);
+
+  it("keeps every subscription agent that cannot pool, with where it is and why", () => {
+    const accounts = collectLimitAccounts(presentations);
+    expect(accounts.map((account) => account.email)).toEqual(["plan@example.com"]);
+    expect(collectUnreportedLimitAccounts(presentations, accounts)).toEqual([
+      {
+        key: "desk:claudeAgent",
+        driver: claude,
+        environmentLabel: "Desk",
+        offline: false,
+        email: "console@example.com",
+        plan: undefined,
+        reason: "apiBilling",
+        message: "Billed to the API instead of plan@example.com.",
+      },
+      expect.objectContaining({
+        environmentLabel: "Laptop",
+        offline: true,
+        reason: "signedOut",
+        message: "Not signed in, so no limits to show.",
+      }),
+    ]);
+  });
+
+  it("leaves the explained ones out of the notices it draws as cards", () => {
+    expect(collectLimitNotices(presentations, { excludeSubscriptionAgents: true })).toEqual([]);
+    expect(collectLimitNotices(presentations)).toContain(
+      "Desk · claudeAgent: Billed to the API instead of plan@example.com.",
+    );
   });
 });
 

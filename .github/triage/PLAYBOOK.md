@@ -6,7 +6,7 @@ crashes, auth failures, broken setups, slow launches, or anything else. Your job
 find out what went wrong, unblock the user if you can, and turn what you learned into
 a well written GitHub issue when one is warranted.
 
-A triage context file with machine facts (version, OS, paths, server liveness) was
+A triage context file with machine facts (versions, OS, paths, server liveness) was
 provided alongside this playbook. Everything machine-specific lives there, not here.
 
 ## 1. Ask what went wrong
@@ -18,9 +18,15 @@ valuable thing you can extract from this conversation.
 
 ## 2. Read the machine facts
 
-Read the triage context file before investigating. It tells you the installed
-version, the OS, whether the server process is currently running, and the exact
+Read the triage context file before investigating. It tells you the OS, whether
+the server process is currently running, which source to clone, and the exact
 paths for state, logs, and the database.
+
+Its triage CLI version (called "Installed version" in older context files) is only
+the version of the `specweave-studio` that ran `specweave-studio triage`. It is
+often not the build the bug happened on: the user may run the desktop app, the
+background service, or a server on another machine. The server process line gives
+the local server's version when the server recorded one.
 
 ## 3. Check for a newer playbook
 
@@ -30,16 +36,28 @@ instead of this one. The user may be on an old release with an old copy.
 
 ## 4. Get the source
 
-Clone the repo at the tag matching the user's installed version, into the source
-cache directory named in the context file, one subdirectory per commit hash:
+Before cloning, ask the user which version, device, and surface the bug happened
+on. The bug may have happened on another machine, a remote server, the mobile app,
+or an older build they have since updated. Check their answer against local facts
+where they apply: the server version in the context file, or `serverVersion` from
+`<origin>/.well-known/studio/environment` when a local server is running. If neither
+the user nor the machine can tell you the version, say it is unknown. Do not guess.
+
+Clone the repo at the release tag for that version (`v` followed by the version,
+such as `v1.0.106`), into the source cache directory named in the context file,
+one subdirectory per commit hash:
 
     git clone --depth 1 --filter=blob:none --branch <release-tag> \
       https://github.com/anton-abyzov/specwithcode <source-cache-dir>/<hash>
 
-If the tag does not exist (nightly builds), clone `main` instead, and treat file
-and line references as approximate: the user's build may not match `main`
-exactly. If the target directory already exists from an earlier triage run,
-reuse it instead of cloning again. Before cloning, delete other entries in the
+The context file's "Source to clone" line says whether the local version's tag is
+published on the public repo. Development and branch builds have tags only in the
+private development repo, which users cannot clone. If the tag does not exist
+there, clone `main` instead, tell the user why, and treat file and line references
+as approximate: the user's build may not match `main` exactly.
+
+If the target directory already exists from an earlier triage run, reuse it
+instead of cloning again. Before cloning, delete other entries in the
 source cache directory, but only entries whose git state is clean (no
 uncommitted changes, no unpushed commits).
 
@@ -53,9 +71,9 @@ different code depending on it:
 
 - How is SpecWithCode running on this machine: `specweave-studio serve` in a terminal, the
   background service, or the desktop app?
-- Which surface is the user connecting from: the website (app.studio.invalid), the
-  desktop app against a local server, the desktop app against a remote server,
-  or the mobile app?
+- Which surface is the user connecting from: the desktop app against a local
+  server, the desktop app against a remote server, a browser opened at a
+  server's own URL, or the mobile app?
 
 Then work from evidence, not assumption. In rough order of value:
 
@@ -85,8 +103,8 @@ comes from this repo's `main` branch.
 
 Search existing issues in anton-abyzov/specwithcode (use `gh`, or the public GitHub search
 API if `gh` is missing or not logged in). Then check whether the problem is already
-fixed in a release newer than the user's version: compare versions, read release
-notes and recent commits touching the relevant code.
+fixed in a release newer than the version the bug happened on: compare versions,
+read release notes and recent commits touching the relevant code.
 
 If the user is behind and the fix likely shipped, say so plainly and give them the
 exact update command for how they run the CLI (the context file records how it was
@@ -108,6 +126,8 @@ of `main` for that work, never the tag-pinned diagnosis clone.
 - Match the structure of the `via-triage` issue template
   (`.github/ISSUE_TEMPLATE/via-triage.yml` in the repo): what happened, diagnosis,
   repro steps, environment, evidence, related issues.
+- Under Version, give the version the bug happened on from step 4, or say it is
+  unknown. Name the triage CLI version only as the CLI's.
 - Label it `via-triage`. Use a plain, specific title with no prefix.
 - Show the user the complete final issue text and get an explicit yes before
   posting. Never post without it.

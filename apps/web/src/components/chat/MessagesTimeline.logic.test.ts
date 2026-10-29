@@ -5105,6 +5105,113 @@ describe("timelineDetail", () => {
   };
 
   describe("concise", () => {
+    it.each(["concise", "normal", "verbose"] as const)(
+      "omits whitespace-only settled assistant rows in %s",
+      (timelineDetail) => {
+        const timelineEntries = [
+          user("user", 0),
+          command("cmd", 1),
+          assistant("blank", 2, "  \n\t"),
+        ];
+        const rows = deriveMessagesTimelineRows({ ...settled, timelineEntries, timelineDetail });
+        expect(rows.some((row) => row.kind === "message" && row.id === "blank")).toBe(false);
+        expect(rows.some((row) => row.kind === "assistant-meta" && !row.message.text.trim())).toBe(
+          false,
+        );
+        expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+      },
+    );
+
+    it.each(["completed", "failed"] as const)(
+      "keeps the meaningful final before a blank completion in a %s turn",
+      (status) => {
+        const timelineEntries = [
+          user("user", 0),
+          command("cmd", 1),
+          assistant("answer", 2, "The exact failure is ENOSPC."),
+          assistant("blank-final", 3, " "),
+        ];
+        const rows = deriveMessagesTimelineRows({
+          ...settled,
+          latestRun: { ...settled.latestRun, status },
+          timelineEntries,
+          timelineDetail: "concise",
+        });
+        expect(rows.map((row) => row.id)).toContain("answer");
+        expect(rows.map((row) => row.id)).not.toContain("blank-final");
+      },
+    );
+
+    it("does not invent activity for multiple blank completion items", () => {
+      const timelineEntries = [
+        user("user", 0),
+        assistant("blank-1", 1, " "),
+        assistant("blank-2", 2, "\n"),
+      ];
+      expect(
+        deriveMessagesTimelineRows({ ...settled, timelineEntries }).map((row) => row.id),
+      ).toEqual(["user"]);
+    });
+
+    it("preserves an attachment carrier with no prose", () => {
+      const blank = assistant("attachment", 1, " ") as Extract<TimelineEntry, { kind: "message" }>;
+      const timelineEntries = [
+        user("user", 0),
+        {
+          ...blank,
+          message: {
+            ...blank.message,
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-1",
+                name: "report.pdf",
+                mimeType: "application/pdf",
+                sizeBytes: 12,
+              },
+            ],
+          },
+        },
+      ];
+      expect(
+        deriveMessagesTimelineRows({ ...settled, timelineEntries }).map((row) => row.id),
+      ).toContain("attachment");
+    });
+
+    it("folds successful activity in a failed turn without hiding its error", () => {
+      const failure = command("failed-cmd", 3, "failed");
+      const timelineEntries = [
+        user("user", 0),
+        assistant("note", 1, "Looking around"),
+        command("cmd", 2),
+        failure,
+        assistant("error", 4, "Credit balance is too low"),
+      ];
+      const rows = deriveMessagesTimelineRows({
+        ...settled,
+        latestRun: { ...settled.latestRun, status: "failed" },
+        timelineEntries,
+        timelineDetail: "concise",
+      });
+      expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+      expect(rows.map((row) => row.id)).not.toContain("note");
+      expect(rows.map((row) => row.id)).toContain("error");
+      expect(
+        rows.some(
+          (row) =>
+            row.kind === "work" && row.groupedEntries.some((entry) => entry.id === "failed-cmd"),
+        ),
+      ).toBe(true);
+      const expanded = deriveMessagesTimelineRows({
+        ...settled,
+        latestRun: { ...settled.latestRun, status: "failed" },
+        timelineEntries,
+        timelineDetail: "concise",
+        expandedRunIds: new Set([runId]),
+      });
+      expect(expanded.map((row) => row.id)).toContain("note");
+    });
+
     it("leaves no row for a group that only thought", () => {
       const timelineEntries = [user("user", 0), thought("thought", 2), assistant("final", 5)];
       const normal = deriveMessagesTimelineRows({ ...settled, timelineEntries });
@@ -5174,7 +5281,7 @@ describe("timelineDetail", () => {
       expect(rows.map((row) => row.id)).toEqual(["user", `turn-fold:${runId}`, "final"]);
     });
 
-    it("keeps a failed run's commentary and drops only its thinking", () => {
+    it("folds a failed run's commentary while keeping its final result", () => {
       const timelineEntries = [
         user("user", 0),
         assistant("note", 1),
@@ -5189,7 +5296,7 @@ describe("timelineDetail", () => {
         timelineDetail: "concise",
       });
       const ids = rows.map((row) => row.id);
-      expect(ids).toContain("note");
+      expect(ids).not.toContain("note");
       expect(ids).toContain("final");
       expect(ids).not.toContain("thought");
       expect(

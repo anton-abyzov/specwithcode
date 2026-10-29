@@ -758,7 +758,7 @@ describe("Gemini and Vertex spend", () => {
     expect(isPerTokenProvider(codex)).toBe(false);
   });
 
-  it("never falls back onto Gemini, including an order entry or the project default", () => {
+  it("never falls back onto Gemini unnamed, and honours it as a named order entry", () => {
     const full = provider("claudeAgent", "claudeAgent", 100);
     const geminiWithRoom = provider("acpRegistry_gemini", "acpRegistry", 10, {
       auth: { status: "authenticated", type: "oauth-personal" },
@@ -787,6 +787,8 @@ describe("Gemini and Vertex spend", () => {
         rule: { ...rule, defaultModelSelection: geminiModel },
       }),
     ).toBeNull();
+    // Naming Gemini in the fallback order is the person's spending choice:
+    // the named entry is judged on readiness and wins in order.
     expect(
       describeFallbackOrder({
         providers: [full, geminiWithRoom, codex],
@@ -797,7 +799,7 @@ describe("Gemini and Vertex spend", () => {
         },
         nowMs: now,
       }).map((entry) => entry.unavailable),
-    ).toEqual(["per-token", null]);
+    ).toEqual([null, null]);
     expect(
       resolveProviderFallback({
         ...base,
@@ -808,7 +810,7 @@ describe("Gemini and Vertex spend", () => {
           providerLimitFallbackModelSelection: null,
         },
       }),
-    ).toEqual(codexModel);
+    ).toEqual(geminiModel);
     expect(
       resolveProviderFallback({
         ...base,

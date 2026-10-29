@@ -356,6 +356,20 @@ describe("fleet update rules", () => {
     );
   });
 
+  it("passes on the request the agent handled, by which fleet_rollout sees a press has ended", () => {
+    const handled = "2026-10-28T13:10:00.000Z";
+    const line = flattenFleetUpdateStatus(
+      {
+        method: "service-agent",
+        serverVersion: "1.0.109",
+        phase: "idle",
+        agent: { ...offering("1.0.110"), handledInstallRequestAt: handled },
+      },
+      "connect",
+    );
+    expect(line).toMatchObject({ handledInstallRequestAt: handled, availableVersion: "1.0.110" });
+  });
+
   it("reports a boot service as finalized once it runs the version it was asked for", () => {
     const line = flattenFleetUpdateStatus(
       { method: "boot-service", serverVersion: "1.0.109", phase: "idle" },

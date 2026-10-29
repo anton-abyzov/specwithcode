@@ -41,6 +41,17 @@ function percent(value: number): string {
   return `${Math.round(value)}%`;
 }
 
+/** The pool in whole accounts: 142 points of a 200-point pool is "1.4". */
+function accounts(value: number): string {
+  const worth = Math.max(0, value) / 100;
+  return Number.isInteger(worth) ? String(worth) : worth.toFixed(1);
+}
+
+/** The y-axis top: "2 accounts" for a pool, "100%" for one account. */
+function capacityLabel(capacity: number): string {
+  return capacity > 100 ? `${accounts(capacity)} accounts` : percent(capacity);
+}
+
 function toPath(
   points: readonly PoolForecastPoint[],
   x: (at: number) => number,
@@ -109,16 +120,18 @@ function PoolChart({
   const projectedPath = toPath(forecast.projected, x, y);
   const nowX = x(now);
   const summary = [
-    `Total left over time, now ${percent(forecast.remaining)} of ${percent(forecast.capacity)}.`,
+    forecast.capacity > 100
+      ? `Pool left over time, now ${accounts(forecast.remaining)} of ${accounts(forecast.capacity)} accounts.`
+      : `Left over time, now ${percent(forecast.remaining)}.`,
     forecast.poolEmptyAt ? "The projection reaches empty." : "",
   ]
     .filter(Boolean)
     .join(" ");
   return (
     <figure className="flex min-w-0 flex-col gap-1" data-pool-forecast-chart="">
-      <div className="relative ps-10">
+      <div className="relative ps-16">
         <span className="absolute top-0 left-0 text-2xs text-muted-foreground tabular-nums">
-          {percent(forecast.capacity)}
+          {capacityLabel(forecast.capacity)}
         </span>
         <span className="absolute bottom-0 left-0 text-2xs text-muted-foreground tabular-nums">
           0%
@@ -180,7 +193,7 @@ function PoolChart({
           />
         </svg>
       </div>
-      <div aria-hidden className="relative ms-10 h-4">
+      <div aria-hidden className="relative ms-16 h-4">
         {ticks(start, end)
           // Labels are centred on their tick: keep them off the chart's edges.
           .filter((tick) => {
@@ -250,10 +263,10 @@ export function PoolForecastPanel({
     <div className="flex min-w-0 flex-col gap-3 md:col-span-2" data-pool-forecast="">
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">
         {pool.members.length > 1 ? (
-          <Stat label="Total left">
-            {percent(forecast.remaining)}{" "}
+          <Stat label="Pool left">
+            {accounts(forecast.remaining)}{" "}
             <span className="font-normal text-muted-foreground">
-              of {percent(forecast.capacity)}
+              of {accounts(forecast.capacity)} accounts
             </span>
           </Stat>
         ) : null}

@@ -398,7 +398,7 @@ export function fleetRemoveSummary(removed: FleetRemoveResult, cli: string): str
     lines.push(`Revoked this machine's worker access on ${removed.label}.`);
   else if (removed.workerAccess === "kept")
     lines.push(
-      `Worker access this machine may hold on ${removed.label} could not be revoked from here. On ${removed.label}, revoke it under Settings > Connections > Who can run work on this Mac.`,
+      `Worker access this machine may hold on ${removed.label} could not be revoked from here. On ${removed.label}, revoke it under Settings > Machines > Who can run work on this Mac.`,
     );
   if (removed.managementToken === "revoked")
     lines.push(`Revoked this machine's management token on ${removed.label}.`);

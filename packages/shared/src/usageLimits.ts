@@ -369,16 +369,34 @@ export function describeLimitAccount(account: LimitAccount): LimitAccountIdentit
  * are left out; there is nothing for the user to act on. The environment
  * is named only when more than one is connected.
  */
-export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
+export function collectLimitNotices(
+  presentations: LimitPresentations,
+  options: {
+    /** The caller draws subscription agents as accounts (`collectUnreportedLimitAccounts`). */
+    readonly excludeSubscriptionAgents?: boolean;
+  } = {},
+): readonly string[] {
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices: string[] = [];
+  const skip = (driver: string) =>
+    options.excludeSubscriptionAgents === true && SUBSCRIPTION_DRIVERS.has(driver);
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      // An account that can never report (API key) is left out; one that
-      // failed, or reported nothing at all, is worth a line.
-      if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
+      if (skip(provider.driver)) continue;
+      // An account that can never report (API key) is left out unless the
+      // server explained why, as it does for a sign-in that hides a
+      // subscription; one that failed, or reported nothing, is worth a line.
+      if (
+        provider.usageLimits?.unavailable?.reason === "unsupported" &&
+        !(
+          SUBSCRIPTION_DRIVERS.has(provider.driver) &&
+          provider.usageLimits.unavailable.message &&
+          !provider.usageLimits.externalUsage
+        )
+      )
+        continue;
       const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
       const name = provider.displayName?.trim() || String(provider.driver);
       if (notice) notices.push(`${label(environmentLabel, name)}: ${notice}`);
@@ -386,6 +404,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     // A subscription agent that never got as far as reading limits would
     // otherwise drop off the page without a word, as if it did not exist.
     for (const provider of presentation.serverConfig?.providers ?? []) {
+      if (skip(provider.driver)) continue;
       if (!SUBSCRIPTION_DRIVERS.has(provider.driver) || provider.usageLimits !== undefined)
         continue;
       if (!provider.enabled || !provider.installed || !isProviderAvailable(provider)) continue;
@@ -405,6 +424,69 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
 
 /** Drivers whose signed-in instances always report subscription windows. */
 const SUBSCRIPTION_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
+
+/**
+ * A subscription agent on a machine that is not in the pool: billed to an
+ * API key or Console sign-in, signed out, or read without usable windows.
+ * The Limits view draws it beside the pooled accounts, so a missing
+ * subscription reads as missing, with the reason, instead of disappearing.
+ */
+export interface UnreportedLimitAccount {
+  readonly key: string;
+  readonly driver: ServerProvider["driver"];
+  readonly environmentLabel: string;
+  readonly offline: boolean;
+  readonly email: string | undefined;
+  readonly plan: string | undefined;
+  readonly reason: "apiBilling" | "signedOut" | "unread";
+  readonly message: string;
+}
+
+export function collectUnreportedLimitAccounts(
+  presentations: LimitPresentations,
+  pooled: readonly LimitAccount[],
+): readonly UnreportedLimitAccount[] {
+  const pooledKeys = new Set(
+    pooled.map((account) => accountKey(account.driver, account.email, account.limits)),
+  );
+  const unreported: UnreportedLimitAccount[] = [];
+  for (const [environmentId, presentation] of presentations) {
+    for (const provider of presentation.serverConfig?.providers ?? []) {
+      if (!SUBSCRIPTION_DRIVERS.has(provider.driver)) continue;
+      if (!provider.enabled || !provider.installed) continue;
+      const limits = provider.usageLimits;
+      // Usage tracked elsewhere (ChatGPT sharing) gets its own link instead.
+      if (limits?.externalUsage) continue;
+      const notice = limits ? limitsNotice(limits) : null;
+      if (limits && notice === null && isProviderAvailable(provider)) continue;
+      // Another machine or a hub already reads this account: it is in the pool.
+      const key = accountKey(provider.driver, provider.auth.email, limits);
+      if (key !== null && limits?.unavailable?.reason !== "unsupported" && pooledKeys.has(key))
+        continue;
+      const reason =
+        provider.auth.status === "unauthenticated"
+          ? "signedOut"
+          : provider.auth.type === "apiKey" ||
+              provider.auth.apiKeyBilling === true ||
+              (limits?.unavailable?.reason === "unsupported" && !limits.unavailable.message)
+            ? "apiBilling"
+            : "unread";
+      unreported.push({
+        key: `${environmentId}:${provider.instanceId}`,
+        driver: provider.driver,
+        environmentLabel: presentation.entry.target.label,
+        offline: !isConnected(presentation),
+        email: provider.auth.email,
+        plan: provider.auth.label,
+        reason,
+        message:
+          notice ??
+          (provider.message?.trim() ? provider.message.trim() : missingLimitsNotice(provider)),
+      });
+    }
+  }
+  return unreported;
+}
 
 /**
  * Why a provider that reported no limits shows none: a subscription agent was

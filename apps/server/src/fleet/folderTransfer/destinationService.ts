@@ -23,7 +23,12 @@ import {
 import { validProjectRelativePath } from "../folderCopyScope.ts";
 import { olderThan } from "../../failClosedAge.ts";
 import { isSafeRelativePath } from "./paths.ts";
-import { SourceClient, SourceClientError, StaleScanError } from "./sourceClient.ts";
+import {
+  SourceClient,
+  SourceClientError,
+  StaleScanError,
+  UnavailableSnapshotError,
+} from "./sourceClient.ts";
 import { previewUndo, undoApply, type UndoPreview, type UndoResult } from "./undo.ts";
 import { type ReceivedSecret, removeReceivedSecrets, writeSecretFile } from "./secrets.ts";
 
@@ -80,6 +85,7 @@ export interface CopyProgress {
 }
 
 export interface DestinationRecord {
+  readonly capturedAt?: number;
   readonly copyRoot?: string;
   readonly projectRelativePath?: string;
   readonly version: 1;
@@ -1006,6 +1012,9 @@ export class DestinationCopies {
     await writeJson(this.paths(record.operationId).plan, plan);
     await this.update(record.operationId, {
       state: "previewed",
+      ...(manifest.header.capturedAt !== undefined
+        ? { capturedAt: manifest.header.capturedAt }
+        : {}),
       progress: null,
       warnings: [...manifest.header.warnings, ...plan.warnings].slice(0, 200),
     });
@@ -1367,7 +1376,13 @@ export function toCopyError(cause: unknown, record?: DestinationRecord): CopyErr
       refused: cause.message,
     };
     const code = cause.code === "unsupported_url" ? "refused" : cause.code;
-    return new CopyError(code, messages[cause.code]);
+    return new CopyError(
+      code,
+      messages[cause.code],
+      cause instanceof StaleScanError || cause instanceof UnavailableSnapshotError
+        ? { recovery: "compare_again" }
+        : {},
+    );
   }
   if (cause instanceof ApplyRefusedError) return new CopyError("apply_refused", cause.message);
   return new CopyError("copy_failed", cause instanceof Error ? cause.message : String(cause));

@@ -1,3 +1,4 @@
+import { isMetadataOnlyAssistantMessage } from "../../studio/messagePresentation";
 import { ArtifactCards } from "../chat/ThreadArtifacts";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { requestExecutionLabel } from "../../studio/projectDomain";
@@ -273,6 +274,16 @@ export function CoordinatorConversation({
   );
   const runs = thread?.projection.runs;
   const turnItems = thread?.projection.turnItems;
+  const failedActivityRunIds = useMemo(
+    () =>
+      new Set([
+        ...(runs ?? []).filter((run) => run.status === "failed").map((run) => run.id as string),
+        ...(turnItems ?? [])
+          .filter((item) => item.status === "failed" && item.runId !== null)
+          .map((item) => item.runId as string),
+      ]),
+    [runs, turnItems],
+  );
   const machineLabel = useMachineNickname(project.environmentId, executionEnvironment?.label);
   const hasRoutineRuns = messages.some((message) => message.scheduledTaskId !== undefined);
   const routines = useKnownRoutines(project.environmentId, hasRoutineRuns);
@@ -567,6 +578,9 @@ export function CoordinatorConversation({
                 turn={turns.get(row.message.id)}
                 separatorAbove={row.decision !== null}
                 activity={view.activityByMessageId.get(row.message.id)}
+                failedActivity={
+                  row.message.runId != null && failedActivityRunIds.has(row.message.runId)
+                }
                 isReport={reportIds.has(row.message.id)}
                 timelineDetail={timelineDetail}
                 timestampFormat={timestampFormat}
@@ -700,6 +714,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   turn,
   separatorAbove,
   activity,
+  failedActivity,
   isReport,
   timelineDetail,
   timestampFormat,
@@ -739,6 +754,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   /** The answered question card above this message carries its time line. */
   readonly separatorAbove: boolean;
   readonly activity: RunActivity | undefined;
+  readonly failedActivity: boolean;
   readonly isReport: boolean;
   /** How much of a worker's long message shows folded (Concise folds soonest). */
   readonly timelineDetail: TimelineDetail;
@@ -818,6 +834,18 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
         </div>
       </>
     );
+  if (isMetadataOnlyAssistantMessage(message, announced.length > 0 || attachments.length > 0)) {
+    return message.runId ? (
+      <button
+        type="button"
+        className="sws-turn-summary"
+        data-metadata-only-activity
+        onClick={() => onOpenCoordinatorActivity(message.runId!)}
+      >
+        {failedActivity ? "Turn failed · View activity" : "View activity"}
+      </button>
+    ) : null;
+  }
   const author = projectMessageAuthor(message);
   const runId = message.runId;
   // A worker's message reads as a quiet relayed note, not a bubble, so the
