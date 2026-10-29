@@ -24,6 +24,9 @@ import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 const providerName = (provider: ServerProvider) =>
   provider.displayName ?? providerLabel(cliOfDriver(provider.driver, provider.instanceId));
 
+/** What makes git use gh's sign-in; the same command provisioning runs. */
+const SETUP_GIT_COMMAND = "gh auth setup-git --hostname github.com";
+
 const REPOSITORY_PROBLEM: Record<MachineReadiness["repositories"][number]["status"], string> = {
   ok: "Reachable",
   "no-origin": "No origin; it stays local",
@@ -311,6 +314,29 @@ export function MachineReadinessChecklist({
               </p>
             ) : null}
           </Row>
+        )}
+        {report?.credentialHelper && (
+          <Row
+            ok={
+              report.credentialHelper.status === "unknown"
+                ? null
+                : report.credentialHelper.status === "configured"
+            }
+            title={
+              report.credentialHelper.status === "configured"
+                ? report.credentialHelper.usesGh
+                  ? "Git uses the GitHub CLI's sign-in"
+                  : "Git has its own credential helper for GitHub"
+                : report.credentialHelper.status === "missing"
+                  ? "Git has no credential helper for GitHub"
+                  : "Git credential helper: unknown"
+            }
+            detail={
+              report.credentialHelper.status === "missing"
+                ? `Clones over HTTPS need it. In a terminal on ${environmentLabel}, run ${SETUP_GIT_COMMAND}.`
+                : null
+            }
+          />
         )}
         {report && report.folder && (
           <Row

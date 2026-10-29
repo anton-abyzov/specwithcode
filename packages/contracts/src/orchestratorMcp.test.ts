@@ -10,6 +10,7 @@ import {
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadReadInput,
+  OrchestratorMcpThreadDetail,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadWaitInput,
 } from "./orchestratorMcp.ts";
@@ -274,4 +275,27 @@ describe("orchestrator MCP contracts", () => {
     expect(result.increment?.inheritedFrom).toBe("thread-parent");
     expect(result.warning).toBe("Pass increment next time.");
   });
+});
+
+it("thread detail keeps optional goal evidence backwards-compatible", () => {
+  const decodeGoal = Schema.decodeUnknownSync(OrchestratorMcpThreadDetail.fields.goal);
+  expect(decodeGoal(undefined)).toBeUndefined();
+  const goal = {
+    id: "disk-goal",
+    scope: "Cleanup",
+    scopeRevision: "goal-1",
+    obligations: [
+      {
+        id: "cleanup",
+        kind: "dependency",
+        reason: "Retire worktrees",
+        owner: "HOME-DISK",
+        nextEvent: "Removal receipt",
+        needsUserOutput: false,
+        completion: { status: "pending", reason: "Still open" },
+      },
+    ],
+  };
+  expect(decodeGoal(JSON.parse(JSON.stringify(goal)))).toEqual(goal);
+  expect(() => decodeGoal({ ...goal, obligations: [] })).toThrow();
 });

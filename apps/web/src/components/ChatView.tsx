@@ -793,7 +793,8 @@ import {
   openLinkIncrementDialog,
   useSetThreadIncrementLink,
 } from "./chat/LinkIncrementDialog";
-import { ThreadMetaRow, type ThreadOrigin } from "./chat/ThreadMetaRow";
+import type { ThreadOrigin } from "./chat/ThreadMetaRow";
+import { ProjectedThreadMetaRow } from "./chat/ProjectedThreadMetaRow";
 import { useThreadMachine } from "./chat/threadMachine";
 import { isNestedSubagentThread } from "../studio/threadSubagents";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
@@ -4959,6 +4960,7 @@ function useChatViewState(props: ChatViewProps) {
           : "available",
   );
   const threadPullRequests = activeThreadShell?.pullRequests ?? [];
+
   const manualCompactionProviderAvailable = useMemo(
     () =>
       hasAvailableCompactionProvider({
@@ -5516,6 +5518,7 @@ function useChatViewState(props: ChatViewProps) {
     threadPlanStatus,
     threadPlanView,
     threadPullRequests,
+    serverThreadHistory,
     threadStatus,
     threadSyncPhase,
     timelineAnchorMessageId,
@@ -9937,6 +9940,7 @@ export default function ChatView(props: ChatViewProps) {
     threadPlanStatus,
     threadPlanView,
     threadPullRequests,
+    serverThreadHistory,
     threadSyncPhase,
     timelineAnchorMessageId,
     timelineBannerOverlayHeight,
@@ -15347,12 +15351,19 @@ export default function ChatView(props: ChatViewProps) {
               timelineWorkingFolder !== null ? (
                 <ThreadProgressDock>
                   <ThreadHeaderLine>
-                    <ThreadMetaRow
+                    <ProjectedThreadMetaRow
                       key={`meta:${activeThread.id}`}
                       machine={threadMachine}
                       origin={threadOrigin}
                       folder={timelineWorkingFolder}
-                      run={activeThreadShell?.latestRun ?? null}
+                      run={activeActivityRun ?? activeThreadShell?.latestRun ?? null}
+                      projection={serverProjection}
+                      historyStatus={chatViewState.threadStatus}
+                      hasMoreHistory={serverThreadHistory.hasMoreHistory}
+                      runHealth={timelineRunHealth}
+                      pendingBackgroundTasks={chatViewState.pendingBackgroundTasks}
+                      isWorking={isWorking}
+                      hasActiveThread={activeThread !== null}
                       awaitingPerson={
                         timelineRunHealth?.state === "waiting"
                           ? (timelineRunHealth.awaitingPerson ?? null)

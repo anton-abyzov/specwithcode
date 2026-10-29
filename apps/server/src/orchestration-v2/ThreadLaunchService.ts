@@ -10,6 +10,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2ProviderThreadNativeMetadata,
+  type OrchestrationV2ThreadOrigin,
   type OrchestrationV2ThreadProjection,
   type ProviderDriverKind,
   type ProviderInteractionMode,
@@ -169,6 +170,8 @@ export interface ThreadLaunchInput {
   readonly routing?: TaskRoutingDecision | undefined;
   /** The model the thread stands in for: its launch moved off it because it had no room. */
   readonly launchFallbackFrom?: ModelSelection | null | undefined;
+  /** The outside client or machine that started the thread, shown in its header. */
+  readonly origin?: OrchestrationV2ThreadOrigin | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -1009,6 +1012,7 @@ const make = Effect.gen(function* () {
                 ...(input.launchFallbackFrom == null
                   ? {}
                   : { launchFallbackFrom: input.launchFallbackFrom }),
+                ...(input.origin === undefined ? {} : { origin: input.origin }),
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),

@@ -8,8 +8,8 @@
  * The path is narrow on purpose. The payload names a skill as
  * `owner/repo/name`, an exact `X.Y.Z` version, user or project scope (a
  * project by its id on this machine, never a path) and whether to keep the
- * pin `install @version` sets. This machine runs only a fixed argv, without
- * a shell:
+ * pin `install @version` sets. This machine passes only a fixed argv through
+ * ProcessRunner (which safely launches Windows .cmd shims):
  *
  *   vskill install <owner/repo/name>@<X.Y.Z> -y [--global]
  *
@@ -47,6 +47,8 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Config from "effect/Config";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { resolveCommandPath } from "@specweave-studio/shared/shell";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { expandHomePath } from "../pathExpansion.ts";
@@ -121,20 +123,29 @@ export const fleetSkillInstallArgs = (ask: FleetSkillAsk): ReadonlyArray<string>
 
 /**
  * Where to look for `vskill`, in order: PATH, then the usual user installs
- * (`~/.local/bin`, Homebrew, `/usr/local/bin`), then npm's global bin. The
+ * (`~/.local/bin`, Homebrew, `/usr/local/bin`, or Windows' roaming npm folder), then npm's global bin. The
  * service's PATH can be narrower than a login shell's.
  */
 export function vskillSearchDirs(input: {
   readonly home: string;
   readonly pathEnv: string | undefined;
+  readonly platform?: NodeJS.Platform | undefined;
+  readonly appData?: string | undefined;
   readonly npmGlobalBin?: string | null | undefined;
 }): ReadonlyArray<string> {
-  const fromPath = (input.pathEnv ?? "").split(":").filter((dir) => dir.startsWith("/"));
+  const windows = (input.platform ?? HostProcessPlatform.defaultValue()) === "win32";
+  const fromPath = (input.pathEnv ?? "")
+    .split(windows ? ";" : ":")
+    .map((dir) => (windows ? dir.trim().replace(/^"(.*)"$/, "$1") : dir))
+    .filter((dir) =>
+      windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(dir) : dir.startsWith("/"),
+    );
   const dirs = [
     ...fromPath,
     `${input.home}/.local/bin`,
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
+    ...(windows
+      ? [`${input.appData ?? `${input.home}/AppData/Roaming`}/npm`]
+      : ["/opt/homebrew/bin", "/usr/local/bin"]),
     ...(input.npmGlobalBin ? [input.npmGlobalBin] : []),
   ];
   return [...new Set(dirs)];
@@ -165,7 +176,7 @@ export interface FleetSkillWorkerDeps {
   readonly home: string;
   /** A project's own workspace root here, or null for an unknown project. */
   readonly projectRoot: (projectId: string) => Effect.Effect<string | null>;
-  /** Runs `command args` in `cwd` with no shell. */
+  /** Runs `command args` in `cwd` through the platform-safe process adapter. */
   readonly run: (input: {
     readonly command: string;
     readonly args: ReadonlyArray<string>;
@@ -240,7 +251,7 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
         if (vskill === null)
           return yield* refuse(
             "vskill-missing",
-            "vskill is not installed on this machine (looked on PATH, ~/.local/bin, /opt/homebrew/bin, /usr/local/bin and npm's global bin). Install it with npm i -g vskill there.",
+            "vskill is not installed on this machine (looked on PATH, in the usual user install folders and npm's global bin). Install it with npm i -g vskill there.",
           );
         const userLock = `${deps.home}/.agents`;
         return {
@@ -419,25 +430,26 @@ export const layer = Layer.effect(
     const projects = yield* ProjectStore.ProjectStoreV2;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const platform = yield* HostProcessPlatform;
+    const windows = platform === "win32";
+    const delimiter = windows ? ";" : ":";
     const home = expandHomePath("~");
     const pathEnv = Option.getOrUndefined(yield* Config.String("PATH").pipe(Config.option));
-
-    const executable = (file: string) =>
-      fs.stat(file).pipe(
-        Effect.map((info) => info.type === "File" && (Number(info.mode) & 0o111) !== 0),
-        Effect.orElseSucceed(() => false),
-      );
+    const appData = Option.getOrUndefined(yield* Config.String("APPDATA").pipe(Config.option));
+    const pathExt = Option.getOrUndefined(yield* Config.String("PATHEXT").pipe(Config.option));
+    const searchDirs = vskillSearchDirs({ home, pathEnv, platform, appData });
+    // The shared resolver understands PATHEXT and .cmd launchers on Windows;
+    // executable Unix mode bits and a bare shebang file do not work there.
     const findIn = (dirs: ReadonlyArray<string>, name: string) =>
-      Effect.gen(function* () {
-        for (const dir of dirs) {
-          const candidate = path.join(dir, name);
-          if (yield* executable(candidate)) return candidate;
-        }
-        return null;
-      });
-    /** `npm prefix -g`/bin, asked of the npm found the same way, only when needed. */
+      resolveCommandPath(name, { env: { PATH: dirs.join(delimiter), PATHEXT: pathExt } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(HostProcessPlatform, platform),
+        Effect.orElseSucceed(() => null),
+      );
+    /** npm global executables are directly under its prefix on Windows, in bin elsewhere. */
     const npmGlobalBin = Effect.gen(function* () {
-      const npm = yield* findIn(vskillSearchDirs({ home, pathEnv }), "npm");
+      const npm = yield* findIn(searchDirs, "npm");
       if (npm === null) return null;
       const output = yield* runner
         .run({
@@ -446,16 +458,16 @@ export const layer = Layer.effect(
           timeout: NPM_TIMEOUT,
           maxOutputBytes: 16 * 1024,
           outputMode: "truncate",
-          env: { PATH: [path.dirname(npm), pathEnv ?? ""].join(":") },
+          env: { PATH: [path.dirname(npm), pathEnv ?? ""].join(delimiter) },
         })
         .pipe(Effect.option);
       if (Option.isNone(output) || output.value.timedOut || output.value.code !== 0) return null;
       const prefix = output.value.stdout.trim();
-      return prefix.startsWith("/") ? path.join(prefix, "bin") : null;
+      return path.isAbsolute(prefix) ? (windows ? prefix : path.join(prefix, "bin")) : null;
     });
     // Resolved on each request: vskill can be installed or moved while this runs.
     const resolveVskill = Effect.gen(function* () {
-      const found = yield* findIn(vskillSearchDirs({ home, pathEnv }), "vskill");
+      const found = yield* findIn(searchDirs, "vskill");
       if (found !== null) return found;
       const npmBin = yield* npmGlobalBin;
       return npmBin === null ? null : yield* findIn([npmBin], "vskill");
@@ -484,9 +496,9 @@ export const layer = Layer.effect(
           outputMode: "truncate",
           // vskill is a node script: its own folder first, so its `node` is found.
           env: {
-            PATH: [path.dirname(command), `${home}/.local/bin`, "/opt/homebrew/bin", pathEnv ?? ""]
+            PATH: [path.dirname(command), ...searchDirs]
               .filter((entry) => entry !== "")
-              .join(":"),
+              .join(delimiter),
             NO_COLOR: "1",
           },
         })

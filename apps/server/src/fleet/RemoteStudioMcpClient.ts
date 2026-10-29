@@ -30,14 +30,18 @@ import {
 } from "./WorkerEpochStore.ts";
 
 /**
- * The only tools this server calls on another machine's `/mcp`. Project
- * create/delete/clone, worktree and pull request tools are never reachable
- * through a worker grant from here, whatever the grant itself would allow.
+ * The only tools this server calls on another machine's `/mcp`. Clone and
+ * create are here only for studio_project_add_to_machine, and that machine
+ * still allows them only to a grant covering all of its projects. Project
+ * update/delete, worktree and pull request tools are never reachable through
+ * a worker grant from here, whatever the grant itself would allow.
  */
 export const REMOTE_TOOL_ALLOWLIST = [
   "orchestrator_capabilities",
   "studio_project_list",
   "studio_project_read",
+  "studio_project_clone",
+  "studio_project_create",
   "studio_thread_launch",
   "studio_thread_list",
   "studio_thread_read",

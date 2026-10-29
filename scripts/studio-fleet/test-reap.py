@@ -503,10 +503,12 @@ class UpdateReapMode(unittest.TestCase):
 
     def carried(self):
         """M4, 2026-10-28: the helper restarted the held service (pid 4242) at 20:02 for REQUEST;
-        the new service (5151) holds itself again for it until the old hold's end."""
+        the new service (5151) holds itself again for it, past the old hold's end (`until`) as the
+        agent works, never past the marker's `ceiling`."""
         (self.own / 'updates/database-restart.json').write_text(json.dumps({
             'schemaVersion': 1, 'servicePid': 4242, 'restartedAt': '2026-10-12T20:02:00+00:00',
-            'request': REQUEST, 'installRunId': 'run-1', 'until': '2026-10-12T20:15:00+00:00'}))
+            'request': REQUEST, 'installRunId': 'run-1', 'until': '2026-10-12T20:10:00+00:00',
+            'ceiling': '2026-10-12T20:15:00+00:00'}))
         self.service['runtime'] = {'pid': 5151, 'startedAt': '2026-10-12T20:02:40.000Z'}
         self.hold(pid=5151, startedAt='2026-10-12T20:02:20.000Z', expiresAt='2026-10-12T20:15:00.000Z',
                   request=REQUEST)
@@ -528,6 +530,19 @@ class UpdateReapMode(unittest.TestCase):
         with mock.patch.object(sys.modules['update_service'], 'datetime', clock):
             self.assertEqual(update.gate_settle(self.own, self.home, 5151, 30), ('held', sys.modules['update_service'].HELD_GATE_SETTLE_SECONDS))
 
+    def test_a_carried_hold_under_an_older_helpers_marker_may_end_by_its_until(self):
+        # Helpers before 0957 name no ceiling: the carried hold ends where the old one did.
+        self.carried()
+        path = self.own / 'updates/database-restart.json'
+        path.write_text(json.dumps({key: value for key, value in json.loads(path.read_text()).items()
+                                    if key != 'ceiling'}))
+        with self.assertRaisesRegex(AssertionError, update.HOLD_REFUSAL):
+            self.held()
+        self.hold(pid=5151, startedAt='2026-10-12T20:02:20.000Z', expiresAt='2026-10-12T20:10:00.000Z',
+                  request=REQUEST)
+        self.assertEqual(update.assert_held(self.service, REQUEST, self.now),
+                         datetime.datetime(2026, 10, 12, 20, 2, 20, tzinfo=datetime.timezone.utc))
+
     def test_a_carried_hold_that_does_not_match_the_restart_and_request_is_refused(self):
         def edit(name, **values):
             path = self.own / 'updates' / name
@@ -540,7 +555,8 @@ class UpdateReapMode(unittest.TestCase):
                                                installCancelledAt='2026-10-12T20:03:00Z'),
             'not forced': lambda: self.settings(installMode='normal', installRequestedAt=REQUEST),
             'expired': lambda: edit('hold.json', expiresAt='2026-10-12T20:04:00.000Z'),
-            'ends after the old hold': lambda: edit('hold.json', expiresAt='2026-10-12T20:20:00.000Z'),
+            'ends past the ceiling': lambda: edit('hold.json', expiresAt='2026-10-12T20:20:00.000Z'),
+            'unreadable ceiling': lambda: edit('database-restart.json', ceiling='later'),
             'no restart marker': lambda: (self.own / 'updates/database-restart.json').unlink(),
             'restart without a request': lambda: (self.own / 'updates/database-restart.json').write_text(json.dumps(
                 {'schemaVersion': 1, 'servicePid': 4242, 'restartedAt': '2026-10-12T20:02:00+00:00'})),

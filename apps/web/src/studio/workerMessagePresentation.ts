@@ -371,6 +371,55 @@ function excerptFrom(
   return { start: head.start, end, cut: false };
 }
 
+/** Candidate attention stays visible even while an internal receipt folds.
+ * Presentation only: this never creates a question, blocker or lifecycle state.
+ * Prose questions and explicit user-action failures remain visible.
+ */
+export function relayAttentionText(text: string): string | null {
+  const selected: Span[] = [];
+  const action =
+    /\?|^(?:please\s+)?(?:approve|choose|confirm|sign in|log in|provide|decide|grant|retry|reconnect|unlock)\b|\b(?:please|you (?:must|need to|can))\s+(?:approve|choose|confirm|sign in|log in|provide|decide|grant|retry|reconnect|unlock)\b|(?:blockers?|action required|needs? your|waiting for you):?|\b(?:authentication failed|permission denied|insufficient credits?)\b/i;
+  for (const block of blocksOf(text)) {
+    if (block.kind === "json") continue;
+    const sentences = sentencesOf(text, block);
+    sentences.forEach((sentence, index) => {
+      const prose = text
+        .slice(sentence.start, sentence.end)
+        .replace(/^ {0,3}(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/, "")
+        .replace(/^(?:\*\*|__|\*|_)/, "")
+        .trim();
+      if (
+        /^(?:\*\*|__)?(?:no (?:user )?action (?:required|needed)\b|no need to retry\b|do not retry\b|no blockers?\b|blockers?:\s*(?:\*\*|__)?\s*(?:none|no blockers?)\b)/i.test(
+          prose,
+        )
+      )
+        return;
+      if (!action.test(prose)) return;
+      // Keep the failure that explains a following action, without a routine lead.
+      const previous = sentences[index - 1];
+      if (
+        previous &&
+        (/\b(?:failed|failure|error|denied)\b/i.test(text.slice(previous.start, previous.end)) ||
+          /^\s*\d+[.)]\s*$/.test(text.slice(previous.start, previous.end)))
+      )
+        selected.push(previous);
+      selected.push(sentence);
+    });
+  }
+  if (!selected.length) return null;
+  const merged: Span[] = [];
+  for (const span of selected) {
+    const previous = merged.at(-1);
+    if (
+      previous &&
+      (span.start <= previous.end || /^\s*$/.test(text.slice(previous.end, span.start)))
+    ) {
+      merged[merged.length - 1] = { start: previous.start, end: Math.max(previous.end, span.end) };
+    } else merged.push(span);
+  }
+  return merged.map((span) => text.slice(span.start, span.end)).join("\n\n");
+}
+
 export function workerMessagePresentation(
   original: string,
   text: string = original,

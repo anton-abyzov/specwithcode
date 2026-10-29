@@ -43,7 +43,7 @@ The model picker distinguishes the coding harness from the model and its billing
 
 The app updates itself from this repository's releases. Turn that off in **Settings → About**, or set `SPECWITHCODE_DISABLE_AUTO_UPDATE=true` (the older `STUDIO_DISABLE_AUTO_UPDATE` is still accepted).
 
-More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md), [providers](docs/user/providers-claude.md), [remote access](docs/user/remote-access.md), [your own VPS](docs/user/linux-worker.md), [updating](docs/user/updating.md).
+More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md), [providers](docs/user/providers-claude.md), [remote access](docs/user/remote-access.md), [outside agents over MCP](docs/user/outside-agents.md), [your own VPS](docs/user/linux-worker.md), [updating](docs/user/updating.md).
 
 In **Settings > Providers**, a CLI's update action opens a machine selection plan. Choose only this CLI here, or explicitly include eligible connected machines. The app uses each configured executable's owning installer and reports each outcome; see [provider updates](docs/user/updating.md#provider-clis).
 

@@ -176,3 +176,15 @@ Weave uses Schibsted Grotesk. The font files are not checked in. To add them:
 2. Put the `.ttf` files in `SWCKit/Sources/Weave/Resources/Fonts`, along with the `OFL.txt` licence.
 
 The fonts are registered the first time they are used. No `project.yml` change is needed. Until the files are there, the app uses the system font at the same sizes and weights.
+
+## Recovering an unavailable machine
+
+Open **Connection options** in a loading or unavailable chat, or **Menu > Machines > the machine**. These controls work without a response from the computer.
+
+- **SpecWithCode Connect** is the primary path. Sign in with the same account on the phone and computer, with Connect enabled in the computer’s Settings > Connections. This control stays available during an outage.
+- **Reconnect** retries Connect first when configured. Saved local/Tailscale pairings are fallback routes if Connect fails. Neither route can reach a powered-off computer.
+- **Disconnect** pauses automatic connection attempts on this phone, including after relaunch or an account refresh. Pairing credentials, saved conversations and drafts remain. Use **Reconnect** in the machine details to resume.
+- **Pair again** accepts a fresh link or QR code from that computer’s Settings > Connections > Pair a phone. Do this for an expired/revoked pairing or to add a direct route; an ordinary outage does not invalidate pairing. Connect-only machines can add a direct pairing here too.
+- **Remove machine** is separate: it forgets the direct pairing on this phone. It does not stop the desktop app or revoke access on the server.
+
+Start with Connect, the phone’s internet, the computer’s power state, and whether SpecWithCode is running. Only when using a fallback, check Tailscale on both devices or the same Wi-Fi for a local address. A Connect sign-in problem offers account settings; version incompatibility asks for an update.

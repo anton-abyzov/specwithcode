@@ -549,6 +549,10 @@ it("keeps agent-origin messages as relayed notes that open their sending thread"
   const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
   const relay = conversation.querySelector('[data-relayed-message="thread"]')!;
   expect(relay.querySelector("h3")!.textContent).toBe("Message from Thread worker");
+  expect(relay.getAttribute("data-relayed-message-state")).toBe("folded");
+  const disclosure = relay.querySelector<HTMLButtonElement>('h3 button[aria-expanded="false"]')!;
+  await act(async () => disclosure.click());
+  expect(relay.getAttribute("data-relayed-message-state")).toBe("open");
   expect(conversation.textContent).toContain(text);
   expect(conversation.textContent).not.toContain("Sent by");
   const view = [...relay.querySelectorAll("button")].find((b) => b.textContent === "View thread")!;

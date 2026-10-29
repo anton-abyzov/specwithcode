@@ -486,3 +486,54 @@ export function formatBurnPerHour(perHour: number): string {
   const rounded = perHour >= 10 ? Math.round(perHour) : Math.round(perHour * 10) / 10;
   return `${rounded}%/h`;
 }
+
+/**
+ * An account a machine recorded within the lookback that no machine reports
+ * now: signed out, switched away from in the CLI, or on a machine that is
+ * off. Its last read says what it held and when it resets.
+ */
+export interface RecentLimitAccount {
+  readonly accountKey: string;
+  readonly driver: string;
+  readonly email: string;
+  readonly lastReadAt: number;
+  readonly windows: ReadonlyArray<{
+    readonly kind: string;
+    readonly id: string;
+    readonly usedPercent: number;
+    readonly resetsAt: number | null;
+  }>;
+}
+
+export function recentLimitAccounts(
+  index: LimitHistoryIndex,
+  current: ReadonlySet<string>,
+): readonly RecentLimitAccount[] {
+  const byAccount = new Map<string, RecentLimitAccount>();
+  for (const [key, samples] of index) {
+    const last = samples[samples.length - 1];
+    const split = key.lastIndexOf("|");
+    if (!last || split < 0) continue;
+    const accountKey = key.slice(0, split);
+    const [kind = "", ...rest] = key.slice(split + 1).split(":");
+    const driverEnd = accountKey.indexOf(":");
+    const email = accountKey.slice(driverEnd + 1);
+    // Only email-keyed accounts can be named; a credential fingerprint cannot.
+    if (driverEnd < 0 || current.has(accountKey) || !email.includes("@")) continue;
+    const previous = byAccount.get(accountKey);
+    const window = {
+      kind,
+      id: rest.join(":"),
+      usedPercent: last.usedPercent,
+      resetsAt: last.resetsAt,
+    };
+    byAccount.set(accountKey, {
+      accountKey,
+      driver: accountKey.slice(0, driverEnd),
+      email,
+      lastReadAt: Math.max(previous?.lastReadAt ?? 0, last.at),
+      windows: [...(previous?.windows ?? []), window],
+    });
+  }
+  return [...byAccount.values()].sort((left, right) => right.lastReadAt - left.lastReadAt);
+}

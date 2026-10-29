@@ -21,7 +21,7 @@ export interface CloneUrls {
   /** Null when the remote is not on a host/owner/repo forge (a local path, a bare server). */
   readonly ssh: string | null;
   readonly https: string | null;
-  /** The checkout's own remote URL, used as is when neither form applies. */
+  /** The checkout's own remote URL (a fork's origin), used as is when neither form applies. */
   readonly raw: string;
   /** The form the source checkout itself uses. */
   readonly preferred: CloneProtocol | null;
@@ -31,7 +31,8 @@ const SSH_REMOTE = /^(?:ssh:\/\/)?[^@/\s]+@[^:/\s]+[:/]/u;
 
 /** The URLs the destination can clone the project's repository from. */
 export function cloneUrlsFor(identity: RepositoryIdentity): CloneUrls {
-  const raw = identity.locator.remoteUrl;
+  // A fork's checkout reports its upstream as the locator; the copy clones the fork.
+  const raw = identity.origin?.remoteUrl ?? identity.locator.remoteUrl;
   const key = repositoryGroupingKeyOf(identity).replace(/\.git$/iu, "");
   const [host, ...path] = key.split("/");
   const forge = host && host.includes(".") && path.length >= 2 && path.every(Boolean);

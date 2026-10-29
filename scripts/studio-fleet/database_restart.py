@@ -45,9 +45,11 @@ malformed"; `kickstart -k` there could have dropped commits only that log held.
 A held service keeps its hold across the restart (restart_marker). On M4, 2026-10-28, the
 marker held only the pid and time: the restarted service started unheld, resumed the interrupted
 turn and started three Codex clients, and every reap refused because the new process held
-nothing. The marker now carries the forced request, its installRunId and the old hold's end; the
-restarted service holds itself again for that request until then (ServiceUpdateHold.ts), and
-update_service.assert_held accepts that carried hold.
+nothing. The marker now carries the forced request, its installRunId, the old hold's end
+(`until`) and how far it could have moved with the agent (`ceiling`). The restarted service holds
+itself again for that request: from where the old hold ended, moving with the agent and never
+past `ceiling` (ServiceUpdateHold.ts), or, in a service from 1.0.108 that predates `ceiling`,
+until `until` and no further. update_service.assert_held accepts that carried hold.
 """
 import datetime
 import json
@@ -62,6 +64,7 @@ CODE = 'restart-needed'
 MARKER = 'database-restart.json'  # The last restart: service pid and time, for RESTART_EVERY; a held one's request.
 QUIET_MARKER = 'database-restart-quiet.json'  # idle_agents.observe's record for the quiet window.
 RESTART_EVERY = datetime.timedelta(minutes=30)
+HOLD_MAX = datetime.timedelta(minutes=110)  # ServiceUpdateHold.ts HOLD_MAX_MS: how far a hold moves with the agent.
 # How long a service with a deleted log gets to close its database after SIGTERM. Closing writes
 # the whole log into the database file, so a large log takes a while; it is never killed instead.
 DETACHED_STOP_SECONDS = 180
@@ -102,16 +105,34 @@ def restart_wait(marker, service_pid, now):
 
 def restart_marker(service_pid, now, request, config, hold):
     """The MARKER for a restart of `service_pid` at `now`. For a service held for the forced
-    `request`, it also carries that request, config.json's installRunId and `until`, the hold's
-    expiresAt (never later): the restarted service holds itself again for that request until
-    then (ServiceUpdateHold.ts, carried hold), and update_service.assert_held accepts that hold.
-    A hold whose end cannot be read carries nothing."""
+    `request`, it also carries that request, config.json's installRunId, `until`, the hold's
+    expiresAt, and `ceiling`, as far as the hold could have moved with the agent: HOLD_MAX from
+    its start, or from the request for a hold that began after it (one carried across an earlier
+    restart, which counts from the request), never past the `ceiling` such a hold names nor past
+    the end of one that names none (a service from 1.0.108 that predates `ceiling` carried it,
+    and it never moves), and never short of `until`. The restarted service holds itself again
+    for that request from where the old hold ended and moves that hold with the agent, never
+    past `ceiling` (ServiceUpdateHold.ts, carried hold); services from 1.0.108 that predate
+    `ceiling` read only `until` and hold to it, as they did before. update_service.assert_held
+    accepts that hold. A hold that ended, or whose start, end, request or `ceiling` cannot be
+    read, carries nothing."""
     marker = {'schemaVersion': 1, 'servicePid': service_pid, 'restartedAt': now.isoformat()}
-    until = idle_agents.utc((hold or {}).get('expiresAt'))
-    if request and until is not None and now < until:
-        run_id = config.get('installRunId')
-        marker.update(request=request, installRunId=run_id if isinstance(run_id, str) else None,
-                      until=until.isoformat())
+    hold = hold or {}
+    started, ends = (idle_agents.utc(hold.get(key)) for key in ('startedAt', 'expiresAt'))
+    requested = idle_agents.utc(request)
+    if not request or None in (started, ends, requested) or now >= ends:
+        return marker
+    ceiling = min(started, requested) + HOLD_MAX
+    if 'ceiling' in hold:
+        named = idle_agents.utc(hold['ceiling'])
+        if named is None:
+            return marker
+        ceiling = min(ceiling, named)
+    elif requested < started:
+        ceiling = min(ceiling, ends)
+    run_id = config.get('installRunId')
+    marker.update(request=request, installRunId=run_id if isinstance(run_id, str) else None,
+                  until=ends.isoformat(), ceiling=max(ceiling, ends).isoformat())
     return marker
 
 

@@ -48,6 +48,19 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("sends who asked here as the originHint, only when there is one", () => {
+    const { remote, layer } = setup({ studio_thread_launch: () => ({ result: launchAnswer }) });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput({ originHint: { clientLabel: "Grok" } }));
+      yield* workers.launch(launchInput({ commandId: "command-2" }));
+      const sent = remote.toolCalls.filter((call) => call.name === "studio_thread_launch");
+      expect(sent[0]?.args.originHint).toEqual({ clientLabel: "Grok" });
+      expect(sent[1]?.args).not.toHaveProperty("originHint");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live(
     "launches canonical workers only into fresh verified admitted bindings, including transferred source projects",
     () => {
@@ -272,8 +285,13 @@ describe("RemoteWorkers", () => {
         access: "auto",
         project: { match: "identity", projectId: "remote-project", title: "App" },
         providers: [{ providerInstanceId: "codex", driverKind: "codex", models: ["gpt-5.5"] }],
+        reachable: true,
       });
       expect(after.machines[0]?.project).not.toHaveProperty("reason");
+      // Without a probe a row is the grant alone, and says nothing of reachability.
+      const unprobed = yield* workers.listMachines({ projectId: undefined, probe: false });
+      expect(unprobed.machines[0]).not.toHaveProperty("reachable");
+      expect(unprobed.machines[0]).not.toHaveProperty("providers");
     }).pipe(Effect.provide(layer));
   });
 
@@ -804,6 +822,77 @@ describe("RemoteWorkers", () => {
       const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
       expect(row?.remoteThreadId).toBe("b-thread-1");
       expect(world.wakes).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("starts an outside client's scratch worker there without waking anyone", () => {
+    const { world, remote, layer } = setup();
+    const client = { kind: "client" as const, sessionId: "session-1", label: "Grok" };
+    return Effect.gen(function* () {
+      yield* allow("auto");
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const { callerThreadId: _thread, ...base } = launchInput();
+      const result = yield* workers.launch({
+        ...base,
+        launchedBy: client,
+        localProject: undefined,
+        inheritedModelSelection: undefined,
+        reportBack: true,
+      });
+      expect(result).toMatchObject({
+        threadId: "b-thread-1",
+        projectId: "remote-project",
+        reportsBack: false,
+        runtimeMode: "auto",
+      });
+      const launch = remote.toolCalls.find((call) => call.name === "studio_thread_launch");
+      // No project to map: that machine makes its own scratch folder.
+      expect(launch?.args).toMatchObject({ scratch: true, runtimeMode: "auto" });
+      expect(launch?.args).not.toHaveProperty("projectId");
+      expect(remote.toolCalls.some((call) => call.name === "studio_project_read")).toBe(false);
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(row).toMatchObject({
+        callerThreadId: "",
+        launchedBy: client,
+        projectId: "",
+        remoteProjectId: "remote-project",
+        reportBack: false,
+      });
+      yield* Effect.sleep("50 millis");
+      expect(world.wakes).toEqual([]);
+      // Its rows are the client's alone: no thread here launched that worker.
+      const key = { machineId: "m1", remoteThreadId: "b-thread-1" };
+      expect(yield* workers.launchedBy({ ...key, launchedBy: client })).toBe(true);
+      expect(
+        yield* workers.launchedBy({ ...key, callerThreadId: ThreadId.make("coordinator") }),
+      ).toBe(false);
+      expect(yield* workers.launchedBy({ ...key, callerThreadId: "" as ThreadId })).toBe(false);
+      expect(yield* workers.workersForProject(ProjectId.make("local-project"))).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reads a row stored before clients could launch as its thread's", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      const store = yield* RemoteWorkerStore.RemoteWorkerStore;
+      // An older server wrote no launchedBy.
+      yield* store.modify("rwt:command-1", (row) => {
+        if (row === undefined) return undefined;
+        const { launchedBy: _launchedBy, ...older } = row;
+        return older;
+      });
+      const [row] = yield* eventually(rows, (current) => current[0]?.remoteThreadId !== null);
+      expect(row).not.toHaveProperty("launchedBy");
+      expect(
+        yield* workers.launchedBy({
+          launchedBy: { kind: "thread", threadId: "coordinator" },
+          machineId: "m1",
+          remoteThreadId: "b-thread-1",
+        }),
+      ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

@@ -54,6 +54,8 @@ struct MachineDetailView: View {
   @Environment(AppModel.self) private var model
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
+  @Environment(AppRouter.self) private var router
+  @State private var changingConnection = false
   @State private var confirmRemove = false
   @State private var deviceViewer: DeviceViewerRoute?
 
@@ -95,6 +97,7 @@ struct MachineDetailView: View {
   private func details(_ machine: MachineSummary) -> some View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
       hero(machine)
+      connectionActions(machine)
       notice(machine)
       GroupedCard(label: "Details", separatorInset: WeaveSpacing.s4) {
         WeaveRow("Status", stacksTrailing: true) {
@@ -115,19 +118,13 @@ struct MachineDetailView: View {
           WeaveRow("Server version", trailingText: version)
         }
         if machine.viaConnect {
-          WeaveRow("Connection", trailingText: "Your account")
+          WeaveRow("Preferred connection", trailingText: "SpecWithCode Connect")
         }
         if machine.hasDirectPairing {
           WeaveRow("Pairing expires", trailingText: Self.expiry(machine.tokenDaysLeft).capitalizedFirst)
         }
       }
       devices(machine)
-      GroupedCard(separatorInset: 56) {
-        WeaveRow("Reconnect", symbol: "arrow.clockwise") { model.engine.reconnect(machineId: machine.id) }
-        if machine.hasDirectPairing || !machine.viaConnect {
-          WeaveRow("Pair again", symbol: "qrcode", showsChevron: true) { nav.push(.repair(machine.id)) }
-        }
-      }
       if !machine.viaConnect {
         GroupedCard(separatorInset: 56) {
           WeaveRow("Remove machine", symbol: "trash", isDestructive: true) { confirmRemove = true }
@@ -136,6 +133,36 @@ struct MachineDetailView: View {
     }
     .padding(.horizontal, WeaveSpacing.gutter)
     .padding(.bottom, WeaveSpacing.s8)
+  }
+
+  private func connectionActions(_ machine: MachineSummary) -> some View {
+    GroupedCard(separatorInset: 56) {
+      if model.connect != nil {
+        WeaveRow("SpecWithCode Connect", subtitle: "Primary connection · sign in or manage your computers", symbol: "person.crop.circle", showsChevron: true) { router.sheet = .globalSettings }
+          .accessibilityIdentifier("machine.connect")
+      }
+      if machine.isDisconnected {
+        WeaveRow("Reconnect", symbol: "arrow.clockwise") { setEnabled(true, machine.id) }
+          .disabled(changingConnection)
+      } else {
+        WeaveRow("Reconnect", symbol: "arrow.clockwise") { model.engine.reconnect(machineId: machine.id) }
+        WeaveRow("Disconnect", subtitle: "Pause on this phone. Keep pairing and drafts.", symbol: "pause.circle") { setEnabled(false, machine.id) }
+          .disabled(changingConnection)
+          .accessibilityIdentifier("machine.disconnect")
+      }
+      WeaveRow(machine.hasDirectPairing ? "Pair again" : "Pair with a link or QR code", subtitle: "Fallback over local Wi-Fi or Tailscale", symbol: "qrcode", showsChevron: true) { nav.push(.repair(machine.id)) }
+        .accessibilityIdentifier("machine.pair-again")
+      WeaveRow("Choose another machine", symbol: "laptopcomputer", showsChevron: true) { nav.push(.machines) }
+    }
+  }
+
+  private func setEnabled(_ enabled: Bool, _ id: String) {
+    changingConnection = true
+    Task {
+      defer { changingConnection = false }
+      do { try await model.engine.setConnectionEnabled(enabled, machineId: id) }
+      catch { router.showError(error) }
+    }
   }
 
   /// Simulators and emulators threads opened on this machine.
@@ -193,7 +220,9 @@ struct MachineDetailView: View {
   }
 
   @ViewBuilder private func notice(_ machine: MachineSummary) -> some View {
-    if machine.needsSignIn {
+    if machine.isDisconnected || !machine.status.isOnline {
+      Banner(machine.recoveryMessage, title: machine.recoveryTitle, kind: .info)
+    } else if machine.needsSignIn {
       Banner("You signed out, so this phone can't reach \(machine.displayName). Sign in again in Settings.", title: "Sign in again", kind: .fail)
     } else if machine.status == .needsRepair, !machine.hasDirectPairing, machine.viaConnect {
       Banner("SpecWithCode Connect couldn't open a connection to \(machine.displayName). Make sure Connect is on in its Settings > Connections.", title: "Can't reach \(machine.displayName)", kind: .fail)

@@ -19,12 +19,14 @@ const item = (turnId, text, status = "inProgress", revision = 1) => ({
   revision,
 });
 const reply = (turnId) => {
+  const replyText = process.env.MUSE_TEST_REPLY_TEXT ?? "Hello Muse";
+  const splitAt = Math.ceil(replyText.length / 2);
   notify("item/started", { item: item(turnId, "") });
   setTimeout(() => {
-    notify("item/delta", { itemId: "reply-" + turnId, delta: "Hello " });
+    notify("item/delta", { itemId: "reply-" + turnId, delta: replyText.slice(0, splitAt) });
     setTimeout(() => {
-      notify("item/delta", { itemId: "reply-" + turnId, delta: "Muse" });
-      notify("item/completed", { item: item(turnId, "Hello Muse", "completed", 2) });
+      notify("item/delta", { itemId: "reply-" + turnId, delta: replyText.slice(splitAt) });
+      notify("item/completed", { item: item(turnId, replyText, "completed", 2) });
       finish(turnId);
     }, 20);
   }, 20);
@@ -120,7 +122,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         },
         sessionDurability: process.env.MUSE_TEST_RESUME ? "durable" : "ephemeral",
         experimentalApi: false,
-        grantedCapabilities: [],
+        grantedCapabilities:
+          process.env.MUSE_TEST_GRANT_SESSION_MCP &&
+          (p.capabilities?.requestedCapabilities ?? []).includes("sessionMcp")
+            ? ["sessionMcp"]
+            : [],
         museHome: process.cwd(),
         platformFamily: "unix",
         platformOs: "macos",

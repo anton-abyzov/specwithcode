@@ -43,6 +43,13 @@ export const MachineReadinessTool = Schema.Struct({
 });
 export type MachineReadinessTool = typeof MachineReadinessTool.Type;
 
+/** Whether git here hands GitHub credentials to gh (gh auth setup-git); never the helper's text. */
+export const MachineReadinessCredentialHelper = Schema.Struct({
+  status: Schema.Literals(["configured", "missing", "unknown"]),
+  usesGh: Schema.Boolean,
+});
+export type MachineReadinessCredentialHelper = typeof MachineReadinessCredentialHelper.Type;
+
 export const MachineReadiness = Schema.Struct({
   checkedAt: bounded(64),
   folder: Schema.NullOr(bounded(4096)),
@@ -51,5 +58,7 @@ export const MachineReadiness = Schema.Struct({
   /** More repositories were found than were checked. */
   repositoriesTruncated: Schema.Boolean,
   tools: Schema.Array(MachineReadinessTool),
+  /** Optional so reports from machines before it still decode. */
+  credentialHelper: Schema.optional(MachineReadinessCredentialHelper),
 });
 export type MachineReadiness = typeof MachineReadiness.Type;

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
+import { LifecycleReceipt as LifecycleReceiptSchema } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import {
+  lifecycleGoalUpdateError,
+  pendingLifecycleGoalObligations,
   currentLifecycleRequest,
   evaluateLifecycleEvidence,
   lifecycleDeliveryStatus,
@@ -281,4 +285,142 @@ describe("thread view delivery status", () => {
       lines: ["Deployment: Release held"],
     });
   });
+});
+
+describe("goal obligations independent of the latest assignment", () => {
+  const goal = {
+    id: "disk",
+    scope: "Cleanup and activate",
+    scopeRevision: "disk-v1",
+    obligations: [
+      {
+        id: "cleanup",
+        kind: "dependency" as const,
+        reason: "Remove eligible worktrees",
+        owner: "HOME-DISK",
+        nextEvent: "Removal receipt",
+        needsUserOutput: false,
+        completion: { status: "pending" as const, reason: "Still required" },
+      },
+    ],
+  };
+  it("keeps pending goal owner/reason visible after a new run supersedes the receipt", () => {
+    const restored = JSON.parse(JSON.stringify({ ...ready, goal }));
+    for (const bound of [null, { ...request, runId: "new-run" }]) {
+      const status = lifecycleDeliveryStatus(restored, bound, now);
+      expect(status?.title).toBe("Goal still open");
+      expect(status?.lines.join(" ")).toContain("HOME-DISK");
+    }
+    expect(decide({ ...ready, goal })).toBe("outstanding_obligations");
+  });
+  it("requires goal-revision evidence, not N/A or a future/malformed reference", () => {
+    for (const completion of [
+      { status: "not_applicable" as const, rationale: "Source milestone complete" },
+      { ...evidence, scopeRevision: "source-only" },
+      { ...evidence, scopeRevision: goal.scopeRevision, observedAt: "invalid" },
+      { ...evidence, scopeRevision: goal.scopeRevision, observedAt: "2026-10-26T01:00:00Z" },
+      { ...evidence, scopeRevision: goal.scopeRevision, reference: " " },
+    ])
+      expect(
+        pendingLifecycleGoalObligations(
+          { ...goal, obligations: [{ ...goal.obligations[0]!, completion }] },
+          now,
+        ),
+      ).toHaveLength(1);
+    expect(
+      pendingLifecycleGoalObligations(
+        {
+          ...goal,
+          obligations: [
+            {
+              ...goal.obligations[0]!,
+              completion: { ...evidence, scopeRevision: goal.scopeRevision },
+            },
+          ],
+        },
+        now,
+      ),
+    ).toEqual([]);
+  });
+  it("inherits omitted goals and permits explicit valid requirement updates", () => {
+    expect(lifecycleGoalUpdateError(goal, undefined, now)).toBeNull();
+    expect(lifecycleGoalUpdateError(goal, { ...goal, obligations: [] }, now)).not.toBeNull();
+    expect(lifecycleGoalUpdateError(goal, { ...goal, scope: "Source only" }, now)).not.toBeNull();
+    expect(
+      lifecycleGoalUpdateError(
+        goal,
+        {
+          ...goal,
+          obligations: [
+            {
+              ...goal.obligations[0]!,
+              completion: { ...evidence, scopeRevision: goal.scopeRevision },
+            },
+          ],
+        },
+        now,
+      ),
+    ).toBeNull();
+    expect(pendingLifecycleGoalObligations(undefined, now)).toEqual([]);
+  });
+});
+
+it("decodes legacy receipts without inventing goal evidence and round-trips optional goals", () => {
+  const decode = Schema.decodeUnknownSync(LifecycleReceiptSchema);
+  expect(decode(ready)).toEqual(ready);
+  expect(decode(ready).goal).toBeUndefined();
+  const goal = {
+    id: "disk",
+    scope: "Cleanup",
+    scopeRevision: "goal-1",
+    obligations: [
+      {
+        id: "cleanup",
+        kind: "dependency",
+        reason: "Retire worktrees",
+        owner: "HOME-DISK",
+        nextEvent: "Removal receipt",
+        needsUserOutput: false,
+        completion: { status: "pending", reason: "Not removed" },
+      },
+    ],
+  };
+  expect(decode(JSON.parse(JSON.stringify({ ...ready, goal }))).goal).toEqual(goal);
+  expect(() => decode({ ...ready, goal: { ...goal, obligations: [] } })).toThrow();
+  expect(() =>
+    decode({
+      ...ready,
+      goal: {
+        ...goal,
+        obligations: [{ ...goal.obligations[0], completion: { status: "verified" } }],
+      },
+    }),
+  ).toThrow();
+});
+
+it("future goal evidence cannot mature with time without a new valid report", () => {
+  const goal = {
+    id: "disk",
+    scope: "Cleanup",
+    scopeRevision: "goal-1",
+    obligations: [
+      {
+        id: "cleanup",
+        kind: "dependency" as const,
+        reason: "Retire worktrees",
+        owner: "HOME-DISK",
+        nextEvent: "Removal receipt",
+        needsUserOutput: false,
+        completion: { ...evidence, scopeRevision: "goal-1", observedAt: "2026-10-25T03:00:00Z" },
+      },
+    ],
+  };
+  expect(lifecycleGoalUpdateError(undefined, goal, now)).not.toBeNull();
+  const future = Date.parse("2026-10-25T04:00:00Z");
+  expect(evaluateLifecycleEvidence(request, { ...ready, goal }, future)).toBe(
+    "outstanding_obligations",
+  );
+  expect(lifecycleDeliveryStatus({ ...ready, goal }, request, future)?.title).toBe(
+    "Goal still open",
+  );
 });

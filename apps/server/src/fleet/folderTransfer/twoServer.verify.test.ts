@@ -500,12 +500,15 @@ describe("folder copy between two isolated sides", () => {
   }, 120_000);
 });
 
-it("copies a changing source into an empty folder from the reviewed scan", async () => {
+it("copies a changing legacy source into an empty folder from the reviewed scan", async () => {
   const operation = await offer();
   const folder = NodePath.join(base, "live-source-target");
   const copies = new DestinationCopies(NodePath.join(base, "live-source-state"), fast);
   await copies.start(startInput(operation.operationId, operation.token, folder));
   await settle(copies, operation.operationId, ["previewed", "failed"]);
+  const loaded = await transfers.authorize(operation.operationId, operation.token);
+  const { capturedSource: _captured, ...legacy } = loaded.record;
+  loaded.record = legacy;
   const added = NodePath.join(fixture.root, "new-after-preview.txt");
   write(added, "later source work");
   try {
@@ -522,7 +525,7 @@ it("copies a changing source into an empty folder from the reviewed scan", async
   }
 });
 
-it("refuses changed source or destination before transfer when the target has work", async () => {
+it("refuses changed legacy source or destination before transfer when the target has work", async () => {
   const operation = await offer();
   const folder = NodePath.join(base, "freshness-target");
   write(NodePath.join(folder, "README.md"), "destination first conflict");
@@ -540,6 +543,9 @@ it("refuses changed source or destination before transfer when the target has wo
   });
   await settle(copies, operation.operationId, ["previewed", "failed"]);
   const before = await copies.read(operation.operationId);
+  const loaded = await transfers.authorize(operation.operationId, operation.token);
+  const { capturedSource: _captured, ...legacy } = loaded.record;
+  loaded.record = legacy;
   const added = NodePath.join(fixture.root, "new-after-preview.txt");
   write(added, "later source work");
   await expect(copies.approve(operation.operationId)).rejects.toThrow(/source changed/);

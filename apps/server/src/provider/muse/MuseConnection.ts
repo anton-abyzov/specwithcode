@@ -1,3 +1,4 @@
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { spawnMspConnection, MuseClient, readSessionDurability } from "@muse-code/sdk";
 import type { MuseSettings } from "@specweave-studio/contracts";
@@ -15,7 +16,11 @@ export async function connectMuse(settings: MuseSettings, env: NodeJS.ProcessEnv
     const host = await Promise.race([
       handshake.initialize({
         clientInfo: { name: "specwithcode", version: "1.0.0" },
-        capabilities: { userInputDialogs: false },
+        // sessionMcp: this client may attach native MCP servers to a
+        // session at start/resume. Hosts that cannot grant it simply do
+        // not echo it in grantedCapabilities, and sessions fall back to
+        // the terminal environment, as before.
+        capabilities: { userInputDialogs: false, requestedCapabilities: ["sessionMcp"] },
       }),
       Effect.runPromise(Effect.sleep(10_000), { signal: timeout.signal }).then(() => {
         throw new Error("Muse Code handshake timed out");
@@ -57,6 +62,13 @@ export function museProtocolSupported(host: {
   return Number(host.initializeResult.schema?.version) === MUSE_ENVELOPE_SCHEMA_VERSION;
 }
 
+/** Whether this host granted native per-session MCP servers at handshake. */
+export function museSessionMcpGranted(host: {
+  readonly initializeResult: { readonly grantedCapabilities?: ReadonlyArray<unknown> };
+}): boolean {
+  return host.initializeResult.grantedCapabilities?.includes("sessionMcp") === true;
+}
+
 /** Discovery/control RPCs must not leave Refresh Providers or model selection hanging. */
 export async function museControl<T>(
   operation: Promise<T>,
@@ -76,6 +88,12 @@ export async function museControl<T>(
     timeout.abort();
   }
 }
+
+/** A failed Muse availability probe, carrying the person-facing check message. */
+export class MuseCheckError extends Data.TaggedError("MuseCheckError")<{
+  readonly detail: string;
+  readonly cause?: unknown;
+}> {}
 
 /** A missing binary keeps the install hint; a protocol or timeout failure must not read as one. */
 export function museCheckFailure(cause: unknown): string {

@@ -1,3 +1,4 @@
+import { orchestratorFeatures } from "./orchestratorFeatures.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
 import { isPaidModel } from "@specweave-studio/shared/modelBilling";
 import {
@@ -139,6 +140,7 @@ import {
   refuseRevoked,
   workGrantOf,
 } from "./workGrantAccess.ts";
+import { launchOriginOf } from "./threadOrigin.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -843,6 +845,9 @@ function threadDetail(
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
   return {
+    ...(projection.thread.lifecycleReceipt?.goal === undefined
+      ? {}
+      : { goal: projection.thread.lifecycleReceipt.goal }),
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
@@ -2568,18 +2573,7 @@ const make = Effect.gen(function* () {
               usage: providerUsageSummary(provider, nowMs),
             };
           }),
-          features: {
-            appOwnedSubagents: true,
-            asyncPolling: true,
-            cancellation: true,
-            batchThreadCreation: true,
-            threadManagement: true,
-            incrementalThreadRead: true,
-            scheduledTasks: true,
-            maxBatchThreads: 20,
-            maxLiveChildTasks: DEFAULT_DELEGATION_LIMITS.maxLiveChildTasks,
-            maxDelegationDepth: DEFAULT_DELEGATION_LIMITS.maxDepth,
-          },
+          features: orchestratorFeatures(DEFAULT_DELEGATION_LIMITS),
         };
       }),
     delegateTask: (callerScope, input, options) =>
@@ -3037,6 +3031,8 @@ const make = Effect.gen(function* () {
               // it starts, would be this machine's own work and revoking the
               // grant would never interrupt it.
               yield* recordLaunchOrigin(work, threadId);
+              // Only another machine's work stamps it: the parent is this machine's thread.
+              const origin = launchOriginOf({ scope, caller: parent.thread }, work);
               yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -3054,6 +3050,7 @@ const make = Effect.gen(function* () {
                   modelSelection: target.modelSelection,
                   ...(routing === null ? {} : { routing }),
                   ...(launchFallbackFrom === null ? {} : { launchFallbackFrom }),
+                  ...(origin === undefined ? {} : { origin }),
                   runtimeMode,
                   interactionMode,
                   branch: parent.thread.branch,
@@ -3197,6 +3194,7 @@ const make = Effect.gen(function* () {
           parent !== undefined &&
           scope.thread !== undefined &&
           task !== undefined &&
+          input.acknowledgeResult !== false &&
           (input.textOffset ?? 0) === 0
         ) {
           const transfer = parent.contextTransfers.findLast(

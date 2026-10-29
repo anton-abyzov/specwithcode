@@ -985,6 +985,7 @@ export async function hashSelected(
 }
 
 export interface ManifestHeader {
+  readonly capturedAt?: number;
   readonly copyRoot?: string;
   readonly projectRelativePath?: string;
   readonly version: 1;

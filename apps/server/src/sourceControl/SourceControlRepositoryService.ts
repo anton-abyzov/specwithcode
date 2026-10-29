@@ -7,6 +7,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import {
+  GitCommandError,
   SourceControlProviderError,
   SourceControlRepositoryError,
   type SourceControlCloneRepositoryInput,
@@ -35,8 +36,10 @@ import { originUrlFromConfig } from "../project/projectFingerprint.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { cloneUrlForProtocol, cloneUrlProtocol } from "@specweave-studio/shared/cloneUrl";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
+const isGitCommandError = Schema.is(GitCommandError);
 const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
 export class SourceControlRepositoryService extends Context.Service<
@@ -59,7 +62,8 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
     /**
      * `git ls-remote` against a URL with this machine's own credentials, never
-     * prompting. Answers whether a clone here would get past sign-in.
+     * prompting. Answers whether a clone here would get past sign-in; an SSH
+     * URL whose key is refused is asked again in its HTTPS form, as a clone is.
      */
     readonly checkRemoteAccess: (
       input: SourceControlRemoteAccessInput,
@@ -221,6 +225,27 @@ export function remoteAccessDetail(stderr: string): string | null {
   return text.length > 0 ? text : null;
 }
 
+/**
+ * Adding a project clones over SSH for most hosts, and a machine with no SSH
+ * key there would fail every time, while the host's HTTPS credential helper
+ * may be set up. A clone whose SSH login was refused is retried once over
+ * HTTPS, unless the caller asked for SSH. A looked-up repository has the
+ * provider's own HTTPS URL; any other URL is rewritten, which is refused
+ * where it would have to guess (a custom port).
+ */
+function httpsFallbackUrl(
+  input: SourceControlCloneRepositoryInput,
+  prepared: SourceControlPreparedClone,
+): string | null {
+  if (input.protocol === "ssh" || cloneUrlProtocol(prepared.cloneUrl) !== "ssh") return null;
+  if (prepared.repository?.sshUrl === prepared.cloneUrl) return prepared.repository.url;
+  return cloneUrlForProtocol(prepared.cloneUrl, "https");
+}
+
+const isSshRejection = (error: SourceControlRepositoryError) =>
+  isGitCommandError(error.cause) &&
+  (error.cause.reason === "authentication_failed" || error.cause.reason === "host_key_unverified");
+
 function selectRemoteUrl(
   urls: SourceControlRepositoryCloneUrls,
   protocol: SourceControlCloneProtocol | undefined,
@@ -362,11 +387,12 @@ export const make = Effect.gen(function* () {
     } satisfies SourceControlPreparedClone;
   });
 
-  const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
+  const runClone = Effect.fn("SourceControlRepositoryService.runClone")(function* (
     input: SourceControlCloneRepositoryInput,
+    destinationPath: string,
+    cloneUrl: string,
     options?: SourceControlCloneOptions,
   ) {
-    const prepared = yield* prepareClone(input);
     const onProgress = options?.onProgress;
     // Git interleaves progress redraws with its real messages on stderr. The
     // last non-progress lines are what explain a failure ("Repository not
@@ -386,14 +412,8 @@ export const make = Effect.gen(function* () {
     yield* git
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
-        cwd: path.dirname(prepared.destinationPath),
-        args: [
-          "clone",
-          "--progress",
-          "--",
-          prepared.cloneUrl,
-          path.basename(prepared.destinationPath),
-        ],
+        cwd: path.dirname(destinationPath),
+        args: ["clone", "--progress", "--", cloneUrl, path.basename(destinationPath)],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Progress redraws add up on a slow multi-GB clone. The buffered copy
         // is never read (the tail is kept by hand above), so keep it small
@@ -418,24 +438,50 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+  });
+
+  const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
+    input: SourceControlCloneRepositoryInput,
+    options?: SourceControlCloneOptions,
+  ) {
+    const prepared = yield* prepareClone(input);
+    const httpsUrl = httpsFallbackUrl(input, prepared);
+    const remoteUrl = yield* runClone(
+      input,
+      prepared.destinationPath,
+      prepared.cloneUrl,
+      options,
+    ).pipe(
+      Effect.as(prepared.remoteUrl),
+      Effect.catch((sshError) =>
+        httpsUrl === null || !isSshRejection(sshError)
+          ? Effect.fail(sshError)
+          : runClone(input, prepared.destinationPath, httpsUrl, options).pipe(
+              // The clone's own remote is the HTTPS URL now; report that one.
+              Effect.as(redactRemoteUrl(httpsUrl)),
+              Effect.mapError(
+                (httpsError) =>
+                  new SourceControlRepositoryError({
+                    operation: "cloneRepository",
+                    provider: sshError.provider,
+                    detail: `${sshError.detail} Cloning over HTTPS instead also failed: ${httpsError.detail}`,
+                    cause: httpsError.cause,
+                  }),
+              ),
+            ),
+      ),
+    );
 
     return {
       cwd: prepared.destinationPath,
-      remoteUrl: prepared.remoteUrl,
+      remoteUrl,
       repository: prepared.repository,
     };
   });
 
-  const checkRemoteAccess = Effect.fn("SourceControlRepositoryService.checkRemoteAccess")(
-    function* (input: SourceControlRemoteAccessInput) {
-      const remoteUrl = input.remoteUrl.trim();
-      if (isUnsafeRemoteUrl(remoteUrl)) {
-        return yield* new SourceControlRepositoryError({
-          operation: "checkRemoteAccess",
-          provider: "unknown",
-          detail: "That clone URL is not allowed.",
-        });
-      }
+  /** One `git ls-remote` against `remoteUrl`, never prompting. */
+  const probeRemoteAccess = Effect.fn("SourceControlRepositoryService.probeRemoteAccess")(
+    function* (remoteUrl: string) {
       const sshCommand = globalThis.process.env.GIT_SSH_COMMAND
         ? {}
         : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" };
@@ -467,6 +513,28 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
+    },
+  );
+
+  const checkRemoteAccess = Effect.fn("SourceControlRepositoryService.checkRemoteAccess")(
+    function* (input: SourceControlRemoteAccessInput) {
+      const remoteUrl = input.remoteUrl.trim();
+      if (isUnsafeRemoteUrl(remoteUrl)) {
+        return yield* new SourceControlRepositoryError({
+          operation: "checkRemoteAccess",
+          provider: "unknown",
+          detail: "That clone URL is not allowed.",
+        });
+      }
+      const first = yield* probeRemoteAccess(remoteUrl);
+      if (first.status !== "no-access" || cloneUrlProtocol(remoteUrl) !== "ssh") return first;
+      // A clone retries over HTTPS when the SSH key is refused (cloneRepository),
+      // so the precheck asks the same question: does either form answer? A
+      // timeout is not retried; the network, not the key, is what failed.
+      const httpsUrl = cloneUrlForProtocol(remoteUrl, "https");
+      if (httpsUrl === null) return first;
+      const https = yield* probeRemoteAccess(httpsUrl);
+      return https.status === "ok" ? https : first;
     },
   );
 

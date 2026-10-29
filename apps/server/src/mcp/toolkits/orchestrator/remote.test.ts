@@ -73,6 +73,12 @@ const setup = (
     readonly callerMode?: string;
     /** An outside MCP client approved here (read-only), not a Studio thread. */
     readonly outside?: boolean;
+    /** The outside client's approved access, read-only unless given. */
+    readonly outsideAccess?: "read-only" | "approval-required" | "auto" | "full-access";
+    /** The outside client is another machine's own credential (a worker grant here). */
+    readonly machineCredential?: boolean;
+    /** The outside client signs in as another machine, with grants off: by principal or label. */
+    readonly otherMachine?: "principal" | "label";
     /** Resolve thread links the way a server without a fleet does. */
     readonly realResolve?: boolean;
     /** The caller runs in this machine's personal assistant. */
@@ -181,7 +187,8 @@ const setup = (
       }),
     launchedBy: (input) =>
       Effect.succeed(
-        input.callerThreadId === callerId &&
+        input.launchedBy?.kind === "thread" &&
+          input.launchedBy.threadId === callerId &&
           input.machineId === M1.id &&
           (options.launched ?? []).includes(input.remoteThreadId),
       ),
@@ -195,7 +202,11 @@ const setup = (
   const grantPath = options.grantPath?.map((entry) => EnvironmentId.make(entry));
   const grants: WorkGrants.WorkGrantsShape = {
     ...(WorkGrants.WorkGrants.defaultValue() as WorkGrants.WorkGrantsShape),
-    enabled: grantPath !== undefined,
+    enabled: grantPath !== undefined || options.machineCredential === true,
+    forClient: () =>
+      Effect.succeed(
+        options.machineCredential === true ? unscopedGrant(EnvironmentId.make("env-a")) : undefined,
+      ),
     originOf: (thread) =>
       Effect.succeed(
         grantPath !== undefined && thread.id === callerId
@@ -219,7 +230,20 @@ const setup = (
         ? undefined
         : { threadId: callerId, providerSessionId: "session", providerInstanceId },
       client: options.outside
-        ? { sessionId: "s", label: "Outside agent", access: "read-only" }
+        ? {
+            sessionId: "s",
+            label:
+              options.otherMachine === "label" ? "SpecWithCode workers · env-a" : "Outside agent",
+            access: options.outsideAccess ?? "read-only",
+            ...(options.otherMachine === "principal"
+              ? {
+                  principal: {
+                    kind: "coordinator" as const,
+                    environmentId: EnvironmentId.make("env-a"),
+                  },
+                }
+              : {}),
+          }
         : undefined,
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -304,7 +328,7 @@ it.effect("reads and waits on a thread on another machine by machine or link", (
     expect(proxied[1]?.arguments).toMatchObject({ threadId: "b-thread", timeoutMs: 600_000 });
     expect(finished).toEqual([
       {
-        callerThreadId: "coordinator",
+        launchedBy: { kind: "thread", threadId: "coordinator" },
         machineId: "m1",
         remoteThreadId: "b-thread",
         runId: "b-run",
@@ -402,18 +426,98 @@ it.effect("keeps delegate_task on this machine and asks a routed coordinator to 
   });
 });
 
-it.effect("keeps outside clients approved here away from the other machine", () => {
+it.effect("lets a read-only outside client read, wait on and list threads elsewhere", () => {
   const { call, proxied, finished } = setup({ outside: true });
   return Effect.gen(function* () {
+    expect(
+      yield* call("studio_thread_read", { machine: "m1", threadId: "b-thread" }),
+    ).toMatchObject({ machine: M1, thread: { threadId: "b-thread" } });
+    expect(
+      yield* call("studio_thread_list", { machine: "m1", projectId: "remote-project" }),
+    ).toMatchObject({ machine: M1, threads: [{ threadId: "b-thread" }] });
+    expect(
+      yield* call("studio_thread_wait", { machine: "m1", threadId: "b-thread" }),
+    ).toMatchObject({ status: "completed" });
+    expect(proxied.map((entry) => entry.tool)).toEqual([
+      "studio_thread_read",
+      "studio_thread_list",
+      "studio_thread_wait",
+    ]);
+    // What it saw finish is noted against its own launches only, never a coordinator's.
+    expect(finished).toEqual([
+      expect.objectContaining({
+        launchedBy: { kind: "client", sessionId: "s", label: "Outside agent" },
+      }),
+    ]);
+    expect(finished[0]).not.toHaveProperty("callerThreadId");
+  });
+});
+
+it.effect("refuses a read-only outside client every change on another machine", () => {
+  const { call, proxied } = setup({ outside: true });
+  return Effect.gen(function* () {
     for (const [tool, params] of [
-      ["studio_thread_read", { machine: "m1", threadId: "any-thread-there" }],
-      ["studio_thread_list", { machine: "m1", projectId: "unrelated-project" }],
+      ["studio_thread_send", { machine: "m1", threadId: "b-thread", message: "More" }],
+      ["studio_thread_interrupt", { machine: "m1", threadId: "b-thread" }],
+    ] as const)
+      expect(yield* call(tool, params), tool).toMatchObject({ code: "capability_denied" });
+    expect(proxied).toEqual([]);
+  });
+});
+
+it.effect("lets an outside client steer threads there only within its own access", () => {
+  const full = setup({ outside: true, outsideAccess: "full-access" });
+  const low = setup({ outside: true, outsideAccess: "approval-required" });
+  return Effect.gen(function* () {
+    expect(
+      yield* full.call("studio_thread_send", {
+        machine: "m1",
+        threadId: "b-thread",
+        message: "More",
+      }),
+    ).toMatchObject({ runId: "b-run-2", threadLink: "[Worker](studio://thread/env-m1/b-thread)" });
+    // The thread there runs auto, above this client's approval.
+    expect(
+      yield* low.call("studio_thread_send", {
+        machine: "m1",
+        threadId: "b-thread",
+        message: "More",
+      }),
+    ).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(low.proxied.map((entry) => entry.tool)).toEqual(["studio_thread_read"]);
+  });
+});
+
+it.effect("keeps another machine's own credential from hopping on to a third machine", () => {
+  const { call, proxied } = setup({ outside: true, machineCredential: true });
+  return Effect.gen(function* () {
+    for (const [tool, params] of [
+      ["studio_thread_read", { machine: "m1", threadId: "b-thread" }],
+      ["studio_thread_list", { machine: "m1", projectId: "remote-project" }],
       ["studio_thread_wait", { machine: "m1", threadId: "b-thread" }],
     ] as const)
-      expect(yield* call(tool, params)).toMatchObject({ code: "capability_denied" });
+      expect(yield* call(tool, params), tool).toMatchObject({ code: "capability_denied" });
     expect(proxied).toEqual([]);
-    // Nor can such a caller mark a coordinator's worker as seen and drop its wake.
-    expect(finished).toEqual([]);
+  });
+});
+
+it.effect("knows another machine's own credential with grants off", () => {
+  return Effect.gen(function* () {
+    for (const otherMachine of ["principal", "label"] as const) {
+      const { call, proxied } = setup({
+        outside: true,
+        outsideAccess: "full-access",
+        otherMachine,
+      });
+      for (const [tool, params] of [
+        ["studio_thread_read", { machine: "m1", threadId: "b-thread" }],
+        ["studio_thread_send", { machine: "m1", threadId: "b-thread", message: "go" }],
+      ] as const)
+        expect(yield* call(tool, params), `${otherMachine} ${tool}`).toMatchObject({
+          code: "capability_denied",
+        });
+      expect(proxied).toEqual([]);
+    }
   });
 });
 

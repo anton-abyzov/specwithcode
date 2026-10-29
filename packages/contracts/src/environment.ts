@@ -339,6 +339,8 @@ export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
  */
 export const RepositoryOrigin = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
+  /** The fork's own fetch URL, which is what a copy on another machine clones. */
+  remoteUrl: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RepositoryOrigin = typeof RepositoryOrigin.Type;

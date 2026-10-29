@@ -24,6 +24,8 @@ export class SourceClientError extends Error {
 
 /** The source's files changed after the saved scan; the scan itself is intact. */
 export class StaleScanError extends SourceClientError {}
+/** The reviewed artifact cannot be used, even when the destination is empty. */
+export class UnavailableSnapshotError extends SourceClientError {}
 
 /**
  * The destination reaches the source only over the source's private HTTPS name
@@ -230,8 +232,24 @@ export class SourceClient {
         404,
         "Update the source before validating this copy scan.",
       );
-    const result = await this.json<{ current: boolean }>(response);
-    if (result.current !== true)
+    if (response.status === 409) {
+      const detail = (await response.json().catch(() => null)) as {
+        error?: string;
+        detail?: string;
+      } | null;
+      if (
+        detail?.error === "snapshot_unavailable" ||
+        detail?.error === "secret_reapproval_required"
+      )
+        throw new UnavailableSnapshotError(
+          "refused",
+          409,
+          detail.detail ?? "The captured copy is unavailable. Compare again.",
+        );
+      throw new SourceClientError("refused", 409, detail?.detail ?? detail?.error);
+    }
+    const result = await this.json<{ current?: boolean; captured?: boolean }>(response);
+    if (result.current !== true && result.captured !== true)
       throw new StaleScanError(
         "refused",
         409,

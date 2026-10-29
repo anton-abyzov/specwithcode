@@ -42,6 +42,7 @@ public struct RootView: View {
 private struct AppScreens: View {
   let model: AppModel
   @State private var router: AppRouter
+  @State private var keyboardInset: CGFloat = 0
   @Environment(\.sampleData) private var sampleData
 
   init(model: AppModel) {
@@ -80,7 +81,10 @@ private struct AppScreens: View {
     @Bindable var router = router
     @Bindable var main = router.main
     return GeometryReader { proxy in
-      let insets = proxy.safeAreaInsets
+      let insets = EdgeInsets(
+        top: proxy.safeAreaInsets.top, leading: proxy.safeAreaInsets.leading,
+        bottom: max(proxy.safeAreaInsets.bottom, keyboardInset), trailing: proxy.safeAreaInsets.trailing
+      )
       DrawerContainer(isOpen: $router.isDrawerOpen, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
         DrawerView()
       } content: {
@@ -91,6 +95,7 @@ private struct AppScreens: View {
         }
         .background(Color.weave.canvas)
       }
+      .background { KeyboardInsetReader { keyboardInset = $0 } }
       .ignoresSafeArea()
     }
   }
@@ -159,12 +164,20 @@ private struct SheetHost: View {
 }
 
 private struct LoadingView: View {
+  @Environment(AppRouter.self) private var router
+  @Environment(AppModel.self) private var model
+
   var body: some View {
     VStack(spacing: WeaveSpacing.s3) {
       ProgressView()
       Text("Connecting to your machines")
         .weaveFont(.callout)
         .foregroundStyle(Color.weave.muted)
+      if model.connect != nil {
+        WeaveButton("SpecWithCode Connect", kind: .secondary) { router.sheet = .globalSettings }
+      }
+      WeaveButton("Machines", kind: .secondary) { router.push(.machines) }
+      WeaveButton("Settings", kind: .ghost) { router.sheet = .globalSettings }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .accessibilityElement(children: .combine)
@@ -185,9 +198,12 @@ private struct OfflineMachinesView: View {
           systemName: "wifi.slash",
           title: title,
           message: "Aide and your projects appear when \(offline.count == 1 ? "it reconnects" : "they reconnect").",
-          actionTitle: "Reconnect",
-          action: reconnect
+          actionTitle: model.connect != nil ? "SpecWithCode Connect" : offline.contains(where: \.canRetryConnection) ? "Reconnect" : nil,
+          action: model.connect != nil ? { router.sheet = .globalSettings } : reconnect
         )
+        if model.connect != nil, offline.contains(where: \.canRetryConnection) {
+          WeaveButton("Reconnect", kind: .secondary, action: reconnect)
+        }
         WeaveButton("Machines", kind: .ghost) { router.push(.machines) }
       }
       .padding(.top, WeaveSpacing.s8 * 2)
@@ -208,18 +224,13 @@ private struct OfflineMachinesView: View {
 
   private var title: String {
     if offline.count == 1 {
-      let machine = offline[0]
-      switch machine.status {
-      case .needsRepair: return machine.needsSignIn ? "Sign in again to reach \(machine.displayName)" : machine.hasDirectPairing ? "Pair \(machine.displayName) again" : "Can't reach \(machine.displayName)"
-      case .unsupported: return "Update SpecWithCode on \(machine.displayName)"
-      default: return "\(machine.displayName) is offline"
-      }
+      return offline[0].recoveryTitle
     }
     return offline.count == model.machines.count ? "Your machines are offline" : "Some machines are offline"
   }
 
   private func reconnect() {
-    for machine in offline { model.engine.reconnect(machineId: machine.id) }
+    for machine in offline where !machine.isDisconnected { model.engine.reconnect(machineId: machine.id) }
   }
 }
 

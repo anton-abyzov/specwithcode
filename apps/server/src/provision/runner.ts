@@ -36,7 +36,14 @@ import {
 
 export { ProvisionRunError, type ProvisionOptions } from "./context.ts";
 import { emptyService, probeAll, readTargetFacts, resolvePaths, stripTarget } from "./probe.ts";
-import { failItem, planItems, reprobe, verifyItem } from "./plan.ts";
+import {
+  SETUP_GIT_COMMAND,
+  failItem,
+  gitCredentialsItem,
+  planItems,
+  reprobe,
+  verifyItem,
+} from "./plan.ts";
 import {
   applyServerItem,
   buildRootPlan,
@@ -215,6 +222,28 @@ export async function runProvision(
       }
     }
 
+    // 3b. git's credential helper for github.com, once git and gh are in place.
+    {
+      Object.assign(probes, await probeAll(ctx));
+      const before = gitCredentialsItem(probes);
+      if (before.status !== "planned") await put(before);
+      else {
+        await put({ ...before, status: "running" });
+        try {
+          await setupGit(ctx, probes);
+          await put(
+            verifyItem(
+              before,
+              await reprobe(ctx, "git-credentials", probes),
+              `${SETUP_GIT_COMMAND} ran but git still has no credential helper for github.com.`,
+            ),
+          );
+        } catch (error) {
+          await put({ ...failItem(before, error), command: SETUP_GIT_COMMAND });
+        }
+      }
+    }
+
     // 4. The server, its service and the PATH that service gives agents.
     for (const id of ["server", "service", "service-path", "legacy-names"] as const) {
       // Re-planned now: installing the server also installs and starts its service.
@@ -255,6 +284,22 @@ export async function runProvision(
   } finally {
     await release?.();
   }
+}
+
+/** Points git at gh for github.com. Not a sign-in: it fails, changing nothing, when gh is signed out. */
+async function setupGit(ctx: Ctx, probes: Probes): Promise<void> {
+  const gh = probes.providers.find((entry) => entry.id === "gh")?.path ?? probes.gh.path;
+  if (!gh) throw new Error("gh is not installed.");
+  const [, ...args] = SETUP_GIT_COMMAND.split(" ");
+  const result = await ctx.host.exec(gh, args, {
+    timeoutMs: 20_000,
+    env: { PATH: probes.searchPath, GH_PROMPT_DISABLED: "1", NO_COLOR: "1" },
+  });
+  await ctx.log(`git-credentials: ${gh} ${args.join(" ")} exited ${result.code}`);
+  if (result.code !== 0)
+    throw new Error(
+      `${SETUP_GIT_COMMAND} failed: ${(result.stderr || result.stdout).trim().slice(0, 500) || `exit ${result.code}`}`,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +361,10 @@ async function assemble(
   if (provider("gh")?.found && provider("gh")?.signedIn === false)
     userSteps.push({
       id: "gh-signin",
-      title: "Sign in to GitHub.",
+      title:
+        p.credentialHelper.status === "missing"
+          ? "Sign in to GitHub, then run provisioning again so git can clone private repos (it runs gh auth setup-git)."
+          : "Sign in to GitHub.",
       command: "gh auth login",
       optional: false,
     });
@@ -384,6 +432,7 @@ async function assemble(
     service: { ...p.service, missingOnPath: p.servicePath.missing },
     server: { wanted: ctx.wantedServer, found: p.server.found },
     providers: p.providers,
+    credentialHelper: p.credentialHelper,
     rootStep,
     userSteps,
     changed,

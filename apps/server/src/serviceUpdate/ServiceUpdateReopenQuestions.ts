@@ -43,6 +43,10 @@ import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAtte
  *   question), so the thread shows "Answer needed" in Needs you and the answer
  *   reaches the agent as the next message.
  *
+ * Requests already settled by the person are not asked again, including
+ * folded subagent requests. An original ask newer than the settlement stays
+ * actionable across updates; the reopened card carries its original ask time.
+ *
  * Both writes use ids derived from the closed request (the note's command id,
  * the card's request id), so reopening twice changes nothing; the entry is
  * then marked reopened at once, with how (a continuation leaves out one asked
@@ -62,6 +66,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2AppThread,
 } from "@specweave-studio/contracts";
 import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
@@ -91,6 +96,13 @@ export const MAX_REOPEN_ATTEMPTS = 5;
 export const CONTINUATION_WAIT_MS = 120_000;
 /** Between the closed request's card and the interrupt notice on the same turn. */
 const NOTE_ORDINAL = 97;
+/** Parents read when looking for a resolved one above a subagent. */
+const MAX_ANCESTOR_DEPTH = 16;
+/** What the resolved check reads of a thread and its parents. */
+type LineageThread = Pick<
+  OrchestrationV2AppThread,
+  "id" | "settledOverride" | "settledAt" | "lineage"
+>;
 /** Run statuses of a turn that has ended. */
 const ENDED_RUN_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -146,7 +158,10 @@ export const captureOpenRequests = (input: {
       list.push(row);
       byThread.set(row.thread_id, list);
     }
-    const entries: Array<ClosedQuestions.ClosedQuestion> = [];
+    const captured: Array<{
+      readonly entry: ClosedQuestions.ClosedQuestion;
+      readonly orderAt: string | null;
+    }> = [];
     for (const [threadId, threadRows] of byThread) {
       const records = yield* input.threads
         .getThreadRecords(ThreadId.make(threadId), ["runtimeRequests", "nodes", "turnItems"], {
@@ -176,21 +191,39 @@ export const captureOpenRequests = (input: {
             ? undefined
             : found?.nodes.find((candidate) => candidate.id === request.nodeId);
         const described = ClosedQuestions.describeClosedRequest({ kind: row.kind as never }, item);
-        entries.push({
-          requestId: row.runtime_request_id,
-          threadId,
-          threadTitle: found?.thread.title ?? null,
-          runId: node?.runId ?? item?.runId ?? null,
-          kind: row.kind,
-          text: described.text,
-          ...(described.questions === undefined ? {} : { questions: described.questions }),
-          askedAt: row.created_at,
-          closedAt,
-          reopenedAt: null,
+        const askedAt = row.runtime_request_id.startsWith("update-reopen")
+          ? (request?.reopenedFromAskedAt ?? null)
+          : row.created_at;
+        captured.push({
+          entry: {
+            requestId: row.runtime_request_id,
+            threadId,
+            threadTitle: found?.thread.title ?? null,
+            runId: node?.runId ?? item?.runId ?? null,
+            kind: row.kind,
+            text: described.text,
+            ...(described.questions === undefined ? {} : { questions: described.questions }),
+            askedAt,
+            closedAt,
+            reopenedAt: null,
+          },
+          // Reopened cards re-ask in original ask order; a legacy card with
+          // no recorded original ask orders by when its card was created.
+          orderAt: askedAt ?? row.created_at,
         });
       }
     }
-    return entries;
+    return captured
+      .toSorted((left, right) =>
+        left.orderAt === right.orderAt
+          ? left.entry.requestId.localeCompare(right.entry.requestId)
+          : left.orderAt === null
+            ? 1
+            : right.orderAt === null
+              ? -1
+              : left.orderAt.localeCompare(right.orderAt),
+      )
+      .map(({ entry }) => entry);
   });
 
 /**
@@ -294,6 +327,36 @@ export const makeReopener = Effect.gen(function* () {
         ),
     });
 
+  /**
+   * Whether the thread or a parent it is folded into (a subagent's lineage) is
+   * settled this request. Newer original asks remain actionable. A parent that
+   * cannot be read ends the walk.
+   */
+  const resolvedWithAncestors = (thread: LineageThread, askedAt: string | null) =>
+    Effect.gen(function* () {
+      const askedMillis = askedAt === null ? NaN : Date.parse(askedAt);
+      let current: LineageThread | null = thread;
+      const visited = new Set<string>();
+      while (current !== null && !visited.has(current.id)) {
+        if (
+          current.settledOverride === "settled" &&
+          (!Number.isFinite(askedMillis) ||
+            !DateTime.isDateTime(current.settledAt) ||
+            askedMillis <= DateTime.toEpochMillis(current.settledAt))
+        )
+          return true;
+        visited.add(current.id);
+        if (current.lineage?.relationshipToParent !== "subagent") return false;
+        const parentId: string | null = current.lineage?.parentThreadId ?? null;
+        if (parentId === null || visited.size > MAX_ANCESTOR_DEPTH) return false;
+        current = yield* threads.getThreadRecords(ThreadId.make(parentId), []).pipe(
+          Effect.map((records): LineageThread => records.thread),
+          Effect.orElseSucceed(() => null),
+        );
+      }
+      return false;
+    });
+
   const postNote = (
     entry: ClosedQuestions.ClosedQuestion,
     run: OrchestrationV2Run,
@@ -362,6 +425,7 @@ export const makeReopener = Effect.gen(function* () {
       requestId: RuntimeRequestId.make(ClosedQuestions.reopenCardRequestId(entry)),
       turnItemId: TurnItemId.make(`turn-item:update-reopen:${entry.requestId}`),
       questions: ClosedQuestions.reopenedQuestions(entry),
+      reopenedFromAskedAt: entry.askedAt,
     });
 
   const reopenOne = (entry: ClosedQuestions.ClosedQuestion) =>
@@ -382,6 +446,10 @@ export const makeReopener = Effect.gen(function* () {
       const { thread, runs, runtimeRequests } = records.value;
       if (thread.archivedAt !== null || thread.deletedAt !== null)
         return { type: "skipped", reason: "thread-closed" } as const;
+      // Only asks that predate an applicable resolution were settled. Preserve
+      // genuine newer asks even when an ancestor still retains that resolution.
+      if (yield* resolvedWithAncestors(thread, entry.askedAt))
+        return { type: "skipped", reason: "thread-resolved" } as const;
       const request = runtimeRequests.find((candidate) => candidate.id === entry.requestId);
       // Answered, or never closed (the drain stopped first): nothing to ask again.
       // A later drain that closes one still open records it afresh.

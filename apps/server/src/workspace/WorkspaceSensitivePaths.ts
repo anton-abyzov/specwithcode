@@ -338,7 +338,8 @@ const STACK_SECRET_FILE = new RegExp(
 export function isSecretLikeProjectPath(relativePath: string): boolean {
   const parts = relativePath.split("/");
   const name = parts.at(-1) ?? "";
-  if (name.startsWith(".env")) return !ENV_TEMPLATE_FILE.test(name);
+  const env = /(?:^\.env|\.env(?:\.|$))/i.exec(name);
+  if (env) return !ENV_TEMPLATE_FILE.test(name.slice(env.index));
   if (PROJECT_KEY_FILE.test(name) || PROVIDER_HOME_CREDENTIAL_FILES.has(name)) return true;
   const suffixMatches = (listed: string) =>
     relativePath === listed || relativePath.endsWith(`/${listed}`);

@@ -726,6 +726,49 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "mcpClientToken",
+        Effect.fn("environment.auth.mcpClientToken")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // A session may only hand out scopes it holds.
+            for (const scope of EnvironmentAuth.mcpClientScopes(args.payload.access)) {
+              if (!session.scopes.has(scope)) return yield* failEnvironmentScopeRequired(scope);
+            }
+            // Another machine's management token never mints client tokens: its
+            // own grant is bound to that machine and refused unbound over Connect.
+            if (session.principal?.kind === "coordinator") {
+              return yield* failEnvironmentAuthInvalid("invalid_credential");
+            }
+            return yield* EnvironmentAuth.mintStaticMcpClientToken(serverAuth, {
+              label: args.payload.label,
+              access: args.payload.access,
+              ...(args.payload.ttlSeconds
+                ? { ttl: Duration.seconds(args.payload.ttlSeconds) }
+                : {}),
+            }).pipe(
+              Effect.catchTag("StaticMcpTokenInputError", (error) =>
+                currentEnvironmentTraceId.pipe(
+                  Effect.flatMap((traceId) =>
+                    Effect.fail(
+                      new EnvironmentRequestInvalidError({
+                        code: "invalid_request",
+                        reason: "invalid_command",
+                        detail: error.reason,
+                        traceId,
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("pairing_credential_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "pairingLinks",
         Effect.fn("environment.auth.pairingLinks")(
           function* (args) {

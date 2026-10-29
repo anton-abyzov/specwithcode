@@ -318,23 +318,53 @@ describe("snoozeWakeLabel", () => {
 
 describe("resolveSnoozePresets", () => {
   it("offers the shared desktop and mobile choices", () => {
-    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10));
-    expect(presets.map((preset) => preset.id)).toEqual([
-      "hour",
-      "three-hours",
-      "evening",
-      "tomorrow",
-      "three-days",
-      "next-week",
-    ]);
-    expect(presets.find((preset) => preset.id === "three-hours")?.snoozedUntil).toBe(
-      localDate(2026, 4, 8, 13).toISOString(),
-    );
-    expect(presets.find((preset) => preset.id === "three-hours")?.label).toBe("In 3 hours");
-    expect(presets.find((preset) => preset.id === "evening")?.label).toBe("This evening");
-    expect(
-      new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil).getHours(),
-    ).toBe(9);
+    // Diagnose the Windows cold-call timeout without changing its budget or native formatting.
+    const started = performance.now();
+    const localeCalls: Array<{ method: string; elapsedMs: number }> = [];
+    const originals = ["toLocaleTimeString", "toLocaleDateString"] as const;
+    const spies = originals.map((method) => {
+      const original = Date.prototype[method];
+      return vi.spyOn(Date.prototype, method).mockImplementation(function (this: Date, ...args) {
+        const callStarted = performance.now();
+        try {
+          return original.apply(this, args);
+        } finally {
+          localeCalls.push({ method, elapsedMs: performance.now() - callStarted });
+        }
+      });
+    });
+    let resolveMs: number | undefined;
+    try {
+      const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10));
+      resolveMs = performance.now() - started;
+      expect(presets.map((preset) => preset.id)).toEqual([
+        "hour",
+        "three-hours",
+        "evening",
+        "tomorrow",
+        "three-days",
+        "next-week",
+      ]);
+      expect(presets.find((preset) => preset.id === "three-hours")?.snoozedUntil).toBe(
+        localDate(2026, 4, 8, 13).toISOString(),
+      );
+      expect(presets.find((preset) => preset.id === "three-hours")?.label).toBe("In 3 hours");
+      expect(presets.find((preset) => preset.id === "evening")?.label).toBe("This evening");
+      expect(
+        new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil).getHours(),
+      ).toBe(9);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      // @effect-diagnostics-next-line globalConsole:off -- Temporary CI timing must reach the test log.
+      console.info(
+        "snooze-preset-timing",
+        JSON.stringify({
+          totalMs: performance.now() - started,
+          resolveMs,
+          localeCalls,
+        }),
+      );
+    }
   });
 
   it("drops the evening choice once evening is near or past", () => {
@@ -371,32 +401,47 @@ describe("resolveSnoozePresets", () => {
   });
 });
 
-
 describe("three-day Snooze", () => {
   it.each([
     [2026, 3, 7, 10, 71],
     [2026, 10, 30, 2, 73],
-  ])("keeps 9am on the third local calendar day across DST (%s-%s-%s)", (year, month, day, expectedDay, hours) => {
-    vi.stubEnv("TZ", "America/New_York");
-    try {
-      const now = localDate(year!, month!, day!, 9);
-      const preset = resolveSnoozePresets(now).find((item) => item.id === "three-days")!;
-      const wake = new Date(preset.snoozedUntil);
-      expect(preset.label).toBe("In 3 days");
-      expect(wake.getDate()).toBe(expectedDay);
-      expect(wake.getHours()).toBe(9);
-      expect((wake.getTime() - now.getTime()) / 3_600_000).toBe(hours);
-    } finally { vi.unstubAllEnvs(); }
-  });
+  ])(
+    "keeps 9am on the third local calendar day across DST (%s-%s-%s)",
+    (year, month, day, expectedDay, hours) => {
+      vi.stubEnv("TZ", "America/New_York");
+      try {
+        const now = localDate(year!, month!, day!, 9);
+        const preset = resolveSnoozePresets(now).find((item) => item.id === "three-days")!;
+        const wake = new Date(preset.snoozedUntil);
+        expect(preset.label).toBe("In 3 days");
+        expect(wake.getDate()).toBe(expectedDay);
+        expect(wake.getHours()).toBe(9);
+        expect((wake.getTime() - now.getTime()) / 3_600_000).toBe(hours);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
   it("persists the shared ISO wake time without pausing running work and wakes early for attention", () => {
-    const preset = resolveSnoozePresets(new Date(SNOOZED_AT)).find((item) => item.id === "three-days")!;
+    const preset = resolveSnoozePresets(new Date(SNOOZED_AT)).find(
+      (item) => item.id === "three-days",
+    )!;
     const original = makeShell({ snoozedUntil: preset.snoozedUntil, sessionStatus: "running" });
     const restored = JSON.parse(JSON.stringify(original)) as ThreadSnoozeShell;
     expect(restored.session?.status).toBe("running");
     expect(effectiveSnoozed(restored, { now: NOW })).toBe(true);
     expect(effectiveSnoozed({ ...restored, hasPendingApprovals: true }, { now: NOW })).toBe(false);
-    expect(effectiveSnoozed(makeShell({ snoozedUntil: preset.snoozedUntil, sessionStatus: "error" }), { now: NOW })).toBe(false);
-    expect(effectiveSnoozed(makeShell({ snoozedUntil: preset.snoozedUntil, turnCompletedAt: "2026-04-10T11:00:00Z" }), { now: NOW })).toBe(false);
+    expect(
+      effectiveSnoozed(makeShell({ snoozedUntil: preset.snoozedUntil, sessionStatus: "error" }), {
+        now: NOW,
+      }),
+    ).toBe(false);
+    expect(
+      effectiveSnoozed(
+        makeShell({ snoozedUntil: preset.snoozedUntil, turnCompletedAt: "2026-04-10T11:00:00Z" }),
+        { now: NOW },
+      ),
+    ).toBe(false);
     expect(restored.snoozedUntil).toBe(preset.snoozedUntil);
   });
   it("does not duplicate Monday when the three-day choice already lands there", () => {

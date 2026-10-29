@@ -58,7 +58,7 @@ const FAMILY_RULES: ReadonlyArray<readonly [RegExp, ModelFamily]> = [
   [/(?:^|[^a-z])(?:gpt|codex|o\d+)(?:$|[^a-z])/, "openai"],
   [/gemini|gemma|argon/, "google"],
   [/grok/, "xai"],
-  [/llama|wander|(?:^|[^a-z])meta(?:$|[^a-z])/, "meta"],
+  [/llama|wonder|muse|(?:^|[^a-z])meta(?:$|[^a-z])/, "meta"],
 ];
 
 /** The family a model belongs to, from its slug or name; never from the provider. */
@@ -170,6 +170,7 @@ export function describeFallbackOptions(input: {
         provider,
         model: model.slug,
         excluded,
+        namedInOrder: orderIndex !== -1,
         current:
           provider.instanceId === input.currentInstanceId &&
           (input.currentModel == null ||
@@ -206,6 +207,7 @@ function optionStatus(input: {
   readonly provider: ServerProvider;
   readonly model: string;
   readonly excluded: boolean;
+  readonly namedInOrder: boolean;
   readonly current: boolean;
   readonly limited: boolean;
   readonly usedPercent: number | null;
@@ -217,7 +219,10 @@ function optionStatus(input: {
   if (input.excluded) return "excluded";
   if (!provider.enabled) return "disabled";
   if (provider.auth.status === "unauthenticated") return "signed-out";
-  if (isGeminiSpendProvider(provider)) return "never-automatic";
+  // A Gemini spend model the person named in their fallback order is their
+  // spending choice and reports its real readiness; unnamed it never moves
+  // a thread on its own.
+  if (isGeminiSpendProvider(provider) && !input.namedInOrder) return "never-automatic";
   if (isPaidModelOn(provider, model)) return "per-token";
   if (isUnknownBillingAgent(provider, model)) return "named-only";
   if (input.limited) return "limited";

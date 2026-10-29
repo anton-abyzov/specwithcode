@@ -4,6 +4,7 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
   type ProjectCoordinatorBinding,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -19,6 +20,8 @@ import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import * as Project from "../project/ProjectService.ts";
 import {
+  assertAccountInGrant,
+  assertProjectInGrant,
   assertThreadWritable,
   claimCoordinatorEpoch,
   type WorkGrantContext,
@@ -424,6 +427,62 @@ describe("claimCoordinatorEpoch", () => {
         ),
       ).toContain("outside_grant_scope");
       expect(claims).toEqual([]);
+    }),
+  );
+});
+
+// The panel that limits what other machines may do here lives in Settings >
+// Machines (/settings/machines); refusals must send the user there.
+describe("grant refusals point at Settings > Machines", () => {
+  const withGrant = (grant: Partial<WorkGrantContext["grant"]>): WorkGrantContext => ({
+    ...fromM4,
+    grant: { coordinatorEnvironmentId: M4, ...grant } as WorkGrantContext["grant"],
+  });
+  const messageOf = (exit: Exit.Exit<unknown, unknown>) => {
+    expect(Exit.isFailure(exit)).toBe(true);
+    return JSON.stringify(exit);
+  };
+
+  it.effect("names the Machines panel for projects and sign-ins", () =>
+    Effect.gen(function* () {
+      const unlinked = projectFixture(project, { title: "EasyChamp" });
+      const messages = [
+        messageOf(
+          yield* Effect.exit(
+            assertProjectInGrant(withGrant({ projects: { kind: "linked" } }), unlinked),
+          ),
+        ),
+        messageOf(
+          yield* Effect.exit(
+            assertProjectInGrant(
+              withGrant({ projects: { kind: "listed", projectIds: [] } }),
+              unlinked,
+            ),
+          ),
+        ),
+        messageOf(
+          yield* Effect.exit(
+            assertAccountInGrant(
+              withGrant({ accounts: { kind: "none" } }),
+              ProviderInstanceId.make("codex"),
+            ),
+          ),
+        ),
+        messageOf(
+          yield* Effect.exit(
+            assertAccountInGrant(
+              withGrant({
+                accounts: { kind: "listed", instanceIds: [ProviderInstanceId.make("claude")] },
+              }),
+              ProviderInstanceId.make("codex"),
+            ),
+          ),
+        ),
+      ];
+      for (const message of messages) {
+        expect(message).toContain("Settings > Machines > Who can run work on this Mac");
+        expect(message).not.toContain(["Connections", "Who can run work"].join(" > "));
+      }
     }),
   );
 });

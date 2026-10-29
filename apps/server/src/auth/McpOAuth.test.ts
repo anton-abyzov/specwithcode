@@ -7,6 +7,7 @@ import {
 } from "@specweave-studio/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +19,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Schema from "effect/Schema";
 
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
@@ -892,6 +894,136 @@ it.live("never spends a fleet invitation's redeem credential as an MCP approval"
       expect((yield* Effect.flip(auth.consumeFleetRedemption(issued.credential)))._tag).toBe(
         "ServerAuthInvalidCredentialError",
       );
+    }),
+  ),
+);
+
+/** `/mcp`'s own authenticator over this router's auth store. */
+const mcpAuthenticate = (auth: EnvironmentAuth.EnvironmentAuth["Service"], request: Request) =>
+  Effect.gen(function* () {
+    const authenticator = yield* McpHttpServer.McpClientAuthenticator;
+    return yield* authenticator.authenticate(HttpServerRequest.fromWeb(request)).pipe(Effect.exit);
+  }).pipe(
+    Effect.provide(
+      McpOAuth.layerMcpClientAuthenticator.pipe(
+        Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+        Layer.provide(
+          Layer.succeed(
+            ServerEnvironment.ServerEnvironment,
+            ServerEnvironment.ServerEnvironment.of({
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("static-token-test")),
+              getDescriptor: Effect.die("unused"),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+
+it.live("admits a static MCP client token at /mcp, over Connect too, until it is revoked", () =>
+  withRoutes((_handler, auth) =>
+    Effect.gen(function* () {
+      const issued = yield* EnvironmentAuth.mintStaticMcpClientToken(auth, {
+        label: "Grok",
+        access: "approval-required",
+      });
+      expect(issued).toMatchObject({ tokenType: "Bearer", label: "Grok" });
+      // 30 days by default, like an OAuth sign-in.
+      const days =
+        (issued.expiresAt.epochMilliseconds - (yield* Clock.currentTimeMillis)) / 86_400_000;
+      expect(days).toBeGreaterThan(29.9);
+      expect(days).toBeLessThanOrEqual(30);
+
+      const bearer = { authorization: `Bearer ${issued.token}` };
+      for (const request of [
+        at("/mcp", { method: "POST", headers: bearer }),
+        viaConnect("/mcp", { method: "POST", headers: bearer }),
+      ]) {
+        const exit = yield* mcpAuthenticate(auth, request);
+        expect(exit._tag).toBe("Success");
+        if (exit._tag !== "Success") continue;
+        expect(exit.value?.thread).toBeUndefined();
+        expect(exit.value?.client).toMatchObject({
+          sessionId: issued.sessionId,
+          label: "Grok",
+          access: "approval-required",
+          // Its own device principal: work grants bind it like any signed-in agent.
+          principal: { kind: "device" },
+        });
+      }
+
+      // Listed with the other MCP clients, and nowhere else accepted.
+      const listed = (yield* auth.listSessions()).find(
+        (session) => session.sessionId === issued.sessionId,
+      );
+      expect(listed).toMatchObject({
+        subject: EnvironmentAuth.MCP_CLIENT_SUBJECT,
+        method: "bearer-access-token",
+        client: { label: "Grok", deviceType: "bot" },
+      });
+
+      expect(yield* auth.revokeSession(issued.sessionId)).toBe(true);
+      const afterRevoke = yield* mcpAuthenticate(
+        auth,
+        at("/mcp", { method: "POST", headers: bearer }),
+      );
+      expect(afterRevoke._tag === "Success" && afterRevoke.value !== undefined).toBe(false);
+      expect(
+        (yield* Effect.flip(
+          auth.authenticateMcpClient(HttpServerRequest.fromWeb(at("/mcp", { headers: bearer }))),
+        ))._tag,
+      ).toBe("ServerAuthInvalidCredentialError");
+    }),
+  ),
+);
+
+it.live("mints a static MCP client token through the auth API for an owner session only", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const owner = yield* auth.issueSession({ scopes: AuthAdministrativeScopes });
+      const mint = (token: string, body: unknown) =>
+        handler(
+          at("/api/auth/mcp-tokens", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+            body: encodeJson(body),
+          }),
+        );
+
+      const response = yield* mint(owner.token, {
+        label: "n8n",
+        access: "read-only",
+        ttlSeconds: 7 * 86_400,
+      });
+      expect(response.status).toBe(200);
+      const issued = yield* json<{
+        sessionId: string;
+        token: string;
+        access: string;
+        expiresAt: string;
+      }>(response);
+      expect(issued.access).toBe("read-only");
+      const days = (Date.parse(issued.expiresAt) - (yield* Clock.currentTimeMillis)) / 86_400_000;
+      expect(days).toBeGreaterThan(6.9);
+      expect(days).toBeLessThanOrEqual(7);
+      const client = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          viaConnect("/mcp", { headers: { authorization: `Bearer ${issued.token}` } }),
+        ),
+      );
+      expect(client).toMatchObject({ label: "n8n", access: "read-only" });
+
+      // Beyond 90 days, a reserved worker label, or a caller that cannot manage access: refused.
+      expect(
+        (yield* mint(owner.token, { label: "x", access: "auto", ttlSeconds: 91 * 86_400 })).status,
+      ).toBe(400);
+      expect(
+        (yield* mint(owner.token, { label: "SpecWithCode workers · abc", access: "auto" })).status,
+      ).toBeGreaterThanOrEqual(400);
+      const reader = yield* auth.issueSession({ scopes: ["orchestration:read"] });
+      expect((yield* mint(reader.token, { label: "bot", access: "read-only" })).status).toBe(403);
+      // An MCP client token cannot mint another one.
+      expect((yield* mint(issued.token, { label: "bot", access: "read-only" })).status).toBe(401);
     }),
   ),
 );

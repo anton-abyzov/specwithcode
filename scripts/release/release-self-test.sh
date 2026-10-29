@@ -30,6 +30,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RELEASE="$HERE/release.sh"
 TOOLS="$HERE/release_tools.py"
+COMMON="$HERE/release_common.sh"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/release-self-test.XXXXXX")"
 WORK="$(cd "$WORK" && pwd -P)"
@@ -90,7 +91,7 @@ lacks() { ! grep -qF -- "$1" "$LAST_OUT"; }
 
 # Stages in the order their first stubbed command appears after line $1 of the stub log.
 stages_after() {
-  awk -F '\t' -v from="$1" 'NR > from && $1 != "server" && !seen[$1]++ { printf "%s ", $1 }' "$STUB_LOG"
+  awk -F '\t' -v from="$1" 'NR > from && $1 != "server" && $2 != "staging-finished" && !seen[$1]++ { printf "%s ", $1 }' "$STUB_LOG"
 }
 
 lines() { if [ -f "$STUB_LOG" ]; then wc -l < "$STUB_LOG" | tr -d ' '; else printf '0\n'; fi; }
@@ -356,14 +357,23 @@ finish_ok() {
     [ "$(cat "$STAGE/published.sha")" = "$SHA_B" ]
 }
 check 'publish private, then public, then M4, the desktop app, M1 and M3, merge, then the Linux workers' finish_ok
+finished_payload_cleanup_ok() {
+  [ "$(awk -F '\t' '$2 == "staging-finished" {print NR; exit}' "$STUB_LOG")" -gt \
+    "$(awk -F '\t' '$2 == "fleet-linux" {print NR; exit}' "$STUB_LOG")" ] &&
+    [ ! -e "$STAGE/lock" ] &&
+    tail -n 1 "$STUB_LOG" | grep -qF -- "staging_retention.py --root $STAGING --finished --apply"
+}
+check 'completed payload cleanup follows rollout and lock release' finished_payload_cleanup_ok
 # The finished run above had older staging folders beside it (made before it ran).
 # They go right after publish-public, so a fleet host failing later cannot keep them.
 staging_pruned() {
-  grep -qF "$(printf 'publish-public\tstaging-prune\trm -rf %s/1.0.9' "$STAGING")" "$STUB_LOG" &&
-    grep -qF "$(printf 'publish-public\tstaging-prune\trm -rf %s/1.0.5' "$STAGING")" "$STUB_LOG" &&
-    ! grep -F 'staging-prune' "$STUB_LOG" | grep -qE '/(1\.0\.[678]|1\.1\.0|1\.2\.0|notes)$'
+  grep -F 'publish-public' "$STUB_LOG" | grep -F 'staging_retention.py' | \
+    grep -qF -- "--root $STAGING --current 1.2.0 --previous 1.1.0 --apply"
 }
-check 'a published release removes merged or public staging folders older than the previous one, never a locked, resumable or foreign one' staging_pruned
+check 'publication invokes locked, evidence-aware staging retention' staging_pruned
+# Actual removal and refusal behavior is tested with real temporary folders, not stubbed rm.
+check 'staging retention preserves locked, unfinished and foreign stages' \
+  python3 -B "$HERE/test-staging-retention.py"
 candidates_pruned() {
   local sha12 name
   sha12="$(printf '%s' "$SHA_B" | cut -c1-12)"
@@ -384,9 +394,10 @@ stub_set RELEASE_STUB_OUTPUT=
 BEFORE="$(lines)"
 done_ok() {
   run 0 1.2.0 --resume || return 1
-  [ "$(lines)" = "$BEFORE" ] && has '= merge: done'
+  [ "$(lines)" = "$((BEFORE + 1))" ] && has '= merge: done' &&
+    tail -n 1 "$STUB_LOG" | grep -qF -- "staging_retention.py --root $STAGING --finished --apply"
 }
-check 'a finished release resumes to nothing' done_ok
+check 'a finished release resumes only idempotent staging cleanup, never another release stage' done_ok
 
 stub_set RELEASE_STUB_SHA="$SHA_C"
 late_candidate_refused() { run 1 1.2.0 --resume && has 'release the change as a new version'; }
@@ -746,12 +757,12 @@ stub_set RELEASE_STUB_OUTPUT=
 
 # `x sums --python3 ...` once ran "--python3" as the command and failed 1.0.44 after signing.
 command_word_refused() {
-  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$RELEASE"); command_word x sums --python3 -B tools.py" \
+  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$COMMON"); command_word x sums --python3 -B tools.py" \
     > "$LAST_OUT" 2>&1 && return 1
   has 'x sums: "--python3" is not a command' || return 1
-  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$RELEASE"); command_word q key" > "$LAST_OUT" 2>&1 &&
+  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$COMMON"); command_word q key" > "$LAST_OUT" 2>&1 &&
     return 1
-  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$RELEASE"); command_word x sums python3 -B" > "$LAST_OUT" 2>&1
+  bash -c "$(sed -n '/^die() {/,/^}/p;/^command_word() {/,/^}/p' "$COMMON"); command_word x sums python3 -B" > "$LAST_OUT" 2>&1
 }
 check 'a call whose command is missing or starts with - is refused' command_word_refused
 # Every x/q/t call in release.sh names its command after --, so the dry run checks each one.
@@ -759,16 +770,17 @@ calls_ok() {
   # Every x, q or t call, wherever it sits on the line (after if !, then, && or || or inside
   # $(...)): after the label and its own options (-C DIR, --may-fail) comes -- or the command,
   # never an option glued to a word such as --python3.
-  python3 -B - "$RELEASE" > "$LAST_OUT" << 'PY'
+  python3 -B - "$RELEASE" "$COMMON" > "$LAST_OUT" << 'PY'
 import re, sys
 call = re.compile(r"(?:^|[\s;&|(])[xqt] (\S+)((?: -C \S+| --may-fail)*) (\S+)")
 bad = []
-for number, line in enumerate(open(sys.argv[1]), 1):
-    if line.lstrip().startswith("#"):
-        continue
-    for match in call.finditer(line):
-        if re.match(r"--[A-Za-z]", match.group(3)):
-            bad.append(f"{number}: {line.strip()}")
+for source in sys.argv[1:]:
+    for number, line in enumerate(open(source), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for match in call.finditer(line):
+            if re.match(r"--[A-Za-z]", match.group(3)):
+                bad.append(f"{source}:{number}: {line.strip()}")
 print("\n".join(bad))
 sys.exit(1 if bad else 0)
 PY

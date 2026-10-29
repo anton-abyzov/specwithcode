@@ -1,5 +1,9 @@
 /** Looks at the machine: what is installed, where, and whether it runs. Changes nothing. */
-import type { ProvisionProvider, ProvisionService } from "@specweave-studio/contracts";
+import type {
+  ProvisionCredentialHelper,
+  ProvisionProvider,
+  ProvisionService,
+} from "@specweave-studio/contracts";
 import {
   MACOS_TAILSCALE_APP_CLI_ENV,
   MACOS_TAILSCALE_APP_EXECUTABLE,
@@ -281,6 +285,7 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
   );
   return {
     searchPath,
+    credentialHelper: await probeCredentialHelper(host, gitPath, searchPath),
     git: { found: await versionOf(host, gitPath, undefined, searchPath), path: gitPath },
     gh: {
       found: await versionOf(host, ghPath, undefined, searchPath),
@@ -463,6 +468,36 @@ export async function probeServicePath(
     if (!(await ctx.host.which(name, effective))) missing.push(name);
   }
   return { effective, missing, dropIn: dropInText !== null, shellUnread };
+}
+
+export const GITHUB_URL = "https://github.com";
+
+/**
+ * The credential helper git uses for https://github.com, by name only. Exit 1
+ * with no output means none is set; an empty value (a reset) also counts as none.
+ */
+export async function probeCredentialHelper(
+  host: ProvisionHost,
+  gitPath: string | null,
+  searchPath: string,
+): Promise<ProvisionCredentialHelper> {
+  if (!gitPath) return { status: "unknown", helper: null, usesGh: false };
+  const result = await host.exec(
+    gitPath,
+    ["config", "--get-urlmatch", "credential.helper", GITHUB_URL],
+    { timeoutMs: 10_000, env: { PATH: searchPath, GIT_TERMINAL_PROMPT: "0" } },
+  );
+  const helper = result.stdout.trim().split(/\r?\n/u).at(-1)?.trim() ?? "";
+  if (result.code === 0 && helper.length > 0)
+    return {
+      status: "configured",
+      helper: helper.slice(0, 500),
+      usesGh: /(^|[\s/!])gh(\.exe)?\s+auth\s+git-credential\b/u.test(helper),
+    };
+  // 1 is git's "no such key"; anything else means git could not be asked.
+  return result.code === 0 || result.code === 1
+    ? { status: "missing", helper: null, usesGh: false }
+    : { status: "unknown", helper: null, usesGh: false };
 }
 
 export async function probeProviders(

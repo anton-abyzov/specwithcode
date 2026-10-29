@@ -19,6 +19,7 @@
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
+- [Outside agents (MCP)](./user/outside-agents.md)
 - [Add a machine](./user/add-a-machine.md)
 - [Move a project to another machine](./user/moving-a-project.md)
 - [Linux worker on your own VPS](./user/linux-worker.md)

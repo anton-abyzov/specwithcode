@@ -129,6 +129,7 @@ export const copyHandlers = ({
     mode: input.mode,
     status: { state: "scanned", summary, error: null },
   }),
+  copySourceStatus: () => ({ state: "scanned", summary, error: null }),
   copyStart: () => copyStatus("scanning"),
   copyStatus: () => nextStatus(),
   copyApprove: () => copyStatus("approved"),

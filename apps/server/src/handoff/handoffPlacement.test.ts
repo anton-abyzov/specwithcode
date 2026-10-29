@@ -111,7 +111,11 @@ it("reuses a registered checkout across storage changes without touching retaine
     ...input,
     settings: { worktreeLocationMode: "custom", worktreesDirectory: "/" },
   });
-  expect(result).toEqual({ worktreePath: original, existing: true });
+  // Git reports forward slashes on Windows; compare the same native checkout path.
+  expect({ ...result, worktreePath: Path.normalize(result.worktreePath) }).toEqual({
+    worktreePath: original,
+    existing: true,
+  });
   expect(FS.readFileSync(Path.join(original, "file.txt"), "utf8")).toBe("retained dirty work\n");
   expect(FS.existsSync(input.defaultDirectory)).toBe(false);
 });

@@ -29,7 +29,7 @@ public struct MachinePairing: Sendable {
   ///
   /// The descriptor is unauthenticated, so the new token is bound to the
   /// address that issued it and never replaces or reaches another route's.
-  public func pair(target: PairingTarget, clientLabel: String, expectedEnvironmentId: String? = nil) async throws -> PairingResult {
+  public func pair(target: PairingTarget, clientLabel: String, expectedEnvironmentId: String? = nil, resumeConnection: Bool = true) async throws -> PairingResult {
     let descriptor = try await http.descriptor(at: target.httpBase, expectedEnvironmentId: expectedEnvironmentId)
     let grant = try await http.exchangePairingCode(target.code, at: target.httpBase, clientLabel: clientLabel)
     let credential = MachineCredential(grant: grant)
@@ -41,7 +41,7 @@ public struct MachinePairing: Sendable {
       // A new address claiming a known machine does not rename it.
       label = existing.label
     }
-    let record = try await registry.recordPairing(environmentId: descriptor.environmentId, label: label, route: route)
+    let record = try await registry.recordPairing(environmentId: descriptor.environmentId, label: label, route: route, resumeConnection: resumeConnection)
     return PairingResult(record: record, descriptor: descriptor, credential: credential)
   }
 }

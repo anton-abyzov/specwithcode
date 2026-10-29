@@ -140,8 +140,16 @@ interface World {
   /** Runs while a thread is read (a drain starting meanwhile, say). */
   onRead: Effect.Effect<void>;
   projection: Record<string, unknown>;
+  /** Threads other than t1, by id: the parents a subagent is folded into. */
+  parents: Record<string, Record<string, unknown>>;
   readonly notes: Array<{ commandId: string; message: string; runId: string }>;
-  readonly cards: Array<{ requestId: string; runId: string; nodeId: string; questions: unknown }>;
+  readonly cards: Array<{
+    requestId: string;
+    runId: string;
+    nodeId: string;
+    questions: unknown;
+    reopenedFromAskedAt?: string | null | undefined;
+  }>;
 }
 
 const newWorld = (fields: Partial<World> = {}): World => ({
@@ -164,6 +172,7 @@ const newWorld = (fields: Partial<World> = {}): World => ({
       { id: RuntimeRequestId.make("a1"), status: "cancelled" },
     ],
   },
+  parents: {},
   notes: [],
   cards: [],
   ...fields,
@@ -178,14 +187,20 @@ const reopenerFor = (world: World, recordPath: string) =>
         Layer.mergeAll(
           Layer.succeed(ClosedQuestions.ServiceUpdateClosedQuestions, store),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadRecords: () =>
-              world.onRead.pipe(
-                Effect.andThen(
-                  world.readFailure === null
-                    ? Effect.succeed(world.projection as unknown as OrchestrationV2ThreadProjection)
-                    : Effect.fail(world.readFailure as never),
-                ),
-              ),
+            getThreadRecords: (threadId) =>
+              world.parents[threadId] !== undefined
+                ? Effect.succeed({
+                    thread: world.parents[threadId],
+                  } as unknown as OrchestrationV2ThreadProjection)
+                : world.onRead.pipe(
+                    Effect.andThen(
+                      world.readFailure === null
+                        ? Effect.succeed(
+                            world.projection as unknown as OrchestrationV2ThreadProjection,
+                          )
+                        : Effect.fail(world.readFailure as never),
+                    ),
+                  ),
             dispatch: (command) =>
               Effect.sync(() => {
                 if (command.type === "user_input_request.record")
@@ -194,6 +209,7 @@ const reopenerFor = (world: World, recordPath: string) =>
                     runId: command.runId,
                     nodeId: command.nodeId,
                     questions: command.questions,
+                    reopenedFromAskedAt: command.reopenedFromAskedAt,
                   });
                 return {} as never;
               }),
@@ -607,6 +623,105 @@ it.effect("stops a pass when a drain starts, and records afresh what it never cl
   ),
 );
 
+it.effect("asks nothing again on a resolved thread, nor on a subagent of one", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const world = newWorld();
+      const t1 = world.projection.thread as Record<string, unknown>;
+      world.projection = { ...world.projection, thread: { ...t1, settledOverride: "settled" } };
+      const { store, reopener } = yield* reopenerFor(world, recordPath);
+      yield* store.record([closed("q1")]);
+      const resolved = yield* reopener.reopenPending;
+      assert.deepEqual(resolved[0]?.outcome, { type: "skipped", reason: "thread-resolved" });
+
+      // A subagent whose grandparent was resolved: its asks were settled with it.
+      world.projection = {
+        ...world.projection,
+        thread: {
+          ...t1,
+          settledOverride: null,
+          lineage: { parentThreadId: "review", relationshipToParent: "subagent" },
+        },
+      };
+      world.parents = {
+        review: {
+          id: "review",
+          settledOverride: null,
+          lineage: { parentThreadId: "root", relationshipToParent: "subagent" },
+        },
+        root: { id: "root", settledOverride: "settled", lineage: null },
+      };
+      yield* store.record([closed("q2")]);
+      const folded = yield* reopener.reopenPending;
+      assert.deepEqual(folded[0]?.outcome, { type: "skipped", reason: "thread-resolved" });
+      assert.lengthOf(world.notes, 0);
+      assert.lengthOf(world.cards, 0);
+
+      // Once the parent is reopened, the question is asked again.
+      world.parents = {
+        ...world.parents,
+        root: { id: "root", settledOverride: "active", lineage: null },
+      };
+      yield* store.record([closed("q3")]);
+      const reopened = yield* reopener.reopenPending;
+      assert.deepEqual(reopened[0]?.outcome, { type: "reopened", by: "card" });
+    }),
+  ),
+);
+
+it.effect(
+  "reopens questions on active forks and their subagents even when the source is resolved",
+  () =>
+    withRecord((recordPath) =>
+      Effect.gen(function* () {
+        const world = newWorld();
+        const t1 = world.projection.thread as Record<string, unknown>;
+        world.projection = {
+          ...world.projection,
+          thread: {
+            ...t1,
+            settledOverride: "active",
+            lineage: { parentThreadId: "root", relationshipToParent: "fork" },
+          },
+        };
+        world.parents = {
+          root: { id: "root", settledOverride: "settled", lineage: null },
+        };
+        const { store, reopener } = yield* reopenerFor(world, recordPath);
+        yield* store.record([closed("q1")]);
+        assert.deepEqual((yield* reopener.reopenPending)[0]?.outcome, {
+          type: "reopened",
+          by: "card",
+        });
+
+        // A subagent belongs to its active fork, not to the fork's resolved source.
+        world.projection = {
+          ...world.projection,
+          thread: {
+            ...t1,
+            lineage: { parentThreadId: "fork", relationshipToParent: "subagent" },
+          },
+        };
+        world.parents = {
+          ...world.parents,
+          fork: {
+            id: "fork",
+            settledOverride: "active",
+            lineage: { parentThreadId: "root", relationshipToParent: "fork" },
+          },
+        };
+        yield* store.record([closed("q2")]);
+        assert.deepEqual((yield* reopener.reopenPending)[0]?.outcome, {
+          type: "reopened",
+          by: "card",
+        });
+        assert.lengthOf(world.cards, 2);
+        assert.lengthOf(world.notes, 2);
+        assert.lengthOf(yield* store.pending, 0);
+      }),
+    ),
+);
+
 it.effect("reopens nothing that was answered, nor on a closed thread, and waits out a drain", () =>
   withRecord((recordPath) =>
     Effect.gen(function* () {
@@ -670,4 +785,83 @@ it.effect("does not reopen an answered restored copy after another update", () =
       assert.lengthOf(world.cards, 0);
     }),
   ),
+);
+
+for (const [askedAt, reopen] of [
+  ["2026-10-29T11:00:00Z", false],
+  ["2026-10-29T12:00:00Z", false],
+  ["2026-10-29T13:00:00Z", true],
+  [null, false],
+] as const)
+  it.effect(
+    `keeps original ask chronology ${String(askedAt)} through nested settled ancestry`,
+    () =>
+      withRecord((recordPath) =>
+        Effect.gen(function* () {
+          const world = newWorld();
+          const t1 = world.projection.thread as Record<string, unknown>;
+          world.projection = {
+            ...world.projection,
+            thread: {
+              ...t1,
+              settledOverride: "active",
+              lineage: { parentThreadId: "middle", relationshipToParent: "subagent" },
+            },
+          };
+          world.parents = {
+            middle: {
+              id: "middle",
+              settledOverride: "settled",
+              settledAt: DateTime.makeUnsafe("2026-10-29T10:00:00Z"),
+              lineage: { parentThreadId: "root", relationshipToParent: "subagent" },
+            },
+            root: {
+              id: "root",
+              settledOverride: "settled",
+              settledAt: DateTime.makeUnsafe("2026-10-29T12:00:00Z"),
+              lineage: null,
+            },
+          };
+          const { store, reopener } = yield* reopenerFor(world, recordPath);
+          yield* store.record([closed("q1", { askedAt })]);
+          const result = yield* reopener.reopenPending;
+          expect(result[0]?.outcome).toEqual(
+            reopen
+              ? { type: "reopened", by: "card" }
+              : { type: "skipped", reason: "thread-resolved" },
+          );
+          expect(world.cards).toHaveLength(reopen ? 1 : 0);
+          if (reopen) expect(world.cards[0]?.reopenedFromAskedAt).toBe(askedAt);
+          expect(yield* reopener.reopenPending).toEqual([]);
+        }),
+      ),
+  );
+
+it.effect("captures reopened cards with their original ask time on another update", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE orchestration_v2_projection_runtime_requests (runtime_request_id TEXT, thread_id TEXT, status TEXT, kind TEXT, created_at TEXT)`;
+    yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+      ('update-reopen:q1', 't1', 'pending', 'user_input', '2026-10-29T15:00:00Z'),
+      ('update-reopen:legacy', 't1', 'pending', 'user_input', '2026-10-29T15:00:00Z')`;
+    const entries = yield* Reopen.captureOpenRequests({
+      sql,
+      threads: {
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { title: "Task" },
+            nodes: [],
+            turnItems: [],
+            runtimeRequests: [
+              { id: "update-reopen:q1", reopenedFromAskedAt: "2026-10-29T13:00:00Z" },
+              { id: "update-reopen:legacy" },
+            ],
+          } as never),
+      },
+    });
+    expect(entries.map((entry) => [entry.requestId, entry.askedAt])).toEqual([
+      ["update-reopen:q1", "2026-10-29T13:00:00Z"],
+      ["update-reopen:legacy", null],
+    ]);
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );

@@ -1,6 +1,11 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { museModels, museUsage } from "./MuseDiscovery.ts";
+import {
+  museFullEntitled,
+  museModels,
+  museUsage,
+  museUsageFromCliJson,
+} from "./MuseDiscovery.ts";
 import { museControl } from "./MuseConnection.ts";
 const catalog = {
   source: "providerCatalog",
@@ -28,6 +33,61 @@ describe("Muse account discovery", () => {
       "future",
     ])
       expect(museModels({ ...catalog, source }, true, false)).toEqual([]);
+  });
+  it("lets a cold host's catalog decide Full; an API key never does", () => {
+    // usage/read on a fresh serve host: nothing observed yet.
+    expect(museFullEntitled({}, false)).toBe(true);
+    expect(museFullEntitled({}, true)).toBe(false);
+    expect(
+      museModels(catalog, museFullEntitled({}, false), false).map((m) => m.slug),
+    ).toContain("muse-wonder-full");
+    // Observed usage rows without a subscription tier are not "unobserved".
+    expect(
+      museFullEntitled(
+        { usage: { observedAtMs: 1700000000000, window: { usedPercent: 1, resetsAtMs: 2 } } },
+        false,
+      ),
+    ).toBe(false);
+  });
+  it("stamps billing, tool calls and native limits on discovered models", () => {
+    const withLimits = {
+      source: "providerCatalog",
+      models: [
+        {
+          modelId: "muse-wonder-full-1.0",
+          displayLabel: "muse-wonder-full-1.0",
+          contextLimit: 1007997,
+          outputLimit: 128000,
+        },
+      ],
+    };
+    const [subscription] = museModels(withLimits, true, false);
+    expect(subscription).toMatchObject({
+      billing: "subscription",
+      toolCalls: true,
+      contextWindow: 1007997,
+      maxOutput: 128000,
+    });
+    expect(museModels(withLimits, true, true)).toEqual([]);
+  });
+  it("reads CLI usage JSON in envelope, bare and unstamped shapes", () => {
+    const usage = {
+      observedAtMs: 1700000000000,
+      tier: "maximum",
+      window: { usedPercent: 0, resetsAtMs: 1700000010000 },
+      weekly: { usedPercent: 2, resetsAtMs: 1700000100000 },
+    };
+    expect(museUsageFromCliJson(JSON.stringify({ usage }), 5)).toMatchObject({
+      ordinaryUsageAllowed: true,
+      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(usage.observedAtMs)),
+    });
+    expect(museUsageFromCliJson(JSON.stringify(usage), 5)).toBeDefined();
+    const { observedAtMs: _omit, ...unstamped } = usage;
+    expect(museUsageFromCliJson(JSON.stringify(unstamped), 1700000000000)).toMatchObject({
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(1700000000000)),
+    });
+    expect(museUsageFromCliJson("not logged in", 5)).toBeUndefined();
+    expect(museUsageFromCliJson("{}", 5)).toBeUndefined();
   });
   it("keeps max effort separate from the Full model", () => {
     const models = museModels(catalog, false, false);

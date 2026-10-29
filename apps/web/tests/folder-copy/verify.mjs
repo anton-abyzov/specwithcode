@@ -237,7 +237,18 @@ const walker = (page, label, flow, viewport) => {
     await page.keyboard.press("Escape");
     await page.getByRole("dialog").waitFor({ state: "detached" });
   };
-  const reopen = () => page.locator('[data-slot="fixture-reopen"]').click();
+  const reopen = async () => {
+    await page.locator('[data-slot="fixture-reopen"]').click();
+    await page.getByRole("dialog").waitFor({ state: "visible" });
+    await page.locator('[data-slot="dialog-popup"]').evaluate(async (popup) => {
+      await new Promise(requestAnimationFrame);
+      await Promise.all(
+        popup
+          .getAnimations({ subtree: true })
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
+  };
   return {
     stages,
     footer,
@@ -683,7 +694,95 @@ const move = async (page, w) => {
   NodeAssert.match(await footer.textContent(), /The source folder cannot be read/);
 };
 
-const FLOWS = { choosing, "one-click": oneClick, move };
+/** A source refusal must lead to a new review, including after closing the dialog. */
+const staleRecovery = async (page, w) => {
+  const { action, fixture, check, close, reopen } = w;
+  await fixture(() => {
+    window.__folderCopyFixture.destinationHasFiles = true;
+  });
+  await chooseFirst(page);
+  await action("Copy to ministorm").click();
+  await action("Preview on ministorm").click();
+  await fixture(() =>
+    window.__folderCopyFixture.failNext(
+      "copyApprove",
+      "refused",
+      "The source changed or this saved scan has no freshness evidence. Refresh the scan and review a new comparison before copying.",
+    ),
+  );
+  await action("Copy with my choices").click();
+  await check("stale-preview", { primary: "Measure and compare again", leading: "Change setup" });
+  NodeAssert.equal(await action("Copy with my choices").isDisabled(), true);
+  NodeAssert.equal(await action("Replace everything").isDisabled(), true);
+  NodeAssert.equal(
+    await fixture(() => window.__folderCopyFixture.calls.filter((x) => x === "copyApprove").length),
+    1,
+  );
+  await close();
+  await reopen();
+  await check("stale-reopened", { primary: "Measure and compare again", leading: "Change setup" });
+  NodeAssert.equal(await action("Copy with my choices").isDisabled(), true);
+  NodeAssert.equal(await action("Replace everything").isDisabled(), true);
+  NodeAssert.equal(
+    await fixture(() => window.__folderCopyFixture.calls.filter((x) => x === "copyApprove").length),
+    1,
+  );
+  await action("Measure and compare again").click();
+  await action("Preview on ministorm").click();
+  await check("fresh-comparison", { primary: "Copy with my choices", leading: "Change setup" });
+  await action("Copy with my choices").click();
+  await check("recovered-copy", {
+    primary: "Open on ministorm",
+    leading: "Undo…",
+    title: COPIED_TITLE,
+  });
+};
+
+/** Captured files remain an explicit review even when active source writers keep changing. */
+const capturedCopy = async (page, w) => {
+  const { action, fixture, check, calls, body, close, reopen } = w;
+  await fixture(() => {
+    window.__folderCopyFixture.captured = true;
+    window.__folderCopyFixture.destinationHasFiles = true;
+  });
+  await action("Copy to ministorm").click();
+  await check("captured-review", { primary: "Copy with my choices", leading: "Change setup" });
+  NodeAssert.equal(await calls("copyApprove"), 0, "capture never approves itself");
+  NodeAssert.match(await body(), /This copy uses files captured/);
+  NodeAssert.match(await body(), /Work is still running here. Later changes stay on the source/);
+  NodeAssert.doesNotMatch(await body(), /Files that change during the copy/);
+  NodeAssert.match(await body(), /New files and later edits stay on the source/);
+  await fixture(() => {
+    window.__folderCopyFixture.scanCurrent = false;
+  });
+  await page.getByRole("button", { name: "Measure again", exact: true }).click();
+  await page.getByText(/The source changed. You can still copy the captured files/).waitFor();
+  NodeAssert.match(await body(), /measurements and notices show the current source/);
+  await check("captured-newer-source", {
+    primary: "Copy with my choices",
+    leading: "Change setup",
+  });
+  NodeAssert.equal(await calls("copyApprove"), 0);
+  await close();
+  await reopen();
+  await check("captured-reopened", { primary: "Copy with my choices", leading: "Change setup" });
+  NodeAssert.equal(await calls("copyApprove"), 0, "reopen keeps the review pending");
+  await action("Copy with my choices").click();
+  await check("captured-copy-done", {
+    primary: "Open on ministorm",
+    leading: "Undo…",
+    title: COPIED_TITLE,
+  });
+  NodeAssert.equal(await calls("copyApprove"), 1, "only the person's click approves the copy");
+};
+
+const FLOWS = {
+  choosing,
+  "one-click": oneClick,
+  move,
+  "stale-recovery": staleRecovery,
+  "captured-copy": capturedCopy,
+};
 try {
   for (const viewport of [
     { width: 375, height: 812 },

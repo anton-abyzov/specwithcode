@@ -507,7 +507,8 @@ function parseGitRemoteVerboseOutput(
       continue;
     }
 
-    const match = /^(\S+)\s+(.+)\s+\((fetch|push)\)$/.exec(trimmed);
+    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
+    const match = /^(\S+)\s+(.+)\s+\((fetch|push)\)(?:\s+\[[^[\]\r\n]+\])?$/.exec(trimmed);
     if (!match) {
       continue;
     }

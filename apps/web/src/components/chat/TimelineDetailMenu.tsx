@@ -223,7 +223,9 @@ function DetailMenu({
         >
           <TriggerIcon aria-hidden className={appearance === "chat" ? "size-3.5" : undefined} />
           <span aria-hidden data-timeline-detail-label className="text-xs">
-            {replyLabel ?? TIMELINE_DETAIL_LABELS[detail]}
+            {replyLabel
+              ? `Replies: ${replyLabel} · ${TIMELINE_DETAIL_LABELS[detail]}`
+              : TIMELINE_DETAIL_LABELS[detail]}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="bottom">

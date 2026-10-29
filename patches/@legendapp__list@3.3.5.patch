@@ -1,5 +1,5 @@
 diff --git a/keyboard.d.ts b/keyboard.d.ts
-index 367945c..0ac7bf8 100644
+index 367945cdfa8a8c260b7a127657a75c016c9ab46f..0ac7bf8b8e9c386058b2374199e58fe8c92d39b3 100644
 --- a/keyboard.d.ts
 +++ b/keyboard.d.ts
 @@ -279,7 +279,7 @@ type KeyboardChatComposerInsetListRef = {
@@ -23,7 +23,7 @@ index 367945c..0ac7bf8 100644
  } & React.RefAttributes<LegendListRef>) => React.ReactElement | null;
  
 diff --git a/keyboard.js b/keyboard.js
-index 6645bcb..321c4c3 100644
+index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..321c4c305129dd3ce3f06127c47d51720a73fb83 100644
 --- a/keyboard.js
 +++ b/keyboard.js
 @@ -33,19 +33,22 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !reactNativeKeyboardController.
@@ -119,7 +119,7 @@ index 6645bcb..321c4c3 100644
        renderScrollComponent: memoList,
        ...rest
 diff --git a/keyboard.mjs b/keyboard.mjs
-index 87b38b9..111eb24 100644
+index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..111eb242ba9d9ade1cb912550f7df85cf4f361ee 100644
 --- a/keyboard.mjs
 +++ b/keyboard.mjs
 @@ -1,7 +1,7 @@
@@ -224,7 +224,7 @@ index 87b38b9..111eb24 100644
        renderScrollComponent: memoList,
        ...rest
 diff --git a/react-native.d.ts b/react-native.d.ts
-index ce1fe00..3ccf6f1 100644
+index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6aba6636e5 100644
 --- a/react-native.d.ts
 +++ b/react-native.d.ts
 @@ -293,6 +293,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -241,7 +241,7 @@ index ce1fe00..3ccf6f1 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a30..5ac6bbe 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..5ac6bbe8fe40bf252fefa6b885c2196d0677d75f 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -809,7 +809,7 @@ index b3c5a30..5ac6bbe 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cd..93aac74 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..93aac741d2cf77ce35996362439108176f19da7a 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1377,7 +1377,7 @@ index 40e87cd..93aac74 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
 diff --git a/react-native.web.js b/react-native.web.js
-index 914d2da..8b88b09 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..8b88b09d1269acef77c6ce0f8aaa1049d4fa26e9 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
 @@ -5651,6 +5651,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1412,7 +1412,7 @@ index 914d2da..8b88b09 100644
      }
    }
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 95465f2..d7cbe1c 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbddd67f1e7d 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
 @@ -5630,6 +5630,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1447,10 +1447,44 @@ index 95465f2..d7cbe1c 100644
      }
    }
 diff --git a/react.js b/react.js
-index 914d2da..0c2917d 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..bceae4d78ec7307f36115d41495c8a884375f278 100644
 --- a/react.js
 +++ b/react.js
-@@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -419,6 +419,33 @@ function getContainerLayoutBaseline(element) {
+ function setContainerLayoutBaseline(element, size) {
+   containerLayoutBaselines.set(element, size);
+ }
++// DOM positions are visual coordinates, but list sizes and scroll offsets use
++// layout border-box units. CSS zoom/transforms must not scale cached row sizes.
++function measureWebBorderBox(element) {
++  const rect = element.getBoundingClientRect();
++  if (element.getClientRects && element.getClientRects().length === 0) {
++    return { height: 0, width: 0, left: rect.left, top: rect.top };
++  }
++  const style = typeof getComputedStyle === "function" ? getComputedStyle(element) : void 0;
++  const dimension = (axis, edges) => {
++    const value = style == null ? void 0 : style[axis];
++    if (!value || !value.endsWith("px")) return rect[axis];
++    let size = parseFloat(value);
++    if (style.boxSizing !== "border-box") {
++      for (const edge of edges) {
++        size += parseFloat(style["padding" + edge]) || 0;
++        size += parseFloat(style["border" + edge + "Width"]) || 0;
++      }
++    }
++    return Number.isFinite(size) && size >= 0 ? size : rect[axis];
++  };
++  return {
++    height: dimension("height", ["Top", "Bottom"]),
++    width: dimension("width", ["Left", "Right"]),
++    left: rect.left,
++    top: rect.top
++  };
++}
+ 
+ // src/utils/devEnvironment.ts
+ var metroDev = typeof __DEV__ !== "undefined" ? __DEV__ : void 0;
+@@ -4702,7 +4729,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
@@ -1460,7 +1494,7 @@ index 914d2da..0c2917d 100644
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4722,6 +4723,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -4722,6 +4750,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
@@ -1473,7 +1507,62 @@ index 914d2da..0c2917d 100644
    }
    return nextSize;
  }
-@@ -5651,6 +5658,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4736,12 +4770,12 @@ function runOrScheduleMVCPRecalculate(ctx) {
+       state.userScrollAnchorReset = void 0;
+     }
+   } else {
+-    if (!state.mvcpAnchorLock) {
+-      state.scheduledWork.cancel("mvcpRecalculate");
+-      calculateItemsInView(ctx, { doMVCP: true });
+-    } else if (!state.scheduledWork.has("mvcpRecalculate")) {
+-      state.scheduledWork.frame(() => calculateItemsInView(ctx, { doMVCP: true }), "mvcpRecalculate");
+-    }
++    // Web has already applied the measured DOM size. Keep downstream row
++    // positions in that same layout transaction, even while retaining an MVCP
++    // anchor. Waiting for another frame exposes overlapping paint and hit areas
++    // and can leave them stale until a wheel/resize when that frame is delayed.
++    state.scheduledWork.cancel("mvcpRecalculate");
++    calculateItemsInView(ctx, { doMVCP: true });
+   }
+ }
+ function updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal) {
+@@ -4956,7 +4990,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const itemKey = peek$(ctx, `containerItemKey${containerId}`);
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureWebBorderBox(element);
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5334,7 +5368,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureWebBorderBox(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -5347,7 +5381,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureWebBorderBox(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -5416,7 +5450,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       var _a4;
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+-        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        const rect = element == null ? void 0 : measureWebBorderBox(element);
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -5651,6 +5685,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1492,7 +1581,7 @@ index 914d2da..0c2917d 100644
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5690,9 +5709,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5690,9 +5736,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1504,7 +1593,16 @@ index 914d2da..0c2917d 100644
        }
      }
    }
-@@ -6446,8 +6465,8 @@ function ScrollAdjust() {
+@@ -5987,7 +6033,7 @@ function resolveScrollEventTarget(scrollElement, isWindowScroll) {
+   return isWindowScroll && typeof window !== "undefined" ? window : scrollElement;
+ }
+ function getLayoutRectangle(element, isWindowScroll, horizontal) {
+-  const rect = element.getBoundingClientRect();
++  const rect = measureWebBorderBox(element);
+   const scroll = getWindowScrollPosition();
+   return {
+     height: isWindowScroll && typeof window !== "undefined" && !horizontal ? window.innerHeight : rect.height,
+@@ -6446,8 +6492,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1515,10 +1613,44 @@ index 914d2da..0c2917d 100644
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2..b73bfdf 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..cf78902fdda50228b0c9d048b419fd77151163b9 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -398,6 +398,33 @@ function getContainerLayoutBaseline(element) {
+ function setContainerLayoutBaseline(element, size) {
+   containerLayoutBaselines.set(element, size);
+ }
++// DOM positions are visual coordinates, but list sizes and scroll offsets use
++// layout border-box units. CSS zoom/transforms must not scale cached row sizes.
++function measureWebBorderBox(element) {
++  const rect = element.getBoundingClientRect();
++  if (element.getClientRects && element.getClientRects().length === 0) {
++    return { height: 0, width: 0, left: rect.left, top: rect.top };
++  }
++  const style = typeof getComputedStyle === "function" ? getComputedStyle(element) : void 0;
++  const dimension = (axis, edges) => {
++    const value = style == null ? void 0 : style[axis];
++    if (!value || !value.endsWith("px")) return rect[axis];
++    let size = parseFloat(value);
++    if (style.boxSizing !== "border-box") {
++      for (const edge of edges) {
++        size += parseFloat(style["padding" + edge]) || 0;
++        size += parseFloat(style["border" + edge + "Width"]) || 0;
++      }
++    }
++    return Number.isFinite(size) && size >= 0 ? size : rect[axis];
++  };
++  return {
++    height: dimension("height", ["Top", "Bottom"]),
++    width: dimension("width", ["Left", "Right"]),
++    left: rect.left,
++    top: rect.top
++  };
++}
+ 
+ // src/utils/devEnvironment.ts
+ var metroDev = typeof __DEV__ !== "undefined" ? __DEV__ : void 0;
+@@ -4681,7 +4708,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
@@ -1528,7 +1660,7 @@ index 95465f2..b73bfdf 100644
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4701,6 +4702,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -4701,6 +4729,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
@@ -1541,7 +1673,62 @@ index 95465f2..b73bfdf 100644
    }
    return nextSize;
  }
-@@ -5630,6 +5637,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4715,12 +4749,12 @@ function runOrScheduleMVCPRecalculate(ctx) {
+       state.userScrollAnchorReset = void 0;
+     }
+   } else {
+-    if (!state.mvcpAnchorLock) {
+-      state.scheduledWork.cancel("mvcpRecalculate");
+-      calculateItemsInView(ctx, { doMVCP: true });
+-    } else if (!state.scheduledWork.has("mvcpRecalculate")) {
+-      state.scheduledWork.frame(() => calculateItemsInView(ctx, { doMVCP: true }), "mvcpRecalculate");
+-    }
++    // Web has already applied the measured DOM size. Keep downstream row
++    // positions in that same layout transaction, even while retaining an MVCP
++    // anchor. Waiting for another frame exposes overlapping paint and hit areas
++    // and can leave them stale until a wheel/resize when that frame is delayed.
++    state.scheduledWork.cancel("mvcpRecalculate");
++    calculateItemsInView(ctx, { doMVCP: true });
+   }
+ }
+ function updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal) {
+@@ -4935,7 +4969,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const itemKey = peek$(ctx, `containerItemKey${containerId}`);
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureWebBorderBox(element);
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5313,7 +5347,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureWebBorderBox(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -5326,7 +5360,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureWebBorderBox(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -5395,7 +5429,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       var _a4;
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+-        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        const rect = element == null ? void 0 : measureWebBorderBox(element);
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -5630,6 +5664,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1560,7 +1747,7 @@ index 95465f2..b73bfdf 100644
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5669,9 +5688,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5669,9 +5715,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1572,7 +1759,16 @@ index 95465f2..b73bfdf 100644
        }
      }
    }
-@@ -6425,8 +6444,8 @@ function ScrollAdjust() {
+@@ -5966,7 +6012,7 @@ function resolveScrollEventTarget(scrollElement, isWindowScroll) {
+   return isWindowScroll && typeof window !== "undefined" ? window : scrollElement;
+ }
+ function getLayoutRectangle(element, isWindowScroll, horizontal) {
+-  const rect = element.getBoundingClientRect();
++  const rect = measureWebBorderBox(element);
+   const scroll = getWindowScrollPosition();
+   return {
+     height: isWindowScroll && typeof window !== "undefined" && !horizontal ? window.innerHeight : rect.height,
+@@ -6425,8 +6471,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1583,7 +1779,7 @@ index 95465f2..b73bfdf 100644
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/reanimated.d.ts b/reanimated.d.ts
-index e504332..2ce6383 100644
+index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
 --- a/reanimated.d.ts
 +++ b/reanimated.d.ts
 @@ -294,6 +294,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -1600,7 +1796,7 @@ index e504332..2ce6383 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/reanimated.js b/reanimated.js
-index f1265fa..fc03be2 100644
+index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..fc03be2190c046f743ffde45ed189ee7868d0cec 100644
 --- a/reanimated.js
 +++ b/reanimated.js
 @@ -115,8 +115,10 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
@@ -1763,7 +1959,7 @@ index f1265fa..fc03be2 100644
          renderScrollComponent: renderReanimatedScrollComponent,
          ...IsNewArchitecture ? { stickyPositionComponentInternal } : {}
 diff --git a/reanimated.mjs b/reanimated.mjs
-index 29a00d5..6ab9292 100644
+index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..6ab929250c8924e2d9919ee09a4f774238fbb90a 100644
 --- a/reanimated.mjs
 +++ b/reanimated.mjs
 @@ -1,7 +1,7 @@

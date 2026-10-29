@@ -66,6 +66,11 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
     with a virtual table is read protected rows first, then the idle check, then the rest."""
     if kept_lines.active() is None:  # Lines an earlier read kept in memory make room for this one first.
         kept_lines.make_room()
+    if include_database and since is None and widen_from is None:
+        import read_cache
+        cached = read_cache.read(state, include_auth, kept_lines.active())
+        if cached is not None:
+            return cached
     db = live_database.connect(state / 'statev2.sqlite')
     try:
         db.execute('BEGIN')
@@ -117,7 +122,7 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
     finally:
         db.close()
 
-def _read_tables(db, tables, include_auth, since, include_database, widen_from, *, once=False, check_idle=False, keep=None):
+def _read_tables(db, tables, include_auth, since, include_database, widen_from, *, once=False, check_idle=False, keep=None, cache=None):
     """The rest of _read_state, in its read transaction. With `once`, the complete capture
     comes first: its legacy hashes are the guarded hashes (the same encoding), it hashes the
     logs' earlier rows in the same scan (log_prefixes), and it hands over the rows of
@@ -130,13 +135,14 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
     if once:
         # Complete schema and typed cells of every table, bound to the protected rows in
         # this same read transaction. Hashes and schema text only; no cell values.
-        scanned, threads = {}, ThreadRows(db)
+        scanned, threads = {}, ThreadRows(db, cache.threads if cache is not None else None)
         def visit(table, rows):
             if table == 'auth_sessions' or table in CURSOR_COLUMNS: scanned[table] = rows
             threads.visit(table, rows)
         prefixes = log_prefixes(db, tables, since) if since is not None else None
         database = continuity.capture_connection(db, widen_from, visit=visit, prefixes=prefixes,
-                                                  **({'keep': keep} if keep is not None else {}))
+                                                  **({'keep': keep} if keep is not None else {}),
+                                                  **({'reuse': cache.reuse} if cache is not None else {}))
         guarded = [table for table in tables
                    if table.startswith(('projection_', 'orchestration_', 'project_')) or table in AUTHORITY_TABLES]
         counts = {table: database['legacy'][table]['count'] for table in guarded}
@@ -293,8 +299,9 @@ class ThreadRows:
     visited, a run at a time (continuity.update_joined), and are let go with its rows: no table
     is read again for the activity, and no stream's lines are held past their own table."""
 
-    def __init__(self, db):
+    def __init__(self, db, cached=None):
         self.db, self.visited, self.tables, self.hashers = db, [], [], {}
+        self.cached = cached
 
     def visit(self, table, rows):
         assert not self.visited or self.visited[-1] < table, 'Tables visited out of name order'
@@ -304,6 +311,8 @@ class ThreadRows:
         if not (is_projection_table(table) and key) or table in CURSOR_COLUMNS:
             return
         self.tables.append(table)
+        if self.cached is not None:
+            return
         index, streams = columns.index(key), {}
         for row in rows:
             streams.setdefault(stream_key(row[index]), []).append(thread_line(table, row))
@@ -317,6 +326,8 @@ class ThreadRows:
             continuity.update_joined(hasher, lines)
 
     def digests(self):
+        if self.cached is not None:
+            return self.cached
         return {stream: hasher.hexdigest() for stream, hasher in self.hashers.items()}
 
 def log_rowids(db, tables):

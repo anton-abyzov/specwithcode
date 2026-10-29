@@ -129,6 +129,7 @@ export const FolderCopySourceStatus = Schema.Struct({
   ]),
   summary: Schema.NullOr(FolderCopySourceSummary),
   scanCompletedAt: Schema.optional(count),
+  capturedAt: Schema.optional(count),
   freshness: Schema.optional(
     Schema.Struct({
       checkedAt: count,
@@ -349,6 +350,7 @@ export const FolderCopyState = Schema.Literals([
 export type FolderCopyState = typeof FolderCopyState.Type;
 
 export const FolderCopyStatus = Schema.Struct({
+  capturedAt: Schema.optional(count),
   ...scopeFields,
   /** Registered coordinator workspace, which can be below targetFolder. */
   projectFolder: Schema.optional(bounded(4096)),
@@ -451,6 +453,8 @@ export class FolderCopyError extends Schema.TaggedError<FolderCopyError>()("Fold
     "copy_failed",
   ]),
   detail: Schema.optional(bounded(4000)),
+  /** A refused preview must be replaced by an explicitly reviewed comparison. */
+  recovery: Schema.optional(Schema.Literal("compare_again")),
 }) {
   override get message(): string {
     // A source refusal's detail names the machine and the next step on its own.

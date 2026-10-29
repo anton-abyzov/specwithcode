@@ -1,11 +1,8 @@
 import * as DateTime from "effect/DateTime";
-import {
-  ProviderDriverKind,
-  TextGenerationError,
-  type ServerProvider,
-} from "@specweave-studio/contracts";
+import { ProviderDriverKind, type ServerProvider } from "@specweave-studio/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -25,10 +22,22 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import { buildServerProvider } from "../providerSnapshot.ts";
 import { MuseSettings } from "@specweave-studio/contracts";
-import { connectMuse, museCheckFailure, museControl } from "../muse/MuseConnection.ts";
-import { museModels, museUsage, museSubscription } from "../muse/MuseDiscovery.ts";
+import {
+  connectMuse,
+  MuseCheckError,
+  museCheckFailure,
+  museControl,
+} from "../muse/MuseConnection.ts";
+import {
+  museModels,
+  museUsage,
+  museFullEntitled,
+  museUsageFromCliJson,
+} from "../muse/MuseDiscovery.ts";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeMuseRuntime } from "../muse/MuseRuntime.ts";
-import { fromRunner } from "../../textGeneration/TextGenerationOperations.ts";
+import { makeMuseTextGeneration } from "../../textGeneration/MuseTextGeneration.ts";
+import { makeMetaTextGeneration, metaApiKey } from "../../textGeneration/MetaTextGeneration.ts";
 import type { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
@@ -64,6 +73,7 @@ export const museAdapterFlavor = (
       cwd: runtime.cwd,
       ...(runtime.resumeSessionId ? { resumeSessionId: runtime.resumeSessionId } : {}),
       runtimeMode: runtime.runtimePolicy.runtimeMode,
+      mcpServers: runtime.mcpServers,
       ...(runtime.onOutgoingResponse ? { onOutgoingResponse: runtime.onOutgoingResponse } : {}),
       ...(runtime.onOutgoingResponseFailure
         ? { onOutgoingResponseFailure: runtime.onOutgoingResponseFailure }
@@ -84,6 +94,7 @@ export const museAdapterFlavor = (
 });
 export type MuseDriverEnv =
   | Crypto.Crypto
+  | ChildProcessSpawner.ChildProcessSpawner
   | Path.Path
   | FileSystem.FileSystem
   | IdAllocatorV2
@@ -98,6 +109,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
   create: (input) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
@@ -139,47 +151,102 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
             },
           }),
         );
-      const checkProvider = Effect.tryPromise({
-        try: async () => {
-          if (!input.enabled) return initial();
-          const { host, client } = await connectMuse(settings, environment, serverConfig.cwd);
-          try {
-            const [catalog, usage] = await museControl(
-              Promise.all([
-                host.connection.request("model/list", {}),
-                host.connection.request("usage/read", {}),
-              ]),
-              () => client.close(),
-            );
-            const limits = museUsage(usage);
-            const apiKey = Boolean(environment.META_API_KEY?.trim());
-            const models = museModels(catalog, museSubscription(usage), apiKey);
-            const authenticated = limits !== undefined;
-            return {
-              ...initial(),
-              installed: true,
-              version: host.initializeResult.serverInfo.version,
-              status: models.length ? ("ready" as const) : ("warning" as const),
-              auth: {
-                status: authenticated ? ("authenticated" as const) : ("unknown" as const),
-                ...(apiKey ? { type: "api_key" } : { type: "subscription" }),
-              },
-              models,
-              ...(limits ? { usageLimits: limits } : {}),
-              message: authenticated
-                ? "Muse Code native subscription. Wonder Full requires an eligible plan and account model availability."
-                : "Sign in with muse and refresh. Subscription capacity is not yet verified; this provider will not be suggested as a fallback.",
-            };
-          } finally {
-            await client.close();
-          }
-        },
-        catch: (cause) => ({
+      // A cold `muse serve` host has observed no usage until one of its
+      // turns lands, so `usage/read` is empty in a provider check.
+      // `muse usage --json` reads the account allowance live without a
+      // model turn; it is the check's fallback, never a replacement for an
+      // observed MSP read.
+      const readCliUsage = Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(settings.binaryPath || "muse", ["usage", "--json"], {
+            env: environment,
+            extendEnv: true,
+          }),
+        );
+        const [output, , exitCode] = yield* Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            child.stderr.pipe(Stream.runDrain),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        return exitCode === 0
+          ? museUsageFromCliJson(output, DateTime.toEpochMillis(now))
+          : undefined;
+      }).pipe(
+        Effect.scoped,
+        Effect.timeoutOption("15 seconds"),
+        Effect.map(Option.getOrElse(() => undefined)),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const checkProvider = Effect.gen(function* () {
+        if (!input.enabled) return initial();
+        const probed = yield* Effect.result(
+          Effect.tryPromise({
+            try: async () => {
+              const { host, client } = await connectMuse(
+                settings,
+                environment,
+                serverConfig.cwd,
+              );
+              try {
+                const [catalog, usage] = await museControl(
+                  Promise.all([
+                    host.connection.request("model/list", {}),
+                    host.connection.request("usage/read", {}),
+                  ]),
+                  () => client.close(),
+                );
+                return { catalog, usage, version: host.initializeResult.serverInfo.version };
+              } finally {
+                await client.close();
+              }
+            },
+            catch: (cause) => new MuseCheckError({ detail: museCheckFailure(cause), cause }),
+          }),
+        );
+        if (probed._tag === "Failure") {
+          const failed: ServerProvider = {
+            ...initial(),
+            status: "error" as const,
+            message: probed.failure.detail,
+          };
+          return failed;
+        }
+        const { catalog, usage, version } = probed.success;
+        const apiKey = Boolean(environment.META_API_KEY?.trim());
+        const limits = museUsage(usage) ?? (yield* readCliUsage);
+        const models = museModels(
+          catalog,
+          limits !== undefined || museFullEntitled(usage, apiKey),
+          apiKey,
+        );
+        // The host only serves its provider catalog to a signed-in
+        // account; a cold host has simply observed no usage yet, which
+        // is not a sign-out. Capacity (and fallback eligibility) still
+        // requires an observed usage read.
+        const authenticated = models.length > 0;
+        const ready: ServerProvider = {
           ...initial(),
-          status: "error" as const,
-          message: museCheckFailure(cause),
-        }),
-      }).pipe(Effect.orElseSucceed((value) => value));
+          installed: true,
+          version,
+          status: models.length ? ("ready" as const) : ("warning" as const),
+          auth: {
+            status: authenticated ? ("authenticated" as const) : ("unknown" as const),
+            ...(apiKey ? { type: "api_key" } : { type: "subscription" }),
+          },
+          models,
+          ...(limits ? { usageLimits: limits } : {}),
+          message: limits
+            ? "Muse Code native subscription. Wonder Full requires an eligible plan and account model availability."
+            : authenticated
+              ? "Signed in to Muse Code. Usage limits appear after this provider runs a turn; until then it will not be suggested as a fallback."
+              : "Sign in with muse and refresh. Subscription capacity is not yet verified; this provider will not be suggested as a fallback.",
+        };
+        return ready;
+      });
       const snapshot = yield* makeManagedServerProvider({
         getSettings: Effect.succeed(settings),
         streamSettings: Stream.empty,
@@ -213,15 +280,13 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         selfInvocation,
         flavor: museAdapterFlavor(settings, environment),
       });
-      const textGeneration = fromRunner("Muse Code", (request) =>
-        Effect.fail(
-          new TextGenerationError({
-            operation: request.operation,
-            detail:
-              "Muse Code background text generation is not enabled. Choose another provider for automatic titles and commit messages.",
-          }),
-        ),
-      );
+      // With a Meta API key the per-token API is the text-generation route
+      // (no durable CLI session per title); the subscription route runs an
+      // ephemeral Muse session. Agentic turns stay on the driver either way.
+      const textGeneration =
+        metaApiKey(environment) === undefined
+          ? makeMuseTextGeneration(settings, environment)
+          : makeMetaTextGeneration(environment);
       return {
         instanceId: input.instanceId,
         driverKind: driver,
@@ -229,6 +294,10 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         displayName: input.displayName,
         enabled: input.enabled,
         snapshot,
+        readUsageLimitsNow: checkProvider.pipe(
+          Effect.map((probed) => probed.usageLimits),
+          Effect.catchCause(() => Effect.succeed(undefined)),
+        ),
         orchestrationAdapter,
         textGeneration,
       };

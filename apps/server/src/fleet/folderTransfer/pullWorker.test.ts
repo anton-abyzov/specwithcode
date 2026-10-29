@@ -53,7 +53,8 @@ beforeAll(async () => {
     operationId,
     projectId: "project-source",
     folder: fixture.root,
-    mode: "copy-only",
+    // Exercise the live-file path retained for coordinator moves and legacy jobs.
+    mode: "copy-and-move",
     destinationEnvironmentId: "env-destination",
   });
   token = offered.token;

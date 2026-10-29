@@ -46,6 +46,7 @@ import type { SubagentEntry } from "../../../studio/threadSubagents";
 import { isCoordinatorNamedThread, threadTitleTip } from "../../../studio/threadTitles";
 import { ModelBadge, ThreadModelBadge, useProviderEntries } from "./ModelBadge";
 import { RoutingDecisionChip } from "./RoutingDecisionChip";
+import { ThreadOriginBadge } from "../../chat/ThreadOriginBadge";
 import { SubagentsChip } from "./SubagentsChip";
 import { Tip } from "./Tip";
 import { HandoffThreadHeaderBadge } from "../../handoff/HandoffBadge";
@@ -226,6 +227,7 @@ export function ProjectThreadHeader(props: {
             focusable
             header
           />
+          <ThreadOriginBadge origin={thread.source?.origin} variant="chip" />
           <RoutingDecisionChip
             routing={thread.routing}
             entries={providerEntries}

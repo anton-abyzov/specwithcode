@@ -727,6 +727,8 @@ const STATUS_KEYS = [
   "downloadedVersion",
   "installedVersion",
   "lastInstall",
+  // fleet_rollout.requested_by_update_now: a press the agent answered without installing it has ended.
+  "handledInstallRequestAt",
   "installRequestedAt",
   "installMode",
   "installHoldUntil",

@@ -48,6 +48,8 @@ class ServiceHold(object):
     updates/hold.json for update.py --reap. Raises HoldUnavailable when that CLI or its service cannot
     do it (an older release has no such command)."""
 
+    wait_for_idle = False
+
     def __init__(self, identity, home=None, run=subprocess.run):
         self.identity = identity
         self.home = pathlib.Path(home or pathlib.Path.home())
@@ -120,7 +122,10 @@ class ServiceHold(object):
         supported, reason = self.support()
         if not supported:
             raise HoldUnsupported(reason)
-        return self._call(['--stop-work', '--hold', '--reason', 'install'], HOLD_TIMEOUT)
+        return self._call(self.prepare_flags(), HOLD_TIMEOUT)
+
+    def prepare_flags(self):
+        return (['--hold', '--if-idle'] if self.wait_for_idle else ['--stop-work', '--hold']) + ['--reason', 'install']
 
     def release(self):
         """Releases the hold, as Cancel update does, so work can start again."""

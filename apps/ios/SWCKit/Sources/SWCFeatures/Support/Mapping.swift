@@ -47,7 +47,7 @@ extension MachineSummary {
   /// little out of date: shown like a connection in progress.
   var displayStatus: WeaveStatus { isStale ? .connecting : status.weaveStatus }
 
-  var statusLabel: String { connectStatusLabel ?? (isStale ? "Catching up" : status.label) }
+  var statusLabel: String { isDisconnected ? "Disconnected on this phone" : connectStatusLabel ?? (isStale ? "Catching up" : status.label) }
 }
 
 extension UserMessageState {

@@ -134,13 +134,15 @@ def refuse(config, state, version):
             'choose Update now again to install it.' % (record['version'], version))
 
 
-def replaced(before, config, state, version, now):
+def replaced(before, config, state, version, now, ttl_until=None):
     """None while the pending request is still `before` (the one this pass started with) or is a
     newer one that may install `version`. Otherwise that newer request is settled and this is
-    the (status, message) that ends the pass, so it never installs a version it did not ask for."""
+    the (status, message) that ends the pass, so it never installs a version it did not ask for.
+    `ttl_until` is as for pending(): when the newer request lapses, if not REQUEST_TTL after it was
+    written (update_agent_run.ttl_until)."""
     if config.get('installRequestedAt') == before:
         return None
-    waiting, message = _verdict(config, state, None, now, lambda _config: False)
+    waiting, message = _verdict(config, state, None, now, lambda _config: False, ttl_until)
     refusal = refuse(config, state, version) if waiting else None
     if message or refusal:
         return 'error', message or refusal

@@ -34,6 +34,62 @@ async function fixture(paths: string[]) {
   return { root, targetRoot, backupRoot, journalFile };
 }
 
+it("flushes completion with the next intent and recovers an unflushed final completion", async () => {
+  const paths = ["one", "two", "three", "four"];
+  const input = await fixture(paths);
+  const handle = await NodeFSP.open(input.journalFile, "r");
+  const prototype = Object.getPrototypeOf(handle) as NodeFSP.FileHandle;
+  await handle.close();
+  const sync = prototype.sync;
+  const durable: string[] = [];
+  const synced = vi.spyOn(prototype, "sync").mockImplementation(async function (
+    this: NodeFSP.FileHandle,
+  ) {
+    await sync.call(this);
+    durable.push(NodeFS.readFileSync(input.journalFile, "utf8"));
+  });
+  const remove = NodeFSP.rm;
+  const mutations = vi.spyOn(NodeFSP, "rm").mockImplementation(async (path, options) => {
+    const relative = NodePath.relative(input.targetRoot, String(path));
+    if (paths.includes(relative)) {
+      const records = (durable.at(-1) ?? "")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(records).toContainEqual(
+        expect.objectContaining({ t: "undo-file-intent", path: relative }),
+      );
+    }
+    return remove(path, options);
+  });
+  try {
+    expect((await undoApply(input)).problems).toEqual([]);
+    // One sync before each mutation, and one final flush; no extra per-file completion sync.
+    expect(durable).toHaveLength(paths.length + 1);
+    const records = durable
+      .at(-1)!
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records.filter((entry) => entry.t === "undo-file-done")).toHaveLength(paths.length);
+    synced.mockRestore();
+    mutations.mockRestore();
+    // A crash after the last restore but before close loses just that completion mark.
+    NodeFS.writeFileSync(input.journalFile, durable.at(-2)!);
+    expect((await previewUndo(input)).edited).toBe(0);
+    expect((await undoApply(input)).problems).toEqual([]);
+    for (const path of paths)
+      expect(NodeFS.readFileSync(NodePath.join(input.targetRoot, path), "utf8")).toBe(
+        `ORIGINAL ${path}`,
+      );
+  } finally {
+    synced.mockRestore();
+    mutations.mockRestore();
+    NodeFS.rmSync(input.root, { recursive: true, force: true });
+  }
+});
+
 it.each([false, true])(
   "retries multi-file Undo without moving restored originals (force: %s)",
   async (force) => {

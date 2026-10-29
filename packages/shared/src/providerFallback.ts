@@ -166,8 +166,11 @@ export function isGeminiSpendProvider(provider: ServerProvider | undefined): boo
 /**
  * Any instance whose turns are billed per token: a Claude API-key, proxy or
  * Bedrock instance, another driver signed in with an API key (Codex on an
- * OpenAI key), or Gemini / Vertex. Nothing picks one by itself. Gemini stays
- * out even when a fallback order or the project default names it.
+ * OpenAI key), or Gemini / Vertex. Nothing picks one by itself. Gemini
+ * spend is the one carve-out: naming it in the fallback order is the
+ * person's own spending choice, so a named order entry may take a thread;
+ * the project default, a proven model and any-ready still never move onto
+ * it (see `describeFallbackOrder`).
  */
 export function isPerTokenProvider(provider: ServerProvider | undefined): boolean {
   return (
@@ -643,7 +646,11 @@ export function describeFallbackOrder(input: {
       return entry("missing");
     if (!fitsContext(input.contextFit, selection)) return entry("too-small");
     if (input.limitedInstanceIds?.has(provider.instanceId)) return entry("limited");
-    if (isPaidModelOn(provider, selection.model)) return entry("per-token");
+    // This list is the person's own order: naming a Gemini spend model here
+    // is their spending consent, so it is judged on readiness like any
+    // other entry. Every unnamed path still refuses it (see `usable`).
+    if (isPaidModelOn(provider, selection.model) && !isGeminiSpendProvider(provider))
+      return entry("per-token");
     if (!canTakeTurn(provider)) {
       if (provider.auth.status === "unauthenticated") return entry("signed-out");
       if (usageDeniesTurn(provider)) return entry("full");

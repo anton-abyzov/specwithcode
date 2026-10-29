@@ -34,12 +34,14 @@ extension LiveEngine {
   }
 
   /// Takes a new or renewed pairing into the machine list.
-  func adopt(_ result: PairingResult) async -> MachineEntry {
+  func adopt(_ result: PairingResult, resumeConnection: Bool = true) async -> MachineEntry {
     if let existing = machines[result.record.environmentId] {
-      existing.record = result.record
+      var record = result.record
+      if !resumeConnection { record.enabled = existing.record.enabled }
+      existing.record = record
       existing.permissions = result.credential.permissions
       existing.tokenDaysLeft = result.credential.daysLeft()
-      await existing.connection.update(result.record)
+      await existing.connection.update(record)
       await existing.connection.reconnect()
       return existing
     }
@@ -76,6 +78,37 @@ extension LiveEngine {
       return true
     }
     publishNow()
+  }
+
+  /// Pause locally without deleting tokens, routes, cached conversations or drafts.
+  public func setConnectionEnabled(_ enabled: Bool, machineId: String) async throws {
+    guard let entry = machines[machineId] else { throw SyncError.unknownMachine }
+    guard connectionChanges.insert(machineId).inserted else {
+      throw SyncError.sendBlocked("The connection is changing. Try again in a moment.")
+    }
+    defer { connectionChanges.remove(machineId) }
+    guard try await registry.update(machineId, { $0.enabled = enabled }) != nil,
+          machines[machineId] === entry else { throw SyncError.unknownMachine }
+    if !enabled {
+      if entry.isOnline { markSeen(entry) }
+      entry.socket = nil
+      entry.configTask?.cancel()
+      entry.shellTask?.cancel()
+      entry.settingsTask?.cancel()
+      entry.deviceTask?.cancel()
+      for controller in controllers.values where controller.environmentId == machineId {
+        controller.task?.cancel()
+        controller.task = nil
+      }
+    }
+    // Only this field belongs to this operation. Discovery may have added routes
+    // while persistence was suspended.
+    entry.record.enabled = enabled
+    entry.answered = true
+    entry.isSynchronized = false
+    publishNow()
+    await entry.connection.update(entry.record)
+    if enabled { await entry.connection.reconnect() }
   }
 
   // MARK: - Aide

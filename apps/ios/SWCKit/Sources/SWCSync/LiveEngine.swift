@@ -98,6 +98,7 @@ public final class LiveEngine: AppEngine {
     MachineNickname.merge(machineOrder.compactMap { machines[$0]?.settings?.machineNicknames })
   }
   var fleetLinking = false
+  var connectionChanges: Set<String> = []
   private var publishTask: Task<Void, Never>?
   private var pathMonitor: NWPathMonitor?
   private var lastPathSatisfied: Bool?
@@ -251,7 +252,10 @@ public final class LiveEngine: AppEngine {
   }
 
   func socketConnected(_ env: String, _ socket: RpcSocket) {
-    guard let entry = machines[env] else { return }
+    guard let entry = machines[env], entry.record.enabled else {
+      Task { await socket.close() }
+      return
+    }
     entry.socket = socket
     entry.configTask?.cancel()
     entry.shellTask?.cancel()
@@ -411,7 +415,7 @@ public final class LiveEngine: AppEngine {
     let nicknames = fleetNicknames
     assign(model, \.machines, entries.map { summary($0, nicknames: nicknames) })
 
-    let output = ShellSummaries.build(entries.filter(\.record.enabled).map { entry in
+    let output = ShellSummaries.build(entries.map { entry in
       // A live list replaces the saved one wholesale, so a reconnect never doubles rows.
       ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
     }, names: fleetNames, nicknames: nicknames)
@@ -446,7 +450,7 @@ public final class LiveEngine: AppEngine {
 
   func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> MachineSummary {
     let status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
-    return MachineSummary(
+    var result = MachineSummary(
       id: entry.environmentId,
       label: entry.label,
       displayName: displayName(entry, nicknames: nicknames),
@@ -461,6 +465,8 @@ public final class LiveEngine: AppEngine {
       checkedAt: entry.isOnline ? nil : connect?.checkedAt[entry.environmentId],
       hasDirectPairing: !entry.record.routes.isEmpty
     )
+    result.isDisconnected = !entry.record.enabled
+    return result
   }
 
   // MARK: - Network

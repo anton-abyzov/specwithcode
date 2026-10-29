@@ -2440,6 +2440,168 @@ describe("orchestrator MCP toolkit", () => {
               settledAt: null,
             });
             expect(metadataRead.thread).toMatchObject({ settled: false, settledAt: null });
+            expect(metadataRead.thread.goal).toBeUndefined();
+
+            // A new independent reporter reads stable goal IDs through the same authorized
+            // thread-detail path, then updates evidence without dropping required work.
+            const goalThreadId = ThreadId.make("thread:mcp-durable-goal");
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("goal:mcp:create"),
+              threadId: goalThreadId,
+              projectId,
+              title: "Disk outcome",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("goal:mcp:start"),
+              threadId: goalThreadId,
+              messageId: MessageId.make("goal:mcp:prompt"),
+              text: "Reclaim disk space",
+              attachments: [],
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const goalRun = (yield* orchestrator.getThreadProjection(goalThreadId)).runs[0]!;
+            const goalNow = yield* DateTime.now;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("goal:mcp:complete"),
+                  type: "run.updated",
+                  threadId: goalThreadId,
+                  occurredAt: goalNow,
+                  payload: {
+                    ...goalRun,
+                    status: "completed",
+                    startedAt: goalNow,
+                    completedAt: goalNow,
+                  },
+                },
+              ],
+            });
+            const goalEvidence = {
+              status: "verified",
+              reference: "receipt://goal-mcp",
+              observedAt: DateTime.formatIso(goalNow),
+              scopeRevision: "disk-goal-1",
+            };
+            const goalReport = {
+              kind: "code",
+              scope: "Source milestone",
+              scopeRevision: "disk-goal-1",
+              validUntil: DateTime.formatIso(DateTime.add(goalNow, { hours: 24 })),
+              obligations: [],
+              push: goalEvidence,
+              merge: goalEvidence,
+              deployment: goalEvidence,
+              deliverable: goalEvidence,
+              verification: goalEvidence,
+            };
+            const goalRequired = {
+              id: "disk-goal",
+              scope: "Cleanup and activation",
+              scopeRevision: "disk-goal-1",
+              obligations: [
+                {
+                  id: "cleanup",
+                  kind: "dependency",
+                  reason: "Retire eligible worktrees",
+                  owner: "HOME-DISK",
+                  nextEvent: "Removal receipt",
+                  needsUserOutput: false,
+                  completion: { status: "pending", reason: "Not removed" },
+                },
+                {
+                  id: "activation",
+                  kind: "deployment",
+                  reason: "Activate the fix",
+                  owner: "publisher",
+                  nextEvent: "Installed receipt",
+                  needsUserOutput: false,
+                  completion: { status: "pending", reason: "Not installed" },
+                },
+              ],
+            };
+            const firstGoalRecord = yield* invoke("studio_thread_record_delivery", {
+              threadId: goalThreadId,
+              expectedRunId: goalRun.id,
+              ...goalReport,
+              goal: goalRequired,
+            });
+            expect(firstGoalRecord.isError).toBe(false);
+            // A fresh invocation by the independent live reporter retains its real
+            // attached session; fabricated idle sessions must remain read-only.
+            const freshReporter = {
+              ...invocation,
+              requestNamespace: "mcp-independent-goal-reporter",
+            };
+            const newReporterRead = yield* invokeAs(freshReporter, "studio_thread_read", {
+              threadId: goalThreadId,
+            });
+            const readGoal = (yield* decodeThreadReadResult(newReporterRead.structuredContent).pipe(
+              Effect.orDie,
+            )).thread.goal!;
+            expect(readGoal).toEqual(goalRequired);
+            expect(readGoal.obligations.map((item) => item.id)).toEqual(["cleanup", "activation"]);
+            const deniedGoalRead = yield* invokeAs(
+              { ...freshReporter, capabilities: new Set() },
+              "studio_thread_read",
+              { threadId: goalThreadId },
+            );
+            expect(declaredFailure(deniedGoalRead)).toMatchObject({ code: "capability_denied" });
+            expect(JSON.stringify(deniedGoalRead)).not.toContain("HOME-DISK");
+            // Omission inherits the goal; a fresh reporter cannot accidentally lose it.
+            const inheritedRecord = yield* invokeAs(
+              freshReporter,
+              "studio_thread_record_delivery",
+              { threadId: goalThreadId, expectedRunId: goalRun.id, ...goalReport },
+            );
+            expect(inheritedRecord.isError, JSON.stringify(inheritedRecord)).toBe(false);
+            expect(
+              (yield* orchestrator.getThreadProjection(goalThreadId)).thread.lifecycleReceipt?.goal,
+            ).toEqual(readGoal);
+            const completedGoalRecord = yield* invokeAs(
+              freshReporter,
+              "studio_thread_record_delivery",
+              {
+                threadId: goalThreadId,
+                expectedRunId: goalRun.id,
+                ...goalReport,
+                goal: {
+                  ...readGoal,
+                  obligations: readGoal.obligations.map((item) => ({
+                    ...item,
+                    completion: goalEvidence,
+                  })),
+                },
+              },
+            );
+            expect(completedGoalRecord.isError).toBe(false);
+            const completedGoalRead = yield* invokeAs(freshReporter, "studio_thread_read", {
+              threadId: goalThreadId,
+            });
+            const completedGoalDetail = (yield* decodeThreadReadResult(
+              completedGoalRead.structuredContent,
+            ).pipe(Effect.orDie)).thread;
+            expect(completedGoalDetail.settled).toBe(true);
+            expect(completedGoalDetail.goal?.obligations.map((item) => item.id)).toEqual([
+              "cleanup",
+              "activation",
+            ]);
+            yield* orchestrator.dispatch({
+              type: "thread.delete",
+              commandId: CommandId.make("goal:mcp:remove-fixture"),
+              threadId: goalThreadId,
+            });
 
             yield* orchestrator.dispatch({
               type: "thread.settle",

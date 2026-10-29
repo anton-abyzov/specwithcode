@@ -9,6 +9,7 @@ import {
 import { createBrowserHistory } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -298,6 +299,141 @@ describe("resolveInitialServerAuthGateState", () => {
       auth: LOOPBACK_AUTH,
     });
     expect(attempts).toBe(4);
+  });
+
+  it("recovers after two slow desktop bearer probes without another bootstrap or reload", async () => {
+    vi.useFakeTimers();
+    installDesktopBootstrap();
+    let attempts = 0;
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    __setPrimaryHttpRunnerForTests(async <A>() => {
+      attempts += 1;
+      if (attempts <= 2) {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        throw new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({
+            request,
+            cause: new Error("synthetic desktop bearer validation timeout"),
+          }),
+        });
+      }
+      return authenticatedSession(DESKTOP_AUTH) as A;
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+    const first = resolveInitialServerAuthGateState();
+    const concurrent = resolveInitialServerAuthGateState();
+    await vi.advanceTimersByTimeAsync(21_000);
+    await expect(first).resolves.toEqual({ status: "authenticated" });
+    await expect(concurrent).resolves.toEqual({ status: "authenticated" });
+    expect(attempts).toBe(3);
+  });
+
+  it("retries the real desktop bearer HTTP adapter without minting a browser session", async () => {
+    vi.useFakeTimers();
+    const testWindow = installTestBrowser("http://localhost/");
+    const getBearer = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("synthetic service restarting"))
+      .mockResolvedValue("fixture-existing-bearer");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Local environment",
+          httpBaseUrl: "http://localhost:8319",
+          wsBaseUrl: "ws://localhost:8319",
+        },
+      ],
+      getLocalEnvironmentBearerToken: getBearer,
+    } as unknown as DesktopBridge;
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer fixture-existing-bearer",
+      );
+      return Response.json({ authenticated: true, auth: DESKTOP_AUTH });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { layer: clientLayer } = await import("./environments/primary/httpClient");
+    const { layerForCurrentOrigin } = await import("./environments/primary/httpLayer");
+    const { __resetDesktopPrimaryAuthForTests } =
+      await import("./environments/primary/desktopAuth");
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+    __resetDesktopPrimaryAuthForTests();
+    __setPrimaryHttpRunnerForTests((effect) =>
+      Effect.runPromise(
+        effect.pipe(Effect.provide(clientLayer.pipe(Layer.provide(layerForCurrentOrigin())))),
+      ),
+    );
+    try {
+      const result = resolveInitialServerAuthGateState();
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(result).resolves.toEqual({ status: "authenticated" });
+      expect(getBearer).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(String(fetch.mock.calls[0]?.[0])).toContain("/api/auth/session");
+    } finally {
+      __resetDesktopPrimaryAuthForTests();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([401, 403, 500])("does not retry an actual HTTP %s response", async (status) => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const response = HttpClientResponse.fromWeb(request, new Response("", { status }));
+    __setPrimaryHttpRunnerForTests(async () => {
+      attempts += 1;
+      throw new HttpClientError.HttpClientError({
+        reason: new HttpClientError.StatusCodeError({ request, response }),
+      });
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+    await expect(resolveInitialServerAuthGateState()).rejects.toMatchObject({
+      status,
+      message: `Primary environment request failed during fetch-session-state (HTTP ${status}).`,
+    });
+    expect(attempts).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops transport retries at the window boundary and leaves a later retry possible", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    let available = false;
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    __setPrimaryHttpRunnerForTests(async <A>() => {
+      attempts += 1;
+      if (available) return authenticatedSession(LOOPBACK_AUTH) as A;
+      throw new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({ request, cause: "synthetic offline" }),
+      });
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+    const result = resolveInitialServerAuthGateState().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await result).toMatchObject({
+      status: null,
+      message: "Primary environment request failed during fetch-session-state (no HTTP response).",
+    });
+    expect(attempts).toBe(120);
+    expect(vi.getTimerCount()).toBe(0);
+    available = true;
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({ status: "authenticated" });
+    expect(attempts).toBe(121);
+  });
+
+  it("does not retry unknown failures just because they have no HTTP response", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    __setPrimaryHttpRunnerForTests(async () => {
+      attempts += 1;
+      throw new Error("synthetic invalid state");
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+    await expect(resolveInitialServerAuthGateState()).rejects.toMatchObject({ status: null });
+    expect(attempts).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {
@@ -593,10 +729,10 @@ describe("resolveInitialServerAuthGateState", () => {
       cause,
     });
 
-    expect(error.status).toBe(500);
+    expect(error.status).toBeNull();
     expect(error.cause).toBe(cause);
     expect(error.message).toBe(
-      "Primary environment request failed during list-pairing-links (HTTP 500).",
+      "Primary environment request failed during list-pairing-links (no HTTP response).",
     );
     expect(error.message).not.toContain(cause.message);
   });

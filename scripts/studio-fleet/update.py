@@ -38,6 +38,7 @@ from quiescence import (SERVICE_EXITED, VANISHED_READS, capture_quiescence, asse
                         reap_descendants, idle_providers, idle_provider_trees, started_before)
 from release_retention import held_state_backups, prune_releases, prune_state_backups, prune_update_leftovers
 import after_proof
+import update_apply
 import database_continuity as continuity
 import database_restart
 import idle_agents
@@ -729,17 +730,20 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     assert expected.get('snapshotMode') in (None, 'held-service'), 'Unknown snapshot mode'
     if held_snapshot:
         assert_held(_service(identity), expected.get('installRequestedAt'))
+    page_mode = update_apply.PageMode.prepare(database_restart.Names(globals()), identity, expected, allow_existing_browser_heartbeat)
     position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
     # Its lines, for the proof after the restart, kept on disk only while the backup's space is left.
     with after_proof.keeping(own / 'userdata' / 'statev2.sqlite', backup_space_needed(own, home, _clonefile())[0]) as kept:
-        before, original_auth, carried = snapshot_since(identity, None if held_snapshot else expected['rows'], capture_auth)
+        before, original_auth, carried = (page_mode.snapshot() if page_mode else
+            snapshot_since(identity, None if held_snapshot else expected['rows'], capture_auth))
     if held_snapshot:
         service = _service(identity)
         assert service['runtime']['pid'] == before['servicePid'], HOLD_REFUSAL
         assert_held(service, expected.get('installRequestedAt'))
         # Only database evidence is rebased. Every identity, pointer, file and process
         # comparison against the agent's admission still runs below.
-        expected = {**expected, 'rows': before['rows'], 'databaseCapture': before['databaseCapture']}
+        expected = {**expected, 'rows': before['rows']}
+        if 'databaseCapture' in before: expected['databaseCapture'] = before['databaseCapture']
     # One base per log position appended rows are measured against: the agent's snapshot
     # (the prestate check) and this read itself (the checks after the gate). Measured against
     # its own rows, this read appended nothing after them, so it carries nothing (None): the
@@ -754,6 +758,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         """(position, reads): the -wal position, taken before this re-read, and the re-read of only
         what committed since the last exact read, or None when a full read must decide."""
         position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
+        if page_mode:
+            page_mode.held()
+            rows, _ = page_mode.read()
+            return position, (rows, None, None)
         why = {}
         try:
             reads = read_delta.reread(own / 'userdata', base[since_key], since, why=why)
@@ -868,13 +876,14 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     # shows no commit since, instead of reading the whole database a third time.
     prestate_read = None
     if unchanged_since(before_mark):  # The rows, appended rows and capture of the read above.
-        current, current_carried = snapshot_reusing(identity, before, carried), carried
+        current, current_carried = (page_mode.snapshot()[0] if page_mode else snapshot_reusing(identity, before, carried)), carried
     else:
         prestate_mark = watermark.take()
         position, reads = delta_since('expected', expected['rows'])
         if reads is not None:  # Only auth sessions changed: every other check of a snapshot runs.
             current_carried = reads[1]
-            current = snapshot_reusing(identity, {'rows': reads[0], 'databaseCapture': reads[2]}, current_carried)
+            current = (page_mode.snapshot()[0] if page_mode else
+                snapshot_reusing(identity, {'rows': reads[0], 'databaseCapture': reads[2]}, current_carried))
         else:
             current, _, current_carried = snapshot_since(identity, expected['rows'])
         base['expected'] = {'position': position, 'since': expected['rows'],
@@ -885,6 +894,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             # after this read. Against the before-read's position they would meet the commits this
             # read already proved (pages outside auth) and read the whole database once more.
             base['before'] = base['expected']
+    if page_mode: page_mode.held()
     assert_prestate(expected, current, current_carried, auth_baseline=before['rows'])
     lap('prestateCheck')
     # Written only once the prestate holds, so a refusal above leaves no folder behind.
@@ -965,6 +975,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         passed = [before_mark]  # Taken right before the last read (full or read_delta) that matched `before`.
         reused_prestate = [prestate_read]
         def assert_unchanged_before_restart():
+            if page_mode: page_mode.held()
             if unchanged_since(passed[0]):  # That read stands: it would read the same rows again.
                 return
             reusable, reused_prestate[0] = reused_prestate[0], None
@@ -1057,12 +1068,14 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # the job unloaded), so a bootout that left the old service running is not a restart.
         service_stopped = progress['stopAttempted'] = True
         output.write_text(json.dumps(progress, indent=2) + '\n')
+        if page_mode: page_mode.held()
         stop_service(domain, before['serviceLabel'], before['servicePid'], port)
         progress['serviceStopped'] = True
         lap('serviceStop')
         # The new release migrates the database on start; a rollback must restore both.
         state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])
         held = after_proof.stopped(held, state_backup, progress['stateBackupMethod'], _clonefile())
+        if page_mode: held = page_mode.stopped(held, before, original_auth, restart_started_at, policy, state_backup)
         lap('backupClone')
         progress['phase'] = 'restart-requested'
         progress['restartStartedAt'] = restart_started_at
@@ -1094,15 +1107,24 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # read with widen_from then decides), and with the schema unchanged it returns what that read
         # would, since a capture gains `widened` only when a table widened. Data a migration rewrites
         # is re-read as any touched table is.
-        reads = after_proof.decide(
-            own / 'userdata', held, kept, base['before'], before['rows'], capture_auth, progress, lap)
+        page_after = page_mode.after(held, restart_started_at, policy) if page_mode else None
+        if page_mode and page_after is None:
+            before, original_auth = page_mode.full_baseline(held, before)
+            progress['pageFallback'] = page_mode.fallback_reason
+            widen = ({'widen_from': before['databaseCapture']['schema']['columns']} if allow_project_migrations else {})
+        reads = (None if page_mode else after_proof.decide(
+            own / 'userdata', held, kept, base['before'], before['rows'], capture_auth, progress, lap))
         while True:
             earlier, reads = reads, None  # The page proof's read stands in once; a retry reads in full.
             try:
                 if earlier is None:
                     kept.clear()  # Lines a decided proof left: a full read needs their memory.
-                after, current_auth, after_carried = _snapshot(identity, capture_auth, before['rows'], reads=earlier) \
-                    if earlier else snapshot_since(identity, before['rows'], capture_auth, **widen)
+                if page_after is not None:
+                    after, current_auth, after_carried = page_after
+                    page_after = None
+                else:
+                    after, current_auth, after_carried = _snapshot(identity, capture_auth, before['rows'], reads=earlier) \
+                        if earlier else snapshot_since(identity, before['rows'], capture_auth, **widen)
                 if after['servicePid'] != before['servicePid']: break
             # A process inventory that timed out twice is retried here like any other
             # not-yet-ready reading, rather than rolling back a service that is starting.
@@ -1120,69 +1142,15 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         if manage_alias and cli_alias_state(alias, {new_bytes['wrapper']})[0] != 'owned':
             # Not an identity pointer: a change made meanwhile is reported, never fatal.
             progress['cliAlias'] = 'changed-outside-left-untouched'
-        heartbeat = None
-        appended = False
-        migration_cells = None
-        widenings = {}
-        if allow_project_migrations:
-            if 'databaseCapture' in before:
-                assert 'databaseCapture' in after, 'Complete database proof missing after restart'
-                widenings = accepted_widenings(before['databaseCapture'], after['databaseCapture'], before['rows'])
-            # Migration 067 widens auth_sessions; its proofs then compare the earlier columns.
-            heartbeat = prove_migration_preserved(
-                before['rows'], narrowed_rows(after['rows'], widenings), original_auth,
-                principal_auth(current_auth, after['rows'], widenings),
-                restart_started_at, after['observedAt'], identity=identity,
-                allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
-                carried=after_carried, web_session_policy=policy)
-            if 'databaseCapture' in before:
-                assert 'databaseCapture' in after, 'Complete database proof missing after restart'
-                assert_migration_typed_cells(before['databaseCapture'], after['databaseCapture'],
-                                             before['rows'], after['rows'], after_carried, widenings)
-                assert_migration_protected_schema(before['databaseCapture'], after['databaseCapture'],
-                                                  before['rows'], widenings)
-                migration_cells = 'typed-verified'
-        elif allow_existing_browser_heartbeat:
-            # Rows the services appended carry forward as below (a project's startup settings
-            # save, a usage-limit check). Every auth cell except what a reconnect writes stays
-            # exact through the invariant hash, and the heartbeat itself is proven separately
-            # against the old non-auth rows, so neither allowance widens the other.
-            appended = (carried_applies(before['rows'], after['rows'], after_carried)
-                        and all('auth_sessions' in rows[key] for rows in (before['rows'], after['rows'])
-                                for key in ('counts', 'hashes'))
-                        and auth_comparison(before['rows'], after['rows']) != after['rows'])
-            if appended:
-                assert same_guarded_rows(before['rows'], after['rows'], after_carried), \
-                    'Existing projects, history or auth rows changed'
-                heartbeat_after = auth_comparison(before['rows'], after['rows'])
-            else:
-                heartbeat_after = after['rows']
-            heartbeat = prove_restart_heartbeat(before['rows'], heartbeat_after, original_auth, current_auth,
-                                                restart_started_at, after['observedAt'], identity=identity, web_session_policy=policy)
+        if page_mode and page_mode.verdict:
+            heartbeat = page_mode.validate_auth(before['rows'], after['rows'], original_auth, current_auth,
+                                               restart_started_at, after['observedAt'], policy)
+            appended = any(page_mode.verdict['appendedRows'].values())
+            migration_cells, widenings, database_continuity = None, {}, 'verified-pages'
         else:
-            # Rows the old service appended before it stopped, or the new one appended since,
-            # carry forward; auth stays byte-exact here (heartbeats need their own proof).
-            assert same_guarded_rows(before['rows'], after['rows'], after_carried, auth_heartbeat=False), \
-                'Existing projects, history or auth rows changed'
-        database_continuity = 'not-compared-migration' if allow_project_migrations else 'not-captured'
-        if not allow_project_migrations and 'databaseCapture' in before:
-            # Every table and the schema must be unchanged. Only a proven heartbeat may differ,
-            # and only in auth_sessions; without one, rows the services appended carry forward
-            # under the same allowance as the guarded rows above.
-            assert 'databaseCapture' in after, 'Complete database proof missing after restart'
-            if heartbeat is not None and appended:
-                allowance = database_allowance(before['rows'], after['rows'], after_carried, auth_heartbeat=False)
-                continuity.assert_database_continuity(before['databaseCapture']['summary'], after['databaseCapture']['summary'],
-                                                      original_auth, current_auth,
-                                                      carried_tables=allowance['tables'],
-                                                      log_prefixes=allowance['logPrefixes'])
-            elif heartbeat is not None:
-                continuity.assert_database_continuity(before['databaseCapture']['summary'], after['databaseCapture']['summary'],
-                                                      original_auth, current_auth)
-            else:
-                assert_capture_carried(before['databaseCapture'], after['databaseCapture'], before['rows'], after['rows'],
-                                       after_carried, auth_heartbeat=False, message='Complete preexisting database changed')
-            database_continuity = 'verified'
+            heartbeat, appended, migration_cells, widenings, database_continuity = update_apply.compare(
+                database_restart.Names(globals()), before, after, original_auth, current_auth, after_carried,
+                restart_started_at, identity, policy, allow_project_migrations, allow_existing_browser_heartbeat)
         if 'otherListenersOwned' in before:
             assert after.get('otherListenersOwned') is False, 'Updated service took another service\'s port'
         else:
@@ -1205,6 +1173,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                   'completeDatabaseContinuity': database_continuity,
                   'settingsContinuity': settings_continuity_report,
                   'stateBackup': progress['stateBackup'], 'prunedStateBackups': progress['prunedStateBackups']}
+        if page_mode and page_mode.verdict: page_mode.receipt(result)
+        if page_mode and page_mode.fallback_reason: result['pageFallback'] = page_mode.fallback_reason
         if migration_cells is not None:
             result['migrationProtectedCells'] = migration_cells
         if widenings:
@@ -1257,6 +1227,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             plist = home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist')
             assert digest(plist.read_bytes()) in plist_hashes
             if restart_requested:
+                assert page_mode is None, 'Activated page-mode database retained: postactivation writes cannot be discarded'
                 try:
                     owned = snapshot(identity)  # Exact current owned PID/release + idle before any rollback stop.
                 except (AssertionError, OSError, sqlite3.Error, subprocess.TimeoutExpired):
@@ -1382,6 +1353,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         progress_file.finish(install_progress.result_of(failure), timings)
         raise
     finally:
+        if page_mode: after_proof.abandon(held, kept)
         clear_install_gate(own, home)
 
 # Refusals the next snapshot may not repeat: processes or the database moved while being read,

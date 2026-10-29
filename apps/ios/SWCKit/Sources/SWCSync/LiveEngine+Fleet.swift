@@ -50,11 +50,15 @@ extension LiveEngine {
   /// with the ones this phone cannot reach yet using codes that machine mints.
   /// A machine the person removed is never paired again this way.
   func linkFleet(via entry: MachineEntry) async {
-    guard let fleetCache, !fleetLinking else { return }
+    guard let fleetCache, !fleetLinking, entry.record.enabled, let socket = entry.socket else { return }
     let env = entry.environmentId
     if let last = fleetLinkedAt[env], ContinuousClock.now - last < options.fleetLinkInterval { return }
     // A Connect token is bound to the device key and only goes to the tunnel.
-    guard let route = entry.status.route, route.issuer != ConnectAuthorizer.issuer,
+    // Config can arrive before the independent status-stream consumer. Read
+    // the route from the live socket's owner, or fleet discovery can be lost.
+    guard let route = await entry.connection.route(of: socket),
+          !fleetLinking, machines[env] === entry, entry.record.enabled, entry.socket === socket,
+          route.issuer != ConnectAuthorizer.issuer,
           let credential = try? credentials.credential(for: route, of: env), !credential.isExpired() else { return }
     fleetLinking = true
     fleetLinkedAt[env] = .now
@@ -107,8 +111,8 @@ extension LiveEngine {
       guard let origin = try? PairingLink.origin(of: route.httpBaseUrl),
             (try? await http.descriptor(at: origin.httpBase, expectedEnvironmentId: machine.environmentId)) != nil else { continue }
       do {
-        let result = try await pairing.pair(target: PairingTarget(code: code, httpBase: origin.httpBase, wsBase: origin.wsBase), clientLabel: options.clientLabel(), expectedEnvironmentId: machine.environmentId)
-        _ = await adopt(result)
+        let result = try await pairing.pair(target: PairingTarget(code: code, httpBase: origin.httpBase, wsBase: origin.wsBase), clientLabel: options.clientLabel(), expectedEnvironmentId: machine.environmentId, resumeConnection: false)
+        _ = await adopt(result, resumeConnection: false)
         return true
       } catch {
         Self.log.error("Linking \(machine.environmentId, privacy: .public) failed: \(String(describing: error), privacy: .public)")

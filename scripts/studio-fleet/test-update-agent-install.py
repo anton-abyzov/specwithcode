@@ -1116,6 +1116,60 @@ class BoundRequest(AgentCase):
         self.assertEqual(state['handledInstallRequestAt'], newer['at'])
         self.assertEqual(len(self.apply_calls()), 1)
 
+    def test_a_request_for_a_release_published_as_a_pass_retries_is_served_by_its_own_pass(self):
+        """Update now for a release published after the pass checked: the pass ends without refusing it
+        (its release is not the one this pass would install), and the next pass checks, finds and installs it."""
+        self.fake.add_release('0.2.0')
+        first = self.request()
+        self.control(snapshotFailures=1, newVersion='0.3.0')
+        newer, set_status, written = {}, update_agent.Agent.set_status, []
+
+        def write_newer():
+            self.fake.add_release('0.3.0')
+            newer['at'] = self.request(version='0.3.0', at=later(seconds=30))
+            self.on_sleep = None
+
+        def recorded(agent, status, message=None):
+            set_status(agent, status, message)
+            written.append((status, agent.state['answeredInstallRequestAt']))
+        self.on_sleep = write_newer
+        with mock.patch.object(update_agent.Agent, 'set_status', recorded):
+            self.assertEqual(self.run_agent(), 0)
+        self.assertNotIn('error', [status for status, _ in written])
+        # The pass for the first request ends there, as it would end with the download ready.
+        self.assertEqual([entry for entry in written if entry[1] == first][-1], ('downloaded', first))
+        state = self.state()
+        self.assertEqual((state['status'], state['installedVersion'], state['handledInstallRequestAt'],
+                          state['answeredInstallRequestAt']), ('installed', '0.3.0', newer['at'], newer['at']))
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_newer_releases_request_that_ends_the_last_pass_is_served_by_a_pass_of_its_own(self):
+        """Update now came while a pass ran, so the next pass serves it and retries; Update now for a release
+        published meanwhile ends that pass, run_once's last for requests written during passes. A pass of its own
+        still checks, finds and installs that release, so the request neither waits for the next scheduled pass
+        nor lapses there."""
+        self.fake.add_release('0.2.0')
+        self.config(installAutomatically=False, quietMinutes=60)
+        self.control(snapshotFailures=1, newVersion='0.3.0')
+        check, first, newer = update_agent.Agent.check, {}, {}
+
+        def check_as_a_request_arrives(agent):
+            if not first:
+                first['at'] = self.request()
+            return check(agent)
+
+        def write_newer():
+            self.fake.add_release('0.3.0')
+            newer['at'] = self.request(version='0.3.0', at=later(seconds=30))
+            self.on_sleep = None
+        self.on_sleep = write_newer
+        with mock.patch.object(update_agent.Agent, 'check', check_as_a_request_arrives):
+            self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual((state['status'], state['installedVersion'], state['handledInstallRequestAt']),
+                         ('installed', '0.3.0', newer['at']))
+        self.assertEqual(len(self.apply_calls()), 1)
+
     def test_a_newer_request_that_already_lapsed_ends_a_retrying_pass(self):
         self.fake.add_release('0.2.0')
         self.request()

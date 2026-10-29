@@ -43,7 +43,9 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   "PrimaryEnvironmentRequestError",
   {
     operation: PrimaryEnvironmentRequestOperation,
-    status: Schema.Number,
+    // A failed transport has no HTTP response. In particular, the desktop can
+    // still be validating its saved bearer while the service comes back up.
+    status: Schema.NullOr(Schema.Number),
     pairingLinkId: Schema.optional(Schema.String),
     sessionId: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -55,7 +57,7 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
     readonly pairingLinkId?: string;
     readonly sessionId?: string;
   }): PrimaryEnvironmentRequestError {
-    const status = readHttpApiStatus(input.cause) ?? 500;
+    const status = readHttpApiStatus(input.cause);
     return new PrimaryEnvironmentRequestError({
       operation: input.operation,
       status,
@@ -66,7 +68,8 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   }
 
   override get message(): string {
-    return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+    const detail = this.status === null ? "no HTTP response" : `HTTP ${this.status}`;
+    return `Primary environment request failed during ${this.operation} (${detail}).`;
   }
 }
 
@@ -273,7 +276,11 @@ async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionS
 }
 
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
-const BOOTSTRAP_RETRY_TIMEOUT_MS = 15_000;
+// A stored desktop bearer probe can take 10 seconds per attempt during service
+// startup. Fifteen seconds allowed only two probes, then left a fatal screen
+// even when the service recovered seconds later. This is a retry window, not a
+// reason to retry an authorization rejection or an actual server error.
+const BOOTSTRAP_RETRY_TIMEOUT_MS = 60_000;
 const BOOTSTRAP_RETRY_STEP_MS = 500;
 
 export async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<T> {
@@ -286,11 +293,18 @@ export async function retryTransientBootstrap<T>(operation: () => Promise<T>): P
         throw error;
       }
 
-      if (Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS) {
+      const remainingMs = BOOTSTRAP_RETRY_TIMEOUT_MS - (Date.now() - startedAt);
+      if (remainingMs <= 0) {
         throw error;
       }
 
-      await waitForBootstrapRetry(BOOTSTRAP_RETRY_STEP_MS);
+      await waitForBootstrapRetry(Math.min(BOOTSTRAP_RETRY_STEP_MS, remainingMs));
+      // Do not start one more request at the deadline. An in-flight request
+      // retains its own transport timeout; no abandoned credential exchange is
+      // left running by racing its Promise against a separate timer.
+      if (Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS) {
+        throw error;
+      }
     }
   }
 }
@@ -303,7 +317,17 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 
 function isTransientBootstrapError(error: unknown): boolean {
   if (isPrimaryEnvironmentRequestError(error)) {
-    return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
+    return error.status === null
+      ? isTransientTransportError(error.cause)
+      : TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
+  }
+
+  return isTransientTransportError(error);
+}
+
+function isTransientTransportError(error: unknown): boolean {
+  if (HttpClientError.isHttpClientError(error)) {
+    return error.reason._tag === "TransportError";
   }
 
   if (error instanceof TypeError) {

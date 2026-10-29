@@ -47,7 +47,17 @@ const addFiles = vi.fn();
 const noop = () => undefined;
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  // Control UI delays and frames without replacing React's host scheduler.
+  vi.useFakeTimers({
+    toFake: [
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+    ],
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
     "ResizeObserver",
@@ -70,6 +80,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(() => root.unmount());
+  vi.clearAllTimers();
   container.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -80,7 +91,7 @@ async function renderPanel(
   overrides: Partial<ComponentProps<typeof RightPanelTabs>> = {},
   children: ReactNode = "content",
 ) {
-  await act(() =>
+  act(() =>
     root.render(
       <RightPanelTabs
         mode="inline"
@@ -128,15 +139,22 @@ async function renderPanel(
       </RightPanelTabs>,
     ),
   );
-  await act(() => vi.advanceTimersByTimeAsync(0));
-  await act(() => vi.advanceTimersToNextFrame());
+  await settlePanelTimers();
+}
+
+async function settlePanelTimers() {
+  // The synchronous interaction has committed. Flush its deferred UI work in one
+  // awaited scope instead of scheduling a separate host turn for each timer step.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersToNextFrame();
+  });
 }
 
 async function press(key: string, options: KeyboardEventInit = {}) {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
-  await act(() => (document.activeElement ?? document.body).dispatchEvent(event));
-  await act(() => vi.advanceTimersByTimeAsync(0));
-  await act(() => vi.advanceTimersToNextFrame());
+  act(() => (document.activeElement ?? document.body).dispatchEvent(event));
+  await settlePanelTimers();
   return event;
 }
 

@@ -48,6 +48,79 @@ export type LifecycleGate =
   | { readonly status: "not_applicable"; readonly rationale: string }
   | { readonly status: "pending"; readonly reason: string };
 
+export interface LifecycleGoal {
+  readonly id: string;
+  readonly scope: string;
+  readonly scopeRevision: string;
+  readonly obligations: readonly (LifecycleObligation & {
+    readonly id: string;
+    readonly completion: LifecycleGate;
+  })[];
+}
+
+/** Stable requirements cannot disappear when a reporter narrows a turn's scope. */
+export function lifecycleGoalUpdateError(
+  previous: LifecycleGoal | undefined,
+  next: LifecycleGoal | undefined,
+  nowMs: number,
+): string | null {
+  const goal = next ?? previous;
+  if (goal === undefined) return null;
+  for (const item of goal.obligations) {
+    const completion = item.completion;
+    if (completion.status !== "verified") continue;
+    const observed = Date.parse(completion.observedAt);
+    if (
+      !completion.reference.trim() ||
+      completion.scopeRevision !== goal.scopeRevision ||
+      !Number.isFinite(observed) ||
+      !Number.isFinite(nowMs) ||
+      observed > nowMs
+    )
+      return `Completion evidence must already verify this goal revision: ${item.reason}.`;
+  }
+  if (next === undefined) return null; // The command inherits previous.
+  if (
+    next.obligations.length === 0 ||
+    new Set(next.obligations.map((item) => item.id)).size !== next.obligations.length
+  )
+    return "A goal needs distinct required obligation IDs.";
+  if (previous === undefined) return null;
+  if (
+    previous.id !== next.id ||
+    previous.scope !== next.scope ||
+    previous.scopeRevision !== next.scopeRevision
+  )
+    return "A recorded goal's identity and scope cannot be replaced by a narrower delivery report.";
+  for (const old of previous.obligations) {
+    const item = next.obligations.find((candidate) => candidate.id === old.id);
+    if (item === undefined || item.kind !== old.kind || item.reason !== old.reason)
+      return `Required goal work cannot be removed or redefined: ${old.reason}.`;
+  }
+  return null;
+}
+
+/** Evidence persists across runs, but must verify each requirement for this goal revision. */
+export function pendingLifecycleGoalObligations(
+  goal: LifecycleGoal | undefined,
+  nowMs: number,
+  recordedAtMs: number = nowMs,
+) {
+  if (goal === undefined) return [];
+  return goal.obligations.filter(({ completion }) => {
+    if (completion.status !== "verified") return true;
+    const observed = Date.parse(completion.observedAt);
+    return (
+      !completion.reference.trim() ||
+      completion.scopeRevision !== goal.scopeRevision ||
+      !Number.isFinite(observed) ||
+      !Number.isFinite(nowMs) ||
+      !Number.isFinite(recordedAtMs) ||
+      observed > Math.min(nowMs, recordedAtMs)
+    );
+  });
+}
+
 export interface LifecycleReceipt extends LifecycleRequest {
   readonly kind: "code" | "no_code";
   readonly scope: string;
@@ -57,6 +130,7 @@ export interface LifecycleReceipt extends LifecycleRequest {
   /** Filled from the authenticated reporting context, never provider final prose. */
   readonly reportedBy: string;
   readonly obligations: readonly LifecycleObligation[];
+  readonly goal?: LifecycleGoal | undefined;
   readonly push: LifecycleGate;
   readonly merge: LifecycleGate;
   readonly deployment: LifecycleGate;
@@ -106,7 +180,11 @@ export function evaluateLifecycleEvidence(
     expires <= recorded
   )
     return "stale_evidence";
-  if (receipt.obligations.length > 0) return "outstanding_obligations";
+  if (
+    receipt.obligations.length > 0 ||
+    pendingLifecycleGoalObligations(receipt.goal, nowMs, Date.parse(receipt.recordedAt)).length > 0
+  )
+    return "outstanding_obligations";
   if (![receipt.scope, receipt.scopeRevision, receipt.reportedBy].every(nonempty))
     return "incomplete_evidence";
   const verified = (gate: LifecycleGate): boolean => {
@@ -216,6 +294,19 @@ export function lifecycleDeliveryStatus(
   request: LifecycleRequest | null,
   nowMs: number,
 ): LifecycleDeliveryStatus | null {
+  const pendingGoal = pendingLifecycleGoalObligations(
+    receipt?.goal,
+    nowMs,
+    Date.parse(receipt?.recordedAt ?? ""),
+  );
+  if (pendingGoal.length > 0)
+    return {
+      tone: "waiting",
+      title: "Goal still open",
+      lines: pendingGoal.map(
+        (item) => `${item.reason} Owner: ${item.owner}. Next: ${item.nextEvent}.`,
+      ),
+    };
   if (receipt == null || request === null) return null;
   const decision = evaluateLifecycleEvidence(request, receipt, nowMs);
   switch (decision) {

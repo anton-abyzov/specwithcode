@@ -179,6 +179,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   // "default" defers to the user's own Pi settings.json model selection.
   [PI_DRIVER_KIND]: "default",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [MUSE_DRIVER_KIND]: "muse-wonder-1.0",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
 };
 
@@ -191,6 +192,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2.5",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [MUSE_DRIVER_KIND]: "muse-spark-1.3",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<

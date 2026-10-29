@@ -74,6 +74,7 @@ async function prepareCopy(
   target: string,
   decisions: Record<string, Choice> = {},
   folder = fixture.root,
+  mode: "copy-only" | "copy-and-move" = "copy-only",
 ) {
   counter += 1;
   const operationId = `019a0000-0000-7000-8000-0000000001${String(counter).padStart(2, "0")}`;
@@ -81,7 +82,7 @@ async function prepareCopy(
     operationId,
     projectId: "project-source",
     folder,
-    mode: "copy-only",
+    mode,
     destinationEnvironmentId: "env-destination",
   });
   const client = new SourceClient({
@@ -437,7 +438,8 @@ describe("Apply while the source keeps committing", () => {
     git(source, "commit", "-q", "-m", "initial");
     write(NodePath.join(source, "dirty.txt"), "dirty at snapshot\n");
     const target = NodePath.join(base, "scratch", "copy-live");
-    const copy = await prepareCopy(target, {}, source);
+    const copy = await prepareCopy(target, {}, source, "copy-and-move");
+    // Live-file coordinator moves retain their original refresh/restoration behavior.
     // Commits land after the snapshot, while the files are still to be read.
     write(NodePath.join(source, "churn.txt"), "churn committed later, longer\n");
     write(NodePath.join(source, "big.bin"), "large committed later, longer\n");

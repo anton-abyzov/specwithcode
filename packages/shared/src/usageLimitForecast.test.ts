@@ -8,6 +8,7 @@ import {
   forecastPool,
   formatBurnPerHour,
   indexLimitHistory,
+  recentLimitAccounts,
 } from "./usageLimitForecast.ts";
 import { type LimitAccount, collectLimitPools } from "./usageLimits.ts";
 
@@ -391,5 +392,35 @@ describe("formatBurnPerHour", () => {
   it("keeps one decimal under ten", () => {
     expect(formatBurnPerHour(3.74)).toBe("3.7%/h");
     expect(formatBurnPerHour(12.4)).toBe("12%/h");
+  });
+});
+
+describe("recentLimitAccounts", () => {
+  it("names accounts recorded lately that nothing reports now, newest first", () => {
+    const index = new Map([
+      [
+        "claudeAgent:old@example.com|session:five_hour",
+        [{ at: 10, usedPercent: 40, resetsAt: 50 }],
+      ],
+      ["claudeAgent:old@example.com|weekly:seven_day", [{ at: 12, usedPercent: 70, resetsAt: 90 }]],
+      [
+        "claudeAgent:live@example.com|session:five_hour",
+        [{ at: 30, usedPercent: 5, resetsAt: 60 }],
+      ],
+      ["codex:newer@example.com|weekly:primary", [{ at: 20, usedPercent: 2, resetsAt: null }]],
+      [
+        "claudeAgent:credential:abc|session:five_hour",
+        [{ at: 40, usedPercent: 1, resetsAt: null }],
+      ],
+    ]);
+    const recent = recentLimitAccounts(index, new Set(["claudeAgent:live@example.com"]));
+    expect(recent.map((entry) => [entry.email, entry.lastReadAt])).toEqual([
+      ["newer@example.com", 20],
+      ["old@example.com", 12],
+    ]);
+    expect(recent[1]?.windows).toEqual([
+      { kind: "session", id: "five_hour", usedPercent: 40, resetsAt: 50 },
+      { kind: "weekly", id: "seven_day", usedPercent: 70, resetsAt: 90 },
+    ]);
   });
 });

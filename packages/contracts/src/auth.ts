@@ -532,6 +532,35 @@ export const AuthMcpClientAccess = Schema.Literals([
 ]);
 export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
+/** The longest a static MCP client token may last: 90 days. */
+export const AUTH_MCP_CLIENT_TOKEN_MAX_TTL_SECONDS = 90 * 24 * 60 * 60;
+
+/**
+ * A static MCP client token, for a client that can only send an
+ * `Authorization: Bearer` header (a hosted bot, a remote MCP tool). It is an
+ * MCP client sign-in like an OAuth-approved one: listed and revoked with them.
+ */
+export const AuthCreateMcpClientTokenInput = Schema.Struct({
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  access: AuthMcpClientAccess,
+  /** Token lifetime; 30 days when left out. At most 90 days. */
+  ttlSeconds: Schema.optionalKey(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(AUTH_MCP_CLIENT_TOKEN_MAX_TTL_SECONDS)),
+  ),
+});
+export type AuthCreateMcpClientTokenInput = typeof AuthCreateMcpClientTokenInput.Type;
+
+/** Returned once, at creation; listings never carry the token. */
+export const AuthMcpClientTokenResult = Schema.Struct({
+  sessionId: AuthSessionId,
+  token: TrimmedNonEmptyString,
+  tokenType: Schema.Literal("Bearer"),
+  label: TrimmedNonEmptyString,
+  access: AuthMcpClientAccess,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type AuthMcpClientTokenResult = typeof AuthMcpClientTokenResult.Type;
+
 /** RFC 9728 metadata for an environment's `/mcp` resource. */
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,

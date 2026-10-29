@@ -151,8 +151,8 @@ describe("pooled limits show burn, run-out and a quota chart", () => {
     await render();
     expect(history.calls).toBe(2);
     const text = panel()?.textContent ?? "";
-    expect(text).toContain("Total left");
-    expect(text).toMatch(/62%\s*of 200%/);
+    expect(text).toContain("Pool left");
+    expect(text).toMatch(/0\.6\s*of 2 accounts/);
     expect(text).toContain("3%/h");
     // home has 2% left at 1%/h, two hours before both accounts reset.
     expect(text).toMatch(/First empty\s*home@example\.com in 2h/);
@@ -162,7 +162,9 @@ describe("pooled limits show burn, run-out and a quota chart", () => {
     const chart = container.querySelector("[data-pool-forecast-chart]");
     expect(chart?.querySelector('[data-series="recorded"]')).not.toBeNull();
     expect(chart?.querySelector('[data-series="projected"]')).not.toBeNull();
-    expect(chart?.querySelector("svg")?.getAttribute("aria-label")).toContain("now 62% of 200%");
+    expect(chart?.querySelector("svg")?.getAttribute("aria-label")).toContain(
+      "now 0.6 of 2 accounts",
+    );
   });
 
   it("reads the history once the session grant lands after the connection", async () => {

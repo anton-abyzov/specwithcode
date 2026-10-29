@@ -261,7 +261,8 @@ checks as new work starts. When M4's installed release predates the command (it 
 answer, refuses or does not hold stops the rollout before the request. Then choose **Update now** in
 the SpecWithCode app on M4, which drains and holds through the same `prepareServiceUpdate` call and
 writes the forced request, wait until `fleet_rollout.py --version <v> --only m4` reports M4
-installed (it joins an install of that version already under way), and run `--only workers`;
+installed (it joins an install of that version already under way, and one Update now asks for while it
+waits: it neither holds nor asks again while that held request stands), and run `--only workers`;
 `--no-hold` is the explicit opt-in to an unheld request;
 `update_request.py status --identity <id>` reads one host's updater state; its `installFinalized`
 needs the agent's verified receipt. Receipts and the agent's snapshots carry the guarded rows,
@@ -551,3 +552,15 @@ The service updater's `pre-*` database backups are separate and stay where they 
 Official release builds must receive both `STUDIO_GOOGLE_OAUTH_CLIENT_ID` and `STUDIO_GOOGLE_OAUTH_CLIENT_SECRET`. Isolated worktrees do not inherit another checkout's ignored `.env`. Inject only this pair into the build environment from the approved release configuration (release.sh reads only those two names from `GOOGLE_OAUTH_ENV_FILE`); never copy the full `.env`, print its contents or put it in an artifact. The server build embeds the Desktop-app OAuth client; no Google account refresh token belongs in the build.
 
 After building, run `STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE=1 node scripts/studio-google/verify.mjs <fresh-evidence-directory>` (the bundle stage does, before signing). The private test server has no runtime Google client variables and must report its compiled SpecWithCode client as configured. The headless check also verifies the optional own-client override and that removing it restores the compiled client. An official release without this receipt must not be published. Real account access additionally requires the user's Google consent and per-project grants.
+
+## Idle-only fleet rollout
+
+For a rollout that must preserve running turns, use `STUDIO_FLEET_WAIT_FOR_IDLE=1 bash scripts/release/release.sh ship studio` from the umbrella, or pass `--wait-for-idle` to `fleet_rollout.py`. M4 then uses the installed service's `--hold --if-idle` admission fence. A busy reply waits; it never falls back to `--stop-work` or sends an unheld forced request. An old CLI without this capability refuses safely. The existing deadline still bounds the wait. Other machines keep their normal quiet-install policy; their configured automatic-pause policy is independent of this option.
+
+If an idle-only rollout fails, it cancels only its own install request. It does not use an unconditional hold release, which could release a different caller's replacement hold. The service settles the cancelled request or expires its two-minute idle lease when no request arrived. Explicit interactive Update now retains its existing interruption confirmation.
+
+## Completed release artifacts
+
+Release build outputs are reproducible artifacts, not database backups. After publication, fleet rollout and merge all complete, staging cleanup may remove generated runtime, asset and verification directories while retaining the release record, published commit, markers, logs and timing history. Failed, unfinished, locked, foreign and unrecognized stages remain intact. Cleanup uses the release's ownership lock and refuses ambiguous ownership; it never removes a lock to force progress.
+
+Inspect the plan with `python3 scripts/release/staging_retention.py --root ~/.specwithcode/release-staging --finished`; add `--apply` only to execute that verified plan through the same guarded helper. The release lifecycle also runs this after successful completion. This does not remove live installations, the installed app, project worktrees or the database rollback snapshot. Human-created verification homes do not become disposable merely because an unrelated release succeeded.

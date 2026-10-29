@@ -18,6 +18,7 @@ export const PROVISION_READBACK_SCHEMA_VERSION = 1;
 export const ProvisionItemId = Schema.Literals([
   "git",
   "gh",
+  "git-credentials",
   "node",
   "claude",
   "codex",
@@ -106,6 +107,22 @@ export const ProvisionProvider = Schema.Struct({
 });
 export type ProvisionProvider = typeof ProvisionProvider.Type;
 
+/**
+ * Whether git has a credential helper for https://github.com. Without one a
+ * signed-in gh still leaves `git clone` of a private repository failing, so
+ * provisioning runs `gh auth setup-git` when gh is signed in. Only the helper's
+ * name is read (`git config --get-urlmatch`), never a credential.
+ * - `configured`: a helper is set; `usesGh` says whether it is gh's own.
+ * - `missing`: none is set; private clones over https fail.
+ * - `unknown`: git is missing or could not be asked.
+ */
+export const ProvisionCredentialHelper = Schema.Struct({
+  status: Schema.Literals(["configured", "missing", "unknown"]),
+  helper: Schema.NullOr(bounded(500)),
+  usesGh: Schema.Boolean,
+});
+export type ProvisionCredentialHelper = typeof ProvisionCredentialHelper.Type;
+
 export const ProvisionUserStep = Schema.Struct({
   id: bounded(80),
   title: bounded(500),
@@ -138,6 +155,8 @@ export const ProvisionReadback = Schema.Struct({
   service: ProvisionService,
   server: Schema.Struct({ wanted: bounded(80), found: Schema.NullOr(bounded(80)) }),
   providers: Schema.Array(ProvisionProvider),
+  /** Optional so readbacks from servers before it still decode. */
+  credentialHelper: Schema.optional(ProvisionCredentialHelper),
   rootStep: Schema.NullOr(ProvisionRootStep),
   userSteps: Schema.Array(ProvisionUserStep),
   /** True when this run installed, upgraded or rewrote anything. */

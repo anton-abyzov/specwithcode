@@ -1,5 +1,6 @@
 /** Shared types and paths for provisioning (runner, probe, plan, install). */
 import type {
+  ProvisionCredentialHelper,
   ProvisionEvent,
   ProvisionItemStatus,
   ProvisionProvider,
@@ -125,4 +126,5 @@ export interface Probes {
   linger: boolean | null;
   sleepMasked: boolean | null;
   providers: ProvisionProvider[];
+  credentialHelper: ProvisionCredentialHelper;
 }

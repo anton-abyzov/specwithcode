@@ -162,8 +162,12 @@ function provisionedLinux(): Fake {
   host.answers.set("systemctl --user is-active studio.service", out("active"));
   host.answers.set("loginctl show-user ada -p Linger --value", out("yes"));
   host.answers.set(`${BIN}/gh auth status`, out("Logged in"));
+  host.answers.set(GIT_HELPER, out(`!${BIN}/gh auth git-credential\n`));
   return host;
 }
+
+const GIT_HELPER = "/usr/bin/git config --get-urlmatch credential.helper https://github.com";
+const SETUP_GIT = `${BIN}/gh auth setup-git --hostname github.com`;
 
 function options(overrides: Partial<ProvisionOptions> = {}): ProvisionOptions {
   return {
@@ -508,6 +512,105 @@ describe("runProvision", () => {
 
     const standalone = await runProvision(host, options({ dryRun: true, standalone: true }));
     expect(byId(standalone.items, "server").status).toBe("planned");
+  });
+});
+
+describe("git credential helper", () => {
+  it("reports gh's helper as configured and runs nothing", async () => {
+    const host = provisionedLinux();
+    const readback = await runProvision(host, options());
+    const credentials = byId(readback.items, "git-credentials");
+    expect(credentials.status).toBe("ok");
+    expect(credentials.found).toBe(`!${BIN}/gh auth git-credential`);
+    expect(readback.credentialHelper).toEqual({
+      status: "configured",
+      helper: `!${BIN}/gh auth git-credential`,
+      usesGh: true,
+    });
+    expect(host.calls).not.toContain(SETUP_GIT);
+  });
+
+  it("keeps another helper the user set and never overrides it", async () => {
+    const host = provisionedLinux();
+    host.answers.set(GIT_HELPER, out("manager\n"));
+    const readback = await runProvision(host, options());
+    expect(byId(readback.items, "git-credentials").status).toBe("ok");
+    expect(readback.credentialHelper).toMatchObject({ status: "configured", usesGh: false });
+    expect(host.calls).not.toContain(SETUP_GIT);
+  });
+
+  it("plans gh auth setup-git when gh is signed in but git has no helper", async () => {
+    const host = provisionedLinux();
+    host.answers.set(GIT_HELPER, out("", 1));
+    const readback = await runProvision(host, options({ dryRun: true }));
+    const credentials = byId(readback.items, "git-credentials");
+    expect(credentials.status).toBe("planned");
+    expect(credentials.detail).toContain("signed in");
+    expect(credentials.detail).toContain("private repos would fail");
+    expect(readback.credentialHelper?.status).toBe("missing");
+    expect(host.calls).not.toContain(SETUP_GIT);
+  });
+
+  it("runs gh auth setup-git and verifies the helper afterwards", async () => {
+    const host = provisionedLinux();
+    let configured = false;
+    host.answers.set(GIT_HELPER, () =>
+      configured ? out(`!${BIN}/gh auth git-credential\n`) : out("", 1),
+    );
+    host.answers.set(SETUP_GIT, () => {
+      configured = true;
+      return out("");
+    });
+    const readback = await runProvision(host, options());
+    expect(host.calls.filter((call) => call === SETUP_GIT)).toHaveLength(1);
+    const credentials = byId(readback.items, "git-credentials");
+    expect(credentials.status).toBe("changed");
+    expect(credentials.found).toBe(`!${BIN}/gh auth git-credential`);
+    expect(readback.credentialHelper?.status).toBe("configured");
+    expect(readback.ok).toBe(true);
+
+    // A second run finds it set and changes nothing.
+    const again = await runProvision(host, options());
+    expect(byId(again.items, "git-credentials").status).toBe("ok");
+    expect(host.calls.filter((call) => call === SETUP_GIT)).toHaveLength(1);
+  });
+
+  it("marks a failed setup-git with the command to run", async () => {
+    const host = provisionedLinux();
+    host.answers.set(GIT_HELPER, out("", 1));
+    host.answers.set(SETUP_GIT, {
+      code: 1,
+      stdout: "",
+      stderr: "failed to set up git credential helper",
+    });
+    const readback = await runProvision(host, options());
+    const credentials = byId(readback.items, "git-credentials");
+    expect(credentials.status).toBe("failed");
+    expect(credentials.detail).toContain("failed to set up git credential helper");
+    expect(credentials.command).toBe("gh auth setup-git --hostname github.com");
+  });
+
+  it("never signs in for the user when gh is signed out; says private clones will fail", async () => {
+    const host = provisionedLinux();
+    host.answers.set(GIT_HELPER, out("", 1));
+    host.answers.set(`${BIN}/gh auth status`, out("", 1));
+    const readback = await runProvision(host, options());
+    const credentials = byId(readback.items, "git-credentials");
+    expect(credentials.status).toBe("user-action");
+    expect(credentials.detail).toContain("private repos will fail");
+    expect(host.calls.some((call) => /auth (login|setup-git|token)/u.test(call))).toBe(false);
+    const signin = readback.userSteps.find((step) => step.id === "gh-signin")!;
+    expect(signin.command).toBe("gh auth login");
+    expect(signin.title).toContain("gh auth setup-git");
+    expect(readback.userSteps.filter((step) => step.id === "git-credentials")).toEqual([]);
+  });
+
+  it("waits for git before asking it", async () => {
+    const host = provisionedLinux();
+    host.files.delete("/usr/bin/git");
+    const readback = await runProvision(host, options({ dryRun: true }));
+    expect(byId(readback.items, "git-credentials").status).toBe("skipped");
+    expect(readback.credentialHelper).toEqual({ status: "unknown", helper: null, usesGh: false });
   });
 });
 

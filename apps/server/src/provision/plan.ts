@@ -28,6 +28,8 @@ import { probeAll } from "./probe.ts";
 export const SOURCES: Record<ProvisionItemId, string> = {
   git: "the distribution's signed apt repository (Apple's command line tools on macOS)",
   gh: `github.com/cli/cli release v${GH_VERSION}, SHA-256 pinned`,
+  "git-credentials":
+    "git config --get-urlmatch credential.helper https://github.com; gh auth setup-git",
   node: `nodejs.org v${NODE_VERSION}, SHA-256 pinned (the build install.sh uses)`,
   claude: `downloads.claude.ai ${CLAUDE_VERSION}, SHA-256 pinned`,
   codex: "github.com/openai/codex release, SHA-256 and size pinned",
@@ -43,6 +45,7 @@ export const SOURCES: Record<ProvisionItemId, string> = {
 export const LABELS: Record<ProvisionItemId, string> = {
   git: "git",
   gh: "GitHub CLI (gh)",
+  "git-credentials": "git credentials for github.com",
   node: "Node.js 22",
   claude: "Claude Code",
   codex: "Codex",
@@ -160,6 +163,55 @@ export function tailscaleItem(ctx: Ctx, p: Probes): ProvisionItem {
   );
 }
 
+export const SETUP_GIT_COMMAND = "gh auth setup-git --hostname github.com";
+
+/**
+ * git needs a credential helper for https://github.com to clone a private repo;
+ * a gh sign-in alone is not enough. When gh is signed in and none is set,
+ * `gh auth setup-git` points git at gh. It is not a sign-in and copies no token:
+ * signing in stays the user's step.
+ */
+export function gitCredentialsItem(p: Probes): ProvisionItem {
+  const wanted = "a credential helper";
+  const helper = p.credentialHelper;
+  const gh = p.providers.find((entry) => entry.id === "gh");
+  if (helper.status === "configured")
+    return item(
+      "git-credentials",
+      wanted,
+      helper.helper,
+      "ok",
+      helper.usesGh ? "git uses your gh sign-in for github.com." : null,
+    );
+  if (helper.status === "unknown")
+    return item(
+      "git-credentials",
+      wanted,
+      null,
+      "skipped",
+      p.git.path
+        ? "git did not answer; checked again on the next run."
+        : "Checked once git is installed.",
+    );
+  if (gh?.found && gh.signedIn)
+    return item(
+      "git-credentials",
+      wanted,
+      null,
+      "planned",
+      "gh is signed in but git has no credential helper for github.com, so git clone of private repos would fail. Runs gh auth setup-git.",
+    );
+  return item(
+    "git-credentials",
+    wanted,
+    null,
+    "user-action",
+    gh?.found
+      ? "gh is not signed in and git has no credential helper for github.com, so git clone of private repos will fail. Sign in to GitHub; provisioning then runs gh auth setup-git."
+      : "git has no credential helper for github.com, so git clone of private repos will fail. Install and sign in to gh; provisioning then runs gh auth setup-git.",
+  );
+}
+
 export function planItems(ctx: Ctx, p: Probes): ProvisionItem[] {
   const linux = isLinux(ctx.target);
   const items: ProvisionItem[] = [];
@@ -205,6 +257,7 @@ export function planItems(ctx: Ctx, p: Probes): ProvisionItem[] {
         ),
   );
   items.push(versioned("gh", GH_VERSION, p.gh.found, p.gh.ours, null, p.gh.path));
+  items.push(gitCredentialsItem(p));
   items.push(
     versioned("claude", CLAUDE_VERSION, p.claude.found, p.claude.ours, null, p.claude.path),
   );
@@ -432,7 +485,8 @@ export function verifyItem(
     before.id === "service-path" ||
     before.id === "legacy-names" ||
     before.id === "linger" ||
-    before.id === "service"
+    before.id === "service" ||
+    before.id === "git-credentials"
       ? after.found !== null
       : compareVersions(after.found, want) >= 0;
   return ok
@@ -485,6 +539,15 @@ export async function reprobe(ctx: Ctx, id: ProvisionItemId, probes: Probes): Pr
       return { found: fresh.server.launchers["specweave-studio"] ? "both run" : null, path: null };
     case "server":
       return fresh.server;
+    case "git-credentials":
+      return {
+        found: fresh.credentialHelper.helper,
+        path: null,
+        detail:
+          fresh.credentialHelper.status === "configured"
+            ? "git clone of private github.com repos now uses your gh sign-in."
+            : "git still has no credential helper for github.com.",
+      };
     default:
       return fresh[id as "git" | "gh" | "node" | "claude" | "codex" | "tailscale"];
   }

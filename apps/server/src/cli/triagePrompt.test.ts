@@ -32,7 +32,9 @@ it("seed prompt names the context file and embeds the playbook", () => {
 it("launch prompt stays a single argv-safe line naming the prompt file", () => {
   // The launch argument goes through cmd.exe on Windows (.cmd shims), which
   // cannot carry newlines; the playbook itself must stay on disk.
-  const launch = buildTriageLaunchPrompt(String.raw`C:\Users\a b\.specweave-studio\userdata\triage\x\prompt.md`);
+  const launch = buildTriageLaunchPrompt(
+    String.raw`C:\Users\a b\.specweave-studio\userdata\triage\x\prompt.md`,
+  );
   assert.notInclude(launch, "\n");
   assert.include(launch, String.raw`C:\Users\a b\.specweave-studio\userdata\triage\x\prompt.md`);
   assert.isBelow(launch.length, 1_000);
@@ -41,8 +43,8 @@ it("launch prompt stays a single argv-safe line naming the prompt file", () => {
 it("context file carries every path the playbook depends on", () => {
   const context = buildTriageContext({
     generatedAt: "2026-08-13T00:00:00.000Z",
-    version: "0.0.33",
-    releaseTag: "v0.0.33",
+    cliVersion: "0.0.33",
+    sourceToClone: "tag v0.0.33 (this CLI's version; published on anton-abyzov/specwithcode)",
     os: "linux x64 (7.0.0)",
     nodeVersion: "v24.0.0",
     launchedAs: "specweave-studio triage",
@@ -70,5 +72,41 @@ it("context file carries every path the playbook depends on", () => {
   assert.include(context, "/home/u/.specweave-studio/userdata/secrets");
   assert.include(context, "/home/u/.specweave-studio/source");
   assert.include(context, "- CLI launched as: specweave-studio triage");
-  assert.include(context, "v0.0.33");
+  assert.include(context, "- Source to clone: tag v0.0.33");
+});
+
+it("context file labels the CLI version as the CLI's, not the user's build", () => {
+  const context = buildTriageContext({
+    generatedAt: "2026-10-28T00:00:00.000Z",
+    cliVersion: "1.0.105",
+    sourceToClone:
+      "tag v1.0.106 (the local server's version; published on anton-abyzov/specwithcode)",
+    os: "darwin arm64 (27.0.0)",
+    nodeVersion: "v22.11.0",
+    launchedAs: "specweave-studio triage",
+    server: "running (pid 42, http://127.0.0.1:4501, version 1.0.106)",
+    paths: {
+      stateDir: "/home/u/.specweave-studio/userdata",
+      dbPath: "/home/u/.specweave-studio/userdata/state.sqlite",
+      settingsPath: "/home/u/.specweave-studio/userdata/settings.json",
+      logsDir: "/home/u/.specweave-studio/userdata/logs",
+      serviceLogPath: "/home/u/.specweave-studio/userdata/logs/boot-service.log",
+      desktopBackendLogGlob: "/home/u/.specweave-studio/userdata/logs/server-child*.log*",
+      serverTracePath: "/home/u/.specweave-studio/userdata/logs/server.trace.ndjson",
+      providerEventLogPath: "/home/u/.specweave-studio/userdata/logs/provider/events.log",
+      terminalLogsDir: "/home/u/.specweave-studio/userdata/logs/terminals",
+      providerStatusCacheDir: "/home/u/.specweave-studio/caches",
+      secretsDir: "/home/u/.specweave-studio/userdata/secrets",
+      sourceCacheDir: "/home/u/.specweave-studio/source",
+    },
+  });
+  assert.notInclude(context, "Installed version");
+  assert.include(context, "- Triage CLI version: 1.0.105 (");
+  assert.include(context, "version 1.0.106");
+});
+
+it("playbook names no placeholder host and asks for the version the bug happened on", () => {
+  assert.notInclude(TRIAGE_PLAYBOOK, ".invalid");
+  assert.include(TRIAGE_PLAYBOOK, "/.well-known/studio/environment");
+  assert.include(TRIAGE_PLAYBOOK, "Under Version, give the version the bug happened on");
 });

@@ -1,6 +1,6 @@
 import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@specweave-studio/contracts";
 import { mergeUsage } from "@specweave-studio/shared/usageMerge";
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -27,7 +27,17 @@ vi.mock("../ui/select", () => ({
   SelectTrigger: "div",
   SelectValue: "div",
 }));
-vi.mock("../ui/sidebar", () => ({ SidebarInset: "div" }));
+vi.mock("../ui/sidebar", () => ({
+  SidebarInset: "div",
+  SidebarContent: "div",
+  SidebarGroup: "div",
+  SidebarMenu: "ul",
+  SidebarMenuItem: "li",
+  SidebarMenuButton: ({
+    isActive: _isActive,
+    ...props
+  }: { isActive?: boolean } & ComponentProps<"button">) => <button type="button" {...props} />,
+}));
 vi.mock("../ui/toggle-group", () => ({ Toggle: "button", ToggleGroup: "div" }));
 vi.mock("../WorkspaceBreadcrumb", () => ({
   WorkspaceBreadcrumb: "div",

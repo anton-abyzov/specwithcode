@@ -1,3 +1,5 @@
+import { MOBILE_CARRY_FORWARD } from "../../tests/agent-messages/internalReceipts";
+import { relayAttentionText } from "./workerMessagePresentation";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -386,4 +388,44 @@ describe("workerMessagePresentation by timeline detail (1068)", () => {
       workerMessagePresentation(DENSE, DENSE, "normal"),
     );
   });
+});
+
+describe("folded relay attention", () => {
+  it.each([
+    "## Approve deployment?",
+    "**Confirm the destination before I continue.**",
+    "1. Confirm the destination before I continue.",
+    "- Confirm the destination before I continue.",
+    "Deployment failed. Please log in to continue.",
+  ])("preserves requests regardless of Markdown: %s", (text) =>
+    expect(relayAttentionText(text)).toBe(text),
+  );
+  it("keeps the actual request without its internal receipt lead", () => {
+    expect(
+      relayAttentionText(
+        "CI passed at 8b9b6da6ceccdca502e74454143d114324b36421. Approve deployment?",
+      ),
+    ).toBe("Approve deployment?");
+    expect(relayAttentionText("No blockers. Receipt: /scratch/checks.json")).toBeNull();
+    expect(relayAttentionText("**Blockers:** none. CI passed.")).toBeNull();
+  });
+  it("does not promote code or JSON log questions into requests", () => {
+    expect(relayAttentionText('```sh\necho "Approve?"\n```')).toBeNull();
+    expect(relayAttentionText('{"log":"Approve?"}')).toBeNull();
+  });
+});
+
+describe("0957 carry-forward presentation", () => {
+  it("keeps operational transport words folded", () => {
+    expect(relayAttentionText(MOBILE_CARRY_FORWARD)).toBeNull();
+    expect(
+      relayAttentionText("No user action required. No need to retry. Do not retry the held run."),
+    ).toBeNull();
+  });
+  it.each([
+    "Please reconnect the machine.",
+    "You need to log in to continue.",
+    "Can you provide the destination?",
+    "Permission denied. Grant access before continuing.",
+  ])("retains user action: %s", (text) => expect(relayAttentionText(text)).toBe(text));
 });

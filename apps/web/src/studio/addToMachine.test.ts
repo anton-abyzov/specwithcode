@@ -77,6 +77,36 @@ describe("cloneUrlsFor", () => {
     expect(urls.https).toBe("https://github.com/me/app.git");
   });
 
+  it("clones a fork's own URL and protocol when it is not on a forge host", () => {
+    const urls = cloneUrlsFor({
+      canonicalKey: "github.com/acme/app",
+      locator: {
+        source: "git-remote",
+        remoteName: "upstream",
+        remoteUrl: "https://github.com/acme/app.git",
+      },
+      origin: { canonicalKey: "local/srv/git/app", remoteUrl: "/srv/git/app.git" },
+    } as RepositoryIdentity);
+    expect(urls.ssh).toBeNull();
+    expect(urls.raw).toBe("/srv/git/app.git");
+    expect(urls.preferred).toBeNull();
+    expect(cloneUrlFor(urls, "https")).toBe("/srv/git/app.git");
+  });
+
+  it("prefers the fork's protocol over the upstream's", () => {
+    const urls = cloneUrlsFor({
+      canonicalKey: "github.com/acme/app",
+      locator: {
+        source: "git-remote",
+        remoteName: "upstream",
+        remoteUrl: "https://github.com/acme/app.git",
+      },
+      origin: { canonicalKey: "github.com/me/app", remoteUrl: "git@github.com:me/app.git" },
+    } as RepositoryIdentity);
+    expect(urls.preferred).toBe("ssh");
+    expect(cloneUrlFor(urls, urls.preferred)).toBe("git@github.com:me/app.git");
+  });
+
   it("uses a local path as is", () => {
     const urls = cloneUrlsFor(identity("/srv/git/app.git", "local/srv/git/app"));
     expect(urls.ssh).toBeNull();

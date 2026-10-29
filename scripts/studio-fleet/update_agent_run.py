@@ -5,9 +5,13 @@ mirrors the request into config.json with `installRunId`. A pass of the update a
 run when config.json names it and asks for the same request; while it owns the run a heartbeat
 thread renews `leaseUntil` every HEARTBEAT_SECONDS, also while the detached install helper runs.
 The pass mirrors its status into `phase`, ends the run as `verified`, `failed` or `cancelled`
-when it decides the request, and otherwise lets go of it (owner null, lease now) so a later pass
+when it decides the request (`cancelled` also when a request for a newer release replaced it, as no
+pass takes the run on again), and otherwise lets go of it (owner null, lease now) so a later pass
 or the desktop's re-kick can take it on. The run's `deadlineAt` is the one clock of a run-era
-request: it replaces the forced retry window and the request TTL.
+request: it replaces the forced retry window and the request TTL. A request for the same release that
+the pass takes on while it owns a run (the fleet's or the CLI's) is served by its own TTL, a forced one
+also by its own window (installHoldUntil, which the service's hold follows), a plain one as long as the
+press's hold times it, and the run ends with that pass.
 
 `runSupport` in state.json tells the desktop this agent understands run records; an older agent
 rewriting state.json drops the key, so the desktop falls back to today's path on its own.
@@ -37,6 +41,8 @@ HEARTBEAT_SECONDS = 5
 LEASE = datetime.timedelta(seconds=90)
 LIVE = ('preparing', 'requested', 'downloading', 'waiting', 'installing')
 TERMINAL = ('verified', 'failed', 'cancelled', 'expired')
+# The message of a run whose request a request for a newer release replaced (update_agent_recovery.withdrawn).
+REPLACED = 'A request to install SpecWithCode %s replaced this one.'
 # The agent status a pass sets, as the run's phase while the pass owns it.
 PHASE_OF = {'downloading': 'downloading', 'downloaded': 'downloading', 'waiting-for-quiet': 'waiting',
             'installing': 'installing'}
@@ -219,15 +225,34 @@ def claim(agent):
     return run
 
 
-def retry_until(agent):
-    """The run's deadline: until when a pass that owns a run retries its request."""
+def retry_until(agent, own=None):
+    """Until when a pass retries the request it serves, whose own window ends at `own`. A pass that owns a
+    run retries the run's request until the run's deadline, its one clock; a request it took on since (the
+    fleet's or the CLI's, for the same release) keeps its own window, the one the service's hold follows for
+    a forced request (installHoldUntil). The hold times a plain one from its own start, HOLD_TTL_MS
+    (ServiceUpdateHold.ts, FORCE_WINDOW here), and reads a waiting-for-quiet as the give-up only from then
+    on: the press's drain took it just before the run's request was written, so the pass retries a plain
+    request until FORCE_WINDOW after that, past its own 2 minutes, and the hold ends with the pass.
+    An older update_agent.py (1.0.69 on) asks with no `own` and gets the run's deadline for any request: an
+    install cut off after this module was written (install_launch_agent writes update_agent.py last) runs one."""
     run = getattr(agent, 'run', None)
-    return run.deadline if run is not None else None
+    if run is None:
+        return own
+    if own is None or agent.config.get('installRequestedAt') == run.requested_at:
+        return run.deadline
+    pressed = _ua(agent).parse_time(run.requested_at)
+    if agent.config.get('installMode') != 'force' and pressed is not None:
+        return max(own, pressed + _ua(agent).FORCE_WINDOW)
+    return own
 
 
 def ttl_until(agent):
-    """A run-era request lapses at the run's deadline, not REQUEST_TTL after it was written."""
-    return retry_until(agent)
+    """When the request the pass serves lapses, or None for REQUEST_TTL after it was written: the run's
+    deadline for the run's request, and None for one the pass took on since, as for any request."""
+    run = getattr(agent, 'run', None)
+    if run is not None and run.requested_at == agent.config.get('installRequestedAt'):
+        return run.deadline
+    return None
 
 
 def outcome(agent, run):
@@ -245,9 +270,15 @@ def outcome(agent, run):
     wanted = ua.version_tuple(run.target)
     if installed is not None and wanted is not None and installed >= wanted:
         return 'verified', message
+    newer = getattr(agent, 'newer_release', None)  # config.json names that request now, not this run.
+    # Only a newer release replaces it: an older update_agent.py's run_once keeps the value its pass before set.
+    if newer and (ua.version_tuple(newer) or ()) > (wanted or ()):
+        return 'cancelled', REPLACED % newer
     handled = state.get('handledInstallRequestAt') == run.requested_at
     late = ua.utcnow() + datetime.timedelta(seconds=ua.RETRY_SECONDS) >= run.deadline
-    if handled or late:
+    # config.json names a request the pass took on since (the fleet's or the CLI's): no later pass claims the run.
+    taken_on = agent.config.get('installRequestedAt') != run.requested_at
+    if handled or late or taken_on:
         return 'failed', message or 'SpecWithCode %s did not install.' % run.target
     return None, None
 
@@ -275,8 +306,10 @@ def release(agent):
         if last.get('version') == run.target and isinstance(last.get('receipt'), str):
             record['receipt'] = last['receipt']
     run.write(end)
-    if phase in ('failed', 'cancelled') and agent.state.get('handledInstallRequestAt') != run.requested_at:
-        # An ended run's request never installs later, at some idle moment nobody asked for.
+    if phase in ('failed', 'cancelled') and agent.config.get('installRequestedAt') == run.requested_at \
+            and agent.state.get('handledInstallRequestAt') != run.requested_at:
+        # An ended run's request never installs later, at some idle moment nobody asked for. One the pass
+        # took on since (update_agent_recovery.withdrawn) keeps the outcome the pass gave it.
         agent.state['handledInstallRequestAt'] = run.requested_at
         try:
             agent.save()

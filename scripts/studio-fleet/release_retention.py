@@ -135,8 +135,86 @@ def prune_releases(home, keep, now=None, recent_seconds=RECENT_SECONDS):
     return removed
 
 
+def _archived_backup_link(path):
+    """Recognize an external archive link by its literal destination, without following it.
+
+    Historical cleanup archives use this layout. The name remains held even when its
+    volume is offline; neither the link nor anything behind it is a pruning candidate.
+    Unknown links still make the entire reference set uncertain.
+    """
+    if not path.is_symlink():
+        return False
+    destination = pathlib.Path(os.readlink(path))
+    parts = destination.parts
+    return (len(parts) == 7 and parts[:2] == ('/', 'Volumes')
+            and parts[2] not in ('', '.', '..') and parts[3:5] == ('Archive', 'specwithcode')
+            and re.fullmatch(r'db-backups-\d{8}', parts[5]) is not None
+            and parts[6] == path.name)
+
+
+def state_backup_references(home):
+    """Recovery and completed copies named by every identity, without opening any database.
+
+    An unreadable/symlinked receipt makes the reference set uncertain: prune nothing. A receipt
+    in an unfinished phase or with a failed rollback retains its copy regardless of age. Finished
+    receipts remain useful evidence, but do not turn obsolete copies into permanent backups.
+    """
+    held, finished = set(), set()
+    for root in (studio_paths.branded_root(home), studio_paths.legacy_root(home)):
+        if not os.path.lexists(root):
+            continue
+        if (root == studio_paths.legacy_root(home) and root.is_symlink()
+                and root.resolve() == studio_paths.branded_root(home)):
+            continue  # migrate_home's compatibility alias; the real root was checked above.
+        if _plain_directory(root, home) is None:
+            return None
+        try:
+            identities = list(root.iterdir())
+            for identity in identities:
+                if identity.is_symlink():
+                    if os.path.lexists(identity / 'updates'):
+                        return None
+                    continue
+                if not identity.is_dir():
+                    continue
+                receipts = identity / 'updates' / 'receipts'
+                if not os.path.lexists(receipts):
+                    continue
+                if _plain_directory(receipts, home) is None:
+                    return None
+                for path in receipts.glob('update-*.json'):
+                    if path.is_symlink() or not path.is_file() or path.stat().st_size > RECEIPT_READ_LIMIT:
+                        return None
+                    value = json.loads(path.read_text())
+                    if not isinstance(value, dict):
+                        return None
+                    backup = value.get('stateBackup')
+                    if isinstance(backup, str) and backup:
+                        target = pathlib.Path(backup)
+                        legacy = studio_paths.legacy_root(home)
+                        if (legacy.is_symlink() and legacy.resolve() == studio_paths.branded_root(home)
+                                and target.is_relative_to(legacy)):
+                            target = studio_paths.branded_root(home) / target.relative_to(legacy)
+                        if (not target.is_absolute() or target.name != 'statev2.sqlite'
+                                or target.parent.parent != studio_paths.backups_root(home)
+                                or not STATE_BACKUP_NAME.fullmatch(target.parent.name)):
+                            return None  # Never authorize a local deletion with a foreign basename.
+                        if _archived_backup_link(target.parent):
+                            held.add(target.parent.name)
+                            continue
+                        if not os.path.lexists(target.parent):
+                            continue  # An already removed copy is only historical evidence.
+                        if (_plain_directory(target.parent, home) is None or target.is_symlink()
+                                or not target.is_file()):
+                            return None
+                        (finished if _finished(value) else held).add(target.parent.name)
+        except (OSError, ValueError):
+            return None
+    return held, finished
+
+
 def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None, recent_seconds=RECENT_SECONDS,
-                        only_if_frees=None):
+                        only_if_frees=None, verified_install=False):
     """Deletes old pre-update state database copies; returns the folder names removed.
 
     Keeps the `keep_newest` newest copies, any folder in `keep`, anything written in the
@@ -145,6 +223,11 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
     pre-<commit>-<stamp>[-<uuid>] folders directly in the backups root are candidates; symlinks
     are never followed. Never raises.
 
+    With `verified_install`, only explicitly completed copies are eligible, without an hour wait:
+    unknown copies stay for review. The caller holds the
+    installation lock after a verified update. Every identity's unfinished recovery reference
+    still wins. Unknown or unreadable references prevent pruning.
+
     With `only_if_frees`, removes nothing unless the candidates' files add up to at least that many
     bytes. Their sizes are an upper bound: a clone frees only the blocks it no longer shares.
     """
@@ -152,7 +235,11 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
         root = _plain_directory(studio_paths.backups_root(home), home)
         if root is None:
             return []
-        protected = {pathlib.Path(str(item)).name for item in keep if item}
+        references = state_backup_references(home)
+        if references is None:
+            return []
+        held, finished = references
+        protected = {pathlib.Path(str(item)).name for item in keep if item} | held
         protected |= {pathlib.Path(str(item)).parent.name for item in keep if item}
         moment = time.time() if now is None else now
         backups = []
@@ -178,7 +265,8 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
     backups.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
     removed = []
     candidates = [(child, entries) for stamp, mtime, child, entries in backups[max(0, keep_newest):]
-                  if child.name not in protected and moment - mtime >= recent_seconds]
+                  if child.name not in protected and (not verified_install or child.name in finished)
+                  and (moment - mtime >= recent_seconds or verified_install)]
     if only_if_frees is not None:
         total = 0
         for child, entries in candidates:

@@ -99,6 +99,11 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.STUDIO_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.STUDIO_ACP_FAIL_PROMPT === "1";
 const failPromptMessage = process.env.STUDIO_ACP_FAIL_PROMPT_MESSAGE;
+// Simulates an agent whose restored history the model rejects: prompts on a
+// session this process loaded fail, prompts on a fresh session succeed.
+const failPromptOnLoadedSession =
+  process.env.STUDIO_ACP_FAIL_PROMPT_ON_LOADED_SESSION === "1";
+const loadedSessionIds = new Set<string>();
 const failSetConfigOption = process.env.STUDIO_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.STUDIO_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const omitModelConfigOption = process.env.STUDIO_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
@@ -894,6 +899,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleResumeSession((request) =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      loadedSessionIds.add(String(request.sessionId));
       yield* agent.client.sessionUpdate({
         sessionId: request.sessionId,
         update: {
@@ -942,6 +948,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      loadedSessionIds.add(requestedSessionId);
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }
@@ -1595,6 +1602,13 @@ const program = Effect.gen(function* () {
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError(
           failPromptMessage ?? "Mock prompt failure",
+        );
+      }
+
+      if (failPromptOnLoadedSession && loadedSessionIds.has(requestedSessionId)) {
+        return yield* AcpError.AcpRequestError.internalError(
+          failPromptMessage ??
+            "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call `default_api:mcp_studio-code_orchestrator_capabilities` , position 2.",
         );
       }
 

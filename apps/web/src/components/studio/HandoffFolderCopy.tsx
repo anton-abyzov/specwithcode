@@ -17,7 +17,6 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
 import {
-  cloneableRows,
   copySettled,
   copyDestinationKey,
   copiedProjectFolder,
@@ -67,9 +66,9 @@ import {
   replacingCount,
   secretsLeft,
   secretsLeftText,
-  undecidedCloneRows,
 } from "./handoffCopyAuto";
-import { copyProblem, groupCopyNotices } from "./handoffCopyNotices";
+import { copyNoticeWarnings, copyProblem, groupCopyNotices } from "./handoffCopyNotices";
+import { copyNeedsComparison, decideCopyClones } from "./handoffCopySnapshot";
 import {
   CopyCheckingStep,
   CopyChoicesSummary,
@@ -78,6 +77,11 @@ import {
 } from "./HandoffCopyGuide";
 import { useCopyStepView } from "./useCopyStepView";
 import { useCopyDraft } from "./useCopyDraft";
+import {
+  needsNewCopyComparison,
+  refreshCopyScan,
+  newCopyComparison,
+} from "./handoffCopyScanRecovery";
 import { HandoffCopyScanFreshness } from "./HandoffCopyScanFreshness";
 import { HandoffCopyStepPanels } from "./HandoffCopyStepPanels";
 import {
@@ -183,6 +187,7 @@ export function HandoffFolderCopy({
   const [stage, setStage] = useState<Stage>("setup");
   const [offer, setOffer] = useState<FolderCopyOffer | null>(null);
   const [scanStatus, setScanStatus] = useState<FolderCopySourceStatus | null>(null);
+  const legacyOperation = useRef<string | undefined>(undefined);
   const [summary, setSummary] = useState<FolderCopySourceSummary | null>(null);
   // The source's progress: measuring, then building the copy while the destination compares.
   const [measured, setMeasured] = useState<FolderCopySourceStatus["progress"]>(null);
@@ -450,6 +455,7 @@ export function HandoffFolderCopy({
           input: { operationId: saved.operationId },
         }),
       );
+      legacyOperation.current = measured.capturedAt === undefined ? saved.operationId : undefined;
       setScanStatus(measured);
       setSummary(measured.summary ?? null);
       if (measured.summary) {
@@ -463,36 +469,29 @@ export function HandoffFolderCopy({
       }
       return measured.summary;
     } catch {
+      legacyOperation.current = undefined;
       return null;
     }
   };
 
-  /**
-   * The clone method answers every cloneable repository once, before the person sees
-   * the preview. The pointer records it so a reopened preview keeps later edits.
-   */
-  const cloneDecide = async (saved: PendingCopy, previewed: FolderCopyStatus) => {
-    const environmentId = saved.environmentId as EnvironmentId;
-    if (
-      (saved.method ?? method) !== "clone" ||
-      saved.cloneDecided ||
-      previewed.state !== "previewed"
-    )
-      return { saved, next: previewed };
-    let next = previewed;
-    if (undecidedCloneRows(previewed.rows).length > 0) {
-      unwrap(
-        await decide({
-          environmentId,
-          input: { operationId: saved.operationId, clone: cloneableRows(previewed.rows) },
-        }),
-      );
-      next = await pollCopy(environmentId, saved.operationId);
-    }
-    const decided: PendingCopy = { ...saved, cloneDecided: true };
-    if (latestPending.current?.operationId === saved.operationId) remember(decided);
-    return { saved: decided, next };
-  };
+  const cloneDecide = (saved: PendingCopy, previewed: FolderCopyStatus) =>
+    decideCopyClones(
+      saved,
+      previewed,
+      method,
+      async (clone) => {
+        unwrap(
+          await decide({
+            environmentId: saved.environmentId as EnvironmentId,
+            input: { operationId: saved.operationId, clone },
+          }),
+        );
+      },
+      () => pollCopy(saved.environmentId as EnvironmentId, saved.operationId),
+      (next) => {
+        if (latestPending.current?.operationId === saved.operationId) remember(next);
+      },
+    );
 
   /** Drops a pointer's pending Replace all once the person has to look at the plan again. */
   const withoutReplaceAll = (saved: PendingCopy): PendingCopy => {
@@ -502,13 +501,9 @@ export function HandoffFolderCopy({
     return rest;
   };
 
-  /**
-   * Shows the compared plan. A one-click copy that replaces nothing is approved here, as
-   * is a plan the person answered with Replace all once nothing is left open; anything
-   * else waits for the person. Secret-like files never stop it: they stay on the source.
-   */
+  /** Auto-approves only a current preview with no replacements or an explicit Replace all. */
   const settlePreview = async (next: FolderCopyStatus, saved: PendingCopy) => {
-    if (next.state === "previewed") {
+    if (next.state === "previewed" && !saved.needsComparison) {
       if (saved.replaceAll) {
         // The ticked secret files went to the source when Replace all was clicked.
         if (replaceAllReady(next)) {
@@ -516,7 +511,12 @@ export function HandoffFolderCopy({
           return;
         }
         withoutReplaceAll(saved);
-      } else if (saved.auto && replacesNothing(next)) {
+      } else if (
+        saved.auto &&
+        replacesNothing(next) &&
+        next.capturedAt === undefined &&
+        legacyOperation.current === saved.operationId
+      ) {
         await applyNow(saved);
         return;
       }
@@ -820,20 +820,20 @@ export function HandoffFolderCopy({
   const refreshScan = () =>
     run(async () => {
       if (!pending) return;
-      const checked = unwrap(
-        await sourceStatus({
-          environmentId: project.environmentId,
-          input: { operationId: pending.operationId, refresh: true },
-        }),
+      await refreshCopyScan(
+        async () =>
+          unwrap(
+            await sourceStatus({
+              environmentId: project.environmentId,
+              input: { operationId: pending.operationId, refresh: true },
+            }),
+          ),
+        setScanStatus,
+        setSummary,
       );
-      setScanStatus(checked);
-      if (checked.freshness?.summary) setSummary(checked.freshness.summary);
-      if (!checked.freshness)
-        throw new Error(
-          "Update the source to check scan freshness. The saved copy and choices have been kept.",
-        );
     });
 
+  const sourceChanged = copyNeedsComparison(scanStatus, pending, copy);
   const choose = (next: ReadonlyArray<FolderCopyFileClass>) => {
     setSelection(next);
     if (pending) remember({ ...pending, selection: next });
@@ -842,7 +842,7 @@ export function HandoffFolderCopy({
   const plan = () =>
     run(async () => {
       if (!offer || !pending) return;
-      if (scanStatus?.freshness?.current === false)
+      if (sourceChanged)
         throw new Error("Measure and compare again before previewing this changed source.");
       await planNow(offer, pending, selection);
     });
@@ -928,14 +928,11 @@ export function HandoffFolderCopy({
     );
   };
 
-  /**
-   * Approves the previewed plan (after sending any confirmed secret files) and follows it.
-   * A failed answer is checked once: an approval that landed anyway carries on.
-   */
+  /** Approves, then checks a failed answer once in case the approval landed anyway. */
   const applyNow = async (saved: PendingCopy, secretsSent = false) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
-    if (scanStatus?.freshness?.current === false)
+    if (sourceChanged)
       throw new Error("The source changed. Measure and compare again before copying.");
     if (!secretsSent && secretsTicked) await sendTickedSecrets(operationId);
     setStage("copying");
@@ -956,7 +953,9 @@ export function HandoffFolderCopy({
           show(current);
         } else setStage("preview");
         // The person decides again; a later reopen must not approve on the old click.
-        withoutReplaceAll(saved);
+        const reviewed = withoutReplaceAll(saved);
+        if (needsNewCopyComparison(cause))
+          remember({ ...reviewed, needsComparison: true, planShown: true });
         throw cause;
       }
       setCopy(current);
@@ -1096,28 +1095,16 @@ export function HandoffFolderCopy({
     else void run(cancelBeforeApply);
   };
 
-  /**
-   * Measures again to choose what to copy. The destination keeps the classes it started
-   * comparing with, so a new choice needs a new copy; nothing was applied yet.
-   */
+  /** A new comparison requires a fresh operation; nothing was applied yet. */
   const rechoose = () => {
     const saved = latestPending.current;
     if (!saved) return;
     void run(async () => {
       await cancelBeforeApply();
-      const chosen = saved.selection ?? DEFAULT_COPY_SELECTION;
+      const next = newCopyComparison(saved, method, scope.selected);
       setChooseFirst(true);
-      setSelection(chosen);
-      await measureNow({
-        machine: saved.environmentId as EnvironmentId,
-        folder: saved.targetFolder,
-        mode: saved.mode,
-        selection: chosen,
-        auto: false,
-        method: saved.method ?? method,
-        copyRoot: saved.copyRoot ?? scope.selected.copyRoot,
-        projectRelativePath: saved.projectRelativePath ?? scope.selected.projectRelativePath,
-      });
+      setSelection(next.selection);
+      await measureNow(next);
     });
   };
 
@@ -1299,9 +1286,10 @@ export function HandoffFolderCopy({
     move: mode === "copy-and-move",
   });
   const notices = groupCopyNotices({
+    captured: (copy?.capturedAt ?? scanStatus?.capturedAt) !== undefined,
     skipped: summary?.skipped,
     linksOutside: summary?.linksOutside,
-    warnings: [...(summary?.warnings ?? []), ...(copy?.warnings ?? [])],
+    warnings: copyNoticeWarnings(summary, copy, scanStatus?.freshness?.summary !== undefined),
     rootLabel,
     mode,
     done: stage === "done",
@@ -1453,14 +1441,17 @@ export function HandoffFolderCopy({
           />
           {(stage === "select" || stage === "preview") && (
             <HandoffCopyScanFreshness
+              capturedAt={copy?.capturedAt}
               status={scanStatus}
+              sourceChanged={sourceChanged}
               busy={busy}
               onRefresh={() => void refreshScan()}
               onCompareAgain={rechoose}
             />
           )}
           <HandoffCopyFooter
-            sourceChanged={scanStatus?.freshness?.current === false}
+            sourceChanged={sourceChanged}
+            onCompareAgain={rechoose}
             stage={stage}
             error={error}
             busy={busy || replanning}

@@ -43,6 +43,7 @@ const status = (state: string) => ({
   mode,
   targetFolder,
   copyRoot,
+  ...(fixture.captured ? { capturedAt: 1793061500000 } : {}),
   projectRelativePath,
   projectFolder:
     projectRelativePath === "." ? targetFolder : `${targetFolder}/${projectRelativePath}`,
@@ -69,13 +70,15 @@ const status = (state: string) => ({
       id: `repo:${child}`,
       kind: "repository",
       path: child,
-      status: "new",
-      detail: "Not on this machine yet.",
+      status: fixture.destinationHasFiles ? "conflict" : "new",
+      detail: fixture.destinationHasFiles
+        ? "Reviewed changes to existing files."
+        : "Not on this machine yet.",
       filesToMove: 8,
       bytesToMove: 2048,
-      bytesPresent: 0,
-      choices: [],
-      decision: null,
+      bytesPresent: fixture.destinationHasFiles ? 1024 : 0,
+      choices: fixture.destinationHasFiles ? ["keep-mine", "take-theirs"] : [],
+      decision: fixture.destinationHasFiles ? "take-theirs" : null,
       needsDecision: false,
       conflicts: [],
       moreConflicts: 0,
@@ -104,6 +107,8 @@ export const fixture = {
   }>,
   transferReady: false,
   scanCurrent: true,
+  destinationHasFiles: false,
+  captured: false,
   failCopy: false,
   pauseNext(name: string) {
     let release!: () => void;
@@ -138,7 +143,10 @@ export const useAtomCommand =
       failures.delete(name);
       return {
         _tag: "Failure",
-        error: Object.assign(new Error(failure.message), { code: failure.code }),
+        error: Object.assign(new Error(failure.message), {
+          code: failure.code,
+          detail: failure.message,
+        }),
       };
     }
     let value;
@@ -226,6 +234,7 @@ export const useAtomCommand =
         error: null,
         progress: null,
         scanCompletedAt: 1793061000000,
+        ...(fixture.captured ? { capturedAt: 1793061500000 } : {}),
         ...(input.refresh
           ? { freshness: { checkedAt: 1793062000000, current: fixture.scanCurrent, summary } }
           : {}),

@@ -290,7 +290,7 @@ export function selectGitHubBaseRepository(input: {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const line of input.remotes.split("\n")) {
-    const match = /^(\S+)\s+(\S+)\s+\(fetch\)$/u.exec(line.trim());
+    const match = /^(\S+)\s+(\S+)\s+\(fetch\)(?:\s+\[[^[\]\r\n]+\])?$/u.exec(line.trim());
     if (!match) continue;
     const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(match[2]!).split("/");
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
@@ -577,7 +577,7 @@ export const make = Effect.gen(function* () {
     const remoteOutput = remotes?.exitCode === 0 ? remotes.stdout : "";
     const fetchRemotes = remoteOutput
       .split("\n")
-      .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)$/u.exec(line.trim()))
+      .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)(?:\s+\[[^[\]\r\n]+\])?$/u.exec(line.trim()))
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => ({
         name: match[1]!,
@@ -884,7 +884,7 @@ export const make = Effect.gen(function* () {
     const remoteFor = (nameWithOwner: string) =>
       remotes
         .split("\n")
-        .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)$/u.exec(line.trim()))
+        .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)(?:\s+\[[^[\]\r\n]+\])?$/u.exec(line.trim()))
         .find(
           (match) =>
             match !== null &&

@@ -11,9 +11,12 @@ import {
 } from "@specweave-studio/contracts";
 import { StudioFleetSkillInput } from "@specweave-studio/contracts/studioFleet";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeEffectPath from "@effect/platform-node/NodePath";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -22,9 +25,10 @@ import { afterEach, vi } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- real key files, fake vskill binaries and locks.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
+import { writeFakeCli } from "../testUtils/fakeCli.ts";
 
 import { fleetSkillAskOfFlags, fleetSkillTargetsOf } from "../cli/fleet.ts";
-import { join } from "../nodePath.ts";
+import { dirname, join } from "../nodePath.ts";
 import type { FleetTarget } from "../studioFleet.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -216,6 +220,7 @@ describe("fleet skill rules", () => {
     expect(
       vskillSearchDirs({
         home: "/Users/me",
+        platform: "darwin",
         pathEnv: "/usr/bin:relative/bin:/opt/homebrew/bin",
         npmGlobalBin: "/Users/me/.npm-global/bin",
       }),
@@ -225,6 +230,26 @@ describe("fleet skill rules", () => {
       "/Users/me/.local/bin",
       "/usr/local/bin",
       "/Users/me/.npm-global/bin",
+    ]);
+  });
+
+  it("keeps Windows drive letters and UNC shares intact and excludes relative PATH entries", () => {
+    expect(
+      vskillSearchDirs({
+        home: "C:\\Users\\Me",
+        platform: "win32",
+        appData: "D:\\Roaming",
+        pathEnv:
+          '"C:\\Program Files\\nodejs";C:\\Tools;relative;C:relative;\\\\server\\tools;C:\\Tools',
+        npmGlobalBin: "D:\\npm-global",
+      }),
+    ).toEqual([
+      "C:\\Program Files\\nodejs",
+      "C:\\Tools",
+      "\\\\server\\tools",
+      "C:\\Users\\Me/.local/bin",
+      "D:\\Roaming/npm",
+      "D:\\npm-global",
     ]);
   });
 
@@ -602,62 +627,152 @@ describe("a fleet machine taking its primary's skill install", () => {
 // ---------------------------------------------------------------------------
 
 describe("the live fleet skill worker", () => {
-  it.live("finds vskill on PATH, runs it without a shell in the project and reads its lock", () =>
+  it.live.each([false, true])("resolves Windows command shims with npm fallback=%s", (fallback) =>
     Effect.gen(function* () {
-      const bin = yield* Effect.promise(() => tempDir("studio-fleet-skills-bin-"));
-      const project = yield* Effect.promise(() => tempDir("studio-fleet-skills-project-"));
-      // A stand-in vskill: records its argv and working folder, writes the lock vskill would.
-      yield* Effect.promise(() =>
-        NodeFSP.writeFile(
-          join(bin, "vskill"),
-          [
-            "#!/bin/sh",
-            'printf "%s\\n" "$@" > "$PWD/argv.txt"',
-            'pwd > "$PWD/cwd.txt"',
-            `printf '{"version":1,"skills":{"sw-do":{"version":"1.2.3","pinnedVersion":"1.2.3","sha":"x"}}}' > "$PWD/vskill.lock"`,
-            "",
-          ].join("\n"),
-          { mode: 0o755 },
-        ),
-      );
-      const projects = Layer.mock(ProjectStore.ProjectStoreV2)({
-        get: (id) =>
-          Effect.succeed(
-            id === ProjectId.make("proj-1")
-              ? Option.some({ workspaceRoot: project } as never)
-              : Option.none(),
-          ),
+      const bin = `C:\\Program Files\\fixture-node-${fallback}`;
+      const prefix = "D:\\fixture-npm-global";
+      const project = "C:\\fixture-project";
+      const npm = `${bin}\\npm.cmd`;
+      const vskill = `${fallback ? prefix : bin}\\vskill.cmd`;
+      const lockPath = `${project}\\vskill.lock`;
+      const calls: ProcessRunner.ProcessRunInput[] = [];
+      const noop = FileSystem.makeNoop({});
+      const fs = FileSystem.makeNoop({
+        stat: (file) =>
+          file === project
+            ? Effect.succeed({ type: "Directory" } as never)
+            : [npm, vskill, lockPath].includes(file)
+              ? Effect.succeed({ type: "File", size: 100n, mode: 0 } as never)
+              : noop.stat(file),
+        readFileString: (file) =>
+          file === lockPath
+            ? Effect.succeed(
+                JSON.stringify({
+                  skills: { "sw-do": { version: "1.2.3", pinnedVersion: "1.2.3" } },
+                }),
+              )
+            : noop.readFileString(file),
       });
       const live = fleetSkillsLayer.pipe(
-        Layer.provide(ProcessRunner.layer),
-        Layer.provide(projects),
-        Layer.provide(NodeServices.layer),
         Layer.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PATH: `${bin}:/bin` } })),
+          Layer.mock(ProcessRunner.ProcessRunner)({
+            run: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return {
+                  code: 0,
+                  stdout: input.command === npm ? `${prefix}\r\n` : "",
+                  stderr: "",
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                } as ProcessRunner.ProcessRunOutput;
+              }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            get: () => Effect.succeed(Option.some({ workspaceRoot: project } as never)),
+          }),
+        ),
+        Layer.provide(Layer.succeed(FileSystem.FileSystem, fs)),
+        Layer.provide(NodeEffectPath.layerWin32),
+        Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+        Layer.provide(
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PATH: bin, PATHEXT: ".CMD" } })),
         ),
       );
-      const service = yield* Effect.provide(
-        Effect.gen(function* () {
-          return yield* FleetSkillWorker;
-        }),
-        live,
-      );
-      expect(
-        yield* Effect.flip(service.request({ ...userAsk, scope: "project", projectId: "proj-2" })),
-      ).toMatchObject({ reason: "unknown-project" });
+      const service = yield* Effect.provide(FleetSkillWorker, live);
       yield* service.request({ ...userAsk, scope: "project", projectId: "proj-1" });
-      expect(yield* settled(service)).toMatchObject({
+      const status = yield* settled(service);
+      expect(status, status.lastError ?? undefined).toMatchObject({
         phase: "installed",
         installedVersion: "1.2.3",
-        pinnedVersion: "1.2.3",
       });
-      const argv = yield* Effect.promise(() => NodeFSP.readFile(join(project, "argv.txt"), "utf8"));
-      expect(argv.split("\n")).toEqual(["install", "anton-abyzov/vskill/sw-do@1.2.3", "-y", ""]);
-      const cwd = yield* Effect.promise(() => NodeFSP.readFile(join(project, "cwd.txt"), "utf8"));
-      expect(yield* Effect.promise(() => NodeFSP.realpath(cwd.trim()))).toBe(
-        yield* Effect.promise(() => NodeFSP.realpath(project)),
-      );
+      expect(calls.map((call) => call.command)).toEqual(fallback ? [npm, vskill] : [vskill]);
+      expect(calls.at(-1)).toMatchObject({
+        command: vskill,
+        cwd: project,
+        args: ["install", "anton-abyzov/vskill/sw-do@1.2.3", "-y"],
+      });
+      expect(calls.at(-1)?.env?.PATH?.split(";")[0]).toBe(fallback ? prefix : bin);
     }),
+  );
+
+  it.live(
+    "finds the platform vskill launcher on PATH, preserves argv and reads the project lock",
+    () =>
+      Effect.gen(function* () {
+        const bin = yield* Effect.promise(() => tempDir("studio-fleet-skills-bin-"));
+        const project = yield* Effect.promise(() => tempDir("studio-fleet-skills-project-"));
+        // A stand-in vskill: records its argv and working folder, writes the lock vskill would.
+        yield* Effect.sync(() =>
+          writeFakeCli({
+            directory: bin,
+            name: "vskill",
+            source: [
+              'import { writeFileSync } from "node:fs";',
+              'writeFileSync("argv.txt", process.argv.slice(2).join("\\n") + "\\n");',
+              'writeFileSync("cwd.txt", process.cwd() + "\\n");',
+              'writeFileSync("vskill.lock", JSON.stringify({version:1,skills:{"sw-do":{version:"1.2.3",pinnedVersion:"1.2.3",sha:"x"}}}));',
+            ].join("\n"),
+          }),
+        );
+        const projects = Layer.mock(ProjectStore.ProjectStoreV2)({
+          get: (id) =>
+            Effect.succeed(
+              id === ProjectId.make("proj-1")
+                ? Option.some({ workspaceRoot: project } as never)
+                : Option.none(),
+            ),
+        });
+        const live = fleetSkillsLayer.pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(projects),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  PATH: [
+                    bin,
+                    dirname(process.execPath),
+                    ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"]),
+                  ].join(process.platform === "win32" ? ";" : ":"),
+                },
+              }),
+            ),
+          ),
+        );
+        const service = yield* Effect.provide(
+          Effect.gen(function* () {
+            return yield* FleetSkillWorker;
+          }),
+          live,
+        );
+        expect(
+          yield* Effect.flip(
+            service.request({ ...userAsk, scope: "project", projectId: "proj-2" }),
+          ),
+        ).toMatchObject({ reason: "unknown-project" });
+        yield* service.request({ ...userAsk, scope: "project", projectId: "proj-1" });
+        const status = yield* settled(service);
+        expect(status, status.lastError ?? undefined).toMatchObject({
+          phase: "installed",
+          installedVersion: "1.2.3",
+          pinnedVersion: "1.2.3",
+        });
+        const argv = yield* Effect.promise(() =>
+          NodeFSP.readFile(join(project, "argv.txt"), "utf8"),
+        );
+        expect(argv.split("\n")).toEqual(["install", "anton-abyzov/vskill/sw-do@1.2.3", "-y", ""]);
+        const cwd = yield* Effect.promise(() => NodeFSP.readFile(join(project, "cwd.txt"), "utf8"));
+        expect(yield* Effect.promise(() => NodeFSP.realpath(cwd.trim()))).toBe(
+          yield* Effect.promise(() => NodeFSP.realpath(project)),
+        );
+      }),
   );
 
   it.live("drops the pin in the project's own lock, not a parent SpecWeave project's lock", () =>
@@ -676,16 +791,15 @@ describe("the live fleet skill worker", () => {
         await NodeFSP.writeFile(join(umbrella, ".specweave", "config.json"), "{}");
         await NodeFSP.writeFile(join(umbrella, "vskill.lock"), umbrellaLock);
         await NodeFSP.mkdir(project, { recursive: true });
-        await NodeFSP.writeFile(
-          join(bin, "vskill"),
-          [
-            "#!/bin/sh",
-            'printf "%s\\n" "$*" >> "$PWD/argv.txt"',
-            `printf '{"version":1,"agents":["claude-code"],"skills":{"sw-do":{"version":"1.2.3","pinnedVersion":"1.2.3","sha":"x"},"other":{"version":"2.0.0","pinnedVersion":"2.0.0"}}}' > "$PWD/vskill.lock"`,
-            "",
+        writeFakeCli({
+          directory: bin,
+          name: "vskill",
+          source: [
+            'import { appendFileSync, writeFileSync } from "node:fs";',
+            'appendFileSync("argv.txt", process.argv.slice(2).join(" ") + "\\n");',
+            'writeFileSync("vskill.lock", JSON.stringify({version:1,agents:["claude-code"],skills:{"sw-do":{version:"1.2.3",pinnedVersion:"1.2.3",sha:"x"},other:{version:"2.0.0",pinnedVersion:"2.0.0"}}}));',
           ].join("\n"),
-          { mode: 0o755 },
-        );
+        });
       });
       const projects = Layer.mock(ProjectStore.ProjectStoreV2)({
         get: (id) =>
@@ -700,7 +814,17 @@ describe("the live fleet skill worker", () => {
         Layer.provide(projects),
         Layer.provide(NodeServices.layer),
         Layer.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PATH: `${bin}:/bin` } })),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                PATH: [
+                  bin,
+                  dirname(process.execPath),
+                  ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"]),
+                ].join(process.platform === "win32" ? ";" : ":"),
+              },
+            }),
+          ),
         ),
       );
       const service = yield* Effect.provide(
@@ -710,7 +834,8 @@ describe("the live fleet skill worker", () => {
         live,
       );
       yield* service.request({ ...userAsk, scope: "project", projectId: "proj-1", pin: false });
-      expect(yield* settled(service)).toMatchObject({
+      const status = yield* settled(service);
+      expect(status, status.lastError ?? undefined).toMatchObject({
         phase: "installed",
         installedVersion: "1.2.3",
         pinnedVersion: null,

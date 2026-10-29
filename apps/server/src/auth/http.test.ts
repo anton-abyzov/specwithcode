@@ -803,3 +803,74 @@ it.effect("lets a bearer credential revoke itself, never a browser cookie", () =
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
+
+it.effect("mints client tokens only for this machine's own sessions, never a worker label", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+    const crypto = yield* Crypto.Crypto;
+    const authContext = yield* Layer.build(
+      EnvironmentAuth.layer.pipe(
+        Layer.provide(SqlitePersistence.layerMemory),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(layerConfig),
+      ),
+    );
+    const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
+    const sessions = Context.get(authContext, SessionStore.SessionStore);
+    const scopes = ["orchestration:read", "orchestration:operate", "access:write"] as const;
+    const own = yield* auth.issueSession({ scopes, label: "Management token" });
+    // What pairing from another machine's coordinator leaves: its principal on the session.
+    const coordinator = yield* auth.issueSession({
+      scopes,
+      label: "Coordinator management",
+      principal: { kind: "coordinator", environmentId: "env-other" as never },
+    });
+    const routes = HttpApiBuilder.layer(AuthTestApi).pipe(
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+      Layer.provide(Layer.succeed(SessionStore.SessionStore, sessions)),
+      Layer.provide(layerConfig),
+      Layer.provide(
+        HttpPlatform.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Etag.layerWeak),
+        ),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+      (handler) =>
+        Effect.tryPromise(async () => {
+          const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+            Context.add(
+              ServerSecretStore.ServerSecretStore,
+              Context.get(authContext, ServerSecretStore.ServerSecretStore),
+            ),
+          );
+          const mint = (token: string, label: string) =>
+            handler.handler(
+              postJson(
+                "/api/auth/mcp-tokens",
+                { label, access: "auto" },
+                { authorization: `Bearer ${token}` },
+              ),
+              requestContext,
+            );
+          const minted = await mint(own.token, "Grok");
+          expect(minted.status).toBe(200);
+          expect(await minted.json()).toMatchObject({ label: "Grok", access: "auto" });
+          // Another machine's coordinator session never mints one.
+          const refused = await mint(coordinator.token, "Grok");
+          expect(refused.status).toBe(401);
+          // The worker label claims a machine's grant, so no static token may carry it.
+          const reserved = await mint(own.token, "SpecWithCode workers · env-other");
+          expect(reserved.status).toBe(400);
+          expect(JSON.stringify(await reserved.json())).toContain("reserved");
+        }),
+      ({ dispose }) => Effect.promise(dispose),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);

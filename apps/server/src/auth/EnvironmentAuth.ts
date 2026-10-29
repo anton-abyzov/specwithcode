@@ -13,6 +13,7 @@ import {
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
   type AuthMcpClientAccess,
+  AUTH_MCP_CLIENT_TOKEN_MAX_TTL_SECONDS,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AuthSessionId,
@@ -30,6 +31,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
@@ -47,6 +49,7 @@ import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { arrivedOverConnect } from "./CredentialFailureLimiter.ts";
+import { coordinatorOfWorkerLabel } from "../fleet/workGrantPolicy.ts";
 import {
   isFleetRedeemSubject,
   parseFleetRedeemSubject,
@@ -91,7 +94,8 @@ export interface IssuedBearerSession {
 export const MCP_CLIENT_SUBJECT = "mcp-client";
 /** The subject of the management token a fleet invitation hands another machine. */
 export const FLEET_INVITATION_SUBJECT = "fleet-invitation";
-const MCP_CLIENT_SESSION_TTL = Duration.days(30);
+/** How long an MCP client sign-in, OAuth-approved or a static token, lasts by default. */
+export const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export const mcpClientScopes = (
   access: AuthMcpClientAccess,
@@ -306,8 +310,11 @@ export class EnvironmentAuth extends Context.Service<
       readonly client: AuthClientMetadata;
       /** Binds the grant to this DPoP key (`token_type: "DPoP"`). */
       readonly proofKeyThumbprint?: string;
+      /** Lifetime; `MCP_CLIENT_SESSION_TTL` when left out. Static tokens set their own. */
+      readonly ttl?: Duration.Duration;
     }) => Effect.Effect<
       {
+        readonly sessionId: AuthSessionId;
         readonly token: string;
         readonly expiresAt: DateTime.DateTime;
         readonly tokenType: "Bearer" | "DPoP";
@@ -1240,12 +1247,13 @@ export const make = Effect.gen(function* () {
         method: input.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
         ...(input.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         scopes: mcpClientScopes(input.access),
-        ttl: MCP_CLIENT_SESSION_TTL,
+        ttl: input.ttl ?? MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         client: { ...input.client, label: input.label, deviceType: "bot" },
       })
       .pipe(
         Effect.map((issued) => ({
+          sessionId: issued.sessionId,
           token: issued.token,
           expiresAt: issued.expiresAt,
           tokenType: input.proofKeyThumbprint ? ("DPoP" as const) : ("Bearer" as const),
@@ -1340,6 +1348,82 @@ export const make = Effect.gen(function* () {
     authenticateBrowserSession,
   });
 });
+
+const MCP_CLIENT_TOKEN_MAX_LABEL_LENGTH = 100;
+
+/** A static MCP client token request this server refuses, with why. */
+export class StaticMcpTokenInputError extends Schema.TaggedError<StaticMcpTokenInputError>()(
+  "StaticMcpTokenInputError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+/**
+ * Mints a static MCP client token: the same `mcp-client` session an OAuth
+ * approval issues, for a client that can only send a fixed
+ * `Authorization: Bearer` header (Grok's remote MCP, the OpenAI Responses
+ * `mcp` tool, n8n, a bot). It carries its own device principal, so work
+ * grants bind it like any signed-in agent, and it is listed and revoked with
+ * the other MCP clients. Never key-bound, and not a machine's grant, so it is
+ * accepted over SpecWithCode Connect within its access ceiling. The token is
+ * returned once and never logged.
+ */
+export const mintStaticMcpClientToken = Effect.fn("EnvironmentAuth.mintStaticMcpClientToken")(
+  function* (
+    environmentAuth: EnvironmentAuth["Service"],
+    input: {
+      readonly label: string;
+      readonly access: AuthMcpClientAccess;
+      readonly ttl?: Duration.Duration | undefined;
+    },
+  ) {
+    const label = input.label.trim();
+    const ttl = input.ttl ?? MCP_CLIENT_SESSION_TTL;
+    const ttlMs = Duration.toMillis(ttl);
+    if (label.length === 0 || label.length > MCP_CLIENT_TOKEN_MAX_LABEL_LENGTH) {
+      return yield* new StaticMcpTokenInputError({
+        reason: `The label must be 1 to ${MCP_CLIENT_TOKEN_MAX_LABEL_LENGTH} characters.`,
+      });
+    }
+    // A worker name claims a machine's grant, which only that machine's approval may hold.
+    if (coordinatorOfWorkerLabel(label) !== undefined) {
+      return yield* new StaticMcpTokenInputError({
+        reason: "That label is reserved for another machine's fleet grant.",
+      });
+    }
+    if (
+      !Number.isFinite(ttlMs) ||
+      ttlMs < 60_000 ||
+      ttlMs > AUTH_MCP_CLIENT_TOKEN_MAX_TTL_SECONDS * 1000
+    ) {
+      return yield* new StaticMcpTokenInputError({
+        reason: "The TTL must be between 1 minute and 90 days.",
+      });
+    }
+    const issued = yield* environmentAuth.issueMcpClientSession({
+      label,
+      access: input.access,
+      client: { label, deviceType: "bot" },
+      ttl,
+    });
+    yield* Effect.logInfo("Issued a static MCP client token.", {
+      sessionId: issued.sessionId,
+      client: label,
+      access: input.access,
+    });
+    return {
+      sessionId: issued.sessionId,
+      token: issued.token,
+      tokenType: "Bearer" as const,
+      label,
+      access: input.access,
+      expiresAt: DateTime.toUtc(issued.expiresAt),
+    };
+  },
+);
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),

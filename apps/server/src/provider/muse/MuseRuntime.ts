@@ -13,8 +13,9 @@ import type {
   AcpSessionRuntimeStartResult,
 } from "../acp/AcpSessionRuntime.ts";
 import type { MuseSettings } from "@specweave-studio/contracts";
-import { connectMuse, museControl } from "./MuseConnection.ts";
-import { museModels, museSubscription } from "./MuseDiscovery.ts";
+import { connectMuse, museControl, museSessionMcpGranted } from "./MuseConnection.ts";
+import { museSessionMcpServers } from "./museMcpServers.ts";
+import { museModels, museFullEntitled } from "./MuseDiscovery.ts";
 import { MUSE_ASK_PROFILE, museRequireHumanReviewer, watchMuseRequests } from "./MuseRequests.ts";
 import { museItemUpdates, museTurnProjection } from "./MuseItems.ts";
 import { parseSessionUpdateEvent } from "../acp/AcpRuntimeModel.ts";
@@ -35,6 +36,8 @@ export const makeMuseRuntime = (input: {
   cwd: string;
   resumeSessionId?: string;
   runtimeMode?: string;
+  /** The thread's ACP MCP servers; attached natively when the host granted sessionMcp. */
+  mcpServers?: ReadonlyArray<Acp.McpServer>;
   connect?: typeof connectMuse;
   onOutgoingResponse?: (requestId: string) => Effect.Effect<void>;
   onOutgoingResponseFailure?: (requestId: string, error: AcpTransportError) => Effect.Effect<void>;
@@ -87,32 +90,66 @@ export const makeMuseRuntime = (input: {
         request("model/list", {}),
         request("usage/read", {}),
       ]);
-      return museModels(
-        catalog,
-        museSubscription(usage),
-        Boolean(input.environment.META_API_KEY?.trim()),
-      );
+      const apiKey = Boolean(input.environment.META_API_KEY?.trim());
+      return museModels(catalog, museFullEntitled(usage, apiKey), apiKey);
     };
+    // Native MCP servers for this session, when the host granted the
+    // sessionMcp capability. The SDK facade cannot forward session config
+    // yet, so a configured session starts/resumes on the raw connection
+    // and the facade then adopts it by resume; without a grant (or with
+    // nothing to attach) the facade path below is unchanged.
+    const sessionMcpServers = museSessionMcpGranted(host)
+      ? museSessionMcpServers(input.mcpServers)
+      : undefined;
     const open = (resumeId?: string) =>
       attempt(async () => {
         if (started && !resumeId) return started;
-        session = resumeId
-          ? await museControl(
-              client.resumeSession({
+        if (sessionMcpServers !== undefined) {
+          const opened = resumeId
+            ? await command("session/resume", {
                 sessionId: resumeId,
                 excludeItems: true,
                 ...(permissionProfile ? { permissionProfile } : {}),
-              }),
-              () => client.close(),
-            )
-          : await museControl(
-              client.startSession({
+                config: { mcpServers: sessionMcpServers },
+              })
+            : await command("session/start", {
                 workspaceRoot: input.cwd,
                 approvalMode: mode,
                 ...(permissionProfile ? { permissionProfile } : {}),
-              }),
-              () => client.close(),
-            );
+                config: { mcpServers: sessionMcpServers },
+              });
+          const openedSessionId = (
+            opened as { session?: { sessionId?: unknown } } | null | undefined
+          )?.session?.sessionId;
+          if (typeof openedSessionId !== "string")
+            throw new Error("Muse Code did not return the configured session id.");
+          session = await museControl(
+            client.resumeSession({
+              sessionId: openedSessionId,
+              excludeItems: true,
+              ...(permissionProfile ? { permissionProfile } : {}),
+            }),
+            () => client.close(),
+          );
+        } else {
+          session = resumeId
+            ? await museControl(
+                client.resumeSession({
+                  sessionId: resumeId,
+                  excludeItems: true,
+                  ...(permissionProfile ? { permissionProfile } : {}),
+                }),
+                () => client.close(),
+              )
+            : await museControl(
+                client.startSession({
+                  workspaceRoot: input.cwd,
+                  approvalMode: mode,
+                  ...(permissionProfile ? { permissionProfile } : {}),
+                }),
+                () => client.close(),
+              );
+        }
         // Restored sessions keep their native policy until explicitly reconciled.
         const identity = await request("session/read", { sessionId: session.sessionId });
         const workspaceRoot = (identity.session as { workspaceRoot?: unknown } | undefined)

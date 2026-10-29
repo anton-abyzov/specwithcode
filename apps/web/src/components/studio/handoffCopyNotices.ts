@@ -20,6 +20,8 @@ export interface CopyNotices {
   readonly dirtyCount: number;
   /** Worktrees whose working folder is outside the copied folder. */
   readonly outsideWorktrees: ReadonlyArray<string>;
+  readonly outsideWorktreeCount: number;
+  readonly outsideWorktreeTotals: Readonly<Record<string, number>>;
   /** Worktrees of repositories outside the folder, copied as independent repositories. */
   readonly separateRepositories: ReadonlyArray<string>;
   readonly linksOutside: number;
@@ -29,6 +31,19 @@ export interface CopyNotices {
 
 const OUTSIDE = /^(.+?): (\d+) worktree\(s\) outside this folder (?:are|were) not copied: (.*)$/s;
 const INSIDE = /^(\d+) linked worktree\(s\) inside this folder (?:are|were) not copied: (.*)$/s;
+
+/** Fresh inventory replaces saved inventory notices, while destination warnings survive. */
+export function copyNoticeWarnings(
+  summary: Pick<FolderCopySourceSummary, "warnings"> | null,
+  copy: Pick<FolderCopyStatus, "warnings"> | null,
+  refreshed: boolean,
+): ReadonlyArray<string> {
+  const saved = copy?.warnings ?? [];
+  return [
+    ...(summary?.warnings ?? []),
+    ...saved.filter((warning) => !refreshed || (!OUTSIDE.test(warning) && !INSIDE.test(warning))),
+  ];
+}
 const SEPARATE = /^(.+?): this worktree will become an independent Git repository/;
 /** The source's running-work notice, from this version or an older one. */
 const ACTIVE_WORK = /^Work is still running (?:in this folder|here)\./;
@@ -73,6 +88,7 @@ export function groupCopyNotices(input: {
    * or a move; null drops it once copying started, so Done never contradicts a finished move.
    */
   readonly activeWork?: "copy-only" | "copy-and-move" | null;
+  readonly captured?: boolean;
   /** What this copy is: a move drops advice that only fits a copy of files. */
   readonly mode?: "copy-only" | "copy-and-move";
   /** Done: the Git snapshot is past (a copy says "were captured"; a finished move drops it). */
@@ -83,13 +99,20 @@ export function groupCopyNotices(input: {
   // Newer sources name the skipped worktrees with uncommitted changes; older ones omit it.
   const dirty = [...(skipped?.dirtyWorktrees ?? [])];
   const outside: string[] = [];
+  const outsideTotals: Record<string, number> = Object.create(null);
   const separate: string[] = [];
   const lines: string[] = [];
   for (const warning of new Set(input.warnings)) {
     const away = OUTSIDE.exec(warning);
     if (away) {
       const repository = away[1]!;
-      for (const name of namesOf(away[3]!))
+      const key = repository === "." ? "" : repositoryLabel(repository, input.rootLabel);
+      // Source summary precedes saved destination notices. Never union two inventories.
+      if (Object.hasOwn(outsideTotals, key)) continue;
+      const names = namesOf(away[3]!);
+      const reported = Number(away[2]);
+      outsideTotals[key] = Math.max(Number.isSafeInteger(reported) ? reported : 0, names.length);
+      for (const name of names)
         outside.push(
           repository === "." ? name : `${name} (${repositoryLabel(repository, input.rootLabel)})`,
         );
@@ -103,7 +126,13 @@ export function groupCopyNotices(input: {
     }
     if (ACTIVE_WORK.test(warning)) {
       if (input.activeWork)
-        lines.push(input.activeWork === "copy-only" ? ACTIVE_WORK_COPY : ACTIVE_WORK_MOVE);
+        lines.push(
+          input.activeWork === "copy-only"
+            ? input.captured
+              ? "Work is still running here. Later changes stay on the source."
+              : ACTIVE_WORK_COPY
+            : ACTIVE_WORK_MOVE,
+        );
       continue;
     }
     const snapshot = GIT_SNAPSHOT.exec(warning);
@@ -137,6 +166,8 @@ export function groupCopyNotices(input: {
     worktreeCount: atLeast(skipped?.worktreeCount, listed.length),
     dirtyCount: atLeast(skipped?.dirtyCount, dirtyWorktrees.length),
     outsideWorktrees: [...new Set(outside)],
+    outsideWorktreeCount: Object.values(outsideTotals).reduce((sum, count) => sum + count, 0),
+    outsideWorktreeTotals: outsideTotals,
     separateRepositories: [...new Set(separate)],
     linksOutside: input.linksOutside ?? 0,
     lines: [...new Set(lines)],
@@ -145,9 +176,7 @@ export function groupCopyNotices(input: {
 
 export function hasNotCopied(notices: CopyNotices): boolean {
   return (
-    notices.rebuildableFolders > 0 ||
-    notices.worktreeCount > 0 ||
-    notices.outsideWorktrees.length > 0
+    notices.rebuildableFolders > 0 || notices.worktreeCount > 0 || notices.outsideWorktreeCount > 0
   );
 }
 

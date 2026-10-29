@@ -179,12 +179,21 @@ public actor MachineRegistry {
 
   /// Records a pairing: adds the route to an existing machine, or adds the machine.
   @discardableResult
-  public func recordPairing(environmentId: String, label: String, route: MachineRoute) throws -> MachineRecord {
+  public func recordPairing(environmentId: String, label: String, route: MachineRoute, resumeConnection: Bool = true) throws -> MachineRecord {
     var record = machine(environmentId) ?? MachineRecord(environmentId: environmentId, label: label, routes: [])
     record.label = label
-    record.enabled = true
+    if resumeConnection { record.enabled = true }
     // A paired route is saved and uses the token its own pairing issued.
     record.upsertRoute(MachineRoute(httpBase: route.httpBase, wsBase: route.wsBase, kind: route.kind, learned: false, issuer: route.address))
+    try upsert(record)
+    return record
+  }
+
+  /// Merge account discovery atomically. Never overwrite a concurrent local pause.
+  public func recordConnect(environmentId: String, label: String, route: MachineRoute) throws -> MachineRecord {
+    var record = machine(environmentId) ?? MachineRecord(environmentId: environmentId, label: label, routes: [])
+    record.connectRoute = route
+    if record.routes.isEmpty, !label.isEmpty { record.label = label }
     try upsert(record)
     return record
   }

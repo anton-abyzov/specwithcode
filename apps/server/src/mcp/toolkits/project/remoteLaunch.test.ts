@@ -40,11 +40,14 @@ const providerInstanceId = ProviderInstanceId.make("codex");
 const workerModel = { instanceId: providerInstanceId, model: "gpt-5.5" } as ModelSelection;
 const M1 = { id: "m1", label: "M1", environmentId: EnvironmentId.make("env-m1") };
 const codeProjectId = ProjectId.make("example-code");
+const missingProjectId = ProjectId.make("missing");
 
 const setup = (
   options: {
     readonly workerMachine?: boolean;
     readonly outsideClient?: boolean;
+    /** The outside client's approved access, full access unless given. */
+    readonly clientAccess?: "read-only" | "approval-required" | "auto" | "full-access";
     /** The worker machine was saved for another environment than "m1" has now. */
     readonly staleEnvironment?: boolean;
     /** The machine's grant lowered the caller's mode to this one. */
@@ -55,6 +58,8 @@ const setup = (
     readonly remoteFails?: OrchestratorMcpFailure["code"];
     /** The caller's project is this machine's personal assistant. */
     readonly personal?: boolean;
+    /** The calling thread is a scratch chat here, outside every project. */
+    readonly callerInScratch?: boolean;
   } = {},
 ) => {
   const caller = {
@@ -146,7 +151,11 @@ const setup = (
         ? undefined
         : { threadId: callerId, providerSessionId: "session", providerInstanceId },
       client: options.outsideClient
-        ? { sessionId: "client", label: "Outside agent", access: "full-access" }
+        ? {
+            sessionId: "client",
+            label: "Outside agent",
+            access: options.clientAccess ?? "full-access",
+          }
         : undefined,
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -170,18 +179,23 @@ const setup = (
     Layer.mock(Project.ProjectService)({
       getById: (id) =>
         Effect.succeed(
-          Option.some(
-            id === codeProjectId
-              ? projectFixture(codeProjectId, {
-                  title: "Example Code",
-                  defaultModelSelection: workerModel,
-                  workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "code" },
-                })
-              : project,
-          ),
+          id === missingProjectId
+            ? Option.none()
+            : Option.some(
+                id === codeProjectId
+                  ? projectFixture(codeProjectId, {
+                      title: "Example Code",
+                      defaultModelSelection: workerModel,
+                      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "code" },
+                    })
+                  : project,
+              ),
         ),
     }),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      isScratch: (id) => Effect.succeed(options.callerInScratch === true && id === projectId),
+    }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
     NodeServices.layer,
@@ -239,6 +253,7 @@ it.effect(
       expect(remoteLaunches[0]).toMatchObject({
         machine: M1,
         callerThreadId: callerId,
+        originHint: { parentThreadId: callerId },
         title: "Fix CI",
         message: "Fix it",
         runtimeMode: "full-access",
@@ -342,12 +357,33 @@ it.effect("keeps the project going here when its worker machine cannot take the 
         placement: {
           machine: "this machine",
           reason: "this_machine",
-          skipped: [{ machine: "M1", reason: `M1: ${code}` }],
+          skipped: [{ machine: "M1", reason: expect.stringMatching(`^M1: ${code}`) }],
         },
       });
       expect(out.remoteLaunches, code).toHaveLength(1);
       expect(out.localLaunches, code).toHaveLength(1);
     }
+  });
+});
+
+it.effect("tells the agent to add a missing project to the machine, then launch again", () => {
+  const missing = setup({ remoteFails: "project_unavailable_on_machine" });
+  const scratch = setup({ remoteFails: "project_unavailable_on_machine" });
+  return Effect.gen(function* () {
+    const refused = yield* missing.launch({ title: "Fix CI", message: "Fix it", machine: "M1" });
+    expect(refused).toMatchObject({ code: "project_unavailable_on_machine" });
+    expect(String(refused.message)).toContain(
+      `studio_project_add_to_machine {machine:"M1", projectId:"${projectId}"}`,
+    );
+    expect(String(refused.message)).toContain("machineProjectId");
+    // A scratch launch has no project to add.
+    const bare = yield* scratch.launch({
+      title: "Check disk",
+      message: "df -h",
+      machine: "M1",
+      scratch: true,
+    });
+    expect(String(bare.message)).not.toContain("studio_project_add_to_machine");
   });
 });
 
@@ -367,16 +403,9 @@ it.effect("never substitutes a machine the agent named, nor a launch that may ha
   });
 });
 
-it.effect("refuses other machines to outside clients, scratch threads and attachments", () => {
-  const outside = setup({ outsideClient: true });
+it.effect("refuses attachments to another machine", () => {
   const inside = setup();
   return Effect.gen(function* () {
-    expect(
-      yield* outside.launch({ title: "x", projectId: "project", machine: "m1" }),
-    ).toMatchObject({ code: "capability_denied" });
-    expect(yield* inside.launch({ title: "x", scratch: true, machine: "m1" })).toMatchObject({
-      code: "invalid_request",
-    });
     expect(
       yield* inside.launch({
         title: "x",
@@ -392,8 +421,96 @@ it.effect("refuses other machines to outside clients, scratch threads and attach
         ],
       }),
     ).toMatchObject({ code: "invalid_request" });
-    expect(outside.remoteLaunches).toEqual([]);
     expect(inside.remoteLaunches).toEqual([]);
+  });
+});
+
+it.effect("lets an outside client start work on another machine, without reporting back", () => {
+  const outside = setup({ outsideClient: true, clientAccess: "auto" });
+  return Effect.gen(function* () {
+    const result = yield* outside.launch({
+      title: "Fix CI",
+      message: "Fix it",
+      projectId: "project",
+      machine: "m1",
+    });
+    expect(result).toMatchObject({ threadId: "b-thread", machine: M1, reportsBack: false });
+    expect(outside.remoteLaunches).toHaveLength(1);
+    expect(outside.remoteLaunches[0]).toMatchObject({
+      launchedBy: { kind: "client", sessionId: "client", label: "Outside agent" },
+      localProject: { id: "project" },
+      // Its approval caps the mode; the machine's grant caps it again there.
+      runtimeMode: "auto",
+      reportBack: false,
+      delegation: { path: ["env-m4"], hops: 1 },
+    });
+    expect(outside.remoteLaunches[0]).not.toHaveProperty("callerThreadId");
+    // The badge there names the client, not just this machine.
+    expect(outside.remoteLaunches[0]?.originHint).toEqual({ clientLabel: "Outside agent" });
+    expect(outside.localLaunches).toEqual([]);
+  });
+});
+
+it.effect("refuses an outside client work above its access or any as read-only", () => {
+  const capped = setup({ outsideClient: true, clientAccess: "approval-required" });
+  const readOnly = setup({ outsideClient: true, clientAccess: "read-only" });
+  return Effect.gen(function* () {
+    expect(
+      yield* capped.launch({
+        title: "x",
+        message: "go",
+        projectId: "project",
+        machine: "m1",
+        runtimeMode: "full-access",
+      }),
+    ).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(
+      yield* readOnly.launch({ title: "x", message: "go", scratch: true, machine: "m1" }),
+    ).toMatchObject({ code: "capability_denied" });
+    expect(capped.remoteLaunches).toEqual([]);
+    expect(readOnly.remoteLaunches).toEqual([]);
+  });
+});
+
+it.effect("starts a scratch thread on another machine for scratch or no project", () => {
+  const outside = setup({ outsideClient: true });
+  const inside = setup();
+  return Effect.gen(function* () {
+    // An outside client naming no project, and one passing scratch.
+    yield* outside.launch({ title: "Disk and RAM", message: "Report", machine: "m1" });
+    yield* outside.launch({
+      title: "Disk and RAM",
+      message: "Report",
+      machine: "m1",
+      scratch: true,
+    });
+    expect(outside.remoteLaunches.map((launch) => launch.localProject)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    // A thread here asking for scratch there, as the user asked.
+    yield* inside.launch({
+      title: "Disk and RAM",
+      message: "Report",
+      machine: "m1",
+      scratch: true,
+      projectless: true,
+    });
+    expect(inside.remoteLaunches[0]).toMatchObject({
+      callerThreadId: callerId,
+      localProject: undefined,
+      reportBack: true,
+    });
+    expect(
+      yield* inside.launch({
+        title: "x",
+        machine: "m1",
+        scratch: true,
+        workspaceStrategy: { type: "root" },
+      }),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(outside.localLaunches).toEqual([]);
+    expect(inside.localLaunches).toEqual([]);
   });
 });
 
@@ -472,5 +589,46 @@ it.effect("keeps a personal assistant's work on this machine", () => {
       }),
     ).toMatchObject({ threadId: "b-thread", machine: M1 });
     expect(code.remoteLaunches).toHaveLength(1);
+  });
+});
+
+it.effect("refuses a project not on this machine instead of a scratch launch there", () => {
+  const outside = setup({ outsideClient: true });
+  const inside = setup();
+  return Effect.gen(function* () {
+    for (const world of [outside, inside]) {
+      const refused = yield* world.launch({
+        title: "Fix CI",
+        message: "Fix it",
+        projectId: missingProjectId,
+        machine: "m1",
+      });
+      expect(refused).toMatchObject({
+        code: "invalid_request",
+        message: "The project was not found.",
+      });
+      expect(world.remoteLaunches).toEqual([]);
+      expect(world.localLaunches).toEqual([]);
+    }
+  });
+});
+
+it.effect("keeps a project thread's scratch work elsewhere to projectless, as here", () => {
+  const inside = setup();
+  const scratchChat = setup({ callerInScratch: true });
+  const outside = setup({ outsideClient: true });
+  return Effect.gen(function* () {
+    const params = { title: "Disk", message: "df -h", machine: "m1", scratch: true };
+    const refused = yield* inside.launch(params);
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect(String(refused.message)).toContain("projectless:true");
+    expect(inside.remoteLaunches).toEqual([]);
+    yield* inside.launch({ ...params, projectless: true });
+    expect(inside.remoteLaunches).toHaveLength(1);
+    // A scratch chat here, and an outside client, have no project to stay in.
+    yield* scratchChat.launch(params);
+    expect(scratchChat.remoteLaunches).toHaveLength(1);
+    yield* outside.launch(params);
+    expect(outside.remoteLaunches).toHaveLength(1);
   });
 });

@@ -45,6 +45,23 @@ export const LifecycleGate = Schema.Union([
   Schema.Struct({ status: Schema.Literal("pending"), reason: Text }),
 ]);
 
+/** Required goal work is distinct from the latest worker/turn delivery. */
+export const LifecycleGoalObligation = Schema.Struct({
+  ...LifecycleObligation.fields,
+  id: Identity,
+  completion: LifecycleGate,
+});
+export const LifecycleGoal = Schema.Struct({
+  id: Identity,
+  scope: Text,
+  scopeRevision: Identity,
+  obligations: Schema.Array(LifecycleGoalObligation).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(100),
+  ),
+});
+export type LifecycleGoal = typeof LifecycleGoal.Type;
+
 /**
  * A persisted adjudication, not a provider completion signal. Server handlers
  * bind reporting identity and current request before accepting this record.
@@ -61,6 +78,8 @@ export const LifecycleReceiptReport = Schema.Struct({
   scopeRevision: Identity,
   validUntil: IsoDateTime,
   obligations: Schema.Array(LifecycleObligation).check(Schema.isMaxLength(100)),
+  /** Omission inherits the recorded goal; it never discards required work. */
+  goal: Schema.optional(LifecycleGoal),
   push: LifecycleGate,
   merge: LifecycleGate,
   deployment: LifecycleGate,

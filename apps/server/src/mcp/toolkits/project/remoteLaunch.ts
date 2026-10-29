@@ -14,6 +14,8 @@ import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { delegationRefusal, outgoingDelegation } from "../../../fleet/workGrantPolicy.ts";
 import type { Caller } from "../../threadAccess.ts";
+import { fleetPrincipalOf } from "../orchestrator/remote.ts";
+import { addToMachineHint } from "./addToMachine.ts";
 
 export interface LaunchTargetInput {
   readonly machine?: string | undefined;
@@ -128,7 +130,13 @@ export const launchTarget = Effect.fn("mcp.launchTarget")(function* (
   } satisfies LaunchPlacement;
 });
 
-/** Starts the thread on another machine and keeps following it for the caller. */
+/**
+ * Starts the thread on another machine. A thread caller's worker is followed
+ * and reports back to it; an outside MCP client's is not (it reads and waits
+ * on the thread instead), and runs within the lower of the client's approved
+ * access and the machine's grant. With no project, or `scratch`, the thread
+ * runs in a scratch folder there.
+ */
 export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
   readonly context: Caller;
   readonly machine: RemoteWorkers.MachineTarget & { readonly kind: "remote" };
@@ -138,35 +146,48 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
 }) {
-  const { context, params, project } = input;
-  const caller = context.caller;
-  if (caller === undefined || context.scope.thread === undefined)
-    return yield* new OrchestratorMcpFailure({
-      code: "capability_denied",
-      message:
-        "Starting work on another machine needs an agent running inside a SpecWithCode thread on this one.",
-    });
-  if (params.scratch === true)
-    return yield* invalid("Scratch threads run on this machine; omit machine or scratch.");
+  const { context, params } = input;
+  const principal = yield* fleetPrincipalOf(context, "act");
+  // A project named here that is not here is an error, never a scratch launch there.
+  if (params.projectId !== undefined && input.project === undefined)
+    return yield* invalid("The project was not found.");
+  // No project here: the one named there, else a scratch folder there.
+  const scratch = params.scratch === true || input.project === undefined;
+  if (
+    params.scratch === true &&
+    (params.projectId !== undefined ||
+      params.machineProjectId !== undefined ||
+      params.workspaceStrategy !== undefined)
+  )
+    return yield* invalid(
+      "scratch:true runs in a scratch folder on that machine; omit projectId, machineProjectId and workspaceStrategy.",
+    );
   if ((params.attachments ?? []).length > 0)
     return yield* invalid(
       "Attachments cannot be sent to another machine; describe the files in message or launch here.",
     );
-  if (project === undefined) return yield* invalid("The project was not found.");
-  const isCoordinator = project.workspaceSettings?.coordinatorThreadId === caller.id;
+  const project = scratch ? undefined : input.project;
+  const caller = principal.kind === "thread" ? principal.caller : undefined;
+  const isCoordinator =
+    caller !== undefined && project?.workspaceSettings?.coordinatorThreadId === caller.id;
   const remote = yield* RemoteWorkers.RemoteWorkers;
   // Work that reached this machine from another carries its path on, so no
-  // chain of launches can come back to a machine it passed through.
+  // chain of launches can come back to a machine it passed through. A
+  // client's launch starts a path here.
   const grants = yield* WorkGrants.WorkGrants;
-  const origin = yield* grants.originOf(caller).pipe(
-    Effect.mapError(
-      () =>
-        new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: "This machine could not read where this thread's work came from. Try again.",
-        }),
-    ),
-  );
+  const origin =
+    caller === undefined
+      ? undefined
+      : yield* grants.originOf(caller).pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message:
+                  "This machine could not read where this thread's work came from. Try again.",
+              }),
+          ),
+        );
   const outgoing = outgoingDelegation({
     localEnvironmentId: context.scope.environmentId,
     targetEnvironmentId: input.machine.machine.environmentId,
@@ -180,18 +201,19 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         new Map([...(yield* remote.machineLabels), [context.scope.environmentId, "this machine"]]),
       ),
     });
-  return yield* remote.launch({
+  const launched = remote.launch({
     machine: input.machine.machine,
     commandId: input.commandId,
-    callerThreadId: caller.id,
+    ...(caller === undefined ? {} : { callerThreadId: caller.id }),
+    launchedBy: principal.launchedBy,
     localProject: project,
-    machineProjectId: params.machineProjectId,
+    machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
     title: params.title,
     explicitModelSelection: params.modelSelection,
     inheritedModelSelection:
       (isCoordinator
-        ? project.defaultModelSelection
-        : (caller.modelSelection ?? project.defaultModelSelection)) ?? undefined,
+        ? project?.defaultModelSelection
+        : (caller?.modelSelection ?? project?.defaultModelSelection)) ?? undefined,
     runtimeMode: input.runtimeMode,
     requestedRuntimeMode: params.runtimeMode,
     interactionMode: input.interactionMode,
@@ -199,7 +221,26 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
     message: params.message,
     // Resolved by the machine that runs the thread, against its own checkout.
     increment: params.increment,
-    reportBack: params.reportBack ?? true,
+    // Only a thread here can be woken when its worker finishes.
+    reportBack: principal.kind === "thread" && (params.reportBack ?? true),
     delegation: outgoing.delegation,
+    // Display text for the badge there: the client's name, or the thread here.
+    originHint:
+      principal.kind === "client"
+        ? { clientLabel: principal.client.label }
+        : { parentThreadId: principal.caller.id },
   });
+  // A project that is not there yet can be put there over MCP.
+  return yield* project === undefined
+    ? launched
+    : launched.pipe(
+        Effect.mapError((error) =>
+          error.code === "project_unavailable_on_machine"
+            ? new OrchestratorMcpFailure({
+                code: error.code,
+                message: `${error.message} ${addToMachineHint(input.machine.machine, project.id)}`,
+              })
+            : error,
+        ),
+      );
 });
