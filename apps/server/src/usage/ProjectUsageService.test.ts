@@ -12,6 +12,7 @@ import {
   type TurnTokenUsage,
   type OrchestrationV2ThreadProjection,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -26,7 +27,11 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ProjectUsage from "./ProjectUsageService.ts";
 import * as UsageService from "./UsageService.ts";
 import { routineProject } from "../scheduledTasks/ScheduledTaskService.test-fixtures.ts";
-import { aggregateProjectUsage, type ProjectUsageProjection } from "./projectUsageAggregation.ts";
+import {
+  aggregateProjectUsage,
+  localDay,
+  type ProjectUsageProjection,
+} from "./projectUsageAggregation.ts";
 import { parseRateTable } from "./usagePricing.ts";
 
 const projectId = ProjectId.make("project-usage");
@@ -249,6 +254,53 @@ describe("project usage accounting", () => {
     assert.equal(
       result.threads.reduce((sum, t) => sum + (t.share ?? 0), 0),
       1,
+    );
+  });
+
+  it("splits each thread by model and dates turns by completion for the trend", () => {
+    const done = DateTime.makeUnsafe("2026-10-08T12:00:00Z");
+    const worker = fixture("worker", complete, "codex", "gpt-5.5");
+    const coordinator = fixture("coordinator", complete, "claudeAgent", "claude-opus-5-5");
+    const undated = fixture("undated", complete, "codex", "gpt-5.5");
+    const dated = (projection: ProjectUsageProjection, startedAt = done) => ({
+      ...projection,
+      providerTurns: projection.providerTurns.map((turn) => ({
+        ...turn,
+        startedAt,
+        completedAt: null,
+      })),
+    });
+    const result = fold([dated(worker), dated(coordinator), undated]);
+    const threadModels = Object.fromEntries(
+      result.threads.map((thread) => [thread.threadId, thread.models]),
+    );
+    assert.deepEqual(threadModels["coordinator"], [
+      {
+        provider: "claudeAgent",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+        totals: result.threads.find((t) => t.threadId === "coordinator")!.totals,
+      },
+    ]);
+    assert.equal(threadModels["worker"]?.[0]?.model, "gpt-5.5");
+    // The undated thread still counts in totals but never enters the trend.
+    assert.equal(result.totals.totalTokens, 360);
+    assert.deepEqual(
+      result.daily?.map(({ day, role, model, totalTokens }) => ({ day, role, model, totalTokens })),
+      [
+        {
+          day: localDay(DateTime.toEpochMillis(done)),
+          role: "coordinator",
+          model: "claude-opus-5-5",
+          totalTokens: 120,
+        },
+        {
+          day: localDay(DateTime.toEpochMillis(done)),
+          role: "worker",
+          model: "gpt-5.5",
+          totalTokens: 120,
+        },
+      ],
     );
   });
 });

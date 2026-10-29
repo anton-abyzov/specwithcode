@@ -280,12 +280,12 @@ it("after a move, lists only the provider the coordinator runs with", async () =
 });
 
 it("after a move, says when the coordinator's provider is not set up there", async () => {
-  state.coordinatorProvider = "cursor";
+  state.coordinatorProvider = "mystery-agent";
   await mount("moved", true);
   const text = container.textContent ?? "";
   // An id the machine does not list is never shown raw.
   expect(text).toContain("The coordinator's coding agent: not set up on M3");
-  expect(text).not.toContain("cursor");
+  expect(text).not.toContain("mystery");
   expect(text).toContain("Install and turn it on in Settings › Providers on M3.");
   expect(text).not.toContain("Claude");
   expect(text).not.toContain("Codex");

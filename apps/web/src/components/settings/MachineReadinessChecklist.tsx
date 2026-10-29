@@ -15,7 +15,7 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
-import { cliOfDriver, providerLabel } from "../../studio/projectUsageModel";
+import { cliOfDriver, knownProviderLabel, providerLabel } from "../../studio/projectUsageModel";
 import { useCoordinatorProvider } from "../../studio/useCoordinatorProvider";
 import { Button } from "../ui/button";
 import { GitHubCredentialCard, useGitHubCredentialCardAvailable } from "./GitHubCredentialCard";
@@ -81,10 +81,8 @@ function Row({
 }
 
 /** A provider id the machine does not list, by a name people know, never the raw id. */
-const missingProviderName = (instanceId: string) => {
-  const label = providerLabel(cliOfDriver(instanceId, instanceId));
-  return label !== instanceId ? label : "The coordinator's coding agent";
-};
+const missingProviderName = (instanceId: string) =>
+  knownProviderLabel(cliOfDriver(instanceId, instanceId)) ?? "The coordinator's coding agent";
 
 /**
  * The provider rows to show. A moved coordinator needs only the provider it runs with:

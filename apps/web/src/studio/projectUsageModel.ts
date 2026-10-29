@@ -21,19 +21,49 @@ const LABELS: Record<string, string> = {
   codex: "Codex",
   copilot: "Copilot",
   grok: "Grok",
+  gemini: "Gemini",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  antigravity: "Antigravity",
+  muse: "Muse",
+  meta: "Meta",
+  deepseek: "DeepSeek",
+  qwen: "Qwen",
+  ollama: "Ollama",
+  pi: "Pi",
+  devin: "Devin",
+  acp: "ACP agent",
 };
+/** ACP agents named by their registry id rather than shown as one "acpRegistry" row. */
+const ACP_AGENTS = ["copilot", "grok", "gemini", "qwen", "deepseek", "meta", "opencode", "cursor"];
 const ORDER = ["claude", "codex", "copilot", "grok"];
 
 /** A Studio driver as the CLI it runs: `claudeAgent` is Claude, an ACP Copilot agent is Copilot. */
 export function cliOfDriver(driver: string, providerInstanceId: string): string {
   if (driver === "claudeAgent") return "claude";
-  if (driver === "acpRegistry" && /copilot/i.test(providerInstanceId)) return "copilot";
-  if (driver === "acpRegistry" && /grok/i.test(providerInstanceId)) return "grok";
+  if (driver === "acpRegistry" || driver === "acp") {
+    const known = ACP_AGENTS.find((agent) => providerInstanceId.toLowerCase().includes(agent));
+    if (known) return known;
+    const named = providerInstanceId
+      .toLowerCase()
+      .replace(/^(?:acp[-_]?)?(?:registry[-_]?)?/, "")
+      .replace(/[-_](?:cli|agent)$/, "");
+    // A bare registry instance names no agent: one "ACP agent" row, never "acpRegistry".
+    return named.length > 0 ? named : "acp";
+  }
   return driver;
 }
 
+/** A provider's name when this app knows it, otherwise undefined. */
+export function knownProviderLabel(provider: string): string | undefined {
+  return LABELS[provider];
+}
+
 export function providerLabel(provider: string): string {
-  return LABELS[provider] ?? provider;
+  const known = LABELS[provider];
+  if (known) return known;
+  const words = provider.replace(/[-_]+/g, " ").trim();
+  return words.length > 0 ? words.charAt(0).toUpperCase() + words.slice(1) : provider;
 }
 
 export function projectProviderRows(summary: ProjectUsageSummary): readonly ProviderUsageRow[] {

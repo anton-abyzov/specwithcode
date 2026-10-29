@@ -36,6 +36,8 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node tests/project-workspace/check.mjs
 
 `followup-check.mjs` opens the fixture with follow-ups typed in workers before they went straight to the worker (`?followups`). The coordinator conversation must leave out a follow-up it only passed back to its own worker, and its reply, and keep one it moved to another worker with its "Moved to" line. A reply typed in a worker on this machine must not reach the coordinator. It checks light and dark at 1440 px.
 
+`usage-tab-check.mjs` opens Project settings > Usage on its own (`?usage`). It checks that model spellings merge into one named row, ACP agents are named by harness, the 30-day trend and its hover readout, that the source, harness and model-family filters narrow every block, hidden threads without usage, dark theme and the 390 px phone width. Usage data is the fixture's synthetic summary; the server's per-thread and per-day folding is covered by `apps/server/src/usage/ProjectUsageService.test.ts` and `projectFolderSessions.test.ts`.
+
 `timeline-detail-check.mjs` opens the coordinator with runs and work items attached to its turns (`?activity`). It checks each level at 1440 px and 390 px, in light and dark.
 
 In every level the commentary that starts "Consolidate the skills" and carries `triage-notes.md` shows that thread's card and the file once; Concise moves both to the turn's answer.

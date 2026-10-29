@@ -1766,3 +1766,208 @@
     outline-offset: 2px;
   }
 }
+
+/* Project usage insights: filters, trend, share and model groups. Series colors are the
+   validated categorical steps, chosen separately for the dark surface. */
+@utility project-usage-insights {
+  --usage-series-threads: #6250d6;
+  --usage-series-cli: #1baf7a;
+  --usage-harness-1: #2a78d6;
+  --usage-harness-2: #eb6834;
+  --usage-harness-3: #1baf7a;
+  --usage-harness-4: #eda100;
+  --usage-harness-5: #e87ba4;
+  --usage-harness-7: #6250d6;
+  --usage-harness-other: color-mix(in oklab, var(--desk-muted) 70%, var(--desk-paper));
+  @variant dark {
+    --usage-series-threads: #9085e9;
+    --usage-series-cli: #199e70;
+    --usage-harness-1: #3987e5;
+    --usage-harness-2: #d95926;
+    --usage-harness-3: #199e70;
+    --usage-harness-4: #c98500;
+    --usage-harness-5: #d55181;
+    --usage-harness-7: #9085e9;
+  }
+  & .project-usage-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 14px 0 4px;
+  }
+  @media (max-width: 760px) {
+    & .project-usage-summary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  & .project-usage-summary > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  & .project-usage-summary small {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--desk-muted);
+  }
+  & .project-usage-trend {
+    margin: 8px 0 24px;
+  }
+  & .project-usage-trend figcaption {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px 16px;
+    margin-bottom: 12px;
+  }
+  & .project-usage-trend h3 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  & .project-usage-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    font-size: 12px;
+    color: var(--desk-muted);
+  }
+  & .project-usage-legend b {
+    color: var(--desk-ink);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  & :is(.project-usage-legend, .project-usage-trend-tip) i {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border-radius: 2px;
+  }
+  & .project-usage-trend-plot {
+    position: relative;
+    height: 140px;
+    margin-left: 40px;
+  }
+  & .project-usage-trend-grid {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px solid var(--desk-line);
+  }
+  & .project-usage-trend-grid small {
+    position: absolute;
+    right: calc(100% + 8px);
+    top: -7px;
+    font-size: 10px;
+    color: var(--desk-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  & .project-usage-trend-columns {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    gap: 2px;
+  }
+  & .project-usage-trend-day {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 100%;
+  }
+  & .project-usage-trend-column {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    border-radius: 4px 4px 0 0;
+    outline: none;
+  }
+  & .project-usage-trend-column:is([data-active], :focus-visible) {
+    background: color-mix(in oklab, var(--desk-ink) 6%, transparent);
+  }
+  & .project-usage-trend-column:focus-visible {
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+  & .project-usage-trend-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    min-height: 2px;
+    overflow: hidden;
+    border-radius: 4px 4px 0 0;
+  }
+  & .project-usage-trend-stack > span {
+    flex-basis: 0;
+    min-height: 1px;
+  }
+  & .project-usage-trend-tip {
+    position: absolute;
+    top: -6px;
+    z-index: 1;
+    display: grid;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--desk-line);
+    border-radius: 8px;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  }
+  & .project-usage-trend-axis {
+    display: flex;
+    justify-content: space-between;
+    margin: 6px 0 0 40px;
+    font-size: 10px;
+    color: var(--desk-muted);
+  }
+  & .project-usage-block {
+    margin: 20px 0 4px;
+  }
+  & .project-usage-models tr[data-nested] > th {
+    padding-left: 16px;
+  }
+  & .project-usage-family > :is(th, td) {
+    font-weight: 600;
+    border-bottom-color: transparent;
+  }
+  & .project-usage-meter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  & .project-usage-meter > span {
+    width: 48px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--desk-line);
+    overflow: hidden;
+  }
+  & .project-usage-meter i {
+    display: block;
+    height: 100%;
+    min-width: 2px;
+    border-radius: 2px;
+    background: var(--desk-moss);
+  }
+  & .project-usage-gaps {
+    margin: 12px 0;
+    font-size: 12px;
+    color: var(--desk-muted);
+  }
+  & .project-usage-gaps.project-notice {
+    color: var(--desk-ink);
+  }
+  & .project-usage-gaps summary {
+    cursor: pointer;
+  }
+  & .project-usage-gaps ul {
+    margin: 8px 0 0 18px;
+    list-style: disc;
+  }
+}

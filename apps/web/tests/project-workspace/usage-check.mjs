@@ -109,18 +109,49 @@ try {
   const offline = await blocks.nth(2).innerText();
   assert.match(offline, /Offline · last read 3h ago/);
   assert.match(offline, /reset since/);
-  // Folder sessions next to Studio threads.
+  // Folder sessions next to Studio threads, grouped and filterable.
   const usageText = await dialog.innerText();
-  assert.match(usageText, /CLI sessions\s*14/);
-  assert.match(usageText, /logs on Development Mac from the last 90 days/);
-  const providerRows = await dialog
-    .locator("table", { has: page.locator("caption", { hasText: "Tokens by provider" }) })
-    .locator("tbody th")
-    .allInnerTexts();
-  assert.equal(providerRows.length, 3);
-  assert.match(providerRows[0], /Claude/);
-  assert.match(providerRows[2], /Copilot/);
+  assert.match(usageText, /7 threads · 14 CLI sessions/);
+  assert.match(usageText, /Daily tokens, last 30 days/);
+  const tableRows = (caption) =>
+    dialog
+      .locator("table", { has: page.locator("caption", { hasText: caption }) })
+      .locator("tbody th")
+      .allInnerTexts();
+  const harnessRows = await tableRows("Tokens by harness");
+  assert.deepEqual(
+    harnessRows.map((row) => row.split("\n")[0]),
+    ["Claude", "Codex", "Copilot", "Grok"],
+  );
+  assert(!usageText.includes("acpRegistry"), "ACP agents are named by harness");
+  const modelRows = (await tableRows("Tokens by model")).map((row) => row.split("\n")[0]);
+  // claude-opus-5.5, claude-opus-5-5 and claude-opus-5-5[1m] are one model.
+  assert.equal(modelRows.filter((row) => row === "Claude Opus 5.5").length, 1);
+  assert.equal(modelRows.at(-1), "Model not reported");
+  assert(!usageText.includes("Not reported\t"), "no columns of Not reported");
+  assert.match(usageText, /Show 1 thread without usage/);
   await shot(page, "usage-settings-by-machine-light.png");
+  await dialog.locator(".project-usage-trend-column").last().hover();
+  await page.locator(".project-usage-trend-tip").waitFor();
+  await shot(page, "usage-trend-hover.png");
+
+  // Filters narrow every block together.
+  await dialog.getByRole("combobox", { name: "Filter by harness" }).click();
+  await page.getByRole("option", { name: "Codex", exact: true }).click();
+  assert.deepEqual(
+    (await tableRows("Tokens by harness")).map((row) => row.split("\n")[0]),
+    ["Codex"],
+  );
+  assert.deepEqual(
+    (await tableRows("Tokens by model")).map((row) => row.split("\n")[0]),
+    ["GPT-5.5", "Model not reported"],
+  );
+  await shot(page, "usage-filtered-codex.png");
+  await dialog.getByRole("button", { name: "Clear filters" }).click();
+  await dialog.getByRole("combobox", { name: "Filter by source" }).click();
+  await page.getByRole("option", { name: "CLI sessions", exact: true }).click();
+  assert.equal(await dialog.getByRole("heading", { name: "Threads" }).count(), 0);
+  await dialog.getByRole("button", { name: "Clear filters" }).click();
 
   // Grouped dropdown: one machine, then pooled.
   await dialog.getByRole("combobox", { name: "Show limits for" }).click();

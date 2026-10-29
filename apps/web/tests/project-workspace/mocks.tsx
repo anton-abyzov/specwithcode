@@ -496,8 +496,10 @@ export const useEnvironmentQuery = (q) => ({
           : q?.kind === "usage"
             ? {
                 totals,
+                readAt: new Date().toISOString(),
                 coverage: {
                   threads: 6,
+                  threadsWithUsage: 5,
                   missingThreads: 1,
                   partialTurns: 1,
                   missingTurns: 2,
@@ -547,18 +549,77 @@ export const useEnvironmentQuery = (q) => ({
                     },
                   ],
                   models: [
-                    { provider: "claude", model: "claude-opus-5-5", totals: scaledTotals(2.2) },
+                    { provider: "claude", model: "claude-opus-5-5[1m]", totals: scaledTotals(2.2) },
                     { provider: "codex", model: "gpt-5.5", totals: scaledTotals(0.7) },
+                    { provider: "copilot", model: null, totals: scaledTotals(0.1) },
                   ],
+                  daily: Array.from({ length: 20 }, (_, back) => {
+                    const date = new Date(Date.now() - (back + 1) * 86_400_000);
+                    const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                    return {
+                      day,
+                      provider: "claude",
+                      model: "claude-opus-5-5",
+                      totalTokens: back % 3 === 0 ? 0 : 3000 + back * 300,
+                    };
+                  }).filter((row) => row.totalTokens > 0),
                 },
-                threads: shells.map((s, i) => ({
-                  threadId: s.id,
-                  title: s.title,
-                  role: i === 0 ? "coordinator" : "worker",
-                  share: i === 0 ? 0.08 : i === 5 ? null : 0.23,
-                  totals: scaledTotals(i === 0 ? 0.08 : i === 5 ? 0 : 0.23),
-                  archived: !!s.archivedAt,
-                })),
+                // The same model under two spellings, an ACP Grok agent and a run that
+                // never reported its model: the tab must merge, name and fold them.
+                threads: shells.map((s, i) => {
+                  const share = i === 0 ? 0.08 : i === 5 ? 0 : 0.23;
+                  const rows: [string, string, string | null, number][] =
+                    i === 0
+                      ? [["claudeAgent", "claude", "claude-opus-5.5", 0.08]]
+                      : i === 5
+                        ? []
+                        : i === 1
+                          ? [
+                              ["claudeAgent", "claude", "claude-opus-5-5", 0.15],
+                              ["acpRegistry", "acp-grok-cli", "grok-code-fast-1", 0.05],
+                              ["codex", "codex", null, 0.03],
+                            ]
+                          : [["codex", "codex", "gpt-5.5", 0.23]];
+                  return {
+                    threadId: s.id,
+                    title: s.title,
+                    role: i === 0 ? "coordinator" : "worker",
+                    share: i === 5 ? null : share,
+                    totals: scaledTotals(share),
+                    archived: !!s.archivedAt,
+                    models: rows.map(([provider, providerInstanceId, model, part]) => ({
+                      provider,
+                      providerInstanceId,
+                      model,
+                      totals: scaledTotals(part),
+                    })),
+                  };
+                }),
+                daily: Array.from({ length: 24 }, (_, back) => {
+                  const date = new Date(Date.now() - back * 86_400_000);
+                  const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                  const wave = Math.round(
+                    4000 + 3500 * Math.sin(back / 2.5) + (back % 7 === 0 ? 6000 : 0),
+                  );
+                  return [
+                    {
+                      day,
+                      role: "coordinator",
+                      provider: "claudeAgent",
+                      providerInstanceId: "claude",
+                      model: "claude-opus-5.5",
+                      totalTokens: Math.round(wave * 0.3),
+                    },
+                    {
+                      day,
+                      role: "worker",
+                      provider: "codex",
+                      providerInstanceId: "codex",
+                      model: "gpt-5.5",
+                      totalTokens: Math.max(0, wave),
+                    },
+                  ];
+                }).flat(),
               }
             : q?.kind === "routines"
               ? { tasks: routineTasks() }
