@@ -1572,10 +1572,11 @@ video.artifact-viewer-media {
   max-width: calc-size(min-content, max(size, 28rem));
 }
 
-/* A table may use the reader's width beyond the prose measure: its frame
-   grows to the table's natural width, up to the room beside the outline, and
-   stays centered on the page. The cell box above bounds every line, so a wide
-   table never turns into long lines. */
+/* A table spreads across the reader while prose keeps its measure: its frame
+   takes the room beside the outline, up to 72rem, and stays centered on the
+   page. A table whose natural width is wider still grows to the whole room,
+   and only what cannot fit the room scrolls inside the frame. The cell box
+   above bounds every line, so a wide table never turns into long lines. */
 .report-reader-body,
 [data-report-file-pane] {
   container: report-reader / inline-size;
@@ -1587,14 +1588,43 @@ video.artifact-viewer-media {
 
 @container report-reader (width > 0) {
   .report-document .chat-markdown > .chat-markdown-table-container {
+    --report-table-room: calc(
+      100cqi - var(--report-outline-room, 0rem) - 2 * var(--report-page-inline)
+    );
     display: grid;
-    grid-template-columns: minmax(max-content, 1fr);
+    grid-template-columns: max-content;
     justify-content: center;
   }
 
   .report-document .chat-markdown > .chat-markdown-table-container > :first-child {
-    max-width: calc(100cqi - var(--report-outline-room, 0rem) - 2 * var(--report-page-inline));
+    min-width: min(72rem, var(--report-table-room));
+    max-width: var(--report-table-room);
   }
+}
+
+/* A Markdown file in the side panel reads at 56rem while its tables take the
+   panel's width and scroll inside their frame when they cannot fit. Only text
+   blocks take the measure, so raw media keep their own 30rem cap. */
+.chat-markdown.file-markdown-preview
+  > :is(
+    p,
+    ul,
+    ol,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    blockquote,
+    hr,
+    pre,
+    dl,
+    details,
+    .chat-markdown-codeblock
+  ) {
+  max-width: 56rem;
+  margin-inline: auto;
 }
 
 /* In a document, a file it names reads as a link, not a boxed chip: the

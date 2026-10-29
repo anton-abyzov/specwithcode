@@ -7,8 +7,6 @@ import {
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
 } from "@specweave-studio/contracts";
-// @effect-diagnostics nodeBuiltinImport:off -- Update feed names are compared by SHA-256 digest.
-import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -56,6 +54,8 @@ import {
   removeInstalledAppDownload,
   updaterCacheDir,
 } from "./pendingAppUpdate.ts";
+import { resolveUpdateFeed } from "./platformFeed.ts";
+import { getAutoUpdateDisabledReason, isUpstreamUpdateFeed } from "./updateFeedGate.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -278,67 +278,6 @@ function shouldBroadcastDownloadProgress(
   return nextStep !== previousStep || nextPercent === 100;
 }
 
-function getAutoUpdateDisabledReason(args: {
-  isDevelopment: boolean;
-  isPackaged: boolean;
-  platform: NodeJS.Platform;
-  appImage?: string | undefined;
-  isDebPackage: boolean;
-  disabledByEnv: boolean;
-  hasUpdateFeedConfig: boolean;
-  feedIsUpstream?: boolean;
-}): string | null {
-  if (!args.hasUpdateFeedConfig) {
-    return "Automatic updates are not available because no update feed is configured.";
-  }
-  if (args.feedIsUpstream) {
-    return "Automatic updates are off because this build points at a feed SpecWithCode does not own.";
-  }
-  if (args.isDevelopment || !args.isPackaged) {
-    return "Automatic updates are only available in packaged production builds.";
-  }
-  if (args.disabledByEnv) {
-    return "Automatic updates are disabled by the SPECWITHCODE_DISABLE_AUTO_UPDATE setting.";
-  }
-  if (args.platform === "linux" && !args.appImage && !args.isDebPackage) {
-    return "Automatic updates on Linux require the AppImage or the .deb package.";
-  }
-  return null;
-}
-
-// Studio never updates itself from the product it was forked from. That
-// product's feed owner, repository and update host are matched by SHA-256, so
-// this file does not carry their names.
-const UPSTREAM_UPDATE_FEED_DIGESTS = new Set([
-  "546cf27bd3d20c268891bbd859d84c1da67bc9e44cb1988bbfc6f72c2a6d16f9",
-  "8a8157f91757ad646fd8615fd9718e37f96c9c60a38f894b075cc1e0c499e24a",
-  "f72ae0c9ef66c9b28790fadd7e6725ab38a5c5d59470f286ff0720eecf36ae00",
-  "e6c67ade29a30e00ac361616629808bf30a61556535a7be8a41b63934ba0efe1",
-]);
-
-// Each word of the value, and each dot suffix of a dotted word, so that a host
-// such as updates.example.com is compared as example.com too.
-function updateFeedTerms(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/[^a-z0-9.]+/)
-    .flatMap((word) => word.split(".").map((_, index, parts) => parts.slice(index).join(".")))
-    .filter((term) => term !== "");
-}
-
-function isUpstreamUpdateFeed(config: AppUpdateYmlConfig | undefined): boolean {
-  if (config === undefined) return false;
-  return [config.owner, config.repo, config.url].some(
-    (value) =>
-      typeof value === "string" &&
-      updateFeedTerms(value).some((term) =>
-        UPSTREAM_UPDATE_FEED_DIGESTS.has(
-          NodeCrypto.createHash("sha256").update(term).digest("hex"),
-        ),
-      ),
-  );
-}
-
 function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
@@ -538,12 +477,13 @@ export const make = Effect.gen(function* () {
     const { provider, owner, repo } = appUpdateYmlConfig.value;
     if (provider !== "github" || !owner || !repo) return;
     const token = yield* Effect.promise(() => updateTokenResolver.resolve());
-    yield* electronUpdater.setFeedURL({
-      provider: "github",
-      owner,
-      repo,
-      ...(token ? { private: true, token } : {}),
-    } as ElectronUpdater.ElectronUpdaterFeedUrl);
+    const { channel } = yield* Ref.get(updateStateRef);
+    const { platform, runtimeInfo } = environment;
+    const { feed, fallbackTag } = yield* Effect.promise(() =>
+      resolveUpdateFeed({ owner, repo, token, channel, platform, arch: runtimeInfo.appArch }),
+    );
+    if (fallbackTag) yield* logUpdaterInfo("Latest has no feed here; using", { tag: fallbackTag });
+    yield* electronUpdater.setFeedURL(feed);
   }).pipe(Effect.withSpan("desktop.updates.refreshGitHubFeed"));
 
   const checkForUpdates = Effect.fn("desktop.updates.checkForUpdates")(function* (

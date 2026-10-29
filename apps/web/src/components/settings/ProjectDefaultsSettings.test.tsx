@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   environment: {} as typeof DEFAULT_SERVER_SETTINGS,
   target: {} as ReturnType<typeof resolveProjectSettings>,
   mixed: false,
+  scope: "environment" as "environment" | "project",
   update: vi.fn(),
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
@@ -20,7 +21,10 @@ vi.mock("../../state/environments", () => ({
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
-    scope: { kind: "project", group: { displayName: "specweave" } },
+    scope:
+      state.scope === "project"
+        ? { kind: "project", group: { displayName: "specweave" } }
+        : { kind: "environment" },
     target: { environmentId: "worker", ...state.target },
     targets: [],
     connectedEnvironments: [{}],
@@ -56,6 +60,11 @@ vi.mock("./settingsLayout", () => ({
   ),
   SettingResetButton: () => null,
 }));
+vi.mock("../ui/switch", () => ({
+  Switch: (props: { checked: boolean; onCheckedChange: (checked: boolean) => void }) => (
+    <input type="checkbox" onChange={() => undefined} {...props} />
+  ),
+}));
 vi.mock("../ui/select", () => ({
   Select: ({
     children,
@@ -86,11 +95,18 @@ function render() {
   });
   return renderer!.root.findByProps({ "aria-label": "Workspace" }).findByType("select");
 }
+function renderUseWorktrees() {
+  act(() => {
+    renderer = create(<ProjectDefaultsSettings category="project" />);
+  });
+  return renderer!.root.findByProps({ "aria-label": "Use worktrees", type: "checkbox" });
+}
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.environment = DEFAULT_SERVER_SETTINGS;
   state.target = resolveProjectSettings(state.environment, project, null, null);
   state.mixed = false;
+  state.scope = "environment";
   state.update.mockClear();
 });
 afterEach(() => {
@@ -102,7 +118,7 @@ describe("web workspace default presentation", () => {
   it("shows automatic for inherited built-in local storage", () => {
     expect(state.target.settings.defaultThreadEnvMode).toBe("local");
     expect(render().props.value).toBe("automatic");
-    expect(JSON.stringify(renderer!.toJSON())).toContain("non-Git folders in the current checkout");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("the current checkout otherwise");
   });
   it.each(["local", "worktree"] as const)("preserves explicit environment %s", (mode) => {
     state.environment = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: mode };
@@ -115,14 +131,6 @@ describe("web workspace default presentation", () => {
     });
     expect(render().props.value).toBe("local");
   });
-  it("shows an explicit project choice", () => {
-    state.environment = {
-      ...DEFAULT_SERVER_SETTINGS,
-      projectSettingsOverrides: { [project]: { defaultThreadEnvMode: "worktree" } },
-    };
-    state.target = resolveProjectSettings(state.environment, project, null, null);
-    expect(render().props.value).toBe("worktree");
-  });
   it("keeps mixed values distinct and stores automatic as null", () => {
     state.mixed = true;
     const picker = render();
@@ -131,7 +139,8 @@ describe("web workspace default presentation", () => {
     expect(state.update).toHaveBeenCalledExactlyOnceWith({ defaultThreadEnvMode: null });
   });
   it("puts every new-thread override on the Project page", () => {
-    render();
+    state.scope = "project";
+    renderUseWorktrees();
     const titles = renderer!.root
       .findAllByType("section")
       .map((section) => section.props["aria-label"]);
@@ -139,13 +148,14 @@ describe("web workspace default presentation", () => {
       expect.arrayContaining([
         "Model",
         "Permissions",
-        "Workspace",
+        "Use worktrees",
         "Submodules",
         "Start from origin",
       ]),
     );
   });
   it("points a category page to the Project page while a project is picked", () => {
+    state.scope = "project";
     act(() => {
       renderer = create(<ProjectDefaultsSettings category="source-control" />);
     });
@@ -160,5 +170,32 @@ describe("web workspace default presentation", () => {
     expect(
       renderer!.root.findAllByType("section").map((section) => section.props["aria-label"]),
     ).toContain("Refresh upstreams at startup");
+  });
+});
+describe("project Use worktrees switch", () => {
+  beforeEach(() => {
+    state.scope = "project";
+  });
+  it("is off unless the project itself chose worktrees", () => {
+    expect(renderUseWorktrees().props.checked).toBe(false);
+    // An environment-wide worktree default does not turn on the project's switch.
+    state.environment = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "worktree" };
+    state.target = resolveProjectSettings(state.environment, project, null, null);
+    act(() => renderer?.unmount());
+    expect(renderUseWorktrees().props.checked).toBe(false);
+  });
+  it("shows and stores the project's choice", () => {
+    state.environment = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [project]: { defaultThreadEnvMode: "worktree" } },
+    };
+    state.target = resolveProjectSettings(state.environment, project, null, null);
+    const toggle = renderUseWorktrees();
+    expect(toggle.props.checked).toBe(true);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("including ones the coordinator starts");
+    act(() => toggle.props.onCheckedChange(false));
+    expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "local" });
+    act(() => toggle.props.onCheckedChange(true));
+    expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "worktree" });
   });
 });

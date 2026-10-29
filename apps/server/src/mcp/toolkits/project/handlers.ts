@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
   type ProjectRepository,
+  type ThreadEnvMode,
 } from "@specweave-studio/contracts";
 import { sameRunModel } from "@specweave-studio/shared/threadModelIdentity";
 import {
@@ -71,6 +72,13 @@ import {
 import { addProjectToMachine } from "./addToMachine.ts";
 import { launchRemote, launchTarget, placementSkippable } from "./remoteLaunch.ts";
 import { routeTargets, routeToProject } from "./route.ts";
+import {
+  holdsSeparateClones,
+  launchWorkspaceDefault,
+  NO_BRANCH_WORKTREE_NOTICE,
+  projectUsesWorktrees,
+  UMBRELLA_WORKTREE_NOTICE,
+} from "./launchWorkspace.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
@@ -122,6 +130,34 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
     message:
       "The user sees an approval card in this thread. End your turn now; their decision and what changed arrive as their answer.",
   };
+});
+
+/** The workspace a launch naming none starts in; see launchWorkspaceDefault. */
+const projectLaunchWorkspace = Effect.fn("mcp.projectLaunchWorkspace")(function* (project: {
+  readonly id: ProjectId;
+  readonly workspaceRoot: string;
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
+}) {
+  const root = { strategy: { type: "root" as const } };
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  if (Option.isNone(settingsService)) return root;
+  const settings = yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
+  if (settings === null) return root;
+  const resolved = resolveProjectSettings(settings, project.id, project);
+  if (!projectUsesWorktrees(resolved)) return root;
+  // An umbrella's own repository leaves its child checkouts out, so a worktree
+  // of it would hold none of their code.
+  if (yield* Effect.promise(() => holdsSeparateClones(project.workspaceRoot)))
+    return { strategy: { type: "root" as const }, notice: UMBRELLA_WORKTREE_NOTICE };
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const status = yield* git
+    .statusDetailsLocal(project.workspaceRoot, { includeDivergence: false })
+    .pipe(Effect.orElseSucceed(() => null));
+  const strategy = launchWorkspaceDefault({
+    resolved,
+    currentBranch: status?.isRepo === true ? status.branch : null,
+  });
+  return strategy.type === "root" ? { strategy, notice: NO_BRANCH_WORKTREE_NOTICE } : { strategy };
 });
 
 /**
@@ -530,6 +566,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           standsInFor !== null && sameRunModel(routedModel, modelSelection) ? standsInFor : null;
         // The header badge names the outside client or machine that started it.
         const origin = launchOriginOf(context, work, input.originHint);
+        // An explicit workspaceStrategy wins; otherwise the project's "Use worktrees" switch decides.
+        const workspace =
+          input.workspaceStrategy !== undefined
+            ? { strategy: input.workspaceStrategy }
+            : project === undefined || scratchProjectId !== undefined
+              ? { strategy: { type: "root" as const } }
+              : yield* projectLaunchWorkspace(project);
+        const workspaceStrategy = workspace.strategy;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -541,7 +585,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ...(origin === undefined ? {} : { origin }),
           runtimeMode,
           interactionMode,
-          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          workspaceStrategy,
           ...(increment.increment === undefined
             ? {}
             : {
@@ -591,6 +635,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ...launchIncrementFields(increment),
           runId: run?.id ?? null,
           status: run?.status ?? null,
+          ...("notice" in workspace && workspace.notice !== undefined
+            ? { workspaceNotice: workspace.notice }
+            : {}),
           // Tells a coordinator on another machine that this one applied its grant's checks.
           delegationChecked: true,
           placement: {
