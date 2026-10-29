@@ -341,7 +341,7 @@ describe("a fallback target that cannot open", () => {
           commandId: "limit-fallback:t1:hop-1:r1",
           messageId: "limit-fallback:t1:hop-1:r1",
           modelSelection: { instanceId: codexId, model: "gpt-6" },
-          text: "Continue where you left off.",
+          text: expect.stringContaining("[Automatic fallback continuation]"),
         },
         {
           type: "message.dispatch",
