@@ -9,6 +9,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { groupGitHubAccounts, nextGitHubHosts } from "./GitHubAccountSettings.logic";
+import { useGitHubCredentialCardAvailable } from "./GitHubCredentialCard";
 import { redactedPlaceholder } from "./RedactedSensitiveText";
 
 /** Sentinel select value for "follow gh's active login"; logins never contain spaces. */
@@ -42,10 +43,12 @@ function RedactedLogin(props: {
  */
 export function GitHubAccountSettings({
   environmentId,
+  environmentLabel = "the server host",
   auth,
   onSaved,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly environmentLabel?: string;
   readonly auth: SourceControlProviderAuth;
   readonly onSaved: () => void;
 }) {
@@ -56,6 +59,7 @@ export function GitHubAccountSettings({
   const [saving, setSaving] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const groups = groupGitHubAccounts(auth.accounts ?? []);
+  const signInAvailable = useGitHubCredentialCardAvailable(environmentId);
 
   const save = async (
     host: string,
@@ -76,8 +80,9 @@ export function GitHubAccountSettings({
   if (groups.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        Sign in with <code className="rounded bg-muted px-1 py-px text-2xs">gh auth login</code> on
-        the server host, then rescan to choose accounts here.
+        {signInAvailable ? "Sign in above, or with" : "Sign in with"}{" "}
+        <code className="rounded bg-muted px-1 py-px text-2xs">gh auth login</code> on{" "}
+        {environmentLabel}, then rescan to choose accounts here. A saved token above also works.
       </p>
     );
   }

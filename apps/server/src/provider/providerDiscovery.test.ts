@@ -30,13 +30,18 @@ import {
 const fakeCliDirectory = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "discovery-"));
 
 /** A fake CLI answering `--version` and one status command with `statusOutput`. */
-const fakeCli = (name: string, statusArgs: ReadonlyArray<string>, statusOutput: string) =>
+const fakeCli = (
+  name: string,
+  statusArgs: ReadonlyArray<string>,
+  statusOutput: string,
+  version = `${name} 1.0.0`,
+) =>
   writeFakeCli({
     directory: fakeCliDirectory(),
     name,
     source: `
 const args = process.argv.slice(2);
-if (args[0] === "--version") { console.log("${name} 1.0.0"); process.exit(0); }
+if (args[0] === "--version") { console.log(${JSON.stringify(version)}); process.exit(0); }
 if (JSON.stringify(args) === ${JSON.stringify(JSON.stringify(statusArgs))}) {
   process.stdout.write(${JSON.stringify(statusOutput)});
   process.exit(0);
@@ -58,6 +63,9 @@ const OPENCODE_ONE_CREDENTIAL = [
   "",
 ].join("\n");
 const OPENCODE_NONE = "┌  Credentials ~/.local/share/opencode/auth.json\n│\n└  0 credentials\n";
+// OpenCode 2 prints one row per integration.
+const OPENCODE_TWO_STORED = "OpenRouter  API key                     stored\n";
+const OPENCODE_TWO_NONE = "No authenticated integrations\n";
 
 const cleanEnvironment = () =>
   discoveryEnvironment({ PATH: process.env.PATH }, HostProcessPlatform.defaultValue());
@@ -87,6 +95,22 @@ describe("parseOpenCodeAuthList", () => {
     expect(parseOpenCodeAuthList(environmentOnly(["AWS_REGION"]))).toBe(false);
     expect(parseOpenCodeAuthList(environmentOnly(["GITHUB_TOKEN"]))).toBe(false);
     expect(parseOpenCodeAuthList(environmentOnly(["AWS_REGION", "GEMINI_API_KEY"]))).toBe(true);
+  });
+
+  it("reads the OpenCode 2 integration rows", () => {
+    expect(parseOpenCodeAuthList(OPENCODE_TWO_STORED)).toBe(true);
+    expect(parseOpenCodeAuthList(OPENCODE_TWO_NONE)).toBe(false);
+    expect(parseOpenCodeAuthList("OpenAI      OPENAI_API_KEY              environment\n")).toBe(
+      true,
+    );
+    expect(parseOpenCodeAuthList("GitHub Copilot  GITHUB_TOKEN                environment\n")).toBe(
+      false,
+    );
+    expect(
+      parseOpenCodeAuthList(
+        "GitHub Copilot  GITHUB_TOKEN                environment\nOpenRouter      API key                     stored\n",
+      ),
+    ).toBe(true);
   });
 
   it("returns unknown for output it does not recognise", () => {
@@ -139,6 +163,21 @@ describe("provider discovery probes", () => {
       const signedOut = fakeCli("opencode", ["auth", "list"], OPENCODE_NONE);
       assert.equal(yield* probeOpenCode(ready, cleanEnvironment()), "ready");
       assert.equal(yield* probeOpenCode(signedOut, cleanEnvironment()), "signed-out");
+      // OpenCode 2 is asked with --standalone, so no shared background service starts.
+      const two = fakeCli(
+        "opencode",
+        ["auth", "list", "--standalone"],
+        OPENCODE_TWO_STORED,
+        "opencode v2.2.0",
+      );
+      const twoSignedOut = fakeCli(
+        "opencode",
+        ["auth", "list", "--standalone"],
+        OPENCODE_TWO_NONE,
+        "opencode v2.2.0",
+      );
+      assert.equal(yield* probeOpenCode(two, cleanEnvironment()), "ready");
+      assert.equal(yield* probeOpenCode(twoSignedOut, cleanEnvironment()), "signed-out");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

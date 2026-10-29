@@ -2,6 +2,7 @@ import type { GoogleService, ProjectId } from "@specweave-studio/contracts";
 
 import {
   isArchivedMember,
+  isAutomatedMember,
   isScratchMember,
   type ProjectListMember,
   type ScratchRootLookup,
@@ -13,8 +14,10 @@ interface GoogleProjectAccess {
 }
 
 /**
- * The projects Google access is offered to: active ones in the main list, archived ones
- * apart. Scratch is not a project. Personal projects lead, since a personal agent lives there.
+ * The projects Google access is offered to: the person's own active ones in the main list,
+ * those a check or agent made for itself (acceptance runs, fixtures, tests) and archived ones
+ * apart, so their access can still be checked. Scratch is not a project. Personal projects
+ * lead, since a personal agent lives there.
  */
 export function partitionGoogleProjects<
   P extends ProjectListMember & {
@@ -30,8 +33,10 @@ export function partitionGoogleProjects<
           Number(left.workspaceSettings?.kind === "personal") ||
         left.title.localeCompare(right.title),
     );
+  const current = sorted.filter((project) => !isArchivedMember(project));
   return {
-    active: sorted.filter((project) => !isArchivedMember(project)),
+    active: current.filter((project) => !isAutomatedMember(project)),
+    automated: current.filter(isAutomatedMember),
     archived: sorted.filter(isArchivedMember),
   };
 }

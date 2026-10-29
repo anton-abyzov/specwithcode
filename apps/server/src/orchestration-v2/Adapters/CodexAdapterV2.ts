@@ -129,6 +129,7 @@ import {
   mergeProviderInstanceEnvironment,
 } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { gitHubSpawnVariables } from "../../sourceControl/gitHubSpawnEnvironment.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -1404,11 +1405,22 @@ export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+  /** The app-server's environment, which the GitHub variables are numbered against. */
+  readonly environment?: NodeJS.ProcessEnv;
 }): {
   readonly cwd?: string;
   readonly model?: string;
   readonly config: Readonly<Record<string, Schema.Json>>;
 } {
+  // Codex builds each tool command's environment from shell_environment_policy, which
+  // can drop GH_TOKEN and GIT_CONFIG_*; `set` entries survive inheritance and the
+  // default excludes. They go over the app-server's stdin, never on a command line.
+  const gitHubShellVariables = Object.fromEntries(
+    Object.entries(gitHubSpawnVariables(input.environment ?? process.env)).map(([name, value]) => [
+      `shell_environment_policy.set.${name}`,
+      value,
+    ]),
+  );
   const mcpSession =
     input.threadId === null ? undefined : McpProviderSession.readMcpProviderSession(input.threadId);
   return {
@@ -1416,6 +1428,7 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...gitHubShellVariables,
       // The shared app-server's own `-c` identity names the thread that opened it.
       ...(input.threadId === null
         ? {}
@@ -3063,7 +3076,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           .request("thread/resume", {
                             threadId: input.nativeThreadId,
                             excludeTurns: true,
-                            ...codexThreadRuntimeParams({ threadId: input.context.projectionThreadId }),
+                            ...codexThreadRuntimeParams({
+                              threadId: input.context.projectionThreadId,
+                              environment: adapterOptions.environment,
+                            }),
                           })
                           .pipe(Effect.flatMap(decodeCodexChildModel))
                       : Effect.succeed(response),
@@ -6248,6 +6264,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       threadId: nativeThreadId,
                       excludeTurns: true,
                       ...codexThreadRuntimeParams({
+                        environment: adapterOptions.environment,
                         threadId: turn?.threadId ?? appThreadId,
                         ...(turn?.modelSelection === undefined
                           ? {}
@@ -6558,6 +6575,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 client.request(
                   "thread/start",
                   codexThreadRuntimeParams({
+                    environment: adapterOptions.environment,
                     threadId: threadInput.threadId,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
@@ -6591,6 +6609,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
+                  environment: adapterOptions.environment,
                   threadId: threadInput.threadId ?? threadInput.providerThread.appThreadId,
                   ...(threadInput.modelSelection === undefined
                     ? {}
@@ -7339,6 +7358,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   threadId,
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
+                    environment: adapterOptions.environment,
                     threadId: threadInput.providerThread.appThreadId,
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -7388,6 +7408,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
+                      environment: adapterOptions.environment,
                       threadId: threadInput.targetThreadId,
                       ...(threadInput.modelSelection === undefined
                         ? {}

@@ -101,7 +101,8 @@ it.effect("adds safe request context while retaining GitHub CLI causes", () =>
     const error = yield* provider
       .getChangeRequest({
         cwd: "/repo",
-        reference: "https://user:secret@github.com/anton-abyzov/specwithcode/pull/42?token=secret#diff",
+        reference:
+          "https://user:secret@github.com/anton-abyzov/specwithcode/pull/42?token=secret#diff",
       })
       .pipe(Effect.flip);
 
@@ -490,6 +491,9 @@ it("reports every gh login and leads with the account Settings pin", () => {
   const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
     hosts: { "github.com": { account: "work", enabled: true } },
     tokens: {},
+    copiedTokens: {},
+    copyHostSignIn: true,
+    confirmCopySignIn: true,
   });
   assert.deepStrictEqual(auth.account, Option.some("work"));
   assert.deepStrictEqual(auth.accounts, [
@@ -503,6 +507,9 @@ it("falls back to gh's active login when the pinned account is gone", () => {
   const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
     hosts: { "github.com": { account: "former-job", enabled: true } },
     tokens: {},
+    copiedTokens: {},
+    copyHostSignIn: true,
+    confirmCopySignIn: true,
   });
   assert.deepStrictEqual(auth.account, Option.some("personal"));
 });
@@ -511,6 +518,9 @@ it("reports unauthenticated when Settings turn off every signed-in host", () => 
   const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
     hosts: { "github.com": { enabled: false } },
     tokens: {},
+    copiedTokens: {},
+    copyHostSignIn: true,
+    confirmCopySignIn: true,
   });
   assert.strictEqual(auth.status, "unauthenticated");
   assert.deepStrictEqual(
@@ -530,7 +540,13 @@ it("names the environment token that overrides the Settings choice", () => {
         tokenSource: "GH_TOKEN",
       },
     ]),
-    { hosts: { "github.com": { account: "work", enabled: true } }, tokens: {} },
+    {
+      hosts: { "github.com": { account: "work", enabled: true } },
+      tokens: {},
+      copiedTokens: {},
+      copyHostSignIn: true,
+      confirmCopySignIn: true,
+    },
   );
   assert.deepStrictEqual(auth.account, Option.some("bot"));
   assert.deepStrictEqual(

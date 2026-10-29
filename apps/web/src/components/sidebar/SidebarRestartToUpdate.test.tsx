@@ -1193,8 +1193,8 @@ describe("SidebarRestartToUpdate", () => {
       // Still within the install helper's own budget: followed, not reported.
       await advance(10 * 60_000);
       expect(lastToast().title).toMatch(/^Installing SpecWithCode 0\.2\.5 · 10:0\d$/);
-      await advance(15 * 60_000);
-      expect(lastToast().description).toContain("has not finished after 25 minutes");
+      await advance(35 * 60_000);
+      expect(lastToast().description).toContain("has not finished after 45 minutes");
       calls.length = 0;
       await act(async () => {
         lastToast().data.onClose?.();

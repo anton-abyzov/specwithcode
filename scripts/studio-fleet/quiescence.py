@@ -239,9 +239,18 @@ def _assert_managed_tunnel(arguments, kernel_executable, tunnel):
         and kernel_executable == tunnel['executable'], 'Owned service has unexpected descendants'
 
 
+# The two ways the recorded service process can be gone. Both refuse. An exited one (stopped,
+# booted out or restarted by launchd) is no longer there at all; a changed one is a listed
+# process under that pid owned by another user. update.py turns an exit into a retryable refusal.
+SERVICE_EXITED = 'Owned service process exited'
+SERVICE_CHANGED = 'Owned service process identity changed'
+
+
 def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True, supervisor_of=None):
     root = processes.get(pid)
-    assert root and pid > 0 and root['uid'] == uid, 'Owned service process identity changed'
+    assert pid > 0, SERVICE_CHANGED
+    assert root is not None, SERVICE_EXITED
+    assert root['uid'] == uid, SERVICE_CHANGED
     assert root['executable'] == executable, 'Owned service executable changed'
     parent = processes.get(root['parent'])
     assert parent and parent['pid'] != pid, 'Owned service parent identity unavailable'

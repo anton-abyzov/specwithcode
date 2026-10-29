@@ -19,6 +19,10 @@ export const MachineReadinessGitHub = Schema.Struct({
   status: Schema.Literals(["signed-in", "signed-out", "not-installed", "unknown"]),
   accounts: Schema.Array(Schema.Struct({ host: bounded(255), login: bounded(255) })),
   detail: Schema.NullOr(bounded(1000)),
+  /** gh is installed but too old to report its sign-in (status "unknown"). */
+  outdated: Schema.optionalKey(Schema.Boolean),
+  /** Hosts where gh holds a login that no longer works (status "signed-out"). */
+  heldHosts: Schema.optionalKey(Schema.Array(bounded(255))),
 });
 export type MachineReadinessGitHub = typeof MachineReadinessGitHub.Type;
 

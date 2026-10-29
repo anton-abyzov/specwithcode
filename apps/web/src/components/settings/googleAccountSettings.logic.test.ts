@@ -11,7 +11,7 @@ const env = EnvironmentId.make("env");
 const project = (
   id: string,
   title: string,
-  settings: { kind?: string; archived?: boolean } = {},
+  settings: { kind?: string; archived?: boolean; origin?: string } = {},
   workspaceRoot = `/p/${id}`,
 ) => ({
   environmentId: env,
@@ -24,18 +24,27 @@ const A = ProjectId.make("a");
 const B = ProjectId.make("b");
 
 describe("partitionGoogleProjects", () => {
-  it("lists active projects, personal first, and keeps archived and scratch apart", () => {
-    const { active, archived } = partitionGoogleProjects(
+  it("lists active projects, personal first, and keeps automated, archived and scratch apart", () => {
+    const { active, automated, archived } = partitionGoogleProjects(
       [
         project("code", "Alpha"),
         project("old", "Old", { archived: true }),
         project("aide", "Zeta", { kind: "personal" }),
         project("scratch", "No project", {}, "/scratch"),
+        project(
+          "check",
+          "Routing acceptance",
+          {},
+          "/home/me/.specwithcode/m4/scratch/run/workspace",
+        ),
+        project("demo", "Demo", { origin: "automated" }),
+        project("oldcheck", "Old check", { archived: true }, "/tmp/check"),
       ],
       () => "/scratch",
     );
     expect(active.map((entry) => entry.id)).toEqual(["aide", "code"]);
-    expect(archived.map((entry) => entry.id)).toEqual(["old"]);
+    expect(automated.map((entry) => entry.id)).toEqual(["demo", "check"]);
+    expect(archived.map((entry) => entry.id)).toEqual(["old", "oldcheck"]);
   });
 });
 

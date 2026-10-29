@@ -78,6 +78,7 @@ import {
 } from "../observability/Metrics.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { withGitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
@@ -2345,7 +2346,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.andThen(
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform);
+            // After the runtime env, so GitHub access set there wins.
+            const terminalEnv = withGitHubSpawnEnvironment(
+              createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform),
+            );
             // Append (never prepend) managed ACP agent install directories so
             // `kimi login` and friends resolve by name without shadowing any
             // system or user tool of the same name.

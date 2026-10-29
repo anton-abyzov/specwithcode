@@ -244,6 +244,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.requiredWorktreeBootstrap).toBe(true);
       expect(second.capabilities.usagePriceOverrides).toBe(true);
       expect(second.capabilities.threadActiveReorder).toBe(true);
+      expect(second.capabilities.gitHubSignIn).toBe(true);
+      expect(second.capabilities.gitHubCredentialCopy).toBe(true);
       expect(second.capabilities.studioFleetRemove).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.threadPullRequests).toBe(true);

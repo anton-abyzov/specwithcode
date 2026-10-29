@@ -490,8 +490,16 @@ export function applyServerSettingsPatch(
       ]),
     ],
     // Host replacement: deepMerge would keep a cleared account pin.
-    ...(patch.github?.hosts !== undefined
-      ? { github: { ...next.github, hosts: patch.github.hosts } }
+    ...(patch.github?.hosts !== undefined || patch.github?.copiedTokens !== undefined
+      ? {
+          github: {
+            ...next.github,
+            ...(patch.github.hosts !== undefined ? { hosts: patch.github.hosts } : {}),
+            ...(patch.github.copiedTokens !== undefined
+              ? { copiedTokens: patch.github.copiedTokens }
+              : {}),
+          },
+        }
       : {}),
     ...(projectSettingsOverridesPatch !== undefined ||
     projectSettingsOverrideChangesPatch !== undefined

@@ -435,13 +435,16 @@ script follows the desktop stage's order:
    move to the Trash and which to rename back).
 
 One run at a time holds `~/.specwithcode/backups/desktop-app-updates/.lock`, which names the run by
-its pid and start time: a lock left by a run that is gone (a power loss, a reboot that gave its pid
-to another process) is taken over, and one its run releases meanwhile is taken, but a lock another
-run made while this one judged it stays with that run. Each run reads its record again 2 seconds
-after writing it and stops (exit 4) when another run's record replaced it, or when its lock went
-before it wrote its record, so of two runs that take over the same lock at once only one goes on,
-unless one of them stalls for more than those 2 seconds. A dropped ssh session does not stop a run halfway. The rollout prints the worker's lines
-as `m1: app: <line>`, then one result per worker:
+its pid and start time. A lock whose record is not all written yet is a run that is starting, for
+10 seconds. A lock left by a run that is gone (a power loss, a reboot that gave its pid to another
+process) is taken over, and one its run releases meanwhile is taken, but a lock another run made
+while this one judged it stays with that run. Each run reads its record again 2 seconds after
+writing it and stops (exit 4) when another run's record replaced it, or when its lock went before it
+wrote its record, so of two runs that take over the same lock at once only one goes on, unless one
+of them stalls for more than those 2 seconds. A run with no room to make the lock, the folder it
+goes in or its record stops with exit 5 and says so. A dropped ssh session does not stop a run halfway, and the
+lines it could not print reach nothing the run reads. The rollout prints the worker's lines as
+`m1: app: <line>`, then one result per worker:
 
 ```
 m1: desktop app 1.0.40 -> 1.0.41: unpacked and checked beside the app, then swapped in; reopened, as it was running
@@ -473,6 +476,9 @@ with exit 2 for a bad value or missing tool, 3 for the download or its sha256, 4
 the app, its own updater or a previous app left at `SpecWithCode.app.release-old` is in the way, 5
 for no room or a copy that cannot be unpacked or fails a check (before the rename, or after it with
 the previous app back in place), and 6 when a rename failed; its reason says where each app is.
+The update cache or its lock that `mkdir` refuses for another reason than no room (a permission, a
+file in the way) ends with exit 1 and `mkdir`'s own reason; a stop nobody planned says
+`stopped unexpectedly (exit <n>) at: <command>`.
 
 ## Rollback copies
 

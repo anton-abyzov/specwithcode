@@ -7,10 +7,15 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
 import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
+import {
+  hasGitHubSpawnToken,
+  withGitHubSpawnEnvironment,
+} from "../../sourceControl/gitHubSpawnEnvironment.ts";
 
 /**
  * Client-side implementation of the ACP `terminal` capability.
@@ -172,6 +177,7 @@ export const makeAcpClientTerminals = (
   options: AcpClientTerminalsOptions,
 ): Effect.Effect<AcpClientTerminals> =>
   Effect.gen(function* () {
+    const hostEnvironment = yield* HostProcessEnvironment;
     const creationPermit = yield* Semaphore.make(1);
     const terminals = new Map<string, ManagedAcpTerminal>();
     let nextTerminalNumber = 1;
@@ -243,10 +249,18 @@ export const makeAcpClientTerminals = (
               (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
             );
             const sessionEnvironment = options.environmentForSession?.(request.sessionId);
-            const environment =
-              options.environment === undefined &&
-              sessionEnvironment === undefined &&
-              (request.env?.length ?? 0) === 0
+            // With a saved or copied GitHub token, the command gets it as it is now, over
+            // the full environment so git's own GIT_CONFIG_* entries stay numbered right.
+            const withGitHub = hasGitHubSpawnToken();
+            const environment = withGitHub
+              ? withGitHubSpawnEnvironment({
+                  ...(options.environment ?? hostEnvironment),
+                  ...sessionEnvironment,
+                  ...requestEnvironment,
+                })
+              : options.environment === undefined &&
+                  sessionEnvironment === undefined &&
+                  (request.env?.length ?? 0) === 0
                 ? undefined
                 : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
             // Each terminal owns a scope so the spawned process is reliably reaped:
@@ -262,7 +276,7 @@ export const makeAcpClientTerminals = (
                     environment,
                     // Without a base environment the session and request
                     // variables only add to the inherited one.
-                    extendEnvironment: options.environment === undefined,
+                    extendEnvironment: options.environment === undefined && !withGitHub,
                     forceKillAfter: options.forceKillAfter,
                   }),
                 )

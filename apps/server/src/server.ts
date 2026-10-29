@@ -154,6 +154,8 @@ import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as FolderTransferRoute from "./fleet/folderTransferRoute.ts";
 import * as FleetTargets from "./fleet/FleetTargets.ts";
 import * as MachineNicknameSync from "./fleet/MachineNicknameSync.ts";
+import * as GitHubCredentialRoute from "./sourceControl/gitHubCredentialRoute.ts";
+import * as GitHubSpawnEnvironmentSync from "./sourceControl/gitHubSpawnEnvironmentSync.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as CredentialFailureLimiter from "./auth/CredentialFailureLimiter.ts";
@@ -791,6 +793,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+  // Gives agents, terminals and git the saved or copied GitHub token when it is the chosen
+  // one. Built before the provider instances, so their first spawn already sees it.
+  Layer.provideMerge(GitHubSpawnEnvironmentSync.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
@@ -916,6 +921,7 @@ const layerMakeRoutes = Layer.mergeAll(
     FolderTransferRoute.layer,
     HandoffRoute.layer,
     MachineNicknameSync.routeLayer,
+    GitHubCredentialRoute.routeLayer,
     GoogleOAuthRoute.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

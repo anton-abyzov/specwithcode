@@ -62,6 +62,7 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
+import * as ConnectAccounts from "./environments/ConnectAccounts.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
@@ -93,6 +94,7 @@ const layerHttpPlatformNotSupported = Layer.succeed(HttpPlatform.HttpPlatform, {
 
 const layerRelayApi = Layer.mergeAll(
   RelayHttpApi.layerHealthApi,
+  RelayHttpApi.layerPublicApi,
   RelayHttpApi.layerMetadataApi,
   RelayHttpApi.layerMobileApi,
   RelayHttpApi.layerClientApi,
@@ -180,6 +182,8 @@ export const layer = Api.make(
     const legacyTunnelGraceMinutes = Option.getOrUndefined(
       yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
     );
+    const connectFreeTunnelLimit = yield* RelayConfiguration.connectFreeTunnelLimitConfig;
+    const globalManagedTunnelCap = yield* RelayConfiguration.globalManagedTunnelCapConfig;
     // Keys are endpoint keys or hashes over them, which already differ per
     // stage, so stages sharing an account cannot collide in these namespaces.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
@@ -219,6 +223,8 @@ export const layer = Api.make(
         managedEndpointCleanupMode,
         legacyManagedEndpointCleanupMode,
         ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
+        connectFreeTunnelLimit,
+        ...(globalManagedTunnelCap === undefined ? {} : { globalManagedTunnelCap }),
       });
     });
 
@@ -301,6 +307,7 @@ export const layer = Api.make(
           EnvironmentLinks.layer,
           ManagedEndpointAllocations.layer,
           ManagedTunnelLimits.layer,
+          ConnectAccounts.layer,
         ),
       ),
       Layer.provideMerge(LiveActivities.layer),

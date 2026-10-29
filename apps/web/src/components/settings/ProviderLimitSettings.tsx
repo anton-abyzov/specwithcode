@@ -107,6 +107,7 @@ export function ProviderLimitSettings() {
     "providerLimitFallbackModels",
     "providerLimitFallbackModelSelection",
   ]);
+  const mixedListOnly = useScopedSettingsMixed(["providerLimitFallbackListOnly"]);
   const mixedSwitchAt = useScopedSettingsMixed(["providerLimitSwitchAtPercent"]);
   const mixedExcluded = useScopedSettingsMixed(["providerLimitExcludedModels"]);
   const excludedModels = settings.providerLimitExcludedModels;
@@ -191,7 +192,11 @@ export function ProviderLimitSettings() {
         mixed={mixedFallback}
         id="provider-limit-fallback"
         title="Fallback order"
-        description="The models a limited thread continues on, best first. The first one that is signed in and has room takes the thread; a thread already on one skips it, so Codex threads can fall back to Claude from the same list. After these, SpecWithCode tries any other ready provider."
+        description={`The models a limited thread continues on, best first. The first one that is signed in and has room takes the thread; a thread already on one skips it, so Codex threads can fall back to Claude from the same list. ${
+          settings.providerLimitFallbackListOnly && fallbackOrder.length > 0
+            ? "When none of these has room, the thread waits."
+            : "After these, SpecWithCode tries any other ready provider."
+        }`}
         status={fallbackOrder.length === 0 && !mixedFallback ? "Any ready provider" : undefined}
         resetAction={
           fallbackOrder.length > 0 ? (
@@ -225,6 +230,33 @@ export function ProviderLimitSettings() {
           onChange={saveFallbackOrder}
         />
       </SettingsRow>
+      {fallbackOrder.length > 0 ? (
+        <SettingsRow
+          serverScoped
+          settingKeys={["providerLimitFallbackListOnly"]}
+          mixed={mixedListOnly}
+          id="provider-limit-fallback-list-only"
+          title="Only these models"
+          description="Never continue a limited thread on a model outside the fallback order. When none of them has room, the thread waits for its reset."
+          resetAction={
+            settings.providerLimitFallbackListOnly ? (
+              <SettingResetButton
+                label="only these models"
+                onClick={() => updateSettings({ providerLimitFallbackListOnly: false })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.providerLimitFallbackListOnly}
+              onCheckedChange={(checked) =>
+                updateSettings({ providerLimitFallbackListOnly: Boolean(checked) })
+              }
+              aria-label="Only these models"
+            />
+          }
+        />
+      ) : null}
       <SettingsRow
         serverScoped
         settingKeys={["providerLimitExcludedModels"]}

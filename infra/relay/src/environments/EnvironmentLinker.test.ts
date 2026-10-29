@@ -15,11 +15,13 @@ import * as Schema from "effect/Schema";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as ConnectAccounts from "./ConnectAccounts.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinker from "./EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
 const relayKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
   privateKeyEncoding: { format: "pem", type: "pkcs8" },
@@ -111,12 +113,26 @@ function layerTest(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
+  readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
+  readonly ensureAccount?: ConnectAccounts.ConnectAccounts["Service"]["ensureAccount"];
 }) {
   return EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer),
     Layer.provide(
       Layer.mergeAll(
         RelayConfiguration.layer(config),
+        Layer.succeed(ConnectAccounts.ConnectAccounts, {
+          ensureAccount:
+            input?.ensureAccount ??
+            ((account) =>
+              Effect.succeed({
+                userId: account.userId,
+                promoId: null,
+                founderNumber: null,
+                createdAt: "2026-10-28T00:00:00.000Z",
+              })),
+          foundersSummary: () => Effect.die("unused"),
+        }),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           verifyAndConsume: () => Effect.die("unexpected DPoP proof verification"),
           consume: input?.consume ?? (() => Effect.succeed(true)),
@@ -141,15 +157,17 @@ function layerTest(input?: {
           prepareDeprovision: () => Effect.succeed(null),
           deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
-          provision: () =>
-            Effect.succeed({
-              endpoint: {
-                httpBaseUrl: "https://managed.example.test/",
-                wsBaseUrl: "wss://managed.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
-            }),
+          provision:
+            input?.provision ??
+            (() =>
+              Effect.succeed({
+                endpoint: {
+                  httpBaseUrl: "https://managed.example.test/",
+                  wsBaseUrl: "wss://managed.example.test/ws",
+                  providerKind: "cloudflare_tunnel",
+                },
+                runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
+              })),
         }),
       ),
     ),
@@ -307,4 +325,113 @@ describe("EnvironmentLinker", () => {
       }
     }).pipe(Effect.provide(layerTest({ consume: () => Effect.succeed(false) }))),
   );
+  it.effect("creates the Connect account only after a managed link succeeded", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const { request } = yield* makeRequest;
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      const result = yield* linker.link({
+        userId: "user_123",
+        request: { ...request, managedTunnelsEnabled: true },
+      });
+      expect(result.endpoint.httpBaseUrl).toBe("https://managed.example.test/");
+      expect(calls).toEqual(["provision:user_123", "upsert:user_123", "ensure-account:user_123"]);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          ensureAccount: (account) =>
+            Effect.sync(() => {
+              calls.push(`ensure-account:${account.userId}`);
+              return {
+                userId: account.userId,
+                promoId: ConnectAccounts.FOUNDERS_PROMO_ID,
+                founderNumber: 1,
+                createdAt: "2026-10-28T00:00:00.000Z",
+              };
+            }),
+          upsert: (upsertInput) =>
+            Effect.sync(() => {
+              calls.push(`upsert:${upsertInput.userId}`);
+            }),
+          provision: (provisionInput) =>
+            Effect.sync(() => {
+              calls.push(`provision:${provisionInput.userId}`);
+              return {
+                endpoint: {
+                  httpBaseUrl: "https://managed.example.test/",
+                  wsBaseUrl: "wss://managed.example.test/ws",
+                  providerKind: "cloudflare_tunnel",
+                },
+                runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
+              };
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not create a Connect account for a publish-only link", () => {
+    let ensured = false;
+    return Effect.gen(function* () {
+      const { request } = yield* makeRequest;
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      yield* linker.link({ userId: "user_123", request });
+      expect(ensured).toBe(false);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          ensureAccount: () =>
+            Effect.sync(() => {
+              ensured = true;
+              return {
+                userId: "user_123",
+                promoId: null,
+                founderNumber: null,
+                createdAt: "2026-10-28T00:00:00.000Z",
+              };
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("takes no founder seat when provisioning refuses the machine", () => {
+    let ensured = false;
+    return Effect.gen(function* () {
+      const { request } = yield* makeRequest;
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      const error = yield* linker
+        .link({ userId: "user_123", request: { ...request, managedTunnelsEnabled: true } })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("ManagedTunnelLimitExceeded");
+      expect(ensured).toBe(false);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          ensureAccount: () =>
+            Effect.sync(() => {
+              ensured = true;
+              return {
+                userId: "user_123",
+                promoId: null,
+                founderNumber: null,
+                createdAt: "2026-10-28T00:00:00.000Z",
+              };
+            }),
+          provision: (provisionInput) =>
+            Effect.fail(
+              new ManagedTunnelLimits.ManagedTunnelLimitExceeded({
+                userId: provisionInput.userId,
+                environmentId: provisionInput.environmentId,
+                reason: "service_capacity",
+                maxTunnels: 10,
+                activeTunnels: 0,
+                globalCap: 180,
+                globalActiveTunnels: 180,
+              }),
+            ),
+        }),
+      ),
+    );
+  });
 });

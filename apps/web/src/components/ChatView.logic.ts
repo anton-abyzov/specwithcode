@@ -1515,7 +1515,33 @@ export async function switchThreadBackToPick(input: {
   readonly selectInComposer: (selection: ModelSelection) => void;
 }): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: unknown }> {
   input.selectInComposer(input.selection);
-  const result = await input.setThreadModel(input.selection);
+  return saveThreadModel(input.setThreadModel, input.selection);
+}
+
+/**
+ * A model picked in the composer of an idle thread is saved on the thread at
+ * once, as "Back to <pick>" does: the chip names it, a limit fallback ends, and
+ * the limit worker no longer answers the old stop by moving the thread off it.
+ * During a turn the pick waits for the next message.
+ */
+export function shouldSaveComposerPick(input: {
+  readonly isServerThread: boolean;
+  readonly isWorking: boolean;
+  readonly current: Pick<ModelSelection, "instanceId" | "model">;
+  readonly next: Pick<ModelSelection, "instanceId" | "model">;
+}): boolean {
+  return (
+    input.isServerThread &&
+    !input.isWorking &&
+    (input.current.instanceId !== input.next.instanceId || input.current.model !== input.next.model)
+  );
+}
+
+export async function saveThreadModel(
+  setThreadModel: (selection: ModelSelection) => Promise<AtomCommandResult<unknown, unknown>>,
+  selection: ModelSelection,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: unknown }> {
+  const result = await setThreadModel(selection);
   // An interrupted request (the view went away) is no failure to report.
   return result._tag === "Failure" && !isAtomCommandInterrupted(result)
     ? { ok: false, error: squashAtomCommandFailure(result) }

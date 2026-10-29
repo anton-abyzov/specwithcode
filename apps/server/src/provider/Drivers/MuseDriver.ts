@@ -31,6 +31,7 @@ import { makeMuseRuntime } from "../muse/MuseRuntime.ts";
 import { fromRunner } from "../../textGeneration/TextGenerationOperations.ts";
 import type { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
+import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
 
 const driver = ProviderDriverKind.make("muse");
 
@@ -55,11 +56,11 @@ export const museAdapterFlavor = (
   makeRuntime: (runtime) =>
     makeMuseRuntime({
       settings,
-      environment: {
+      environment: withGitHubSpawnEnvironment({
         ...environment,
         ...runtime.processEnvironment,
         ...runtime.agentEnvironment,
-      },
+      }),
       cwd: runtime.cwd,
       ...(runtime.resumeSessionId ? { resumeSessionId: runtime.resumeSessionId } : {}),
       runtimeMode: runtime.runtimePolicy.runtimeMode,

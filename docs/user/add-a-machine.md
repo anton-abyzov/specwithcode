@@ -279,6 +279,12 @@ two from **Settings > Project > Machines** so the coordinator finds that copy
 ([Shared projects](./shared-projects.md)). **Settings > Machines** shows each
 machine, whether this app can see it, its worker grants and its shared projects.
 
+**Give the worker GitHub.** The machine's readiness check shows its GitHub
+sign-in. With none, **Use this Mac's GitHub sign-in** copies the main machine's
+sign-in to the worker over Tailscale (never through Connect); **Sign in with a
+code instead** signs the worker's `gh` in with a one-time code. A worker that
+already has a login keeps it. See [GitHub](./source-control.md#github).
+
 **Keep SpecWithCode running on the worker.** Coordinators can only start work
 there while its app or server is running and the main machine reaches it over
 Tailscale or SpecWithCode Connect. With the

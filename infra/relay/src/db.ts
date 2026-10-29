@@ -3,7 +3,9 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle";
 import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
+import type { SQL } from "drizzle-orm";
 import type { EffectSQLiteD1Database } from "drizzle-orm/effect-d1";
+import { SQLiteDialect } from "drizzle-orm/sqlite-core";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type { SqlError } from "effect/sql/SqlError";
@@ -18,6 +20,17 @@ export class RelayDb extends Context.Service<RelayDb, RelayDatabase>()("studio-r
 export interface BatchableQuery {
   readonly toSQL: () => { readonly sql: string; readonly params: ReadonlyArray<unknown> };
 }
+
+const dialect = new SQLiteDialect();
+
+/**
+ * A hand-written statement (for example `INSERT ... SELECT ... WHERE` with a
+ * capacity condition) that `batch` can run. Use it only where the drizzle
+ * builders cannot express the statement.
+ */
+export const rawQuery = (query: SQL): BatchableQuery => ({
+  toSQL: () => dialect.sqlToQuery(query),
+});
 
 /**
  * Runs the queries as one D1 batch: a single implicit transaction that

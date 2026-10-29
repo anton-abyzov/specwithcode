@@ -122,18 +122,51 @@ describe("SpecWithCode Connect addresses", () => {
       { index: 1, label: "Mac M2", reason: expect.stringContaining("connectUrl") },
     ]);
   });
-  it("lists the Connect address with the machine", async () => {
+  it("lists Connect as primary while reporting bearer management binding separately", async () => {
+    const f = fetcher();
     const snapshot = await discoverFleet(
       parseFleetConfig(withMachine({ connectUrl: connect })),
       "127.0.0.1",
-      fetcher(),
+      f,
     );
     expect(snapshot.machines[0]).toMatchObject({
+      url: source().machines[0]!.url,
+      connectUrl: connect,
+      status: "reachable",
+      transport: "connect",
+      managementBinding: "bearer",
+    });
+    // Discovery proves the public identity, not permission to send a bearer there.
+    expect(f.mock.calls.map(([url]) => String(url))).toEqual([
+      `${connect}/.well-known/studio/environment`,
+    ]);
+    for (const [, init] of f.mock.calls)
+      expect(new Headers(init?.headers).get("authorization")).toBeNull();
+    expect(JSON.stringify(snapshot)).not.toContain(source().machines[0]!.managementToken);
+  });
+  it("lists Tailscale as fallback when Connect is unavailable without sending credentials", async () => {
+    const f = vi.fn<typeof fetch>(async (url) => {
+      if (String(url).startsWith(connect)) throw new TypeError("Connect offline");
+      return Response.json(descriptor("environment-m1"));
+    });
+    const snapshot = await discoverFleet(
+      parseFleetConfig(withMachine({ connectUrl: connect })),
+      "127.0.0.1",
+      f,
+    );
+    expect(snapshot.machines[0]).toMatchObject({
+      url: source().machines[0]!.url,
       connectUrl: connect,
       status: "reachable",
       transport: "tailnet",
       managementBinding: "bearer",
     });
+    expect(f.mock.calls.map(([url]) => String(url))).toEqual([
+      `${connect}/.well-known/studio/environment`,
+      `${source().machines[0]!.url}/.well-known/studio/environment`,
+    ]);
+    for (const [, init] of f.mock.calls)
+      expect(new Headers(init?.headers).get("authorization")).toBeNull();
   });
   it("says which address answered and whether the saved token is bound", async () => {
     const bound = `${Buffer.from(JSON.stringify({ sid: "s", jkt: "thumb" })).toString("base64url")}.sig`;

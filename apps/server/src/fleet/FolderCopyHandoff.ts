@@ -13,7 +13,12 @@ import {
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import { sha256 } from "../nodeCrypto.ts";
-import { CopyError, type DestinationRecord } from "./folderTransfer/destinationService.ts";
+import {
+  CopyError,
+  type DestinationRecord,
+  toCopyError,
+} from "./folderTransfer/destinationService.ts";
+import { SourceClientError } from "./folderTransfer/sourceClient.ts";
 import type { Plan } from "./folderTransfer/reconcile.ts";
 import {
   SourceTransferError,
@@ -46,8 +51,10 @@ const PROGRESS_STEPS: ReadonlySet<string> = new Set([
 ]);
 
 /** Maps the folder transfer services' errors to the wire error. */
-export function folderCopyError(cause: unknown): FolderCopyError {
-  if (Schema.is(FolderCopyError)(cause)) return cause;
+export function folderCopyError(failure: unknown): FolderCopyError {
+  if (Schema.is(FolderCopyError)(failure)) return failure;
+  // A source refusal that escaped unmapped would read "The copy failed. unauthorized".
+  const cause = failure instanceof SourceClientError ? toCopyError(failure) : failure;
   if (cause instanceof CopyError) {
     const detail = text(cause.message, 3000);
     return new FolderCopyError({

@@ -91,9 +91,26 @@ describe("reaching a fleet machine", () => {
     // Remembered: the next call goes straight to Connect.
     up.add(TAILNET);
     expect((await reachFleetMachine(link, target, { token: bound })).origin).toBe(CONNECT);
-    // After the TTL the tailnet is tried first again.
+    // After the TTL Connect remains primary, even when the tailnet is healthy.
     advance(FLEET_ADDRESS_TTL_MS + 1);
+    expect((await reachFleetMachine(link, target, { token: bound })).origin).toBe(CONNECT);
+  });
+
+  it("uses Connect first and recovers from a tailnet fallback after network change", async () => {
+    const up = new Set([TAILNET]);
+    const f = network(up);
+    const { link, key, advance } = await boundLink(f);
+    const bound = token(key.thumbprint);
     expect((await reachFleetMachine(link, target, { token: bound })).origin).toBe(TAILNET);
+    expect(String(f.mock.calls[0]![0])).toBe(`${CONNECT}/.well-known/studio/environment`);
+    up.add(CONNECT);
+    advance(FLEET_ADDRESS_TTL_MS + 1);
+    expect((await reachFleetMachine(link, target, { token: bound })).origin).toBe(CONNECT);
+    up.delete(CONNECT);
+    expect(
+      (await fleetRequest(link, target, "/api/auth/session", { token: bound, idempotent: true }))
+        .address.origin,
+    ).toBe(TAILNET);
   });
 
   it("never contacts Connect with an unbound token: connect-unbound", async () => {
@@ -150,7 +167,7 @@ describe("reaching a fleet machine", () => {
     // ...but cannot keep it past the TTL counted from its identity check.
     advance(FLEET_ADDRESS_TTL_MS - 4 * 60_000);
     const { address } = await fleetRequest(link, target, "/api/auth/session", { token: bound });
-    expect(address.origin).toBe(TAILNET);
+    expect(address.origin).toBe(CONNECT);
     expect(identityChecks()).toBe(first + 1);
   });
 
@@ -179,7 +196,7 @@ describe("reaching a fleet machine", () => {
       if (!up.has(where.origin)) throw new TypeError("offline");
       if (where.pathname === "/.well-known/studio/environment")
         return Response.json(descriptor("env-m1"));
-      if (where.origin === TAILNET) {
+      if (where.origin === CONNECT) {
         posts += 1;
         throw new TypeError("connection reset");
       }
@@ -191,12 +208,12 @@ describe("reaching a fleet machine", () => {
       fleetRequest(link, target, "/api/x", { method: "POST", token: bound }),
     ).rejects.toMatchObject({ kind: "unreachable" });
     expect(posts).toBe(1);
-    expect(f.mock.calls.some(([url]) => String(url) === `${CONNECT}/api/x`)).toBe(false);
+    expect(f.mock.calls.some(([url]) => String(url) === `${TAILNET}/api/x`)).toBe(false);
     const { address } = await fleetRequest(link, target, "/api/x", {
       token: bound,
       idempotent: true,
     });
-    expect(address.origin).toBe(CONNECT);
+    expect(address.origin).toBe(TAILNET);
   });
 
   it("builds headers only for the address they go to", async () => {

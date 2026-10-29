@@ -216,6 +216,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
   /** Server answers provision.preview and provision.run (Settings > Connections > Provision). */
   machineProvision: Schema.optionalKey(Schema.Boolean),
+  /** Server answers gitHubSignIn.* (sign its gh in from another device). Absent on older
+      servers, where clients keep the `gh auth login` hint instead. */
+  gitHubSignIn: Schema.optionalKey(Schema.Boolean),
+  /** Server answers gitHubCredential.* (shows its GitHub access, copies its sign-in to a fleet
+      machine, stores and removes one copied in). Older servers hide the copy option. */
+  gitHubCredentialCopy: Schema.optionalKey(Schema.Boolean),
   /** Server can durably mark running provider turns before a self-update and
       continue them after the replacement process starts. */
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),

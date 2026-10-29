@@ -15,6 +15,8 @@ import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPla
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
 import { provisionRpcs } from "./provision.ts";
+import { GITHUB_SIGN_IN_RPC_METHODS, gitHubSignInRpcs } from "./gitHubSignIn.ts";
+import { GITHUB_CREDENTIAL_RPC_METHODS, gitHubCredentialRpcs } from "./gitHubCredentialCopy.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
 import { BROWSER_EXTENSION_RPC_METHODS, browserExtensionRpcs } from "./browserExtension.ts";
 import { COMPUTER_USE_RPC_METHODS, computerUseRpcs } from "./computerUse.ts";
@@ -418,6 +420,8 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 export const WS_METHODS = {
   ...PROJECT_WORKSPACE_RPC_METHODS,
   ...MACHINE_HANDOFF_RPC_METHODS,
+  ...GITHUB_SIGN_IN_RPC_METHODS,
+  ...GITHUB_CREDENTIAL_RPC_METHODS,
   ...PROJECT_LINK_RPC_METHODS,
   ...LINKED_MEMORY_RPC_METHODS,
   ...HANDOFF_MODE_RPC_METHODS,
@@ -2321,6 +2325,12 @@ export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
   RpcScopeAuthorization,
 );
 
+/** Signing this machine's gh in from another device; its own group for the same depth reason. */
+export const WsGitHubSignInRpcGroup = RpcGroup.make(
+  ...gitHubSignInRpcs,
+  ...gitHubCredentialRpcs,
+).middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2338,5 +2348,6 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsHandoffModeRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
   .merge(WsProvisionRpcGroup)
+  .merge(WsGitHubSignInRpcGroup)
   .merge(WsDesignRpcGroup)
   .merge(WsDesignSystemImportRpcGroup);

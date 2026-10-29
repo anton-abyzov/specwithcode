@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  connectFreeTunnelLimitConfig,
+  globalManagedTunnelCapConfig,
   legacyManagedEndpointCleanupModeConfig,
   legacyTunnelGraceMinutesConfig,
   managedEndpointCleanupModeConfig,
@@ -71,6 +73,39 @@ it.effect.each(["0", "-10"])("rejects a grace override of %s minutes", (value) =
     const error = yield* Effect.flip(
       legacyTunnelGraceMinutesConfig.parse(
         ConfigProvider.fromEnv({ env: { RELAY_LEGACY_TUNNEL_GRACE_MINUTES: value } }),
+      ),
+    );
+    expect(error._tag).toBe("ConfigError");
+  }),
+);
+
+it.effect.each([
+  { name: "missing", env: {}, free: 3, cap: undefined },
+  {
+    name: "blank",
+    env: { RELAY_CONNECT_FREE_TUNNEL_LIMIT: " ", RELAY_GLOBAL_MANAGED_TUNNEL_CAP: "" },
+    free: 3,
+    cap: undefined,
+  },
+  {
+    name: "set",
+    env: { RELAY_CONNECT_FREE_TUNNEL_LIMIT: "5", RELAY_GLOBAL_MANAGED_TUNNEL_CAP: "180" },
+    free: 5,
+    cap: 180,
+  },
+] as const)("loads $name Connect limits", ({ env, free, cap }) =>
+  Effect.gen(function* () {
+    const provider = ConfigProvider.fromEnv({ env });
+    expect(yield* connectFreeTunnelLimitConfig.parse(provider)).toBe(free);
+    expect(yield* globalManagedTunnelCapConfig.parse(provider)).toBe(cap);
+  }),
+);
+
+it.effect.each(["0", "-1", "2.5", "many"])("rejects a global tunnel cap of %s", (value) =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(
+      globalManagedTunnelCapConfig.parse(
+        ConfigProvider.fromEnv({ env: { RELAY_GLOBAL_MANAGED_TUNNEL_CAP: value } }),
       ),
     );
     expect(error._tag).toBe("ConfigError");

@@ -4,7 +4,7 @@ import {
   resolveVisibleWorktreeSetup,
 } from "./ChatView.logic";
 import { environmentUnavailableBanner, environmentWaitsForReconnectGrace } from "./ChatView.logic";
-import { switchThreadBackToPick } from "./ChatView.logic";
+import { shouldSaveComposerPick, switchThreadBackToPick } from "./ChatView.logic";
 import { threadModelIdentity } from "@specweave-studio/shared/threadModelIdentity";
 import * as Cause from "effect/Cause";
 import {
@@ -2385,5 +2385,38 @@ describe("switchThreadBackToPick", () => {
       setThreadModel: async () => AsyncResult.failure(Cause.interrupt()),
     });
     expect(outcome).toEqual({ ok: true });
+  });
+});
+
+describe("shouldSaveComposerPick", () => {
+  const opus = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+  const flash = { instanceId: ProviderInstanceId.make("deepseek"), model: "deepseek-v4.1-flash" };
+
+  it("saves a different model on an idle saved thread", () => {
+    expect(
+      shouldSaveComposerPick({
+        isServerThread: true,
+        isWorking: false,
+        current: flash,
+        next: opus,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves the pick for the next message during a turn, on a draft, or when nothing changed", () => {
+    expect(
+      shouldSaveComposerPick({ isServerThread: true, isWorking: true, current: flash, next: opus }),
+    ).toBe(false);
+    expect(
+      shouldSaveComposerPick({
+        isServerThread: false,
+        isWorking: false,
+        current: flash,
+        next: opus,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSaveComposerPick({ isServerThread: true, isWorking: false, current: opus, next: opus }),
+    ).toBe(false);
   });
 });

@@ -75,17 +75,19 @@ describe("serviceInstallInProgress", () => {
   });
 
   describe("after the agent stopped waiting", () => {
+    // Past the agent's wait, inside the hard limit.
+    const PAST_WINDOW_MS = SERVICE_INSTALL_WINDOW_MS + 5 * 60_000;
     const late = (ageMs: number, receipt: string = RECEIPT) => ({
       ...marker({ version: "1.0.7", receipt, at: iso(NOW - ageMs) }),
       [RECEIPT]: JSON.stringify({ phase: "restart-requested", helperPid: 4242 }),
     });
 
     it("holds while the helper named in its receipt still runs", () => {
-      expect(serviceInstallInProgress(HOME, NOW, io(late(20 * 60_000), [4242]))).toBe(true);
+      expect(serviceInstallInProgress(HOME, NOW, io(late(PAST_WINDOW_MS), [4242]))).toBe(true);
     });
 
     it("lets go once that helper exits", () => {
-      expect(serviceInstallInProgress(HOME, NOW, io(late(20 * 60_000), []))).toBe(false);
+      expect(serviceInstallInProgress(HOME, NOW, io(late(PAST_WINDOW_MS), []))).toBe(false);
     });
 
     it("never trusts a live pid past the hard limit", () => {
@@ -97,28 +99,28 @@ describe("serviceInstallInProgress", () => {
     it("reads only a receipt kept for this home", () => {
       const elsewhere = "/home/other/updates/receipts/update-1.0.7.json";
       const files = {
-        ...late(20 * 60_000, elsewhere),
+        ...late(PAST_WINDOW_MS, elsewhere),
         [elsewhere]: JSON.stringify({ helperPid: 4242 }),
       };
       expect(serviceInstallInProgress(HOME, NOW, io(files, [4242]))).toBe(false);
       const traversal = "/home/m4/updates/receipts/../../../other/x.json";
-      expect(serviceInstallInProgress(HOME, NOW, io(late(20 * 60_000, traversal), [4242]))).toBe(
+      expect(serviceInstallInProgress(HOME, NOW, io(late(PAST_WINDOW_MS, traversal), [4242]))).toBe(
         false,
       );
     });
 
     it("needs a helper pid from an older helper's receipt", () => {
-      const files = { ...late(20 * 60_000), [RECEIPT]: JSON.stringify({ phase: "prepared" }) };
+      const files = { ...late(PAST_WINDOW_MS), [RECEIPT]: JSON.stringify({ phase: "prepared" }) };
       expect(serviceInstallInProgress(HOME, NOW, io(files, [4242]))).toBe(false);
     });
 
     it("never counts this process or a missing receipt", () => {
       const own = {
-        ...late(20 * 60_000),
+        ...late(PAST_WINDOW_MS),
         [RECEIPT]: JSON.stringify({ helperPid: process.pid }),
       };
       expect(serviceInstallInProgress(HOME, NOW, io(own, [process.pid]))).toBe(false);
-      const missing = marker({ receipt: RECEIPT, at: iso(NOW - 20 * 60_000) });
+      const missing = marker({ receipt: RECEIPT, at: iso(NOW - PAST_WINDOW_MS) });
       expect(serviceInstallInProgress(HOME, NOW, io(missing, [4242]))).toBe(false);
     });
   });

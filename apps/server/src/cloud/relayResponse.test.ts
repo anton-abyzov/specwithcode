@@ -58,6 +58,25 @@ it.effect("reports the tunnel limit and relay trace instead of a generic 403", (
   }),
 );
 
+it.effect("tells a full service apart from a full account", () =>
+  Effect.gen(function* () {
+    const error = yield* filterRelayResponse(
+      response(403, {
+        _tag: "RelayEnvironmentLinkLimitExceededError",
+        code: "environment_link_limit_exceeded",
+        maxTunnels: 3,
+        reason: "service_capacity",
+        traceId: "trace-capacity",
+      }),
+    ).pipe(Effect.mapError(relayRequestError), Effect.flip);
+
+    expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "forbidden" });
+    expect(error.message).toContain("at capacity");
+    expect(error.message).not.toContain("Unlink an unused environment");
+    expect(error.message).toContain("Trace ID: trace-capacity");
+  }),
+);
+
 it.effect("makes revoked authorization actionable and non-retryable", () =>
   Effect.gen(function* () {
     const error = yield* filterRelayResponse(

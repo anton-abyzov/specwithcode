@@ -57,6 +57,10 @@ import {
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "./AcpAdapterV2.ts";
+import {
+  hasGitHubSpawnToken,
+  withGitHubSpawnEnvironment,
+} from "../../sourceControl/gitHubSpawnEnvironment.ts";
 
 export const ACP_REGISTRY_PROVIDER = ProviderDriverKind.make("acpRegistry");
 export const ACP_REGISTRY_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(ACP_REGISTRY_PROVIDER);
@@ -254,12 +258,19 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
+          // GitHub access is resolved per spawn, so a copy or removal reaches the next session.
           spawn:
-            processEnvironment === undefined && agentEnvironment === undefined
+            processEnvironment === undefined &&
+            agentEnvironment === undefined &&
+            !hasGitHubSpawnToken()
               ? spawn
               : {
                   ...spawn,
-                  env: { ...spawn.env, ...processEnvironment, ...agentEnvironment },
+                  env: withGitHubSpawnEnvironment({
+                    ...spawn.env,
+                    ...processEnvironment,
+                    ...agentEnvironment,
+                  }),
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
         }).pipe(

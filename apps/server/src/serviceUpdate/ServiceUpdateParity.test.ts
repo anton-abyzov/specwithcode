@@ -115,13 +115,27 @@ it.effect("reads the request and the agent's answer where the update agent keeps
     };
     assert.equal(seconds("SNAPSHOT_TIMEOUT"), Hold.AGENT_SNAPSHOT_TIMEOUT_MS);
     assert.equal(seconds("RETRY_SECONDS"), Hold.AGENT_RETRY_MS);
+    assert.equal(seconds("APPLY_TIMEOUT"), Hold.AGENT_APPLY_TIMEOUT_MS);
+    // An install can begin as late as a snapshot started at the end of the forced retry
+    // window; the helper may refuse right before its restart (APPLY_TIMEOUT less update.py's
+    // 720 s restart reserve, since M4's 902 s pre-restart refused under 25 min), and its
+    // retry window, snapshot and whole second install follow: the hold must outlast all of it.
     assert.isAtMost(
-      15 * 60_000 + seconds("APPLY_TIMEOUT"),
+      15 * 60_000 +
+        seconds("SNAPSHOT_TIMEOUT") +
+        (seconds("APPLY_TIMEOUT") - 720_000) +
+        Hold.AGENT_APPLY_RETRY_WINDOW_MS +
+        seconds("SNAPSHOT_TIMEOUT") +
+        seconds("APPLY_TIMEOUT"),
       Hold.HOLD_MAX_MS,
-      "the ceiling covers the retry window and one install",
+      "the ceiling covers the retry window, a refused install, its retry and one whole install",
     );
     assert.include(source, "FORCE_WINDOW = datetime.timedelta(minutes=15)");
-    assert.include(source, `'${Hold.AGENT_APPLY_RETRY_MESSAGE}'`);
+    assert.include(
+      source,
+      `APPLY_RETRY_WINDOW = datetime.timedelta(minutes=${Hold.AGENT_APPLY_RETRY_WINDOW_MS / 60_000})`,
+    );
+    assert.include(source, `APPLY_RETRY_MESSAGE = '${Hold.AGENT_APPLY_RETRY_MESSAGE}'`);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

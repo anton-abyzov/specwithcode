@@ -738,7 +738,8 @@ it("shows the parent's own visible status as parent and child activity change", 
     renderer.root
       .findAll((node) => typeof node.type === "string" && node.props.className !== "sr-only")
       .flatMap((node) => node.children.filter((child) => typeof child === "string"))
-      .join(" ");
+      .join(" ")
+      .replace(/\s+/g, " ");
   expect(visibleText()).toContain("Parent conversation");
   expect(visibleText()).toContain("Running");
   state.shells = shells(
@@ -796,7 +797,8 @@ it.each(["source", "target"])(
       const visibleText = renderer.root
         .findAll((node) => typeof node.type === "string")
         .flatMap((node) => node.children.filter((child) => typeof child === "string"))
-        .join(" ");
+        .join(" ")
+        .replace(/\s+/g, " ");
       expect(visibleText).toContain(
         currentThreadId === "source" ? "target conversation" : "source conversation",
       );
@@ -806,3 +808,54 @@ it.each(["source", "target"])(
     }
   },
 );
+
+it("keeps the end of look-alike agent names visible and marks failures", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const agent = (round: number, status: string) => ({
+    id: `agent-r${round}`,
+    driver: "codex",
+    providerInstanceId: "codex",
+    childThreadId: `child-r${round}`,
+    origin: "provider_native",
+    title: `/root/review_copy_recovery_r${round}`,
+    prompt: "",
+    model: "gpt-6.1-sol",
+    status,
+    progress: null,
+    result: null,
+    startedAt: DateTime.makeUnsafe("2026-10-28T04:00:00Z"),
+    completedAt: DateTime.makeUnsafe("2026-10-28T04:03:00Z"),
+    updatedAt: DateTime.makeUnsafe("2026-10-28T04:03:00Z"),
+  });
+  state.projection = {
+    thread: { id: "parent", lineage: { relationshipToParent: null }, activeProviderThreadId: null },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [agent(10, "failed"), agent(11, "completed")],
+  };
+  await act(async () => {
+    renderer = create(
+      <ThreadRelationshipsPanel
+        environmentId={EnvironmentId.make("test")}
+        threadId={ThreadId.make("parent")}
+      />,
+    );
+  });
+  await act(async () =>
+    renderer.root.findByProps({ "aria-expanded": false, type: "button" }).props.onClick(),
+  );
+  const spans = renderer.root.findAll((node) => node.type === "span");
+  const tail = (round: string) =>
+    spans.find((node) => node.children.join("") === ` ${round}`)?.props.className;
+  const head = spans.filter((node) => node.children.join("") === "Review Copy Recovery");
+  expect(head).toHaveLength(2);
+  expect(head.every((node) => String(node.props.className).includes("truncate"))).toBe(true);
+  expect(tail("R10")).toContain("shrink-0");
+  expect(tail("R11")).toContain("shrink-0");
+  const failed = spans.find((node) => node.children.join("") === "Failed");
+  expect(failed?.props.className).toContain("text-destructive-foreground");
+  const done = spans.find((node) => node.children.join("") === "Done");
+  expect(done?.props.className).not.toContain("text-destructive-foreground");
+});

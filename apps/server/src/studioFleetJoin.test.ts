@@ -271,6 +271,46 @@ describe("adding machines to the fleet file", () => {
         );
     });
 
+    it("keeps the pinned machine's tailnet fallback when refreshing through Connect only", async () => {
+      const baseDir = await home();
+      await NodeFSP.writeFile(
+        join(baseDir, "studio-fleet.json"),
+        JSON.stringify({
+          version: 1,
+          machines: [
+            {
+              id: "m1",
+              label: "Kept nickname",
+              url: tailnet,
+              environmentId: "environment-m1",
+              managementToken: "old-token",
+              scopes: [...AuthStandardClientScopes],
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      );
+      const result = await addFleetMachine({
+        baseDir,
+        code: v2({ url: connect, connectUrl: undefined }),
+        link: machine([connect]),
+        localEnvironmentId: "environment-primary",
+      });
+      expect(result).toMatchObject({
+        id: "m1",
+        url: tailnet,
+        connectUrl: connect,
+        change: "updated",
+      });
+      expect((await readFleetConfig(baseDir))?.machines[0]).toMatchObject({
+        id: "m1",
+        label: "Kept nickname",
+        url: tailnet,
+        connectUrl: connect,
+        scopes: [...AuthStandardClientScopes],
+      });
+    });
+
     it("says a used line is used, and writes no machine", async () => {
       const baseDir = await home();
       const f = machine([tailnet], () => new Response("{}", { status: 401 }));

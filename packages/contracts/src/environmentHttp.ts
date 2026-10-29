@@ -532,6 +532,27 @@ export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedError
     });
   }
 }
+/**
+ * Refused because the service is held for an update: a write the update's
+ * guarded prestate compares exactly (a pairing grant) waits for the restart.
+ * `retryAfterSeconds` says when to send it again.
+ */
+export class EnvironmentServiceUpdateInProgressError extends Schema.TaggedError<EnvironmentServiceUpdateInProgressError>()(
+  "EnvironmentServiceUpdateInProgressError",
+  {
+    code: Schema.Literal("update_in_progress"),
+    message: Schema.String,
+    retryAfterSeconds: Schema.Int,
+  },
+  { httpApiStatus: 503 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentServiceUpdateInProgressError)(this, {
+      status: 503,
+      headers: { "retry-after": String(this.retryAfterSeconds) },
+    });
+  }
+}
 const EnvironmentSessionCreationErrors = [
   EnvironmentAuthInvalidError,
   EnvironmentInternalError,
@@ -547,6 +568,7 @@ const EnvironmentScopedOperationErrors = [
 ] as const;
 const EnvironmentPairingCredentialErrors = [
   EnvironmentRequestInvalidError,
+  EnvironmentServiceUpdateInProgressError,
   ...EnvironmentScopedOperationErrors,
 ] as const;
 const EnvironmentSessionRevokeErrors = [

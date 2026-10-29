@@ -27,6 +27,8 @@ export interface ProviderFallbackRule {
   readonly providerLimitFallbackModelSelection: ModelSelection | null;
   /** The models to continue on, best first; empty uses the single model above. */
   readonly providerLimitFallbackModels?: ReadonlyArray<ModelSelection> | undefined;
+  /** A non-empty order is the whole chain: nothing past it takes the thread. */
+  readonly providerLimitFallbackListOnly?: boolean | undefined;
   /** Models never continued on automatically (see `isExcludedFallbackModel`). */
   readonly providerLimitExcludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly providerLimitSwitchAtPercent: number | null;
@@ -703,6 +705,7 @@ function resolveProviderFallbackPass(input: {
     ProviderFallbackRule,
     | "providerLimitFallbackModelSelection"
     | "providerLimitFallbackModels"
+    | "providerLimitFallbackListOnly"
     | "providerLimitExcludedModels"
     | "defaultModelSelection"
     | "defaultModelProviders"
@@ -798,11 +801,16 @@ function resolveProviderFallbackPass(input: {
   // A fallback order the user set comes first: it is the strongest statement
   // of intent. The legacy single model keeps its old place, after the same
   // model elsewhere and ahead of the project default.
-  const explicitOrder = (input.rule.providerLimitFallbackModels?.length ?? 0) > 0;
+  // "Only these models" makes even the legacy single model the whole chain.
+  const listOnly =
+    input.rule.providerLimitFallbackListOnly === true && fallbackModelOrder(input.rule).length > 0;
+  const explicitOrder = (input.rule.providerLimitFallbackModels?.length ?? 0) > 0 || listOnly;
   const legacyOnly = !explicitOrder && fallbackModelOrder(input.rule).length > 0;
   if (explicitOrder) {
     const ordered = firstAvailable();
     if (ordered !== undefined) return ordered;
+    // The user said this list is the whole chain: past it the thread waits.
+    if (listOnly) return null;
   }
   const same =
     input.currentModel === undefined
@@ -1089,6 +1097,7 @@ export function resolveWorkerLaunchSelection(input: {
     rule: {
       providerLimitFallbackModelSelection: input.rule.providerLimitFallbackModelSelection,
       providerLimitFallbackModels: input.rule.providerLimitFallbackModels,
+      providerLimitFallbackListOnly: input.rule.providerLimitFallbackListOnly,
       providerLimitExcludedModels: input.rule.providerLimitExcludedModels,
       defaultModelSelection: null,
       defaultModelProviders: input.rule.defaultModelProviders,

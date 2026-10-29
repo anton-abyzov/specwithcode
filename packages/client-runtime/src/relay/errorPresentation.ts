@@ -58,7 +58,9 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
     case "RelayEnvironmentLinkUnavailableError":
       return `Relay cannot provision the managed endpoint (${error.reason}).`;
     case "RelayEnvironmentLinkLimitExceededError":
-      return `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
+      return error.reason === "service_capacity"
+        ? "SpecWithCode Connect is at capacity and is not accepting new machines right now. Machines already linked keep working. Try again later."
+        : `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
     case "RelayAgentActivityPublishProofExpiredError":
       return "Relay rejected an expired agent activity publish proof.";
     case "RelayAgentActivityPublishProofInvalidError":

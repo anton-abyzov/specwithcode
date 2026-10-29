@@ -55,7 +55,7 @@ export const ProjectMemoryToolkit = Toolkit.make(
   Tool.make("studio_project_memory_write", {
     ...shared,
     description:
-      "Save durable project facts or decisions. Keep one file per subject and update it instead of adding a dated copy; name new files <type>_<topic>.md, where type is project, reference, feedback, decision or user. To change an existing file, pass expectedRevision from studio_project_memory_list or the latest read; omit it to create a new file. A conflict names the current revision: reread, merge and write again. Never store secrets. Thread credentials can write only their own project.",
+      "Save durable project facts or decisions. Keep one file per subject and update it instead of adding a dated copy. Memory is not a run log: a run's status, receipts, evidence paths, SHAs and counts go in your report, and a thread cannot create a file with a date in its name or a pile of local paths. Name new files <type>_<topic>.md, where type is project, reference, feedback, decision or user. To change an existing file, pass expectedRevision from studio_project_memory_list or the latest read; omit it to create a new file. A conflict names the current revision: reread, merge and write again. Never store secrets. Thread credentials can write only their own project.",
     parameters: Schema.Struct({
       ...ProjectMemoryWriteInput.fields,
       projectId: Schema.optional(ProjectId),

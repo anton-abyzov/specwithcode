@@ -45,14 +45,27 @@ export interface GhResult {
   readonly code: number | null;
   readonly stdout: string;
   readonly missing: boolean;
+  readonly stderr?: string;
 }
+
+/**
+ * gh rejected `--json` on `auth status`: it exited with a code and named the flag.
+ * A timeout (no exit code) or any other unreadable answer is not "too old".
+ */
+export const ghTooOldForJson = (result: GhResult): boolean =>
+  result.code !== null &&
+  result.code !== 0 &&
+  /unknown (?:flag|shorthand flag)[^\n]*json/i.test(result.stderr ?? "");
 
 /** Collapses anything that looks like a credential in tool output before it is shown. */
 export function scrubDetail(text: string): string {
   return text
     .replace(/(https?:\/\/)[^\s/@]+@/g, "$1")
     .replace(/\b(gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})\b/g, "[redacted]")
-    .replace(/\b(token|password|secret)[=:]\s*\S+/gi, "$1=[redacted]")
+    .replace(
+      /\b((?:gh|github)(?:_enterprise)?_token|token|password|secret)[=:]\s*\S+/gi,
+      "$1=[redacted]",
+    )
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
@@ -61,17 +74,19 @@ export function scrubDetail(text: string): string {
     .slice(0, 1000);
 }
 
-function runGh(env: NodeJS.ProcessEnv): Promise<GhResult> {
+/** `gh auth status --json hosts` with prompts off; `missing` when gh is not on PATH. */
+export function runGhAuthStatus(env: NodeJS.ProcessEnv): Promise<GhResult> {
   return new Promise((resolve) => {
     NodeChildProcess.execFile(
       "gh",
       ["auth", "status", "--json", "hosts"],
       { env: { ...env, GH_PROMPT_DISABLED: "1", NO_COLOR: "1" }, timeout: 15_000 },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         const code = (error as NodeJS.ErrnoException | null)?.code;
         resolve({
           code: error ? (typeof code === "number" ? code : null) : 0,
           stdout: String(stdout),
+          stderr: String(stderr).slice(0, 4000),
           missing: code === "ENOENT",
         });
       },
@@ -87,20 +102,32 @@ export async function gitHubReadiness(
   if (result.missing) return { status: "not-installed", accounts: [], detail: null };
   const parsed = parseGitHubAuthStatus(result.stdout);
   if (!parsed.parsed)
-    return {
-      status: "unknown",
-      accounts: [],
-      detail: "This gh is too old to report its sign-in; update it, then check again.",
-    };
+    return ghTooOldForJson(result)
+      ? {
+          status: "unknown",
+          accounts: [],
+          detail: "This gh is too old to report its sign-in; update it, then check again.",
+          outdated: true,
+        }
+      : {
+          status: "unknown",
+          accounts: [],
+          detail:
+            result.code === null
+              ? "gh did not answer in time; check again."
+              : "gh could not report its sign-in; check again.",
+        };
   const accounts = parsed.accounts
     .filter((account) => account.authenticated)
     .map((account) => ({ host: account.host, login: account.account }));
   if (accounts.length > 0) return { status: "signed-in", accounts, detail: null };
   const failed = parsed.accounts.find((account) => account.error);
+  const heldHosts = [...new Set(parsed.accounts.map((account) => account.host))];
   return {
     status: "signed-out",
     accounts: [],
     detail: failed?.error ? scrubDetail(failed.error) : null,
+    ...(heldHosts.length > 0 ? { heldHosts } : {}),
   };
 }
 
@@ -297,7 +324,7 @@ async function forEachLimited<T, R>(
 
 export async function checkMachineReadiness(options: ReadinessOptions): Promise<MachineReadiness> {
   const env = options.env ?? process.env;
-  const github = await gitHubReadiness(options.ghAuthStatus ?? (() => runGh(env)));
+  const github = await gitHubReadiness(options.ghAuthStatus ?? (() => runGhAuthStatus(env)));
   let repositories: Array<MachineReadinessRepository> = [];
   let truncated = false;
   if (options.folder) {

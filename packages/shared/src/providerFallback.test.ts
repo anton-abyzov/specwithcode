@@ -1680,6 +1680,46 @@ describe("the user's fallback order", () => {
     ).toEqual(astra);
   });
 
+  it("stops at the end of the order when only those models may take the thread", () => {
+    const input = {
+      providers: [opus, codexModels(100, 100), copilot],
+      currentInstanceId: opus.instanceId,
+      currentModel: "claude-opus-5-5",
+      nowMs: now,
+      belowPercent: 95,
+      anyReady: true,
+    };
+    const onlyAstra = { ...rule, providerLimitFallbackModels: [astra] };
+    // Past the order, the same model elsewhere takes the thread.
+    expect(resolveProviderFallback({ ...input, rule: onlyAstra })).not.toBeNull();
+    expect(
+      resolveProviderFallback({
+        ...input,
+        rule: { ...onlyAstra, providerLimitFallbackListOnly: true },
+      }),
+    ).toBeNull();
+    // The legacy single model counts as the whole chain too.
+    expect(
+      resolveProviderFallback({
+        ...input,
+        rule: {
+          ...rule,
+          providerLimitFallbackModels: [],
+          providerLimitFallbackModelSelection: astra,
+          providerLimitFallbackListOnly: true,
+        },
+      }),
+    ).toBeNull();
+    // An entry with room still takes it.
+    expect(
+      resolveProviderFallback({
+        ...input,
+        providers: [opus, codexModels(20, 30), copilot],
+        rule: { ...onlyAstra, providerLimitFallbackListOnly: true },
+      }),
+    ).toEqual(astra);
+  });
+
   it("takes the next entry when the first one's own window is full", () => {
     const providers = [opus, codexModels(20, 100), copilot];
     expect(

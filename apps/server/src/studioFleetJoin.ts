@@ -347,10 +347,18 @@ export async function addFleetMachine(input: {
     const previous = machines[index]!;
     const previousUrl = new URL(String(previous.url)).origin;
     const { connectUrl: _previousConnect, ...kept } = previous;
+    // A Connect-only refresh upgrades the credential without throwing away
+    // this same pinned machine's existing private fallback address.
+    const keepTailnet =
+      connectUrl === undefined &&
+      parseFleetOrigin(invite.url)?.transport === "connect" &&
+      parseFleetOrigin(previousUrl)?.transport === "tailnet";
+    const savedUrl = keepTailnet ? previousUrl : invite.url;
+    const savedConnectUrl = keepTailnet ? invite.url : connectUrl;
     const next: Record<string, unknown> = {
       ...kept,
-      url: invite.url,
-      ...(connectUrl === undefined ? {} : { connectUrl }),
+      url: savedUrl,
+      ...(savedConnectUrl === undefined ? {} : { connectUrl: savedConnectUrl }),
       managementToken,
       ...(input.label === undefined ? {} : { label }),
     };
@@ -358,11 +366,11 @@ export async function addFleetMachine(input: {
     result = {
       id: String(next.id),
       label: String(next.label),
-      url: invite.url,
-      ...(connectUrl === undefined ? {} : { connectUrl }),
+      url: savedUrl,
+      ...(savedConnectUrl === undefined ? {} : { connectUrl: savedConnectUrl }),
       environmentId,
       change: "updated",
-      ...(previousUrl === invite.url ? {} : { previousUrl }),
+      ...(previousUrl === savedUrl ? {} : { previousUrl }),
     };
   } else {
     const id = input.id ?? fleetMachineIdFor(label, taken);

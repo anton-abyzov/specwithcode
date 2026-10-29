@@ -438,6 +438,39 @@ describe("providerLimitStep", () => {
     ).not.toBe("resume-api");
   });
 
+  it("leaves a stopped thread on a model a person picked after the stop", () => {
+    const stoppedRun = { providerInstanceId: claudeId, modelSelection: limited.modelSelection };
+    // Untouched since the stop: the rule continues it on the fallback.
+    expect(
+      providerLimitStep(limited, [claudeFull, codexFree], rule, now, {
+        resetAttempted: false,
+        stoppedRun,
+      })?.type,
+    ).toBe("switch");
+    // Picked another model on another account: the next message runs the pick.
+    const picked = {
+      ...limited,
+      providerInstanceId: codexId,
+      modelSelection: { instanceId: codexId, model: "gpt-6" },
+    };
+    expect(
+      providerLimitStep(picked, [claudeFull, codexFree], rule, now, {
+        resetAttempted: false,
+        stoppedRun,
+      }),
+    ).toBeNull();
+    // Another model on the same account counts as a pick too.
+    expect(
+      providerLimitStep(
+        { ...limited, modelSelection: { instanceId: claudeId, model: "sonnet" } },
+        [claudeFull, codexFree],
+        rule,
+        now,
+        { resetAttempted: false, stoppedRun },
+      ),
+    ).toBeNull();
+  });
+
   it("redeems a banked reset before anything else, once per stopped run", () => {
     const rule2 = { ...rule, providerLimitRedeemResets: true };
     const step = providerLimitStep(limited, [banked, codexFree], rule2, now, {

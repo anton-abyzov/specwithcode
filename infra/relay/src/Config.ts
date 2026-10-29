@@ -47,6 +47,36 @@ export const legacyTunnelGraceMinutesConfig = Config.option(
   ),
 );
 
+const decodePositiveInteger = Schema.decodeUnknownEffect(
+  Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThan(0))),
+);
+
+// Unset GitHub variables reach the deploy as empty strings, so blank means unset.
+const optionalPositiveIntegerConfig = (name: string) =>
+  Config.String(name).pipe(
+    Config.withDefault(""),
+    Config.mapEffect((raw) => {
+      const value = raw.trim();
+      return value === ""
+        ? Effect.succeed(undefined)
+        : decodePositiveInteger(value).pipe(
+            Effect.mapError((error) => new Config.ConfigError(error)),
+          );
+    }),
+  );
+
+/** Managed machines an account without an override or founder seat may link. */
+export const DEFAULT_CONNECT_FREE_TUNNEL_LIMIT = 3;
+
+export const connectFreeTunnelLimitConfig = optionalPositiveIntegerConfig(
+  "RELAY_CONNECT_FREE_TUNNEL_LIMIT",
+).pipe(Config.map((value) => value ?? DEFAULT_CONNECT_FREE_TUNNEL_LIMIT));
+
+/** Total managed machines across all accounts; unset means no global cap. */
+export const globalManagedTunnelCapConfig = optionalPositiveIntegerConfig(
+  "RELAY_GLOBAL_MANAGED_TUNNEL_CAP",
+);
+
 export interface ApnsCredentials {
   readonly teamId: string;
   readonly keyId: string;
@@ -73,6 +103,10 @@ export class RelayConfiguration extends Context.Service<
     readonly legacyManagedEndpointCleanupMode?: ManagedEndpointCleanupMode;
     /** Canary-only override of the legacy grace period; ignored on prod. */
     readonly legacyTunnelGraceMinutes?: number;
+    /** Managed machines for accounts without an override or founder seat. Default 3. */
+    readonly connectFreeTunnelLimit?: number;
+    /** New managed machine allocations stop at this total. Unset means no cap. */
+    readonly globalManagedTunnelCap?: number;
   }
 >()("studio-relay/Config/RelayConfiguration") {}
 

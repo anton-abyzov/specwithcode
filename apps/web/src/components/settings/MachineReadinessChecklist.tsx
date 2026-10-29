@@ -5,6 +5,7 @@ import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
+  type GitHubCredentialState,
   type MachineReadiness,
   type ProjectId,
   type ServerProvider,
@@ -17,6 +18,7 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { cliOfDriver, providerLabel } from "../../studio/projectUsageModel";
 import { useCoordinatorProvider } from "../../studio/useCoordinatorProvider";
 import { Button } from "../ui/button";
+import { GitHubCredentialCard, useGitHubCredentialCardAvailable } from "./GitHubCredentialCard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 
 const providerName = (provider: ServerProvider) =>
@@ -131,10 +133,14 @@ export function MachineReadinessChecklist({
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const gitHubCardAvailable = useGitHubCredentialCardAvailable(environmentId);
   const [report, setReport] = useState<MachineReadiness | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [signingIn, setSigningIn] = useState<string | null>(null);
+  // What SpecWithCode uses there for GitHub, from the card; a saved, copied or variable
+  // token signs SpecWithCode in even while gh itself is not.
+  const [gitHubAccess, setGitHubAccess] = useState<GitHubCredentialState | null>(null);
   const started = useRef(false);
 
   const run = useCallback(async () => {
@@ -171,6 +177,31 @@ export function MachineReadinessChecklist({
     report?.repositories.filter((repo) => repo.status !== "ok" && repo.status !== "no-origin") ??
     [];
   const missingTools = report?.tools.filter((tool) => !tool.found) ?? [];
+  // An old gh cannot report its login, so it is not driven from here: it is updated first.
+  const ghOutdated = report?.github.status === "unknown" && report.github.outdated === true;
+  // The card shows what GitHub access the machine has and offers what it lacks; it never
+  // runs gh's sign-in where gh is missing, outdated or already holds a login.
+  const offerGitHubSignIn =
+    gitHubCardAvailable &&
+    (report?.github.status === "signed-out" || report?.github.status === "unknown");
+  const tokenAccess =
+    gitHubAccess?.inUse != null && gitHubAccess.inUse.source !== "gh" ? gitHubAccess.inUse : null;
+  const tokenTitle =
+    tokenAccess === null
+      ? null
+      : `GitHub: signed in${tokenAccess.login ? ` as ${tokenAccess.login}` : ""} (${
+          tokenAccess.source === "copied"
+            ? `copied from ${gitHubAccess?.saved?.copiedFrom ?? "another machine"}`
+            : tokenAccess.source === "saved"
+              ? "token saved in Settings"
+              : gitHubAccess?.environmentVariables.join(", ")
+        })`;
+  // gh auth login is only suggested where nothing signs SpecWithCode in and gh holds no login.
+  const suggestGhLogin =
+    tokenAccess === null &&
+    (gitHubAccess === null || gitHubAccess.ghAccounts.length === 0) &&
+    (report?.github.status === "signed-out" || report?.github.status === "unknown") &&
+    !ghOutdated;
 
   return (
     <section
@@ -185,7 +216,8 @@ export function MachineReadinessChecklist({
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Sign-ins are never copied between machines. Each one happens on {environmentLabel} itself.
+        Coding-agent sign-ins are never copied between machines. Each one happens on{" "}
+        {environmentLabel} itself.
       </p>
       <ul className="space-y-1">
         {missing ? (
@@ -236,27 +268,49 @@ export function MachineReadinessChecklist({
         {report && (
           <Row
             ok={
-              report.github.status === "signed-in"
+              tokenAccess !== null || report.github.status === "signed-in"
                 ? true
                 : report.github.status === "unknown"
                   ? null
                   : false
             }
             title={
-              report.github.status === "signed-in"
+              tokenTitle ??
+              (report.github.status === "signed-in"
                 ? `GitHub CLI: signed in as ${report.github.accounts.map((account) => `${account.login} (${account.host})`).join(", ")}`
                 : report.github.status === "not-installed"
                   ? "GitHub CLI: not installed"
                   : report.github.status === "signed-out"
                     ? "GitHub CLI: not signed in"
-                    : "GitHub CLI: sign-in unknown"
+                    : "GitHub CLI: sign-in unknown")
             }
             detail={
-              report.github.status === "signed-out" || report.github.status === "not-installed"
-                ? `Pull requests need it. In a terminal on ${environmentLabel}, run gh auth login.`
-                : report.github.detail
+              tokenAccess !== null
+                ? null
+                : report.github.status === "not-installed"
+                  ? `Pull requests need it. Run specwithcode provision on ${environmentLabel}.`
+                  : ghOutdated
+                    ? `This gh is too old to report its sign-in. Update gh on ${environmentLabel}, then sign in.`
+                    : report.github.status === "signed-out"
+                      ? `Pull requests need it.${report.github.detail ? ` ${report.github.detail}` : ""}`
+                      : report.github.detail
             }
-          />
+          >
+            {gitHubCardAvailable ? (
+              <GitHubCredentialCard
+                environmentId={environmentId}
+                environmentLabel={environmentLabel}
+                onChanged={() => void run()}
+                onState={setGitHubAccess}
+              />
+            ) : null}
+            {suggestGhLogin ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {offerGitHubSignIn ? "Or, in" : "In"} a terminal on {environmentLabel}, run gh auth
+                login.
+              </p>
+            ) : null}
+          </Row>
         )}
         {report && report.folder && (
           <Row

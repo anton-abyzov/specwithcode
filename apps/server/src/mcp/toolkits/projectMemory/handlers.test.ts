@@ -40,6 +40,37 @@ it("pages a large memory list and caps one page", () => {
   expect(Handlers.memoryListPage(memory, { query: " TOPIC_00 " }).totalFiles).toBe(100);
 });
 
+it("refuses run receipts as new memory files and keeps lasting notes", () => {
+  expect(
+    Handlers.runRecordRefusal("home-disk-two-released-retirements-20261028.md", "x"),
+  ).toContain("carries a date");
+  expect(Handlers.runRecordRefusal("m4-retirement-2026-10-28.md", "x")).toContain("carries a date");
+  expect(Handlers.runRecordRefusal("release_receipt_20261027.md", "x")).toContain("carries a date");
+  expect(Handlers.runRecordRefusal("project_cleanup_2026_10_28.md", "x")).toContain(
+    "carries a date",
+  );
+  expect(Handlers.runRecordRefusal("notes.2026.10.28.md", "x")).toContain("carries a date");
+  // The same path repeated, or a URL path, is not a pile of receipts.
+  const repeated = Array.from({ length: 5 }, () => "/Users/anton/repo").join(" and ");
+  expect(Handlers.runRecordRefusal("project_layout.md", repeated)).toBeUndefined();
+  const urls = [1, 2, 3, 4].map((i) => `https://example.com/home/${i}`).join(" ");
+  expect(Handlers.runRecordRefusal("reference_links.md", urls)).toBeUndefined();
+  const receipt = [1, 2, 3, 4]
+    .map((i) => `/Users/anton/.specwithcode/m4/evidence/run-${i}/receipt.json`)
+    .join(" and ");
+  expect(Handlers.runRecordRefusal("project_disk_cleanup.md", receipt)).toContain("run receipt");
+  expect(Handlers.runRecordRefusal("MEMORY.md", receipt)).toBeUndefined();
+  expect(
+    Handlers.runRecordRefusal(
+      "decision_release_policy.md",
+      "Releases go through scripts/release/release.sh; the runbook is ~/notes/release.md.",
+    ),
+  ).toBeUndefined();
+  // A version or issue number is not a date.
+  expect(Handlers.runRecordRefusal("project_studio_1_0_110.md", "x")).toBeUndefined();
+  expect(Handlers.runRecordRefusal("reference_issue_20261.md", "x")).toBeUndefined();
+});
+
 const caller = liveThreadShell(ThreadId.make("memory-worker"));
 const scope = {
   environmentId: EnvironmentId.make("fixture"),
@@ -116,6 +147,17 @@ it.effect(
       expect((yield* write("second", 1)).at(-1)?.result).toMatchObject({
         revision: 2,
         content: "second",
+      });
+      const dated = yield* toolkit
+        .handle("studio_project_memory_write", {
+          name: "retirement-progress-20261028.md",
+          content: "30 bindings open",
+        })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(dated.at(-1)?.result).toMatchObject({
+        _tag: "OrchestratorMcpFailure",
+        code: "invalid_request",
+        message: expect.stringContaining("carries a date"),
       });
       const read = yield* toolkit
         .handle("studio_project_memory_read", { name: "MEMORY.md" })

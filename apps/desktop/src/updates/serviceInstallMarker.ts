@@ -13,10 +13,11 @@ const SERVICE_INSTALL_MARKER = NodePath.join("updates", "install-in-progress.jso
 const SERVICE_INSTALL_RECEIPTS = NodePath.join("updates", "receipts");
 
 /**
- * The agent waits 900 s for the install helper (update_agent.py APPLY_TIMEOUT);
- * inside this window a marker alone means an install is running.
+ * The agent waits 40 minutes for the install helper (update_agent.py
+ * APPLY_TIMEOUT, 25 minutes in agents up to 1.0.112); inside this window a
+ * marker alone means an install is running.
  */
-export const SERVICE_INSTALL_WINDOW_MS = 15 * 60_000;
+export const SERVICE_INSTALL_WINDOW_MS = 40 * 60_000;
 
 /**
  * Past that the agent stops waiting but leaves the helper to finish its restart

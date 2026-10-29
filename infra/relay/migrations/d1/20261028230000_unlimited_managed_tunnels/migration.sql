@@ -1,0 +1,1 @@
+ALTER TABLE `relay_managed_tunnel_limits` ADD `unlimited` integer DEFAULT false NOT NULL;

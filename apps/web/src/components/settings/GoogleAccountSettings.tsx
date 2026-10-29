@@ -76,7 +76,11 @@ export function GoogleAccountSettingsPanel() {
 
   const allProjects = useProjects();
   const scratchRoot = config?.scratchWorkspaceRoot ?? null;
-  const { active: projects, archived: archivedProjects } = useMemo(
+  const {
+    active: projects,
+    automated: automatedProjects,
+    archived: archivedProjects,
+  } = useMemo(
     () =>
       partitionGoogleProjects(
         allProjects.filter((project) => project.environmentId === environmentId),
@@ -224,8 +228,11 @@ export function GoogleAccountSettingsPanel() {
   const activeIds = projects.map((project) => project.id);
   const setServiceForAll = (service: GoogleService, on: boolean) => {
     if (status === null) return;
-    // Disabling also covers archived projects, so nothing keeps reading behind a collapsed list.
-    const ids = on ? activeIds : [...activeIds, ...archivedProjects.map((project) => project.id)];
+    // Disabling also covers automated and archived projects, so nothing keeps reading behind a
+    // collapsed list.
+    const ids = on
+      ? activeIds
+      : [...activeIds, ...[...automatedProjects, ...archivedProjects].map((project) => project.id)];
     void applyChanges(
       on ? "Could not enable access" : "Could not disable access",
       bulkServiceChanges(status.projects, ids, service, on),
@@ -555,7 +562,9 @@ export function GoogleAccountSettingsPanel() {
                 </div>
               </div>
             ) : null}
-            {projects.length === 0 && archivedProjects.length === 0 ? (
+            {projects.length === 0 &&
+            automatedProjects.length === 0 &&
+            archivedProjects.length === 0 ? (
               <p className="px-3 pb-4 text-muted-foreground text-sm sm:px-4">
                 Add a project first. A Personal project suits a personal agent.
               </p>
@@ -574,7 +583,9 @@ export function GoogleAccountSettingsPanel() {
                         const anyOn =
                           bulkServiceChanges(
                             status.projects,
-                            [...projects, ...archivedProjects].map((project) => project.id),
+                            [...projects, ...automatedProjects, ...archivedProjects].map(
+                              (project) => project.id,
+                            ),
                             service,
                             false,
                           ).length > 0;
@@ -617,9 +628,16 @@ export function GoogleAccountSettingsPanel() {
                   <ul className="flex flex-col py-2">{projects.map(renderProjectRow)}</ul>
                 ) : (
                   <p className="px-3 py-2 text-muted-foreground text-sm sm:px-4">
-                    Every project here is archived.
+                    No active projects of your own here.
                   </p>
                 )}
+                <ArchivedDisclosure
+                  count={automatedProjects.length}
+                  label="automated"
+                  className="pb-1"
+                >
+                  <ul className="flex flex-col">{automatedProjects.map(renderProjectRow)}</ul>
+                </ArchivedDisclosure>
                 <ArchivedDisclosure count={archivedProjects.length} className="pb-2">
                   <ul className="flex flex-col">{archivedProjects.map(renderProjectRow)}</ul>
                 </ArchivedDisclosure>

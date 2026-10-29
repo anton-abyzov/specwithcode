@@ -72,6 +72,7 @@ import {
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "./AcpAdapterV2.ts";
+import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
 
 export const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_DRIVER_KIND = GROK_PROVIDER;
@@ -281,7 +282,10 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
           ...input,
           interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
-          environment: { ...options.environment, ...input.agentEnvironment },
+          environment: withGitHubSpawnEnvironment({
+            ...options.environment,
+            ...input.agentEnvironment,
+          }),
           childProcessSpawner: options.childProcessSpawner,
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),

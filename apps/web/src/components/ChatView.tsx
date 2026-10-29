@@ -70,6 +70,8 @@ import {
   isSettledRunStatus,
   resolveVisibleWorktreeSetup,
   resolveWorktreeSetupProgress,
+  saveThreadModel,
+  shouldSaveComposerPick,
   switchThreadBackToPick,
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
@@ -6732,6 +6734,15 @@ function useChatViewActions(
     },
     [environmentId, navigate],
   );
+  // The fallback order is a machine setting a project may override; its row says which.
+  const openFallbackOrder = useCallback(() => {
+    void navigate({
+      to: "/settings/general",
+      search: { machine: environmentId },
+      hash: "provider-limit-fallback",
+      state: { settingsTargetHighlight: true },
+    });
+  }, [environmentId, navigate]);
   const canOperatePreview = useEnvironmentScope(
     activeThreadTarget?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -9553,6 +9564,7 @@ function useChatViewActions(
     openChangesFromThreadPanel,
     openFileSurface,
     openProviderSetup,
+    openFallbackOrder,
     deliveryBannerItem,
     parkedThreadBannerItem,
     threadMoveBannerItem,
@@ -10111,6 +10123,7 @@ export default function ChatView(props: ChatViewProps) {
     openChangesFromThreadPanel,
     openFileSurface,
     openProviderSetup,
+    openFallbackOrder,
     deliveryBannerItem,
     parkedThreadBannerItem,
     threadMoveBannerItem,
@@ -14389,8 +14402,18 @@ export default function ChatView(props: ChatViewProps) {
     [activeRuntime, activeThread, providerStatuses, supportsProviderSwitchingViaHandoff],
   );
 
+  // The model this client last asked the server to save per thread, until it lands:
+  // a quick pick back to the saved model must still be sent after it.
+  const pendingThreadModelRef = useRef<{
+    readonly threadId: string;
+    readonly selection: ModelSelection;
+  } | null>(null);
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string, options?: { focusComposer?: boolean }) => {
+    (
+      instanceId: ProviderInstanceId,
+      model: string,
+      options?: { focusComposer?: boolean; saveToThread?: boolean },
+    ) => {
       if (!activeThread) return;
       if (projectRouting?.saveCoordinatorModel) {
         void projectRouting.saveCoordinatorModel({ instanceId, model });
@@ -14473,11 +14496,53 @@ export default function ChatView(props: ChatViewProps) {
         { explicit: true, replaceOptions: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
+      if (
+        options?.saveToThread === true &&
+        shouldSaveComposerPick({
+          isServerThread,
+          isWorking,
+          current:
+            pendingThreadModelRef.current?.threadId === activeThread.id
+              ? pendingThreadModelRef.current.selection
+              : activeThread.modelSelection,
+          next: nextModelSelection,
+        })
+      ) {
+        const threadId = activeThread.id;
+        const threadEnvironmentId = activeThread.environmentId;
+        const pending = { threadId, selection: nextModelSelection };
+        pendingThreadModelRef.current = pending;
+        void saveThreadModel(
+          (selection) =>
+            updateThreadMetadata({
+              environmentId: threadEnvironmentId,
+              input: { threadId, modelSelection: selection },
+            }),
+          nextModelSelection,
+        ).then((outcome) => {
+          if (pendingThreadModelRef.current === pending) pendingThreadModelRef.current = null;
+          if (outcome.ok) return;
+          // The pick stays in the composer and applies from the next message.
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "Model applies from your next message",
+              description:
+                outcome.error instanceof Error
+                  ? outcome.error.message
+                  : "The thread could not switch now.",
+            }),
+          );
+        });
+      }
       if (options?.focusComposer !== false) scheduleComposerFocus();
     },
     [
       projectRouting,
       activeThread,
+      isServerThread,
+      isWorking,
+      updateThreadMetadata,
       activeRuntime,
       lockedProvider,
       supportsProviderSwitchingViaHandoff,
@@ -15774,6 +15839,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               onProviderModelSelect={onProviderModelSelect}
                               onOpenProviderSetup={openProviderSetup}
+                              onEditFallbackOrder={openFallbackOrder}
                               getModelDisabledReason={getModelDisabledReason}
                               toggleInteractionMode={toggleInteractionMode}
                               handleRuntimeModeChange={handleRuntimeModeChange}

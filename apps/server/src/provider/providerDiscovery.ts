@@ -56,11 +56,26 @@ const NON_SIGN_IN_VARIABLES = new Set(["GITHUB_TOKEN", "GH_TOKEN"]);
  *     ●  Google GEMINI_API_KEY
  *     └  1 environment variable
  *
+ * OpenCode 2 prints one row per integration instead, or a single line when
+ * there are none:
+ *
+ *     OpenRouter  API key                     stored
+ *     OpenAI      OPENAI_API_KEY              environment
+ *     No authenticated integrations
+ *
  * A stored credential, or a provider key in the environment, counts as signed
  * in. Variables such as AWS_REGION are listed too but prove nothing.
  */
 export function parseOpenCodeAuthList(output: string): boolean | null {
   const text = output.replace(ANSI_PATTERN, "");
+  if (/^\s*No authenticated integrations\s*$/m.test(text)) return false;
+  const rows = [...text.matchAll(/^\s*\S.*?\s{2,}(\S.*?)\s{2,}(stored|environment)\s*$/gm)];
+  if (rows.some((row) => row[2] === "stored")) return true;
+  if (rows.length > 0) {
+    return rows.some(
+      ([, name = ""]) => CREDENTIAL_VARIABLE.test(name) && !NON_SIGN_IN_VARIABLES.has(name),
+    );
+  }
   const credentials = text.match(/(\d+)\s+credentials?\b/i);
   const environment = text.match(/(\d+)\s+environment variables?\b/i);
   if (!credentials && !environment) return null;
@@ -141,12 +156,26 @@ export const probeGrok = (binary: string, environment: NodeJS.ProcessEnv) =>
     return verdict(parseGrokModelsCliOutput(`${stdout}\n${stderr}`).authenticated);
   });
 
+/** `opencode --version` prints `1.14.33` or `opencode v2.2.0`. */
+export function isOpenCodeTwoOrLater(versionOutput: string): boolean {
+  const major = versionOutput.match(/(\d+)\.\d+\.\d+/)?.[1];
+  return major !== undefined && Number(major) >= 2;
+}
+
 export const probeOpenCode = (binary: string, environment: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
     const run = makeRun(binary, environment);
-    const installed = yield* probeInstalled(run);
-    if (installed !== "installed") return installed;
-    const list = yield* run(["auth", "list"], STATUS_TIMEOUT_MS);
+    const version = yield* run(["--version"], VERSION_TIMEOUT_MS);
+    if (version === "missing") return "not-installed" as const;
+    if (Option.isNone(version) || version.value.code !== 0) return "unknown" as const;
+    // OpenCode 2 answers `auth list` through a shared background service on a
+    // fixed port; --standalone uses a private one that exits with the command.
+    const list = yield* run(
+      isOpenCodeTwoOrLater(`${version.value.stdout}\n${version.value.stderr}`)
+        ? ["auth", "list", "--standalone"]
+        : ["auth", "list"],
+      STATUS_TIMEOUT_MS,
+    );
     if (list === "missing" || Option.isNone(list) || list.value.code !== 0) {
       return "unknown" as const;
     }

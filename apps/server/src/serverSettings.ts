@@ -592,6 +592,18 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     tokens: Object.fromEntries(
       Object.entries(settings.github.tokens).map(([host, token]) => [host, redactSecret(token)]),
     ),
+    // The fingerprint only matches a copy note to its token on this server.
+    copiedTokens: Object.fromEntries(
+      Object.entries(settings.github.copiedTokens).map(([host, note]) => [
+        host,
+        {
+          from: note.from,
+          at: note.at,
+          ...(note.login !== undefined ? { login: note.login } : {}),
+          ...(note.replacedSaved === true ? { replacedSaved: true } : {}),
+        },
+      ]),
+    ),
   };
   const voice = {
     ...settings.voice,

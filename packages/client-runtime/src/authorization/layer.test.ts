@@ -175,6 +175,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   const unexpected = () => Effect.die("Unexpected relay request");
   const relay = ManagedRelay.ManagedRelayClient.of({
     relayUrl: "https://relay.example.test",
+    getManagedTunnelPolicy: unexpected,
     listEnvironments: unexpected,
     listDevices: unexpected,
     createEnvironmentLinkChallenge: unexpected,

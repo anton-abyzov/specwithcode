@@ -1,6 +1,6 @@
 /**
  * How this machine reaches another one in its fleet: every address the fleet
- * file lists for it, tailnet first, each proven to answer as that machine
+ * file lists for it, Connect first, each proven to answer as that machine
  * (`/.well-known/studio/environment`, no redirects) before anything is sent.
  * The address that worked is remembered for a few minutes.
  *
@@ -24,7 +24,7 @@ export type { FleetOrigin, FleetTransport } from "./fleetOrigin.ts";
 /**
  * How long an address stays preferred and its identity trusted, counted from
  * the identity check that proved it. Traffic never extends it: a machine that
- * fell back to Connect tries the tailnet again, and every address has its
+ * fell back to the tailnet tries Connect again, and every address has its
  * `/.well-known` identity proven again, at least this often.
  */
 export const FLEET_ADDRESS_TTL_MS = 5 * 60_000;
@@ -114,12 +114,12 @@ type Reachable = Pick<FleetTarget, "url" | "connectUrl" | "environmentId"> & {
   readonly id?: string;
 };
 
-/** The machine's addresses in configured order: `url`, then `connectUrl`. */
+/** The machine's addresses: Connect first, with the tailnet retained as fallback. */
 export function fleetAddresses(
   target: Pick<FleetTarget, "url" | "connectUrl">,
 ): ReadonlyArray<FleetOrigin> {
   const addresses: FleetOrigin[] = [];
-  for (const value of [target.url, target.connectUrl]) {
+  for (const value of [target.connectUrl, target.url]) {
     if (value === undefined) continue;
     const parsed = parseFleetOrigin(value);
     if (parsed !== null && !addresses.some((entry) => entry.origin === parsed.origin))
@@ -150,7 +150,7 @@ async function tokenRefusal(
 
 /**
  * The first address that answers as `target`: the one that last worked (while
- * fresh), then the configured order (tailnet first). With `token`, only
+ * fresh), then the configured order (Connect first). With `token`, only
  * addresses that token may be sent to are tried, so an unbound token never
  * leads to a Connect address being contacted at all.
  */

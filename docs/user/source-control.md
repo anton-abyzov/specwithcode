@@ -24,6 +24,39 @@ If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
 over that choice; a host turned off stays off either way.
 
+#### Another machine's GitHub sign-in
+
+On a machine you added, the GitHub card shows what it already uses: a saved token, a token
+variable, or `gh` and its accounts. A machine with a working login keeps it, and SpecWithCode
+never switches, logs out or replaces `gh`'s accounts there.
+
+With no login yet, **Use this Mac's GitHub sign-in** copies this machine's token (a saved one
+first, then `gh auth token`) to that machine over Tailscale only; a machine reached only
+through SpecWithCode Connect cannot receive one. A short confirmation names the account, its
+scopes and expiry. The copy is stored only in that machine's secret store as its saved token,
+so it wins over `GH_TOKEN` and `gh` there. Agents, terminals and git that SpecWithCode starts
+on that machine get it as `GH_TOKEN` and `GITHUB_TOKEN` and as a per-process git credential
+for `https://github.com`, so they can clone, push and open pull requests. A process whose
+environment already sets `GH_TOKEN` or `GITHUB_TOKEN` (for example in a provider instance's
+environment) keeps that token and gets neither, and a credential helper set in its own
+`GIT_CONFIG_*` entries is kept, with no helper added. Each new session, terminal and git command reads the current one, so a copy or
+removal applies from the next one on; Codex tool commands get it through
+`shell_environment_policy.set`. The same applies to a token saved there by hand. That machine's `gh` logins, git
+config and credential helpers are not changed, other hosts keep their helpers, and SSH remotes
+keep using SSH keys.
+A machine that uses a token saved in its Settings by hand keeps it; copying over it is a
+separate, always-confirmed choice, and the saved token is set aside and comes back when the
+copy is removed. Nothing is copied while github.com is turned off on this machine.
+**Remove copied sign-in** deletes only that copy. Revoking the token on GitHub signs out every
+machine that uses it.
+
+**Sign in with a code instead** runs `gh auth login` on that machine and shows its one-time
+code here. It is offered only while `gh` there holds no github.com login.
+
+In **Settings → Source Control → GitHub**, **When adding a machine, copy this machine's GitHub
+sign-in** (on by default) makes the copy the first choice, and **Ask before copying** controls
+the confirmation.
+
 ### Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or

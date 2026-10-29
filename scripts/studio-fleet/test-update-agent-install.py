@@ -365,7 +365,7 @@ class InstallNow(AgentCase):
         seen = self.messages()
         self.assertEqual(self.run_agent(), 1)
         self.assert_ended_as_the_refused_apply()
-        self.assertIn('Waiting for open SpecWithCode terminals and agent processes to close (attempt 1)', seen)
+        self.assertIn(update_agent.APPLY_RETRY_MESSAGE + '. Waiting for open SpecWithCode terminals and agent processes to close (attempt 1)', seen)
         self.offset += datetime.timedelta(minutes=11)
         self.control()
         self.run_agent()  # Settled: a later pass neither installs it nor calls it expired.
@@ -787,6 +787,44 @@ class InstallNow(AgentCase):
         self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
         self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (4, 2))
         self.assertEqual(self.sleeps, [update_agent.RETRY_SECONDS] * 2)
+
+    def test_a_forced_apply_refused_after_the_hold_ended_retries_within_a_window_of_its_own(self):
+        """With a 40-minute APPLY_TIMEOUT the refusal before the restart can come after installHoldUntil:
+        the retry still snapshots again for APPLY_RETRY_WINDOW, and every status it writes leads with
+        APPLY_RETRY_MESSAGE, by which the service keeps holding itself for it."""
+        self.fake.add_release()
+        self.request(hold_minutes=15)
+        self.control(applyRefusals=1, snapshotFailCalls=[2, 3])
+        real = update_agent.Agent.apply
+
+        def slow(agent, *args):
+            self.offset += datetime.timedelta(minutes=28)
+            return real(agent, *args)
+        seen = self.messages()
+        with mock.patch.object(update_agent.Agent, 'apply', slow):
+            self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (4, 2))
+        self.assertEqual(len(seen), 2)
+        for message in seen:
+            self.assertTrue(message.startswith(update_agent.APPLY_RETRY_MESSAGE + '. '), message)
+
+    def test_a_forced_retry_past_the_hold_gives_up_once_its_own_window_ends(self):
+        self.fake.add_release()
+        self.request(hold_minutes=15)
+        self.control(applyRefusals=1, snapshotFailAfterApply=True)
+        real = update_agent.Agent.apply
+
+        def slow(agent, *args):
+            self.offset += datetime.timedelta(minutes=28)
+            return real(agent, *args)
+        with mock.patch.object(update_agent.Agent, 'apply', slow):
+            self.assertEqual(self.run_agent(), 1)
+        self.assert_ended_as_the_refused_apply()
+        retries = len(self.snapshot_calls()) - 1
+        self.assertGreater(retries, 1)  # Not one snapshot and out, as when clipped by installHoldUntil.
+        self.assertLessEqual(retries, update_agent.APPLY_RETRY_WINDOW.total_seconds() / update_agent.RETRY_SECONDS + 1)
 
     def test_install_settings_are_validated(self):
         for values in ({'installMode': 'now'}, {'installHoldUntil': 5}, {'installCancelledAt': ''}):

@@ -305,6 +305,17 @@ function stoppedOnLimit(
   );
 }
 
+/** The thread is set to another account or model than the run the limit stopped. */
+export function pickedSinceStop(
+  thread: FallbackThread,
+  run: Pick<OrchestrationV2Run, "providerInstanceId" | "modelSelection">,
+): boolean {
+  return (
+    thread.providerInstanceId !== run.providerInstanceId ||
+    thread.modelSelection.model !== run.modelSelection.model
+  );
+}
+
 /** Capacity belongs to the run's account, even after the thread selection changes. */
 export function usageHoldEvidence(
   thread: FallbackThread,
@@ -494,6 +505,8 @@ export function providerLimitStep(
     readonly unopenable?: UnopenableStop | null | undefined;
     /** The latest run stopped on its own instance's Claude plan limit. */
     readonly planLimitOutlived?: boolean;
+    /** The run the limit stopped, to tell whether a person has picked another model since. */
+    readonly stoppedRun?: Pick<OrchestrationV2Run, "providerInstanceId" | "modelSelection"> | null;
   },
 ):
   | {
@@ -521,6 +534,9 @@ export function providerLimitStep(
     });
     return command === null ? null : { type: "switch", command };
   }
+  // A person picked another model after the stop: their next message runs it, and
+  // nothing answers the stop by moving the thread off their pick.
+  if (options.stoppedRun != null && pickedSinceStop(thread, options.stoppedRun)) return null;
   const current = providers.find((provider) => provider.instanceId === thread.providerInstanceId);
   if (
     options.planLimitOutlived === true &&
@@ -1693,6 +1709,7 @@ export const makeSweep = Effect.gen(function* () {
         failedTargets: (yield* Ref.get(failedTargets)).get(stopKey),
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
+        stoppedRun: thread.latestRunId === null ? null : (holdRuns.get(thread.latestRunId) ?? null),
       };
       const stepFor = (current: FallbackThread) =>
         providerLimitStep(current, providersFor(current), resolved, now, options);
@@ -1773,7 +1790,10 @@ export const makeSweep = Effect.gen(function* () {
           thread: current,
           rule,
           nowMs: at,
-          stopped: stoppedOnLimit(current) && !waitsForReset(current, rule, at),
+          stopped:
+            stoppedOnLimit(current) &&
+            !waitsForReset(current, rule, at) &&
+            !(options.stoppedRun != null && pickedSinceStop(current, options.stoppedRun)),
           atThreshold: shouldSwitchBeforeTurn({ provider, model, rule, nowMs: at }),
           localStep,
           windowKey: usageWindowKey(provider, at, model),
@@ -1813,8 +1833,10 @@ export const makeSweep = Effect.gen(function* () {
       if (step === null) {
         // Most threads have no way back to send. Judged on the snapshot first,
         // so they cost no lock, settings read or shell re-read each sweep.
-        // The rule-off answer is the looser one: it can only find more.
+        // The rule-off answer is the looser one: it can only find more. A model
+        // a person picked since the latest run is where the thread runs now.
         if (
+          (options.stoppedRun != null && pickedSinceStop(thread, options.stoppedRun)) ||
           (yield* apiCreditReturnPlan(thread, providersFor(thread), now, false, resolved)) === null
         ) {
           // No way back: a provider that could not open runs the turn again once it can.
@@ -1828,6 +1850,7 @@ export const makeSweep = Effect.gen(function* () {
         // the person's choice again.
         yield* withCurrentPolicy(thread, (current, rule, currentProject) =>
           Effect.gen(function* () {
+            if (options.stoppedRun != null && pickedSinceStop(current, options.stoppedRun)) return;
             const back = yield* apiCreditReturn(
               current,
               providersFor(current, currentProject),

@@ -58,7 +58,11 @@ CHECK_INTERVAL = update_request.CHECK_INTERVAL  # 60 minutes; status() calls a c
 # Two process inventories bracket the snapshot and it hashes every guarded table; on a
 # loaded Mac one took almost 4 minutes, so the limit leaves room before reporting "busy".
 SNAPSHOT_TIMEOUT = 600
-APPLY_TIMEOUT = 1500
+# How long the agent waits for the install helper, passed to it as STUDIO_UPDATE_APPLY_BUDGET so
+# the helper always ends (restart or rollback included) within it. 40 minutes lets a busy Mac with
+# a large database spend up to 28 minutes before the restart: on M4 (1.0.112) the before-read,
+# staging and prestate re-read took 902 s and a 1500 s budget refused at 780 s.
+APPLY_TIMEOUT = 2400
 # While an install request waits for the service to drain, a pass snapshots again this often.
 # A forced request retries until the service's update hold ends (at most 15 minutes); a plain
 # one retries briefly, then waits for quiet as before. An apply for either that the helper refused before
@@ -67,6 +71,11 @@ RETRY_SECONDS = 10
 FORCE_WINDOW = datetime.timedelta(minutes=15)
 REQUEST_WINDOW = datetime.timedelta(minutes=2)
 APPLY_RETRIES = 2
+# A refused apply's retry snapshots for at least this long, even once installHoldUntil has passed:
+# with a 40-minute APPLY_TIMEOUT the refusal can come long after it. Its statuses begin with
+# APPLY_RETRY_MESSAGE, which the service keeps its hold for (ServiceUpdateHold.ts).
+APPLY_RETRY_WINDOW = datetime.timedelta(minutes=2)
+APPLY_RETRY_MESSAGE = 'New work started before the restart; trying again'
 RETRYABLE_REFUSALS = ('Guarded prestate changed', 'Native work changed before restart', 'Native work is not idle',
                       'Complete database prestate changed', 'Complete database changed before restart',
                       'Another installation operation is in progress for this home')  # e.g. a prune after install
@@ -1025,6 +1034,8 @@ class Agent(object):
                     remove_path(baseline_path, self.home)
                 self.state['quietSince'] = None
                 retry_by = self.retry_deadline(window) if install_request else started
+                if refused_apply is not None and runs.retry_until(self) is None:  # A run keeps its one clock.
+                    retry_by = max(retry_by, window + APPLY_RETRY_WINDOW)
                 if refused[0] != 'waiting-for-quiet':
                     self.state['automaticRetry'] = None
                 if refused[0] != 'waiting-for-quiet' or utcnow() + datetime.timedelta(seconds=RETRY_SECONDS) >= retry_by:
@@ -1042,7 +1053,9 @@ class Agent(object):
                         # refusal names the request it ends, so the service's hold for that one ignores it.
                         return pause.forget(self.state) or self.finish(*refused)
                     return pause.after_refusal(self, verified, refused)
-                self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
+                # A refused apply's retry leads with its message, by which the service's hold outlasts installHoldUntil.
+                self.set_status(refused[0], ('%s. ' % APPLY_RETRY_MESSAGE if refused_apply is not None else '')
+                                + '%s (attempt %d)' % (refused[1], attempt))
                 if (ended := recovery.withdrawn(self, version)):  # Written while the snapshot ran: no reap.
                     return self.finish(*ended)
                 time.sleep(reaper.before_retry(self, helper_dir, refused, started, window))
@@ -1061,7 +1074,7 @@ class Agent(object):
                 # The refused apply is the request's it ran for: its first, if taken on as the snapshot or apply ran.
                 retries = retries + 1 if self.config['installRequestedAt'] == serving else 1
                 attempt, window, serving = 0, utcnow(), self.config['installRequestedAt']
-                self.set_status('waiting-for-quiet', 'New work started before the restart; trying again')
+                self.set_status('waiting-for-quiet', APPLY_RETRY_MESSAGE)
                 continue
             break
         pause.forget(self.state)  # Idle: nothing to pause any more.
@@ -1156,8 +1169,8 @@ class Agent(object):
         if outcome == 'failed':
             recovery.ensure_failure_receipt(self, version, receipt, current)
         if outcome == 'timeout':
-            return 'error', ('Installing SpecWithCode %s is taking longer than 15 minutes; it was left to finish. '
-                             'See the update receipt.' % version)
+            return 'error', ('Installing SpecWithCode %s is taking longer than %d minutes; it was left to finish. '
+                             'See the update receipt.' % (version, max(1, int(APPLY_TIMEOUT // 60))))
         if outcome == 'interrupted':
             return 'error', 'The install of SpecWithCode %s was interrupted; SpecWithCode is on %s.' % (version, current)
         disk = recovery.disk_refusal(self, receipt) if outcome == 'failed' else None
