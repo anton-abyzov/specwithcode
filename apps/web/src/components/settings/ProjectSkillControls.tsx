@@ -64,7 +64,9 @@ export interface SkillControls {
   readonly projectId: ProjectId;
   readonly row: ProjectSkillRow;
   readonly memberProjects: ReadonlyArray<SkillMemberProject>;
-  /** Settings files only (a Claude skill switch). */
+  /** The machine-wide view: every switch is the user's own. */
+  readonly userLevel: boolean;
+  /** Settings files only (a skill switch kept in a settings file). */
   readonly canWrite: boolean;
   /** Changes that also run a CLI or app server. */
   readonly canOperate: boolean;
@@ -112,6 +114,7 @@ export function SkillControlsProvider({
   projectId,
   row,
   memberProjects,
+  userLevel = false,
   initialPushOpen = false,
   onChanged,
   onLatest,
@@ -121,6 +124,8 @@ export function SkillControlsProvider({
   projectId: ProjectId;
   row: ProjectSkillRow;
   memberProjects: ReadonlyArray<SkillMemberProject>;
+  /** A row of the machine-wide view: actions name the user level, and switches the user's files. */
+  userLevel?: boolean;
   initialPushOpen?: boolean;
   /** Called after a change lands, to read the skills again. */
   onChanged: () => void;
@@ -136,7 +141,10 @@ export function SkillControlsProvider({
   const version = skillVersionControl(row);
   const versionsQuery = useEnvironmentQuery(
     version.skillId
-      ? projectWorkspace.skillVersions({ environmentId, input: { projectId, skill: row.name } })
+      ? projectWorkspace.skillVersions({
+          environmentId,
+          input: { projectId, skill: row.name, ...(userLevel ? { userLevel: true } : {}) },
+        })
       : null,
   );
   const [pending, setPending] = useState<string | null>(null);
@@ -163,6 +171,7 @@ export function SkillControlsProvider({
           input: {
             projectId,
             skill: row.name,
+            ...(userLevel ? { userLevel: true } : {}),
             preview,
             action,
             ...(expected ? { expected } : {}),
@@ -177,7 +186,7 @@ export function SkillControlsProvider({
         return { ok: false as const, message: "The machine did not confirm the change." };
       }
     },
-    [environmentId, projectId, row.name, run],
+    [environmentId, projectId, row.name, run, userLevel],
   );
 
   // The delayed rescans, cleared when the sheet closes so none fires after it.
@@ -298,6 +307,7 @@ export function SkillControlsProvider({
       projectId,
       row,
       memberProjects,
+      userLevel,
       canWrite,
       canOperate: canWrite && canTerminal,
       canPush: canMaintain,
@@ -334,6 +344,7 @@ export function SkillControlsProvider({
       propose,
       pushOpen,
       row,
+      userLevel,
       versionsQuery.data,
       versionsQuery.error,
       versionsQuery.isPending,

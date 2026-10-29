@@ -535,6 +535,7 @@ export function buildProjectSkillRows(
           scope: skill.scope ?? null,
           enabled: skill.enabled,
           ...(skill.userInvocable === false ? { userInvocable: false } : {}),
+          ...(skill.switchFile !== undefined ? { switchFile: skill.switchFile } : {}),
           ...(fact?.fileVersion !== undefined ? { fileVersion: fact.fileVersion } : {}),
           ...(fact?.pluginVersion !== undefined ? { pluginVersion: fact.pluginVersion } : {}),
         },

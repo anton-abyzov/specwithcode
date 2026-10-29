@@ -70,6 +70,8 @@ export interface ProviderSkillsControl {
   readonly environment: NodeJS.ProcessEnv;
   readonly homePath?: string | undefined;
   readonly launchArgs?: string | undefined;
+  /** ACP registry agents: which agent the instance runs (`gemini`, `github-copilot-cli`). */
+  readonly agentId?: string | undefined;
 }
 
 export type ProviderWorkspaceSnapshot = ServerProvider &
@@ -115,7 +117,7 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
-  /** Claude, Codex and Grok: what the Skills switches run. */
+  /** What the Skills switches run or edit: Claude, Codex, Grok, OpenCode, Pi and ACP agents. */
   readonly skillsControl?: ProviderSkillsControl;
   readonly orchestrationAdapter: ProviderAdapterV2Shape;
   readonly textGeneration: TextGeneration["Service"];

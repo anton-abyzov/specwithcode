@@ -156,9 +156,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
   const navItems = SETTINGS_NAV_ITEMS.filter(
-    (item) =>
-      (item.to !== "/settings/projects" && item.to !== "/settings/skills") ||
-      isSettingsOverviewVisible(scopeSearch),
+    // Skills also has a machine-wide view, so it shows without a project.
+    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");

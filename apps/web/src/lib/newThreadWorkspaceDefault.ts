@@ -32,27 +32,60 @@ export function observeNewThreadIsRepo(
   );
 }
 
-/** Only a fresh, unconfigured web draft gets the Git-aware default. */
+/**
+ * Only a fresh, unconfigured web draft gets the Git-aware default: a worktree
+ * for one Git repository, the current checkout otherwise. A Git folder that
+ * holds separate clones, such as an umbrella whose `repositories/` its own
+ * `.gitignore` excludes, stays in the current checkout, since a worktree of it
+ * would hold none of their code. Its layout is read only for a Git folder.
+ */
 export async function resolveNewThreadWorkspaceDefault(options: {
   readonly configuredMode: ThreadEnvMode | null;
   readonly readIsRepo: () => Promise<boolean | undefined>;
+  readonly readHoldsSeparateClones?: () => Promise<boolean | undefined>;
 }): Promise<ThreadEnvMode> {
   if (options.configuredMode !== null) return options.configuredMode;
   try {
-    return (await options.readIsRepo()) === true ? "worktree" : "local";
+    if ((await options.readIsRepo()) !== true) return "local";
   } catch {
     // Offline/unknown workspaces remain usable without pretending Git was verified.
     return "local";
   }
+  // An unreadable layout keeps the Git default.
+  const separateClones = await options.readHoldsSeparateClones?.().catch(() => undefined);
+  return separateClones === true ? "local" : "worktree";
 }
+
+/** A large folder's layout walk must not hold the new draft for long. */
+const LAYOUT_READ_MS = 5_000;
+const within =
+  <A>(ms: number, read: () => Promise<A>) =>
+  (): Promise<A | undefined> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(undefined), ms);
+      read().then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve(undefined);
+        },
+      );
+    });
 
 export function readNewThreadWorkspaceDefault(options: {
   readonly configuredMode: ThreadEnvMode | null;
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot?: string | undefined;
+  readonly readHoldsSeparateClones?: () => Promise<boolean | undefined>;
 }): Promise<ThreadEnvMode> {
   return resolveNewThreadWorkspaceDefault({
     configuredMode: options.configuredMode,
+    ...(options.readHoldsSeparateClones
+      ? { readHoldsSeparateClones: within(LAYOUT_READ_MS, options.readHoldsSeparateClones) }
+      : {}),
     readIsRepo: async () => {
       if (!options.workspaceRoot) return undefined;
       const result = await executeAtomQuery(

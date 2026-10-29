@@ -276,13 +276,24 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
  * Claude skill switch (a settings edit) also start a CLI or app server. An
  * action that cannot be read takes the wider set.
  */
+/** Agents whose skill switch is an edit to their own settings file, with no CLI run. */
+export const FILE_SWITCHED_SKILL_DRIVERS: ReadonlySet<string> = new Set([
+  "claudeAgent",
+  "grok",
+  "opencode",
+  "pi",
+  "acpRegistry",
+]);
+
 export function projectSkillsActionScopes(input: unknown): readonly AuthEnvironmentScope[] {
   const action =
     typeof input === "object" && input !== null
       ? (input as { readonly action?: { readonly kind?: unknown; readonly provider?: unknown } })
           .action
       : undefined;
-  return action?.kind === "toggle-skill" && action.provider === "claudeAgent"
+  return action?.kind === "toggle-skill" &&
+    typeof action.provider === "string" &&
+    FILE_SWITCHED_SKILL_DRIVERS.has(action.provider)
     ? [AuthFilesystemWriteScope]
     : [AuthFilesystemWriteScope, AuthTerminalOperateScope];
 }

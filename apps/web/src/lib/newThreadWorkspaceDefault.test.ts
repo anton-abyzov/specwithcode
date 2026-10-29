@@ -43,6 +43,64 @@ describe("Git-aware new web thread defaults", () => {
       expect(readIsRepo).not.toHaveBeenCalled();
     },
   );
+  it("keeps a Git folder holding separate clones, such as an umbrella, in its checkout", async () => {
+    expect(
+      await resolveNewThreadWorkspaceDefault({
+        configuredMode: null,
+        readIsRepo: async () => true,
+        readHoldsSeparateClones: async () => true,
+      }),
+    ).toBe("local");
+    expect(
+      await resolveNewThreadWorkspaceDefault({
+        configuredMode: null,
+        readIsRepo: async () => true,
+        readHoldsSeparateClones: async () => false,
+      }),
+    ).toBe("worktree");
+  });
+  it("keeps the Git default when the layout cannot be read", async () => {
+    for (const read of [async () => undefined, async () => Promise.reject(new Error("offline"))]) {
+      expect(
+        await resolveNewThreadWorkspaceDefault({
+          configuredMode: null,
+          readIsRepo: async () => true,
+          readHoldsSeparateClones: read,
+        }),
+      ).toBe("worktree");
+    }
+  });
+  it("reads the layout only for a Git folder without a configured mode", async () => {
+    const readHoldsSeparateClones = vi.fn(async () => true);
+    await resolveNewThreadWorkspaceDefault({
+      configuredMode: null,
+      readIsRepo: async () => false,
+      readHoldsSeparateClones,
+    });
+    await resolveNewThreadWorkspaceDefault({
+      configuredMode: "worktree",
+      readIsRepo: async () => true,
+      readHoldsSeparateClones,
+    });
+    expect(readHoldsSeparateClones).not.toHaveBeenCalled();
+  });
+  it("gives up on a slow layout read and keeps the Git default", async () => {
+    vi.useFakeTimers();
+    try {
+      fixture.follow.mockReturnValue(Stream.empty);
+      fixture.query.mockResolvedValueOnce({ _tag: "Success", value: true });
+      const result = readNewThreadWorkspaceDefault({
+        configuredMode: null,
+        environmentId: worker,
+        workspaceRoot: "/worker/umbrella",
+        readHoldsSeparateClones: () => new Promise<boolean>(() => undefined),
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await result).toBe("worktree");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("keeps an unavailable environment usable locally", async () => {
     expect(
       await resolveNewThreadWorkspaceDefault({

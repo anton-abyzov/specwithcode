@@ -19,6 +19,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -60,10 +61,15 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 
-/** `/settings/skills`: which skills each agent loads in the selected project's folder. */
+/**
+ * `/settings/skills`: which skills each agent loads in the selected project's
+ * folder, or with no project picked, every agent's user-level skills on the
+ * machine, switchable without touching any other agent.
+ */
 export function ProjectSkillsSettings() {
   const { search: value, scope } = useSettingsScope();
   const groups = useSettingsProjectGroups();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const machine = value.machine ? EnvironmentId.make(value.machine) : null;
   const group = projectScope
@@ -77,6 +83,28 @@ export function ProjectSkillsSettings() {
     ) ?? null;
 
   if (!projectScope) {
+    // The machine view rides on any project of that machine; it scans the home folder, not the project.
+    const machineId = machine ?? primaryEnvironmentId;
+    const anchor =
+      machineId === null
+        ? null
+        : (groups
+            .flatMap((candidate) => candidate.memberProjects)
+            .find((candidate) => candidate.environmentId === machineId) ?? null);
+    if (scope.kind !== "unavailable" && anchor !== null)
+      return (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <SettingsPageContainer width="wide">
+            <ProjectSkillsView
+              key={`${anchor.environmentId}:user-level`}
+              environmentId={anchor.environmentId}
+              projectId={anchor.id}
+              folder="~"
+              userLevel
+            />
+          </SettingsPageContainer>
+        </div>
+      );
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         {scope.kind === "unavailable" ? (
@@ -581,18 +609,25 @@ export function ProjectSkillsView({
   projectId,
   folder,
   memberProjects = NO_MEMBERS,
+  userLevel = false,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   folder: string;
   /** This project on every machine, for installing it on the others. */
   memberProjects?: ReadonlyArray<SkillMemberProject>;
+  /** The machine-wide view: user-level skills of every agent, read from the home folder. */
+  userLevel?: boolean;
 }) {
   const [rescan, setRescan] = useState(false);
   const query = useEnvironmentQuery(
     projectWorkspace.skills({
       environmentId,
-      input: rescan ? { projectId, refresh: true } : { projectId },
+      input: {
+        projectId,
+        ...(rescan ? { refresh: true } : {}),
+        ...(userLevel ? { userLevel: true } : {}),
+      },
     }),
   );
   const [search, setSearch] = useState("");
@@ -693,12 +728,21 @@ export function ProjectSkillsView({
       }
     >
       <div className="space-y-3 px-3 pt-3 sm:px-4">
-        <p className="text-xs text-muted-foreground">
-          Which skills each agent loads in{" "}
-          <span className="break-all font-mono text-foreground/80">{folder}</span>, and whether each
-          still matches the version vskill installed. Filter by agent or by level: project skills
-          live in this folder, user skills apply to every project. Click a skill for details.
-        </p>
+        {userLevel ? (
+          <p className="text-xs text-muted-foreground" data-testid="skills-user-level">
+            Every skill each agent loads for you on this machine, in every project. Turning one off
+            changes only that agent&apos;s own settings, so other agents keep it and nothing is
+            deleted. Pick a project to see its project skills too. Click a skill for details.
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Which skills each agent loads in{" "}
+            <span className="break-all font-mono text-foreground/80">{folder}</span>, and whether
+            each still matches the version vskill installed. Filter by agent or by level: project
+            skills live in this folder, user skills apply to every project. Click a skill for
+            details.
+          </p>
+        )}
         {linkedMissing ? (
           <p
             className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
@@ -870,6 +914,7 @@ export function ProjectSkillsView({
                   projectId={projectId}
                   row={detailRow}
                   memberProjects={memberProjects}
+                  userLevel={userLevel}
                   initialPushOpen={sheetFocus === "push"}
                   onChanged={query.refresh}
                   onLatest={noteLatest}

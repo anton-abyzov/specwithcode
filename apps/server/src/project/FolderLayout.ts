@@ -46,12 +46,18 @@ export interface FolderLayout {
   readonly repositoryCount: number;
   /** The folder budget stopped the walk before it saw everything. */
   readonly truncated: boolean;
+  /**
+   * A checkout below it is a clone of its own (a `.git` folder), not a submodule
+   * or worktree (a `.git` file), so a worktree of the folder would leave it out.
+   */
+  readonly separateClones: boolean;
 }
 
-const isCheckout = (folder: string) =>
+/** "clone" for a `.git` folder, "linked" for a `.git` file, null for no checkout. */
+const checkoutKind = (folder: string) =>
   NodeFSP.lstat(NodePath.join(folder, ".git")).then(
-    (stat) => stat.isDirectory() || stat.isFile(),
-    () => false,
+    (stat) => (stat.isDirectory() ? "clone" : stat.isFile() ? "linked" : null),
+    () => null,
   );
 
 const within = (root: string, candidate: string) => {
@@ -62,8 +68,9 @@ const within = (root: string, candidate: string) => {
 export async function readFolderLayout(folder: string): Promise<FolderLayout | null> {
   const root = await NodeFSP.realpath(folder).catch(() => null);
   if (root === null) return null;
-  const rootIsRepository = await isCheckout(root);
+  const rootIsRepository = (await checkoutKind(root)) !== null;
   const found = new Map<string, { readonly path: string; readonly link: boolean }>();
+  let separateClones = false;
   const queue: Array<{ path: string; depth: number; link: boolean }> = [
     { path: root, depth: 0, link: false },
   ];
@@ -88,7 +95,9 @@ export async function readFolderLayout(folder: string): Promise<FolderLayout | n
       const real = await NodeFSP.realpath(child).catch(() => null);
       if (real === null || real === root) continue;
       const link = next.link || entry.isSymbolicLink();
-      if (await isCheckout(child)) {
+      const kind = await checkoutKind(child);
+      if (kind !== null) {
+        if (kind === "clone") separateClones = true;
         // A checkout reached directly wins over a symlink to it, as in the CLI.
         const seen = found.get(real);
         if (seen === undefined || (seen.link && !link))
@@ -117,6 +126,7 @@ export async function readFolderLayout(folder: string): Promise<FolderLayout | n
     repositories: repositories.slice(0, LISTED_REPOSITORIES),
     repositoryCount: repositories.length,
     truncated,
+    separateClones,
   };
 }
 

@@ -1,4 +1,7 @@
-import { ASSISTANT_CITATION_CONTEXT_LENGTH, type AssistantCitation } from "@specweave-studio/contracts";
+import {
+  ASSISTANT_CITATION_CONTEXT_LENGTH,
+  type AssistantCitation,
+} from "@specweave-studio/contracts";
 
 export type AssistantTextSelector = {
   readonly text: string;

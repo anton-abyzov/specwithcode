@@ -4,11 +4,15 @@
  * reconnects, at most once per {@link RECHECK_AFTER_MS}, so a folder moved or
  * deleted outside the app is named instead of every thread failing on its own.
  *
+ * The same check says what the folder holds (its layout), which the new-thread
+ * workspace default and the workspace guidance read from this one cache.
+ *
  * @module useProjectFolderHealth
  */
 import { useEffect, useState } from "react";
+import type { AtomCommandResult } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import type { ProjectFolderCheck } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectFolderCheck, ProjectId } from "@specweave-studio/contracts";
 
 import { useEnvironment } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
@@ -39,58 +43,87 @@ export const RECHECK_AFTER_MS = 2 * 60_000;
 /** The latest check per project and folder, shared by every page showing it. */
 const checks = new Map<
   string,
-  { readonly at: number; readonly health: Promise<ProjectFolderHealth> }
+  { readonly at: number; readonly check: Promise<ProjectFolderCheck | null> }
 >();
 
 export function resetProjectFolderChecksForTests(): void {
   checks.clear();
 }
 
-export function useProjectFolderHealth(
-  project: Pick<EnvironmentProject, "environmentId" | "id" | "workspaceRoot">,
-): ProjectFolderHealth {
-  // A failed check is never shown, so it raises no toast either.
-  const runCheck = useAtomCommand(projectEnvironment.folderCheck, {
+export type RunProjectFolderCheck = (request: {
+  readonly environmentId: EnvironmentId;
+  readonly input: { readonly projectId: ProjectId; readonly workspaceRoot: string };
+}) => Promise<AtomCommandResult<ProjectFolderCheck, unknown>>;
+
+type CheckedProject = Pick<EnvironmentProject, "environmentId" | "id" | "workspaceRoot">;
+
+/**
+ * The project's own folder check: the cached one when it is younger than
+ * {@link RECHECK_AFTER_MS}, otherwise a new one. Null when the check failed;
+ * a failed check is tried again on the next read.
+ */
+export function readProjectFolderCheck(
+  runCheck: RunProjectFolderCheck,
+  project: CheckedProject,
+): Promise<ProjectFolderCheck | null> {
+  const { environmentId, id: projectId, workspaceRoot } = project;
+  const key = `${environmentId}\n${projectId}\n${workspaceRoot}`;
+  const now = Date.now();
+  const recent = checks.get(key);
+  if (recent !== undefined && now - recent.at < RECHECK_AFTER_MS) return recent.check;
+  const entry = {
+    at: now,
+    check: runCheck({ environmentId, input: { projectId, workspaceRoot } }).then(
+      (outcome) => (outcome._tag === "Success" ? outcome.value : null),
+      () => null,
+    ),
+  };
+  checks.set(key, entry);
+  void entry.check.then((settled) => {
+    if (settled === null && checks.get(key) === entry) checks.delete(key);
+  });
+  return entry.check;
+}
+
+/** The folder check command, quiet: a failed check is never shown, so it raises no toast either. */
+export function useProjectFolderCheckCommand(): RunProjectFolderCheck {
+  return useAtomCommand(projectEnvironment.folderCheck, {
     reportFailure: false,
     reportDefect: false,
-  });
-  const connected = useEnvironment(project.environmentId)?.connection.phase === "connected";
-  const { environmentId, id: projectId, workspaceRoot } = project;
+  }) as RunProjectFolderCheck;
+}
+
+/** The project's folder check, read once per project and again after its machine reconnects. */
+export function useProjectFolderCheck(project: CheckedProject | null): ProjectFolderCheck | null {
+  const runCheck = useProjectFolderCheckCommand();
+  const environmentId = project?.environmentId ?? null;
+  const connected = useEnvironment(environmentId)?.connection.phase === "connected";
+  const projectId = project?.id ?? null;
+  const workspaceRoot = project?.workspaceRoot ?? "";
   const key = `${environmentId}\n${projectId}\n${workspaceRoot}`;
   const [result, setResult] = useState<{
     readonly key: string;
-    readonly health: ProjectFolderHealth;
+    readonly check: ProjectFolderCheck | null;
   } | null>(null);
   // One check per project and folder, and one more when the machine reconnects
   // once the last check is older than RECHECK_AFTER_MS.
   useEffect(() => {
-    if (!connected || workspaceRoot.trim() === "") return;
+    if (!connected || environmentId === null || projectId === null) return;
+    if (workspaceRoot.trim() === "") return;
     let live = true;
-    const now = Date.now();
-    const recent = checks.get(key);
-    let health = recent !== undefined && now - recent.at < RECHECK_AFTER_MS ? recent.health : null;
-    if (health === null) {
-      const entry = {
-        at: now,
-        health: runCheck({ environmentId, input: { projectId, workspaceRoot } }).then(
-          (outcome): ProjectFolderHealth =>
-            outcome._tag === "Success" ? projectFolderHealth(outcome.value) : "unknown",
-          (): ProjectFolderHealth => "unknown",
-        ),
-      };
-      checks.set(key, entry);
-      health = entry.health;
-      // A failed check is tried again on the next reconnect.
-      void entry.health.then((settled) => {
-        if (settled === "unknown" && checks.get(key) === entry) checks.delete(key);
-      });
-    }
-    void health.then((settled) => {
-      if (live) setResult({ key, health: settled });
-    });
+    void readProjectFolderCheck(runCheck, { environmentId, id: projectId, workspaceRoot }).then(
+      (check) => {
+        if (live) setResult({ key, check });
+      },
+    );
     return () => {
       live = false;
     };
   }, [connected, environmentId, key, projectId, runCheck, workspaceRoot]);
-  return result?.key === key ? result.health : "unknown";
+  return result?.key === key ? result.check : null;
+}
+
+export function useProjectFolderHealth(project: CheckedProject): ProjectFolderHealth {
+  const check = useProjectFolderCheck(project);
+  return check === null ? "unknown" : projectFolderHealth(check);
 }

@@ -34,6 +34,12 @@ export const ProjectSkillsReadInput = Schema.Struct({
    * looked up instead of every thread of the project.
    */
   threadId: Schema.optional(ThreadId),
+  /**
+   * Read the machine's user-level skills instead: the agents scan the
+   * user's home folder, so only user, plugin and system skills show, the
+   * same for every project. `cwd` and `threadId` are then ignored.
+   */
+  userLevel: Schema.optional(Schema.Boolean),
 });
 export type ProjectSkillsReadInput = typeof ProjectSkillsReadInput.Type;
 
@@ -80,6 +86,8 @@ export const ProjectSkillPresence = Schema.Struct({
   fileVersion: Schema.optional(Schema.NullOr(Schema.String)),
   /** For a plugin skill, the version in the plugin's manifest (`plugin.json`). */
   pluginVersion: Schema.optional(Schema.NullOr(Schema.String)),
+  /** As on {@link ServerProviderSkill}: the user file that holds this agent's switch. */
+  switchFile: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectSkillPresence = typeof ProjectSkillPresence.Type;
 
@@ -206,6 +214,8 @@ const projectSkillTarget = {
   /** As in {@link ProjectSkillsReadInput}: the root or one of the project's thread worktrees. */
   cwd: Schema.optional(TrimmedNonEmptyString),
   threadId: Schema.optional(ThreadId),
+  /** As in {@link ProjectSkillsReadInput}: a row of the machine-wide, user-level view. */
+  userLevel: Schema.optional(Schema.Boolean),
   /** The row's name in the Skills view. */
   skill: ProjectSkillName,
 };
@@ -262,7 +272,10 @@ export const ProjectSkillsAction = Schema.Union([
     provider: ProviderDriverKind,
     instanceId: ProviderInstanceId,
     enabled: Schema.Boolean,
-    /** Claude: `~/.claude/settings.json` or the repository's `.claude/settings.local.json`. */
+    /**
+     * Claude: `~/.claude/settings.json` or the repository's `.claude/settings.local.json`.
+     * Every other agent switches skills for the user only.
+     */
     scope: Schema.Literals(["user", "local"]),
   }),
   Schema.Struct({

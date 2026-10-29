@@ -6,6 +6,7 @@ import {
   nestedProjectsSummary,
   planningSummary,
   refusalSummary,
+  workspaceRecommendationLine,
   worktreeSourceSummary,
 } from "./ProjectFolderChange";
 
@@ -149,5 +150,28 @@ describe("folder check summaries", () => {
       "This folder is not a Git repository itself, so new worktree threads and routines need a repository chosen for them.",
     );
     expect(worktreeSourceSummary({ sameRepository: false })).toBeNull();
+  });
+
+  it("recommends a workspace for the new folder without choosing it", () => {
+    const base = { repositories: [], repositoryCount: 0, truncated: false };
+    expect(
+      workspaceRecommendationLine({
+        ...base,
+        kind: "umbrella",
+        rootIsRepository: true,
+        repositories: ["repositories/acme/api"],
+        repositoryCount: 1,
+        separateClones: true,
+      }),
+    ).toMatchObject({
+      recommended: "local",
+      text: expect.stringMatching(/^Recommended for this folder: Use worktrees off\./),
+    });
+    expect(
+      workspaceRecommendationLine({ ...base, kind: "single", rootIsRepository: true }),
+    ).toMatchObject({ recommended: "worktree" });
+    expect(
+      workspaceRecommendationLine({ ...base, kind: "plain", rootIsRepository: false }),
+    ).toBeNull();
   });
 });

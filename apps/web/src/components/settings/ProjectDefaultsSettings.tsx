@@ -36,6 +36,8 @@ import { ComputerUsePermissionSetup } from "../computerUse/ComputerUsePermission
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { worktreesSettingRecommendation } from "../../lib/folderLayoutGuidance";
+import { useProjectFolderCheck } from "../../studio/useProjectFolderHealth";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -115,6 +117,17 @@ export function ProjectDefaultsSettings({
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
+  // What the project's folder holds, for the Use worktrees recommendation.
+  const folderProject = isProjectScope
+    ? (scope.members.find(
+        (member) =>
+          member.id === target?.projectId && member.environmentId === target.environmentId,
+      ) ?? null)
+    : null;
+  const folderLayout = useProjectFolderCheck(folderProject)?.layout;
+  const worktreesRecommendation = folderLayout
+    ? worktreesSettingRecommendation(folderLayout)
+    : null;
   // File-backed submodule settings show the effective value. Workspace also
   // exposes Automatic so an inherited Git-aware choice is never shown as an
   // explicit current-checkout preference.
@@ -245,7 +258,20 @@ export function ProjectDefaultsSettings({
       mixed={mixedWorkspace}
       id={searchableSetting("new-threads").id}
       title="Use worktrees"
-      description="New threads in this project, including ones the coordinator starts, open in their own git worktree off the project's current branch. A folder holding other repositories, such as an umbrella, keeps its threads in the folder. Off: they work in the project folder. Not set: coordinator threads work in the project folder and chats you start follow this machine's Workspace default."
+      description={
+        <>
+          New threads in this project, including ones the coordinator starts, open in their own git
+          worktree off the project's current branch. A folder holding other repositories, such as an
+          umbrella, keeps its threads in the folder. Off: they work in the project folder. Not set:
+          coordinator threads work in the project folder and chats you start follow this machine's
+          Workspace default.
+          {worktreesRecommendation ? (
+            <span className="mt-1 block text-foreground" data-workspace-recommendation="">
+              {worktreesRecommendation}
+            </span>
+          ) : null}
+        </>
+      }
       resetAction={
         target?.sources.defaultThreadEnvMode === "project" ? (
           <SettingResetButton
@@ -273,7 +299,7 @@ export function ProjectDefaultsSettings({
       mixed={mixedWorkspace}
       id={searchableSetting("new-threads").id}
       title="Workspace"
-      description="Automatic uses a new worktree for Git projects and the current checkout otherwise. Explicit project and specweave-studio.json choices win; threads a coordinator starts get a worktree only when their project turns on Use worktrees. Worktree storage is configured separately in Storage."
+      description="Automatic uses a new worktree for a project that is one Git repository, and the current checkout for a folder holding other repositories (an umbrella or several services) or no repository. Explicit project and specweave-studio.json choices win; threads a coordinator starts get a worktree only when their project turns on Use worktrees. Worktree storage is configured separately in Storage."
       resetAction={
         settings.defaultThreadEnvMode !== null ? (
           <SettingResetButton

@@ -492,6 +492,10 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         accentColor,
         enabled,
         snapshot,
+        skillsControl: {
+          binaryPath: effectiveConfig.binaryPath || "opencode",
+          environment: processEnv,
+        },
         snapshotForCwd: (cwd) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot

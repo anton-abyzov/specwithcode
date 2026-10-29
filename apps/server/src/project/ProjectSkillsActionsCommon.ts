@@ -31,12 +31,15 @@ export interface SkillsActionContext {
   readonly projectId: ProjectId;
   readonly cwd: string;
   readonly row: ProjectSkillRow;
+  /** The machine-wide view: `cwd` is the home folder, and only user files are written. */
+  readonly userLevel?: boolean | undefined;
 }
 
 export interface SkillTarget {
   readonly projectId: ProjectId;
   readonly cwd?: string | undefined;
   readonly threadId?: ThreadId | undefined;
+  readonly userLevel?: boolean | undefined;
   readonly skill: string;
 }
 

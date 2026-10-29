@@ -71,7 +71,7 @@ describe("settingInheritanceLayers", () => {
       ["Project", "Inherits", false],
       ["Laptop", "Inherits", false],
       ["specweave-studio.json", "New worktree", true],
-      ["Default", "Automatic (Git worktree; otherwise current checkout)", false],
+      ["Default", "Automatic (worktree for one Git repository; otherwise current checkout)", false],
     ]);
     const settings = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" as const };
     const fromEnvironment = settingInheritanceLayers(
@@ -88,7 +88,7 @@ describe("settingInheritanceLayers", () => {
       ["Inherits", false],
       ["Current checkout", true],
       ["Inherits", false],
-      ["Automatic (Git worktree; otherwise current checkout)", false],
+      ["Automatic (worktree for one Git repository; otherwise current checkout)", false],
     ]);
   });
 });
