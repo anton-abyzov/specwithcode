@@ -142,7 +142,7 @@ describe("agentVerdictForHold", () => {
     const cancelled = { installRequestedAt: null, handledInstallRequestAt: requested };
     expect(verdict({ ...cancelled, status: "installing" })).toEqual({
       type: "busy",
-      untilMs: startedAtMs + Hold.HOLD_MAX_MS,
+      untilMs: startedAtMs + 90_000 + Hold.AGENT_APPLY_TIMEOUT_MS + Hold.AGENT_RETRY_MS,
     });
     expect(verdict({ ...cancelled, status: "installed" })).toEqual({
       type: "settled",
@@ -162,10 +162,19 @@ describe("agentVerdictForHold", () => {
   });
 
   it("keeps the hold while the agent installs this request, up to the ceiling", () => {
+    // Until the agent stops waiting for the helper it started with that status.
     expect(verdict({ status: "installing", handledInstallRequestAt: requested })).toEqual({
       type: "busy",
-      untilMs: startedAtMs + Hold.HOLD_MAX_MS,
+      untilMs: startedAtMs + 90_000 + Hold.AGENT_APPLY_TIMEOUT_MS + Hold.AGENT_RETRY_MS,
     });
+    // A retried install that starts late still ends at the ceiling.
+    expect(
+      verdict({
+        status: "installing",
+        handledInstallRequestAt: requested,
+        updatedAtMs: startedAtMs + 80 * 60_000,
+      }),
+    ).toEqual({ type: "busy", untilMs: startedAtMs + Hold.HOLD_MAX_MS });
     // An install another pass started is not this request's.
     expect(verdict({ status: "installing" })).toEqual({ type: "none" });
   });
@@ -180,10 +189,61 @@ describe("agentVerdictForHold", () => {
     expect(verdict({ updatedAtMs: startedAtMs + 30_000 })).toEqual(until);
     // Its final answer, once no retry fits: only the time limit is left.
     expect(verdict({ updatedAtMs: holdUntilMs - Hold.AGENT_RETRY_MS })).toEqual({ type: "none" });
-    // A refused apply snapshots again even past the deadline.
+    // A refused apply snapshots again even past the deadline, within a window of its own.
     expect(
       verdict({ updatedAtMs: holdUntilMs + 5_000, message: Hold.AGENT_APPLY_RETRY_MESSAGE }),
+    ).toEqual({
+      type: "busy",
+      untilMs:
+        holdUntilMs + 5_000 + Hold.AGENT_APPLY_RETRY_WINDOW_MS + Hold.AGENT_SNAPSHOT_TIMEOUT_MS,
+    });
+    // Refused before the deadline: the forced window still bounds it.
+    expect(
+      verdict({ updatedAtMs: startedAtMs + 120_000, message: Hold.AGENT_APPLY_RETRY_MESSAGE }),
     ).toEqual(until);
+  });
+
+  it("keeps the hold through a retry of an install refused long after installHoldUntil", () => {
+    // M4 1.0.112: a forced request held 15 minutes, its apply refused before the
+    // restart about 28 minutes in, as the 40-minute APPLY_TIMEOUT now allows.
+    const refusedAtMs = startedAtMs + 28 * 60_000;
+    const retry = Hold.AGENT_APPLY_RETRY_MESSAGE;
+    const first = verdict({ updatedAtMs: refusedAtMs, message: retry });
+    expect(first).toEqual({
+      type: "busy",
+      untilMs: refusedAtMs + Hold.AGENT_APPLY_RETRY_WINDOW_MS + Hold.AGENT_SNAPSHOT_TIMEOUT_MS,
+    });
+    expect(first.type === "busy" && first.untilMs > refusedAtMs + 60_000).toBe(true);
+    // Its retry snapshots refuse again: each status leads with the same message.
+    const againAtMs = refusedAtMs + 5 * 60_000;
+    expect(
+      verdict({
+        updatedAtMs: againAtMs,
+        message: `${retry}. Waiting for running sessions (attempt 1)`,
+      }),
+    ).toEqual({
+      type: "busy",
+      untilMs: againAtMs + Hold.AGENT_APPLY_RETRY_WINDOW_MS + Hold.AGENT_SNAPSHOT_TIMEOUT_MS,
+    });
+    // Its second install is held until it ends.
+    const secondAtMs = refusedAtMs + 6 * 60_000;
+    expect(
+      verdict({
+        status: "installing",
+        handledInstallRequestAt: requested,
+        updatedAtMs: secondAtMs,
+      }),
+    ).toEqual({
+      type: "busy",
+      untilMs: Math.min(
+        startedAtMs + Hold.HOLD_MAX_MS,
+        secondAtMs + Hold.AGENT_APPLY_TIMEOUT_MS + Hold.AGENT_RETRY_MS,
+      ),
+    });
+    // The give-up of a pass that was not retrying an apply still ends only by TTL.
+    expect(
+      verdict({ updatedAtMs: refusedAtMs, message: "Waiting for running sessions (attempt 9)" }),
+    ).toEqual({ type: "none" });
   });
 });
 

@@ -113,6 +113,8 @@ team that signs the iPhone app:
 | `RELAY_API_ZONE_NAME`              | `spec-weave.com`               | `production` variable       |
 | `RELAY_TUNNEL_ZONE_NAME`           | `spec-weave.com`               | `production` variable       |
 | `RELAY_TUNNEL_CLEANUP_MODE`        | `dry-run`                      | `production` variable       |
+| `RELAY_GLOBAL_MANAGED_TUNNEL_CAP`  | `180`                          | `production` variable       |
+| `RELAY_CONNECT_FREE_TUNNEL_LIMIT`  | unset (default `3`)            | `production` variable       |
 | `CLERK_PUBLISHABLE_KEY`            | `pk_live_...`                  | `production` variable       |
 | `CLERK_JWT_AUDIENCE`               | `studio-code-relay`            | `production` variable       |
 | `CLERK_JWT_TEMPLATE`               | `studio-relay`                 | `production` variable       |
@@ -126,6 +128,13 @@ team that signs the iPhone app:
 | `STUDIO_CLERK_JWT_TEMPLATE`        | `studio-relay`                 | repo variable (Mac release) |
 | `STUDIO_CLERK_CLI_OAUTH_CLIENT_ID` | step 3.8                       | repo variable (Mac release) |
 | `STUDIO_RELAY_URL`                 | `https://relay.spec-weave.com` | repo variable (Mac release) |
+
+`RELAY_GLOBAL_MANAGED_TUNNEL_CAP` stops new machine links at that total across all accounts;
+machines already linked keep working, and new links get a `service_capacity` limit error. Each
+linked machine is one DNS record, and the Free zone allows 200 records, so keep it at `180` until
+the tunnel zone is on Pro, then raise it to `1500`. Unset means no global cap.
+`RELAY_CONNECT_FREE_TUNNEL_LIMIT` is the machine limit for accounts without a founder seat or a
+manual override; leave it unset for 3.
 
 Leave `RELAY_DOMAIN` unset: the `prod` stage derives `relay.spec-weave.com` from the zone. Leave
 `RELAY_TUNNEL_BASE_DOMAIN` unset so tunnels sit directly under `spec-weave.com`. Leave
@@ -155,6 +164,7 @@ E="-R $R --env production"
 gh variable set RELAY_API_ZONE_NAME       $E -b 'spec-weave.com'
 gh variable set RELAY_TUNNEL_ZONE_NAME    $E -b 'spec-weave.com'
 gh variable set RELAY_TUNNEL_CLEANUP_MODE $E -b 'dry-run'
+gh variable set RELAY_GLOBAL_MANAGED_TUNNEL_CAP $E -b '180'
 gh variable set CLERK_PUBLISHABLE_KEY     $E -b 'pk_live_...'
 gh variable set CLERK_JWT_AUDIENCE        $E -b 'studio-code-relay'
 gh variable set CLERK_JWT_TEMPLATE        $E -b 'studio-relay'
@@ -229,6 +239,36 @@ first and falls back to its Connect address. Tailscale on both machines is optio
   `gh workflow run deploy-relay.yml -R $R --ref main`.
 - Each linked Mac holds one Cloudflare Tunnel. Check Zero Trust > Networks > Tunnels against
   Cloudflare's per-account tunnel limit once sign-ups grow.
+
+## Founding 1,000 seats
+
+The first 1,000 accounts to link a managed machine get a founder number and 10 machines; everyone
+else gets `RELAY_CONNECT_FREE_TUNNEL_LIMIT` (3). A row in `relay_managed_tunnel_limits` overrides
+both for one account. A seat is granted atomically only after a managed link succeeds, so a link
+refused at a cap or failing in Cloudflare never takes one. Seats are never resold when an account
+is deleted. `GET https://relay.spec-weave.com/v1/public/founders` (no auth, cached for 60 seconds)
+returns `seatCap`, `seatsGranted`, `seatsLeft` and `grantsOpen`.
+
+The free limit was 5 before this release. The `connect_founders` migration gives every account that
+already holds a live managed machine a founder number, in order of its earliest allocation, so no
+existing account drops below its machines.
+
+Stop new founder seats without touching existing founders (the kill switch), or reopen them:
+
+```sh
+cd infra/relay
+npx wrangler d1 execute <prod D1 database name> --remote \
+  --command "UPDATE relay_connect_promos SET grants_open = 0 WHERE id = 'founders'"
+```
+
+Raise the cap the same way with `SET seat_cap = <n>`. After grants reopen or the cap is raised,
+an account without a seat (including one first linked while grants were closed) takes the next
+seat on its next successful managed link.
+
+A machine counts toward the account and global caps while its link is live with managed tunnels
+on, and for 15 minutes after its allocation was reserved or last re-claimed, so concurrent links
+cannot overshoot. An allocation left by a failed link stops counting after that window. The global
+cap also counts any allocation that still holds a DNS record, such as one whose teardown failed.
 
 ## Before the iPhone app goes to App Store review
 

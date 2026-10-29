@@ -58,6 +58,8 @@ import {
 } from "../Icons";
 import { BitbucketCredentialsSettings } from "./BitbucketCredentialsSettings";
 import { GitHubAccountSettings } from "./GitHubAccountSettings";
+import { GitHubCopySignInSettings } from "./GitHubCopySignInSettings";
+import { GitHubCredentialCard } from "./GitHubCredentialCard";
 import { GitHubTokenSettings } from "./GitHubTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
@@ -618,6 +620,16 @@ export function SourceControlSettingsPanel() {
                   ) : item.kind === "github" ? (
                     <SettingsSearchTarget id={searchableSetting("github-accounts").id}>
                       <div className="grid gap-6">
+                        <GitHubCredentialCard
+                          key={`credential-${environmentId}`}
+                          environmentId={environmentId}
+                          environmentLabel={environment?.label ?? "the server host"}
+                          onChanged={handleScan}
+                        />
+                        <GitHubCopySignInSettings
+                          key={`copy-${environmentId}`}
+                          environmentId={environmentId}
+                        />
                         {/* Shown even without gh: a saved token is how GitHub works without the CLI. */}
                         <GitHubTokenSettings
                           key={`token-${environmentId}`}
@@ -628,6 +640,7 @@ export function SourceControlSettingsPanel() {
                           <GitHubAccountSettings
                             key={environmentId}
                             environmentId={environmentId}
+                            environmentLabel={environment?.label ?? "the server host"}
                             auth={item.auth}
                             onSaved={handleScan}
                           />

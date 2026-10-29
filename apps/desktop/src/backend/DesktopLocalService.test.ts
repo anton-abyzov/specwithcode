@@ -741,9 +741,9 @@ describe("DesktopLocalService.discover", () => {
         yield* stopForInstall(studioHome, 0);
         const service = yield* DesktopLocalService.DesktopLocalService;
         const discovering = yield* Effect.forkChild(service.discover());
-        yield* TestClock.adjust("14 minutes");
+        yield* TestClock.adjust("39 minutes");
         assert.isUndefined(discovering.pollUnsafe());
-        // 15 minutes of waiting for the install, two more for a job launchd does
+        // 40 minutes of waiting for the install, two more for a job launchd does
         // not have loaded, then the usual six-second grace.
         yield* TestClock.adjust("1 minute");
         yield* TestClock.adjust("2 minutes");
@@ -762,8 +762,8 @@ describe("DesktopLocalService.discover", () => {
     withDescriptorServer((origin) => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       return Effect.gen(function* () {
-        // Ten seconds of the agent's 15-minute window are left.
-        yield* stopForInstall(studioHome, 14 * 60_000 + 50_000);
+        // Ten seconds of the agent's 40-minute window are left.
+        yield* stopForInstall(studioHome, 39 * 60_000 + 50_000);
         const service = yield* DesktopLocalService.DesktopLocalService;
         const discovering = yield* Effect.forkChild(service.discover());
         yield* advanceSeconds(10);
@@ -829,7 +829,7 @@ describe("DesktopLocalService.discover", () => {
     withDescriptorServer((origin) => {
       const { home, studioHome } = makeHomeWithInstalledService(origin);
       return Effect.gen(function* () {
-        yield* stopForInstall(studioHome, 16 * 60_000);
+        yield* stopForInstall(studioHome, 41 * 60_000);
         const service = yield* DesktopLocalService.DesktopLocalService;
         let notices = 0;
         const discovering = yield* Effect.forkChild(

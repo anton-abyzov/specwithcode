@@ -35,6 +35,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
 class DiskFullTestError extends Schema.TaggedError<DiskFullTestError>()("DiskFullTestError", {
@@ -214,6 +215,95 @@ it.effect.each(cookieTransportCases)(
           Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// M4, 1.0.112: a pairing token minted while the service was held added an
+// auth_pairing_links row, which the update helper compares exactly, and failed the install.
+it.effect("refuses to mint a pairing token while the service is held for an update", () =>
+  Effect.gen(function* () {
+    // The hold's expiry is read on the request's clock, which is the real one.
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+    const crypto = yield* Crypto.Crypto;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
+    const hold = yield* ServiceUpdateHold.makeWithOptions({
+      agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json",
+    });
+    const routes = HttpApiBuilder.layer(AuthTestApi).pipe(
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(Layer.succeed(ServiceUpdateHold.ServiceUpdateHold, hold)),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provideMerge(layerEnvironmentAuth),
+      Layer.provide(layerConfig),
+      Layer.provide(
+        HttpPlatform.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Etag.layerWeak),
+        ),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const call = (request: Request) =>
+            Effect.promise(() => environment.handler(request, requestContext));
+          const signIn = yield* call(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          expect(signIn.status).toBe(200);
+          const cookie =
+            signIn.headers
+              .getSetCookie()
+              .find((value) => value.startsWith("studio_dev_session_"))
+              ?.split(";", 1)[0] ?? "";
+          const mint = () =>
+            call(
+              postJson(
+                "/api/auth/pairing-token",
+                { scopes: ["orchestration:read"], label: "memory-cleanup" },
+                { cookie, origin: "http://127.0.0.1" },
+              ),
+            );
+          const links = () =>
+            call(
+              new Request("http://127.0.0.1/api/auth/pairing-links", { headers: { cookie } }),
+            ).pipe(
+              Effect.flatMap((response) =>
+                Effect.promise(() => response.json() as Promise<ReadonlyArray<unknown>>),
+              ),
+              Effect.map((rows) => rows.length),
+            );
+          const before = yield* links();
+
+          yield* hold.acquire({ reason: "test" });
+          const refused = yield* mint();
+          expect(refused.status).toBe(503);
+          expect(yield* Effect.promise(() => refused.json())).toMatchObject({
+            code: "update_in_progress",
+            retryAfterSeconds: 300,
+            message: ServiceUpdateHold.SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
+          });
+          // Nothing the update helper guards was written.
+          expect(yield* links()).toBe(before);
+
+          yield* hold.release("test");
+          const minted = yield* mint();
+          expect(minted.status).toBe(200);
+          expect(yield* links()).toBe(before + 1);
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(

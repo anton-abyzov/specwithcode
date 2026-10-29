@@ -67,6 +67,7 @@ import {
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
+import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
@@ -246,10 +247,10 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             installation: executable,
             profile,
             cwd: input.cwd,
-            baseEnv: {
+            baseEnv: withGitHubSpawnEnvironment({
               ...withAgentDeviceEnvironment(processEnvironment, input),
               ...input.agentEnvironment,
-            },
+            }),
             auth,
             runtimeTempDirectory,
           }),

@@ -75,6 +75,38 @@ describe("gitHubReadiness", () => {
       stdout: JSON.stringify({ hosts: {} }),
     }));
     expect(out.status).toBe("signed-out");
+    expect(out.heldHosts).toBeUndefined();
+    const broken = await gitHubReadiness(async () => ({
+      code: 1,
+      missing: false,
+      stdout: JSON.stringify({
+        hosts: {
+          "github.com": [
+            { state: "error", active: true, host: "github.com", login: "old", error: "expired" },
+          ],
+        },
+      }),
+    }));
+    expect(broken).toMatchObject({ status: "signed-out", heldHosts: ["github.com"] });
+    // Only gh rejecting --json is "too old"; a timeout or other noise is just unknown.
+    expect(
+      await gitHubReadiness(async () => ({
+        code: 1,
+        missing: false,
+        stdout: "",
+        stderr: "unknown flag: --json\n",
+      })),
+    ).toMatchObject({ status: "unknown", outdated: true });
+    const timedOut = await gitHubReadiness(async () => ({
+      code: null,
+      missing: false,
+      stdout: "",
+    }));
+    expect(timedOut).toMatchObject({
+      status: "unknown",
+      detail: "gh did not answer in time; check again.",
+    });
+    expect(timedOut.outdated).toBeUndefined();
     expect(
       (await gitHubReadiness(async () => ({ code: null, missing: true, stdout: "" }))).status,
     ).toBe("not-installed");

@@ -19,7 +19,9 @@ import os
 import pathlib
 import plistlib
 import re
+import resource
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -310,7 +312,11 @@ class RemoteScript(Machine):
         self.assertEqual(self.trash(), [OLD])
         self.assertIn('quitting the app (TERM to pid %d)' % app.pid, lines)
 
-    def test_a_session_dropped_after_the_quit_still_swaps_and_reopens_the_app(self):
+    def dropped_after(self, prefix):
+        """Runs an update of the running app whose ssh session drops once the line starting with `prefix` is out,
+        and checks that the run still swaps, reopens the app and leaves no lock behind. bash 3.2 kept each line
+        that could not be written in the shell's buffer, and every later $(...) carried it out: the app's pids,
+        the zip's sha256 and the lock's holder read wrong."""
         make_app(self.app, OLD)
         self.serve()
         app = self.start()
@@ -321,9 +327,9 @@ class RemoteScript(Machine):
                                       text=True)
             self.processes.append(script)
             for line in script.stdout:
-                if line.startswith('quitting the app'):
+                if line.startswith(prefix):
                     break
-            script.stdout.close()  # The ssh session drops with the app quit and nothing swapped yet.
+            script.stdout.close()  # The ssh session drops here.
             self.assertEqual(script.wait(timeout=60), 0)
         self.assertEqual((self.root / 'stderr').read_text(), '')
         self.assertIsNotNone(app.poll())
@@ -331,6 +337,19 @@ class RemoteScript(Machine):
         self.assertEqual(self.log('open'), [str(self.app)])
         self.assertEqual(self.trash(), [OLD])
         self.assertEqual(self.leftovers(), [])
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
+
+    def test_a_session_dropped_after_the_quit_still_swaps_and_reopens_the_app(self):
+        self.dropped_after('quitting the app')  # With the app quit and nothing swapped yet.
+
+    def test_a_session_dropped_before_the_download_still_checks_it_and_swaps(self):
+        self.dropped_after('installed app:')
+
+    def test_a_session_dropped_after_the_download_still_quits_the_app_and_swaps(self):
+        self.dropped_after('downloaded the release zip')
+
+    def test_a_session_dropped_after_the_unpack_still_quits_the_app_and_swaps(self):
+        self.dropped_after('unpacked ')
 
     def shipit_on_quit(self, app, staged, waiting=False, relaunch=False):
         """Squirrel's ShipIt, run from the app's own framework: once the app quits, it swaps in `staged`. Squirrel.Mac
@@ -654,6 +673,8 @@ class RemoteScript(Machine):
                 make_app(self.old, OLD)
                 (self.cache / '.lock').mkdir(parents=True, exist_ok=True)
                 (self.cache / '.lock' / 'pid').write_text(record)
+                long_ago = time.time() - 3600  # Left by a power loss, long before this run.
+                os.utime(str(self.cache / '.lock'), (long_ago, long_ago))
                 code, lines = self.run_script()
                 self.assertEqual(code, 0, lines)
                 self.assertIn('took over the update lock of a run that is gone', lines)
@@ -700,6 +721,27 @@ class RemoteScript(Machine):
         self.assertIn('another update of this app is starting', lines)
         made = time.time() - 60
         os.utime(str(lock), (made, made))
+        code, lines = self.run_script()
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
+        self.assertIn('took over the update lock of a run that is gone', lines)
+        self.assertFalse(lock.exists())
+
+    def test_a_lock_whose_record_is_half_written_holds_as_one_starting(self):
+        # The record is two writes: a run that reads only its pid line meanwhile must not take the lock of the
+        # live run writing it for a gone run's; one left that way for long is a run that stopped there.
+        make_app(self.app, OLD)
+        self.serve()
+        holder = self.start('nothing')
+        lock = self.cache / '.lock'
+        lock.mkdir(parents=True)
+        (lock / 'pid').write_text('%d\n' % holder.pid)
+        code, lines = self.run_script()
+        self.assertEqual(code, 4, lines)
+        self.assertIn('another update of this app is starting; let it finish', self.failure(code, lines))
+        self.assertEqual((lock / 'pid').read_text(), '%d\n' % holder.pid)
+        self.assertEqual(bundle_version(self.app), OLD)
+        long_ago = time.time() - 60
+        os.utime(str(lock), (long_ago, long_ago))
         code, lines = self.run_script()
         self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
         self.assertIn('took over the update lock of a run that is gone', lines)
@@ -888,6 +930,67 @@ exec /usr/bin/stat "$@"
         self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
         self.assertEqual(bundle_version(self.app), OLD)
 
+    def test_a_run_whose_record_the_disk_refuses_stops_for_no_room_and_prints_none_of_it(self):
+        # The lock's folder fits and its record's file opens, but its data does not (a full volume): bash 3.2
+        # kept the record in its buffer, the inode check after it read the record too, and the run stopped as
+        # one whose lock another run took over, printing its record.
+        make_app(self.app, OLD)
+        self.serve()
+        env = self.env()
+        env.update({'V': NEW, 'SHA': self.served, 'REPO': REPO, 'DRY_RUN': '0'})
+
+        def no_room_for_data():
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))  # Every write into a file fails, as on a full volume.
+        result = subprocess.run(['/bin/bash', str(SCRIPT)], env=env, capture_output=True, text=True, timeout=120,
+                                preexec_fn=no_room_for_data)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines, [self.failure(result.returncode, lines)])
+        self.assertIn("could not write this run's record", lines[-1])
+        self.assertEqual(result.returncode, 5)
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
+        self.assertEqual(bundle_version(self.app), OLD)
+
+    def test_a_run_that_cannot_make_its_lock_says_why(self):
+        make_app(self.app, OLD)
+        self.serve()
+        shims = self.root / 'shims'
+        shims.mkdir()
+        mkdir = shims / 'mkdir'
+        # Refuses the folder $REFUSE names with $MKDIR_ERROR, as a full volume or a locked folder refuses it.
+        mkdir.write_text('#!/bin/bash\n' + r'''
+for arg in "$@"; do
+  [ "$arg" != "$REFUSE" ] || { echo "mkdir: $arg: $MKDIR_ERROR" >&2; exit 1; }
+done
+exec /bin/mkdir "$@"
+''')
+        mkdir.chmod(0o755)
+        # The cache folder first, while the worker has none (its first run, or its backups were removed).
+        self.assertFalse(self.cache.exists())
+        for folder, made in ((self.cache, 'the update cache'), (self.cache / '.lock', 'the update lock')):
+            # No room is exit 5 and says so; any other reason is mkdir's own, with exit 1.
+            for error, want, hint in (('No space left on device', 5, '; is the disk full?'),
+                                      ('Disc quota exceeded', 5, '; is the disk full?'), ('Permission denied', 1, '')):
+                with self.subTest(folder=folder.name, error=error):
+                    code, lines = self.run_script(PATH=str(shims) + ':/usr/bin:/bin:/usr/sbin:/sbin',
+                                                  REFUSE=str(folder), MKDIR_ERROR=error)
+                    self.assertIn('could not make %s (mkdir: %s: %s%s)' % (made, folder, error, hint),
+                                  self.failure(code, lines))
+                    self.assertEqual(code, want)
+                    self.assertEqual(bundle_version(self.app), OLD)
+                    self.assertFalse((self.cache / '.lock').exists())
+
+    def test_a_run_removes_the_folder_a_run_stopped_in_its_release_left_aside(self):
+        # A run killed between release_lock's rename and its rm: only a run with that pid would remove the folder.
+        make_app(self.app, OLD)
+        self.serve()
+        aside = self.cache / '.lock-gone-424242'
+        aside.mkdir(parents=True)
+        (aside / 'pid').write_text('424242\nThu Jan 1 00:00:00 1970\n')
+        code, lines = self.run_script()
+        self.assertEqual((code, self.result(lines)['how']), (0, 'swapped'))
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.lock')], [])
+
     def test_a_run_takes_over_only_the_lock_it_judged_gone(self):
         # Another run took the same stale lock over while this one judged it: this one stops and leaves it.
         make_app(self.app, OLD)
@@ -1050,27 +1153,43 @@ exec /bin/rm "$@"
         other = self.start('nothing')
         theirs = '%d\n%s\n' % (other.pid, started(other.pid))
 
-        def names(pid):
-            try:
-                return (lock / 'pid').read_text().split('\n')[0] == str(pid)
-            except OSError:
-                return False
+        shims = self.root / 'shims'
+        shims.mkdir()
+        pause = shims / 'sleep'
+        pause.write_text('#!/bin/bash\n' + r'''
+# The run's wait after it writes its record (its only sleep of SWC_LOCK_WAIT seconds) ends once the test has
+# written the other run's record, however slow the host: a slow host must not let the run read its own record.
+if [ "$1" = "$SWC_LOCK_WAIT" ]; then
+  : > "$FAKE/lock.waiting"
+  n=0
+  while [ ! -f "$FAKE/lock.go" ] && [ "$n" -lt 1200 ]; do
+    /bin/sleep 0.05
+    n=$((n + 1))
+  done
+  exit 0
+fi
+exec /bin/sleep "$@"
+''')
+        pause.chmod(0o755)
 
         for stale in (True, False):
             with self.subTest(stale=stale):
                 if stale:
                     lock.mkdir(parents=True)
                     (lock / 'pid').write_text(left)
-                env = self.env(SWC_LOCK_WAIT='3')
+                env = self.env(SWC_LOCK_WAIT='3', PATH=str(shims) + ':/usr/bin:/bin:/usr/sbin:/sbin')
                 env.update({'V': NEW, 'SHA': self.served, 'REPO': REPO, 'DRY_RUN': '0'})
                 script = subprocess.Popen(['/bin/bash', str(SCRIPT)], env=env, stdout=subprocess.PIPE,
                                           stderr=subprocess.PIPE, text=True)
                 self.processes.append(script)
-                deadline = time.time() + 10
-                while not names(script.pid):
-                    self.assertLess(time.time(), deadline, 'the run never wrote its record')
+                deadline = time.time() + 60
+                while not (self.fake / 'lock.waiting').exists():
+                    self.assertLess(time.time(), deadline, 'the run never waited after writing its record')
+                    self.assertIsNone(script.poll(), 'the run ended before it waited')
                     time.sleep(0.02)
+                self.assertEqual((lock / 'pid').read_text().split('\n')[0], str(script.pid))
                 (lock / 'pid').write_text(theirs)  # The other run's record, written as this run waits.
+                (self.fake / 'lock.go').write_text('')
                 out, err = script.communicate(timeout=60)
                 self.assertEqual(err, '')
                 lines = out.splitlines()
@@ -1082,6 +1201,8 @@ exec /bin/rm "$@"
                 self.assertEqual(bundle_version(self.app), OLD)
                 self.assertEqual(self.leftovers(), [])
                 shutil.rmtree(str(lock))
+                for mark in ('lock.waiting', 'lock.go'):
+                    (self.fake / mark).unlink()
 
     def test_dry_run_changes_nothing(self):
         make_app(self.app, OLD)

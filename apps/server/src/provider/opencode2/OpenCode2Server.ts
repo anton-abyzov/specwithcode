@@ -18,6 +18,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { OpenCodeRuntimeError } from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
+import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
 
 const INFO_TIMEOUT = "5 seconds";
 
@@ -58,7 +59,8 @@ export const serverEnvironment = (
   password: Redacted.Redacted,
 ): NodeJS.ProcessEnv => {
   const { OPENCODE_SERVER_PASSWORD: _inherited, ...rest } = environment;
-  return { ...rest, OPENCODE_PASSWORD: Redacted.value(password) };
+  // One server serves every thread, so it gets the GitHub access current when it starts.
+  return withGitHubSpawnEnvironment({ ...rest, OPENCODE_PASSWORD: Redacted.value(password) });
 };
 
 /** The client wraps HTTP failures in a `ClientError`; this unwraps either shape. */

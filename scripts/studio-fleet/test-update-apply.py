@@ -14,6 +14,11 @@ updater_base=importlib.util.module_from_spec(spec);spec.loader.exec_module(updat
 # The harness's own update.py module and fixtures, so a patch here reaches the apply it runs.
 update,DISK,RESTART,REAL_ROWS_SNAPSHOT=updater_base.update,updater_base.DISK,updater_base.RESTART,updater_base.REAL_ROWS_SNAPSHOT
 mutate_state,waiting_check=updater_base.mutate_state,updater_base.waiting_check
+def budget_constants(budget):
+ """update.py's READY_BY_SECONDS_FROM_START and MIN_READINESS_SECONDS for an agent's budget
+ (test-update-refusal.py ApplyBudget checks the module derives the same from its environment)."""
+ seconds=min(3600,max(900,budget));ready_by=seconds-420
+ return ready_by,min(update.READINESS_DEADLINE_SECONDS,max(60,ready_by-420))
 class ApplyRecoveryTests(updater_base.ApplyRecovery):
  def test_migration_capable_plans_try_the_page_proof_and_fall_back_when_it_refuses(self):
   self.use_waiting_state()
@@ -503,6 +508,38 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   for spent,stage,given in ((0,lambda:self.clock.__setitem__(0,self.clock[0]+budget+1),[budget]),(100,outlast,[budget-100]),(budget,None,[])):
    self.stage_timeouts,self.clock[0],self.on_stage=[],1000.0,stage;self.snapshot_since=lambda i,r,a=False,s=spent:(self.clock.__setitem__(0,self.clock[0]+s),since(i,r,a))[1]
    self.assertRaisesRegex(AssertionError,'^'+update.TOO_SLOW_TO_RESTART+'$',self.execute);self.assertEqual(self.stage_timeouts,given);self.assertEqual((self.restart_calls,self.backups),([],[]));self.assertEqual({p:p.read_bytes() for p in self.original},self.original)
+ def m4_1_0_112_run(self,budget):
+  # M4's quiet 1.0.112 retry (receipt update-1.0.112-20261028T222038875092Z): the before-read took
+  # 527 s, staging 101 s and the prestate re-read 274 s, 902 s before the gate settle.
+  ready_by,min_ready=budget_constants(budget);spent=[]
+  def prestate():  # The first read after staging, full or reused, is the prestate re-read.
+   if spent==['beforeRead','staging']:spent.append('prestateCheck');self.clock[0]+=274
+  def read(identity,expected_rows,include_auth=False,real=self.snapshot_since):
+   if not spent:spent.append('beforeRead');self.clock[0]+=527
+   else:prestate()
+   return real(identity,expected_rows,include_auth)
+  def reuse(identity,earlier,carried,real=self.snapshot_reusing):
+   prestate();return real(identity,earlier,carried)
+  def stage():spent.append('staging');self.clock[0]+=101
+  self.snapshot_since,self.snapshot_reusing,self.on_stage=read,reuse,stage
+  with patch.object(update,'READY_BY_SECONDS_FROM_START',ready_by),patch.object(update,'MIN_READINESS_SECONDS',min_ready):
+   try:self.execute();error=None
+   except AssertionError as caught:error=str(caught)
+  self.assertEqual(spent,['beforeRead','staging','prestateCheck'])
+  progress=self.own/'updates'/install_progress.FILE  # A refusal before the pointers writes no receipt yet.
+  result=json.loads((self.output if self.output.exists() else progress).read_text())
+  for phase,ms in (('beforeRead',527_000),('verifyAndStage',101_000),('prestateCheck',274_000)):self.assertGreaterEqual(result['timings'][phase],ms,phase)
+  return error,result
+ def test_the_m4_1_0_112_timings_refused_under_the_old_1500_second_budget(self):
+  error,result=self.m4_1_0_112_run(1500)
+  self.assertEqual(error,update.TOO_SLOW_TO_RESTART);self.assertEqual((self.backups,self.restart_calls),([],[]))
+ def test_the_m4_1_0_112_timings_install_under_the_agent_budget(self):
+  import update_agent
+  error,result=self.m4_1_0_112_run(update_agent.APPLY_TIMEOUT)
+  self.assertIsNone(error);self.assertEqual(result['phase'],'verified');self.assertEqual(len(self.restart_calls),1)
+  # The helper ends, rollback share included, within the time the agent waits for it.
+  ready_by,_=budget_constants(update_agent.APPLY_TIMEOUT);self.assertLessEqual(ready_by+420,update_agent.APPLY_TIMEOUT)
+  self.assertLessEqual(self.clock[0]-1000,ready_by)
  def test_a_full_re_read_that_cannot_finish_in_time_refuses_before_it_starts(self):
   # Each full read takes 140 s: the before-read and the prestate read leave less than that after
   # the gate settles, so the check after the gate refuses instead of reading a third time.
@@ -1115,6 +1152,19 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   result=json.loads(self.output.read_text())
   self.assertEqual(result['phase'],'verified');self.assertEqual(reads,[False,False,True]);self.assertIn('prestateReuse',result['timings'])
   self.assertEqual(result['appendedLogRows'],{'orchestration_events':1,'orchestration_command_receipts':1})
+ def test_a_held_pairing_grant_minted_after_the_before_read_still_refuses(self):
+  # M4, 1.0.112: a pairing token minted during the hold added an auth_pairing_links row between
+  # the helper's before read and its re-read. Grants are bearer-equivalent and compared exactly,
+  # so the guard refuses; the service refuses the mint while held instead (auth/http.ts). The
+  # thread activity beside it is carried, as in the test above, and alone would not refuse.
+  service=self.use_held_admission();state=self.own/'userdata'
+  def stage():
+   waiting_check(state,'staging')
+   mutate_state(state,"INSERT INTO auth_pairing_links VALUES ('minted-during-hold','synthetic-private-credential')")
+  self.on_stage=stage
+  with patch.object(update,'_service',return_value=service),self.assertRaisesRegex(AssertionError,'Guarded prestate changed: rows'):
+   self.execute()
+  self.assertEqual((self.backups,self.launchd,self.restart_calls),([],[],[]))
  def test_a_held_write_before_the_gate_check_is_not_hidden_by_the_reused_read(self):
   # The prestate re-read is reused only while nothing committed after it: a write during the
   # gate settle makes the check after the gate read in full, and that read refuses.

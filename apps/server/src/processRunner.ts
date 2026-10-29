@@ -9,8 +9,12 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
+import {
+  hasGitHubSpawnToken,
+  withGitHubSpawnEnvironment,
+} from "./sourceControl/gitHubSpawnEnvironment.ts";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -291,9 +295,17 @@ export const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
 
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-  input: ProcessRunInput,
+  requested: ProcessRunInput,
 ): Effect.fn.Return<ProcessRunOutput, ProcessRunError, Scope.Scope> {
-  yield* Effect.annotateCurrentSpan("process.command", commandName(input.command));
+  yield* Effect.annotateCurrentSpan("process.command", commandName(requested.command));
+  // SpecWithCode's own git gets the saved or copied GitHub token; gh is given it per call.
+  const input: ProcessRunInput =
+    hasGitHubSpawnToken() && /^git(?:\.exe)?$/i.test(commandName(requested.command))
+      ? {
+          ...requested,
+          env: withGitHubSpawnEnvironment({ ...(yield* HostProcessEnvironment), ...requested.env }),
+        }
+      : requested;
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";

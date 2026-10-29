@@ -1,3 +1,4 @@
+import { useManagedTunnelPolicyLabel } from "~/cloud/managedTunnelPolicy";
 import { findErrorTraceId } from "@specweave-studio/client-runtime/errors";
 import {
   type EnvironmentConnectionPresentation,
@@ -97,6 +98,7 @@ export function CloudEnvironmentConnectRows({
     readonly onChange: (environmentId: EnvironmentId, selected: boolean) => void;
   };
 }) {
+  const policyLabel = useManagedTunnelPolicyLabel();
   const environmentsState = useRelayEnvironmentDiscovery();
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
     reportFailure: false,
@@ -319,7 +321,7 @@ export function CloudEnvironmentConnectRows({
     return empty;
   }
 
-  return visibleEnvironments.map(({ environment, availability, error, status }) => {
+  const rows = visibleEnvironments.map(({ environment, availability, error, status }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
     const compatibilityError = discoveredCompatibilityError(status);
     const unsupported =
@@ -512,4 +514,12 @@ export function CloudEnvironmentConnectRows({
       </div>
     );
   });
+  return (
+    <>
+      {policyLabel ? (
+        <p className="px-3 py-1 text-xs text-muted-foreground">{policyLabel}</p>
+      ) : null}
+      {rows}
+    </>
+  );
 }

@@ -34,7 +34,7 @@ import release_check
 from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             read_auth_sessions_in_transaction, restore_witness, rows_hash,
                             utc_timestamp, verify_restart_witness)
-from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
+from quiescence import (SERVICE_EXITED, VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
                         reap_descendants, idle_providers, idle_provider_trees, started_before)
 from release_retention import held_state_backups, prune_releases, prune_state_backups, prune_update_leftovers
 import after_proof
@@ -77,6 +77,27 @@ from installation_descriptor import InstallationDescriptor, cli_paths, current_o
 def digest(value):
     return hashlib.sha256(value).hexdigest()
 
+@contextlib.contextmanager
+def scratch_directory(prefix, parent):
+    """tempfile.TemporaryDirectory whose cleanup never fails an update. Finder can write .DS_Store
+    into a folder while it is removed (ENOTEMPTY failed a 1.0.112 install after the release was
+    published); prune_update_leftovers removes whatever is left on the next verified update."""
+    path = tempfile.mkdtemp(prefix=prefix, dir=str(parent))
+    try:
+        yield path
+    finally:
+        for attempt in range(3):
+            try:
+                shutil.rmtree(path)
+                break
+            except FileNotFoundError:
+                break
+            except OSError as error:
+                if attempt == 2:
+                    print(f'Left {path} for the next prune: {error}', file=sys.stderr)
+                else:
+                    time.sleep(0.2)
+
 def safe_path(path, home):
     return owned_path(path, home)
 
@@ -113,6 +134,14 @@ def _service(identity):
     runtime record, port owner and executable. Reads no database (release_check.service)."""
     return release_check.service(identity, run, listeners, release_verified)
 
+# The service process a snapshot started from exited (stopped, booted out, restarted) before its
+# proof. Not an install failure: no pointer moved. The message starts with 'Guarded prestate
+# changed' (the service pid is guarded prestate) because update_agent_recovery retries only
+# receipts whose error starts with one of update_agent.RETRYABLE_REFUSALS: refusal_proof for an
+# automatic install, refused_before_restart (a substring match) for Install now.
+SERVICE_RESTARTED = ('Guarded prestate changed: the SpecWithCode service restarted during the update check; '
+                     'the update will retry')
+
 SERVICE_KEYS = ('home', 'own', 'installation', 'receipt', 'label', 'plist', 'wrapper', 'launcher', 'content', 'node', 'runtime')
 
 def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
@@ -127,21 +156,44 @@ def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
         assert path.is_file() and not path.is_symlink(), 'A protected Studio file is missing or is a link'
     contents = {name: path.read_bytes() for name, path in protected.items()}
     file_hashes = {name: digest(data) for name, data in contents.items()}
-    assert_database_attached(runtime['pid'], own / 'userdata')
-    assert_database_locked(own / 'userdata')
+    def service_quiescence():
+        try:
+            return capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments'])
+        except AssertionError as error:
+            # The recorded process is gone. Rows read from it prove nothing about a successor,
+            # so this snapshot refuses; the next one starts over from the new runtime record.
+            if str(error) == SERVICE_EXITED:
+                raise AssertionError(SERVICE_RESTARTED) from error
+            raise
+    try:
+        assert_database_attached(runtime['pid'], own / 'userdata')
+        assert_database_locked(own / 'userdata')
+    except AssertionError as error:
+        # An exited service holds no SQLite locks (and lsof lists no files for its pid), so a
+        # service that stopped after _service read its record fails here first. That is the
+        # same restart as one during the read, not a database that needs a restart: only when
+        # the recorded process is gone. A live service that lost its locks still refuses so.
+        if str(error) in DATABASE_RESTART_REASONS:
+            try:
+                service_quiescence()
+            except AssertionError as gone:
+                if str(gone) == SERVICE_RESTARTED:
+                    raise gone from error
+        raise
     if reads is None:  # Stray descendants refuse before the full read, not minutes after it; the proof's capture follows it.
-        capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments'])
+        service_quiescence()
     rows, auth, carried, database = reads or _read_state(own / 'userdata', include_auth, since, True, widen_from)
     other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS if port != receipt['port']}
+    owned, process_quiescence = service_owns_listener(other, runtime['pid'], read_processes()), service_quiescence()
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': service['owner'].uid, 'port': receipt['port'], 'webSessionPolicy': service['owner'].policy, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
             'fileHashes': file_hashes,
             # Key paths and value hashes only, so a restart that rewrites settings.json can be
             # proven to keep every user value (see settings_continuity) without storing any.
             'settingsProof': settings_continuity.settings_proof(contents['settings']),
-            'rows': rows, 'databaseCapture': database, 'otherListeners': other, 'otherListenersOwned': service_owns_listener(other, runtime['pid'], read_processes()),
+            'rows': rows, 'databaseCapture': database, 'otherListeners': other, 'otherListenersOwned': owned,
             'cookieName': receipt['cookieName'],
-            'processQuiescence': capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments']),
+            'processQuiescence': process_quiescence,
             'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
     return proof, auth, carried
 
@@ -452,9 +504,10 @@ def assert_prestate(expected, actual, carried=None, auth_baseline=None):
 # Bound on waiting for the restarted service (see apply). With a full rollback (bootout,
 # stop wait, restore, bootstrap) it stays under the update agent's APPLY_TIMEOUT.
 READINESS_DEADLINE_SECONDS = 300
-# How long the agent lets this helper run before it kills it. Agents that predate the
-# variable allow 900 s; newer ones pass a longer budget so a loaded Mac still gets the full
-# readiness wait after a slow staging step.
+# How long the agent waits for this helper (update_agent.py APPLY_TIMEOUT). Agents that predate
+# the variable allow 900 s, 1.0.4x-1.0.112 agents pass 1500 s and newer ones 2400 s, so a loaded
+# Mac with a large database still gets the full readiness wait after slow reads and staging.
+# Everything here ends within this budget, so the agent never stops waiting mid-apply.
 _APPLY_BUDGET = os.environ.get('STUDIO_UPDATE_APPLY_BUDGET', '')
 APPLY_BUDGET_SECONDS = min(3600, max(900, int(_APPLY_BUDGET))) if _APPLY_BUDGET.isdigit() else 900
 # The readiness wait also ends this long after apply() started, so slow readings before the
@@ -469,7 +522,8 @@ STAGE_TIMEOUT_SECONDS = 600
 # and the updater may try again, rather than restarting into a rollback it cannot avoid.
 # Everything before the restart thus ends within READY_BY_SECONDS_FROM_START - this (420 s with
 # the old 900 s budget) plus one reading in flight, which keeps the helper under the agent's 900 s.
-# With a budget beyond the old 900 s the restart always keeps the full readiness wait.
+# With a budget beyond the old 900 s the restart always keeps the full readiness wait; the
+# pre-restart work then gets budget - 720 s (780 s at 1500, 1680 s at 2400).
 MIN_READINESS_SECONDS = min(READINESS_DEADLINE_SECONDS, max(60, READY_BY_SECONDS_FROM_START - 420))
 TOO_SLOW_TO_RESTART = 'Preparing the update took too long to leave time for the restart; nothing was changed'
 
@@ -770,7 +824,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     incoming = safe_path(studio_paths.incoming_root(home), home)
     incoming.mkdir(parents=True, exist_ok=True)
     # Reuse the integrity installer only in a new private staging home, never a live home.
-    with tempfile.TemporaryDirectory(prefix='owned-update-stage-', dir=str(incoming)) as temporary:
+    with scratch_directory('owned-update-stage-', incoming) as temporary:
         stage_home = pathlib.Path(temporary)
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0)); stage_port = probe.getsockname()[1]
@@ -1332,7 +1386,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
 
 # Refusals the next snapshot may not repeat: processes or the database moved while being read,
 # or a process listed by ps exited before the kernel read of it.
-BUSY_REFUSALS = {'Owned process identities changed during inventory', 'Owned service process identity changed'} | VANISHED_READS
+BUSY_REFUSALS = {'Owned process identities changed during inventory', 'Owned service process identity changed',
+                 SERVICE_EXITED, SERVICE_RESTARTED} | VANISHED_READS
 
 def _refusal_detail(code, own):
     """Counts or names for a refusal, read again after the failed check; '' when unreadable."""

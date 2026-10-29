@@ -90,18 +90,32 @@ export const APP_RESTART_HOLD_TTL_MS = 90_000;
 export const NO_REQUEST_RELEASE_MS = 60_000;
 /**
  * The longest a hold lasts while the agent stays busy on its request: the
- * agent's retry window (FORCE_WINDOW, 15 min) plus one install (APPLY_TIMEOUT,
- * 25 min) and slack. An agent that dies while it reports `installing` ends here.
+ * agent's retry window (FORCE_WINDOW, 15 min), a snapshot begun at its end
+ * (SNAPSHOT_TIMEOUT, 10 min), an install refused right before its restart
+ * (APPLY_TIMEOUT less the helper's 12-minute restart reserve, 28 min), the
+ * retry's own window and snapshot (APPLY_RETRY_WINDOW, 2 min, and 10 min), one
+ * more whole install (40 min) and slack. An agent that dies while it reports
+ * `installing` ends its hold `AGENT_APPLY_TIMEOUT_MS` after that write instead.
  */
-export const HOLD_MAX_MS = 45 * 60_000;
+export const HOLD_MAX_MS = 110 * 60_000;
 /** How often a held service reads the update agent's state. */
 export const AGENT_POLL_MS = 5_000;
 /** `update_agent.py` SNAPSHOT_TIMEOUT: a snapshot begun just before its deadline runs this long. */
 export const AGENT_SNAPSHOT_TIMEOUT_MS = 600_000;
 /** `update_agent.py` RETRY_SECONDS: a forced pass gives up once its next retry would pass the deadline. */
 export const AGENT_RETRY_MS = 10_000;
-/** What a forced pass writes when it snapshots again after a refused apply, at any time. */
+/**
+ * What a forced pass's statuses begin with while it snapshots again after a
+ * refused apply, at any time: agents up to 1.0.112 write exactly this once.
+ */
 export const AGENT_APPLY_RETRY_MESSAGE = "New work started before the restart; trying again";
+/**
+ * `update_agent.py` APPLY_RETRY_WINDOW: after a refused apply the agent snapshots
+ * again at least this long from its last status, even past installHoldUntil.
+ */
+export const AGENT_APPLY_RETRY_WINDOW_MS = 2 * 60_000;
+/** `update_agent.py` APPLY_TIMEOUT: how long the agent waits for one install. */
+export const AGENT_APPLY_TIMEOUT_MS = 2_400_000;
 /**
  * Agent statuses (`update_agent.py` STATUSES) written while a pass still works
  * on a request. Every other status the agent writes once it handled the request
@@ -455,18 +469,27 @@ export function agentVerdictForHold(input: {
   if (!busy || updatedAtMs === null || updatedAtMs < startedAtMs) return { type: "none" };
   const ceiling = startedAtMs + (input.maxMs ?? HOLD_MAX_MS);
   // The agent marks the request handled just before it installs it.
+  // It writes nothing while the helper runs, which ends within APPLY_TIMEOUT.
   if (status === "installing")
-    return handled ? { type: "busy", untilMs: ceiling } : { type: "none" };
+    return handled
+      ? {
+          type: "busy",
+          untilMs: Math.min(ceiling, updatedAtMs + AGENT_APPLY_TIMEOUT_MS + AGENT_RETRY_MS),
+        }
+      : { type: "none" };
   if (handled) return { type: "none" };
   const deadline = reading.installHoldUntilMs ?? startedAtMs + HOLD_TTL_MS;
+  // A refused apply's retry may come long after the deadline (a 40-minute
+  // install); it snapshots again within a window of its own, from each status.
+  const applyRetry =
+    typeof reading.message === "string" && reading.message.startsWith(AGENT_APPLY_RETRY_MESSAGE);
   // Written once no retry fits before the deadline: the pass gave up. Only TTL ends the hold.
-  if (
-    status === "waiting-for-quiet" &&
-    updatedAtMs >= deadline - AGENT_RETRY_MS &&
-    reading.message !== AGENT_APPLY_RETRY_MESSAGE
-  )
+  if (status === "waiting-for-quiet" && updatedAtMs >= deadline - AGENT_RETRY_MS && !applyRetry)
     return { type: "none" };
-  return { type: "busy", untilMs: Math.min(ceiling, deadline + AGENT_SNAPSHOT_TIMEOUT_MS) };
+  const lastSnapshotAtMs = applyRetry
+    ? Math.max(deadline, updatedAtMs + AGENT_APPLY_RETRY_WINDOW_MS)
+    : deadline;
+  return { type: "busy", untilMs: Math.min(ceiling, lastSnapshotAtMs + AGENT_SNAPSHOT_TIMEOUT_MS) };
 }
 
 const decodeAgentState = Schema.decodeUnknownOption(

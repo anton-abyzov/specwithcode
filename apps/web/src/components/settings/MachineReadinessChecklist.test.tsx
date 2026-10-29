@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
   canManage: true,
   readiness: null as unknown,
   fail: null as Error | null,
+  signInAvailable: true,
+  access: null as unknown,
   coordinatorProvider: null as string | null,
   coordinatorAsked: [] as Array<[unknown, unknown]>,
 }));
@@ -44,6 +46,23 @@ vi.mock("./ProviderAuthenticationSection", () => ({
     </p>
   ),
 }));
+
+vi.mock("./GitHubCredentialCard", async () => {
+  const { useEffect } = await import("react");
+  return {
+    GitHubCredentialCard: (props: {
+      environmentLabel: string;
+      onState?: (value: unknown) => void;
+    }) => {
+      const { onState } = props;
+      useEffect(() => {
+        if (state.access) onState?.(state.access);
+      }, [onState]);
+      return <p>GitHub sign-in panel for {props.environmentLabel}</p>;
+    },
+    useGitHubCredentialCardAvailable: () => state.signInAvailable,
+  };
+});
 
 const provider = (instanceId: string, status: string, extra: Record<string, unknown> = {}) => ({
   instanceId,
@@ -82,6 +101,8 @@ beforeEach(() => {
   state.calls = [];
   state.canManage = true;
   state.fail = null;
+  state.signInAvailable = true;
+  state.access = null;
   state.coordinatorProvider = null;
   state.coordinatorAsked = [];
   state.providers = [
@@ -129,7 +150,7 @@ it("checks the machine and project, and lists what still needs a sign-in or acce
   expect(text).toContain("repositories/private");
   expect(text).toContain("Permission denied (publickey).");
   expect(text).toContain("Missing tools: cargo");
-  expect(text).toContain("Sign-ins are never copied between machines");
+  expect(text).toContain("Coding-agent sign-ins are never copied between machines");
 });
 
 it("signs in on that machine itself and checks again on request", async () => {
@@ -150,6 +171,99 @@ it("hides sign-in for a browser without provider permission and explains an olde
   expect(container.textContent).toContain(
     "M3 could not be checked. It may run an older SpecWithCode.",
   );
+});
+
+const withGitHub = (github: unknown) => {
+  state.readiness = { ...(state.readiness as object), github };
+};
+
+it("offers signing gh in from this device when that machine is signed out", async () => {
+  withGitHub({ status: "signed-out", accounts: [], detail: "The token in default is invalid." });
+  await mount();
+  const text = container.textContent ?? "";
+  expect(text).toContain("GitHub CLI: not signed in");
+  expect(text).toContain("The token in default is invalid.");
+  expect(text).toContain("GitHub sign-in panel for M3");
+  expect(text).toContain("Or, in a terminal on M3, run gh auth login.");
+});
+
+it("offers signing in when gh is installed but its sign-in is unknown", async () => {
+  withGitHub({
+    status: "unknown",
+    accounts: [],
+    detail: "This gh is too old to report its sign-in.",
+  });
+  await mount();
+  expect(container.textContent).toContain("GitHub CLI: sign-in unknown");
+  expect(container.textContent).toContain("GitHub sign-in panel for M3");
+});
+
+it("asks to provision a machine without gh and drops the gh hint", async () => {
+  withGitHub({ status: "not-installed", accounts: [], detail: null });
+  await mount();
+  const text = container.textContent ?? "";
+  expect(text).toContain("GitHub CLI: not installed");
+  expect(text).toContain("Run specwithcode provision on M3.");
+  // A copied sign-in still works without gh, so the card stays; the gh hint does not.
+  expect(text).toContain("GitHub sign-in panel for M3");
+  expect(text).not.toContain("gh auth login");
+});
+
+it("shows the signed-in account with no gh hint", async () => {
+  withGitHub({
+    status: "signed-in",
+    accounts: [{ host: "github.com", login: "octo" }],
+    detail: null,
+  });
+  await mount();
+  const text = container.textContent ?? "";
+  expect(text).toContain("GitHub CLI: signed in as octo (github.com)");
+  // The card then only reports the login; it offers nothing by default (its own tests).
+  expect(text).toContain("GitHub sign-in panel for M3");
+  expect(text).not.toContain("run gh auth login");
+});
+
+it("gives the plain gh hint, without an orphaned Or, when the panel cannot show", async () => {
+  state.signInAvailable = false;
+  withGitHub({ status: "signed-out", accounts: [], detail: null });
+  await mount();
+  const text = container.textContent ?? "";
+  expect(text).not.toContain("GitHub sign-in panel");
+  expect(text).toContain("In a terminal on M3, run gh auth login.");
+  expect(text).not.toContain("Or, in a terminal");
+});
+
+it("asks to update an old gh instead of offering sign-in", async () => {
+  withGitHub({
+    status: "unknown",
+    accounts: [],
+    detail: "This gh is too old to report its sign-in; update it, then check again.",
+    outdated: true,
+  });
+  await mount();
+  const text = container.textContent ?? "";
+  expect(text).toContain("Update gh on M3, then sign in.");
+  expect(text).not.toContain("gh auth login");
+});
+
+it("counts a copied sign-in as signed in and drops the gh auth login hint", async () => {
+  state.access = {
+    host: "github.com",
+    hostEnabled: true,
+    gh: { installed: true, version: "2.88.1", outdated: false },
+    ghAccounts: [],
+    environmentVariables: [],
+    saved: { copiedFrom: "M4", copiedAt: "2026-10-27T00:00:00Z", login: "octo" },
+    credentialHelpers: [],
+    gitHubCredentialHelper: false,
+    inUse: { source: "copied", login: "octo" },
+  };
+  await mount();
+  const text = container.textContent ?? "";
+  expect(text).toContain("GitHub: signed in as octo (copied from M4)");
+  expect(text).not.toContain("GitHub CLI: not signed in");
+  expect(text).not.toContain("gh auth login");
+  expect(text).not.toContain("Pull requests need it.");
 });
 
 it("after a move, lists only the provider the coordinator runs with", async () => {

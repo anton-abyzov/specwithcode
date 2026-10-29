@@ -21,6 +21,7 @@ import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
@@ -62,6 +63,7 @@ function makeFakeRelay(input: {
   };
 
   const layer = Layer.mergeAll(
+    Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
     Layer.mock(EnvironmentLinks.EnvironmentLinks, {
       getForUser: ({ environmentId }) =>
         Effect.succeed(
@@ -114,10 +116,13 @@ function makeFakeRelay(input: {
       AccountDeletion.AccountRecords.of({
         listEnvironmentIds: () => Effect.succeed([...new Set([...links.keys(), ...allocations])]),
         listAllocatedEnvironmentIds: () => Effect.succeed([...allocations]),
+        markDeleting: ({ userId }) => Effect.sync(() => void log.push(`mark-deleting:${userId}`)),
         deleteUserRows: ({ userId }) =>
           Effect.sync(() => {
+            if (allocations.size > 0) return false;
             links.clear();
             log.push(`delete-rows:${userId}`);
+            return true;
           }),
       }),
     ),
@@ -158,6 +163,7 @@ describe("account deletion", () => {
       const result = yield* deleteAccount;
       expect(result).toEqual({ deleted: true, environmentCount: 3 });
       expect(relay.log).toEqual([
+        `mark-deleting:${USER}`,
         "revoke:env-a",
         "revoke-credential:env-a",
         "deprovision:env-a",
@@ -181,12 +187,17 @@ describe("account deletion", () => {
       return Effect.gen(function* () {
         const failed = yield* Effect.exit(deleteAccount);
         expect(Exit.isFailure(failed)).toBe(true);
-        expect(relay.log).toEqual(["revoke:env-a", "revoke-credential:env-a"]);
+        expect(relay.log).toEqual([
+          `mark-deleting:${USER}`,
+          "revoke:env-a",
+          "revoke-credential:env-a",
+        ]);
 
         relay.faults.deprovision.clear();
         relay.log.length = 0;
         expect(yield* deleteAccount).toEqual({ deleted: true, environmentCount: 1 });
         expect(relay.log).toEqual([
+          `mark-deleting:${USER}`,
           "deprovision:env-a",
           `clear-inbox:${expectedEndpointKey("env-a")}`,
           `delete-rows:${USER}`,
@@ -217,7 +228,11 @@ describe("account deletion", () => {
 
       relay.log.length = 0;
       expect(yield* deleteAccount).toEqual({ deleted: true, environmentCount: 0 });
-      expect(relay.log).toEqual([`delete-rows:${USER}`, `delete-clerk-user:${USER}`]);
+      expect(relay.log).toEqual([
+        `mark-deleting:${USER}`,
+        `delete-rows:${USER}`,
+        `delete-clerk-user:${USER}`,
+      ]);
     }).pipe(Effect.provide(relay.layer));
   });
 });

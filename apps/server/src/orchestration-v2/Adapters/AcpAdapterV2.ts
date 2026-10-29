@@ -481,7 +481,7 @@ export interface AcpAdapterV2Flavor {
    * When true, send image attachment content blocks even if the ACP agent
    * advertises `promptCapabilities.image: false`. Grok CLI currently accepts
    * and vision-processes image blocks while still reporting the capability as
-   * false; without this override, screenshot turns fail before `session/prompt`.
+   * false; without this override, screenshots reach Grok only as file paths.
    */
   readonly supportsImagePrompts?: boolean;
 }
@@ -7114,15 +7114,32 @@ export function makeAcpAdapterV2(
           if (text.length > 0) {
             prompt.push({ type: "text", text });
           }
-          const imageAttachments = turnInput.message.attachments.filter(
+          const nativeImages = turnInput.message.attachments.filter(
             isProviderNativeImageAttachment,
           );
-          if (imageAttachments.length > 0 && !supportsImagePrompts) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver,
-              detail: "ACP driver did not negotiate image prompt support",
+          // A text-only agent still gets the turn when the text above names each
+          // image's saved path, so the agent can open the file itself. Without a
+          // path (bad id, or text at the size limit) the image would be lost.
+          if (nativeImages.length > 0 && !supportsImagePrompts) {
+            const unnamed = nativeImages.some((attachment) => {
+              const path = resolveAttachmentPath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment: attachment as ChatAttachment,
+              });
+              return path === null || !messageText.includes(path);
+            });
+            if (unnamed) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: "ACP driver did not negotiate image prompt support",
+              });
+            }
+            prompt.push({
+              type: "text",
+              text: "This agent cannot view images inline. Each attached image is named above by its saved path; open it with your tools if you can.",
             });
           }
+          const imageAttachments = supportsImagePrompts ? nativeImages : [];
           for (const attachment of imageAttachments) {
             const path = resolveAttachmentPath({
               attachmentsDir: serverConfig.attachmentsDir,

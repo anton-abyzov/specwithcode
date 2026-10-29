@@ -1741,9 +1741,11 @@ export interface ChatComposerProps {
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: { focusComposer?: boolean; saveToThread?: boolean },
   ) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
+  /** Opens the fallback order a limited thread continues on. */
+  onEditFallbackOrder?: () => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
@@ -5815,9 +5817,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         usageValueHiddenClassName="@max-[520px]/composer-surface:hidden"
         onInstanceModelChange={(instanceId, model) => {
           setMultipleModelSelections(null);
-          onProviderModelSelect(instanceId, model);
+          onProviderModelSelect(instanceId, model, { saveToThread: true });
         }}
         onOpenProviderSetup={onOpenProviderSetup}
+        {...(props.onEditFallbackOrder && !routesProjectMessage
+          ? { onEditFallbackOrder: props.onEditFallbackOrder }
+          : {})}
         quickSetup={providerQuickSetup}
       />
 

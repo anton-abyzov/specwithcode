@@ -436,8 +436,8 @@ describe("a window that only follows another window's request", () => {
       };
       await advance(2_000);
       expect(label()).toBe("Installing…");
-      await advance(25 * 60_000);
-      expect(lastToast().description).toContain("has not finished after 25 minutes");
+      await advance(45 * 60_000);
+      expect(lastToast().description).toContain("has not finished after 45 minutes");
       calls.length = 0;
       await closeToast();
       // As for any install that timed out: its request is withdrawn, and the
@@ -503,8 +503,8 @@ describe("an old failure's toast closed after another window pressed", () => {
     await advance(2_000);
     expect(label()).toBe("Installing…");
     // The install outlasts its budget: the failure stays, and the agent may still install.
-    await advance(25 * 60_000);
-    expect(lastToast().description).toContain("has not finished after 25 minutes");
+    await advance(45 * 60_000);
+    expect(lastToast().description).toContain("has not finished after 45 minutes");
     // The install ended since, and another window pressed Update now.
     const otherAt = Date.now();
     checked = { ...RUNNING, held: true };

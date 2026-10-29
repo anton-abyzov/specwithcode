@@ -125,8 +125,49 @@ export const relayManagedEndpointAllocations = sqliteTable(
 export const relayManagedTunnelLimits = sqliteTable("relay_managed_tunnel_limits", {
   userId: text("user_id").primaryKey(),
   maxTunnels: integer("max_tunnels").notNull(),
+  unlimited: integer("unlimited", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+});
+
+/**
+ * A Connect promo such as the "Founding 1,000". `seatsGranted` only grows:
+ * deleting a founder's account never returns the seat. `grantsOpen` is the
+ * kill switch for new founder numbers; existing founders keep theirs.
+ */
+export const relayConnectPromos = sqliteTable("relay_connect_promos", {
+  id: text("id").primaryKey(),
+  seatCap: integer("seat_cap").notNull(),
+  seatsGranted: integer("seats_granted").notNull().default(0),
+  founderTunnelLimit: integer("founder_tunnel_limit").notNull(),
+  grantsOpen: integer("grants_open", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/** One row per account that has linked a managed machine, in signup order. */
+export const relayConnectAccounts = sqliteTable(
+  "relay_connect_accounts",
+  {
+    userId: text("user_id").primaryKey(),
+    promoId: text("promo_id"),
+    founderNumber: integer("founder_number"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_relay_connect_accounts_founder_number").on(table.promoId, table.founderNumber),
+  ],
+);
+
+/**
+ * Accounts whose deletion has started. Written first by account deletion and
+ * never removed (Clerk user ids are not reused), so a link racing the
+ * deletion cannot create a Connect account or a managed allocation for it.
+ */
+export const relayAccountDeletions = sqliteTable("relay_account_deletions", {
+  userId: text("user_id").primaryKey(),
+  startedAt: text("started_at").notNull(),
 });
 
 export const relayEnvironmentCredentials = sqliteTable(

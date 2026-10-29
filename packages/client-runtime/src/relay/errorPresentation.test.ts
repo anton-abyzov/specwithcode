@@ -1,4 +1,7 @@
-import { RelayAuthInvalidError } from "@specweave-studio/contracts/relay";
+import {
+  RelayAuthInvalidError,
+  RelayEnvironmentLinkLimitExceededError,
+} from "@specweave-studio/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -53,5 +56,20 @@ describe("relayProtectedErrorMessage", () => {
     });
 
     expect(relayProtectedErrorMessage(error)).toBe("Relay rejected the cloud session token.");
+  });
+
+  it.each([
+    { reason: undefined, expected: "maximum of 3 managed tunnels" },
+    { reason: "account_limit" as const, expected: "maximum of 3 managed tunnels" },
+    { reason: "service_capacity" as const, expected: "at capacity" },
+  ])("presents the $reason link limit", ({ reason, expected }) => {
+    const error = new RelayEnvironmentLinkLimitExceededError({
+      code: "environment_link_limit_exceeded",
+      maxTunnels: 3,
+      ...(reason === undefined ? {} : { reason }),
+      traceId: "trace-1",
+    });
+
+    expect(relayProtectedErrorMessage(error)).toContain(expected);
   });
 });

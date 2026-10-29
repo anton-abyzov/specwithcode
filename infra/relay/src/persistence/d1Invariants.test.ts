@@ -221,15 +221,21 @@ describe("relay persistence on SQLite (D1)", () => {
       yield* insertLink({ userId: "user-2" });
       yield* provision();
 
-      yield* records.deleteUserRows({ userId: "user-1" });
-
       const db = yield* RelayDb.RelayDb;
-      const linkUsers = yield* db
+      const linkUsers = db
         .select({ userId: relayEnvironmentLinks.userId })
         .from(relayEnvironmentLinks);
-      expect(linkUsers).toEqual([{ userId: "user-2" }]);
-      // Allocations are torn down by deprovisioning, not by the row delete.
+
+      // Allocations are torn down by deprovisioning, not by the row delete:
+      // while one remains (for example from a link racing the deletion), the
+      // batch deletes nothing.
+      expect(yield* records.deleteUserRows({ userId: "user-1" })).toBe(false);
+      expect(yield* linkUsers).toEqual([{ userId: "user-1" }, { userId: "user-2" }]);
       expect(yield* allocations.get({ userId: "user-1", environmentId: "env-1" })).not.toBeNull();
+
+      yield* allocations.remove({ userId: "user-1", environmentId: "env-1" });
+      expect(yield* records.deleteUserRows({ userId: "user-1" })).toBe(true);
+      expect(yield* linkUsers).toEqual([{ userId: "user-2" }]);
     }).pipe(Effect.provide(layer())),
   );
 

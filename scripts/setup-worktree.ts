@@ -18,6 +18,21 @@ if (!projectRoot) {
 }
 const worktree = NodePath.dirname(import.meta.dirname);
 
+// The vendored .repos reference tree is about 70% of the tracked files and no
+// build reads it, so a linked worktree leaves it out. The main checkout keeps
+// it, and an existing sparse-checkout setup is never replaced.
+const dotGit = NodeFS.lstatSync(NodePath.join(worktree, ".git"), { throwIfNoEntry: false });
+const sparse = NodeChildProcess.spawnSync("git", ["config", "--get", "core.sparseCheckout"], {
+  cwd: worktree,
+  encoding: "utf8",
+});
+if (dotGit?.isFile() && sparse.stdout.trim() !== "true") {
+  NodeChildProcess.spawnSync("git", ["sparse-checkout", "set", "--no-cone", "/*", "!/.repos/"], {
+    cwd: worktree,
+    stdio: "inherit",
+  });
+}
+
 // `shell` resolves `vp` through PATH, including Windows command shims.
 const install = NodeChildProcess.spawnSync("vp i", {
   cwd: worktree,

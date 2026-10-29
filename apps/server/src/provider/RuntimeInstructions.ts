@@ -1,5 +1,7 @@
 import type { ResponseStyle } from "@specweave-studio/contracts";
 
+import { withGitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
+
 /**
  * Set on every provider process SpecWithCode starts, so Playwright stays out of
  * its debugger and never opens an HTML report window whatever the agent runs.
@@ -49,14 +51,17 @@ export function specweaveAgentEnvironment(identity: SpecweaveAgentIdentity): {
 }
 
 /**
- * `environment` with specweaveAgentEnvironment applied last. Every spawn site
- * that has a per-thread environment uses it; providerSpawnSites.test.ts checks.
+ * `environment` with specweaveAgentEnvironment applied last, plus SpecWithCode's
+ * GitHub access as it is at this spawn (see gitHubSpawnEnvironment.ts), so a
+ * copy or removal reaches the next session without rebuilding the adapter. Every
+ * spawn site that has a per-thread environment uses it; providerSpawnSites.test.ts
+ * checks.
  */
 export function withSpecweaveAgentEnvironment(
   environment: NodeJS.ProcessEnv | undefined,
   identity: SpecweaveAgentIdentity,
 ): NodeJS.ProcessEnv {
-  return { ...environment, ...specweaveAgentEnvironment(identity) };
+  return withGitHubSpawnEnvironment({ ...environment, ...specweaveAgentEnvironment(identity) });
 }
 
 /** A TOML basic string: Codex parses each `-c` value as TOML. */

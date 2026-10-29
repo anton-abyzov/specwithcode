@@ -9,7 +9,10 @@ import {
   projectedSubagentsToRuntime,
   type RuntimeSubagent,
 } from "@specweave-studio/client-runtime/state/subagentRuntime";
-import { formatSubagentDisplayTitle } from "@specweave-studio/client-runtime/state/subagent-display";
+import {
+  formatSubagentDisplayTitle,
+  splitDisplayTitleTail,
+} from "@specweave-studio/client-runtime/state/subagent-display";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -400,6 +403,7 @@ export function ThreadRelationshipsPanel(props: {
                 title: node?.thread?.title ?? agent?.title ?? threadId,
                 isSubagent,
               });
+              const threadTitleParts = splitDisplayTitleTail(threadTitle);
               const provider = providers?.find(
                 (entry) =>
                   entry.instanceId ===
@@ -440,10 +444,11 @@ export function ThreadRelationshipsPanel(props: {
                     fallbackIcon={RelationshipIcon}
                     status={status}
                   />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
-                      {threadTitle}
-                    </span>
+                  <span className="flex min-w-0 flex-1 text-left text-sm font-medium leading-4 text-foreground/85">
+                    <span className="truncate">{threadTitleParts.head}</span>
+                    {threadTitleParts.tail ? (
+                      <span className="shrink-0 whitespace-pre">{` ${threadTitleParts.tail}`}</span>
+                    ) : null}
                   </span>
                   {agent ? (
                     agent.startedAt ? (
@@ -457,7 +462,9 @@ export function ThreadRelationshipsPanel(props: {
                     <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                   )}
                   {!isMergeTarget ? (
-                    <span className="shrink-0 text-2xs text-muted-foreground">
+                    <span
+                      className={`shrink-0 text-2xs ${status === "failed" || status === "error" ? "font-medium text-destructive-foreground" : "text-muted-foreground"}`}
+                    >
                       {threadRelationshipStatusLabel(status)}
                     </span>
                   ) : null}

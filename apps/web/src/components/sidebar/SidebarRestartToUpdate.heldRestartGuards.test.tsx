@@ -740,8 +740,8 @@ describe("Update now around a held restart: guards", () => {
     });
     await advance(2_000);
     expect(label()).not.toBe("Update now");
-    // The install never finishes: the window gives up on it after 25 minutes.
-    await advance(26 * 60_000);
+    // The install never finishes: the window gives up on it after 45 minutes.
+    await advance(46 * 60_000);
     expect(lastToast().type).toBe("error");
     calls.length = 0;
     const closeTimedOut = (lastToast().data as { onClose?: () => void } | undefined)?.onClose;

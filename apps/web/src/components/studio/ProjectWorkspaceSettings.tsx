@@ -41,7 +41,6 @@ import {
   ChartNoAxesCombinedIcon,
   Clock3Icon,
 } from "lucide-react";
-import { ProjectLocation } from "./ProjectLocation";
 import { ProjectFolderChange } from "./ProjectFolderChange";
 import { useProjectDeletionWorktrees } from "./ProjectDeletionWorktrees";
 import { ProjectThreadsDeletion } from "./ProjectThreadsDeletion";
@@ -345,9 +344,7 @@ export function ProjectWorkspaceSettings({
             </DialogDescription>
             {snapshot.settings.kind === "personal" ? (
               <p className="project-muted text-xs">{PERSONAL_ASSISTANT_LABEL}</p>
-            ) : (
-              <ProjectLocation path={project.workspaceRoot} />
-            )}
+            ) : null}
           </header>
           <div className="project-settings-layout">
             <nav aria-label="Project settings sections" onKeyDown={moveTabFocus}>

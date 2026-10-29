@@ -158,6 +158,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pullRequestsRequestReviewers]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetLabels]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
+  // Signing gh in stores a GitHub credential on that machine, like saving a token in Settings.
+  // Status carries the one-time code, so reading it needs the same scope.
+  [WS_METHODS.gitHubSignInStart]: AuthSettingsWriteScope,
+  [WS_METHODS.gitHubSignInStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.gitHubSignInCancel]: AuthSettingsWriteScope,
+  // Copying a sign-in reads this machine's token and stores it on another; both ends need it.
+  [WS_METHODS.gitHubCredentialState]: AuthSettingsWriteScope,
+  [WS_METHODS.gitHubCredentialRemoveCopied]: AuthSettingsWriteScope,
+  [WS_METHODS.gitHubCredentialCopyPreview]: AuthSettingsWriteScope,
+  [WS_METHODS.gitHubCredentialCopy]: AuthSettingsWriteScope,
   // Runs git with this machine's credentials; only offered before a clone, which needs write.
   [WS_METHODS.sourceControlCheckRemoteAccess]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlInspectDestination]: AuthSourceControlWriteScope,

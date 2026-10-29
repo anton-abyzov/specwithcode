@@ -1184,17 +1184,14 @@ describe("project settings and memory", () => {
   });
 });
 
-it("keeps the full folder path in a disclosure separate from project identity", async () => {
+it("keeps the header focused on identity and folder management in General", async () => {
   await render("environment", true, { kind: "code" });
   const heading = container.querySelector(".project-settings-heading")!;
   expect(heading.querySelector("p")?.textContent).toBe(project.title);
-  const location = heading.querySelector("details")!;
-  expect(location.hasAttribute("open")).toBe(false);
-  expect(location.querySelector("summary")?.getAttribute("aria-label")).toBe(
-    `Folder location: ${project.workspaceRoot}`,
-  );
-  expect(location.querySelector("code")?.textContent).toBe(project.workspaceRoot);
-  expect(location.querySelector("code")?.tabIndex).toBe(0);
+  expect(heading.querySelector("details")).toBeNull();
+  expect(heading.textContent).not.toContain(project.workspaceRoot);
+  await click("General");
+  expect(container.textContent).toContain("Project folder");
 });
 
 it("keeps folder removal reversible and saves only the remaining environment draft", async () => {

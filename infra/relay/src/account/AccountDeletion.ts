@@ -1,8 +1,9 @@
 import { createClerkClient } from "@clerk/backend";
 import { isClerkAPIResponseError } from "@clerk/backend/errors";
-import { eq } from "drizzle-orm";
+import { and, eq, notExists, sql } from "drizzle-orm";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
@@ -16,6 +17,8 @@ import { unlinkEnvironmentRecord } from "../environments/EnvironmentUnlink.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import {
+  relayAccountDeletions,
+  relayConnectAccounts,
   relayDeliveryAttempts,
   relayEnvironmentLinks,
   relayLiveActivities,
@@ -28,7 +31,12 @@ export class AccountRecordsPersistenceError extends Schema.TaggedError<AccountRe
   "AccountRecordsPersistenceError",
   {
     userId: Schema.String,
-    stage: Schema.Literals(["list-environments", "list-allocations", "delete-rows"]),
+    stage: Schema.Literals([
+      "mark-deleting",
+      "list-environments",
+      "list-allocations",
+      "delete-rows",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -72,10 +80,24 @@ export class AccountRecords extends Context.Service<
     readonly listAllocatedEnvironmentIds: (input: {
       readonly userId: string;
     }) => Effect.Effect<ReadonlyArray<string>, AccountRecordsPersistenceError>;
-    /** Hard-deletes devices, Live Activities, delivery records, tunnel limits and links. */
-    readonly deleteUserRows: (input: {
+    /**
+     * Records that the account's deletion has started. From then on no Connect
+     * account or managed allocation can be created for it, so a link racing
+     * the deletion cannot leave one behind. The marker is never removed.
+     */
+    readonly markDeleting: (input: {
       readonly userId: string;
     }) => Effect.Effect<void, AccountRecordsPersistenceError>;
+    /**
+     * Hard-deletes devices, Live Activities, delivery records, tunnel limits,
+     * the Connect account and links, only while the account holds no managed
+     * allocation; the check and the deletes are one batch. Returns false,
+     * deleting nothing, when an allocation remains. A founder seat is never
+     * returned.
+     */
+    readonly deleteUserRows: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<boolean, AccountRecordsPersistenceError>;
   }
 >()("studio-relay/account/AccountDeletion/AccountRecords") {}
 
@@ -107,16 +129,46 @@ export const layerAccountRecords = Layer.effect(
         const allocated = yield* listAllocatedEnvironmentIds(input);
         return [...new Set([...links.map((row) => row.environmentId), ...allocated])];
       }),
+      markDeleting: Effect.fn("relay.account.markDeleting")(function* (input) {
+        yield* db
+          .insert(relayAccountDeletions)
+          .values({ userId: input.userId, startedAt: DateTime.formatIso(yield* DateTime.now) })
+          .onConflictDoNothing()
+          .pipe(Effect.mapError(fail(input.userId, "mark-deleting")));
+      }),
       deleteUserRows: Effect.fn("relay.account.deleteUserRows")(function* (input) {
         const userId = input.userId;
-        // One D1 batch runs the deletes atomically.
-        yield* RelayDb.batch(db, [
-          db.delete(relayLiveActivities).where(eq(relayLiveActivities.userId, userId)),
-          db.delete(relayMobileDevices).where(eq(relayMobileDevices.userId, userId)),
-          db.delete(relayDeliveryAttempts).where(eq(relayDeliveryAttempts.userId, userId)),
-          db.delete(relayManagedTunnelLimits).where(eq(relayManagedTunnelLimits.userId, userId)),
-          db.delete(relayEnvironmentLinks).where(eq(relayEnvironmentLinks.userId, userId)),
+        const noAllocation = notExists(
+          db
+            .select({ userId: relayManagedEndpointAllocations.userId })
+            .from(relayManagedEndpointAllocations)
+            .where(eq(relayManagedEndpointAllocations.userId, userId)),
+        );
+        // One D1 batch checks for allocations and runs the deletes atomically,
+        // so an allocation created after the caller's check keeps every row.
+        const results = yield* RelayDb.batch(db, [
+          db
+            .delete(relayLiveActivities)
+            .where(and(eq(relayLiveActivities.userId, userId), noAllocation)),
+          db
+            .delete(relayMobileDevices)
+            .where(and(eq(relayMobileDevices.userId, userId), noAllocation)),
+          db
+            .delete(relayDeliveryAttempts)
+            .where(and(eq(relayDeliveryAttempts.userId, userId), noAllocation)),
+          db
+            .delete(relayManagedTunnelLimits)
+            .where(and(eq(relayManagedTunnelLimits.userId, userId), noAllocation)),
+          // The promo's seats_granted is left alone, so the seat is not resold.
+          db
+            .delete(relayConnectAccounts)
+            .where(and(eq(relayConnectAccounts.userId, userId), noAllocation)),
+          db
+            .delete(relayEnvironmentLinks)
+            .where(and(eq(relayEnvironmentLinks.userId, userId), noAllocation)),
+          RelayDb.rawQuery(sql`select ${noAllocation} as deleted`),
         ]).pipe(Effect.mapError(fail(userId, "delete-rows")));
+        return Number(results[6]?.[0]?.deleted ?? 0) === 1;
       }),
     });
   }),
@@ -187,6 +239,9 @@ export const deleteAccountRecords = Effect.fn("relay.account.deleteAccountRecord
     const records = yield* AccountRecords;
     const inbox = yield* HookInbox.HookInbox;
     const clerk = yield* ClerkUsers;
+    // First, so a link racing the deletion cannot create an account row or a
+    // managed allocation after the steps below have run.
+    yield* records.markDeleting({ userId: input.userId });
     const environmentIds = yield* records.listEnvironmentIds({ userId: input.userId });
     for (const environmentId of environmentIds) {
       yield* unlinkEnvironmentRecord({
@@ -213,7 +268,12 @@ export const deleteAccountRecords = Effect.fn("relay.account.deleteAccountRecord
         environmentIds: remaining,
       });
     }
-    yield* records.deleteUserRows({ userId: input.userId });
+    if (!(yield* records.deleteUserRows({ userId: input.userId }))) {
+      return yield* new AccountDeletionIncomplete({
+        userId: input.userId,
+        environmentIds: yield* records.listAllocatedEnvironmentIds({ userId: input.userId }),
+      });
+    }
     yield* clerk.deleteUser(input.userId);
     return { deleted: true, environmentCount: environmentIds.length };
   },

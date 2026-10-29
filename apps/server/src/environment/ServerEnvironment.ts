@@ -367,6 +367,8 @@ export const make = Effect.gen(function* () {
       agentBrowserProfile: true,
       projectAgentBrowserProfile: true,
       machineProvision: true,
+      gitHubSignIn: true,
+      gitHubCredentialCopy: true,
     },
   };
 

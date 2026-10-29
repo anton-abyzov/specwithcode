@@ -1232,6 +1232,18 @@ export const GitHubHostSettings = Schema.Struct({
 });
 export type GitHubHostSettings = typeof GitHubHostSettings.Type;
 
+export const GitHubCopiedToken = Schema.Struct({
+  /** The label of the machine the sign-in was copied from. */
+  from: TrimmedNonEmptyString,
+  /** ISO time of the copy. */
+  at: TrimmedNonEmptyString,
+  login: Schema.optionalKey(TrimmedNonEmptyString),
+  fingerprint: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The copy replaced a token saved by hand, kept in the secret store so Remove restores it. */
+  replacedSaved: Schema.optionalKey(Schema.Boolean),
+});
+export type GitHubCopiedToken = typeof GitHubCopiedToken.Type;
+
 export const GitHubSettings = Schema.Struct({
   /** Keyed by lowercased host, for example `github.com`. */
   hosts: Schema.Record(GitHubHost, GitHubHostSettings).pipe(
@@ -1244,6 +1256,17 @@ export const GitHubSettings = Schema.Struct({
   tokens: Schema.Record(GitHubHost, TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * Where a saved token came from when another machine copied its own sign-in here. Non-secret;
+   * `fingerprint` (a SHA-256 of the token) ties the note to that token and never reaches clients.
+   */
+  copiedTokens: Schema.Record(GitHubHost, GitHubCopiedToken).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /** Adding a machine offers to copy this machine's GitHub sign-in first, before a device code. */
+  copyHostSignIn: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Ask before copying this machine's sign-in; "Don't ask again" turns it off. */
+  confirmCopySignIn: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type GitHubSettings = typeof GitHubSettings.Type;
 
@@ -1476,6 +1499,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "providerLimitAction",
   "providerLimitFallbackModelSelection",
   "providerLimitFallbackModels",
+  "providerLimitFallbackListOnly",
   "providerLimitExcludedModels",
   "providerLimitSwitchAtPercent",
   "providerLimitWaitUnderMinutes",
@@ -1532,6 +1556,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitAction: Schema.optionalKey(ProviderLimitAction),
   providerLimitFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   providerLimitFallbackModels: Schema.optionalKey(ProviderLimitFallbackModels),
+  providerLimitFallbackListOnly: Schema.optionalKey(Schema.Boolean),
   providerLimitExcludedModels: Schema.optionalKey(ProviderLimitExcludedModels),
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
@@ -1764,6 +1789,10 @@ export const ServerSettings = Schema.Struct({
   /** Tried in order before any other fallback; empty uses the single model above. */
   providerLimitFallbackModels: ProviderLimitFallbackModels.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Stop at the end of the fallback order instead of trying any other ready provider. */
+  providerLimitFallbackListOnly: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   /** Never continued on automatically; see `ProviderLimitExcludedModel`. */
   providerLimitExcludedModels: ProviderLimitExcludedModels.pipe(
@@ -2256,6 +2285,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerLimitAction: Schema.optionalKey(ProviderLimitAction),
   providerLimitFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   providerLimitFallbackModels: Schema.optionalKey(ProviderLimitFallbackModels),
+  providerLimitFallbackListOnly: Schema.optionalKey(Schema.Boolean),
   providerLimitExcludedModels: Schema.optionalKey(ProviderLimitExcludedModels),
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
@@ -2342,6 +2372,10 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       hosts: Schema.optionalKey(Schema.Record(GitHubHost, GitHubHostSettings)),
       tokens: Schema.optionalKey(Schema.Record(GitHubHost, TrimmedString)),
+      /** Replaces the whole map, like `hosts`. */
+      copiedTokens: Schema.optionalKey(Schema.Record(GitHubHost, GitHubCopiedToken)),
+      copyHostSignIn: Schema.optionalKey(Schema.Boolean),
+      confirmCopySignIn: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

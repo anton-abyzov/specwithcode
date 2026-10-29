@@ -1020,45 +1020,48 @@ export const make = Effect.gen(function* () {
         environmentHash,
       );
       const requestedTunnelName = managedEndpointTunnelName(cf.namespace, environmentHash);
-      yield* tunnelLimits
-        .ensureCapacity({
-          userId: input.userId,
-          environmentId: input.environmentId,
-        })
-        .pipe(
-          Effect.catchTags({
-            ManagedTunnelLimitPersistenceError: (cause) =>
-              Effect.fail(
-                new ManagedEndpointProvisioningFailed({
-                  userId: input.userId,
-                  environmentId: input.environmentId,
-                  stage: "check-tunnel-limit",
-                  hostname: requestedHostname,
-                  tunnelName: requestedTunnelName,
-                  cause,
-                }),
-              ),
-          }),
-        );
+      const limit = yield* tunnelLimits.resolve({ userId: input.userId }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ManagedEndpointProvisioningFailed({
+              userId: input.userId,
+              environmentId: input.environmentId,
+              stage: "check-tunnel-limit",
+              hostname: requestedHostname,
+              tunnelName: requestedTunnelName,
+              cause,
+            }),
+        ),
+      );
+      yield* Effect.annotateCurrentSpan({
+        "relay.managed_endpoint.max_tunnels": limit.maxTunnels ?? "unlimited",
+        "relay.managed_endpoint.limit_source": limit.source,
+      });
       const allocation = yield* allocations
         .reserve({
           userId: input.userId,
           environmentId: input.environmentId,
           hostname: requestedHostname,
           tunnelName: requestedTunnelName,
+          capacity: {
+            maxTunnels: limit.maxTunnels,
+            globalCap: config.globalManagedTunnelCap,
+          },
         })
         .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointProvisioningFailed({
-                userId: input.userId,
-                environmentId: input.environmentId,
-                stage: "reserve-allocation",
-                hostname: requestedHostname,
-                tunnelName: requestedTunnelName,
-                cause,
-              }),
-          ),
+          Effect.catchTags({
+            ManagedEndpointAllocationPersistenceError: (cause) =>
+              Effect.fail(
+                new ManagedEndpointProvisioningFailed({
+                  userId: input.userId,
+                  environmentId: input.environmentId,
+                  stage: "reserve-allocation",
+                  hostname: requestedHostname,
+                  tunnelName: requestedTunnelName,
+                  cause,
+                }),
+              ),
+          }),
         );
       const { hostname, tunnelName } = allocation;
 

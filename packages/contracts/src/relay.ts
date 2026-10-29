@@ -550,17 +550,31 @@ export class RelayEnvironmentLinkUnavailableError extends Schema.TaggedError<Rel
   }
 }
 
+/**
+ * Why the relay refused a new managed machine: the account is at its own
+ * limit, or the hosted service is at its total machine capacity.
+ */
+export const RelayEnvironmentLinkLimitReason = Schema.Literals([
+  "account_limit",
+  "service_capacity",
+]);
+export type RelayEnvironmentLinkLimitReason = typeof RelayEnvironmentLinkLimitReason.Type;
+
 export class RelayEnvironmentLinkLimitExceededError extends Schema.TaggedError<RelayEnvironmentLinkLimitExceededError>()(
   "RelayEnvironmentLinkLimitExceededError",
   {
     code: Schema.Literal("environment_link_limit_exceeded"),
     maxTunnels: Schema.Number,
+    // Older relays send no reason; treat a missing one as the account limit.
+    reason: Schema.optionalKey(RelayEnvironmentLinkLimitReason),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
 ) {
   override get message(): string {
-    return `Relay managed tunnel limit reached: this account allows at most ${this.maxTunnels} tunnels`;
+    return this.reason === "service_capacity"
+      ? "Relay managed tunnel capacity reached: SpecWithCode Connect is not accepting new machines right now"
+      : `Relay managed tunnel limit reached: this account allows at most ${this.maxTunnels} tunnels`;
   }
 }
 
@@ -622,6 +636,12 @@ export const RelayProtectedError = Schema.Union([
 export type RelayProtectedError = typeof RelayProtectedError.Type;
 
 const RelayAuthAndInternalErrors = [RelayAuthInvalidError, RelayInternalError] as const;
+
+const RelayManagedEndpointRecoveryErrors = [
+  RelayAuthInvalidError,
+  RelayEnvironmentLinkLimitExceededError,
+  RelayInternalError,
+] as const;
 
 const RelayEnvironmentLinkErrors = [
   RelayAuthInvalidError,
@@ -719,8 +739,15 @@ export const RelayClientEnvironmentRecord = Schema.Struct({
 });
 export type RelayClientEnvironmentRecord = typeof RelayClientEnvironmentRecord.Type;
 
+export const RelayManagedTunnelPolicy = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("unlimited") }),
+  Schema.Struct({ kind: Schema.Literal("limited"), maxTunnels: Schema.Number }),
+]);
+export type RelayManagedTunnelPolicy = typeof RelayManagedTunnelPolicy.Type;
+
 export const RelayListEnvironmentsResponse = Schema.Struct({
   environments: Schema.Array(RelayClientEnvironmentRecord),
+  managedTunnelPolicy: Schema.optional(RelayManagedTunnelPolicy),
 });
 export type RelayListEnvironmentsResponse = typeof RelayListEnvironmentsResponse.Type;
 
@@ -998,6 +1025,25 @@ const RelayHealthGroup = HttpApiGroup.make("health")
   )
   .annotate(OpenApi.Description, "Service health and readiness.");
 
+/** The public "Founding 1,000" counter. */
+export const RelayFoundersResponse = Schema.Struct({
+  seatCap: Schema.Number,
+  seatsGranted: Schema.Number,
+  seatsLeft: Schema.Number,
+  /** False once grants are closed or no seats are left. */
+  grantsOpen: Schema.Boolean,
+});
+export type RelayFoundersResponse = typeof RelayFoundersResponse.Type;
+
+const RelayPublicGroup = HttpApiGroup.make("public")
+  .add(
+    HttpApiEndpoint.get("founders", "/v1/public/founders", {
+      success: RelayFoundersResponse,
+      error: RelayInternalError,
+    }).annotate(OpenApi.Summary, "Read the Connect founders seat counter"),
+  )
+  .annotate(OpenApi.Description, "Unauthenticated public information.");
+
 const RelayMetadataGroup = HttpApiGroup.make("metadata")
   .add(
     HttpApiEndpoint.get("authorizationServer", "/.well-known/oauth-authorization-server", {
@@ -1213,7 +1259,7 @@ const RelayServerGroup = HttpApiGroup.make("server")
         }),
         payload: RelayManagedEndpointRecoveryRegistrationRequest,
         success: RelayManagedEndpointRecoveryRegistrationResponse,
-        error: RelayAuthAndInternalErrors,
+        error: RelayManagedEndpointRecoveryErrors,
       },
     ).annotate(OpenApi.Summary, "Register managed tunnel recovery without provisioning"),
     HttpApiEndpoint.post("recoverManagedEndpoint", "/v1/environments/:environmentId/tunnel", {
@@ -1222,7 +1268,7 @@ const RelayServerGroup = HttpApiGroup.make("server")
       }),
       payload: RelayManagedEndpointRecoveryRequest,
       success: RelayManagedEndpointRecoveryResponse,
-      error: RelayAuthAndInternalErrors,
+      error: RelayManagedEndpointRecoveryErrors,
     }).annotate(OpenApi.Summary, "Recover an environment's managed tunnel"),
     HttpApiEndpoint.post(
       "publishAgentActivity",
@@ -1286,6 +1332,7 @@ const RelayHooksGroup = HttpApiGroup.make("hooks")
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
+    RelayPublicGroup,
     RelayMetadataGroup,
     RelayMobileGroup,
     RelayClientGroup,

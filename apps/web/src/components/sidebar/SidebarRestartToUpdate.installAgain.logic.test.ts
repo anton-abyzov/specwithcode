@@ -77,7 +77,7 @@ describe("an install the agent leaves for another pass", () => {
     );
   });
 
-  it("does not fail 25 minutes after the first install when the next began later", () => {
+  it("does not fail 45 minutes after the first install when the next began later", () => {
     const first = requestedAt + MINUTE;
     let progress = installingAt(first);
     progress = advanceServiceUpdateProgress(
@@ -98,7 +98,7 @@ describe("an install the agent leaves for another pass", () => {
     );
     expect(progress.phase).toBe("installing");
     expect(serviceUpdateButtonLabel(progress, pastFirstDeadline)).toBe("Installing…");
-    // The second install has its own 25 minutes.
+    // The second install has its own 45 minutes.
     const stuck = advanceServiceUpdateProgress(
       progress,
       agent("installing", second),
@@ -107,11 +107,11 @@ describe("an install the agent leaves for another pass", () => {
     expect(stuck).toMatchObject({
       phase: "failed",
       message:
-        "The install has not finished after 25 minutes. See Settings > About for the receipt.",
+        "The install has not finished after 45 minutes. See Settings > About for the receipt.",
     });
   });
 
-  it("still fails 25 minutes on when the restart never comes back", () => {
+  it("still fails 45 minutes on when the restart never comes back", () => {
     const first = requestedAt + MINUTE;
     const installing = installingAt(first);
     // The service restarts into the new version and never answers again: the

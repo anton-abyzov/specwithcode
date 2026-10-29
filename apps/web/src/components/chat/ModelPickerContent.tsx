@@ -207,6 +207,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onRequestClose?: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   onManageProviders?: () => void;
+  /** Open the settings where the fallback order is set. */
+  onEditFallbackOrder?: () => void;
   /** One-click install here, and providers ready on the user's other machines. */
   quickSetup?: ProviderQuickSetup;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -1448,7 +1450,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </div>
             ) : null}
             {runningNote}
-            {props.onManageProviders || props.secondaryAction ? (
+            {props.onManageProviders || props.secondaryAction || props.onEditFallbackOrder ? (
               // Two actions don't fit one row at the menu's width: they stack.
               <div className="flex shrink-0 flex-col border-t border-border/70 p-2">
                 {props.onManageProviders ? (
@@ -1473,6 +1475,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     onClick={props.secondaryAction.onOpen}
                   >
                     {props.secondaryAction.label}
+                  </Button>
+                ) : null}
+                {props.onEditFallbackOrder ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start"
+                    data-model-picker-fallback-order=""
+                    onClick={() => {
+                      props.onRequestClose?.();
+                      props.onEditFallbackOrder?.();
+                    }}
+                  >
+                    Fallback order
                   </Button>
                 ) : null}
               </div>

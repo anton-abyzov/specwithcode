@@ -90,6 +90,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   quickSetup?: ProviderQuickSetup;
   /** Open the provider list even when every configured model is ready. */
   onManageProviders?: () => void;
+  /** Open the settings where the models a limited thread continues on are set. */
+  onEditFallbackOrder?: () => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   /**
    * Show usage on the trigger and beside every model, and warn on models whose
@@ -558,6 +560,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     else props.onOpenProviderSetup?.(activeInstanceId);
                   },
                 }
+              : {})}
+            {...(props.onEditFallbackOrder
+              ? { onEditFallbackOrder: props.onEditFallbackOrder }
               : {})}
             {...(props.getModelDisabledReason
               ? { getModelDisabledReason: props.getModelDisabledReason }

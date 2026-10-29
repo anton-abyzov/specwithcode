@@ -32,7 +32,9 @@
 # value or missing tool, 3 for the download or its sha256, 4 when another run, the app, its own
 # updater or a previous app left at SpecWithCode.app.release-old is in the way, 5 for no room or a
 # copy that cannot be unpacked or fails a check (after the rename too: the previous app is then back),
-# and 6 when a rename failed (the reason says where each app is).
+# and 6 when a rename failed (the reason says where each app is). The update cache or its lock that
+# mkdir refuses for another reason than no room (a permission, a file in the way) ends with exit 1 and
+# mkdir's own reason; a stop nobody planned says "stopped unexpectedly (exit <n>) at: <command>".
 # Tests override paths, waits and tools: SWC_APP_DIR, SWC_CACHE_DIR, SWC_REQUIREMENT, SWC_POLL,
 # SWC_QUIT_WAIT, SWC_SHIPIT_GRACE, SWC_SHIPIT_WAIT, SWC_LAUNCH_WAIT, SWC_LOCK_WAIT, and SWC_CURL,
 # SWC_SHASUM, SWC_PLISTBUDDY, SWC_CODESIGN, SWC_SPCTL, SWC_DITTO, SWC_UNZIP, SWC_DF, SWC_PGREP,
@@ -46,13 +48,22 @@
 # macOS keys the privacy grants to it, and only the release team's signature satisfies it.
 RELEASE_REQUIREMENT='identifier "com.specweave.studio" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = NMCB2JZ7QG'
 
-say() { printf '%s\n' "$*" 2> /dev/null || true; } # never fatal: see main's trap '' PIPE
+# Never fatal: see main's trap '' PIPE. In a subshell: bash 3.2 keeps a write that failed (once the session
+# dropped) in this shell's buffer, and every later $(...) and redirected builtin would carry it out.
+say() { (printf '%s\n' "$*") 2> /dev/null || true; }
 
 dry() { [ "$DRY_RUN" = 1 ]; }
 
 die() { # die CODE REASON: the EXIT trap cleans up, then prints "FAIL REASON" last
   REASON="$2"
   exit "$1"
+}
+
+# mkdir_failed WHAT ERROR: a folder the volume has no room for stops with exit 5; one mkdir refuses for
+# another reason (permissions, a file in the way) stops with exit 1 and mkdir's own reason.
+mkdir_failed() {
+  case "$2" in *'No space left on device'* | *'quota exceeded'*) die 5 "could not make $1 ($2; is the disk full?)" ;; esac
+  die 1 "could not make $1 (${2:-mkdir failed})"
 }
 
 init() {
@@ -181,28 +192,29 @@ started() { "$PS" -o lstart= -p "$1" 2> /dev/null | awk '{ $1 = $1; print }' || 
 # The pid of the run that holds the lock, or nothing. The lock names its run by pid and start time:
 # a run stopped by a power loss or SIGKILL keeps its lock, and its pid alone may belong to any other
 # process by the next run (after a reboot, say), which would then stop every run and the repair.
-# A lock without its record yet ("starting") is a run between its mkdir and its record, for up to
-# 10 seconds; one older than that is a run that stopped there.
+# A lock without all of its record yet ("starting": the record is two writes) is a run between its
+# mkdir and its record, for up to 10 seconds; one older than that is a run that stopped there.
 lock_holder() {
   local pid="" start="" made now
   { read -r pid && read -r start; } 2> /dev/null < "$LOCK/pid" || true
-  case "$pid" in
-    '' | *[!0-9]*)
-      made="$("$STAT" -f %m "$LOCK" 2> /dev/null || true)"
-      now="$("$DATE" +%s 2> /dev/null || true)"
-      case "$made:$now" in :* | *: | *[!0-9:]*) return 0 ;; esac
-      if [ $((now - made)) -lt 10 ]; then printf 'starting\n'; fi
-      return 0
-      ;;
-  esac
-  if [ -n "$start" ] && [ "$(started "$pid")" = "$start" ]; then printf '%s\n' "$pid"; fi
+  case "$pid" in '' | *[!0-9]*) start="" ;; esac
+  if [ -z "$start" ]; then
+    made="$("$STAT" -f %m "$LOCK" 2> /dev/null || true)"
+    now="$("$DATE" +%s 2> /dev/null || true)"
+    case "$made:$now" in :* | *: | *[!0-9:]*) return 0 ;; esac
+    if [ $((now - made)) -lt 10 ]; then printf 'starting\n'; fi
+    return 0
+  fi
+  if [ "$(started "$pid")" = "$start" ]; then printf '%s\n' "$pid"; fi
   return 0
 }
 
 # Moves the lock aside, then removes it: a run judging it meanwhile sees all of it or none of it, never a
-# lock whose record went first, which it would take for a run that is starting. A rename the volume
-# refuses (a full one, say) removes the lock in place, so it is never left behind; a record another
-# run writes into it meanwhile keeps it, and the mkdir that follows leaves it to that run.
+# lock whose record went first, which it would take for a run that is starting. When the rename fails
+# (a full volume refuses it, or another run moved the lock first) a lock that stands is removed in
+# place, so it is never left behind; a record another run writes into it meanwhile keeps it, and the
+# mkdir that follows leaves it to that run. Whichever lock this removes, the record each run reads
+# again after LOCK_WAIT decides which run goes on.
 release_lock() {
   local aside="$CACHE/.lock-gone-$$"
   rm -rf "$aside"
@@ -214,7 +226,7 @@ release_lock() {
 }
 
 take_lock() {
-  local holder me seen now
+  local holder me seen now err
   if dry; then
     holder="$(lock_holder)"
     case "$holder" in
@@ -224,7 +236,8 @@ take_lock() {
     esac
     return 0
   fi
-  mkdir -p "$CACHE"
+  # A worker's first run makes the folder, which a full volume refuses as it would the lock.
+  err="$(mkdir -p "$CACHE" 2>&1)" || mkdir_failed "the update cache" "${err:-mkdir -p $CACHE failed}"
   me="$(started "$$")" # Read first: the record follows the mkdir at once.
   if ! mkdir "$LOCK" 2> /dev/null; then
     seen="$("$STAT" -f %i "$LOCK" 2> /dev/null || true)" # The lock judged below.
@@ -242,14 +255,16 @@ take_lock() {
       say "took over the update lock of a run that is gone"
       release_lock
     fi
-    if ! mkdir "$LOCK" 2> /dev/null; then
+    if ! err="$(mkdir "$LOCK" 2>&1)"; then
       [ ! -e "$LOCK" ] || die 4 "another update of this app took the lock first; let it finish"
-      die 4 "could not take the update lock $LOCK"
+      mkdir_failed "the update lock" "${err:-mkdir $LOCK failed}"
     fi
   fi
   LOCKED=1
   LOCK_ID="$("$STAT" -f %i "$LOCK" 2> /dev/null || true)"
-  if ! printf '%s\n%s\n' "$$" "$me" 2> /dev/null > "$LOCK/pid"; then
+  # Written by a subshell whose output is the record, as say: a write the disk refuses would stay in
+  # this shell's buffer. In braces: bash 3.2 drops the ! of a subshell whose own redirection fails.
+  if ! { (printf '%s\n%s\n' "$$" "$me") > "$LOCK/pid"; } 2> /dev/null; then
     # Gone before its record: another run that judged the lock this one replaced gone removed it.
     [ -n "$LOCK_ID" ] && [ "$("$STAT" -f %i "$LOCK" 2> /dev/null || true)" = "$LOCK_ID" ] ||
       die 4 "another update of this app took the lock over as this one did; let it finish"
@@ -260,6 +275,9 @@ take_lock() {
   # longer than LOCK_WAIT between judging the lock and writing its record.
   sleep "$LOCK_WAIT"
   [ "$(lock_holder)" = "$$" ] || die 4 "another update of this app took the lock over as this one did; let it finish"
+  # A run stopped between release_lock's rename and its rm (a kill, a power loss) leaves its folder
+  # aside, and no run with another pid removes it: the run holding the lock does.
+  rm -rf "$CACHE"/.lock-gone-* 2> /dev/null || true
 }
 
 trash_old() {

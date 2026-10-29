@@ -146,6 +146,38 @@ class StateBackupRetention(unittest.TestCase):
    with patch.object(pathlib.Path,'home',return_value=home),patch.object(update.live_database,'connect',side_effect=lambda path:Failing(sqlite3.connect(path))):
     with self.assertRaises(sqlite3.OperationalError):update.backup_state(own,'abc')
    self.assertEqual(list(studio_paths.backups_root(home).iterdir()),[])
+class ScratchDirectory(unittest.TestCase):
+    def test_finder_file_written_during_removal_does_not_fail_the_update(self):
+        with tempfile.TemporaryDirectory() as parent:
+            real=shutil.rmtree
+            calls=[]
+            def racing(path,*a,**k):
+                calls.append(path)
+                if len(calls)==1:
+                    raise OSError(66,'Directory not empty',path)
+                return real(path,*a,**k)
+            with patch.object(update.shutil,'rmtree',racing),patch.object(update.time,'sleep'):
+                with update.scratch_directory('owned-update-stage-',parent) as path:
+                    pathlib.Path(path,'.DS_Store').write_bytes(b'x')
+            self.assertEqual(len(calls),2)
+            self.assertEqual(os.listdir(parent),[])
+
+    def test_cleanup_that_keeps_failing_leaves_the_folder_for_pruning(self):
+        with tempfile.TemporaryDirectory() as parent:
+            def failing(path,*a,**k): raise OSError(66,'Directory not empty',path)
+            with patch.object(update.shutil,'rmtree',failing),patch.object(update.time,'sleep'),contextlib.redirect_stderr(io.StringIO()):
+                with update.scratch_directory('owned-update-stage-',parent) as path:
+                    pass
+            self.assertEqual(os.listdir(parent),[os.path.basename(path)])
+            self.assertTrue(release_retention.STAGE_NAME.fullmatch(os.path.basename(path)))
+
+    def test_error_inside_the_block_still_propagates(self):
+        with tempfile.TemporaryDirectory() as parent:
+            with self.assertRaises(AssertionError):
+                with update.scratch_directory('owned-update-stage-',parent):
+                    raise AssertionError('boom')
+            self.assertEqual(os.listdir(parent),[])
+
 class UpdateGuards(unittest.TestCase):
  def idle_fixture(self, state):
   db=sqlite3.connect(state/'statev2.sqlite')

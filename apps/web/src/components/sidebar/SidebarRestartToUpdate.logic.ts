@@ -474,10 +474,10 @@ function namesRelease(state: StudioServiceUpdateState, version: string): boolean
 export const STALE_FAILURE_MS = 90_000;
 /**
  * An install that has not finished in this long is reported, so it can be
- * retried: the update agent gives its install helper 25 minutes (APPLY_TIMEOUT
+ * retried: the update agent gives its install helper 40 minutes (APPLY_TIMEOUT
  * in update_agent.py), so a slow but healthy install is never reported early.
  */
-export const INSTALL_TIMEOUT_MS = 25 * 60_000;
+export const INSTALL_TIMEOUT_MS = 45 * 60_000;
 
 /**
  * Identifies an agent state that answers a request (waiting, failed or another
@@ -689,7 +689,7 @@ export function advanceServiceUpdateProgress(
           ...progress,
           phase: "failed",
           message:
-            "The install has not finished after 25 minutes. See Settings > About for the receipt.",
+            `The install has not finished after ${INSTALL_TIMEOUT_MS / 60_000} minutes. See Settings > About for the receipt.`,
         };
       }
       return {

@@ -562,9 +562,9 @@ describe("Update now for the service and the app", () => {
       };
       await advance(2_000);
       expect(label()).toBe("Installing…");
-      await advance(25 * 60_000);
+      await advance(45 * 60_000);
       expect(lastToast().description).toBe(
-        "The install has not finished after 25 minutes. See Settings > About for the receipt.",
+        "The install has not finished after 45 minutes. See Settings > About for the receipt.",
       );
       // The same install, published again: not one the agent started on its own.
       state.service = { ...agent, updatedAt: new Date().toISOString() };
@@ -730,8 +730,8 @@ describe("Update now for the service and the app", () => {
       };
       await advance(2_000);
       expect(label()).toBe("Installing…");
-      await advance(25 * 60_000);
-      expect(lastToast().description).toContain("has not finished after 25 minutes");
+      await advance(45 * 60_000);
+      expect(lastToast().description).toContain("has not finished after 45 minutes");
       calls.length = 0;
       await closeToastWithX();
       await advance(0);

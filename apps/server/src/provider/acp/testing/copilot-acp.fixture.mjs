@@ -113,7 +113,11 @@ for await (const line of createInterface({ input: process.stdin })) {
       agentCapabilities: {
         loadSession: true,
         mcpCapabilities: { http: true, sse: true },
-        promptCapabilities: { image: true, audio: false, embeddedContext: true },
+        promptCapabilities: {
+          image: scenario !== "startup-text-only",
+          audio: false,
+          embeddedContext: true,
+        },
         sessionCapabilities: { close: {}, list: {} },
       },
       authMethods: [

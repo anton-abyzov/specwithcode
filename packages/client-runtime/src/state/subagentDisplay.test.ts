@@ -5,6 +5,7 @@ import {
   subagentGroupSummary,
   resolveSubagentMetadata,
   subagentDetailPreview,
+  splitDisplayTitleTail,
 } from "./subagentDisplay.js";
 
 describe("subagentGroupSummary", () => {
@@ -162,5 +163,26 @@ describe("subagentDetailPreview", () => {
       subagentDetailPreview({ status: "failed", progress: "Last progress", result: " " }),
     ).toBe("Last progress");
     expect(subagentDetailPreview({ status: "pending" })).toBeNull();
+  });
+});
+
+describe("splitDisplayTitleTail", () => {
+  it("keeps the short word that tells sibling agents apart", () => {
+    expect(splitDisplayTitleTail("Review Copy Recovery R11")).toEqual({
+      head: "Review Copy Recovery",
+      tail: "R11",
+    });
+    expect(splitDisplayTitleTail("Review Copy Preview Final")).toEqual({
+      head: "Review Copy Preview",
+      tail: "Final",
+    });
+  });
+
+  it("leaves one-word and long-ending titles whole", () => {
+    expect(splitDisplayTitleTail("Worker")).toEqual({ head: "Worker", tail: "" });
+    expect(splitDisplayTitleTail("Check thread-relationship-ordering")).toEqual({
+      head: "Check thread-relationship-ordering",
+      tail: "",
+    });
   });
 });

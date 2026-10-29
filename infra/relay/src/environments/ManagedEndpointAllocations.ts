@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as RelayDb from "../db.ts";
 import { isManagedEndpointHostname, managedEndpointForHostname } from "../deploymentConfig.ts";
 import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
+import { ManagedTunnelLimitExceeded } from "./ManagedTunnelLimits.ts";
 
 export interface ManagedEndpointAllocation {
   readonly userId: string;
@@ -91,9 +92,18 @@ interface ManagedEndpointAllocationKey {
   readonly environmentId: string;
 }
 
+/** Caps a new allocation must fit under; an existing allocation always resolves. */
+export interface ManagedEndpointAllocationCapacity {
+  /** Managed machines the account may hold; null means no per-account cap. */
+  readonly maxTunnels: number | null;
+  /** Managed machines across all accounts; undefined means no global cap. */
+  readonly globalCap?: number | undefined;
+}
+
 interface ReserveManagedEndpointAllocationInput extends ManagedEndpointAllocationKey {
   readonly hostname: string;
   readonly tunnelName: string;
+  readonly capacity?: ManagedEndpointAllocationCapacity;
 }
 
 interface RecordManagedEndpointTunnelInput extends ManagedEndpointAllocationKey {
@@ -144,9 +154,21 @@ export class ManagedEndpointAllocations extends Context.Service<
     readonly getByTunnelName: (
       tunnelName: string,
     ) => Effect.Effect<ManagedEndpointAllocation | null, ManagedEndpointAllocationPersistenceError>;
+    /**
+     * Returns the environment's allocation, inserting it if it does not exist.
+     * With `capacity`, the writes themselves check the account and global
+     * counts, so concurrent reservations can never exceed either cap. An
+     * environment whose allocation has a live managed link still resolves at
+     * the limit; an existing allocation without one (in flight, left by a
+     * failed link, or revoked with a failed teardown) must fit the caps again.
+     * No allocation is created once the account's deletion has started.
+     */
     readonly reserve: (
       input: ReserveManagedEndpointAllocationInput,
-    ) => Effect.Effect<ManagedEndpointAllocation, ManagedEndpointAllocationPersistenceError>;
+    ) => Effect.Effect<
+      ManagedEndpointAllocation,
+      ManagedEndpointAllocationPersistenceError | ManagedTunnelLimitExceeded
+    >;
     readonly recordTunnel: (
       input: RecordManagedEndpointTunnelInput,
     ) => Effect.Effect<number | null, ManagedEndpointAllocationPersistenceError>;
@@ -212,6 +234,57 @@ const allocationSelection = {
   tunnelReleasedAt: relayManagedEndpointAllocations.tunnelReleasedAt,
 };
 
+/**
+ * How long an allocation without a live managed link still counts as being
+ * provisioned. `reserve` runs before the tunnel exists and the link row is
+ * written last, so in-flight allocations must count, or two concurrent first
+ * links could both fit under the last slot. After this window an allocation
+ * left behind by a failed link stops holding the account's slot.
+ */
+export const MANAGED_ENDPOINT_IN_FLIGHT_WINDOW_MINUTES = 15;
+
+/** The allocation has a live link with managed tunnels enabled. */
+const liveManagedLink = sql`exists (
+  select 1 from relay_environment_links l
+  where l.user_id = a.user_id
+    and l.environment_id = a.environment_id
+    and l.revoked_at is null
+    and l.managed_tunnels_enabled = 1
+)`;
+
+/**
+ * Allocations that hold one of the account's managed machine slots: a live
+ * managed link, or reserved or touched within the in-flight window.
+ */
+const occupiesAccountSlot = (inFlightSince: string) =>
+  sql`(${liveManagedLink} or a.updated_at > ${inFlightSince})`;
+
+/**
+ * Allocations that count toward the global cap, which protects the DNS zone:
+ * every account slot plus any allocation that still holds a DNS record
+ * (for example one whose teardown failed), whether or not a link remains.
+ */
+const occupiesGlobalSlot = (inFlightSince: string) =>
+  sql`(${occupiesAccountSlot(inFlightSince)} or a.dns_record_id is not null)`;
+
+const accountSlotCount = (input: ManagedEndpointAllocationKey, inFlightSince: string) => sql`(
+  select count(*) from relay_managed_endpoint_allocations a
+  where a.user_id = ${input.userId}
+    and a.environment_id <> ${input.environmentId}
+    and ${occupiesAccountSlot(inFlightSince)}
+)`;
+
+const globalSlotCount = (input: ManagedEndpointAllocationKey, inFlightSince: string) => sql`(
+  select count(*) from relay_managed_endpoint_allocations a
+  where not (a.user_id = ${input.userId} and a.environment_id = ${input.environmentId})
+    and ${occupiesGlobalSlot(inFlightSince)}
+)`;
+
+/** No new allocation once the account's deletion has started. */
+const notDeleting = (input: ManagedEndpointAllocationKey) => sql`not exists (
+  select 1 from relay_account_deletions d where d.user_id = ${input.userId}
+)`;
+
 const whereAllocation = (input: ManagedEndpointAllocationKey) =>
   and(
     eq(relayManagedEndpointAllocations.userId, input.userId),
@@ -269,57 +342,143 @@ export const make = Effect.gen(function* () {
     reserve: Effect.fn("relay.managed_endpoint_allocations.reserve")(function* (
       input: ReserveManagedEndpointAllocationInput,
     ) {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      const inserted = yield* db
-        .insert(relayManagedEndpointAllocations)
-        .values({
-          ...input,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoNothing()
-        .returning(allocationSelection)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointAllocationPersistenceError({
-                operation: "reserve",
-                stage: "database-request",
-                ...input,
-                cause,
-              }),
-          ),
-        );
-
-      const allocation =
-        inserted[0] ??
-        (yield* db
+      const { capacity, ...key } = input;
+      const reserveError = (cause: unknown) =>
+        new ManagedEndpointAllocationPersistenceError({
+          operation: "reserve",
+          stage: "database-request",
+          ...key,
+          cause,
+        });
+      const nowDateTime = yield* DateTime.now;
+      const now = DateTime.formatIso(nowDateTime);
+      if (capacity === undefined) {
+        yield* db
+          .insert(relayManagedEndpointAllocations)
+          .values({ ...key, createdAt: now, updatedAt: now })
+          .onConflictDoNothing()
+          .pipe(Effect.mapError(reserveError));
+        const allocation = yield* db
           .select(allocationSelection)
           .from(relayManagedEndpointAllocations)
-          .where(whereAllocation(input))
+          .where(whereAllocation(key))
           .limit(1)
           .pipe(
             Effect.map((rows) => rows[0]),
-            Effect.mapError(
-              (cause) =>
-                new ManagedEndpointAllocationPersistenceError({
-                  operation: "reserve",
-                  stage: "database-request",
-                  ...input,
-                  cause,
-                }),
-            ),
-          ));
-
-      if (allocation === undefined) {
+            Effect.mapError(reserveError),
+          );
+        if (allocation !== undefined) {
+          return allocation;
+        }
         return yield* new ManagedEndpointAllocationPersistenceError({
           operation: "reserve",
           stage: "resolve-reservation",
-          ...input,
+          ...key,
         });
       }
 
-      return allocation;
+      // D1 has no row locks or interactive transactions, so the caps are
+      // part of the writes, and the batch is one implicit transaction:
+      // 1. an existing allocation without a live managed link (in flight, left
+      //    by a failed link, or revoked with a failed teardown) is checked
+      //    against the caps again, and claims a slot by touching updated_at;
+      // 2. a new allocation is inserted only under both caps;
+      // 3. an allocation with a live managed link resolves at the limit.
+      const inFlightSince = DateTime.formatIso(
+        DateTime.subtract(nowDateTime, { minutes: MANAGED_ENDPOINT_IN_FLIGHT_WINDOW_MINUTES }),
+      );
+      const fitsCaps = sql`${notDeleting(key)}
+        ${
+          capacity.maxTunnels === null
+            ? sql``
+            : sql`and ${accountSlotCount(key, inFlightSince)} < ${capacity.maxTunnels}`
+        }
+        ${
+          capacity.globalCap === undefined
+            ? sql``
+            : sql`and ${globalSlotCount(key, inFlightSince)} < ${capacity.globalCap}`
+        }`;
+      const results = yield* RelayDb.batch(db, [
+        RelayDb.rawQuery(sql`
+          update relay_managed_endpoint_allocations as a
+          set updated_at = ${now}
+          where a.user_id = ${key.userId}
+            and a.environment_id = ${key.environmentId}
+            and not ${liveManagedLink}
+            and ${fitsCaps}
+          returning user_id
+        `),
+        RelayDb.rawQuery(sql`
+          insert into relay_managed_endpoint_allocations
+            (user_id, environment_id, hostname, tunnel_name, created_at, updated_at)
+          select ${key.userId}, ${key.environmentId}, ${key.hostname}, ${key.tunnelName}, ${now}, ${now}
+          where ${fitsCaps}
+          on conflict do nothing
+          returning user_id
+        `),
+        RelayDb.rawQuery(sql`
+          select count(*) as live from relay_managed_endpoint_allocations a
+          where a.user_id = ${key.userId}
+            and a.environment_id = ${key.environmentId}
+            and ${liveManagedLink}
+        `),
+      ]).pipe(Effect.mapError(reserveError));
+      const claimed =
+        (results[0]?.length ?? 0) > 0 ||
+        (results[1]?.length ?? 0) > 0 ||
+        Number(results[2]?.[0]?.live ?? 0) > 0;
+
+      if (claimed) {
+        const allocation = yield* db
+          .select(allocationSelection)
+          .from(relayManagedEndpointAllocations)
+          .where(whereAllocation(key))
+          .limit(1)
+          .pipe(
+            Effect.map((rows) => rows[0]),
+            Effect.mapError(reserveError),
+          );
+        if (allocation !== undefined) {
+          return allocation;
+        }
+      } else {
+        // Nothing was claimed: report which cap refused it. A read here is
+        // only for the error; it never decides whether to write.
+        const counted = yield* RelayDb.batch(db, [
+          RelayDb.rawQuery(
+            sql`select ${accountSlotCount(key, inFlightSince)} as account_count, ${globalSlotCount(key, inFlightSince)} as global_count`,
+          ),
+        ]).pipe(Effect.mapError(reserveError));
+        const accountCount = Number(counted[0]?.[0]?.account_count ?? 0);
+        const globalCount = Number(counted[0]?.[0]?.global_count ?? 0);
+        if (capacity.maxTunnels !== null && accountCount >= capacity.maxTunnels) {
+          return yield* new ManagedTunnelLimitExceeded({
+            userId: key.userId,
+            environmentId: key.environmentId,
+            reason: "account_limit",
+            maxTunnels: capacity.maxTunnels,
+            activeTunnels: accountCount,
+          });
+        }
+        if (capacity.globalCap !== undefined && globalCount >= capacity.globalCap) {
+          return yield* new ManagedTunnelLimitExceeded({
+            userId: key.userId,
+            environmentId: key.environmentId,
+            reason: "service_capacity",
+            // An unlimited account reports the global cap it hit instead.
+            maxTunnels: capacity.maxTunnels ?? capacity.globalCap,
+            activeTunnels: accountCount,
+            globalCap: capacity.globalCap,
+            globalActiveTunnels: globalCount,
+          });
+        }
+      }
+
+      return yield* new ManagedEndpointAllocationPersistenceError({
+        operation: "reserve",
+        stage: "resolve-reservation",
+        ...key,
+      });
     }),
     recordTunnel: Effect.fn("relay.managed_endpoint_allocations.record_tunnel")(function* (
       input: RecordManagedEndpointTunnelInput,

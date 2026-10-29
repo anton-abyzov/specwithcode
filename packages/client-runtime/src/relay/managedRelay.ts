@@ -2,6 +2,7 @@ import {
   RelayAccessTokenType,
   RelayApi,
   type RelayClientEnvironmentRecord,
+  type RelayManagedTunnelPolicy,
   type RelayClientDeviceRecord,
   RelayConnectEnvironmentEndpoint,
   type RelayDeviceRegistrationRequest,
@@ -87,6 +88,7 @@ export type ManagedRelayDpopSignerError = typeof ManagedRelayDpopSignerError.Typ
 export const ManagedRelayRequestAction = Schema.Literals([
   "exchange relay DPoP access token",
   "list relay-managed environments",
+  "read managed tunnel policy",
   "list relay client devices",
   "create relay environment link challenge",
   "link relay environment",
@@ -104,6 +106,7 @@ export type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
 export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay DPoP access token exchange",
   "Relay environment listing",
+  "Relay account policy",
   "Relay client device listing",
   "Relay environment link challenge",
   "Relay environment linking",
@@ -259,6 +262,9 @@ export class ManagedRelayClient extends Context.Service<
   ManagedRelayClient,
   {
     readonly relayUrl: string;
+    readonly getManagedTunnelPolicy: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<RelayManagedTunnelPolicy | null, ManagedRelayClientError>;
     readonly listEnvironments: (input: {
       readonly clerkToken: string;
     }) => Effect.Effect<ReadonlyArray<RelayClientEnvironmentRecord>, ManagedRelayClientError>;
@@ -417,6 +423,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
   return ManagedRelayClient.of({
     relayUrl,
     listEnvironments: unavailable("clientRuntime.managedRelay.listEnvironments"),
+    getManagedTunnelPolicy: unavailable("clientRuntime.managedRelay.getManagedTunnelPolicy"),
     listDevices: unavailable("clientRuntime.managedRelay.listDevices"),
     createEnvironmentLinkChallenge: unavailable(
       "clientRuntime.managedRelay.createEnvironmentLinkChallenge",
@@ -717,6 +724,12 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
 
   return ManagedRelayClient.of({
     relayUrl,
+    getManagedTunnelPolicy: (input) =>
+      client.client.listEnvironments({ headers: bearerHeaders(input.clerkToken) }).pipe(
+        Effect.map((response) => response.managedTunnelPolicy ?? null),
+        Effect.mapError(relayRequestError("read managed tunnel policy")),
+        timeoutRelayRequest("Relay account policy"),
+      ),
     listEnvironments: Effect.fnUntraced(
       function* (input) {
         return yield* client.client

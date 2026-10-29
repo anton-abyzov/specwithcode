@@ -1270,7 +1270,7 @@ class PassBehaviour(AgentCase):
         with mock.patch.object(update_agent, 'APPLY_TIMEOUT', 0.5):
             self.assertEqual(self.run_agent(), 1)
         self.assertEqual(len(self.apply_calls()), 1)
-        self.assertIn('taking longer than 15 minutes', self.state()['message'])
+        self.assertRegex(self.state()['message'], r'is taking longer than \d+ minutes; it was left to finish')
         self.assertEqual(self.state()['status'], 'error')
         self.assertTrue(marker.exists())
         self.assertEqual(self.run_agent(), 0)  # The helper still holds the pass lock.

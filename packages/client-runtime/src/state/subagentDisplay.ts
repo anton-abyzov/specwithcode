@@ -53,6 +53,17 @@ export function formatSubagentDisplayTitle(title: string): string {
   return name.replace(/(^|\s)\S/gu, (letter) => letter.toUpperCase()) || displayTitle;
 }
 
+/**
+ * Splits a title so a narrow row can truncate the start and keep the end.
+ * Sibling agents often differ only in a short last word ("Review R10",
+ * "Review R11", "Review Final"); plain end truncation hides exactly that.
+ */
+export function splitDisplayTitleTail(title: string): { head: string; tail: string } {
+  const match = /^(.*\S)\s+(\S{1,12})$/u.exec(title.trim());
+  if (match === null) return { head: title, tail: "" };
+  return { head: match[1]!, tail: match[2]! };
+}
+
 /** Match desktop's model resolution and show only changes from the parent's workspace. */
 export function resolveSubagentMetadata(input: {
   readonly model: string | null;

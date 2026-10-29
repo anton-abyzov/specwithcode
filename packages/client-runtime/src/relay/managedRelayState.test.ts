@@ -67,6 +67,7 @@ function resetRegistry() {
 function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Service"]>) {
   return ManagedRelay.ManagedRelayClient.of({
     relayUrl: "https://relay.example.test",
+    getManagedTunnelPolicy: () => Effect.succeed(null),
     listEnvironments: () => Effect.succeed([environment]),
     listDevices: () => Effect.succeed([device]),
     createEnvironmentLinkChallenge: () => Effect.die("unused"),

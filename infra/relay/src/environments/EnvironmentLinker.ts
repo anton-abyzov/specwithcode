@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as ConnectAccounts from "./ConnectAccounts.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
@@ -68,6 +69,7 @@ export type EnvironmentLinkError =
   | DpopProofs.DpopProofReplayPersistenceError
   | EnvironmentLinks.EnvironmentLinkUpsertPersistenceError
   | EnvironmentCredentials.EnvironmentCredentialCreatePersistenceError
+  | ConnectAccounts.ConnectAccountPersistenceError
   | ManagedEndpointProvider.ManagedEndpointProviderError;
 
 export class EnvironmentLinker extends Context.Service<
@@ -142,6 +144,7 @@ const make = Effect.gen(function* () {
   const proofReplay = yield* DpopProofs.DpopProofReplay;
   const relayTokens = yield* RelayTokens.RelayTokens;
   const config = yield* RelayConfiguration.RelayConfiguration;
+  const connectAccounts = yield* ConnectAccounts.ConnectAccounts;
 
   return EnvironmentLinker.of({
     link: Effect.fn("relay.environment_linker.link")(function* (input) {
@@ -329,6 +332,13 @@ const make = Effect.gen(function* () {
         });
       }
       yield* links.upsert({ ...input, proof: verified, endpoint });
+      // Only a managed link that succeeded creates the Connect account and,
+      // while seats remain, grants its founder number. A link refused at a cap
+      // or failing in provisioning never takes a seat. The limit resolved
+      // during provisioning already treated a would-be founder as one.
+      if (input.request.managedTunnelsEnabled) {
+        yield* connectAccounts.ensureAccount({ userId: input.userId });
+      }
       const environmentCredential = yield* credentials.create({
         environmentId: verified.environmentId,
         environmentPublicKey: verified.environmentPublicKey,

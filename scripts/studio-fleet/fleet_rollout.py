@@ -781,7 +781,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         raise
 
 
-def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=75 * 60, worker_deadline=30 * 60,
+def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60, worker_deadline=60 * 60,
             worker_force=False, poll=15, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None):
     """M4 first (drained and held through `hold`, its ServiceHold, when given), then every other
     host in `hosts` together (M1 and M3, and any Connect-only machine), never held; an Unreachable
@@ -881,8 +881,8 @@ def main(argv=None):
     parser.add_argument('--only', choices=('all', LOCAL, 'workers'), default='all')
     parser.add_argument('--hold-minutes', type=int, default=update_request.HOLD_MAX_MINUTES,
                         help='M4 hold (and worker hold with --worker-force), 1 to 15')
-    parser.add_argument('--m4-deadline-minutes', type=int, default=75)
-    parser.add_argument('--worker-deadline-minutes', type=int, default=30)
+    parser.add_argument('--m4-deadline-minutes', type=int, default=115)
+    parser.add_argument('--worker-deadline-minutes', type=int, default=60)
     parser.add_argument('--worker-force', action='store_true', help='force the M1 and M3 requests too')
     parser.add_argument('--poll-seconds', type=int, default=15)
     parser.add_argument('--no-hold', action='store_true',

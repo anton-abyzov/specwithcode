@@ -69,6 +69,8 @@ import * as EnvironmentConnector from "../environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
+import * as ConnectAccounts from "../environments/ConnectAccounts.ts";
+import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
 import { withSpanAttributes } from "../spanAttributes.ts";
@@ -100,6 +102,18 @@ const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler
         pragma: "no-cache",
       }),
     ),
+);
+
+/**
+ * The public founders counter is aggregate and unauthenticated: let browsers
+ * and shared caches keep it for a minute instead of reading D1 on every hit.
+ */
+const appendPublicCounterCacheHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(
+    response.status === 200
+      ? HttpServerResponse.setHeader(response, "cache-control", "public, max-age=60, s-maxage=60")
+      : response,
+  ),
 );
 
 const appendRelayDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
@@ -457,6 +471,24 @@ export const layerMetadataApi = HttpApiBuilder.group(
   }),
 );
 
+export const layerPublicApi = HttpApiBuilder.group(
+  RelayApi,
+  "public",
+  Effect.fnUntraced(function* (handlers) {
+    const connectAccounts = yield* ConnectAccounts.ConnectAccounts;
+    return handlers.handle(
+      "founders",
+      Effect.fn("relay.api.public.founders")(
+        function* () {
+          yield* appendPublicCounterCacheHeader;
+          return yield* connectAccounts.foundersSummary();
+        },
+        Effect.catch(() => relayInternalErrorResponse("database_unavailable")),
+      ),
+    );
+  }),
+);
+
 export const layerHealthApi = HttpApiBuilder.group(
   RelayApi,
   "health",
@@ -555,9 +587,14 @@ export const layerClientApi = HttpApiBuilder.group(
       .handle(
         "listEnvironments",
         Effect.fn("relay.api.client.listEnvironments")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
           const { userId } = yield* RelayClientPrincipal;
           const environments = yield* links.listForUser({ userId });
-          return { environments };
+          const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+          const managedTunnelPolicy = ManagedTunnelLimits.toManagedTunnelPolicy(
+            yield* limits.resolve({ userId }),
+          );
+          return { environments, managedTunnelPolicy };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
@@ -633,9 +670,11 @@ export const layerClientApi = HttpApiBuilder.group(
                 traceId,
               }),
             ManagedTunnelLimitExceeded: (limitError, traceId) =>
-              new RelayEnvironmentLinkLimitExceededError({
-                code: "environment_link_limit_exceeded",
-                maxTunnels: limitError.maxTunnels,
+              relayLinkLimitExceededError(limitError, traceId),
+            ConnectAccountPersistenceError: (_error, traceId) =>
+              new RelayEnvironmentLinkFailedError({
+                code: "environment_link_failed",
+                reason: "link_persistence_failed",
                 traceId,
               }),
             EnvironmentLinkUpsertPersistenceError: (_error, traceId) =>
@@ -1084,7 +1123,12 @@ export const layerServerApi = HttpApiBuilder.group(
               relayInternalErrorResponse("upstream_unavailable"),
             ManagedEndpointProvisioningFailed: () =>
               relayInternalErrorResponse("upstream_unavailable"),
-            ManagedTunnelLimitExceeded: () => relayInternalErrorResponse("upstream_unavailable"),
+            ManagedTunnelLimitExceeded: (limitError) =>
+              currentTraceId.pipe(
+                Effect.flatMap((traceId) =>
+                  Effect.fail(relayLinkLimitExceededError(limitError, traceId)),
+                ),
+              ),
           }),
           mapRelayCommonApiErrors("not_authorized"),
         ),
@@ -1121,7 +1165,12 @@ export const layerServerApi = HttpApiBuilder.group(
               relayInternalErrorResponse("upstream_unavailable"),
             ManagedEndpointDeprovisioningFailed: () =>
               relayInternalErrorResponse("upstream_unavailable"),
-            ManagedTunnelLimitExceeded: () => relayInternalErrorResponse("upstream_unavailable"),
+            ManagedTunnelLimitExceeded: (limitError) =>
+              currentTraceId.pipe(
+                Effect.flatMap((traceId) =>
+                  Effect.fail(relayLinkLimitExceededError(limitError, traceId)),
+                ),
+              ),
           }),
           mapRelayCommonApiErrors("not_authorized"),
         ),
@@ -1169,6 +1218,7 @@ const isHttpUnauthorized = Schema.is(HttpApiError.Unauthorized);
 const isDpopProofRejected = Schema.is(DpopProofs.DpopProofRejected);
 
 const RelayCommonPersistenceError = Schema.Union([
+  ManagedTunnelLimits.ManagedTunnelLimitPersistenceError,
   Devices.DeviceRegistrationPersistenceError,
   Devices.DeviceUnregistrationPersistenceError,
   Devices.DeviceListPersistenceError,
@@ -1224,6 +1274,19 @@ export function relayDpopFailureReason(
     case "invalid_proof":
       return "invalid_proof";
   }
+}
+
+/** The 403 every managed-machine path returns when a cap refuses a new machine. */
+function relayLinkLimitExceededError(
+  limitError: Pick<ManagedTunnelLimits.ManagedTunnelLimitExceeded, "maxTunnels" | "reason">,
+  traceId: string,
+) {
+  return new RelayEnvironmentLinkLimitExceededError({
+    code: "environment_link_limit_exceeded",
+    maxTunnels: limitError.maxTunnels,
+    reason: limitError.reason,
+    traceId,
+  });
 }
 
 function relayInternalErrorResponse(reason: RelayInternalError["reason"]) {

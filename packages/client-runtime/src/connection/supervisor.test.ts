@@ -1584,6 +1584,7 @@ describe("EnvironmentSupervisor", () => {
       const unused = () => Effect.die("Unexpected relay operation.");
       const relay = ManagedRelay.ManagedRelayClient.of({
         relayUrl: "https://relay.example.test",
+        getManagedTunnelPolicy: unused,
         listEnvironments: unused,
         listDevices: unused,
         createEnvironmentLinkChallenge: unused,

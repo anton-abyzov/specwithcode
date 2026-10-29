@@ -153,6 +153,60 @@ const fixture = Effect.fn("startupRegistryAdapterFixture")(function* (
   };
 });
 
+const turnInput = Effect.fn("startupRegistryTurnInput")(function* (
+  test: Effect.Success<ReturnType<typeof fixture>>,
+  providerThread: ProviderAdapterV2TurnInput["providerThread"],
+  selection: ProviderAdapterV2TurnInput["modelSelection"],
+  attachments: ProviderAdapterV2TurnInput["message"]["attachments"] = [],
+) {
+  const now = yield* DateTime.now;
+  return {
+    appThread: {
+      createdBy: "user",
+      creationSource: "web",
+      id: test.threadId,
+      projectId: ProjectId.make("startup-project"),
+      title: "Fixture",
+      providerInstanceId: test.instanceId,
+      modelSelection: selection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: providerThread.id,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: test.threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+    threadId: test.threadId,
+    runId: RunId.make("startup-run"),
+    runOrdinal: 1,
+    providerTurnOrdinal: 1,
+    attemptId: RunAttemptId.make("startup-attempt"),
+    rootNodeId: NodeId.make("startup-node"),
+    providerThread,
+    message: {
+      createdBy: "user",
+      creationSource: "web",
+      messageId: MessageId.make("startup-message"),
+      text: "Fixture only",
+      attachments,
+    },
+    modelSelection: selection,
+    runtimePolicy: test.runtimePolicy,
+  } satisfies ProviderAdapterV2TurnInput;
+});
+
 describe("registry Copilot startup model integration", () => {
   it.effect(
     "passes the selection through the adapter before initialize and explicitly resets default",
@@ -165,53 +219,8 @@ describe("registry Copilot startup model integration", () => {
           const before = yield* test.messages;
           expect(before[2].args).toContain(`--model=${selected}`);
           expect(before.filter((frame) => frame.method === "session/set_model")).toEqual([]);
-          const now = yield* DateTime.now;
           const selection = { instanceId: test.instanceId, model: "default" };
-          const turn: ProviderAdapterV2TurnInput = {
-            appThread: {
-              createdBy: "user",
-              creationSource: "web",
-              id: test.threadId,
-              projectId: ProjectId.make("startup-project"),
-              title: "Fixture",
-              providerInstanceId: test.instanceId,
-              modelSelection: selection,
-              runtimeMode: "approval-required",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: null,
-              activeProviderThreadId: providerThread.id,
-              lineage: {
-                parentThreadId: null,
-                relationshipToParent: null,
-                rootThreadId: test.threadId,
-              },
-              forkedFrom: null,
-              createdAt: now,
-              updatedAt: now,
-              archivedAt: null,
-              settledOverride: null,
-              settledAt: null,
-              lastVisitedAt: null,
-              deletedAt: null,
-            },
-            threadId: test.threadId,
-            runId: RunId.make("startup-run"),
-            runOrdinal: 1,
-            providerTurnOrdinal: 1,
-            attemptId: RunAttemptId.make("startup-attempt"),
-            rootNodeId: NodeId.make("startup-node"),
-            providerThread,
-            message: {
-              createdBy: "user",
-              creationSource: "web",
-              messageId: MessageId.make("startup-message"),
-              text: "Fixture only",
-              attachments: [],
-            },
-            modelSelection: selection,
-            runtimePolicy: test.runtimePolicy,
-          };
+          const turn = yield* turnInput(test, providerThread, selection);
           yield* runtime.startTurn(turn);
           yield* runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
@@ -328,6 +337,41 @@ describe("registry Copilot startup model integration", () => {
           {
             params: { modelId: "grok-4.7" },
           },
+        );
+      }),
+    ),
+  );
+
+  it.effect("sends a screenshot turn to a text-only agent as its saved path", () =>
+    scoped(
+      Effect.gen(function* () {
+        const test = yield* fixture("startup-text-only");
+        const runtime = yield* test.adapter.openSession(test.input);
+        const providerThread = yield* runtime.ensureThread(test.input);
+        yield* runtime.startTurn(
+          yield* turnInput(test, providerThread, test.input.modelSelection, [
+            {
+              type: "image",
+              id: "thread-github-copilot-cli-1b2c3d4e-0000-4000-8000-000000000001",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 1024,
+            },
+          ]),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const prompts = (yield* test.messages).filter((frame) => frame.method === "session/prompt");
+        expect(prompts).toHaveLength(1);
+        const blocks: ReadonlyArray<{ type: string; text?: string }> = prompts[0].params.prompt;
+        expect(blocks.some((block) => block.type === "image")).toBe(false);
+        expect(blocks.some((block) => block.text?.includes("cannot view images inline"))).toBe(
+          true,
+        );
+        expect(blocks.map((block) => block.text ?? "").join("\n")).toContain(
+          '[Attached image "image.png" is saved at: ',
         );
       }),
     ),

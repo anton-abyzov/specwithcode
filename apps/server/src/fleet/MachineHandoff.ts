@@ -99,6 +99,7 @@ import { makeCopyRegistration } from "./folderCopyRegistration.ts";
 import { discoverCopyScopes, resolveCopyScope } from "./folderCopyScope.ts";
 import { checkMachineReadiness } from "./MachineReadiness.ts";
 import * as ProvisionRpc from "../provision/rpc.ts";
+import * as GitHubSignInRpc from "../sourceControl/gitHubSignInRpc.ts";
 import {
   DestinationCopies,
   type DestinationRecord as FolderDestinationRecord,
@@ -1480,8 +1481,12 @@ const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrument
   }),
 );
 
-/** Provisioning rides along here, so ws.ts registers it without a new import (TS2589). */
-export const layerRpcHandlers = Layer.merge(
+/**
+ * Provisioning and GitHub sign-in ride along here, so ws.ts registers them without a new
+ * import (TS2589).
+ */
+export const layerRpcHandlers = Layer.mergeAll(
   layerFolderCopyRpcHandlers,
   ProvisionRpc.layerRpcHandlers,
+  GitHubSignInRpc.layerRpcHandlers,
 );

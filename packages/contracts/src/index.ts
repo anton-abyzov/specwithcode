@@ -85,6 +85,8 @@ export * from "./scheduledTask.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./provision.ts";
+export * from "./gitHubSignIn.ts";
+export * from "./gitHubCredentialCopy.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";

@@ -362,5 +362,20 @@ class ApplyBudget(unittest.TestCase):
         self.assertLessEqual(ready_by + 420, budget)
         self.assertEqual(self.constants('99999')[0], 3600)
 
+    def test_the_agent_budget_leaves_room_for_m4s_902_second_preparation(self):
+        # M4's 1.0.112 retry spent 527 + 101 + 274 s before the gate settle and refused at 780 s
+        # under the 1500 s budget. The agent's budget takes that, the settle and one more full
+        # read as long as the before-read (the check before the restart may need one).
+        import update_agent
+        budget, ready_by, min_ready = self.constants(str(update_agent.APPLY_TIMEOUT))
+        self.assertEqual(budget, update_agent.APPLY_TIMEOUT)
+        self.assertEqual(min_ready, update.READINESS_DEADLINE_SECONDS)
+        old_cap = self.constants('1500')[1] - self.constants('1500')[2]
+        cap = ready_by - min_ready
+        self.assertLess(old_cap, 902 + update.INSTALL_GATE_SETTLE_SECONDS)
+        self.assertGreater(cap, 902 + update.INSTALL_GATE_SETTLE_SECONDS + 527)
+        # The helper's rollback share still ends inside the time the agent waits.
+        self.assertLessEqual(ready_by + 420, update_agent.APPLY_TIMEOUT)
+
 if __name__ == '__main__':
     unittest.main()

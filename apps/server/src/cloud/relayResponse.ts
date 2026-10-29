@@ -40,7 +40,9 @@ export const shouldRetryRelayRequest = (error: unknown): boolean =>
 function recoveryHint(error: RelayProtectedError): string {
   switch (error._tag) {
     case "RelayEnvironmentLinkLimitExceededError":
-      return "Unlink an unused environment in SpecWithCode Connect, then restart SpecWithCode on this machine.";
+      return error.reason === "service_capacity"
+        ? "SpecWithCode Connect is at capacity and is not accepting new machines right now. Try again later; machines already linked keep working."
+        : `This account allows ${error.maxTunnels} linked machines. Unlink an unused environment in SpecWithCode Connect, then restart SpecWithCode on this machine.`;
     case "RelayAuthInvalidError":
       return "Run `specweave-studio connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `specweave-studio connect logout`, then run `specweave-studio connect` again. Restart SpecWithCode after signing in.";
     case "RelayEnvironmentLinkProofExpiredError":

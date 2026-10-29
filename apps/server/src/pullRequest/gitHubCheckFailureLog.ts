@@ -61,7 +61,7 @@ const GH_LOG_PREFIX = /^[^\t\n]*\t[^\t\n]*\t/;
 /** The runner's own timestamp, often behind a byte-order mark. */
 const RUNNER_TIMESTAMP = /^﻿?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/;
 const SECRET_ASSIGNMENT_KEY =
-  "(?:token|access[_-]?token|api[_-]?key|authorization|client[_-]?secret|password|secret)";
+  "(?:(?:gh|github)(?:_enterprise)?_token|token|access[_-]?token|api[_-]?key|authorization|client[_-]?secret|password|secret)";
 const QUOTED_SECRET_VALUE = String.raw`(?:"[^"\n]*"|'[^'\n]*')`;
 const SECRET_SCHEME_PREFIX = String.raw`(?:(?:Bearer|Basic|token)[ \t]+)+`;
 // Query values stop at URL separators, while plain assignments can contain them.

@@ -6,7 +6,8 @@ import {
   settlePromise,
 } from "@specweave-studio/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { RelayManagedTunnelPolicy } from "@specweave-studio/contracts/relay";
 
 import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
@@ -14,6 +15,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
 import { ConnectRouteReconciler } from "./ConnectRouteReconciler";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
+import { ManagedTunnelPolicyContext } from "./managedTunnelPolicy";
 
 export function deactivateManagedRelayAuthentication(): void {
   setManagedRelaySession(appAtomRegistry, null);
@@ -33,6 +35,33 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({
     treatPendingAsSignedOut: false,
   });
+  const [accountPolicy, setAccountPolicy] = useState<{
+    accountId: string;
+    policy: RelayManagedTunnelPolicy | null;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setAccountPolicy(null);
+    if (isLoaded && isSignedIn && userId) {
+      void (async () => {
+        try {
+          const clerkToken = await getToken(resolveRelayClerkTokenOptions());
+          if (!clerkToken || cancelled) return;
+          const policy = await runtime.runPromise(
+            ManagedRelay.ManagedRelayClient.pipe(
+              Effect.flatMap((client) => client.getManagedTunnelPolicy({ clerkToken })),
+            ),
+          );
+          if (!cancelled) setAccountPolicy({ accountId: userId, policy });
+        } catch {
+          // Unknown policy is not a finite cap or an unlimited entitlement.
+        }
+      })();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken, isLoaded, isSignedIn, userId]);
   const removeRelayEnvironments = useAtomCommand(environmentCatalog.removeRelayEnvironments, {
     reportFailure: false,
     reportDefect: false,
@@ -106,9 +135,11 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   useEffect(() => () => deactivateManagedRelayAuthentication(), []);
 
   return (
-    <>
+    <ManagedTunnelPolicyContext
+      value={isSignedIn && accountPolicy?.accountId === userId ? accountPolicy.policy : null}
+    >
       {children}
       {isLoaded && isSignedIn && userId ? <ConnectRouteReconciler key={userId} /> : null}
-    </>
+    </ManagedTunnelPolicyContext>
   );
 }

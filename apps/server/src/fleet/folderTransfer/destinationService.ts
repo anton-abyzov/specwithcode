@@ -457,7 +457,7 @@ export class DestinationCopies {
       await writeJson(paths.record, record);
     } catch (cause) {
       await NodeFSP.rm(paths.directory, { recursive: true, force: true });
-      throw toCopyError(cause);
+      throw toCopyError(cause, record);
     }
     return { record, created: true };
   }
@@ -522,7 +522,7 @@ export class DestinationCopies {
         () => false,
         (error: unknown) => {
           if (error instanceof StaleScanError && nothingHere(plan)) return true;
-          throw error;
+          throw toCopyError(error, record);
         },
       );
     const manifest = await readManifestFile(this.paths(operationId).manifest);
@@ -751,7 +751,7 @@ export class DestinationCopies {
       .hello(record.sourceEnvironmentId)
       .then(
         (hello) => hello.state,
-        (cause: unknown) => toCopyError(cause),
+        (cause: unknown) => toCopyError(cause, record),
       );
   }
 
@@ -928,7 +928,9 @@ export class DestinationCopies {
     const record = await this.read(operationId);
     if (!record || record.state === "cancelled") return;
     const step = record.state === "failed" ? (record.failedStep ?? fallback) : record.state;
-    let error = aborted ? new CopyError("cancelled", "The copy was stopped.") : toCopyError(cause);
+    let error = aborted
+      ? new CopyError("cancelled", "The copy was stopped.")
+      : toCopyError(cause, record);
     // Applied but never committed: Retry cannot finish without the source, which still holds it.
     if (
       error.code === "unauthorized" &&
@@ -1338,9 +1340,23 @@ function nothingHere(plan: Plan): boolean {
   );
 }
 
-function toCopyError(cause: unknown): CopyError {
+/**
+ * The source refused this copy's grant. It expired, was cancelled or replaced
+ * there, or the source's saved offer was removed (a disk cleanup that moved the
+ * app's data folder did this once). Starting again mints a fresh offer.
+ */
+function staleOfferMessage(record: DestinationRecord) {
+  const name = sourceName(record);
+  const action = record.mode === "copy-and-move" ? "move" : "copy";
+  return `${name} no longer accepts this ${action} (prepared ${record.createdAt.slice(0, 10)}): its offer expired, was cancelled or replaced there, or was removed from ${name}. Start the ${action} again from ${name}.`;
+}
+
+/** Maps a failure to the copy error people see; with the record, a refusal names the source. */
+export function toCopyError(cause: unknown, record?: DestinationRecord): CopyError {
   if (cause instanceof CopyError) return cause;
   if (cause instanceof SourceClientError) {
+    if (cause.code === "unauthorized" && record)
+      return new CopyError("unauthorized", staleOfferMessage(record));
     const messages: Record<SourceClientError["code"], string> = {
       unsupported_url: "The source address is not a private tailnet address.",
       unreachable: "The source machine stopped answering.",

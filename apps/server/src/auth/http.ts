@@ -22,6 +22,7 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentRateLimitedError,
+  EnvironmentServiceUpdateInProgressError,
 } from "@specweave-studio/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@specweave-studio/contracts";
 import { parseOAuthScope } from "@specweave-studio/shared/oauthScope";
@@ -44,6 +45,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -445,6 +447,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const updateHold = yield* ServiceUpdateHold.optional;
 
     return handlers
       .handle(
@@ -690,13 +693,32 @@ export const layer = HttpApiBuilder.group(
             ) {
               return yield* failEnvironmentAuthInvalid("invalid_credential");
             }
-            return yield* serverAuth.issuePairingCredential({
-              ...args.payload,
-              ...(coordinator ? { coordinatorEnvironmentId: coordinator } : {}),
-              ...(session.principal?.kind === "coordinator"
-                ? { principalGeneration: session.principalGeneration }
-                : {}),
-            });
+            // A pairing grant is an auth_pairing_links row, which the update helper's
+            // guarded prestate compares exactly: one minted while the service is held
+            // failed the 1.0.112 install on M4. It waits for the restart instead, and
+            // one admitted just before the hold closes is awaited by the drain.
+            return yield* updateHold
+              .admit(
+                "auth.pairingCredential",
+                serverAuth.issuePairingCredential({
+                  ...args.payload,
+                  ...(coordinator ? { coordinatorEnvironmentId: coordinator } : {}),
+                  ...(session.principal?.kind === "coordinator"
+                    ? { principalGeneration: session.principalGeneration }
+                    : {}),
+                }),
+              )
+              .pipe(
+                Effect.catchTag("ServiceUpdateInProgressError", (error) =>
+                  Effect.fail(
+                    new EnvironmentServiceUpdateInProgressError({
+                      code: "update_in_progress",
+                      message: error.message,
+                      retryAfterSeconds: error.verifying === true ? 60 : 300,
+                    }),
+                  ),
+                ),
+              );
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),

@@ -516,6 +516,33 @@ describe("ManagedRelayClient", () => {
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, undefined, accessTokenStore)));
   });
 
+  it.effect(
+    "reads explicit unlimited and finite policy without inventing policy for old relays",
+    () =>
+      Effect.gen(function* () {
+        for (const policy of [
+          { kind: "unlimited" },
+          { kind: "limited", maxTunnels: 3 },
+          undefined,
+        ] as const) {
+          const fetchFn = (() =>
+            Promise.resolve(
+              Response.json({
+                environments: [],
+                ...(policy ? { managedTunnelPolicy: policy } : {}),
+              }),
+            )) satisfies typeof globalThis.fetch;
+          const result = yield* ManagedRelay.ManagedRelayClient.pipe(
+            Effect.flatMap((client) =>
+              client.getManagedTunnelPolicy({ clerkToken: "clerk-token" }),
+            ),
+            Effect.provide(layerManagedRelayTest(fetchFn)),
+          );
+          expect(result).toEqual(policy ?? null);
+        }
+      }),
+  );
+
   it.effect("times out stalled relay environment listing requests", () => {
     const fetchFn = (() =>
       new Promise<Response>(() => undefined)) satisfies typeof globalThis.fetch;

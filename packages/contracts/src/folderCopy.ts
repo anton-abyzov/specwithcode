@@ -453,6 +453,8 @@ export class FolderCopyError extends Schema.TaggedError<FolderCopyError>()("Fold
   detail: Schema.optional(bounded(4000)),
 }) {
   override get message(): string {
+    // A source refusal's detail names the machine and the next step on its own.
+    if (this.code === "unauthorized" && this.detail) return this.detail;
     const base = {
       not_found: "The copy or its project is no longer available.",
       busy: "Finish active work in this project before moving it.",

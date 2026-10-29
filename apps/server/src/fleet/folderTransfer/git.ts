@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - the copy engine streams files and runs Git directly.
 import * as NodeChildProcess from "node:child_process";
 
+import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
+
 /**
  * Git for the folder copy. Copied repositories carry the source's `.git/config`,
  * so hooks and the file-system monitor are switched off for every call, prompts
@@ -63,7 +65,7 @@ export function runGit(
         maxBuffer: 256 * 1024 * 1024,
         ...(killTree ? {} : { timeout: timeoutMs }),
         ...(options.signal && !killTree ? { signal: options.signal } : {}),
-        env: {
+        env: withGitHubSpawnEnvironment({
           ...process.env,
           GIT_TERMINAL_PROMPT: "0",
           GIT_OPTIONAL_LOCKS: "0",
@@ -71,7 +73,7 @@ export function runGit(
           GIT_LITERAL_PATHSPECS: "1",
           LC_ALL: "C",
           ...options.env,
-        },
+        }),
       },
       (error, stdout, stderr) => {
         stopWatching();
