@@ -1,4 +1,7 @@
-import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAttention";
+import {
+  answeredRuntimeRequestCopy,
+  runtimeRequestFamilyId,
+} from "@specweave-studio/shared/projectAttention";
 /**
  * Records what a forced "Update now" is about to close, and asks it again once
  * the update is over (increment 0991, owner decision D-03).
@@ -124,6 +127,27 @@ export const isThreadNotFound = (error: unknown): boolean =>
 type Threads = ThreadManagementService.ThreadManagementService["Service"];
 
 /**
+ * When the person was first asked what `requestId` asks: for a reopened card,
+ * the creation of the original request its family copies, while the thread
+ * still has it. A card reopened before its family's ask time was recorded
+ * carries its own creation instead, which made a resolved thread's old
+ * question look newer than the resolve. `recorded` stands when there is no
+ * original to read.
+ */
+export function originalAskedAt(
+  requestId: string,
+  requests: ReadonlyArray<Pick<OrchestrationV2RuntimeRequest, "id" | "createdAt">>,
+  recorded: string | null,
+): string | null {
+  if (!requestId.startsWith("update-reopen")) return recorded;
+  const family = runtimeRequestFamilyId(requestId);
+  const original = requests.find((request) => request.id === family);
+  return original !== undefined && DateTime.isDateTime(original.createdAt)
+    ? DateTime.formatIso(original.createdAt)
+    : recorded;
+}
+
+/**
  * Every question and approval still waiting on the person, with what it asked,
  * as the record keeps it. A thread that cannot be read is recorded from its
  * request row alone.
@@ -192,7 +216,11 @@ export const captureOpenRequests = (input: {
             : found?.nodes.find((candidate) => candidate.id === request.nodeId);
         const described = ClosedQuestions.describeClosedRequest({ kind: row.kind as never }, item);
         const askedAt = row.runtime_request_id.startsWith("update-reopen")
-          ? (request?.reopenedFromAskedAt ?? null)
+          ? originalAskedAt(
+              row.runtime_request_id,
+              found?.runtimeRequests ?? [],
+              request?.reopenedFromAskedAt ?? null,
+            )
           : row.created_at;
         captured.push({
           entry: {
@@ -446,9 +474,13 @@ export const makeReopener = Effect.gen(function* () {
       const { thread, runs, runtimeRequests } = records.value;
       if (thread.archivedAt !== null || thread.deletedAt !== null)
         return { type: "skipped", reason: "thread-closed" } as const;
+      const asked = {
+        ...entry,
+        askedAt: originalAskedAt(entry.requestId, runtimeRequests, entry.askedAt),
+      };
       // Only asks that predate an applicable resolution were settled. Preserve
       // genuine newer asks even when an ancestor still retains that resolution.
-      if (yield* resolvedWithAncestors(thread, entry.askedAt))
+      if (yield* resolvedWithAncestors(thread, asked.askedAt))
         return { type: "skipped", reason: "thread-resolved" } as const;
       const request = runtimeRequests.find((candidate) => candidate.id === entry.requestId);
       // Answered, or never closed (the drain stopped first): nothing to ask again.
@@ -491,8 +523,11 @@ export const makeReopener = Effect.gen(function* () {
             return { type: "waiting", reason: "continuation" } as const;
         }
       }
-      yield* postNote(entry, run, by);
-      if (by === "card") yield* askAgain(entry, run, run.rootNodeId);
+      // A card that an earlier update already asked again was noted then: each
+      // later update only puts the card back, so the turn gains no repeat notes.
+      if (by === "agent" || !entry.requestId.startsWith("update-reopen"))
+        yield* postNote(entry, run, by);
+      if (by === "card") yield* askAgain(asked, run, run.rootNodeId);
       return { type: "reopened", by } as const;
     });
 

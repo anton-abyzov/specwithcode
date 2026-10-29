@@ -865,3 +865,121 @@ it.effect("captures reopened cards with their original ask time on another updat
     ]);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
+
+it.effect(
+  "captures a legacy reopened card by its family's original ask, not its own creation",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE orchestration_v2_projection_runtime_requests (runtime_request_id TEXT, thread_id TEXT, status TEXT, kind TEXT, created_at TEXT)`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+      ('update-reopen:update-reopen:q1', 't1', 'pending', 'user_input', '2026-10-29T15:00:00Z')`;
+      const entries = yield* Reopen.captureOpenRequests({
+        sql,
+        threads: {
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { title: "Task" },
+              nodes: [],
+              turnItems: [],
+              runtimeRequests: [
+                { id: "q1", createdAt: DateTime.makeUnsafe("2026-10-28T05:17:00Z") },
+                {
+                  id: "update-reopen:update-reopen:q1",
+                  // Recorded by an older release as the previous copy's creation.
+                  reopenedFromAskedAt: "2026-10-29T05:28:00Z",
+                },
+              ],
+            } as never),
+        },
+      });
+      expect(entries.map((entry) => entry.askedAt)).toEqual(["2026-10-28T05:17:00.000Z"]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("does not reopen a resolved parent's subagent question recorded with a copy's time", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const world = newWorld();
+      const t1 = world.projection.thread as Record<string, unknown>;
+      world.projection = {
+        ...world.projection,
+        thread: {
+          ...t1,
+          settledOverride: null,
+          lineage: { parentThreadId: "root", relationshipToParent: "subagent" },
+        },
+        runtimeRequests: [
+          {
+            id: RuntimeRequestId.make("q1"),
+            status: "cancelled",
+            createdAt: DateTime.makeUnsafe("2026-10-28T05:17:00Z"),
+          },
+          { id: RuntimeRequestId.make("update-reopen:q1"), status: "cancelled" },
+        ],
+      };
+      world.parents = {
+        root: {
+          id: "root",
+          settledOverride: "settled",
+          settledAt: DateTime.makeUnsafe("2026-10-29T00:29:00Z"),
+          lineage: null,
+        },
+      };
+      const { store, reopener } = yield* reopenerFor(world, recordPath);
+      yield* store.record([closed("update-reopen:q1", { askedAt: "2026-10-29T05:28:00Z" })]);
+      const outcomes = yield* reopener.reopenPending;
+      expect(outcomes[0]?.outcome).toEqual({ type: "skipped", reason: "thread-resolved" });
+      expect(world.cards).toHaveLength(0);
+      expect(world.notes).toHaveLength(0);
+    }),
+  ),
+);
+
+it.effect("puts a reopened card back after another update without another note", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const world = newWorld();
+      world.projection = {
+        ...world.projection,
+        runtimeRequests: [
+          {
+            id: RuntimeRequestId.make("q1"),
+            status: "cancelled",
+            createdAt: DateTime.makeUnsafe("2026-10-28T05:17:00Z"),
+          },
+          { id: RuntimeRequestId.make("update-reopen:q1"), status: "cancelled" },
+        ],
+      };
+      const { store, reopener } = yield* reopenerFor(world, recordPath);
+      yield* store.record([closed("update-reopen:q1", { askedAt: "2026-10-29T05:28:00Z" })]);
+      const outcomes = yield* reopener.reopenPending;
+      expect(outcomes[0]?.outcome).toEqual({ type: "reopened", by: "card" });
+      expect(world.cards.map((card) => card.requestId)).toEqual(["update-reopen:update-reopen:q1"]);
+      // The card keeps the original ask, not the time an older release recorded.
+      expect(world.cards[0]?.reopenedFromAskedAt).toBe("2026-10-28T05:17:00.000Z");
+      expect(world.notes).toHaveLength(0);
+    }),
+  ),
+);
+
+it("dates a mixed-prefix approval card by its family's original request", () => {
+  expect(
+    Reopen.originalAskedAt(
+      "update-reopen:update-reopen-approval:a1",
+      [{ id: RuntimeRequestId.make("a1"), createdAt: DateTime.makeUnsafe("2026-10-27T10:00:00Z") }],
+      "2026-10-29T05:28:00Z",
+    ),
+  ).toBe("2026-10-27T10:00:00.000Z");
+  // Without the original, the recorded time stands; a fresh ask is never rewritten.
+  expect(Reopen.originalAskedAt("update-reopen:gone", [], "2026-10-29T05:28:00Z")).toBe(
+    "2026-10-29T05:28:00Z",
+  );
+  expect(
+    Reopen.originalAskedAt(
+      "q2",
+      [{ id: RuntimeRequestId.make("q2"), createdAt: DateTime.makeUnsafe("2026-10-20T00:00:00Z") }],
+      "2026-10-29T06:00:00Z",
+    ),
+  ).toBe("2026-10-29T06:00:00Z");
+});
