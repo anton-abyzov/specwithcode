@@ -6,7 +6,7 @@ import { HandoffFolderCopy } from "./HandoffFolderCopy";
 import { DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
 import { isDisabled, openMore } from "./HandoffFolderCopy.testkit";
 
-// Held moves, Move anyway and Undo: what the screen says always matches its buttons.
+// Held moves, Hand off anyway and Undo: what the screen says always matches its buttons.
 const state = vi.hoisted(() => ({
   calls: [] as Array<[string, unknown]>,
   handlers: {} as Record<string, (input: unknown) => unknown>,
@@ -226,40 +226,40 @@ it("shows the server's held message verbatim beside the differences", async () =
   expect(problemsText()).toContain("so the coordinator stayed here");
 });
 
-it("keeps the Move anyway wording after the transfer clears the pointer", async () => {
+it("keeps the Hand off anyway wording after the transfer clears the pointer", async () => {
   reopenMove();
   await mount();
-  await click("Move anyway");
+  await click("Hand off anyway");
   expect(container.textContent).toContain("The coordinator now runs on M3.");
   expect(pointerNow()).toBeNull();
   expect(problemsText()).toContain(
-    "You chose Move anyway, so the coordinator moved with these differences.",
+    "You chose Hand off anyway, so the coordinator moved with these differences.",
   );
   expect(problemsText()).not.toContain("Copy again");
   expect(labels()).not.toContain("Copy again");
   expectCopyAgainMatchesButton();
 });
 
-it("drops Move anyway when the source changed, and a reopen still offers Copy again", async () => {
+it("drops Hand off anyway when the source changed, and a reopen still offers Copy again", async () => {
   reopenMove();
   state.handlers.prepare = () => {
     throw Object.assign(new Error("changed"), { code: "source_changed" });
   };
   await mount();
-  await click("Move anyway");
+  await click("Hand off anyway");
   expect(pointerNow()).toMatchObject({ operationId: OPERATION });
   expect(pointerNow()).not.toHaveProperty("moveAnyway");
   expect(problemsText()).toContain("Copy again: it compares first");
-  expect(problemsText()).not.toContain("Move anyway");
+  expect(problemsText()).not.toContain("Hand off anyway");
   expect(labels()).toContain("Copy again");
-  expect(labels()).not.toContain("Move coordinator now");
+  expect(labels()).not.toContain("Hand off coordinator now");
 
   statuses = [committedAnyway()];
   await remount();
   expect(problemsText()).toContain("Copy again: it compares first");
-  expect(problemsText()).not.toContain("Move anyway");
+  expect(problemsText()).not.toContain("Hand off anyway");
   expect(labels()).toContain("Copy again");
-  expect(labels()).not.toContain("Move coordinator now");
+  expect(labels()).not.toContain("Hand off coordinator now");
   await openMore();
   expect(isDisabled(button("Start a new copy"))).toBe(false);
   expectCopyAgainMatchesButton();

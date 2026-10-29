@@ -64,7 +64,7 @@ export function MoveIntentToggle({
       }}
     >
       <Toggle value="move" disabled={!canMove}>
-        Move and continue there
+        Hand off and continue there
       </Toggle>
       <Toggle value="copy">Copy files only</Toggle>
     </ToggleGroup>
@@ -119,7 +119,7 @@ const METHODS: ReadonlyArray<{
   {
     value: "folder",
     label: "Send committed work through Git only",
-    detail: "Pushes commits and continues in a folder already saved there. Nothing else moves.",
+    detail: "Pushes commits and continues in a folder already saved there. Nothing else is sent.",
   },
 ];
 
@@ -155,7 +155,7 @@ export function FilesTravelChoice() {
               <span className="min-w-0 leading-5">
                 <span className="block wrap-anywhere">{item.label}</span>
                 <span className="block wrap-anywhere text-xs text-muted-foreground">
-                  {blocked ? "Only when moving the project." : item.detail}
+                  {blocked ? "Only when handing off the project." : item.detail}
                 </span>
               </span>
             </label>

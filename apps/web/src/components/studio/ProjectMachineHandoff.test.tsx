@@ -1036,7 +1036,7 @@ it("says why Move project is off: a focusable button that describes the reason a
   // Focusable, so a keyboard or screen reader reaches it and hears the reason.
   expect(button.disabled).toBe(false);
   expect(button.getAttribute("aria-disabled")).toBe("true");
-  expect(reason()).toBe("Send this project its first message, then you can move it.");
+  expect(reason()).toBe("Send this project its first message, then you can hand it off.");
   await act(async () => button.click());
   expect(props().open).toBe(false);
   state.environments = [
@@ -1048,7 +1048,7 @@ it("says why Move project is off: a focusable button that describes the reason a
       <ProjectMachineHandoff project={source as never} coordinatorId={"coordinator" as never} />,
     ),
   );
-  expect(reason()).toBe("Connect this machine to move this project.");
+  expect(reason()).toBe("Connect this machine to hand off this project.");
   expect(wrap.querySelector("button")!.getAttribute("aria-disabled")).toBe("true");
 });
 
@@ -1063,7 +1063,7 @@ it("says when this connection lacks permission to move the project", async () =>
   const button = container.querySelector('[data-slot="handoff-trigger-wrap"] button')!;
   expect(button.getAttribute("aria-disabled")).toBe("true");
   expect(document.getElementById(button.getAttribute("aria-describedby")!)?.textContent).toBe(
-    "This connection needs permission to move projects.",
+    "This connection needs permission to hand off projects.",
   );
 });
 

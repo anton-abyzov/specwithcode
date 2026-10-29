@@ -72,6 +72,26 @@ class Pipeline(unittest.TestCase):
         self.assertNotIn('rowsByteIdentical', receipt)
         self.assertEqual(receipt['rowPreservation'], 'verified-stopped-clone-pages')
 
+    def test_write_during_verification_retries_instead_of_full_fallback(self):
+        mode, before, auth = self.prepare()
+        self.flow.mark();self.flow.stop();self.flow.clone()
+        mode.stopped(self.flow.held, before, auth, START, 'browser-cookie')
+        self.flow.restart();self.pid = 101
+        snapshot = mode.snapshot
+        calls = []
+        def snapshot_then_heartbeat():
+            calls.append(1)
+            value = snapshot()
+            if len(calls) == 1:  # A reconnect heartbeat lands after the proof, before the watermark check.
+                self.flow.new.heartbeat('session-1', '2026-10-22T14:05:30Z')
+            return value
+        mode.snapshot = snapshot_then_heartbeat
+        with patch.object(update_apply, 'PAGE_VERIFY_QUIET_SECONDS', 0.05):
+            after, current, carried = mode.after(self.flow.held, START, 'browser-cookie')
+        self.assertEqual(mode.after_attempts, 2)
+        self.assertIsNotNone(mode.verdict)
+        self.assertIsNone(mode.fallback_reason)
+
     def test_no_heartbeat_opt_in_declines_page_verdict(self):
         mode, before, auth = self.prepare(heartbeat=False)
         self.assertIsNone(self.restart(mode, before, auth))

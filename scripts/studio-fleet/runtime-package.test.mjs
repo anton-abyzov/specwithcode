@@ -22,7 +22,14 @@ test("runtime and desktop package the complete executable managed helper graph",
   const local = new Set(readdirSync(fleet).filter((name) => name.endsWith(".py")));
   const required = new Set();
   // migrate_home.py is an entry point of its own: the desktop runs it beside the agent.
-  const pending = ["update_agent.py", "managed_updates.py", "migrate_home.py"];
+  // relay_ownership.py too: the runtime runs it beside managed_updates.py to record its relay
+  // (apps/server/src/cloud/RelayProcessOwnership.ts).
+  const pending = [
+    "update_agent.py",
+    "managed_updates.py",
+    "migrate_home.py",
+    "relay_ownership.py",
+  ];
   while (pending.length) {
     const name = pending.pop();
     if (required.has(name)) continue;

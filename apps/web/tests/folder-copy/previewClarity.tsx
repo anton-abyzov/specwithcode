@@ -108,7 +108,7 @@ export function PreviewClarity() {
   return (
     <main className="min-h-screen bg-background p-4 text-foreground">
       <section className="mx-auto max-w-3xl space-y-4 rounded-xl border bg-background p-4 sm:p-6">
-        <h1 className="text-xl font-semibold">Move SpecWeave</h1>
+        <h1 className="text-xl font-semibold">Hand off SpecWeave</h1>
         <p className="text-muted-foreground">
           From MacBook M4 to another machine. Nothing there is replaced without asking.
         </p>

@@ -40,8 +40,8 @@ function Fixture() {
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       <h1 className="text-lg font-medium">EasyChamp</h1>
-      <p className="text-sm text-muted-foreground">Move project interaction preview</p>
-      <button onClick={() => setOpen(true)}>Move project</button>
+      <p className="text-sm text-muted-foreground">Hand off project interaction preview</p>
+      <button onClick={() => setOpen(true)}>Hand off project</button>
       {opened && <p role="status">Destination coordinator opened</p>}
       <MachineHandoffDialog
         open={open}

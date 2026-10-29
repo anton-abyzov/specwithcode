@@ -307,7 +307,7 @@ it.effect("rejects incompatible saved or active ACP after coordinator selection 
           .send({ projectId: id, commandId, prompt: "Next" })
           .pipe(Effect.flip);
         expect(error.code).toBe("unsupported_provider");
-        expect(error.message).toContain("Codex or Claude");
+        expect(error.message).toContain("Codex, Claude or Muse Code");
         expect(f.sends).toHaveLength(0);
         expect(f.launches).toHaveLength(0);
         expect(f.updates).toHaveLength(0);

@@ -160,13 +160,13 @@ export function CopyChoicesSummary({
             onClick={onChange}
           >
             {pending.mode === "copy-and-move"
-              ? "Change (stops the move)"
+              ? "Change (stops the handoff)"
               : "Change (stops this copy)"}
           </Button>
         )}
       </div>
       <p className="wrap-anywhere" data-slot="copy-scope-mapping">
-        {pending.mode === "copy-and-move" ? "Move" : "Copy"} to {targetLabel}:{" "}
+        {pending.mode === "copy-and-move" ? "Hand off" : "Copy"} to {targetLabel}:{" "}
         <span className="font-mono">{target}</span>
         <span className="block text-muted-foreground">
           From <span className="font-mono">{source}</span>
@@ -266,7 +266,7 @@ export function CopyWorkingHint({ move = false }: { readonly move?: boolean }) {
   return (
     <p className="text-xs text-muted-foreground" data-slot="copy-close-hint">
       {move
-        ? "You can close this window while files copy. We’ll notify you; then reopen it to finish the move."
+        ? "You can close this window while files copy. We’ll notify you; then reopen it to finish the handoff."
         : "You can close this window. We’ll notify you when it’s done."}
     </p>
   );

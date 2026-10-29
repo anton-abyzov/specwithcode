@@ -826,7 +826,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
 
 
 def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60, worker_deadline=60 * 60,
-            worker_force=False, poll=15, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None):
+            worker_force=False, poll=5, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None):
     """M4 first (drained and held through `hold`, its ServiceHold, when given), then every other
     host in `hosts` together (M1 and M3, and any Connect-only machine), never held; an Unreachable
     one is reported as skipped. With `desktop` (desktop_app_rollout.DesktopApps), each worker's desktop app
@@ -928,7 +928,9 @@ def main(argv=None):
     parser.add_argument('--m4-deadline-minutes', type=int, default=115)
     parser.add_argument('--worker-deadline-minutes', type=int, default=60)
     parser.add_argument('--worker-force', action='store_true', help='force the M1 and M3 requests too')
-    parser.add_argument('--poll-seconds', type=int, default=15)
+    # 5 s: at 15 s the poll itself was the longest single wait before the install request
+    # (offer noticed up to 15 s late, then "installed" seen up to 15 s late again).
+    parser.add_argument('--poll-seconds', type=int, default=5)
     parser.add_argument('--wait-for-idle', action='store_true',
                         default=os.environ.get('STUDIO_FLEET_WAIT_FOR_IDLE') == '1',
                         help='acquire a service-owned idle hold; never interrupt running work')

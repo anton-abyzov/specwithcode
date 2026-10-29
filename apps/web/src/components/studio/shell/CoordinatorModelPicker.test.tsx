@@ -541,7 +541,7 @@ describe("CoordinatorModelPicker folder compatibility", () => {
       requiresFolderGrants: true,
     });
     expect(container.textContent).toContain(
-      "With the current restricted policy, choose Codex or Claude",
+      "With the current restricted policy, choose Codex, Claude or Muse Code",
     );
     expect(state.pickerProps!.activeInstanceId).toBe("copilot-work");
     expect(onChange).not.toHaveBeenCalled();
@@ -571,7 +571,7 @@ describe("CoordinatorModelPicker folder compatibility", () => {
       requiresFolderGrants: true,
     });
     expect(container.textContent).toContain(
-      "Additional folders are available with Codex and Claude.",
+      "Additional folders are available with Codex, Claude and Muse Code.",
     );
     expect(container.textContent).not.toContain("Choose one for the coordinator");
     expect(
@@ -614,7 +614,7 @@ describe("coordinator ACP folder policy", () => {
       ),
     ).toBeNull();
     expect(container.textContent).toContain("existing full-access permissions");
-    expect(container.textContent).not.toContain("choose Codex or Claude");
+    expect(container.textContent).not.toContain("choose Codex, Claude or Muse Code");
     expect(onChange).not.toHaveBeenCalled();
   });
 

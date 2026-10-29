@@ -15,6 +15,7 @@ export const MAC_SERVICE_UPDATER_FILES = [
   "managed_updates.py",
   "studio_paths.py",
   "migrate_home.py",
+  "relay_ownership.py",
 ] as const;
 
 export const MAC_SERVICE_UPDATER_EXTRA_RESOURCES = [

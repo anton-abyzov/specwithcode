@@ -108,7 +108,7 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
             environment: { additionalFolders: [extra], repositories: [] },
           },
         } as unknown as Project;
-        for (const driver of ["codex", "claudeAgent"]) {
+        for (const driver of ["codex", "claudeAgent", "muse"]) {
           const session = {
             driver: ProviderDriverKind.make(driver),
             startTurn: (input: ProviderAdapterV2TurnInput) =>
@@ -130,7 +130,7 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
           yield* runtime.startTurn(turn());
           yield* runtime.compactThread!(turn());
         }
-        assert.equal(received.length, 6);
+        assert.equal(received.length, 9);
         for (const input of received)
           assert.deepEqual(input.projectAdditionalDirectories, [main, extra]);
         project = {
@@ -150,7 +150,7 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
           } as unknown as ProviderAdapterV2SessionRuntime,
           () => Effect.succeed(Option.some(project)),
         ).startTurn(turn());
-        assert.isUndefined(received[6]?.projectAdditionalDirectories);
+        assert.isUndefined(received[9]?.projectAdditionalDirectories);
       }),
   );
   it.effect(

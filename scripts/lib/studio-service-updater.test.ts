@@ -13,8 +13,13 @@ it("ships the complete local dependency graph of the installed service updater",
   const fleet = NodePath.join(import.meta.dirname, "..", "studio-fleet");
   const local = new Set(NodeFS.readdirSync(fleet).filter((name) => name.endsWith(".py")));
   const required = new Set<string>();
-  // migrate_home.py is an entry point of its own: the desktop runs it beside the agent.
-  const pending = ["update_agent.py", "managed_updates.py", "migrate_home.py"];
+  // Migration and relay ownership are independent installed entry points.
+  const pending = [
+    "update_agent.py",
+    "managed_updates.py",
+    "migrate_home.py",
+    "relay_ownership.py",
+  ];
   while (pending.length > 0) {
     const name = pending.pop()!;
     if (required.has(name)) continue;

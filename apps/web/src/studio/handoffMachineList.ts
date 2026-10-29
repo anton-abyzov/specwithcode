@@ -51,8 +51,8 @@ export function moveBlockedReason(input: {
   readonly coordinator: boolean;
   readonly permitted: boolean;
 }): string | null {
-  if (!input.connected) return "Connect this machine to move this project.";
-  if (!input.coordinator) return "Send this project its first message, then you can move it.";
-  if (!input.permitted) return "This connection needs permission to move projects.";
+  if (!input.connected) return "Connect this machine to hand off this project.";
+  if (!input.coordinator) return "Send this project its first message, then you can hand it off.";
+  if (!input.permitted) return "This connection needs permission to hand off projects.";
   return null;
 }

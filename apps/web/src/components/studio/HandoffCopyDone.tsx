@@ -77,7 +77,7 @@ export function HandoffCopyDone({
       {problem && (
         <CopyProblems copy={copy} sourceLabel={sourceLabel}>
           {movingAnyway
-            ? `The files are on ${targetLabel}, but ${problem}. You chose Move anyway, so the coordinator ${contextTransferred ? "moved" : "moves"} with these differences.`
+            ? `The files are on ${targetLabel}, but ${problem}. You chose Hand off anyway, so the coordinator ${contextTransferred ? "moved" : "moves"} with these differences.`
             : copyAgain
               ? `The files are on ${targetLabel}, but ${problem}. Copy again: it compares first and moves only what changed.`
               : `The files are on ${targetLabel}, but ${problem}.`}
@@ -90,7 +90,7 @@ export function HandoffCopyDone({
             : mode === "copy-and-move"
               ? copyAgain
                 ? "The coordinator stays here until you copy again."
-                : "Files are copied. Move the coordinator once work here is idle."
+                : "Files are copied. Hand off the coordinator once work here is idle."
               : `${targetLabel} has a copy. The coordinator stays here.`}
         </p>
         <p className="text-xs text-muted-foreground wrap-anywhere">
@@ -355,7 +355,7 @@ function HandoffCopyHeldActions({
         Copy again
       </Button>
       <Button variant="outline" disabled={busy} onClick={onMoveAnyway}>
-        Move anyway
+        Hand off anyway
       </Button>
       {copy.backupsDiscardedAt === undefined && (
         <CopyUndoButton busy={busy} undoPreview={undoPreview} onUndo={onUndo} />
@@ -465,7 +465,7 @@ export function HandoffCopyFailedActions({
       </Button>
       {failedBeforeApply && (
         <Button variant="ghost" data-leading disabled={busy} onClick={onCancel}>
-          {copy.mode === "copy-and-move" ? "Stop move" : "Stop copy"}
+          {copy.mode === "copy-and-move" ? "Stop handoff" : "Stop copy"}
         </Button>
       )}
     </>
@@ -529,7 +529,7 @@ export function HandoffCopyDoneActions({
       )}
       {transfer && (
         <Button disabled={busy} onClick={onTransfer}>
-          Move coordinator now
+          Hand off coordinator now
         </Button>
       )}
       <Button variant={copyAgain || transfer ? "outline" : "default"} onClick={onOpen}>

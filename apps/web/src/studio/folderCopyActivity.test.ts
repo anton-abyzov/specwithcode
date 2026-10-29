@@ -99,7 +99,7 @@ const moving = (destination: CopyActivity["destination"]): CopyActivity => ({
 });
 
 it("says Move for a move in the sidebar line, and names where it lands", () => {
-  expect(copyActivityText(moving(undefined))).toBe("Move to ministorm: copying files, 50%");
+  expect(copyActivityText(moving(undefined))).toBe("Hand off to ministorm: copying files, 50%");
   const activity = copyActivityFromStatus(
     status("transferring", {
       mode: "copy-and-move",

@@ -83,6 +83,12 @@ pnpm dev            # server and web app
 pnpm dev:desktop    # desktop app
 ```
 
+For app-only work (most lanes), `pnpm run install:lane` installs everything except
+`infra/relay` — it skips the Alchemy/Cloudflare deploy toolchain (≈2 GiB of packages).
+Add the relay later with `pnpm run install:relay`. In an existing full checkout, run
+`pnpm run clean` first: pnpm will not shrink an already-linked tree on a scope switch.
+Release and CI always run the full install.
+
 Contributor notes, architecture and focused checks are in [AGENTS.md](AGENTS.md).
 
 ## Status

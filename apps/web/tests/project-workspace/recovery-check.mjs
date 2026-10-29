@@ -64,7 +64,9 @@ try {
         assert.equal(await page.getByText(/Choose one for the coordinator/).count(), 0);
         assert(
           await page
-            .getByText("Additional folders are available with Codex and Claude.", { exact: true })
+            .getByText("Additional folders are available with Codex, Claude and Muse Code.", {
+              exact: true,
+            })
             .isVisible(),
         );
         await retry.click();
@@ -94,7 +96,7 @@ try {
               .isVisible(),
           );
           assert.equal(
-            await page.getByText(/choose Codex or Claude for the coordinator/).count(),
+            await page.getByText(/choose Codex, Claude or Muse Code for the coordinator/).count(),
             0,
           );
         }

@@ -371,7 +371,7 @@ def cancel_request(home, identity, request, now=None):
 AGENT_FILES = ('update_agent.py', 'update_agent_reap.py', 'update_agent_cache.py', 'update_request.py',
                'update_agent_recovery.py', 'installation_descriptor.py', 'managed_updates.py', 'studio_paths.py',
                'migrate_home.py', 'update_agent_run.py', 'update_agent_pause.py', 'service_hold.py',
-               'service_handles.py', 'live_database.py')
+               'service_handles.py', 'live_database.py', 'relay_ownership.py')
 # Beside every copy of those files: the release they belong to, {schemaVersion, version}, written by
 # the runtime and desktop builds since 1.0.67. The installed copy's record also lists each file it
 # installed with its sha256.

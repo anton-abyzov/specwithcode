@@ -70,7 +70,17 @@ import datetime
 import pathlib
 import re
 import sqlite3
+import time
 import urllib.parse
+
+PAGE_VERIFY_ATTEMPTS = 3
+PAGE_VERIFY_QUIET_SECONDS = 1.0
+PAGE_VERIFY_QUIET_WAIT_SECONDS = 15
+
+
+class DatabaseChangedDuringVerification(AssertionError):
+    """The watermark moved during one page-verification attempt; that attempt proves nothing."""
+
 
 import after_proof
 import auth_heartbeat
@@ -205,7 +215,47 @@ class PageMode:
         assert not path.is_symlink() and page_continuity.PageProof.file_identity(path.stat()) == self.baseline_identity, 'Stopped baseline changed after capture'
 
     def after(self, held, started, policy):
+        # A write that lands while one attempt verifies (a reconnected browser's auth
+        # heartbeat is the known one: the gate stops new work, not that heartbeat) discards
+        # only that attempt. Each retry waits for a quiet watermark, then re-proves from
+        # scratch under the same unchanged() check, so nothing is proved more weakly; only
+        # a database that never stays still takes the full clone read. 1.0.117 on M4 fell
+        # back on the first heartbeat and the full read held "Installing" for 326 s.
         self.verdict = None
+        self.after_attempts = 0
+        for attempt in range(PAGE_VERIFY_ATTEMPTS):
+            self.after_attempts += 1
+            try:
+                return self._after_once(held, started, policy)
+            except DatabaseChangedDuringVerification as error:
+                if attempt + 1 >= PAGE_VERIFY_ATTEMPTS:
+                    self.fallback_reason = '%s:%s (%d attempts)' % (
+                        type(error).__name__, str(error)[:160], self.after_attempts)
+                    return None
+                self._wait_quiet()
+            except (page_continuity.Refused, read_cache.Unavailable, AssertionError, OSError, sqlite3.Error, ValueError) as error:
+                self.fallback_reason = type(error).__name__ + ':' + str(error)[:160]
+                return None
+        return None
+
+    def _wait_quiet(self):
+        """Until the watermark holds still for PAGE_VERIFY_QUIET_SECONDS, at most
+        PAGE_VERIFY_QUIET_WAIT_SECONDS; a database that never settles is retried anyway."""
+        mark = read_watermark.Watermark.open(self.state / 'statev2.sqlite')
+        try:
+            deadline = time.monotonic() + PAGE_VERIFY_QUIET_WAIT_SECONDS
+            token, since = mark.take(), time.monotonic()
+            while time.monotonic() < deadline:
+                time.sleep(0.25)
+                current = mark.take()
+                if current is None or token is None or current != token:
+                    token, since = current, time.monotonic()
+                elif time.monotonic() - since >= PAGE_VERIFY_QUIET_SECONDS:
+                    return
+        finally:
+            mark.close()
+
+    def _after_once(self, held, started, policy):
         mark = read_watermark.Watermark.open(self.state / 'statev2.sqlite')
         try:
             self.check_baseline(held)
@@ -217,13 +267,11 @@ class PageMode:
             assert self.heartbeat or verdict['authHeartbeat'] is None, 'Auth heartbeat was not authorized'
             after, auth, _ = self.snapshot()
             assert after['servicePid'] != self.expected['servicePid'], 'Page verification still sees the old service'
-            assert mark.unchanged(token), 'Database changed during page verification'
+            if not mark.unchanged(token):
+                raise DatabaseChangedDuringVerification('Database changed during page verification')
             self.check_baseline(held)
             self.verdict = verdict
             return after, auth, None
-        except (page_continuity.Refused, read_cache.Unavailable, AssertionError, OSError, sqlite3.Error, ValueError) as error:
-            self.fallback_reason = type(error).__name__ + ':' + str(error)[:160]
-            return None
         finally:
             mark.close()
 

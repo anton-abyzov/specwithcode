@@ -1563,7 +1563,7 @@ runpy.run_path(script, run_name='__main__')
         # service_handles and its live_database are update_agent_pause's own imports.
         self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)),
                          sorted(['update_agent', 'managed_updates', 'migrate_home', 'service_hold', 'service_handles',
-                                 'live_database'] + imported))
+                                 'live_database', 'relay_ownership'] + imported))
         self.assertEqual(imported, ['installation_descriptor', 'studio_paths', 'update_agent_cache', 'update_agent_pause',
                                     'update_agent_reap', 'update_agent_recovery', 'update_agent_run', 'update_request'])
 

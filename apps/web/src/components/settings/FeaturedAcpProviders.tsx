@@ -188,8 +188,8 @@ export function FeaturedAcpProviderCards({
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
         Installs come from the official ACP Registry on the selected machine. These agents can work
-        in the project folder; projects with additional approved folders currently require Codex or
-        Claude.
+        in the project folder; projects with additional approved folders currently require Codex,
+        Claude or Muse Code.
       </p>
     </section>
   );

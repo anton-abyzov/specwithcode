@@ -140,7 +140,7 @@ try {
     await page.goto(`${origin}/?theme=${theme}`, { waitUntil: "networkidle" });
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
-    NodeAssert.ok(await dialog.getByRole("heading", { name: "Move EasyChamp" }).isVisible());
+    NodeAssert.ok(await dialog.getByRole("heading", { name: "Hand off EasyChamp" }).isVisible());
     NodeAssert.ok(
       await dialog
         .getByText(
@@ -153,7 +153,7 @@ try {
         .getByRole("group", { name: "What to do" })
         .locator('button[aria-pressed="true"]')
         .textContent(),
-      "Move and continue there",
+      "Hand off and continue there",
     );
     const m1 = dialog.getByRole("radio", { name: /Mac mini M1/ });
     const m3 = dialog.getByRole("radio", { name: /MacBook Air M3/ });
@@ -177,12 +177,12 @@ try {
     );
     const layouts = { choose: await layout(page, dialog, "choose") };
     const screenshots = { choose: await screenshot(page, `${width}-${theme}-choose`) };
-    await dialog.getByRole("button", { name: "Move to MacBook Air M3", exact: true }).focus();
+    await dialog.getByRole("button", { name: "Hand off to MacBook Air M3", exact: true }).focus();
     await page.keyboard.press("Enter");
     const review = dialog.locator('[data-slot="handoff-git-review"]');
     await review.waitFor();
     const continuation = dialog.getByRole("button", {
-      name: "Move to MacBook Air M3",
+      name: "Hand off to MacBook Air M3",
       exact: true,
     });
     NodeAssert.equal(await continuation.isDisabled(), true, "publishing needs explicit consent");
@@ -199,7 +199,7 @@ try {
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
     await m3.waitFor();
     NodeAssert.equal(await m3.isChecked(), true, "Back keeps the chosen machine");
-    await dialog.getByRole("button", { name: "Move to MacBook Air M3", exact: true }).click();
+    await dialog.getByRole("button", { name: "Hand off to MacBook Air M3", exact: true }).click();
     await review.waitFor();
     const details = dialog.locator('[data-slot="handoff-commits"]');
     const summary = details.getByRole("button", { name: "Details" });

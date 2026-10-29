@@ -692,7 +692,7 @@ export function HandoffFolderCopy({
   ) => {
     if (!anyway && applied && copyProblem(applied, sourceLabel) !== null) {
       setCopyAgain(true);
-      setTransferNotice("Copy again before moving the coordinator.");
+      setTransferNotice("Copy again before handing off the coordinator.");
       setStage("done");
       return;
     }
@@ -1261,7 +1261,7 @@ export function HandoffFolderCopy({
     (pending?.projectRelativePath ?? scope.selected.projectRelativePath) !== "."
       ? "Umbrella root"
       : "Project root";
-  const approveLabel = `${mode === "copy-and-move" ? "Move" : "Copy"} to ${targetLabel}`;
+  const approveLabel = `${mode === "copy-and-move" ? "Hand off" : "Copy"} to ${targetLabel}`;
   const replaced = stage === "preview" && copy ? replacementText(copy.rows) : null;
   const replaceLeft = stage === "preview" && copy ? replaceAllLeftText(copy.rows, rootLabel) : null;
   // Files changed on the source while copying, or a failed check: copying again fixes it.

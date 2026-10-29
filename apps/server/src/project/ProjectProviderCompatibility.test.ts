@@ -11,6 +11,7 @@ const providers = [
   provider("copilot", "acpRegistry"),
   provider("codex", "codex"),
   provider("claude", "claudeAgent"),
+  provider("muse", "muse"),
 ];
 const project = {
   workspaceRoot: "/project",
@@ -36,6 +37,7 @@ describe("project provider folder compatibility", () => {
       expect(projectCompatibleProviders({ project, providers, runtimePolicy })).toEqual([
         providers[1],
         providers[2],
+        providers[3],
       ]);
     expect(
       projectCompatibleProviders({
@@ -50,7 +52,7 @@ describe("project provider folder compatibility", () => {
   });
   it("filters automatic routes while leaving provider readiness and usage data intact", () => {
     const compatible = projectCompatibleProviders({ project, providers });
-    expect(compatible).toEqual([providers[1], providers[2]]);
+    expect(compatible).toEqual([providers[1], providers[2], providers[3]]);
     expect(compatible[0]).toBe(providers[1]);
     expect(
       isProjectModelSelectionCompatible({
@@ -95,6 +97,6 @@ describe("project provider folder compatibility", () => {
     );
     expect(
       projectCompatibleProviders({ project: configured, cwd: "/worktree", providers }),
-    ).toEqual([providers[1], providers[2]]);
+    ).toEqual([providers[1], providers[2], providers[3]]);
   });
 });

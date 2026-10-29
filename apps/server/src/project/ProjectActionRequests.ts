@@ -314,7 +314,7 @@ export const make = Effect.gen(function* () {
             : "";
         const first =
           environment.additionalFolders.length === 0 && environment.repositories.length === 0
-            ? " This is the project's first extra folder: threads on providers other than Codex, Claude or full-access ACP stop working in this project."
+            ? " This is the project's first extra folder: threads on providers other than Codex, Claude, Muse Code or full-access ACP stop working in this project."
             : "";
         return {
           question: `Let agents in the project ${name} read and write ${canonical}?\n\nThreads in the project can use it from their next turn; turns already running keep their current folders.${asked}${personal}${first} Remove it any time in project settings.\n\n${why}`,

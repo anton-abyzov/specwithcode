@@ -77,7 +77,7 @@ export function ProjectHandoffRecovery({
     running.current.add(entry.key);
     setStatuses((current) => ({
       ...current,
-      [entry.key]: { text: "Checking the move…", busy: true },
+      [entry.key]: { text: "Checking the handoff…", busy: true },
     }));
     try {
       // No destination or new operation is invented. The source returns its immutable saved plan.
@@ -99,7 +99,7 @@ export function ProjectHandoffRecovery({
         bundle.coordinatorBinding?.state !== "transferring"
       )
         throw new Error(
-          `This move isn't ready to finish yet. Open Move on ${
+          `This handoff isn't ready to finish yet. Open Hand off on ${
             environments.find((item) => item.environmentId === entry.scope.environmentId)?.label ??
             "the source"
           } to continue it.`,
@@ -170,7 +170,7 @@ export function ProjectHandoffRecovery({
       }
       setStatuses((current) => ({
         ...current,
-        [entry.key]: { text: "Move finished on both machines.", complete: true },
+        [entry.key]: { text: "Handoff finished on both machines.", complete: true },
       }));
     } catch (cause) {
       setStatuses((current) => ({
@@ -179,7 +179,7 @@ export function ProjectHandoffRecovery({
           text:
             cause instanceof Error
               ? cause.message
-              : "The move could not finish. Try again when both machines are connected.",
+              : "The handoff could not finish. Try again when both machines are connected.",
         },
       }));
     } finally {
@@ -201,16 +201,16 @@ export function ProjectHandoffRecovery({
           <section
             key={entry.key}
             className="project-notice"
-            aria-label={`Finish moving ${project}`}
+            aria-label={`Finish handing off ${project}`}
             data-handoff-recovery={entry.operationId}
           >
             <p className="font-medium">
               {destination
-                ? `Finish moving ${project} to ${destination}`
-                : `Finish moving ${project}`}
+                ? `Finish handing off ${project} to ${destination}`
+                : `Finish handing off ${project}`}
             </p>
             <p className="project-muted">
-              The move stopped partway. {label} won’t restart on its own.
+              The handoff stopped partway. {label} won’t restart on its own.
             </p>
             {status ? <p role="status">{status.text}</p> : null}
             {!sourceReady ? (
@@ -222,7 +222,7 @@ export function ProjectHandoffRecovery({
                 disabled={!sourceReady || status?.busy}
                 onClick={() => void retry(entry)}
               >
-                Finish move
+                Finish handoff
               </Button>
             ) : null}
             <div className="project-muted text-xs">

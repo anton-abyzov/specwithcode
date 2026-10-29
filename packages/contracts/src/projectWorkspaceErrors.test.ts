@@ -55,7 +55,7 @@ describe("project workspace error transport", () => {
       projectId: ProjectId.make("project"),
       code: "unsupported_provider",
     });
-    expect(error.message).toContain("Codex or Claude");
+    expect(error.message).toContain("Codex, Claude or Muse Code");
     expect(error.message).toContain("already running with Full access");
     expect(error.message).toContain("no restrictive sandbox or approval override");
   });

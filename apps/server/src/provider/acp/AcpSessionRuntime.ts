@@ -1299,7 +1299,14 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
-      options?: { readonly dispatched?: Deferred.Deferred<void> },
+      options?: {
+        readonly dispatched?: Deferred.Deferred<void>;
+        /**
+         * The turn's approved extra project folders, for runtimes that grant
+         * them natively (Muse Code workspace roots). ACP agents ignore it.
+         */
+        readonly projectAdditionalDirectories?: ReadonlyArray<string>;
+      },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a real ACP `session/cancel` notification for the active session.

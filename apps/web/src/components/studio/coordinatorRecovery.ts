@@ -5,6 +5,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProjectWorkspaceError,
   fullAccessAcpProjectFolders,
+  providerEnforcesProjectFolders,
 } from "@specweave-studio/contracts";
 import type {
   ChatAttachment,
@@ -39,7 +40,7 @@ export function coordinatorRequiresFolderGrants(
 }
 
 export const COORDINATOR_FOLDER_GUIDANCE =
-  "This project needs additional folder access. With the current restricted policy, choose Codex or Claude for the coordinator.";
+  "This project needs additional folder access. With the current restricted policy, choose Codex, Claude or Muse Code for the coordinator.";
 export interface CoordinatorFolderPolicy {
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
@@ -60,8 +61,7 @@ export function coordinatorFolderCompatibility(
     (!supportedRuntimeModes?.length || supportedRuntimeModes.includes("full-access"));
   return requiresGrants &&
     driver !== undefined &&
-    driver !== "codex" &&
-    driver !== "claudeAgent" &&
+    !providerEnforcesProjectFolders(driver) &&
     !unrestrictedAcp
     ? COORDINATOR_FOLDER_GUIDANCE
     : null;

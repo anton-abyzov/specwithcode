@@ -109,7 +109,7 @@ const editFolder = (value: string) =>
   });
 const moveRadio = () =>
   [...document.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-    (node) => node.textContent === "Move and continue there",
+    (node) => node.textContent === "Hand off and continue there",
   )!;
 const stageNow = () =>
   container.querySelector('[data-slot="handoff-folder-copy"]')?.getAttribute("data-stage");
@@ -198,8 +198,8 @@ it("offers no Change while coordinator context transfers", async () => {
   ];
   await mount();
   await act(async () => moveRadio().click());
-  await click("Move to M3");
-  await click("Move to M3");
+  await click("Hand off to M3");
+  await click("Hand off to M3");
   expect(stageNow()).toBe("moving");
   expect(stepState()).toEqual([
     "Where:done",
@@ -313,7 +313,7 @@ it("cancels the copy from Review's Change setup, and opens the form with the sam
   await mount();
   await act(async () => moveRadio().click());
   await chooseFirst();
-  await click("Move to M3");
+  await click("Hand off to M3");
   await click("Preview on M3");
   expect(stageNow()).toBe("preview");
   // Review's footer holds the way back; Your choices has no second one.
@@ -333,7 +333,7 @@ it("cancels the copy from Review's Change setup, and opens the form with the sam
   expect(folderInput().disabled).toBe(false);
   expect(folderInput().value).toBe("/home/anton/Projects/project");
   expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
-  expect(button("Move to M3").disabled).toBe(false);
+  expect(button("Hand off to M3").disabled).toBe(false);
   // Closing right after keeps those choices for the next open.
   expect(JSON.parse(localStorage.getItem(DRAFT_KEY)!)).toMatchObject({
     machine: "m3",
@@ -422,7 +422,7 @@ it("locks starting a new copy while a coordinator transfer may need recovering",
   await mount();
   await settle();
   expect(stepState()).toContain("Transfer:current");
-  expect(button("Move coordinator now").disabled).toBe(false);
+  expect(button("Hand off coordinator now").disabled).toBe(false);
   await openMore();
   expect(isDisabled(button("Start a new copy"))).toBe(true);
   // Copy again releases the source too, so it is locked the same way.
@@ -644,7 +644,7 @@ it("remembers the setup form while no copy has started", async () => {
   await settle();
   expect(folderInput().value).toBe("/home/anton/Elsewhere/project");
   expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
-  await click("Move to M3");
+  await click("Hand off to M3");
   // The copy's pointer holds the choices from here.
   expect(localStorage.getItem(DRAFT_KEY)).toBeNull();
   expect(pointerNow()).toMatchObject({ targetFolder: "/home/anton/Elsewhere/project" });
@@ -709,13 +709,13 @@ it("keeps the move and machine the dialog was opened with over the last copy-onl
     machineRequested: true,
   });
   expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
-  expect(button("Move to M1").disabled).toBe(false);
+  expect(button("Hand off to M1").disabled).toBe(false);
   expect(() => button("Copy to M3")).toThrow();
   await act(async () => root.unmount());
   root = createRoot(container);
   // "Move project" with only a remembered machine: still a move; the draft may pick the machine.
   await mount({ m1Available: true, defaultMode: "copy-and-move", preferredMachine: "m1" });
-  expect(button("Move to M3").disabled).toBe(false);
+  expect(button("Hand off to M3").disabled).toBe(false);
 });
 
 it("lets the last copy go back to being the last copy when its destination is offline", async () => {

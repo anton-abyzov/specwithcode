@@ -1398,7 +1398,7 @@ def install_launch_agent(home, identity, out):
                  for name in (studio_paths.__file__, update_request.__file__, recovery.__file__, installation_descriptor.__file__,
                               runs.__file__, pause.service_hold.__file__, here / 'live_database.py', here / 'service_handles.py',
                               pause.__file__, here / 'managed_updates.py',
-                              here / 'migrate_home.py', __file__)]  # Modules first.
+                              here / 'migrate_home.py', here / 'relay_ownership.py', __file__)]  # Modules first.
 
         def same(path, data):
             return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data

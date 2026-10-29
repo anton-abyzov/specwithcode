@@ -80,7 +80,7 @@ const render = (knownMembers = members) =>
   );
 const finishButton = () =>
   [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-    (button) => button.textContent === "Finish move",
+    (button) => button.textContent === "Finish handoff",
   );
 const retry = () => act(async () => finishButton()!.click());
 
@@ -103,7 +103,7 @@ it("recovers from authoritative source ownership without a browser retry pointer
     coordinatorThreadId: "next-coordinator",
     digest: bundle.digest,
   });
-  expect(container.textContent).toContain("Move finished on both machines.");
+  expect(container.textContent).toContain("Handoff finished on both machines.");
 });
 
 it("keeps an unavailable source discoverable using the original pointer and does not invoke either host", async () => {
@@ -135,7 +135,7 @@ it("retries the same published operation after an ambiguous launch, then acknowl
     environmentId: "m1",
     input: { projectId: "original-anchor", operationId, mode: "start", bundle },
   });
-  expect(container.textContent).toContain("Move finished on both machines.");
+  expect(container.textContent).toContain("Handoff finished on both machines.");
 });
 
 it("requires the original review when a retry pointer only refers to an unpublished preview", async () => {
@@ -146,7 +146,7 @@ it("requires the original review when a retry pointer only refers to an unpublis
   await render();
   await retry();
   expect(container.textContent).toMatch(
-    /This move isn.t ready to finish yet\. Open Move on .+ to continue it\./,
+    /This handoff isn.t ready to finish yet\. Open Hand off on .+ to continue it\./,
   );
   expect(container.textContent).not.toContain("checkpoint");
   expect(state.receive).not.toHaveBeenCalled();
@@ -179,15 +179,17 @@ it("preserves the saved operation when the source cannot read it, then recovers 
     }),
   });
   expect(state.receive).toHaveBeenCalledTimes(1);
-  expect(container.textContent).toContain("Move finished on both machines.");
+  expect(container.textContent).toContain("Handoff finished on both machines.");
   expect(localStorage.getItem(key)).toBeNull();
 });
 
 it("names the project and destination, keeps the operation in Details, and asks to reconnect only when the source is not ready", async () => {
   localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:original-anchor" }));
   await render([{ ...members[0]!, title: "SpecWeave" }] as never);
-  expect(container.textContent).toContain("Finish moving SpecWeave to m1");
-  expect(container.textContent).toContain("The move stopped partway. m4 won’t restart on its own.");
+  expect(container.textContent).toContain("Finish handing off SpecWeave to m1");
+  expect(container.textContent).toContain(
+    "The handoff stopped partway. m4 won’t restart on its own.",
+  );
   expect(container.textContent).not.toContain("Reconnect");
   const details = [...container.querySelectorAll("button")].find(
     (b) => b.textContent === "Details",
