@@ -168,6 +168,7 @@ function ConfiguredPhoneConnectSettings() {
 
   return (
     <SettingsSection
+      id="phone-connect"
       title="Use SpecWithCode on your phone"
       icon={<SmartphoneIcon className="size-4" />}
     >

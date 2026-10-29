@@ -26,6 +26,11 @@ export function PhoneSetupDialog(props: {
   readonly error: string | null;
   readonly hasAccessControls: boolean;
   readonly onShowAccessSettings: () => void;
+  /**
+   * Goes to the SpecWithCode Connect sign-in above instead of this private
+   * fallback. Provided only where Connect is shown on this page.
+   */
+  readonly onUseConnect?: () => void;
   readonly onGenerate: () => void;
   readonly onCopyAddress: () => void;
   readonly onCopyCode: () => void;
@@ -47,8 +52,8 @@ export function PhoneSetupDialog(props: {
     instructions = (
       <ol className="list-decimal space-y-2 pl-5">
         <li>
-          Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn
-          the VPN on.
+          For this private fallback, install Tailscale on your iPhone. Sign in to the same tailnet
+          as this computer and turn the VPN on.
         </li>
         <li>
           Copy the computer address below and open it in Safari on your iPhone. If it cannot load,
@@ -78,11 +83,18 @@ export function PhoneSetupDialog(props: {
           <DialogDescription>
             {code?.status === "ready"
               ? `This code works once and expires at ${code.expiresAt}. Keep this computer awake.`
-              : "This is the private alternative to signing in with SpecWithCode Connect. Prepare the connection first, then make a fresh one-time code."}
+              : props.onUseConnect
+                ? "Fastest: sign in to SpecWithCode Connect — no Tailscale needed. Use this QR code only as the private fallback."
+                : "This is the private alternative to signing in with SpecWithCode Connect. Prepare the connection first, then make a fresh one-time code."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
+            {props.onUseConnect && code?.status !== "ready" ? (
+              <div>
+                <Button onClick={props.onUseConnect}>Use SpecWithCode Connect instead</Button>
+              </div>
+            ) : null}
             <div className="text-sm text-muted-foreground">{instructions}</div>
             {address !== null ? (
               <div className="rounded-lg border border-border p-3">

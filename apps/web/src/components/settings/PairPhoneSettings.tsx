@@ -22,7 +22,12 @@ import {
   resolvePhonePairingAddress,
 } from "./PairPhone.logic";
 import { PhoneSetupDialog, type PhoneSetupCode } from "./PhoneSetupDialog";
-import { SettingsDisclosure, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsDisclosure,
+  SettingsRow,
+  SettingsSection,
+  scrollToSettingsTarget,
+} from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 
 const PHONE_LINK_LABEL = "iPhone";
@@ -206,6 +211,14 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
           changeOpen(false);
           onShowAccessSettings();
         }}
+        {...(folded
+          ? {
+              onUseConnect: () => {
+                changeOpen(false);
+                scrollToSettingsTarget("phone-connect");
+              },
+            }
+          : {})}
         onGenerate={() => void handlePair()}
         onCopyAddress={() => {
           if (address !== null) void copy(address.httpBaseUrl, "Computer address copied");
