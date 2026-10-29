@@ -35,6 +35,13 @@ export function agentLiveness(driver: string): ProjectSkillsLiveness | null {
   return AGENT_LIVENESS[driver] ?? null;
 }
 
+/** When this copy's skill switch takes effect, or null when it has none. */
+export function skillSwitchLiveness(presence: ProjectSkillPresence): ProjectSkillsLiveness | null {
+  // Grok, Gemini, Copilot, OpenCode and Pi read their own settings file at session start.
+  if (presence.switchFile !== undefined) return "next-session";
+  return presence.driver === "grok" ? null : agentLiveness(presence.driver);
+}
+
 const ARGV_NAME = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/;
 
 export type SkillSwitch =
@@ -49,13 +56,17 @@ export type SkillSwitch =
  * keeps a project skill's switch in the repository's `settings.local.json`,
  * everything else in the user's settings.
  */
-export function skillSwitchFor(presence: ProjectSkillPresence): SkillSwitch {
+export function skillSwitchFor(
+  presence: ProjectSkillPresence,
+  options: { readonly userLevel?: boolean } = {},
+): SkillSwitch {
   const enabled = !presence.enabled;
   switch (presence.driver) {
     case "claudeAgent": {
       if (presence.scope === "plugin")
         return { available: false, reason: "Claude plugin skills use the whole-plugin control" };
-      const level = projectSkillLevel(presence.scope, presence.path);
+      // In the machine-wide view the home folder's skills are the user's own.
+      const level = options.userLevel ? "user" : projectSkillLevel(presence.scope, presence.path);
       return {
         available: true,
         action: {
@@ -78,10 +89,28 @@ export function skillSwitchFor(presence: ProjectSkillPresence): SkillSwitch {
           scope: "user",
         },
       };
-    case "grok":
-      return { available: false, reason: "Grok has no per-skill toggle" };
     default:
-      return { available: false, reason: `${presence.label} has no skill switch here yet` };
+      // Grok, Gemini CLI, Copilot CLI, OpenCode and Pi: the agent's own user settings file.
+      if (presence.switchFile !== undefined)
+        return {
+          available: true,
+          action: {
+            kind: "toggle-skill",
+            provider: presence.driver,
+            instanceId: presence.instanceId,
+            enabled,
+            scope: "user",
+          },
+        };
+      return {
+        available: false,
+        reason:
+          presence.driver === "cursor" || presence.driver === "antigravity"
+            ? `${presence.label} has no per-skill off switch of its own`
+            : presence.driver === "pi"
+              ? "Pi switches this skill in the project's .pi/settings.json, not your user settings"
+              : `${presence.label} has no skill switch here yet`,
+      };
   }
 }
 

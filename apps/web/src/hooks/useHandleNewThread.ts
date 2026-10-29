@@ -4,7 +4,12 @@ import {
   projectWorkspaceIntentText,
 } from "../studio/projectCoordinatorDraft";
 import { projectWorkspaceSearch } from "../studio/projectPaneThreads";
+import { holdsSeparateClones } from "../lib/folderLayoutGuidance";
 import { readNewThreadWorkspaceDefault } from "../lib/newThreadWorkspaceDefault";
+import {
+  readProjectFolderCheck,
+  useProjectFolderCheckCommand,
+} from "../studio/useProjectFolderHealth";
 import { useAtomValue } from "@effect/atom-react";
 import {
   scopedProjectKey,
@@ -78,6 +83,7 @@ export function useNewThreadHandler() {
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const runFolderCheck = useProjectFolderCheckCommand();
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -218,6 +224,14 @@ export function useNewThreadHandler() {
             null,
           environmentId: projectRef.environmentId,
           workspaceRoot: project?.workspaceRoot,
+          ...(project !== undefined
+            ? {
+                readHoldsSeparateClones: () =>
+                  readProjectFolderCheck(runFolderCheck, project).then((check) =>
+                    check?.layout ? holdsSeparateClones(check.layout) : undefined,
+                  ),
+              }
+            : {}),
         });
       };
       const logicalProjectKey = project
@@ -496,6 +510,7 @@ export function useNewThreadHandler() {
       projectGroupingSettings,
       router,
       legacySidebarEnabled,
+      runFolderCheck,
     ],
   );
 }

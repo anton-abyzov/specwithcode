@@ -53,6 +53,19 @@ const testState = vi.hoisted(() => {
 
   return {
     coordinatorDraft: vi.fn(),
+    folderCheck: vi.fn(async () => ({
+      _tag: "Success",
+      value: {
+        layout: {
+          kind: "umbrella",
+          rootIsRepository: true,
+          repositories: ["repositories/acme/api"],
+          repositoryCount: 1,
+          truncated: false,
+          separateClones: true,
+        },
+      },
+    })),
     legacy: true,
     scratchRoot: undefined as string | undefined,
     setExplicitModelPick(value: boolean) {
@@ -197,6 +210,19 @@ vi.mock("../lib/newThreadWorkspaceDefault", () => ({
     async ({ configuredMode }: { configuredMode: "local" | "worktree" | null }) =>
       configuredMode ?? "worktree",
   ),
+}));
+vi.mock("../studio/useProjectFolderHealth", () => ({
+  useProjectFolderCheckCommand: () => testState.folderCheck,
+  readProjectFolderCheck: async (
+    run: (request: unknown) => Promise<{ _tag: string; value?: unknown }>,
+    project: { environmentId: string; id: string; workspaceRoot: string },
+  ) => {
+    const outcome = await run({
+      environmentId: project.environmentId,
+      input: { projectId: project.id, workspaceRoot: project.workspaceRoot },
+    });
+    return outcome._tag === "Success" ? outcome.value : null;
+  },
 }));
 vi.mock("../lib/studioProjectFileDefaults", () => ({
   readStudioProjectFile: () => testState.projectFileRead,
@@ -493,6 +519,15 @@ describe("Git-aware workspace default integration", () => {
       configuredMode: null,
       environmentId: "environment-ssh",
       workspaceRoot: "/remote/project",
+      readHoldsSeparateClones: expect.any(Function),
+    });
+    // The layout comes from the project's own folder check on its machine.
+    const { readHoldsSeparateClones } = vi.mocked(readNewThreadWorkspaceDefault).mock
+      .lastCall![0] as { readHoldsSeparateClones: () => Promise<boolean | undefined> };
+    await expect(readHoldsSeparateClones()).resolves.toBe(true);
+    expect(testState.folderCheck).toHaveBeenLastCalledWith({
+      environmentId: "environment-ssh",
+      input: { projectId: "project-remote", workspaceRoot: "/remote/project" },
     });
     expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenLastCalledWith(
       "remote-project",

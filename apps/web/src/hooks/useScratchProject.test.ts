@@ -52,9 +52,13 @@ vi.mock("../state/entities", () => ({
 }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
-vi.mock("../state/projects", () => ({ projectEnvironment: { openScratch: "open-scratch" } }));
+vi.mock("../state/projects", () => ({
+  projectEnvironment: { openScratch: "open-scratch", folderCheck: "folder-check" },
+}));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
+    // The new-thread handler reads a project's folder layout only for an unconfigured Git folder.
+    if (command === "folder-check") return async () => ({ _tag: "Failure" });
     if (command !== "open-scratch") throw new Error("Unexpected server command");
     return fixture.openScratch;
   },

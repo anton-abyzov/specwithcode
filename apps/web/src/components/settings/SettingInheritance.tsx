@@ -145,7 +145,7 @@ export function settingInheritanceLayers(
     label: "Default",
     value:
       key === "defaultThreadEnvMode"
-        ? "Automatic (Git worktree; otherwise current checkout)"
+        ? "Automatic (worktree for one Git repository; otherwise current checkout)"
         : formatValue(key, builtIn),
     effective: source === "environment" && !environmentSet,
     set: true,

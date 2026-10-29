@@ -37,6 +37,7 @@ describe("readFolderLayout", () => {
       repositories: [],
       repositoryCount: 0,
       truncated: false,
+      separateClones: false,
     });
   });
 
@@ -52,6 +53,7 @@ describe("readFolderLayout", () => {
       kind: "umbrella",
       rootIsRepository: false,
       repositoryCount: 3,
+      separateClones: true,
     });
     expect(layout?.repositories).toEqual([
       "repositories/acme/api",
@@ -77,6 +79,19 @@ describe("readFolderLayout", () => {
     expect(layout?.kind).toBe("nested");
     // billing-link resolves to services/billing and is listed once.
     expect(layout?.repositories).toEqual(["frontend", "services/billing", "wt/feature"]);
+    expect(layout?.separateClones).toBe(true);
+  });
+
+  it("does not count submodules or worktrees as separate clones", async () => {
+    await checkout("");
+    await NodeFSP.mkdir(at("libs/lib"), { recursive: true });
+    await NodeFSP.writeFile(at("libs/lib/.git"), "gitdir: ../../.git/modules/lib\n");
+    expect(await readFolderLayout(root)).toMatchObject({
+      kind: "nested",
+      rootIsRepository: true,
+      repositories: ["libs/lib"],
+      separateClones: false,
+    });
   });
 
   it("lists a checkout once when a symlinked parent folder also reaches it", async () => {

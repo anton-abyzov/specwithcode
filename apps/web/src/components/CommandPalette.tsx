@@ -248,6 +248,8 @@ import {
   searchProjectSettings,
 } from "./studio/projectSettingsSearch.logic";
 import { requestProjectSettings } from "../studio/projectSettingsRequests";
+import { useProjectFolderCheckCommand } from "../studio/useProjectFolderHealth";
+import { announceWorkspaceGuidance } from "../studio/workspaceGuidanceToast";
 import {
   COMMAND_PALETTE_META_ICON_CLASS,
   CommandPaletteMetaDot,
@@ -817,6 +819,7 @@ function OpenCommandPaletteDialog(props: {
   const clientSettings = useClientSettings();
   const modCommands = useModsStore((state) => state.commands);
   const modChannels = useModsStore((state) => state.channels);
+  const runFolderCheck = useProjectFolderCheckCommand();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -2935,6 +2938,12 @@ function OpenCommandPaletteDialog(props: {
           return "failed";
         }
 
+        // Advice only, after the project exists; a failed folder check says nothing.
+        void announceWorkspaceGuidance(runFolderCheck, {
+          environmentId: input.environmentId,
+          id: projectId,
+          workspaceRoot: cwd,
+        });
         const navigationResult = await settlePromise(() =>
           handleNewThread(scopeProjectRef(input.environmentId, projectId)),
         );
@@ -2981,6 +2990,7 @@ function OpenCommandPaletteDialog(props: {
     [
       handleNewThread,
       createProject,
+      runFolderCheck,
       environments,
       findFolderCopies,
       navigate,

@@ -9,6 +9,14 @@ const state = vi.hoisted(() => ({
   mixed: false,
   scope: "environment" as "environment" | "project",
   update: vi.fn(),
+  folderCheck: null as unknown,
+  checkedProject: undefined as unknown,
+}));
+vi.mock("../../studio/useProjectFolderHealth", () => ({
+  useProjectFolderCheck: (project: unknown) => {
+    state.checkedProject = project;
+    return state.folderCheck;
+  },
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../state/environments", () => ({
@@ -23,9 +31,13 @@ vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
     scope:
       state.scope === "project"
-        ? { kind: "project", group: { displayName: "specweave" } }
+        ? {
+            kind: "project",
+            group: { displayName: "specweave" },
+            members: [{ id: "project", environmentId: "worker", workspaceRoot: "/w/umbrella" }],
+          }
         : { kind: "environment" },
-    target: { environmentId: "worker", ...state.target },
+    target: { environmentId: "worker", projectId: "project", ...state.target },
     targets: [],
     connectedEnvironments: [{}],
   }),
@@ -108,6 +120,8 @@ beforeEach(() => {
   state.mixed = false;
   state.scope = "environment";
   state.update.mockClear();
+  state.folderCheck = null;
+  state.checkedProject = undefined;
 });
 afterEach(() => {
   act(() => renderer?.unmount());
@@ -118,7 +132,11 @@ describe("web workspace default presentation", () => {
   it("shows automatic for inherited built-in local storage", () => {
     expect(state.target.settings.defaultThreadEnvMode).toBe("local");
     expect(render().props.value).toBe("automatic");
-    expect(JSON.stringify(renderer!.toJSON())).toContain("the current checkout otherwise");
+    expect(JSON.stringify(renderer!.toJSON())).toContain(
+      "the current checkout for a folder holding other repositories",
+    );
+    // Environment defaults read no project folder.
+    expect(state.checkedProject).toBeNull();
   });
   it.each(["local", "worktree"] as const)("preserves explicit environment %s", (mode) => {
     state.environment = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: mode };
@@ -197,5 +215,49 @@ describe("project Use worktrees switch", () => {
     expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "local" });
     act(() => toggle.props.onCheckedChange(true));
     expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "worktree" });
+  });
+});
+
+describe("Use worktrees recommendation", () => {
+  const layout = (overrides: Record<string, unknown>) => ({
+    layout: {
+      kind: "single",
+      rootIsRepository: true,
+      repositories: [],
+      repositoryCount: 0,
+      truncated: false,
+      separateClones: false,
+      ...overrides,
+    },
+  });
+  const text = () => JSON.stringify(renderer!.toJSON());
+
+  it("recommends off for an umbrella without changing the switch", () => {
+    state.scope = "project";
+    state.folderCheck = layout({
+      kind: "umbrella",
+      repositories: ["repositories/acme/api", "repositories/acme/web"],
+      repositoryCount: 2,
+      separateClones: true,
+    });
+    const toggle = renderUseWorktrees();
+    expect(state.checkedProject).toMatchObject({ id: "project", environmentId: "worker" });
+    expect(text()).toContain("Recommended for this folder: off.");
+    expect(text()).toContain("an umbrella holding 2 repositories");
+    expect(toggle.props.checked).toBe(false);
+    expect(state.update).not.toHaveBeenCalled();
+  });
+
+  it("recommends on for one Git repository", () => {
+    state.scope = "project";
+    state.folderCheck = layout({});
+    renderUseWorktrees();
+    expect(text()).toContain("Recommended for this folder: on.");
+  });
+
+  it("says nothing before the folder is checked", () => {
+    state.scope = "project";
+    renderUseWorktrees();
+    expect(text()).not.toContain("Recommended for this folder");
   });
 });

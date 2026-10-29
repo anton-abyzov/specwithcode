@@ -14,6 +14,7 @@ import {
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectFolderCheck } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
+import { workspaceGuidance } from "../../lib/folderLayoutGuidance";
 import { readLocalApi } from "../../localApi";
 import { projectEnvironment } from "../../state/projects";
 import { threadEnvironment } from "../../state/threads";
@@ -155,6 +156,21 @@ export function worktreeSourceSummary(
   return layout.rootIsRepository
     ? "New worktree threads and routines are cut from this folder's own repository, so they do not contain the nested repositories' code unless a repository is chosen for them."
     : "This folder is not a Git repository itself, so new worktree threads and routines need a repository chosen for them.";
+}
+
+/**
+ * Which workspace suits the new folder, as Project settings > Use worktrees
+ * recommends it. Advice only: the check never changes the setting. Exported for tests.
+ */
+export function workspaceRecommendationLine(
+  layout: NonNullable<ProjectFolderCheck["layout"]>,
+): { readonly recommended: "local" | "worktree"; readonly text: string } | null {
+  const guidance = workspaceGuidance(layout);
+  if (guidance === null) return null;
+  return {
+    recommended: guidance.recommended,
+    text: `Recommended for this folder: Use worktrees ${guidance.recommended === "worktree" ? "on" : "off"}. ${guidance.detail}`,
+  };
 }
 
 /** The line shown once the folder changed, built from the check the change was applied with. */
@@ -306,6 +322,7 @@ export function ProjectFolderChange({
   const refusal = check === null ? null : refusalSummary(check);
   const nested = check === null ? null : nestedProjectsSummary(check);
   const worktreeSource = check === null ? null : worktreeSourceSummary(check);
+  const workspaceAdvice = check?.layout ? workspaceRecommendationLine(check.layout) : null;
   const blocked =
     check === null ||
     refusal !== null ||
@@ -432,6 +449,13 @@ export function ProjectFolderChange({
                 {worktreeSource ? (
                   <CheckLine tone="warn">
                     <span data-folder-worktree-source>{worktreeSource}</span>
+                  </CheckLine>
+                ) : null}
+                {workspaceAdvice ? (
+                  <CheckLine tone="info">
+                    <span data-folder-workspace-recommendation={workspaceAdvice.recommended}>
+                      {workspaceAdvice.text}
+                    </span>
                   </CheckLine>
                 ) : null}
                 {nested ? (

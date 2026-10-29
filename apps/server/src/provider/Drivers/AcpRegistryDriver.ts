@@ -949,6 +949,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.tap(() => controller.refreshMethods ?? Effect.void),
           ),
         },
+        skillsControl: {
+          binaryPath: "",
+          environment: processEnvironment,
+          agentId: effectiveConfig.agentId,
+        },
         orchestrationAdapter,
         textGeneration: makeUnsupportedTextGeneration(),
         acpSessionManagement: {

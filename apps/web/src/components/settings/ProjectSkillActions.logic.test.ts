@@ -22,6 +22,7 @@ import {
   skillPluginOf,
   skillPreviewLines,
   skillSwitchFor,
+  skillSwitchLiveness,
   skillUpdateTarget,
 } from "./ProjectSkillActions.logic";
 
@@ -64,15 +65,50 @@ describe("per-agent switches", () => {
     expect(codex.available && codex.action).toMatchObject({ enabled: false, scope: "user" });
   });
 
-  it("gives Grok and agents without a writer a disabled switch with a reason", () => {
+  it("switches every Claude skill for the user in the machine-wide view", () => {
+    const home = presence("claudeAgent", "/home/me/.claude/skills/deploy/SKILL.md", {
+      scope: "project",
+    });
+    const result = skillSwitchFor(home, { userLevel: true });
+    expect(result.available && result.action).toMatchObject({ scope: "user" });
+  });
+
+  it("switches agents that keep a user settings file through that file", () => {
+    for (const driver of ["grok", "opencode", "pi", "acpRegistry"]) {
+      const copy = presence(driver, "/home/me/.agents/skills/x/SKILL.md", {
+        enabled: false,
+        switchFile: `/home/me/.${driver}/settings.json`,
+      });
+      expect(skillSwitchFor(copy)).toEqual({
+        available: true,
+        action: {
+          kind: "toggle-skill",
+          provider: driver,
+          instanceId: driver,
+          enabled: true,
+          scope: "user",
+        },
+      });
+      expect(skillSwitchLiveness(copy)).toBe("next-session");
+    }
+  });
+
+  it("gives agents without a switch file a disabled switch with a reason", () => {
     expect(skillSwitchFor(presence("grok", "/home/me/.grok/skills/x/SKILL.md"))).toEqual({
       available: false,
-      reason: "Grok has no per-skill toggle",
+      reason: "grok has no skill switch here yet",
+    });
+    expect(skillSwitchFor(presence("pi", "/work/repo/.pi/skills/x/SKILL.md"))).toEqual({
+      available: false,
+      reason: "Pi switches this skill in the project's .pi/settings.json, not your user settings",
     });
     expect(skillSwitchFor(presence("cursor", "/work/app/.cursor/skills/x/SKILL.md"))).toEqual({
       available: false,
-      reason: "cursor has no skill switch here yet",
+      reason: "cursor has no per-skill off switch of its own",
     });
+    expect(
+      skillSwitchLiveness(presence("cursor", "/work/app/.cursor/skills/x/SKILL.md")),
+    ).toBeNull();
   });
 
   it("uses the whole-plugin control for Claude plugin skills", () => {

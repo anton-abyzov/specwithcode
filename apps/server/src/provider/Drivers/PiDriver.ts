@@ -188,6 +188,10 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        skillsControl: {
+          binaryPath: effectiveConfig.binaryPath || "pi",
+          environment: processEnv,
+        },
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;

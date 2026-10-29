@@ -229,7 +229,17 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     { directory: path.join(base, ".claude", "skills"), scope },
   ];
   const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
+  return yield* scanSkillRoots(roots);
+});
 
+/**
+ * Agent Skills (`<name>/SKILL.md`) under `roots`, in order, the first copy of
+ * a name winning. Other agents that read plain skill folders (Gemini CLI,
+ * Copilot CLI) are scanned the same way.
+ */
+export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
+  roots: ReadonlyArray<{ readonly directory: string; readonly scope: "user" | "project" }>,
+) {
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,

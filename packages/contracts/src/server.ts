@@ -166,6 +166,12 @@ export const ServerProviderSkill = Schema.Struct({
    * only the agent can start it. Composers must not offer it under `/`.
    */
   userInvocable: Schema.optional(Schema.Boolean),
+  /**
+   * The user config file that holds this agent's own on/off switch for the
+   * skill (Grok, Gemini CLI, Copilot CLI, OpenCode, Pi). Settings > Skills
+   * edits only that file, so other agents keep loading the skill.
+   */
+  switchFile: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

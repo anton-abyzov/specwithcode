@@ -287,7 +287,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-skills",
     title: "Skills",
     to: "/settings/skills",
-    searchTerms: ["agent skills SKILL.md vskill lockfile version drift duplicate"],
+    searchTerms: [
+      "agent skills SKILL.md vskill lockfile version drift duplicate",
+      "turn off disable enable plugin machine user level",
+    ],
   },
   {
     id: "default-model",
@@ -1234,7 +1237,8 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/projects": "project",
-  "/settings/skills": "project",
+  // With no project picked it shows the machine's user-level skills.
+  "/settings/skills": null,
   "/settings/general": null,
   "/settings/agents": "project-defaults",
   "/settings/appearance": null,

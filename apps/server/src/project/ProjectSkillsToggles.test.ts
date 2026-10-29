@@ -83,6 +83,7 @@ const rowOf = (name: string, providers: ReadonlyArray<ProjectSkillPresence>): Pr
 
 interface Harness {
   readonly configDir: string;
+  readonly home: string;
   readonly cwd: string;
   readonly runs: Array<{ command: string; args: ReadonlyArray<string>; cwd: string }>;
   readonly requests: Array<{ method: string; params: unknown }>;
@@ -106,6 +107,8 @@ const harness = (options: {
     params: unknown,
   ) => Effect.Effect<unknown, CodexAppServerRequestError>;
   readonly repository?: boolean;
+  /** ACP registry agent every instance runs. */
+  readonly agentId?: string;
 }) =>
   Effect.gen(function* () {
     const root = yield* tempDir("project-skills-toggles-");
@@ -132,6 +135,7 @@ const harness = (options: {
       binaryPath: `/nonexistent/bin/${driver}`,
       environment: {},
       homePath: driver === "claudeAgent" ? configDir : join(root, "codex-home"),
+      ...(options.agentId === undefined ? {} : { agentId: options.agentId }),
     });
     const deps: ProjectSkillsActionsDeps = {
       home: join(root, "home"),
@@ -146,7 +150,16 @@ const harness = (options: {
     };
     const toggles = yield* makeSkillsToggles(deps, run);
     const ctx: SkillsActionContext = { projectId, cwd, row: options.row(cwd) };
-    return { configDir, cwd, runs, requests, writes, ctx, toggles } satisfies Harness;
+    return {
+      configDir,
+      cwd,
+      home: deps.home,
+      runs,
+      requests,
+      writes,
+      ctx,
+      toggles,
+    } satisfies Harness;
   });
 
 type Toggle = Extract<ProjectSkillsActionInput["action"], { kind: "toggle-skill" }>;
@@ -668,12 +681,38 @@ describe("Codex switches", () => {
 });
 
 describe("Grok switches", () => {
-  it.live("refuses a skill switch and switches plugins for the user only", () =>
+  it.live("switches a skill in [skills].disabled and plugins for the user only", () =>
     Effect.gen(function* () {
       const h = yield* harness({ row: () => rowOf("sw-do", [presence("grok")]) });
-      const skill = skillToggle("grok", false);
+      const config = join(h.home, ".grok", "config.toml");
+      yield* write(
+        config,
+        '# mine\n[plugins]\nenabled = ["chrome-devtools"]\n\n[skills]\npaths = ["~/x"] # keep\n',
+      );
+      const off = skillToggle("grok", false);
+      const preview = yield* h.toggles.toggleSkill(
+        h.ctx,
+        input(off, { preview: true }),
+        off,
+        serialized,
+      );
+      expect(preview).toMatchObject({ preview: { files: [config], liveness: "next-session" } });
+      expect(yield* h.toggles.toggleSkill(h.ctx, input(off), off, serialized)).toMatchObject({
+        applied: true,
+        effectiveEnabled: false,
+      });
+      expect(yield* readOr(config)).toBe(
+        '# mine\n[plugins]\nenabled = ["chrome-devtools"]\n\n[skills]\ndisabled = ["sw-do"]\npaths = ["~/x"] # keep\n',
+      );
+      const on = skillToggle("grok", true);
+      yield* h.toggles.toggleSkill(h.ctx, input(on), on, serialized);
+      expect(yield* readOr(config)).toBe(
+        '# mine\n[plugins]\nenabled = ["chrome-devtools"]\n\n[skills]\ndisabled = []\npaths = ["~/x"] # keep\n',
+      );
+      expect(h.runs).toEqual([]);
+      const local = skillToggle("grok", false, "local");
       expect(
-        (yield* h.toggles.toggleSkill(h.ctx, input(skill), skill, serialized).pipe(Effect.flip))
+        (yield* h.toggles.toggleSkill(h.ctx, input(local), local, serialized).pipe(Effect.flip))
           .reason,
       ).toBe("scope_unsupported");
       const project = pluginToggle("grok", "specweave", false, "project");
@@ -690,6 +729,110 @@ describe("Grok switches", () => {
       expect(h.runs).toEqual([
         { command: "/nonexistent/bin/grok", args: grokPluginArgs("specweave", false), cwd: h.cwd },
       ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("refuses an apply when config.toml changed after the preview", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({ row: () => rowOf("sw-do", [presence("grok")]) });
+      const config = join(h.home, ".grok", "config.toml");
+      const off = skillToggle("grok", false);
+      const preview = yield* h.toggles.toggleSkill(
+        h.ctx,
+        input(off, { preview: true }),
+        off,
+        serialized,
+      );
+      yield* write(config, "[skills]\n");
+      const expected = "preview" in preview ? preview.preview.expected : {};
+      const failed = yield* h.toggles
+        .toggleSkill(h.ctx, input(off, { expected }), off, serialized)
+        .pipe(Effect.flip);
+      expect(failed.reason).toBe("stale");
+      expect(yield* readOr(config)).toBe("[skills]\n");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("Agents switched in their own settings file", () => {
+  const cases = [
+    {
+      title: "Gemini CLI",
+      driver: "acpRegistry",
+      agentId: "gemini",
+      file: (home: string) => join(home, ".gemini", "settings.json"),
+      off: { skills: { disabled: ["sw-do"] } },
+    },
+    {
+      title: "Copilot CLI",
+      driver: "acpRegistry",
+      agentId: "github-copilot-cli",
+      file: (home: string) => join(home, ".copilot", "settings.json"),
+      off: { disabledSkills: ["sw-do"] },
+    },
+    {
+      title: "OpenCode",
+      driver: "opencode",
+      agentId: undefined,
+      file: (home: string) => join(home, ".config", "opencode", "opencode.json"),
+      off: { permission: { skill: { "sw-do": "deny" } } },
+    },
+    {
+      title: "Pi",
+      driver: "pi",
+      agentId: undefined,
+      file: (home: string) => join(home, ".pi", "agent", "settings.json"),
+      // Pi's user file reaches only its user skill folders.
+      path: (home: string) => join(home, ".agents", "skills", "sw-do", "SKILL.md"),
+      off: (home: string) => ({ skills: [`-${join(home, ".agents", "skills", "sw-do")}`] }),
+    },
+  ] as const;
+  for (const entry of cases)
+    it.live(`${entry.title}: off and on again, nothing else touched`, () =>
+      Effect.gen(function* () {
+        const h = yield* harness({
+          row: (cwd) =>
+            rowOf("sw-do", [
+              presence(
+                entry.driver,
+                "path" in entry ? { path: entry.path(join(cwd, "..", "home")) } : {},
+              ),
+            ]),
+          ...(entry.agentId === undefined ? {} : { agentId: entry.agentId }),
+        });
+        const file = entry.file(h.home);
+        const offState = typeof entry.off === "function" ? entry.off(h.home) : entry.off;
+        const claude = join(h.configDir, "settings.json");
+        yield* write(claude, '{ "skillOverrides": {} }\n');
+        const off = skillToggle(entry.driver, false);
+        expect(yield* h.toggles.toggleSkill(h.ctx, input(off), off, serialized)).toMatchObject({
+          applied: true,
+          effectiveEnabled: false,
+          liveness: "next-session",
+        });
+        expect(JSON.parse((yield* readOr(file))!)).toEqual(offState);
+        const on = skillToggle(entry.driver, true);
+        expect(yield* h.toggles.toggleSkill(h.ctx, input(on), on, serialized)).toMatchObject({
+          effectiveEnabled: true,
+        });
+        expect(JSON.parse((yield* readOr(file))!)).not.toEqual(offState);
+        // Another agent's settings and the skill folder stay as they were.
+        expect(yield* readOr(claude)).toBe('{ "skillOverrides": {} }\n');
+        expect(h.runs).toEqual([]);
+        expect(h.writes).toEqual([[entry.driver], [entry.driver]]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+  it.live("refuses an ACP agent with no switch of its own", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({
+        row: () => rowOf("sw-do", [presence("acpRegistry")]),
+        agentId: "devin",
+      });
+      const off = skillToggle("acpRegistry", false);
+      expect(
+        (yield* h.toggles.toggleSkill(h.ctx, input(off), off, serialized).pipe(Effect.flip)).reason,
+      ).toBe("scope_unsupported");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

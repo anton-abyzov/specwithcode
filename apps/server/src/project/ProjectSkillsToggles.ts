@@ -6,7 +6,8 @@
  * |--------|-----------------------------------------|-----------------------------------------------------|----------------|
  * | Claude | `skillOverrides` edit (ClaudeSettingsWrite) | `claude plugin enable|disable -s <scope> --json -- <id>` | next session |
  * | Codex  | app server `skills/config/write`        | app server `config/value/write plugins."<id>".enabled` | now          |
- * | Grok   | refused: its ignore list hides the skill for good | `grok plugin enable|disable -- <name>` (user only) | `/plugins reload` |
+ * | Grok   | name in `[skills].disabled` of `$GROK_HOME/config.toml` | `grok plugin enable|disable -- <name>` (user only) | next session / `/plugins reload` |
+ * | Gemini, Copilot, OpenCode, Pi | their own user file (see nativeSkillSwitches) | — | next session |
  *
  * Codex writes go through its own app server, never a TOML edit; when it
  * cannot be started the switch is refused with `agent_unavailable`. A write
@@ -41,7 +42,15 @@ import {
   type ClaudeSettingsWriteError,
   planClaudeSkillOverride,
   readClaudePluginEnabled,
+  settingsFileHash,
 } from "./ClaudeSettingsWrite.ts";
+import {
+  NATIVE_SKILL_HARNESS_LABELS,
+  nativeSkillHarnessOf,
+  piUserSkillRoots,
+  planNativeSkillSwitch,
+} from "./nativeSkillSwitches.ts";
+import { switchFileFor } from "./projectSkillsNativeOverlay.ts";
 import {
   actionError,
   cliFailure,
@@ -59,6 +68,7 @@ export type Serialized = <A, E, R>(
 ) => Effect.Effect<A, E, R>;
 
 const CLI_TIMEOUT = "60 seconds";
+const MAX_SWITCH_FILE_BYTES = 2_000_000;
 
 /** `claude plugin enable|disable -s <scope> --json -- <plugin@marketplace>`. */
 export const claudePluginArgs = (
@@ -181,6 +191,12 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
       serialized: Serialized,
     ) =>
       Effect.gen(function* () {
+        if (ctx.userLevel === true && action.scope !== "user")
+          return yield* actionError(
+            ctx.projectId,
+            "scope_unsupported",
+            "The machine-wide view switches Claude skills in your user settings only.",
+          );
         const control = yield* controlOf(ctx, presence);
         const configDir = control.homePath ?? path.join(deps.home, ".claude");
         const plan = planClaudeSkillOverride({
@@ -192,7 +208,21 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
           platform: deps.platform,
           environment: control.environment,
           managedPath: deps.managedSettingsPath,
-        }).pipe(Effect.mapError(settingsError(ctx)));
+        }).pipe(
+          Effect.mapError(settingsError(ctx)),
+          // Outranked user settings fall back to a folder's local file, which means nothing machine-wide.
+          Effect.flatMap((planned) =>
+            ctx.userLevel === true && planned.localFile
+              ? Effect.fail(
+                  actionError(
+                    ctx.projectId,
+                    "scope_unsupported",
+                    `A settings file that outranks your user settings decides ${presence.name ?? ctx.row.name}, so switch it from that project's Skills view.`,
+                  ),
+                )
+              : Effect.succeed(planned),
+          ),
+        );
         const warningsOf = (planned: Effect.Success<typeof plan>) =>
           Effect.gen(function* () {
             if (!planned.localFile || planned.repositoryRoot === undefined || !planned.changed)
@@ -285,6 +315,128 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
         );
       });
 
+    /** The switch file's text, null when there is none; refused when it is not a settings file. */
+    const readSwitchText = (ctx: SkillsActionContext, file: string) =>
+      Effect.gen(function* () {
+        const info = yield* fs.stat(file).pipe(Effect.option);
+        if (Option.isNone(info)) return null;
+        if (info.value.type !== "File" || info.value.size > BigInt(MAX_SWITCH_FILE_BYTES))
+          return yield* actionError(
+            ctx.projectId,
+            "overrides_invalid",
+            `${file} is not a settings file this can edit.`,
+          );
+        return yield* fs
+          .readFileString(file)
+          .pipe(
+            Effect.mapError(() =>
+              actionError(ctx.projectId, "read_failed", `${file} could not be read.`),
+            ),
+          );
+      });
+
+    /**
+     * Grok, Gemini, Copilot, OpenCode and Pi: one edit to the agent's own
+     * user file, so no other agent's view of the skill changes.
+     */
+    const nativeSkill = (
+      ctx: SkillsActionContext,
+      input: ProjectSkillsActionInput,
+      action: ToggleSkill,
+      presence: ProjectSkillPresence,
+      serialized: Serialized,
+    ) =>
+      Effect.gen(function* () {
+        if (action.scope !== "user")
+          return yield* actionError(
+            ctx.projectId,
+            "scope_unsupported",
+            `${presence.label} switches skills for the user only.`,
+          );
+        const control = yield* controlOf(ctx, presence);
+        const harness = nativeSkillHarnessOf(presence.driver, control.agentId);
+        if (harness === undefined)
+          return yield* actionError(
+            ctx.projectId,
+            "scope_unsupported",
+            `${presence.label} skills cannot be switched from here.`,
+          );
+        const file = yield* switchFileFor({ harness, environment: control.environment }, deps.home);
+        // Pi loads the first copy of a skill folder name across its user folders.
+        const piCopies = Effect.gen(function* () {
+          if (harness !== "pi" || !path.isAbsolute(presence.path)) return [];
+          const base = /(^|[\\/])SKILL\.md$/i.test(presence.path)
+            ? path.join(path.basename(path.dirname(presence.path)), "SKILL.md")
+            : path.basename(presence.path);
+          const candidates = piUserSkillRoots(file, deps.home).map((root) => path.join(root, base));
+          return yield* Effect.filter(
+            candidates.filter((candidate) => candidate !== presence.path),
+            (candidate) => fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)),
+          );
+        });
+        const plan = Effect.gen(function* () {
+          const text = yield* readSwitchText(ctx, file);
+          const planned = planNativeSkillSwitch({
+            harness,
+            file,
+            text,
+            skill: {
+              name: presence.name ?? ctx.row.name,
+              path: presence.path,
+              copies: yield* piCopies,
+            },
+            enabled: action.enabled,
+            home: deps.home,
+          });
+          if (planned.status === "invalid")
+            return yield* actionError(ctx.projectId, "overrides_invalid", planned.why);
+          return { ...planned, currentHash: settingsFileHash(text) };
+        });
+        if (input.preview) {
+          const planned = yield* plan;
+          return {
+            preview: {
+              files: [file],
+              summary: planned.summary,
+              liveness: "next-session",
+              ...(planned.warnings.length > 0 ? { warnings: planned.warnings } : {}),
+              expected: { fileHash: planned.currentHash },
+            },
+          } satisfies ProjectSkillsActionResult;
+        }
+        return yield* serialized(
+          ctx.cwd,
+          Effect.gen(function* () {
+            const planned = yield* plan;
+            yield* applyClaudeSkillOverride(
+              {
+                target: file,
+                currentHash: planned.currentHash,
+                changed: planned.changed,
+                nextText: planned.nextText,
+              },
+              { expectedHash: input.expected?.fileHash, backupDir: deps.backupDir },
+            ).pipe(Effect.mapError(settingsError(ctx)));
+            yield* refreshed(ctx, presence);
+            return {
+              applied: true,
+              summary: planned.summary,
+              liveness: "next-session",
+              effectiveEnabled: planned.effectiveEnabled,
+              ...(planned.warnings.length > 0
+                ? { warnings: planned.warnings }
+                : planned.effectiveEnabled === action.enabled
+                  ? {}
+                  : {
+                      warnings: [
+                        `${NATIVE_SKILL_HARNESS_LABELS[harness]} still keeps ${ctx.row.name} ${planned.effectiveEnabled ? "on" : "off"}.`,
+                      ],
+                    }),
+            } satisfies ProjectSkillsActionResult;
+          }),
+        );
+      });
+
     const toggleSkill = (
       ctx: SkillsActionContext,
       input: ProjectSkillsActionInput,
@@ -305,11 +457,10 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
           case "codex":
             return yield* codexSkill(ctx, input, action, presence, serialized);
           case "grok":
-            return yield* actionError(
-              ctx.projectId,
-              "scope_unsupported",
-              "Grok has no per-skill toggle: its ignore list hides the skill, so it could not be turned back on here.",
-            );
+          case "opencode":
+          case "pi":
+          case "acpRegistry":
+            return yield* nativeSkill(ctx, input, action, presence, serialized);
           default:
             return yield* actionError(
               ctx.projectId,

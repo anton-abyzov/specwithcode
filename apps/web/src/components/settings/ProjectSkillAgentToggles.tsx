@@ -5,11 +5,11 @@ import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import {
-  agentLiveness,
   LIVENESS_LABELS,
   pluginSwitchFor,
   skillPluginOf,
   skillSwitchFor,
+  skillSwitchLiveness,
 } from "./ProjectSkillActions.logic";
 import { skillActionKey, useSkillControls } from "./ProjectSkillControls";
 import { SkillControlReason } from "./ProjectSkillReason";
@@ -17,10 +17,11 @@ import { SkillControlReason } from "./ProjectSkillReason";
 export function ProjectSkillAgentToggle({ presence }: { presence: ProjectSkillPresence }) {
   const controls = useSkillControls();
   if (!controls) return null;
-  const toggle = skillSwitchFor(presence);
-  const liveness = agentLiveness(presence.driver);
+  const toggle = skillSwitchFor(presence, { userLevel: controls.userLevel });
+  const liveness = skillSwitchLiveness(presence);
+  // A switch kept in a settings file needs only file access; Codex's runs its app server.
   const allowed = toggle.available
-    ? presence.driver === "claudeAgent"
+    ? presence.driver === "claudeAgent" || presence.switchFile !== undefined
       ? controls.canWrite
       : controls.canOperate
     : false;
@@ -45,7 +46,10 @@ export function ProjectSkillAgentToggle({ presence }: { presence: ProjectSkillPr
     />
   );
   return (
-    <span className="ms-auto flex items-center gap-1.5">
+    <span
+      className="ms-auto flex items-center gap-1.5"
+      title={presence.switchFile ? `Switch kept in ${presence.switchFile}` : undefined}
+    >
       {liveness ? (
         <span className="text-2xs text-muted-foreground" data-testid="skill-liveness">
           {LIVENESS_LABELS[liveness]}

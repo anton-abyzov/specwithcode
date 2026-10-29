@@ -1,4 +1,9 @@
-import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  type AssistantCitation,
+} from "@specweave-studio/contracts";
 import {
   createMemoryHistory,
   createRootRoute,

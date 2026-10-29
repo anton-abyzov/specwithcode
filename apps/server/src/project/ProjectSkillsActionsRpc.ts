@@ -83,6 +83,7 @@ export const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.midd
             projectId: input.projectId,
             cwd,
             ...(input.threadId ? { threadId: input.threadId } : {}),
+            ...(input.userLevel === true ? { userLevel: true } : {}),
           });
           const row =
             snapshot.rows.find((candidate) => candidate.name === input.skill) ??
@@ -92,7 +93,12 @@ export const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.midd
               projectId: input.projectId,
               reason: "skill_not_found",
             });
-          return { projectId: input.projectId, cwd, row };
+          return {
+            projectId: input.projectId,
+            cwd,
+            row,
+            ...(input.userLevel === true ? { userLevel: true } : {}),
+          };
         }).pipe(
           Effect.catchTag("ProjectSkillsReadError", (error) => Effect.fail(fromReadError(error))),
         );

@@ -29,6 +29,28 @@ const makeInspectSpawner = (stdout: string, exitCode = 0, spawnCwds?: Array<stri
   });
 
 describe("discoverGrokSkills", () => {
+  it.effect("reports a skill named in [skills].disabled as off", () =>
+    Effect.gen(function* () {
+      const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});
+      expect(skills).toEqual([
+        { name: "wip", path: "/home/dev/.grok/skills/wip/SKILL.md", scope: "user", enabled: false },
+      ]);
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeInspectSpawner(
+          inspectPayload([
+            {
+              name: "wip",
+              source: { type: "user", path: "/home/dev/.grok/skills/wip/SKILL.md" },
+              disabled: true,
+            },
+          ]),
+        ),
+      ),
+    ),
+  );
+
   it.effect("maps inspect entries onto provider skills, sorted by name", () =>
     Effect.gen(function* () {
       const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});

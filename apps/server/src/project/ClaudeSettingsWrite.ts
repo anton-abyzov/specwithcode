@@ -390,12 +390,18 @@ const BackupFile = Schema.fromJsonString(
 const encodeBackup = Schema.encodeSync(BackupFile);
 const BACKUP_NAME = /^\d{13}-[0-9a-f]{8}\.json$/;
 
+/** What {@link applyClaudeSkillOverride} needs; other agents' switch files are written the same way. */
+export type SettingsFileWrite = Pick<
+  ClaudeSkillOverridePlan,
+  "target" | "currentHash" | "changed" | "nextText"
+>;
+
 /**
  * Writes the planned edit. The file is read again first: when its hash is
  * not `expectedHash` (the preview's) or the plan's, nothing is written.
  */
 export const applyClaudeSkillOverride = Effect.fn("claudeSettingsWrite.apply")(function* (
-  plan: ClaudeSkillOverridePlan,
+  plan: SettingsFileWrite,
   options: { readonly expectedHash?: string | undefined; readonly backupDir?: string | undefined },
 ) {
   const fs = yield* FileSystem.FileSystem;

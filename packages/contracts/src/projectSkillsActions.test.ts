@@ -101,15 +101,21 @@ describe("skills control center contracts", () => {
     ).toThrow();
   });
 
-  it("widens skillsAction to terminal operate for everything but a Claude skill switch", () => {
+  it("widens skillsAction to terminal operate for everything but a settings-file skill switch", () => {
+    for (const provider of ["claudeAgent", "grok", "opencode", "pi", "acpRegistry"])
+      expect(
+        clientRpcRequiredScopes(WS_METHODS.projectsSkillsAction, {
+          action: { kind: "toggle-skill", provider },
+        }),
+      ).toEqual([AuthFilesystemWriteScope]);
     expect(
       clientRpcRequiredScopes(WS_METHODS.projectsSkillsAction, {
-        action: { kind: "toggle-skill", provider: "claudeAgent" },
+        action: { kind: "toggle-skill", provider: "codex" },
       }),
-    ).toEqual([AuthFilesystemWriteScope]);
+    ).toEqual([AuthFilesystemWriteScope, AuthTerminalOperateScope]);
     expect(
       clientRpcRequiredScopes(WS_METHODS.projectsSkillsAction, {
-        action: { kind: "toggle-skill", provider: "grok" },
+        action: { kind: "toggle-plugin", provider: "grok" },
       }),
     ).toEqual([AuthFilesystemWriteScope, AuthTerminalOperateScope]);
     expect(clientRpcRequiredScopes(WS_METHODS.projectsSkillsAction, undefined)).toEqual([

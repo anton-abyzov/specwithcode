@@ -321,6 +321,8 @@ export const ProjectFolderCheck = Schema.Struct({
       repositories: Schema.Array(Schema.String),
       repositoryCount: NonNegativeInt,
       truncated: Schema.Boolean,
+      /** A checkout below is a clone of its own, which a worktree of the folder leaves out. Older servers omit it. */
+      separateClones: Schema.optional(Schema.Boolean),
     }),
   ),
   /**

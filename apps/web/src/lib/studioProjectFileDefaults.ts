@@ -1,4 +1,8 @@
-import { STUDIO_PROJECT_FILE_NAME, type EnvironmentId, type StudioProjectFile } from "@specweave-studio/contracts";
+import {
+  STUDIO_PROJECT_FILE_NAME,
+  type EnvironmentId,
+  type StudioProjectFile,
+} from "@specweave-studio/contracts";
 import { parseStudioProjectFile } from "@specweave-studio/shared/studioProjectFile";
 import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 

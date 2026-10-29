@@ -44,7 +44,8 @@ class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
 
 /**
  * Map `grok inspect --json` output onto provider skills. Entries without a
- * name or a filesystem path are skipped; `userInvocable: false` skills stay
+ * name or a filesystem path are skipped; `disabled: true` (a name in
+ * `[skills].disabled`) is reported as not enabled; `userInvocable: false` skills stay
  * enabled (the agent still loads them) and carry `userInvocable: false`, so
  * slash menus (`isProviderSkillUserInvocable`) hide them.
  */
@@ -83,7 +84,8 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
     skillsByName.set(name, {
       name,
       path,
-      enabled: true,
+      // `[skills].disabled` keeps the skill listed but out of the prompt.
+      enabled: record.disabled !== true,
       ...(record.userInvocable === false ? { userInvocable: false } : {}),
       ...(scope ? { scope } : {}),
       ...(description ? { description } : {}),

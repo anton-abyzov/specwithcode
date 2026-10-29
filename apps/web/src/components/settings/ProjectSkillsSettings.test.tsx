@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   actions: [] as Array<{ preview: boolean; action: unknown; expected?: unknown }>,
   search: {} as Record<string, unknown>,
   navigations: [] as Array<{ replace?: boolean; search?: unknown }>,
+  skillsInputs: [] as unknown[],
   toasts: [] as Array<{
     title?: string;
     actionProps?: { children?: unknown; onClick?: () => void };
@@ -28,7 +29,10 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: {
-    skills: () => ({ kind: "skills" }),
+    skills: (options: { input: unknown }) => {
+      state.skillsInputs.push(options.input);
+      return { kind: "skills" };
+    },
     skillVersions: () => ({ kind: "versions" }),
     skillAction: { label: "skill-action" },
     skillFleetPush: { label: "skill-fleet-push" },
@@ -203,6 +207,7 @@ beforeEach(() => {
   state.toasts = [];
   state.search = {};
   state.navigations = [];
+  state.skillsInputs = [];
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -231,6 +236,23 @@ const bodyRows = () =>
   );
 
 describe("ProjectSkillsView", () => {
+  it("reads the machine's user-level skills in the machine-wide view", async () => {
+    await act(async () =>
+      root.render(
+        <ProjectSkillsView
+          environmentId={EnvironmentId.make("host")}
+          projectId={ProjectId.make("project")}
+          folder="~"
+          userLevel
+        />,
+      ),
+    );
+    expect(state.skillsInputs.at(-1)).toEqual({ projectId: "project", userLevel: true });
+    expect(container.querySelector("[data-testid=skills-user-level]")?.textContent).toContain(
+      "changes only that agent's own settings",
+    );
+  });
+
   it("shows a summary line and one row per skill with its lock details", async () => {
     await render();
     expect(container.querySelector("[data-testid=skills-summary]")?.textContent).toBe(

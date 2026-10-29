@@ -34,7 +34,11 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { expandHomePath } from "../pathExpansion.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { nativeSkillHarnessOf } from "./nativeSkillSwitches.ts";
+import { applyNativeSkillSwitches, type NativeSkillControl } from "./projectSkillsNativeOverlay.ts";
 import type { ProviderSkillSource } from "./projectSkillsInventory.ts";
 import { gatherProjectSkills } from "./projectSkillsScan.ts";
 
@@ -129,7 +133,7 @@ export class ProjectSkillsService extends Context.Service<
     ) => Effect.Effect<ProjectSkillsSnapshot, ProjectSkillsReadError>;
     /** The folder a read of `input` would scan, refused like a read. */
     readonly resolveCwd: (
-      input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId">,
+      input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId" | "userLevel">,
     ) => Effect.Effect<string, ProjectSkillsReadError>;
     /** Forgets the cached answer for a folder, so the next read scans it again. */
     readonly invalidate: (input: {
@@ -146,6 +150,9 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // Absent in narrow test layers; then no agent's own switches are read.
+  const instances = yield* Effect.serviceOption(ProviderInstanceRegistry.ProviderInstanceRegistry);
+  const home = expandHomePath("~");
   const cache = yield* Ref.make(
     new Map<
       string,
@@ -219,10 +226,12 @@ export const make = Effect.gen(function* () {
 
   /** The folder `input` names, once the project's own root and worktrees allow it. */
   const cwdFor = (
-    input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId">,
+    input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId" | "userLevel">,
     workspaceRoot: string,
   ) =>
     Effect.gen(function* () {
+      // The machine-wide view: every agent scans the home folder, so only user-level skills show.
+      if (input.userLevel === true) return home;
       const worktrees =
         input.cwd === undefined || path.resolve(input.cwd) === path.resolve(workspaceRoot)
           ? []
@@ -261,7 +270,9 @@ export const make = Effect.gen(function* () {
       return project.value.workspaceRoot;
     });
 
-  const resolveCwd = (input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId">) =>
+  const resolveCwd = (
+    input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId" | "userLevel">,
+  ) =>
     Effect.gen(function* () {
       return yield* cwdFor(input, yield* projectRoot(input.projectId));
     });
@@ -304,7 +315,7 @@ export const make = Effect.gen(function* () {
       // A folder answered recently was allowed then; reuse it before any
       // thread lookup, so reopening the popover costs no database read.
       if (input.refresh !== true) {
-        const target = path.resolve(input.cwd ?? workspaceRoot);
+        const target = path.resolve(input.userLevel === true ? home : (input.cwd ?? workspaceRoot));
         for (const entry of (yield* Ref.get(cache)).values())
           if (
             entry.projectId === input.projectId &&
@@ -326,9 +337,30 @@ export const make = Effect.gen(function* () {
         (provider) => scanProvider(provider, cwd, fresh),
         { concurrency: fresh ? 1 : "unbounded" },
       );
+      // Each agent's own switch file (Grok, Gemini, Copilot, OpenCode, Pi).
+      const controls = new Map<ServerProvider["instanceId"], NativeSkillControl>();
+      if (Option.isSome(instances))
+        for (const provider of eligible) {
+          const instance = yield* instances.value.getInstance(provider.instanceId);
+          const harness = nativeSkillHarnessOf(provider.driver, instance?.skillsControl?.agentId);
+          if (harness !== undefined && instance?.skillsControl !== undefined)
+            controls.set(provider.instanceId, {
+              harness,
+              environment: instance.skillsControl.environment,
+            });
+        }
+      const sources = yield* applyNativeSkillSwitches({
+        cwd,
+        home,
+        sources: scanned.map((entry) => entry.source),
+        controls,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
       const snapshot = yield* gatherProjectSkills({
         cwd,
-        providers: scanned.map((entry) => entry.source),
+        providers: sources,
         providerStates: scanned.map((entry) => entry.state),
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
