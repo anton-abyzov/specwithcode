@@ -32,6 +32,34 @@ export const ProjectUsageCoverage = Schema.Struct({
 });
 export type ProjectUsageCoverage = typeof ProjectUsageCoverage.Type;
 
+/** One provider instance and model's share of a single thread. */
+export const ProjectUsageThreadModel = Schema.Struct({
+  provider: TrimmedNonEmptyString,
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  totals: ProjectUsageTotals,
+});
+export type ProjectUsageThreadModel = typeof ProjectUsageThreadModel.Type;
+
+/** Tokens of one local calendar day (`YYYY-MM-DD` on the reading host). */
+export const ProjectUsageDay = Schema.Struct({
+  day: Schema.String,
+  role: Schema.Literals(["coordinator", "worker"]),
+  provider: TrimmedNonEmptyString,
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  totalTokens: NonNegativeInt,
+});
+export type ProjectUsageDay = typeof ProjectUsageDay.Type;
+
+export const ProjectFolderUsageDay = Schema.Struct({
+  day: Schema.String,
+  provider: TrimmedNonEmptyString,
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  totalTokens: NonNegativeInt,
+});
+export type ProjectFolderUsageDay = typeof ProjectFolderUsageDay.Type;
+
 export const ProjectUsageThread = Schema.Struct({
   threadId: ThreadId,
   title: TrimmedNonEmptyString,
@@ -40,6 +68,8 @@ export const ProjectUsageThread = Schema.Struct({
   totals: ProjectUsageTotals,
   /** Share of the measured project token subtotal, 0..1; null with no measured total. */
   share: Schema.NullOr(Schema.Number),
+  /** Per provider instance and model, so filters can split a thread. */
+  models: Schema.optional(Schema.Array(ProjectUsageThreadModel)),
 });
 export type ProjectUsageThread = typeof ProjectUsageThread.Type;
 
@@ -88,6 +118,8 @@ export const ProjectFolderUsage = Schema.Struct({
   totals: ProjectUsageTotals,
   providers: Schema.Array(ProjectFolderUsageProvider),
   models: Schema.Array(ProjectFolderUsageModel),
+  /** Tokens per local day, provider and model, for the trend. */
+  daily: Schema.optional(Schema.Array(ProjectFolderUsageDay)),
 });
 export type ProjectFolderUsage = typeof ProjectFolderUsage.Type;
 
@@ -108,6 +140,8 @@ export const ProjectUsageSummary = Schema.Struct({
   cacheReadRatio: Schema.optional(Schema.NullOr(Schema.Number)),
   /** CLI sessions in the project folders; null when the logs could not be read. */
   folderSessions: Schema.optional(Schema.NullOr(ProjectFolderUsage)),
+  /** Thread turns per local day of completion (start when unfinished); undated turns are left out. */
+  daily: Schema.optional(Schema.Array(ProjectUsageDay)),
 });
 export type ProjectUsageSummary = typeof ProjectUsageSummary.Type;
 

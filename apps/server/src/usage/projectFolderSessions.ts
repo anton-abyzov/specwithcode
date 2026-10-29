@@ -22,6 +22,7 @@ import { nodePath as NodePath } from "../nodePath.ts";
 
 import type {
   ProjectFolderUsage,
+  ProjectFolderUsageDay,
   ProjectFolderUsageModel,
   ProjectFolderUsageProvider,
   ProjectUsageTotals,
@@ -29,6 +30,7 @@ import type {
 
 import * as DateTime from "effect/DateTime";
 
+import { localDay } from "./projectUsageAggregation.ts";
 import { priceUsage, type RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -113,10 +115,10 @@ async function readHead(filePath: string, bytes = HEAD_BYTES): Promise<string | 
     Effect.scoped(
       Effect.gen(function* () {
         const handle = yield* nativeFiles.open(filePath, { flag: "r" });
-    const buffer = new Uint8Array(bytes);
-    const bytesRead = yield* handle.read(buffer);
-    return Buffer.from(buffer.subarray(0, bytesRead)).toString("utf8");
-  }),
+        const buffer = new Uint8Array(bytes);
+        const bytesRead = yield* handle.read(buffer);
+        return Buffer.from(buffer.subarray(0, bytesRead)).toString("utf8");
+      }),
     ).pipe(Effect.orElseSucceed(() => null)),
   );
 }
@@ -301,6 +303,10 @@ export function aggregateFolderUsage(input: {
     { sessions: Set<string>; totals: ProjectUsageTotals; lastActiveMs: number }
   >();
   const models = new Map<string, ProjectFolderUsageModel>();
+  const daily = new Map<
+    string,
+    { -readonly [K in keyof ProjectFolderUsageDay]: ProjectFolderUsageDay[K] }
+  >();
   let totals = zeroTotals();
   for (const file of input.files) {
     for (const record of file.records) {
@@ -353,6 +359,19 @@ export function aggregateFolderUsage(input: {
         model: model.trim() || null,
         totals: add(current?.totals ?? zeroTotals(), record, cost),
       });
+      if (record.timestampMs > 0) {
+        const day = localDay(record.timestampMs);
+        const dayKey = `${day}\0${modelKey}`;
+        const entry = daily.get(dayKey) ?? {
+          day,
+          provider: file.provider,
+          model: model.trim() || null,
+          totalTokens: 0,
+        };
+        entry.totalTokens +=
+          uncachedInputTokens + cachedInputTokens + cacheCreationTokens + outputTokens;
+        daily.set(dayKey, entry);
+      }
     }
   }
   const providerRows: ProjectFolderUsageProvider[] = [...providers]
@@ -373,5 +392,11 @@ export function aggregateFolderUsage(input: {
     totals,
     providers: providerRows,
     models: [...models.values()].sort((a, b) => b.totals.totalTokens - a.totals.totalTokens),
+    daily: [...daily.values()].sort(
+      (a, b) =>
+        a.day.localeCompare(b.day) ||
+        b.totalTokens - a.totalTokens ||
+        a.provider.localeCompare(b.provider),
+    ),
   };
 }

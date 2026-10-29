@@ -54,7 +54,7 @@ try {
   });
   await page.getByRole("button", { name: "Discard edit", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Usage", exact: true }).click();
-  assert(await page.getByText(/Incomplete usage:/).isVisible());
+  assert(await page.getByText(/Some usage was not reported/).isVisible());
   assert((await page.getByRole("dialog").innerText()).includes("Not reported"));
   await page.screenshot({
     path: `${output}/0888-project-usage.png`,

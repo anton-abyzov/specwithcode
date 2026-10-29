@@ -5,8 +5,11 @@ import type {
   ThreadId,
   TurnTokenUsage,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
+
 import type {
   ProjectUsageCoverage,
+  ProjectUsageDay,
   ProjectUsageModel,
   ProjectUsageSummary,
   ProjectUsageTotals,
@@ -35,7 +38,8 @@ export interface ProjectUsageProjection {
     Pick<
       Projection["providerTurns"][number],
       "id" | "providerThreadId" | "runAttemptId" | "nativeTurnRef" | "turnTokenUsage" | "tokenUsage"
-    >
+    > &
+      Partial<Pick<Projection["providerTurns"][number], "startedAt" | "completedAt">>
   >;
   readonly attempts: ReadonlyArray<
     Pick<Projection["attempts"][number], "id" | "runId" | "nativeThreadId">
@@ -70,6 +74,13 @@ function addTotals(a: ProjectUsageTotals, b: ProjectUsageTotals): ProjectUsageTo
         ? null
         : (a.equivalentCostUsd ?? 0) + (b.equivalentCostUsd ?? 0),
   };
+}
+
+/** `YYYY-MM-DD` of an instant in the reading host's own time zone. */
+export function localDay(epochMs: number): string {
+  return DateTime.formatIsoDate(
+    DateTime.setZone(DateTime.makeUnsafe(epochMs), DateTime.zoneMakeLocal()),
+  );
 }
 
 function speedOf(selection: ModelSelection): UsageSpeed {
@@ -164,6 +175,7 @@ export function aggregateProjectUsage(input: {
   const seenTurns = new Set<string>();
   const seenThreads = new Set<ThreadId>();
   const threads: ProjectUsageSummary["threads"][number][] = [];
+  const daily = new Map<string, { -readonly [K in keyof ProjectUsageDay]: ProjectUsageDay[K] }>();
   for (const projection of input.projections) {
     const { thread } = projection;
     if (
@@ -175,6 +187,8 @@ export function aggregateProjectUsage(input: {
     seenThreads.add(thread.id);
     coverage.threads += 1;
     let threadTotals = emptyTotals();
+    const threadModels = new Map<string, ProjectUsageModel>();
+    const role = thread.id === input.coordinatorThreadId ? "coordinator" : "worker";
     let hasUsage = false;
     const providers = new Map(
       projection.providerThreads.map((provider) => [provider.id, provider]),
@@ -228,13 +242,35 @@ export function aggregateProjectUsage(input: {
         selection?.model ?? null,
       ]);
       const current = models.get(key);
-      models.set(key, {
+      const modelRow = {
         provider: provider.driver,
         providerInstanceId: provider.providerInstanceId,
         model: selection?.model ?? null,
         modelAttribution: selection ? "run_selection" : "unknown",
+      } as const;
+      models.set(key, {
+        ...modelRow,
         totals: addTotals(current?.totals ?? emptyTotals(), turnTotals),
       });
+      threadModels.set(key, {
+        ...modelRow,
+        totals: addTotals(threadModels.get(key)?.totals ?? emptyTotals(), turnTotals),
+      });
+      const at = turn.completedAt ?? turn.startedAt;
+      if (at && turnTotals.totalTokens > 0) {
+        const day = localDay(DateTime.toEpochMillis(at));
+        const dayKey = JSON.stringify([day, role, key]);
+        const entry = daily.get(dayKey) ?? {
+          day,
+          role,
+          provider: modelRow.provider,
+          providerInstanceId: modelRow.providerInstanceId,
+          model: modelRow.model,
+          totalTokens: 0,
+        };
+        entry.totalTokens += turnTotals.totalTokens;
+        daily.set(dayKey, entry);
+      }
     }
     if (hasUsage) coverage.threadsWithUsage += 1;
     else coverage.missingThreads += 1;
@@ -242,10 +278,14 @@ export function aggregateProjectUsage(input: {
     threads.push({
       threadId: thread.id,
       title: thread.title,
-      role: thread.id === input.coordinatorThreadId ? "coordinator" : "worker",
+      role,
       archived: thread.archivedAt !== null,
       totals: threadTotals,
       share: null,
+      models: [...threadModels.values()]
+        .filter((model) => model.totals.totalTokens > 0)
+        .sort((a, b) => b.totals.totalTokens - a.totals.totalTokens)
+        .map(({ modelAttribution: _attribution, ...model }) => model),
     });
   }
   return {
@@ -266,6 +306,13 @@ export function aggregateProjectUsage(input: {
       ),
     models: [...models.values()].sort((a, b) => b.totals.totalTokens - a.totals.totalTokens),
     coverage,
+    daily: [...daily.values()].sort(
+      (a, b) =>
+        a.day.localeCompare(b.day) ||
+        b.totalTokens - a.totalTokens ||
+        a.role.localeCompare(b.role) ||
+        (a.model ?? "").localeCompare(b.model ?? ""),
+    ),
     cacheReadRatio:
       coverage.partialTurns === 0 &&
       coverage.missingTurns === 0 &&

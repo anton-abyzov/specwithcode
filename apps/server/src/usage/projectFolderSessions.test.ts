@@ -17,6 +17,7 @@ import {
   readLogCwd,
   type FolderSessionFile,
 } from "./projectFolderSessions.ts";
+import { localDay } from "./projectUsageAggregation.ts";
 import { parseRateTable } from "./usagePricing.ts";
 
 const totals = (input: number, cached: number, write: number, output: number) => ({
@@ -185,6 +186,11 @@ describe("aggregateFolderUsage", () => {
     expect(result.totals.equivalentCostUsd).toBeCloseTo(176);
     expect(result.providers[1]?.totals.equivalentCostUsd).toBe(null);
     expect(result.providers[0]?.lastActiveAt).toBe("2026-10-09T10:00:00.000Z");
+    const day = localDay(Date.parse("2026-10-09T10:00:00Z"));
+    expect(result.daily).toEqual([
+      { day, provider: "claude", model: "fixture-model", totalTokens: 120 },
+      { day, provider: "codex", model: "unknown-model", totalTokens: 120 },
+    ]);
   });
 
   it("leaves out Claude Code's zero-token synthetic messages", () => {

@@ -3,6 +3,8 @@ import { AttentionFixture } from "./attention-fixture";
 import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionsFixture } from "./connections-fixture";
+import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import { ProjectUsage } from "../../src/components/studio/ProjectUsage";
 import { ProjectWorkspace } from "../../src/components/studio/ProjectWorkspace";
 import {
   projectReturnSearch,
@@ -257,6 +259,15 @@ createRoot(document.getElementById("root")!).render(
     <AttentionFixture />
   ) : search.has("connections") ? (
     <ConnectionsFixture />
+  ) : search.has("usage") ? (
+    // `?usage`: Project settings > Usage on its own, for usage-tab-check.mjs.
+    <main className="project-surface min-h-screen px-4 py-6 sm:px-10">
+      <ProjectUsage
+        environmentId={EnvironmentId.make("host")}
+        projectId={ProjectId.make("atlas")}
+        onOpenThread={() => {}}
+      />
+    </main>
   ) : search.has("report") ? (
     <SidebarLayout>
       <ProjectWorkspace projectKey="atlas" />
