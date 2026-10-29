@@ -1,4 +1,5 @@
 import { stringifyJson } from "../json.ts";
+import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
 import {
   CommandId,
   type ManualCodexCreditIntent,
@@ -1188,9 +1189,16 @@ export const makeSweep = Effect.gen(function* () {
               providerThreads: records.providerThreads,
               turnItems: records.turnItems,
             });
-      return restart === null
-        ? command
-        : { ...command, text: restart.text, attachments: restart.attachments };
+      const resumed =
+        restart === null
+          ? command
+          : { ...command, text: restart.text, attachments: restart.attachments };
+      // Add policy after replaying the request, including later hops in a limit
+      // chain. Never turn a manual send or same-provider recovery into consent.
+      return resumed.messageId.startsWith(LIMIT_FALLBACK_MESSAGE_PREFIX) &&
+        resumed.modelSelection !== undefined
+        ? { ...resumed, text: automaticFallbackContinuation(resumed.modelSelection, resumed.text) }
+        : resumed;
     });
   // Per stopped run, the fallback models whose continuation failed to
   // dispatch: the next try moves down the user's order instead of repeating one.
