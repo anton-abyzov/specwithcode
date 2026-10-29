@@ -233,20 +233,49 @@ export function ProjectDefaultsSettings({
       }
     />
   );
-  const workspaceRow = (
+  // A project's switch is its own choice: on gives every new thread, including
+  // ones the coordinator starts, its own worktree; off keeps them in the project folder.
+  const projectUsesWorktrees =
+    target?.sources.defaultThreadEnvMode === "project" &&
+    target.settings.defaultThreadEnvMode === "worktree";
+  const useWorktreesRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["defaultThreadEnvMode"]}
+      mixed={mixedWorkspace}
+      id={searchableSetting("new-threads").id}
+      title="Use worktrees"
+      description="New threads in this project, including ones the coordinator starts, open in their own git worktree off the project's current branch. A folder holding other repositories, such as an umbrella, keeps its threads in the folder. Off: they work in the project folder. Not set: coordinator threads work in the project folder and chats you start follow this machine's Workspace default."
+      resetAction={
+        target?.sources.defaultThreadEnvMode === "project" ? (
+          <SettingResetButton
+            label="Use worktrees"
+            onClick={() => updateSettings({ defaultThreadEnvMode: null })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          aria-label="Use worktrees"
+          mixed={mixedWorkspace}
+          checked={mixedWorkspace ? false : projectUsesWorktrees}
+          onCheckedChange={(checked) =>
+            updateSettings({ defaultThreadEnvMode: checked ? "worktree" : "local" })
+          }
+        />
+      }
+    />
+  );
+  const environmentWorkspaceRow = (
     <SettingsRow
       serverScoped
       settingKeys={["defaultThreadEnvMode"]}
       mixed={mixedWorkspace}
       id={searchableSetting("new-threads").id}
       title="Workspace"
-      description={
-        isProjectScope
-          ? "Automatic starts Git threads in a new worktree and non-Git folders in the current checkout. Uncheck Use worktree before a new chat to work in Current checkout. Choose folders in Settings → Storage."
-          : "Automatic uses a new worktree for Git projects and the current checkout otherwise. Explicit project and specweave-studio.json choices win. Worktree storage is configured separately in Storage."
-      }
+      description="Automatic uses a new worktree for Git projects and the current checkout otherwise. Explicit project and specweave-studio.json choices win; threads a coordinator starts get a worktree only when their project turns on Use worktrees. Worktree storage is configured separately in Storage."
       resetAction={
-        !isProjectScope && settings.defaultThreadEnvMode !== null ? (
+        settings.defaultThreadEnvMode !== null ? (
           <SettingResetButton
             label="default workspace"
             onClick={() => updateSettings({ defaultThreadEnvMode: null })}
@@ -428,7 +457,7 @@ export function ProjectDefaultsSettings({
               </Select>
             }
           />
-          {workspaceRow}
+          {isProjectScope ? useWorktreesRow : environmentWorkspaceRow}
           <SettingsRow
             serverScoped
             settingKeys={["worktreeSubmodules"]}

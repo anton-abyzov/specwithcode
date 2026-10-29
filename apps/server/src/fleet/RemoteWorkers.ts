@@ -162,6 +162,8 @@ export interface RemoteLaunchResult {
   readonly runtimeModeLoweredFrom?: RuntimeMode;
   /** Something the user should know about that machine, such as checks it is too old to make. */
   readonly machineNotice?: string;
+  /** Why that machine kept the thread in its project folder although Use worktrees is on there. */
+  readonly workspaceNotice?: string;
 }
 
 /**
@@ -969,6 +971,7 @@ const make = Effect.gen(function* () {
         readonly modelSelection: ModelSelection | undefined;
         /** Whether that machine said it checked the delegation path and its grant's scope. */
         readonly grantChecked: boolean | undefined;
+        readonly workspaceNotice?: string | undefined;
       };
       if (attempt._tag === "Success") {
         const answer = readLaunchAnswer(attempt.success);
@@ -987,6 +990,10 @@ const make = Effect.gen(function* () {
           ...answer.value,
           modelSelection: answer.value.modelSelection ?? modelSelection,
           grantChecked: isRecord(attempt.success) && attempt.success.delegationChecked === true,
+          workspaceNotice:
+            isRecord(attempt.success) && typeof attempt.success.workspaceNotice === "string"
+              ? attempt.success.workspaceNotice
+              : undefined,
         };
       } else {
         const error = attempt.failure;
@@ -1078,6 +1085,9 @@ const make = Effect.gen(function* () {
           ? {}
           : { runtimeModeLoweredFrom: clamped.loweredFrom }),
         ...(launched.grantChecked === false ? { machineNotice: olderWorkerNotice(machine) } : {}),
+        ...(launched.workspaceNotice === undefined
+          ? {}
+          : { workspaceNotice: launched.workspaceNotice }),
       };
     });
 

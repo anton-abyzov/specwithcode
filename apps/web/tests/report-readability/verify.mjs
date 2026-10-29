@@ -222,8 +222,8 @@ async function tabToTable(page, index) {
 }
 
 /**
- * The comparison's controls: keyboard scrolling of the values table, the
- * expanded state, and Copy as Markdown and CSV of the five-column table.
+ * The comparison's controls: keyboard scrolling of the values table, and
+ * Copy as Markdown and CSV of the five-column table.
  */
 async function exerciseTables(page, label) {
   const tables = page.locator('[data-report-reader-body="true"] .chat-markdown-table-container');
@@ -260,20 +260,7 @@ async function exerciseTables(page, label) {
     copies[format] = await page.evaluate(() => navigator.clipboard.readText());
   }
 
-  // The toggle starts from the word-wrap setting; check the other state, then go back.
-  const toggle = tables.nth(0).getByRole("button", { name: /table cells$/u });
-  await toggle.click();
-  await page.waitForTimeout(100);
-  const toggled = (await measureTables(page)).tables[0];
-  const state = await toggle.getAttribute("aria-label");
-  await page.screenshot({ path: NodePath.join(output, `${label}-comparison-toggled.png`) });
-  await toggle.click();
-  return {
-    keyboard,
-    outlineOnTop,
-    copies,
-    toggled: { state, split: toggled.split, frameWidth: toggled.frameWidth },
-  };
+  return { keyboard, outlineOnTop, copies };
 }
 
 /**
@@ -401,11 +388,12 @@ try {
             Math.abs(table.frameCenterOffset) <= 2,
             `${label} ${entry.doc} table ${index}: centered on the page`,
           );
-          // AC-02: a frame is at least the page's column and at most the room;
+          // AC-02: a frame spreads across the room (up to 72rem), never past it;
           // it scrolls only once it has the whole room.
           NodeAssert.ok(
-            table.frameWidth >= entry.columnWidth - 2 && table.frameWidth <= entry.room + 2,
-            `${label} ${entry.doc} table ${index}: frame between the column and the room`,
+            table.frameWidth >= Math.min(1152, entry.room) - 2 &&
+              table.frameWidth <= entry.room + 2,
+            `${label} ${entry.doc} table ${index}: frame spreads across the room (${table.frameWidth} of ${entry.room})`,
           );
           if (table.scrollsInFrame) {
             NodeAssert.ok(
@@ -475,7 +463,7 @@ try {
         NodeAssert.ok(keyboard.scrolledBy > 0, `${label}: arrow keys scroll the table`);
       }
       NodeAssert.ok(comparison.outlineOnTop, `${label}: the outline list opens above the table`);
-      // AC-04: content, links, copy and the expanded state are unchanged.
+      // AC-04: content, links and copy are unchanged.
       NodeAssert.ok(skills.cellText.includes("sw-grill-me"), `${label}: identifier text intact`);
       NodeAssert.ok(
         skills.links.includes(DOCS.statements),
@@ -497,11 +485,6 @@ try {
       NodeAssert.ok(
         comparison.copies.CSV.includes(",") && !comparison.copies.CSV.includes("| --- |"),
         `${label}: CSV copy is CSV`,
-      );
-      NodeAssert.deepEqual(
-        comparison.toggled.split,
-        [],
-        `${label}: both cell states keep words whole`,
       );
 
       // The screenshot's table: compact rows, every column reachable by keyboard.

@@ -130,7 +130,7 @@ import {
 } from "../Notification.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { limitReplyTurnFailure, usageLimitErrorFailure } from "./acpLimitReply.ts";
-import { missingThoughtSignatureFailure } from "./acpHistoryError.ts";
+import { nativeHistoryInvalidFailure } from "./acpHistoryError.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   decideToolItemPersist,
@@ -7604,14 +7604,15 @@ export function makeAcpAdapterV2(
                           usageLimitErrorFailure(promptCauseMessage, limitNowMs))
                         : null;
                     // A model that rejects the restored history itself (a
-                    // missing Gemini thought signature) will reject every
-                    // later prompt on this native session. Retire the
-                    // session and restart the runtime so the next turn
-                    // starts fresh with a context handoff.
+                    // missing Gemini thought signature, or a rebuilt history
+                    // ending on a model turn) will reject every later prompt
+                    // on this native session. Retire the session and restart
+                    // the runtime so the next turn starts fresh with a
+                    // context handoff.
                     const historyError =
                       failure.class === "provider_error"
-                        ? (missingThoughtSignatureFailure(promptCauseMessage) ??
-                          missingThoughtSignatureFailure(failure.message))
+                        ? (nativeHistoryInvalidFailure(promptCauseMessage) ??
+                          nativeHistoryInvalidFailure(failure.message))
                         : null;
                     if (historyError !== null) {
                       yield* Ref.update(
