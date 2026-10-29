@@ -34,6 +34,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Lets another machine's threads act in the signed-in Chrome here.
   [WS_METHODS.browserExtensionPeer]: AuthAccessWriteScope,
   [WS_METHODS.nativeConnectionApply]: AuthFilesystemWriteScope,
+  // Skills control center. Writes widen per action kind in `projectSkillsActionScopes`.
+  [WS_METHODS.projectsSkillsVersions]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsSkillsAction]: AuthFilesystemWriteScope,
+  // Installs on other machines, like a fleet update.
+  [WS_METHODS.projectsSkillsFleetPush]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.projectsSkillsStudioLink]: AuthOrchestrationOperateScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
@@ -87,6 +93,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectTakeover]: AuthSettingsWriteScope,
   [WS_METHODS.projectSupersede]: AuthSettingsWriteScope,
   [WS_METHODS.projectStartCoordinator]: AuthSettingsWriteScope,
+  // Arming automatic takeover lets another machine become the coordinator.
+  [WS_METHODS.projectSetStandby]: AuthSettingsWriteScope,
+  [WS_METHODS.projectAcceptStandby]: AuthSettingsWriteScope,
   [WS_METHODS.projectsEnvironmentPrepare]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsPlanReplace]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsPlanConfigure]: AuthOrchestrationOperateScope,
@@ -262,6 +271,22 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
   }
 }
 
+/**
+ * `projects.skillsAction` by action kind: every kind writes a file; all but a
+ * Claude skill switch (a settings edit) also start a CLI or app server. An
+ * action that cannot be read takes the wider set.
+ */
+export function projectSkillsActionScopes(input: unknown): readonly AuthEnvironmentScope[] {
+  const action =
+    typeof input === "object" && input !== null
+      ? (input as { readonly action?: { readonly kind?: unknown; readonly provider?: unknown } })
+          .action
+      : undefined;
+  return action?.kind === "toggle-skill" && action.provider === "claudeAgent"
+    ? [AuthFilesystemWriteScope]
+    : [AuthFilesystemWriteScope, AuthTerminalOperateScope];
+}
+
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
@@ -294,7 +319,9 @@ export function clientRpcRequiredScopes(
     method === WS_METHODS.projectLinkMemoryMerge ||
     method === WS_METHODS.projectTakeover ||
     method === WS_METHODS.projectSupersede ||
-    method === WS_METHODS.projectStartCoordinator
+    method === WS_METHODS.projectStartCoordinator ||
+    method === WS_METHODS.projectSetStandby ||
+    method === WS_METHODS.projectAcceptStandby
   )
     return [AuthSettingsWriteScope, AuthOrchestrationOperateScope];
   // Moving a thread writes a checkpoint ref (pushed when allowed) and starts work elsewhere.
@@ -315,6 +342,7 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.designWatch) return [AuthFilesystemReadScope];
   if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
+  if (method === WS_METHODS.projectsSkillsAction) return projectSkillsActionScopes(input);
   // Writes another tool's configuration, which that tool then runs as commands.
   if (method === WS_METHODS.nativeConnectionApply)
     return [AuthFilesystemWriteScope, AuthTerminalOperateScope];

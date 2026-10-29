@@ -4,7 +4,8 @@
  * threads checkpoint every 5 minutes and checkpoints replicate. Work
  * boundaries inside a turn checkpoint too: a child about to launch (where the
  * provider has a pre-launch hook), a child starting, a child's result
- * arriving and a provider session retiring.
+ * arriving and a provider session retiring. Automatic coordinator takeover
+ * leases to the armed standby on the same 30-second rhythm, on a loop of its own.
  */
 import {
   HANDOFF_LEASE_RENEW_MS,
@@ -19,6 +20,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { CoordinatorLease } from "../project/CoordinatorLease.ts";
 import { SubagentLaunchCheckpoints } from "../orchestration-v2/SubagentLaunchCheckpoints.ts";
 import { forkParked } from "../serverActivation.ts";
 import { HandoffMode } from "./HandoffMode.ts";
@@ -74,6 +76,7 @@ export const launchCheckpoint =
 export const start = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const handoff = yield* HandoffMode;
+  const coordinatorLease = yield* CoordinatorLease;
   yield* (yield* SubagentLaunchCheckpoints).serve(launchCheckpoint(handoff));
 
   const seen = new Set<string>();
@@ -101,6 +104,9 @@ export const start = Effect.gen(function* () {
   // Leases and heartbeats run on their own loop, so a slow checkpoint, negotiation or
   // replication never delays a renewal past the stale window (AC-03).
   yield* forkParked(handoff.heartbeat.pipe(Effect.repeat(every), Effect.asVoid));
+
+  // Its own loop too: a lease must never wait behind a heartbeat to a sleeping machine.
+  yield* forkParked(coordinatorLease.tick.pipe(Effect.repeat(every), Effect.asVoid));
 
   let replicateCount = 0;
   yield* forkParked(

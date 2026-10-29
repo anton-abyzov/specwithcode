@@ -347,6 +347,7 @@ export const make = Effect.gen(function* () {
       projectLink: true,
       coordinatorTakeover: true,
       coordinatorPerMachine: true,
+      coordinatorStandby: true,
       linkedPlans: true,
       projectKnowledge: true,
       designSystemEditing: true,

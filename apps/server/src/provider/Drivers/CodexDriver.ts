@@ -412,6 +412,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         snapshotForCwd,
         consumeResetCredit,
+        skillsControl: {
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          environment: processEnv,
+        },
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;

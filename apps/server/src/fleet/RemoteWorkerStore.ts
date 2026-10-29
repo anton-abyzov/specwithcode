@@ -43,6 +43,18 @@ export const RemoteWorkerRecord = Schema.Struct({
   lostContactNotified: Schema.Boolean,
   lastError: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
+  /**
+   * A worker this server took on from the coordinator it replaced: that
+   * machine's row and the epoch this server claimed for it.
+   */
+  adoptedFrom: Schema.optionalKey(
+    Schema.Struct({ environmentId: Schema.String, rowId: Schema.String, epoch: Schema.Int }),
+  ),
+  /**
+   * The worker's machine did not confirm this server as its coordinator, so
+   * this server shows the worker but never steers or follows it.
+   */
+  readOnly: Schema.optionalKey(Schema.Boolean),
 });
 export type RemoteWorkerRecord = typeof RemoteWorkerRecord.Type;
 

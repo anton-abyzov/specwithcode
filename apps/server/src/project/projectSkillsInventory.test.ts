@@ -16,6 +16,7 @@ import {
   comparableSkillContent,
   isListableSkillPath,
   lockEntryKey,
+  lockSkillId,
   parseVskillDoctorReport,
   parseVskillLock,
   readSkillFrontmatter,
@@ -116,6 +117,72 @@ describe("parseVskillLock", () => {
     assert.strictEqual(entries?.get("plugin")?.sha, null);
     assert.strictEqual(entries?.get("plugin")?.pluginDir, true);
     assert.strictEqual(parseVskillLock("{"), undefined);
+  });
+});
+
+describe("lock source fields", () => {
+  it("keeps the pin, source links and the lock key of each entry", () => {
+    const entries = parseVskillLock(
+      JSON.stringify({
+        skills: {
+          "social-media-posting": {
+            version: "1.3.1",
+            source: "github:anton-abyzov/social-media-posting-skill",
+            pinnedVersion: "1.3.1",
+            sourceRepoUrl: "https://github.com/anton-abyzov/social-media-posting-skill",
+            sourceSkillPath: "SKILL.md",
+            sourceBranch: "main",
+            sourceCommitSha: "2b25fe6",
+          },
+          bare: { version: "1.0.0" },
+        },
+      }),
+    );
+    const posting = entries?.get("social-media-posting");
+    assert.strictEqual(posting?.name, "social-media-posting");
+    assert.strictEqual(posting?.pinnedVersion, "1.3.1");
+    assert.strictEqual(posting?.sourceSkillPath, "SKILL.md");
+    assert.strictEqual(posting?.sourceBranch, "main");
+    assert.strictEqual(posting?.sourceCommitSha, "2b25fe6");
+    assert.strictEqual(entries?.get("bare")?.pinnedVersion, null);
+    assert.strictEqual(entries?.get("bare")?.sourceRepoUrl, null);
+  });
+
+  it("names the registry skill owner/repo/key for GitHub and marketplace sources only", () => {
+    assert.strictEqual(
+      lockSkillId("github:anthropics/skills", "webapp-testing"),
+      "anthropics/skills/webapp-testing",
+    );
+    assert.strictEqual(lockSkillId("github:owner/repo.git#plugin:sw", "sw"), "owner/repo/sw");
+    assert.strictEqual(lockSkillId("marketplace:owner/market#sw", "sw"), "owner/market/sw");
+    assert.strictEqual(lockSkillId("local:/tmp/skill", "x"), null);
+    assert.strictEqual(lockSkillId(null, "x"), null);
+    assert.strictEqual(lockSkillId("github:owner/repo", "-flag"), null);
+    assert.strictEqual(lockSkillId("github:own.er/repo", "x"), null);
+  });
+
+  it("puts the fields on a row's lock", () => {
+    const entries = parseVskillLock(
+      JSON.stringify({
+        skills: {
+          "webapp-testing": {
+            version: "1.0.0",
+            source: "github:anthropics/skills",
+            pinnedVersion: "1.0.0",
+          },
+        },
+      }),
+    )!;
+    const rows = buildProjectSkillRows({
+      cwd: "/work",
+      providers: [],
+      locks: [{ path: "/work/vskill.lock", root: "/work", scope: "project", entries }],
+      files: new Map(),
+      doctor: [],
+    });
+    assert.strictEqual(rows[0]?.lock?.skillId, "anthropics/skills/webapp-testing");
+    assert.strictEqual(rows[0]?.lock?.pinnedVersion, "1.0.0");
+    assert.strictEqual(rows[0]?.lock?.name, "webapp-testing");
   });
 });
 

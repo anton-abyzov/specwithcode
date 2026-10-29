@@ -41,14 +41,19 @@
 # SWC_PS, SWC_STAT, SWC_DATE, SWC_OPEN, SWC_TRASH, SWC_OSASCRIPT.
 #
 # Everything runs from main, called on the last line: a stream cut short runs nothing. A session
-# dropped while it runs does not stop it halfway: SIGPIPE is ignored, output then goes nowhere, and
-# the run finishes (the app reopened if it quit it) or fails cleanly.
+# dropped while it runs does not stop it halfway: SIGPIPE and SIGHUP are ignored, output then goes
+# nowhere, and the run finishes (the app reopened if it quit it) or fails cleanly. SIGINT or SIGTERM
+# (kill on the worker, or Ctrl-C at a terminal there) stops it once the command it waits on ends, as
+# a failure with exit 130 or 143 and "stopped by SIGINT" or "stopped by SIGTERM": it opens the app
+# again if it quit it, once it has gone, unless the app's own updater runs. From the swap's first
+# rename until the app renamed in passes its checks, a stop is ignored and the run goes on. Ctrl-C
+# at the terminal of the ssh commands above ends only ssh: the run goes on, its session dropped.
 
 # The requirement every release since 1.0.32 carries (mac-signature.mjs expectedRequirement());
 # macOS keys the privacy grants to it, and only the release team's signature satisfies it.
 RELEASE_REQUIREMENT='identifier "com.specweave.studio" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = NMCB2JZ7QG'
 
-# Never fatal: see main's trap '' PIPE. In a subshell: bash 3.2 keeps a write that failed (once the session
+# Never fatal: see signals' trap '' PIPE. In a subshell: bash 3.2 keeps a write that failed (once the session
 # dropped) in this shell's buffer, and every later $(...) and redirected builtin would carry it out.
 say() { (printf '%s\n' "$*") 2> /dev/null || true; }
 
@@ -64,6 +69,15 @@ die() { # die CODE REASON: the EXIT trap cleans up, then prints "FAIL REASON" la
 mkdir_failed() {
   case "$2" in *'No space left on device'* | *'quota exceeded'*) die 5 "could not make $1 ($2; is the disk full?)" ;; esac
   die 1 "could not make $1 (${2:-mkdir failed})"
+}
+
+# A dropped session stops nothing (SIGPIPE, and SIGHUP for one with a terminal). SIGINT or SIGTERM stops the run as
+# a failure, so finish cleans up and opens an app this run quit again: without these traps bash 3.2 runs the EXIT
+# trap with the last command's status, 0 in a wait, and the stop reads as a success.
+signals() {
+  trap '' PIPE HUP
+  trap 'die 130 "stopped by SIGINT"' INT
+  trap 'die 143 "stopped by SIGTERM"' TERM
 }
 
 init() {
@@ -103,14 +117,27 @@ init() {
 }
 
 finish() {
-  local rc=$?
+  local rc=$? busy
   trap - EXIT
+  # The cleanup runs to the end: another stop is ignored, by its commands too (Ctrl-C at a terminal reaches them all,
+  # and a wait whose pgrep it ended would read as an app that has gone).
+  trap '' INT TERM
   set +eu
   if [ "$rc" -ne 0 ]; then
     if [ -n "$UNPACK_MADE" ]; then rm -rf "$UNPACK"; fi
-    # The app was running and this run quit it: open whichever app is in place again.
-    if [ "$QUIT" = 1 ] && [ "$LEAVE_CLOSED" != 1 ] && [ -d "$APP" ] && [ -z "$(running_pids)" ]; then
-      reopen
+    # The app was running and this run quit it: open whichever app is in place again, once the app has gone
+    # (a run stopped while it quits waits for that, until the quit's own deadline), unless the app's own updater
+    # runs: it installs on the quit, as settle waits for.
+    if [ "$QUIT" = 1 ] && [ "$LEAVE_CLOSED" != 1 ] && [ -d "$APP" ]; then
+      while [ -n "$QUIT_BY" ] && [ "$SECONDS" -lt "$QUIT_BY" ] && [ -n "$(running_pids)" ]; do sleep "$POLL"; done
+      if [ -z "$(running_pids)" ]; then
+        busy="$(own_update)"
+        if [ -z "$busy" ]; then
+          reopen
+        else
+          say "WARNING: left the app closed while $busy runs; open it on that Mac once that has finished"
+        fi
+      fi
     fi
     [ -n "$REASON" ] || REASON="stopped unexpectedly (exit $rc) at: ${FAILED_COMMAND:-unknown}"
     say "FAIL $REASON"
@@ -167,11 +194,13 @@ own_update() { # own_update [swap-only]
   return 0
 }
 
-# run_limited SECONDS CMD...: runs CMD and stops it (TERM to the pid it started) after SECONDS.
+# run_limited SECONDS CMD...: runs CMD, its output dropped, and stops it (TERM to the pid it started) after SECONDS.
+# CMD's own redirection: one on this function's call would stay on this shell when a stop ends the run inside it, and
+# finish's lines would go nowhere.
 run_limited() {
   local limit="$1" pid deadline rc=0
   shift
-  "$@" &
+  "$@" > /dev/null 2>&1 &
   pid=$!
   deadline=$((SECONDS + limit))
   while kill -0 "$pid" 2> /dev/null; do
@@ -182,7 +211,7 @@ run_limited() {
     fi
     sleep "$POLL"
   done
-  wait "$pid" || rc=$?
+  wait "$pid" 2> /dev/null || rc=$?
   return "$rc"
 }
 
@@ -225,9 +254,20 @@ release_lock() {
   fi
 }
 
+# Only a folder is a lock: anything else at its path (a file, a link) is in the way. One lstat decides, so a lock its
+# run releases meanwhile is never taken for a file.
+lock_in_the_way() {
+  case "$("$STAT" -f %HT "$LOCK" 2> /dev/null || true)" in '' | Directory) return 1 ;; esac
+  return 0
+}
+
 take_lock() {
   local holder me seen now err
   if dry; then
+    if lock_in_the_way; then
+      say "$LOCK is not a folder: a real run stops on it (exit 1) and leaves it there"
+      return 0
+    fi
     holder="$(lock_holder)"
     case "$holder" in
       '') ;;
@@ -239,7 +279,9 @@ take_lock() {
   # A worker's first run makes the folder, which a full volume refuses as it would the lock.
   err="$(mkdir -p "$CACHE" 2>&1)" || mkdir_failed "the update cache" "${err:-mkdir -p $CACHE failed}"
   me="$(started "$$")" # Read first: the record follows the mkdir at once.
-  if ! mkdir "$LOCK" 2> /dev/null; then
+  if ! err="$(mkdir "$LOCK" 2>&1)"; then
+    # A file or a link in its place is refused as mkdir refused it, never taken over.
+    if lock_in_the_way; then mkdir_failed "the update lock" "$err"; fi
     seen="$("$STAT" -f %i "$LOCK" 2> /dev/null || true)" # The lock judged below.
     holder="$(lock_holder)"
     case "$holder" in
@@ -256,6 +298,8 @@ take_lock() {
       release_lock
     fi
     if ! err="$(mkdir "$LOCK" 2>&1)"; then
+      # Another run made it meanwhile, also when a third run that judged the same lock gone moved it aside since.
+      case "$err" in *'File exists'*) die 4 "another update of this app took the lock first; let it finish" ;; esac
       [ ! -e "$LOCK" ] || die 4 "another update of this app took the lock first; let it finish"
       mkdir_failed "the update lock" "${err:-mkdir $LOCK failed}"
     fi
@@ -287,9 +331,9 @@ trash_old() {
     return 0
   fi
   # /usr/bin/trash (macOS 15) needs no Finder and no Apple events; Finder is the older route.
-  if [ -x "$TRASH" ] && run_limited 60 "$TRASH" "$OLD" > /dev/null 2>&1 && [ ! -e "$OLD" ]; then
+  if [ -x "$TRASH" ] && run_limited 60 "$TRASH" "$OLD" && [ ! -e "$OLD" ]; then
     say "moved the previous app to the Trash"
-  elif run_limited 60 "$OSASCRIPT" -e "tell application \"Finder\" to delete POSIX file \"$OLD\"" > /dev/null 2>&1 &&
+  elif run_limited 60 "$OSASCRIPT" -e "tell application \"Finder\" to delete POSIX file \"$OLD\"" &&
     [ ! -e "$OLD" ]; then
     say "moved the previous app to the Trash (Finder)"
   else
@@ -420,7 +464,7 @@ unpack() {
 }
 
 quit_app() {
-  local pids pid deadline
+  local pids pid
   pids="$(running_pids)"
   if [ -z "$pids" ]; then
     say "the app is not running"
@@ -432,17 +476,18 @@ quit_app() {
     return 0
   fi
   QUIT=1
+  QUIT_BY=$((SECONDS + QUIT_WAIT)) # finish waits for the app until then too, for a run stopped meanwhile.
   for pid in $pids; do
-    say "quitting the app (TERM to pid $pid)"
     kill -TERM "$pid" 2> /dev/null || true
+    say "quitting the app (TERM to pid $pid)"
   done
-  deadline=$((SECONDS + QUIT_WAIT))
   while [ -n "$(running_pids)" ]; do
-    if [ "$SECONDS" -ge "$deadline" ]; then
+    if [ "$SECONDS" -ge "$QUIT_BY" ]; then
       die 4 "the app (pid $(echo $(running_pids))) did not quit within ${QUIT_WAIT}s; nothing was changed"
     fi
     sleep "$POLL"
   done
+  QUIT_BY=""
 }
 
 # A previous app that repair could not move to the Trash takes the name the swap renames the
@@ -468,7 +513,7 @@ swap() {
     mv "$APP" "$FRESH" || true
     undo_swap "$moved" 5 "$PROBLEM after the rename"
   fi
-  trap - HUP INT TERM
+  signals
   say "swapped $V into $APP"
   trash_old
 }
@@ -524,8 +569,9 @@ main() {
   umask 022
   # The ssh session can drop mid-run (a worker's network moves): a write to it then fails instead
   # of killing the run between quitting the app and reopening it. Every pipe below reads to the end.
-  trap '' PIPE
-  BEFORE="" HOW="" RELAUNCHED=no WAS_RUNNING=0 QUIT=0 LEAVE_CLOSED=0 LOCKED="" LOCK_ID="" UNPACK_MADE="" REASON=""
+  signals
+  BEFORE="" HOW="" RELAUNCHED=no WAS_RUNNING=0 QUIT=0 QUIT_BY="" LEAVE_CLOSED=0 LOCKED="" LOCK_ID="" UNPACK_MADE=""
+  REASON=""
   V="${V:-}" SHA="${SHA:-}" REPO="${REPO:-anton-abyzov/specwithcode}" DRY_RUN="${DRY_RUN:-0}"
   trap finish EXIT
   trap 'FAILED_COMMAND="$BASH_COMMAND"' ERR

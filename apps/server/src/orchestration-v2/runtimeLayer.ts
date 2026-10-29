@@ -2,7 +2,10 @@ import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
 import * as HandoffMode from "../handoff/HandoffMode.ts";
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
+import * as CoordinatorLeaseRoute from "../project/CoordinatorLeaseRoute.ts";
+import * as CoordinatorWakeGate from "../project/CoordinatorWakeGate.ts";
 import * as CoordinatorReplicas from "../project/CoordinatorReplicas.ts";
+import * as CoordinatorStandbyStore from "../project/CoordinatorStandbyStore.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
@@ -301,6 +304,8 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       ThreadForkService.layer,
       // Shares HandoffModeStore.layer with HandoffMode.layer (one cached document).
       HandoffTurnGate.layer,
+      // Reads the lease records the coordinator lease loop writes.
+      CoordinatorWakeGate.layer,
       // One reference where steers run (the effect executor) and the queue starts.
       SteersInFlight.layer,
     ),
@@ -462,6 +467,18 @@ const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerProjectService, HandoffTurnGate.layer)),
 );
 
+const layerProjectLinkProvided = ProjectLink.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      layerProjectService,
+      layerProjectWorkspaceProvided,
+      CoordinatorReplicas.layer,
+      CoordinatorStandbyStore.layer,
+    ),
+  ),
+);
+
 export const layerProduction = Layer.mergeAll(
   ProjectRuntimeAccess.layer.pipe(Layer.provide(layerOrchestratorProvided)),
   MachineHandoff.layer.pipe(
@@ -478,14 +495,11 @@ export const layerProduction = Layer.mergeAll(
       ),
     ),
   ),
-  ProjectLink.layer.pipe(
+  layerProjectLinkProvided,
+  // The standby's side of the coordinator lease, served on the handoff peer route.
+  CoordinatorLeaseRoute.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(
-        ProjectionStore.layer,
-        layerProjectService,
-        layerProjectWorkspaceProvided,
-        CoordinatorReplicas.layer,
-      ),
+      Layer.mergeAll(layerProjectLinkProvided, layerProjectService, CoordinatorStandbyStore.layer),
     ),
   ),
   LinkedMemorySync.layer.pipe(

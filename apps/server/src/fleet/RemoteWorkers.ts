@@ -41,6 +41,7 @@ import * as FleetTargets from "./FleetTargets.ts";
 import * as PhoneLinks from "./phoneLinks.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
+import * as RemoteWorkerAdoption from "./RemoteWorkerAdoption.ts";
 import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
 import {
   clampRuntimeMode,
@@ -53,6 +54,7 @@ import {
   translateModel,
 } from "./remoteWorkerMatching.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
+import * as WorkerEpochStore from "./WorkerEpochStore.ts";
 
 const PROBE_TTL = Duration.seconds(60);
 /**
@@ -1205,12 +1207,16 @@ export const layer = Layer.effect(RemoteWorkers, make);
 export const layerFleetWorkers = Layer.mergeAll(
   layer,
   RemoteWorkerFollower.layerResume,
+  // Takes on the old coordinator's workers after an automatic takeover.
+  RemoteWorkerAdoption.layer,
   FleetWorkerGrants.layerRenewal,
   // Carries a phone revocation between this machine and the machines it linked the phone to.
   PhoneLinks.layerSweep,
 ).pipe(
   Layer.provideMerge(RemoteWorkerFollower.layer),
   Layer.provideMerge(RemoteStudioMcpClient.layer),
+  // The coordinator epochs the client names to the machines it calls.
+  Layer.provideMerge(WorkerEpochStore.layerCoordinatorEpochSource),
   Layer.provideMerge(Layer.merge(FleetWorkerGrants.layer, RemoteWorkerStore.layer)),
   Layer.provideMerge(FleetTargets.layer),
 );

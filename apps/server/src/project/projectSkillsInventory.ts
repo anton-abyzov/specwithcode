@@ -40,6 +40,34 @@ export interface VskillLockEntry {
   readonly installedPath: string | null;
   readonly files: ReadonlyArray<string> | null;
   readonly pluginDir: boolean;
+  /** The key the lock files the entry under. */
+  readonly name?: string;
+  readonly pinnedVersion?: string | null;
+  readonly sourceRepoUrl?: string | null;
+  readonly sourceSkillPath?: string | null;
+  readonly sourceBranch?: string | null;
+  readonly sourceCommitSha?: string | null;
+}
+
+/** As the fleet's StudioFleetSkillName: owner, repository and skill segments. */
+const REGISTRY_OWNER = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
+const REGISTRY_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
+/**
+ * The registry id `owner/repo/name` vskill resolves a lock entry to: a
+ * `github:` or `marketplace:` source's repository plus the lock key, as
+ * `vskill pin` does. Null for any other source.
+ */
+export function lockSkillId(source: string | null, name: string): string | null {
+  const match =
+    /^(?:github|github-plugin|marketplace):([^/#\s]+)\/([^/#\s]+?)(?:\.git)?(?:#.*)?$/.exec(
+      source ?? "",
+    );
+  if (!match) return null;
+  const [, owner, repo] = match;
+  return REGISTRY_OWNER.test(owner!) && REGISTRY_SEGMENT.test(repo!) && REGISTRY_SEGMENT.test(name)
+    ? `${owner}/${repo}/${name}`
+    : null;
 }
 
 export interface VskillLockSource {
@@ -216,6 +244,12 @@ export function parseVskillLock(text: string): ReadonlyMap<string, VskillLockEnt
       installedPath: stringOrNull(entry.installedPath),
       files,
       pluginDir: entry.pluginDir === true,
+      name: name.trim(),
+      pinnedVersion: stringOrNull(entry.pinnedVersion),
+      sourceRepoUrl: stringOrNull(entry.sourceRepoUrl),
+      sourceSkillPath: stringOrNull(entry.sourceSkillPath),
+      sourceBranch: stringOrNull(entry.sourceBranch),
+      sourceCommitSha: stringOrNull(entry.sourceCommitSha),
     });
   }
   return entries;
@@ -606,6 +640,17 @@ export function buildProjectSkillRows(
         source: entry.source,
         sha: entry.sha,
         installedAt: entry.installedAt,
+        ...(entry.name === undefined
+          ? {}
+          : {
+              name: entry.name,
+              pinnedVersion: entry.pinnedVersion ?? null,
+              sourceRepoUrl: entry.sourceRepoUrl ?? null,
+              sourceSkillPath: entry.sourceSkillPath ?? null,
+              sourceBranch: entry.sourceBranch ?? null,
+              sourceCommitSha: entry.sourceCommitSha ?? null,
+              skillId: lockSkillId(entry.source, entry.name),
+            }),
       };
       // Compare the copies that belong to this lock's scope.
       const facts = row.presences.flatMap((pending) =>

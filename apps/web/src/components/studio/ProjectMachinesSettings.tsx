@@ -37,6 +37,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { CoordinatorStandbySettings } from "./CoordinatorStandbySettings";
 import { ProjectLocation } from "./ProjectLocation";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { useHoldProjectKeyFollow } from "../settings/projectKeyFollow";
@@ -476,6 +477,13 @@ export function ProjectMachinesSettings({
           }
         />
       ))}
+      {coordinator && copies.length > 1 ? (
+        <CoordinatorStandbySettings
+          key={`${coordinator.environmentId}:${coordinator.id}`}
+          coordinator={coordinator}
+          shared={shared}
+        />
+      ) : null}
       <SettingsRow
         title="Link with a project on another machine"
         description={

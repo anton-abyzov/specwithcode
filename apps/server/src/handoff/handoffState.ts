@@ -82,6 +82,20 @@ export const HandoffThreadRecord = Schema.Struct({
   pendingSeed: Schema.optionalKey(Schema.NullOr(Schema.String)).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
+  /**
+   * Set while a machine that may continue this thread on its own (automatic
+   * continuation) has gone quiet: no turn starts here until it answers again.
+   * Saved so a restart keeps it. Added later, so older files decode to null.
+   */
+  autoFence: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        environmentId: Schema.String,
+        machineLabel: Schema.String,
+        at: Schema.String,
+      }),
+    ),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 export type HandoffThreadRecord = typeof HandoffThreadRecord.Type;
 
@@ -100,8 +114,26 @@ export const HandoffIncomingDetail = Schema.Struct({
   /** The handoff version the source ran when it sent this copy; absent before the check existed. */
   sourceProtocolVersion: Schema.optional(NonNegativeInt),
   sourceAppVersion: Schema.optional(Schema.String),
+  /**
+   * The delay after which this machine continues the copy on its own, as the
+   * source's latest heartbeat named it; null when the source named another
+   * machine or none. Added later, so older files decode to null.
+   */
+  autoContinueMinutes: Schema.optionalKey(Schema.NullOr(NonNegativeInt)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type HandoffIncomingDetail = typeof HandoffIncomingDetail.Type;
+
+/**
+ * A machine this one named in a heartbeat as the one to continue its threads
+ * automatically: the delay it was given and when its silence started counting.
+ */
+export const AutoContinuePeerState = Schema.Struct({
+  minutes: NonNegativeInt,
+  baselineAt: Schema.String,
+});
+export type AutoContinuePeerState = typeof AutoContinuePeerState.Type;
 
 export const HandoffDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -115,6 +147,10 @@ export const HandoffDocument = Schema.Struct({
   ),
   pausedSince: Schema.NullOr(Schema.String),
   machineRun: Schema.NullOr(HandoffMachineRun),
+  /** Keyed by environment id; added later, so older files decode to `{}`. */
+  autoContinuePeers: Schema.optionalKey(Schema.Record(Schema.String, AutoContinuePeerState)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed({})),
+  ),
 });
 export type HandoffDocument = typeof HandoffDocument.Type;
 
@@ -127,6 +163,7 @@ export const EMPTY_HANDOFF_DOCUMENT: HandoffDocument = {
   incomingDetails: {},
   pausedSince: null,
   machineRun: null,
+  autoContinuePeers: {},
 };
 
 export function emptyThreadRecord(projectId: ProjectId): HandoffThreadRecord {
@@ -145,6 +182,7 @@ export function emptyThreadRecord(projectId: ProjectId): HandoffThreadRecord {
     runEpochs: {},
     pendingTakeover: null,
     pendingSeed: null,
+    autoFence: null,
   };
 }
 
@@ -508,6 +546,8 @@ export function upsertIncoming(
     execution: meta.execution,
     takeoverEpoch: null,
     takeover: null,
+    // A newer checkpoint keeps the designation the latest heartbeat gave.
+    autoContinueMinutes: (document.incomingDetails ?? {})[key]?.autoContinueMinutes ?? null,
     ...(meta.protocolVersion === undefined ? {} : { sourceProtocolVersion: meta.protocolVersion }),
     ...(meta.appVersion === undefined ? {} : { sourceAppVersion: meta.appVersion }),
   };
@@ -670,7 +710,11 @@ export function heartbeatContinued(
   document: HandoffDocument,
   request: {
     readonly sourceEnvironmentId: string;
-    readonly leases: ReadonlyArray<{ readonly sourceThreadId: ThreadId; readonly epoch: number }>;
+    readonly leases: ReadonlyArray<{
+      readonly sourceThreadId: ThreadId;
+      readonly epoch: number;
+      readonly autoContinueMinutes?: number | undefined;
+    }>;
   },
   now: string,
 ): readonly [
@@ -700,7 +744,22 @@ export function heartbeatContinued(
         : replica.lease;
     return { ...replica, lease, sourceLastSeenAt: now, sourceUnreachable: false };
   });
-  return [continued, { ...document, incoming }];
+  // Each heartbeat restates which copies this machine may continue on its own;
+  // a copy it leaves out, or names without a delay, loses that designation.
+  const designated = new Map(
+    request.leases.map((lease) => [lease.sourceThreadId as string, lease.autoContinueMinutes]),
+  );
+  let incomingDetails = document.incomingDetails ?? {};
+  for (const replica of incoming) {
+    if (replica.sourceEnvironmentId !== request.sourceEnvironmentId) continue;
+    const key = incomingKey(replica.sourceEnvironmentId, replica.sourceThreadId);
+    const detail = incomingDetails[key];
+    if (detail === undefined) continue;
+    const minutes = designated.get(replica.sourceThreadId) ?? null;
+    if ((detail.autoContinueMinutes ?? null) === minutes) continue;
+    incomingDetails = { ...incomingDetails, [key]: { ...detail, autoContinueMinutes: minutes } };
+  }
+  return [continued, { ...document, incoming, incomingDetails }];
 }
 
 /** Replicas whose source has not answered for longer than a stale lease read "unknown". */

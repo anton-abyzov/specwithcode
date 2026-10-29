@@ -1,9 +1,11 @@
 import {
+  NonNegativeInt,
   OrchestratorMcpFailure,
   OrchestratorMcpMachineListInput,
   OrchestratorMcpMachineListResult,
 } from "@specweave-studio/contracts";
 import { Tool, Toolkit } from "effect/ai";
+import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -25,4 +27,42 @@ const MachineListTool = Tool.make("studio_machine_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, true);
 
-export const MachinesToolkit = Toolkit.make(MachineListTool);
+const ClaimEpochInput = Schema.Struct({
+  logicalProjectId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+  epoch: NonNegativeInt,
+  threadIds: Schema.optional(
+    Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(Schema.isMaxLength(50)),
+  ),
+});
+
+const ClaimEpochResult = Schema.Struct({
+  logicalProjectId: Schema.String,
+  accepted: Schema.Boolean,
+  epoch: NonNegativeInt,
+  origins: Schema.Array(
+    Schema.Struct({
+      threadId: Schema.String,
+      coordinatorEnvironmentId: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+
+/** Called between SpecWithCode machines when a coordinator takes over; agents never need it. */
+const ClaimEpochTool = Tool.make("studio_coordinator_claim_epoch", {
+  description:
+    "Internal, between SpecWithCode machines. A machine that took over as a linked project's coordinator claims its epoch here. Agents never call this.",
+  parameters: ClaimEpochInput,
+  success: ClaimEpochResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
+})
+  .annotate(Tool.Title, "Claim coordinator epoch")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false);
+
+export const MachinesToolkit = Toolkit.make(MachineListTool, ClaimEpochTool);

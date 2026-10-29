@@ -2,9 +2,11 @@ import {
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -19,6 +21,7 @@ import {
   ProjectId,
   CommandId,
   WsRpcGroup,
+  clientRpcRequiredScopes,
   type AuthEnvironmentScope,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -579,5 +582,110 @@ describe("project link authorization", () => {
         ).toMatchObject({ requiredPermission: missing });
         expect(invoked).toBe(false);
       }),
+  );
+});
+
+describe("skills control center authorization", () => {
+  const tested = [
+    WS_METHODS.projectsSkillsVersions,
+    WS_METHODS.projectsSkillsAction,
+    WS_METHODS.projectsSkillsFleetPush,
+    WS_METHODS.projectsSkillsStudioLink,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  const projectId = ProjectId.make("project");
+  const toggle = (provider: string) =>
+    ({
+      kind: "toggle-skill",
+      provider: ProviderDriverKind.make(provider),
+      instanceId: ProviderInstanceId.make(provider),
+      enabled: false,
+      scope: "user",
+    }) as const;
+  const actions = [
+    { action: { kind: "install-version", version: "1.2.3" }, wide: true },
+    { action: { kind: "pin", version: "1.2.3" }, wide: true },
+    { action: { kind: "unpin" }, wide: true },
+    { action: { kind: "update-latest" }, wide: true },
+    { action: toggle("claudeAgent"), wide: false },
+    { action: toggle("codex"), wide: true },
+    {
+      action: {
+        kind: "toggle-plugin",
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        pluginId: "sw@specweave",
+        enabled: false,
+        scope: "user",
+      },
+      wide: true,
+    },
+  ] as const;
+
+  it.each(actions)("asks the same scopes on client and server for $action.kind", (entry) => {
+    const input = { projectId, skill: "sw-do", preview: true, action: entry.action };
+    expect(clientRpcRequiredScopes(WS_METHODS.projectsSkillsAction, input)).toEqual(
+      entry.wide
+        ? [AuthFilesystemWriteScope, AuthTerminalOperateScope]
+        : [AuthFilesystemWriteScope],
+    );
+  });
+
+  it("reads versions with read access, pushes with maintain and links with operate", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.projectsSkillsVersions)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.projectsSkillsFleetPush)).toBe(
+      AuthEnvironmentMaintainScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.projectsSkillsStudioLink)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it.effect.each(actions.filter((entry) => entry.wide))(
+    "rejects $action.kind without terminal operate before its handler runs",
+    (entry) =>
+      Effect.gen(function* () {
+        let invoked = false;
+        const never = () =>
+          Effect.sync(() => {
+            invoked = true;
+          }).pipe(Effect.andThen(Effect.never));
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.projectsSkillsVersions, never),
+              group.toLayerHandler(WS_METHODS.projectsSkillsAction, never),
+              group.toLayerHandler(WS_METHODS.projectsSkillsFleetPush, never),
+              group.toLayerHandler(WS_METHODS.projectsSkillsStudioLink, never),
+              RpcAuthorization.layer([AuthFilesystemWriteScope, AuthOrchestrationOperateScope]),
+            ),
+          ),
+        );
+        expect(
+          yield* client[WS_METHODS.projectsSkillsAction]({
+            projectId,
+            skill: "sw-do",
+            preview: false,
+            action: entry.action,
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthTerminalOperateScope });
+        expect(
+          yield* client[WS_METHODS.projectsSkillsFleetPush]({
+            projectId,
+            skillId: "anton-abyzov/vskill/sw-do",
+            version: "1.2.3",
+            pin: true,
+            targets: [{ machineId: "m3", scope: "user" }],
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthEnvironmentMaintainScope });
+        expect(invoked).toBe(false);
+      }).pipe(Effect.scoped),
   );
 });

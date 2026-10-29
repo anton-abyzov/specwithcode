@@ -160,6 +160,8 @@ export const StudioFleetAddResult = Schema.Struct({
   /** updated: a configured machine got a new address or token. */
   change: Schema.Literals(["added", "updated"]),
   previousUrl: Schema.optionalKey(Schema.String),
+  /** The management session a v2 invitation was redeemed for on that machine. */
+  sessionId: Schema.optionalKey(AuthSessionId),
 });
 export type StudioFleetAddResult = typeof StudioFleetAddResult.Type;
 

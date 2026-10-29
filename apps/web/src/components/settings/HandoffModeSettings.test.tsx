@@ -73,8 +73,11 @@ describe("Moving work between machines", () => {
     expect(html).not.toContain("Cheap model");
   });
 
-  it("drops the automatic continue row, which nothing acts on yet", () => {
-    expect(render({})).not.toContain("Continue automatically");
+  it("offers automatic continue under More options, off by default", () => {
+    const html = render({});
+    expect(html).toContain("Continue automatically when a machine stops answering");
+    expect(html.indexOf("Continue automatically")).toBeGreaterThan(html.indexOf("More options"));
+    expect(html).toMatch(/aria-label="Automatic takeover"[^>]*>[\s\S]*?Off/);
   });
 
   it("titles the sleep row without a placeholder when no machine is chosen", () => {

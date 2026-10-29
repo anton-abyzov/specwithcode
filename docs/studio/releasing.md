@@ -442,9 +442,10 @@ while this one judged it stays with that run. Each run reads its record again 2 
 writing it and stops (exit 4) when another run's record replaced it, or when its lock went before it
 wrote its record, so of two runs that take over the same lock at once only one goes on, unless one
 of them stalls for more than those 2 seconds. A run with no room to make the lock, the folder it
-goes in or its record stops with exit 5 and says so. A dropped ssh session does not stop a run halfway, and the
-lines it could not print reach nothing the run reads. The rollout prints the worker's lines as
-`m1: app: <line>`, then one result per worker:
+goes in or its record stops with exit 5 and says so. A dropped ssh session (or a closed terminal,
+for a run started from one) does not stop a run halfway, and the lines it could not print reach
+nothing the run reads. The rollout prints the worker's lines as `m1: app: <line>`, then one result
+per worker:
 
 ```
 m1: desktop app 1.0.40 -> 1.0.41: unpacked and checked beside the app, then swapped in; reopened, as it was running
@@ -478,7 +479,19 @@ for no room or a copy that cannot be unpacked or fails a check (before the renam
 the previous app back in place), and 6 when a rename failed; its reason says where each app is.
 The update cache or its lock that `mkdir` refuses for another reason than no room (a permission, a
 file in the way) ends with exit 1 and `mkdir`'s own reason; a stop nobody planned says
-`stopped unexpectedly (exit <n>) at: <command>`.
+`stopped unexpectedly (exit <n>) at: <command>`. `kill` on the worker (SIGTERM), or Ctrl-C at a
+terminal there (SIGINT), stops a run once the command it waits on ends, with exit 143 or 130 and
+`stopped by SIGTERM` or `stopped by SIGINT`; a run that quit the app opens it again once it has gone,
+unless the app's own updater runs. From the swap's first rename until the app renamed in passes its
+checks, a stop is ignored and the run goes on to the end. Ctrl-C at the terminal of the `ssh`
+commands above, or of the rollout, ends only `ssh`: the run goes on as one whose session dropped.
+To stop such a run, send it SIGTERM on the worker, after checking that the lock's record (its pid,
+then its start time) names a live run:
+
+```sh
+ssh <worker> 'r=~/.specwithcode/backups/desktop-app-updates/.lock/pid; p=$(sed -n 1p "$r")
+  [ "$(ps -o lstart= -p "$p" | xargs)" = "$(sed -n 2p "$r")" ] && kill -TERM "$p"'
+```
 
 ## Rollback copies
 

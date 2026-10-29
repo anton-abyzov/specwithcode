@@ -1,5 +1,6 @@
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  logicalProjectMemberKey,
   logicalProjectTitle,
   PROJECT_NAME_MAX_LENGTH,
   projectNameKey,
@@ -39,6 +40,8 @@ import type { ProjectRow } from "./ProjectStore.ts";
  * - `unlink`: a relinquished member leaves with a fresh identity and an active coordinator.
  * - `start-coordinator`: a relinquished member runs its own coordinator next to the others,
  *   at a higher epoch, replacing none of them.
+ * - `set-standby`: the active coordinator of a linked project sets, changes or clears the
+ *   one listed member that takes over automatically; nothing else in the binding changes.
  */
 export type ProjectOwnershipMode =
   | "handoff"
@@ -49,7 +52,8 @@ export type ProjectOwnershipMode =
   | "unlink"
   | "takeover"
   | "superseded"
-  | "start-coordinator";
+  | "start-coordinator"
+  | "set-standby";
 
 export interface ProjectOwnershipUpdate {
   readonly mode: ProjectOwnershipMode;
@@ -472,6 +476,7 @@ export function ownershipRejection(
         next.operationId === undefined ||
         next.takenOverAt === undefined ||
         next.successor !== undefined ||
+        next.standby !== undefined ||
         next.predecessor === undefined ||
         memberRef(next.predecessor) === memberRef(selfEntries[0]) ||
         !incoming.members.some((member) => memberRef(member) === memberRef(next.predecessor!))
@@ -492,6 +497,8 @@ export function ownershipRejection(
         next.predecessor !== undefined ||
         next.successor !== undefined ||
         next.takenOverAt !== undefined ||
+        next.takenOverBy !== undefined ||
+        next.standby !== undefined ||
         next.releaseReason !== undefined
       )
         return "A started coordinator is active at a higher epoch and replaces no other coordinator.";
@@ -512,11 +519,32 @@ export function ownershipRejection(
         next.takenOverAt === undefined ||
         next.predecessor !== undefined ||
         next.successor === undefined ||
+        next.standby !== undefined ||
         !self ||
         memberRef(next.successor) === memberRef(self) ||
         !incoming.members.some((member) => memberRef(member) === memberRef(next.successor!))
       )
         return "A coordinator gives way only to a listed member that took over at a higher epoch.";
+      return undefined;
+    }
+    case "set-standby": {
+      const current = old ?? ACTIVE_LEGACY_BINDING;
+      if (current.state !== "active")
+        return "Only the active coordinator can choose who takes over automatically.";
+      if (!keepsIdentity()) return "Choosing a standby keeps the shared identity as it is.";
+      if (!sameRecord(incoming.members, identity!.members) || !selfEntries[0])
+        return "Choosing a standby keeps every member listed as it is.";
+      const { standby: _nextStandby, ...nextRest } = next;
+      const { standby: _currentStandby, ...currentRest } = current;
+      if (!sameRecord(nextRest, currentRest))
+        return "Choosing a standby changes nothing else about the coordinator.";
+      const standby = next.standby;
+      if (
+        standby !== undefined &&
+        (logicalProjectMemberKey(standby.member) === logicalProjectMemberKey(selfEntries[0]) ||
+          !incoming.members.some((member) => memberRef(member) === memberRef(standby.member)))
+      )
+        return "The standby is another member listed in this project.";
       return undefined;
     }
   }

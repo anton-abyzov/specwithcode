@@ -66,6 +66,7 @@ try {
       viewport: { width, height: 1100 },
       colorScheme: theme,
       reducedMotion: "reduce",
+      permissions: ["clipboard-read", "clipboard-write"],
     });
     const page = await context.newPage();
     const errors = [];
@@ -136,7 +137,34 @@ try {
       "0",
       "a native zero exit code plus SIGINT is shown as stopped, not successful",
     );
-    await page.screenshot({ path: shot("5-full-page"), fullPage: true });
+    // 5. A device sign-in shows its code to copy and its page as a link, while it runs.
+    const signIn = thread.locator(".chat-markdown-codeblock").nth(2);
+    await signIn.getByRole("button", { name: "Run command" }).click();
+    await signIn.locator("[data-shell-run-confirm]").click();
+    await signIn.getByRole("button", { name: "Copy code 3160-87C3" }).first().waitFor();
+    // The page link streams in on the next line, while the command keeps running.
+    await signIn.getByRole("link", { name: "Open https://github.com/login/device" }).waitFor();
+    assert.equal(
+      await signIn.getByLabel("Command output").textContent(),
+      "! First copy your one-time code: 3160-87C3\nPress Enter to open https://github.com/login/device in your browser...",
+      "links and copy buttons add no text",
+    );
+    assert.equal(
+      await signIn
+        .getByLabel("Command output")
+        .locator('a[href="https://github.com/login/device"]')
+        .count(),
+      1,
+    );
+    assert.equal(
+      await signIn.getByRole("link", { name: "Open https://github.com/login/device" }).count(),
+      1,
+    );
+    await signIn.getByRole("button", { name: "Copy code 3160-87C3" }).first().click();
+    await signIn.getByRole("button", { name: "Copied code 3160-87C3" }).first().waitFor();
+    await signIn.screenshot({ path: shot("5-sign-in-code-and-link") });
+    await signIn.getByRole("button", { name: "Stop command" }).click();
+    await page.screenshot({ path: shot("6-full-page"), fullPage: true });
 
     assert.deepEqual(errors, []);
     receipt.cases.push({

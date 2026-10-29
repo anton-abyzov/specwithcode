@@ -1,10 +1,11 @@
 /**
  * The one check the orchestrator makes before a turn starts on a thread in
  * handoff mode: a copy another machine continued, a lease another machine
- * holds, a transfer in flight, or a machine that lost its network while other
- * machines hold copies of its threads never starts a turn. Without handoff
- * state every turn is allowed (the default), so tests and servers that never
- * use handoff mode see no change.
+ * holds, a transfer in flight, a copy whose automatic-continuation machine
+ * went quiet, or a machine that lost its network while other machines hold
+ * copies of its threads never starts a turn. Without handoff state every turn
+ * is allowed (the default), so tests and servers that never use handoff mode
+ * see no change.
  */
 import type { ThreadId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
@@ -13,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { autoFenceRefusal } from "./HandoffAutoContinue.ts";
 import * as HandoffModeStore from "./HandoffModeStore.ts";
 import type { HandoffDocument } from "./handoffState.ts";
 
@@ -60,6 +62,8 @@ export function turnRefusal(
       return "This thread is being handed off; it starts no turn until the handoff finishes.";
     }
   }
+  const autoFenced = autoFenceRefusal(record);
+  if (autoFenced !== null) return autoFenced;
   // Turning handoff off leaves the copies elsewhere continuable, so the mode does not matter.
   if (document.pausedSince !== null && lease !== null && record.replicas.length > 0) {
     return PAUSED_OFFLINE_REFUSAL;

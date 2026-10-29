@@ -26,6 +26,10 @@ const NOTE_LABELS: Record<HandoffConfig["noteModel"], string> = {
   cheap: "Smaller model",
   thread: "Thread's model",
 };
+const TAKEOVER_MINUTES = [0, 5, 15, 30, 60] as const;
+// The server waits at least 5 minutes whatever is stored, so a shorter value reads as 5.
+const takeoverLabel = (minutes: number) =>
+  minutes === 0 ? "Off" : `After ${Math.max(5, minutes)} min`;
 
 /** A project on this machine whose own setting differs from the machine default. */
 export interface HandoffModeOverride {
@@ -150,6 +154,30 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           More options
         </CollapsibleTrigger>
         <CollapsiblePanel keepMounted>
+          <SettingsRow
+            title="Continue automatically when a machine stops answering"
+            description="Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way."
+            control={
+              <Select
+                value={String(config.autoTakeoverMinutes)}
+                disabled={props.pending}
+                onValueChange={(value) => props.onConfig({ autoTakeoverMinutes: Number(value) })}
+              >
+                <SelectTrigger size="sm" aria-label="Automatic takeover">
+                  <SelectValue>{takeoverLabel(config.autoTakeoverMinutes)}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {[...new Set<number>([...TAKEOVER_MINUTES, config.autoTakeoverMinutes])].map(
+                    (minutes) => (
+                      <SelectItem key={minutes} value={String(minutes)}>
+                        {takeoverLabel(minutes)}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectPopup>
+              </Select>
+            }
+          />
           <SettingsRow
             title="Turn summary"
             description="A short note at each turn end: what's done, what's next, open questions. It helps the next machine pick up."

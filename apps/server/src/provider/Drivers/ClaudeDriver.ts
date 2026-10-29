@@ -75,6 +75,7 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -167,6 +168,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         processEnv,
       );
       const configDir = yield* resolveClaudeHomePath(effectiveConfig, processEnv);
+      const skillsEnvironment = yield* makeClaudeEnvironment(effectiveConfig, processEnv);
       const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
         effectiveConfig.homePath.trim() || processEnv.CLAUDE_CONFIG_DIR?.trim()
           ? configDir
@@ -437,6 +439,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
           ),
+        skillsControl: {
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: configDir,
+          environment: skillsEnvironment,
+        },
         orchestrationAdapter,
         textGeneration,
         consumeResetCredit,

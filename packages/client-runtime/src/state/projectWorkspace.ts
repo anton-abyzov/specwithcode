@@ -176,6 +176,25 @@ export function createProjectWorkspaceAtoms<R, E>(
       staleTimeMs: 10_000,
       idleTtlMs: 30_000,
     }),
+    /** Registry versions and `vskill outdated` for one skill; runs vskill, so read on demand. */
+    skillVersions: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:skill-versions",
+      tag: WS_METHODS.projectsSkillsVersions,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
+    skillAction: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skill-action",
+      tag: WS_METHODS.projectsSkillsAction,
+    }),
+    skillFleetPush: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skill-fleet-push",
+      tag: WS_METHODS.projectsSkillsFleetPush,
+    }),
+    skillStudioLink: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skill-studio-link",
+      tag: WS_METHODS.projectsSkillsStudioLink,
+    }),
     library: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:library",
       tag: WS_METHODS.projectsLibraryRead,

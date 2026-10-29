@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
+import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import {
   accountInGrant,
@@ -39,6 +40,8 @@ export interface WorkGrantContext {
   readonly origin: WorkOrigin | undefined;
   /** The coordinator machine's name, for messages. */
   readonly coordinatorLabel: string;
+  /** The coordinator epochs the calling machine named, one per linked project it coordinates. */
+  readonly coordinatorEpochs?: ReadonlyMap<string, number> | undefined;
 }
 
 /**
@@ -78,6 +81,7 @@ export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: Gran
       origin: undefined,
       coordinatorLabel:
         labels.get(grant.coordinatorEnvironmentId) ?? grant.coordinatorEnvironmentId,
+      coordinatorEpochs: context.scope.client?.coordinatorEpochs,
     } satisfies WorkGrantContext;
   }
   const origin = yield* grants.originOf(context.caller).pipe(Effect.mapError(storageFailure));
@@ -200,6 +204,29 @@ export const assertThreadInGrant = Effect.fn("mcp.assertThreadInGrant")(function
 });
 
 /**
+ * After a coordinator took over a linked project and claimed its epoch here,
+ * the other machine steers that project's threads only if it names an epoch
+ * at least as high: the coordinator it replaced still believes an older one,
+ * or names none, and may read but no longer steer. Threads another machine's
+ * work started here act under that work's origin and are not held to it.
+ */
+export const assertCoordinatorEpoch = Effect.fn("mcp.assertCoordinatorEpoch")(function* (
+  work: WorkGrantContext,
+  project: Project,
+) {
+  if (work.origin !== undefined) return;
+  const identity = project.workspaceSettings?.logicalProject;
+  if (identity === undefined || identity.members.length < 2) return;
+  const store = yield* WorkerEpochStore.WorkerEpochStore;
+  const claimed = yield* store.get(identity.id).pipe(Effect.mapError(storageFailure));
+  if (WorkerEpochStore.epochAdmits(claimed, work.coordinatorEpochs?.get(identity.id))) return;
+  return yield* new OrchestratorMcpFailure({
+    code: "thread_fenced",
+    message: `Another machine now coordinates "${project.title}". This machine takes steering for it only from that coordinator. ${work.coordinatorLabel} may still read its threads.`,
+  });
+});
+
+/**
  * Another machine's work steers only the threads it started here (and their
  * subagents and forks). Steering this machine's own work would run it, and
  * whatever it then does, outside the grant: it records no origin, so routines,
@@ -218,6 +245,7 @@ export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(functi
   const project = yield* findProject(thread.projectId);
   // A thread whose project this machine cannot read is not one the grant may change.
   if (project === undefined) return yield* unreachable(work, "thread");
+  yield* assertCoordinatorEpoch(work, project);
   const settings = project.workspaceSettings;
   const linked = (settings?.logicalProject?.members.length ?? 0) >= 2;
   // A legacy grant (the owner's own machines, from before grants) keeps
@@ -383,4 +411,82 @@ export const refuseGrantRoutineChange = Effect.fn("mcp.refuseGrantRoutineChange"
     code: "outside_grant_scope",
     message: `This machine does not let ${work.coordinatorLabel}'s work create, change, delete or run its scheduled routines. Ask the user here to set up the routine, or schedule it on ${work.coordinatorLabel}.`,
   });
+});
+
+/** At most this many threads' origins come back from one claim, as many as a lease reports. */
+export const CLAIM_EPOCH_MAX_THREADS = 50;
+
+export interface CoordinatorEpochClaimInput {
+  readonly logicalProjectId: string;
+  readonly epoch: number;
+  readonly threadIds?: ReadonlyArray<string> | undefined;
+}
+
+export interface CoordinatorEpochClaimResult {
+  readonly logicalProjectId: string;
+  readonly accepted: boolean;
+  readonly epoch: number;
+  readonly origins: ReadonlyArray<{
+    readonly threadId: string;
+    readonly coordinatorEnvironmentId: string | null;
+  }>;
+}
+
+/**
+ * A coordinator that took over a linked project claims its epoch here, and
+ * learns which of the listed threads the coordinator it replaced started, so
+ * it adopts only those. Only another machine's own grant may claim, in a
+ * project that grant covers; a thread outside this machine's copy of the
+ * project has no origin to report.
+ */
+export const claimCoordinatorEpoch = Effect.fn("mcp.claimCoordinatorEpoch")(function* (
+  context: Caller,
+  input: CoordinatorEpochClaimInput,
+) {
+  const work = yield* workGrantOf(context);
+  if (work === undefined || work.origin !== undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "outside_grant_scope",
+      message: "Only another machine's coordinator claims a project here.",
+    });
+  yield* refuseRevoked(work);
+  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+  const project = Option.isNone(projects)
+    ? undefined
+    : (yield* projects.value.snapshot.pipe(
+        Effect.map((snapshot) => snapshot.projects),
+        Effect.orElseSucceed(() => []),
+      )).find(
+        (candidate) =>
+          candidate.deletedAt === null &&
+          candidate.workspaceSettings?.logicalProject?.id === input.logicalProjectId,
+      );
+  if (project === undefined) return yield* unreachable(work, "project");
+  yield* assertProjectInGrant(work, project);
+  const store = yield* WorkerEpochStore.WorkerEpochStore;
+  const claimed = yield* store
+    .claim({
+      logicalProjectId: input.logicalProjectId,
+      epoch: input.epoch,
+      by: work.grant.coordinatorEnvironmentId,
+    })
+    .pipe(Effect.mapError(storageFailure));
+  const grants = yield* WorkGrants.WorkGrants;
+  const origins: Array<CoordinatorEpochClaimResult["origins"][number]> = [];
+  for (const threadId of [...new Set(input.threadIds ?? [])].slice(0, CLAIM_EPOCH_MAX_THREADS)) {
+    const shell = yield* context.threads
+      .getThreadShell(threadId as never)
+      .pipe(Effect.orElseSucceed(() => null));
+    const origin =
+      shell === null || shell === undefined || shell.projectId !== project.id
+        ? undefined
+        : yield* grants.originOf(shell).pipe(Effect.mapError(storageFailure));
+    origins.push({ threadId, coordinatorEnvironmentId: origin?.coordinatorEnvironmentId ?? null });
+  }
+  return {
+    logicalProjectId: input.logicalProjectId,
+    accepted: claimed.accepted,
+    epoch: claimed.epoch,
+    origins,
+  } satisfies CoordinatorEpochClaimResult;
 });

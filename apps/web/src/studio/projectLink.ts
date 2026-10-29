@@ -79,6 +79,16 @@ export const projectLink = {
     label: "project-link:start-coordinator",
     tag: WS_METHODS.projectStartCoordinator,
   }),
+  /** Names, changes or clears the member that takes over when this coordinator goes quiet. */
+  setStandby: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:set-standby",
+    tag: WS_METHODS.projectSetStandby,
+  }),
+  /** Registers, on the standby, the coordinator whose leases it listens to; null disarms it. */
+  acceptStandby: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:accept-standby",
+    tag: WS_METHODS.projectAcceptStandby,
+  }),
 };
 
 /** How long the coordinator's machine must be unreachable before a member may take over. */
@@ -87,7 +97,8 @@ export const TAKEOVER_UNREACHABLE_MS = 10 * 60_000;
 /**
  * Whether "Take over coordinator here" may be pressed: never while the
  * coordinator's machine is connected, and only after it has been unreachable
- * for 10 minutes. There is no automatic failover.
+ * for 10 minutes. Automatic takeover runs on the server only, for a standby
+ * the owner armed (standbyArming.ts); this button stays manual.
  */
 export function takeoverAvailability(input: {
   readonly coordinatorConnected: boolean;

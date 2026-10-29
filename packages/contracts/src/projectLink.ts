@@ -140,6 +140,19 @@ export const ProjectCoordinatorReplica = Schema.Struct({
   instructions: bounded(PROJECT_INSTRUCTIONS_MAX_LENGTH),
   notes: Schema.Array(ProjectLinkNote).check(Schema.isMaxLength(4096)),
   notesTruncated: Schema.Boolean,
+  /**
+   * Set when the coordinator pushed this copy itself (automatic takeover)
+   * rather than the owner's app. `instructionsChangedAt` is when the goal or
+   * instructions first differed from the last copy the app wrote; null when
+   * they match it or the app never wrote one.
+   */
+  peer: Schema.optional(
+    Schema.Struct({
+      receivedAt: IsoDateTime,
+      clientGoalDigest: Schema.NullOr(bounded(128)),
+      instructionsChangedAt: Schema.NullOr(IsoDateTime),
+    }),
+  ),
 });
 export type ProjectCoordinatorReplica = typeof ProjectCoordinatorReplica.Type;
 
@@ -257,12 +270,14 @@ export const ProjectUnlinkInput = Schema.Union([
     operationId: ProjectLinkOperationId,
     projectId: ProjectId,
     notes: NoteWrites,
+    changeAnyway: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     side: Schema.Literal("coordinator"),
     operationId: ProjectLinkOperationId,
     projectId: ProjectId,
     member: LogicalProjectMember,
+    changeAnyway: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type ProjectUnlinkInput = typeof ProjectUnlinkInput.Type;
@@ -361,6 +376,8 @@ export const ProjectSupersedeInput = Schema.Struct({
   successor: LogicalProjectMember,
   /** The successor's active binding; its predecessor must be this copy. */
   coordinatorBinding: ProjectCoordinatorBinding,
+  /** Go ahead when the standby this copy leases to does not answer its release. */
+  changeAnyway: Schema.optional(Schema.Boolean),
 });
 export type ProjectSupersedeInput = typeof ProjectSupersedeInput.Type;
 export const ProjectSupersedeResult = Schema.Struct({
@@ -391,6 +408,7 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
     "storage_failed",
     "not_member",
     "superseded_conflict",
+    "standby_unreachable",
   ]),
   /** Names what differs, such as the two root repositories. */
   detail: Schema.optional(bounded(1000)),
@@ -422,6 +440,8 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
         "This copy does not run workers for another copy, so there is no coordinator to take over from.",
       superseded_conflict:
         "Another copy took over in a way this copy cannot confirm. Reload both machines and check which one coordinates.",
+      standby_unreachable:
+        "The Mac that takes over automatically did not answer. Choose Change anyway to go ahead without it.",
     };
     return this.detail ? `${messages[this.code]} ${this.detail}` : messages[this.code];
   }

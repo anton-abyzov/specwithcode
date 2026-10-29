@@ -21,6 +21,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { ServerAuthInvalidCredentialError } from "../auth/EnvironmentAuthErrors.ts";
 import { type EffectiveWorkGrant, unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
 import { HANDOFF_PEER_PREFIX } from "./handoffWire.ts";
@@ -72,6 +73,7 @@ function api() {
               ]?.grant,
             ),
         }),
+        Layer.mock(CoordinatorLeaseReceiver)({ grantRefused: () => Effect.void }),
         Layer.mock(HandoffReceiver)({
           negotiate: (caller) =>
             Effect.sync(() => {

@@ -945,6 +945,12 @@ it.layer(NodeServices.layer)("discoverClaudeSkills plugin skills", (it) => {
 
       assert.deepEqual(skills, [
         {
+          name: "off-plugin:hidden",
+          path: path.join(offRoot, "skills", "hidden", "SKILL.md"),
+          enabled: false,
+          scope: "plugin",
+        },
+        {
           name: "sw:agent-only",
           path: path.join(swRoot, "skills", "agent-only", "SKILL.md"),
           enabled: true,
@@ -976,6 +982,42 @@ it.layer(NodeServices.layer)("discoverClaudeSkills plugin skills", (it) => {
           enabled: true,
           scope: "plugin",
           userInvocationOnly: true,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("keeps an enabled namespace ahead of a disabled copy from another marketplace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-plugin-priority-" });
+      const configDir = path.join(root, "claude");
+      const pluginsRoot = path.join(configDir, "plugins");
+      const disabled = path.join(pluginsRoot, "cache", "aaa", "sw", "1");
+      const enabled = path.join(pluginsRoot, "cache", "zzz", "sw", "1");
+      yield* writePlugin(disabled, { name: "sw" }, { "skills/do": "# Disabled" });
+      yield* writePlugin(enabled, { name: "sw" }, { "skills/do": "# Enabled" });
+      yield* writeJson(path.join(pluginsRoot, "installed_plugins.json"), {
+        plugins: {
+          "sw@aaa": [{ scope: "user", installPath: disabled }],
+          "sw@zzz": [{ scope: "user", installPath: enabled }],
+        },
+      });
+      yield* writeJson(path.join(configDir, "settings.json"), {
+        enabledPlugins: { "sw@aaa": false, "sw@zzz": true },
+      });
+      const skills = yield* discoverClaudeSkills(
+        { homePath: configDir },
+        undefined,
+        pluginEnvironment,
+      );
+      assert.deepEqual(skills, [
+        {
+          name: "sw:do",
+          path: path.join(enabled, "skills", "do", "SKILL.md"),
+          scope: "plugin",
+          enabled: true,
         },
       ]);
     }),
@@ -1022,8 +1064,11 @@ it.layer(NodeServices.layer)("discoverClaudeSkills plugin skills", (it) => {
         pluginEnvironment,
       );
       assert.deepEqual(
-        inWorkspace.map((skill) => skill.name),
-        ["mine:run"],
+        inWorkspace.map((skill) => ({ name: skill.name, enabled: skill.enabled })),
+        [
+          { name: "mine:run", enabled: true },
+          { name: "opted-out:run", enabled: false },
+        ],
       );
 
       // Without the workspace settings nothing enables `mine`, and its

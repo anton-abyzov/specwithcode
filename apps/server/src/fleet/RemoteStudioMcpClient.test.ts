@@ -23,6 +23,7 @@ import { makeFleetLink } from "./fleetTransport.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
+import * as WorkerEpochStore from "./WorkerEpochStore.ts";
 
 const remoteThread = { threadId: "thread-remote", title: "Worker", status: "idle" };
 
@@ -205,6 +206,60 @@ describe("RemoteStudioMcpClient", () => {
         .pipe(failureOnly);
       expect(["unreachable", "invalid_response"]).toContain(error.reason);
     }).pipe(Effect.provide(layer));
+  });
+
+  // 1086 AC-08: the worker machine fences steering by the epochs a coordinator names.
+  it.effect("names this machine's coordinator epochs for the projects it shares there", () => {
+    const { remote } = setup();
+    const named: Array<string | null> = [];
+    let epochs = new Map([["logical:app", 5]]);
+    const recording = Layer.succeed(FleetTargets.FleetTargets, {
+      load: Effect.succeed({ version: 1 as const, machines: [target] }),
+      fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        if (new URL(input instanceof Request ? input.url : String(input)).pathname === "/mcp")
+          named.push(new Headers(init?.headers).get(WorkerEpochStore.COORDINATOR_EPOCHS_HEADER));
+        return remote.fetcher(input, init);
+      }) as typeof fetch,
+    });
+    const asked: string[] = [];
+    return Effect.gen(function* () {
+      const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+      yield* read(client);
+      expect(asked.every((environmentId) => environmentId === target.environmentId)).toBe(true);
+      expect(named.at(-1)).toBe('{"logical:app":5}');
+      // After this machine gave the project away it names none.
+      epochs = new Map();
+      yield* read(client);
+      expect(named.at(-1)).toBeNull();
+    }).pipe(
+      Effect.provide(
+        RemoteStudioMcpClient.layer.pipe(
+          Layer.provide(
+            Layer.mock(FleetWorkerGrants.FleetWorkerGrants)({
+              credential: () =>
+                Effect.succeed({
+                  target,
+                  accessToken: "token-1",
+                  access: "auto" as const,
+                  expiresAt: "2026-11-11T00:00:00.000Z",
+                }),
+              reportAccepted: () => Effect.void,
+              reportRejected: () => Effect.void,
+            }),
+          ),
+          Layer.provide(recording),
+          Layer.provide(
+            Layer.succeed(WorkerEpochStore.CoordinatorEpochSource, {
+              epochsFor: (environmentId) =>
+                Effect.sync(() => {
+                  asked.push(environmentId);
+                  return epochs;
+                }),
+            }),
+          ),
+        ),
+      ),
+    );
   });
 });
 

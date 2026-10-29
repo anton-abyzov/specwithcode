@@ -250,7 +250,13 @@ describe("adding machines to the fleet file", () => {
         link: f,
         localEnvironmentId: "environment-primary",
       });
-      expect(result).toMatchObject({ url: tailnet, connectUrl: connect, change: "added" });
+      // The redeemed session is named, so a setup-only caller can revoke it there.
+      expect(result).toMatchObject({
+        url: tailnet,
+        connectUrl: connect,
+        change: "added",
+        sessionId: "redeemed-session",
+      });
       const redeem = f.mock.calls.find(([url]) => String(url).endsWith("/invitation/redeem"));
       expect(String(redeem?.[0])).toBe(`${connect}/api/studio/fleet/invitation/redeem`);
       expect(JSON.parse(String(redeem?.[1]?.body))).toEqual({

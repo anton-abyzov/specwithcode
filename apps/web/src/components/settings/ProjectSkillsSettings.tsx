@@ -6,18 +6,17 @@ import {
   type ProjectSkillRow,
   type ProjectSkillsSnapshot,
 } from "@specweave-studio/contracts";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
   BadgeCheckIcon,
-  CheckIcon,
-  CopyIcon,
   ExternalLinkIcon,
+  PinIcon,
   RefreshCwIcon,
   SearchIcon,
   XIcon,
 } from "lucide-react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { useEnvironmentQuery } from "../../state/query";
@@ -33,6 +32,15 @@ import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ProjectSkillAgentToggle, ProjectSkillPluginToggle } from "./ProjectSkillAgentToggles";
+import { SkillControlsProvider, type SkillMemberProject } from "./ProjectSkillControls";
+import { ProjectSkillSheetFooter } from "./ProjectSkillFleetPush";
+import {
+  ProjectSkillLinkButtons,
+  ProjectSkillRowMenu,
+  type SkillSheetFocus,
+} from "./ProjectSkillRowMenu";
+import { ProjectSkillVersionSection } from "./ProjectSkillVersionSection";
 import {
   filterProjectSkillRows,
   projectSkillAttentionCount,
@@ -92,30 +100,13 @@ export function ProjectSkillsSettings() {
             environmentId={member.environmentId}
             projectId={member.id}
             folder={member.workspaceRoot}
+            memberProjects={group?.memberProjects ?? []}
           />
         ) : (
           <p className="text-sm text-muted-foreground">This project is no longer available.</p>
         )}
       </SettingsPageContainer>
     </div>
-  );
-}
-
-function CopyPathButton({ row }: { row: ProjectSkillRow }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "path" });
-  return (
-    <Button
-      size="icon-xs"
-      variant="ghost-muted"
-      type="button"
-      disabled={row.path === null}
-      aria-label={`Copy the SKILL.md path of ${row.name}`}
-      onClick={() => {
-        if (row.path) copyToClipboard(row.path, undefined);
-      }}
-    >
-      {isCopied ? <CheckIcon /> : <CopyIcon />}
-    </Button>
   );
 }
 
@@ -263,8 +254,9 @@ function StatusBadge({ row }: { row: ProjectSkillRow }) {
  * The lock's version beside the versions the copies on disk report (the
  * plugin manifest for a plugin skill), with a hint when the lock is behind.
  */
-function VersionCell({ row }: { row: ProjectSkillRow }) {
+function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | null }) {
   const versions = projectSkillVersions(row);
+  const pinned = row.lock?.pinnedVersion ?? null;
   const files = versions.files.map((file) => file.version);
   const lockOnly = versions.lock !== null && !versions.lockOutOfDate;
   if (versions.lock === null && files.length === 0) {
@@ -285,6 +277,21 @@ function VersionCell({ row }: { row: ProjectSkillRow }) {
       {versions.lockOutOfDate ? (
         <div className="text-xs text-warning-foreground">lock {versions.lock}, out of date</div>
       ) : null}
+      {pinned || update ? (
+        <span className="mt-0.5 flex flex-wrap gap-1">
+          {pinned ? (
+            <Badge size="sm" variant="outline" data-testid="version-pinned">
+              <PinIcon aria-hidden />
+              pinned
+            </Badge>
+          ) : null}
+          {update ? (
+            <Badge size="sm" variant="info" data-testid="version-update">
+              ↑{update}
+            </Badge>
+          ) : null}
+        </span>
+      ) : null}
     </Hinted>
   );
 }
@@ -292,11 +299,13 @@ function VersionCell({ row }: { row: ProjectSkillRow }) {
 function SkillRow({
   row,
   entries,
+  update,
   onOpen,
 }: {
   row: ProjectSkillRow;
   entries: ProviderEntries;
-  onOpen: (name: string) => void;
+  update: string | null;
+  onOpen: (name: string, focus?: SkillSheetFocus) => void;
 }) {
   const issue = row.issues[0];
   return (
@@ -353,7 +362,7 @@ function SkillRow({
         </span>
       </TableCell>
       <TableCell>
-        <VersionCell row={row} />
+        <VersionCell row={row} update={update} />
       </TableCell>
       <TableCell>
         <TierCell row={row} />
@@ -365,7 +374,7 @@ function SkillRow({
         <StatusBadge row={row} />
       </TableCell>
       <TableCell className="w-8 text-right">
-        <CopyPathButton row={row} />
+        <ProjectSkillRowMenu row={row} onOpen={onOpen} />
       </TableCell>
     </TableRow>
   );
@@ -389,7 +398,6 @@ const DRIFT_LABELS: Readonly<Record<ProjectSkillRow["drift"], string>> = {
 
 /** Everything known about one skill: where each agent loads it from, its lock and its problems. */
 function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: ProviderEntries }) {
-  const links = projectSkillSourceLinks(row);
   const problems = [...new Set([...row.issues, ...row.doctor])];
   return (
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6 text-sm">
@@ -405,30 +413,8 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
       {row.aliases?.length ? (
         <p className="text-muted-foreground">Also listed as {row.aliases.join(", ")}.</p>
       ) : null}
-      {links?.registryUrl || links?.repoUrl ? (
-        <div className="flex flex-wrap gap-2">
-          {links.registryUrl ? (
-            <Button
-              size="xs"
-              variant="outline"
-              render={<a href={links.registryUrl} target="_blank" rel="noreferrer noopener" />}
-            >
-              <BadgeCheckIcon aria-hidden />
-              View on verified-skill.com
-            </Button>
-          ) : null}
-          {links.repoUrl ? (
-            <Button
-              size="xs"
-              variant="outline"
-              render={<a href={links.repoUrl} target="_blank" rel="noreferrer noopener" />}
-            >
-              <ExternalLinkIcon aria-hidden />
-              Source repository
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <ProjectSkillLinkButtons row={row} />
+      <ProjectSkillVersionSection />
       {problems.length > 0 ? (
         <section aria-label="Problems" className="space-y-1">
           <h3 className="font-medium text-foreground">Needs attention</h3>
@@ -472,10 +458,12 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                       agent only
                     </Badge>
                   ) : null}
+                  <ProjectSkillAgentToggle presence={presence} />
                 </div>
                 <div className="break-all font-mono text-xs text-muted-foreground">
                   {presence.path}
                 </div>
+                <ProjectSkillPluginToggle presence={presence} />
               </li>
             ))}
           </ul>
@@ -490,32 +478,13 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
       <section aria-label="Install" className="space-y-1">
         <h3 className="font-medium text-foreground">Install</h3>
         <dl>
+          {/* The link buttons and the Version section above cover links, version and pin. */}
           <DetailItem term="Source">{row.lock?.source ?? "—"}</DetailItem>
-          {links?.registryUrl ? (
-            <DetailItem term="verified-skill.com">
-              <ExternalLink
-                href={links.registryUrl}
-                label={`Open ${row.name} on verified-skill.com: ${links.registryUrl}`}
-                className="break-all text-foreground underline"
-              >
-                {links.registryUrl}
-              </ExternalLink>
+          {row.lock?.skillId ? null : (
+            <DetailItem term="Version">
+              <VersionCell row={row} />
             </DetailItem>
-          ) : null}
-          {links?.repoUrl ? (
-            <DetailItem term="Repository">
-              <ExternalLink
-                href={links.repoUrl}
-                label={`Open the source of ${row.name}: ${links.repoUrl}`}
-                className="break-all text-foreground underline"
-              >
-                {links.repoUrl}
-              </ExternalLink>
-            </DetailItem>
-          ) : null}
-          <DetailItem term="Version">
-            <VersionCell row={row} />
-          </DetailItem>
+          )}
           <DetailItem term="Tier">{row.lock?.tier ?? "—"}</DetailItem>
           <DetailItem term="Installed">
             {row.lock?.installedAt ? new Date(row.lock.installedAt).toLocaleString() : "—"}
@@ -605,14 +574,19 @@ function SkillsFootnotes({ snapshot }: { snapshot: ProjectSkillsSnapshot }) {
   );
 }
 
+const NO_MEMBERS: ReadonlyArray<SkillMemberProject> = [];
+
 export function ProjectSkillsView({
   environmentId,
   projectId,
   folder,
+  memberProjects = NO_MEMBERS,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   folder: string;
+  /** This project on every machine, for installing it on the others. */
+  memberProjects?: ReadonlyArray<SkillMemberProject>;
 }) {
   const [rescan, setRescan] = useState(false);
   const query = useEnvironmentQuery(
@@ -626,7 +600,37 @@ export function ProjectSkillsView({
   const [providers, setProviders] = useState<ReadonlyArray<string>>([]);
   const [levels, setLevels] = useState<ReadonlyArray<string>>([]);
   const [tiers, setTiers] = useState<ReadonlyArray<string>>([]);
-  const [openSkill, setOpenSkill] = useState<string | null>(null);
+  // `?skill=` from the composer's Manage link opens that skill's sheet once, then leaves the URL,
+  // so closing the sheet, a reload or Back does not open it again.
+  const linked = useSearch({ strict: false }) as { readonly skill?: unknown };
+  const linkedSkill = typeof linked.skill === "string" && linked.skill !== "" ? linked.skill : null;
+  const navigate = useNavigate();
+  const [openSkill, setOpenSkill] = useState<string | null>(linkedSkill);
+  /** The skill the link named, until the sheet opens for it or the notice is dismissed. */
+  const [linkedName, setLinkedName] = useState<string | null>(linkedSkill);
+  useEffect(() => {
+    if (linkedSkill === null) return;
+    setOpenSkill(linkedSkill);
+    setLinkedName(linkedSkill);
+    void navigate({
+      to: ".",
+      search: ({ skill: _skill, ...rest }: Record<string, unknown>) => rest,
+      replace: true,
+    });
+  }, [linkedSkill, navigate]);
+  const [sheetFocus, setSheetFocus] = useState<SkillSheetFocus | null>(null);
+  const [updates, setUpdates] = useState<Readonly<Record<string, string | null>>>({});
+  const openWith = useCallback((name: string, focus?: SkillSheetFocus) => {
+    setOpenSkill(name);
+    setSheetFocus(focus ?? null);
+  }, []);
+  const noteLatest = useCallback(
+    (skill: string, latest: string | null) =>
+      setUpdates((current) =>
+        current[skill] === latest ? current : { ...current, [skill]: latest },
+      ),
+    [],
+  );
   // The first Rescan switches the query key; keep showing the last result while it scans.
   const lastSnapshot = useRef(query.data);
   if (query.data) lastSnapshot.current = query.data;
@@ -648,8 +652,17 @@ export function ProjectSkillsView({
   const chipsActive = providers.length + levels.length + tiers.length > 0;
   const filtered = chipsActive || problemsOnly || search.trim() !== "";
   const detailRow = openSkill
-    ? (snapshot?.rows.find((candidate) => candidate.name === openSkill) ?? null)
+    ? (snapshot?.rows.find((candidate) => candidate.name === openSkill) ??
+      snapshot?.rows.find((candidate) => candidate.aliases?.includes(openSkill)) ??
+      null)
     : null;
+  const linkedMissing =
+    linkedName !== null &&
+    openSkill === linkedName &&
+    snapshot !== undefined &&
+    snapshot !== null &&
+    detailRow === null &&
+    !query.isPending;
   const attention = snapshot ? projectSkillAttentionCount(snapshot.rows) : 0;
   const entries = useProviderEntries(environmentId);
   const presenceByLabel = useMemo(() => {
@@ -686,6 +699,29 @@ export function ProjectSkillsView({
           still matches the version vskill installed. Filter by agent or by level: project skills
           live in this folder, user skills apply to every project. Click a skill for details.
         </p>
+        {linkedMissing ? (
+          <p
+            className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+            role="status"
+            data-testid="skills-linked-missing"
+          >
+            <span>
+              <span className="font-medium text-foreground">{linkedName}</span> is not loaded in
+              this project.
+            </span>
+            <Button
+              size="micro"
+              variant="ghost-muted"
+              type="button"
+              onClick={() => {
+                setLinkedName(null);
+                setOpenSkill(null);
+              }}
+            >
+              Dismiss
+            </Button>
+          </p>
+        ) : null}
         {snapshot ? (
           <p className="text-sm text-foreground" role="status" data-testid="skills-summary">
             {summarizeProjectSkills(snapshot.rows)}
@@ -806,7 +842,13 @@ export function ProjectSkillsView({
                   </TableRow>
                 ) : (
                   rows.map((row) => (
-                    <SkillRow key={row.name} row={row} entries={entries} onOpen={setOpenSkill} />
+                    <SkillRow
+                      key={row.name}
+                      row={row}
+                      entries={entries}
+                      update={updates[row.name] ?? null}
+                      onOpen={openWith}
+                    />
                   ))
                 )}
               </TableBody>
@@ -822,7 +864,16 @@ export function ProjectSkillsView({
             {/* The page also renders inside the Settings dialog; the sheet must cover it. */}
             <SheetPopup className="max-w-lg" layer="dialog" data-testid="skill-details">
               {detailRow ? (
-                <>
+                <SkillControlsProvider
+                  key={detailRow.name}
+                  environmentId={environmentId}
+                  projectId={projectId}
+                  row={detailRow}
+                  memberProjects={memberProjects}
+                  initialPushOpen={sheetFocus === "push"}
+                  onChanged={query.refresh}
+                  onLatest={noteLatest}
+                >
                   <SheetHeader>
                     <SheetTitle className="me-8 break-all">{detailRow.name}</SheetTitle>
                     {detailRow.description ? (
@@ -830,7 +881,8 @@ export function ProjectSkillsView({
                     ) : null}
                   </SheetHeader>
                   <SkillDetails row={detailRow} entries={entries} />
-                </>
+                  <ProjectSkillSheetFooter />
+                </SkillControlsProvider>
               ) : null}
             </SheetPopup>
           </Sheet>

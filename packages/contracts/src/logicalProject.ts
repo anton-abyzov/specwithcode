@@ -64,6 +64,31 @@ export function projectNameKey(name: string): string {
   return name.normalize("NFC").trim().toLowerCase();
 }
 
+/**
+ * Where the desktop app tells its own server that the Mac is about to sleep,
+ * so the server announces a sleeping lease to its standbys first. Only this
+ * machine's own bearer with access:write may call it.
+ */
+export const COORDINATOR_SUSPEND_PATH = "/api/coordinator/v1/suspend";
+
+/** The silence, in minutes, after which an armed standby takes over the coordinator. */
+export const COORDINATOR_STANDBY_AFTER_MINUTES = [5, 15, 30, 60] as const;
+export const DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES = 15;
+export const CoordinatorStandbyAfterMinutes = Schema.Literals(COORDINATOR_STANDBY_AFTER_MINUTES);
+export type CoordinatorStandbyAfterMinutes = typeof CoordinatorStandbyAfterMinutes.Type;
+
+/**
+ * The one member the owner chose to take over this coordinator automatically
+ * when it goes quiet. Off when absent. The standby learns its role from the
+ * owner's `acceptStandby`, never from a peer message.
+ */
+export const ProjectCoordinatorStandby = Schema.Struct({
+  member: LogicalProjectMember,
+  afterMinutes: CoordinatorStandbyAfterMinutes,
+  enabledAt: IsoDateTime,
+});
+export type ProjectCoordinatorStandby = typeof ProjectCoordinatorStandby.Type;
+
 /** A relinquished binding never becomes active through an ordinary settings edit. */
 export const ProjectCoordinatorBinding = Schema.Struct({
   epoch: NonNegativeInt,
@@ -74,11 +99,16 @@ export const ProjectCoordinatorBinding = Schema.Struct({
   /** Why a handoff returned the coordinator to this machine after a failure. */
   releaseReason: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
   /**
-   * Set by a manual takeover: when a member made itself the coordinator while
-   * the previous one was unreachable. Turns the previous one ran after this
-   * are listed for review once it returns.
+   * Set by a takeover: when a member made itself the coordinator while the
+   * previous one was unreachable, by the owner's click or by an armed standby
+   * (`takenOverBy`). Turns the previous one ran after this are listed for
+   * review once it returns.
    */
   takenOverAt: Schema.optional(IsoDateTime),
+  /** Who took over: the owner (`person`) or an armed standby (`auto`). */
+  takenOverBy: Schema.optional(Schema.Literals(["person", "auto"])),
+  /** Set only on an active binding while automatic takeover is on. */
+  standby: Schema.optional(ProjectCoordinatorStandby),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
 

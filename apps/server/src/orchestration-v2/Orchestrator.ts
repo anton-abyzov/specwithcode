@@ -203,6 +203,7 @@ import {
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
+import * as CoordinatorWakeGate from "../project/CoordinatorWakeGate.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isPersonStopRequest } from "./systemInterruptReasons.ts";
 import * as SteersInFlight from "./SteersInFlight.ts";
@@ -1160,6 +1161,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // While the service is held for an update, nothing may start new work.
   const updateHold = yield* ServiceUpdateHold.optional;
   const handoffGate = yield* HandoffTurnGate.HandoffTurnGate;
+  // Automatic takeover: a coordinator whose standby went quiet starts no turn.
+  const coordinatorGate = yield* CoordinatorWakeGate.CoordinatorWakeGate;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
   const inactiveArchiveGuard = yield* InactiveThreadArchiveGuard.InactiveThreadArchiveGuard;
@@ -1755,6 +1758,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       // A fenced handoff copy keeps its queue; the machine running it now takes the work.
       if ((yield* handoffGate.check(threadId)) !== null) return;
+      if ((yield* coordinatorGate.check(threadId)) !== null) return;
       const projection = yield* readCommandProjection(threadId);
       if (
         projection.thread.archivedAt !== null ||
@@ -5297,7 +5301,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       // Handoff mode: one execution owner per thread. A fenced or stale copy never starts a turn.
-      const handoffRefusal = yield* handoffGate.check(command.threadId);
+      const handoffRefusal =
+        (yield* handoffGate.check(command.threadId)) ??
+        (yield* coordinatorGate.check(command.threadId));
       if (handoffRefusal !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

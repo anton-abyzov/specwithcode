@@ -127,6 +127,15 @@ export class ProjectSkillsService extends Context.Service<
     readonly read: (
       input: ProjectSkillsReadInput,
     ) => Effect.Effect<ProjectSkillsSnapshot, ProjectSkillsReadError>;
+    /** The folder a read of `input` would scan, refused like a read. */
+    readonly resolveCwd: (
+      input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId">,
+    ) => Effect.Effect<string, ProjectSkillsReadError>;
+    /** Forgets the cached answer for a folder, so the next read scans it again. */
+    readonly invalidate: (input: {
+      readonly projectId: ProjectSkillsReadInput["projectId"];
+      readonly cwd: string;
+    }) => Effect.Effect<void>;
   }
 >()("specweave-studio/project/ProjectSkillsService") {}
 
@@ -208,6 +217,70 @@ export const make = Effect.gen(function* () {
       return providerSkillsForCwd(current, cwd, Option.isSome(finished) ? "done" : "timeout");
     });
 
+  /** The folder `input` names, once the project's own root and worktrees allow it. */
+  const cwdFor = (
+    input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId">,
+    workspaceRoot: string,
+  ) =>
+    Effect.gen(function* () {
+      const worktrees =
+        input.cwd === undefined || path.resolve(input.cwd) === path.resolve(workspaceRoot)
+          ? []
+          : yield* projectWorktrees(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSkillsReadError({
+                    projectId: input.projectId,
+                    reason: "read_failed",
+                    cause,
+                  }),
+              ),
+            );
+      const cwd = allowedSkillsCwd(path.resolve, workspaceRoot, worktrees, input.cwd);
+      if (cwd === null) {
+        return yield* new ProjectSkillsReadError({
+          projectId: input.projectId,
+          reason: "cwd_not_allowed",
+        });
+      }
+
+      return cwd;
+    });
+
+  const projectRoot = (projectId: ProjectSkillsReadInput["projectId"]) =>
+    Effect.gen(function* () {
+      const project = yield* projects
+        .get(projectId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProjectSkillsReadError({ projectId, reason: "read_failed", cause }),
+          ),
+        );
+      if (Option.isNone(project))
+        return yield* new ProjectSkillsReadError({ projectId, reason: "project_not_found" });
+      return project.value.workspaceRoot;
+    });
+
+  const resolveCwd = (input: Pick<ProjectSkillsReadInput, "projectId" | "cwd" | "threadId">) =>
+    Effect.gen(function* () {
+      return yield* cwdFor(input, yield* projectRoot(input.projectId));
+    });
+
+  const invalidate = (input: {
+    readonly projectId: ProjectSkillsReadInput["projectId"];
+    readonly cwd: string;
+  }) =>
+    Ref.update(cache, (current) => {
+      const next = new Map(current);
+      for (const [key, entry] of next)
+        if (
+          entry.projectId === input.projectId &&
+          path.resolve(entry.snapshot.cwd) === path.resolve(input.cwd)
+        )
+          next.delete(key);
+      return next;
+    });
+
   const read = (input: ProjectSkillsReadInput) =>
     Effect.gen(function* () {
       const project = yield* projects.get(input.projectId).pipe(
@@ -240,26 +313,7 @@ export const make = Effect.gen(function* () {
           )
             return entry.snapshot;
       }
-      const worktrees =
-        input.cwd === undefined || path.resolve(input.cwd) === path.resolve(workspaceRoot)
-          ? []
-          : yield* projectWorktrees(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectSkillsReadError({
-                    projectId: input.projectId,
-                    reason: "read_failed",
-                    cause,
-                  }),
-              ),
-            );
-      const cwd = allowedSkillsCwd(path.resolve, workspaceRoot, worktrees, input.cwd);
-      if (cwd === null) {
-        return yield* new ProjectSkillsReadError({
-          projectId: input.projectId,
-          reason: "cwd_not_allowed",
-        });
-      }
+      const cwd = yield* cwdFor(input, workspaceRoot);
 
       const eligible = (yield* registry.getProviders).filter(
         (provider) => provider.enabled && provider.availability !== "unavailable",
@@ -292,7 +346,7 @@ export const make = Effect.gen(function* () {
       return snapshot;
     });
 
-  return ProjectSkillsService.of({ read });
+  return ProjectSkillsService.of({ read, resolveCwd, invalidate });
 });
 
 export const layer = Layer.effect(ProjectSkillsService, make);

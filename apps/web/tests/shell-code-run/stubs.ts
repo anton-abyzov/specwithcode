@@ -40,6 +40,14 @@ export const terminalEnvironment = {
 /** Commands the fixture scripts: output lines, then an exit code or nothing (keeps running). */
 function script(command: string): { lines: string[]; exitCode: number | null } {
   if (command.includes("sleep")) return { lines: ["Waiting for the dev server…"], exitCode: null };
+  if (command.includes("gh auth"))
+    return {
+      lines: [
+        "\u001b[33m!\u001b[0m First copy your one-time code: \u001b[1m3160-87C3\u001b[0m",
+        "Press Enter to open https://github.com/login/device in your browser... ",
+      ],
+      exitCode: null,
+    };
   if (command.includes("missing"))
     return { lines: ["\u001b[31mls: missing: No such file or directory\u001b[0m"], exitCode: 1 };
   return {

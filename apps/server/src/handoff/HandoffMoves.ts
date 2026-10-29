@@ -57,6 +57,13 @@ import * as Option from "effect/Option";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import {
+  autoContinueMinutes,
+  designatedMachine,
+  makeAutoContinueLoops,
+  noteAnnounced,
+  noteAnswered,
+} from "./HandoffAutoContinue.ts";
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
@@ -975,7 +982,11 @@ export const make = Effect.gen(function* () {
    * does not answer a direct probe. An agent also needs both shown: this
    * machine online and the source silent rather than unaskable.
    */
-  const continueHere = (input: HandoffContinueHereInput, options?: HandoffContinueHereOptions) =>
+  const continueHereAs = (
+    input: HandoffContinueHereInput,
+    reason: "continue-here" | "auto-takeover",
+    options?: HandoffContinueHereOptions,
+  ) =>
     Effect.gen(function* () {
       const byAgent = options?.byAgent === true;
       const document = yield* handoff.document;
@@ -1062,7 +1073,7 @@ export const make = Effect.gen(function* () {
             sourceThreadId: input.sourceThreadId,
             epoch: replica.lease.epoch + 1,
             sequence: replica.checkpoint.sequence,
-            reason: "continue-here",
+            reason,
             modelSelection: input.modelSelection ?? null,
           },
         )
@@ -1076,11 +1087,30 @@ export const make = Effect.gen(function* () {
       } satisfies HandOffResult;
     });
 
+  const continueHere = (input: HandoffContinueHereInput, options?: HandoffContinueHereOptions) =>
+    continueHereAs(input, "continue-here", options);
+
   const resumeFenced = Effect.gen(function* () {
     yield* handoff.updateDocument(
       (document) => [undefined, { ...document, pausedSince: null }] as const,
     );
     return yield* handoff.snapshot;
+  });
+
+  const autoContinue = yield* makeAutoContinueLoops({
+    self,
+    document: handoff.document,
+    updateRecord: (threadId, change) => updateRecord(threadId, change).pipe(Effect.ignore),
+    threadShell: (threadId) =>
+      projections.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)),
+    peerLabel,
+    interruptRun: (shell, reason) => interruptRun(shell, reason).pipe(Effect.asVoid),
+    project: (projectId) =>
+      projects.getById(projectId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      ),
+    continueHereAs,
   });
 
   /**
@@ -1094,17 +1124,55 @@ export const make = Effect.gen(function* () {
   const heartbeatOnce = Effect.gen(function* () {
     const document = yield* handoff.document;
     const now = yield* Clock.currentTimeMillis;
-    const byPeer = new Map<EnvironmentId, Array<{ sourceThreadId: ThreadId; epoch: number }>>();
+    const nowText = DateTime.formatIso(DateTime.makeUnsafe(now));
+    const autoMinutes = autoContinueMinutes(document.config);
+    const byPeer = new Map<
+      EnvironmentId,
+      Array<{ sourceThreadId: ThreadId; epoch: number; autoContinueMinutes?: number }>
+    >();
     for (const [id, record] of Object.entries(document.threads)) {
       if (record.continuedOn !== null || record.lease === null) continue;
       if (record.lease.holderEnvironmentId !== self) continue;
+      // Only the one designated machine hears the delay, and only for a handoff-mode thread.
+      const designated =
+        autoMinutes === null ||
+        effectiveHandoffMode(document, record.projectId, record.mode) !== "on"
+          ? null
+          : designatedMachine({
+              config: document.config,
+              project: yield* projects.getById(record.projectId).pipe(
+                Effect.map(Option.getOrNull),
+                Effect.orElseSucceed(() => null),
+              ),
+              threadId: id,
+              self,
+            });
       for (const replica of record.replicas) {
         if (replica.environmentId === self) continue;
         const list = byPeer.get(replica.environmentId) ?? [];
-        list.push({ sourceThreadId: id as ThreadId, epoch: record.lease.epoch });
+        list.push({
+          sourceThreadId: id as ThreadId,
+          epoch: record.lease.epoch,
+          ...(autoMinutes !== null && replica.environmentId === designated
+            ? { autoContinueMinutes: autoMinutes }
+            : {}),
+        });
         byPeer.set(replica.environmentId, list);
       }
     }
+    const announcedTo = (peer: EnvironmentId) =>
+      (byPeer.get(peer) ?? []).find((lease) => lease.autoContinueMinutes !== undefined)
+        ?.autoContinueMinutes ?? null;
+    // Saved before sending: a heartbeat whose answer is lost may still have reached the peer.
+    yield* handoff.updateDocument((current) => {
+      const before = current.autoContinuePeers ?? {};
+      let peers = before;
+      for (const peer of byPeer.keys()) {
+        const minutes = announcedTo(peer);
+        if (minutes !== null) peers = noteAnnounced(peers, peer, minutes, nowText);
+      }
+      return [undefined, peers === before ? current : { ...current, autoContinuePeers: peers }];
+    });
     // One silent peer must not hold up the others' heartbeats.
     const answers = yield* Effect.forEach(
       [...byPeer],
@@ -1124,6 +1192,15 @@ export const make = Effect.gen(function* () {
     for (const { peer, leases, answer } of answers) {
       if (Option.isNone(answer)) continue;
       lastAnswer.set(peer, now);
+      const minutes = announcedTo(peer);
+      yield* handoff.updateDocument((current) => {
+        const before = current.autoContinuePeers ?? {};
+        if (minutes === null && before[peer] === undefined) return [undefined, current];
+        return [
+          undefined,
+          { ...current, autoContinuePeers: noteAnswered(before, peer, minutes, nowText) },
+        ];
+      });
       const continuedIds = new Set(answer.value.continued.map((entry) => entry.sourceThreadId));
       for (const { sourceThreadId } of leases) {
         const record = document.threads[sourceThreadId];
@@ -1162,6 +1239,7 @@ export const make = Effect.gen(function* () {
         );
       }
     }
+    yield* autoContinue.fenceQuiet(now);
     const usableRemote = (record: (typeof document.threads)[string]) =>
       record.replicas.filter(
         (replica) => replica.environmentId !== self && replica.sequence !== null,
@@ -1311,6 +1389,12 @@ export const make = Effect.gen(function* () {
         yield* replicateTo(shell, checkpoint, destination).pipe(Effect.ignore);
       }
     }
+    // Last, so a slow continuation never holds up this machine's own checkpoints.
+    yield* autoContinue.continueDue.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Handoff automatic continuation failed", { cause }),
+      ),
+    );
   }).pipe(
     Effect.catchCause((cause) => Effect.logWarning("Handoff moves replication failed", { cause })),
   );
@@ -1321,6 +1405,7 @@ export const make = Effect.gen(function* () {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff"),
     handOffMachine,
     continueHere,
+    continueHereAs,
     resumeFenced,
     preflight,
     heartbeat,

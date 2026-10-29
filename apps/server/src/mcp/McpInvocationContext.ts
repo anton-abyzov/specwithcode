@@ -39,6 +39,12 @@ export interface McpClientCaller {
   readonly label: string;
   /** Read only, or the most the threads it starts or changes may run with. */
   readonly access: AuthMcpClientAccess;
+  /**
+   * The coordinator epoch the calling machine names for each linked project
+   * it coordinates, from its request. A worker machine that saw a newer
+   * coordinator claim a project refuses steering calls naming an older one.
+   */
+  readonly coordinatorEpochs?: ReadonlyMap<string, number>;
 }
 
 /**

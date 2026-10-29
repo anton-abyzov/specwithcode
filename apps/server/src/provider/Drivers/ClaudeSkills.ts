@@ -130,7 +130,7 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
  * user and project one. Absent on almost every machine, which is why a missing
  * file is the normal case rather than an error.
  */
-function claudeManagedSettingsPath(
+export function claudeManagedSettingsPath(
   path: Path.Path,
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,
@@ -185,7 +185,7 @@ export function skillOverrideSettingsPaths(
  * boundary Claude Code walks up to for project settings. `undefined` outside
  * a repository.
  */
-const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
+export const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
   cwd: string,
 ): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -687,7 +687,8 @@ const listPluginSkillFiles = Effect.fn("listPluginSkillFiles")(function* (
 });
 
 /**
- * Skills from the Claude Code plugins enabled for `cwd`, named the way the
+ * Skills from installed Claude Code plugins for `cwd`, including disabled copies
+ * for management and Undo, named the way the
  * CLI publishes them: `<plugin>:<skill>`, where `<plugin>` is the manifest
  * `name` (the id before `@` without one) and `<skill>` is the frontmatter
  * `name`, else the skill's directory. A frontmatter name that already carries
@@ -732,13 +733,18 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
     const skills: Array<ServerProviderSkill> = [];
     const seenNames = new Set<string>();
     const seenNamespaces = new Set<string>();
-    for (const id of [...installsById.keys()].sort()) {
+    // Enabled namespaces win over disabled copies with the same name.
+    const ids = [...installsById.keys()].sort(
+      (a, b) =>
+        Number(enabledById.get(a) === false) - Number(enabledById.get(b) === false) ||
+        a.localeCompare(b),
+    );
+    for (const id of ids) {
       const explicit = enabledById.get(id);
-      if (explicit === false) continue;
       const installs = installsById.get(id) ?? [];
       const applicable = applicablePluginInstalls(installs, projectRoots);
       if (explicit === undefined && applicable.length === 0) continue;
-      const candidates = explicit === true ? [...applicable, ...installs] : applicable;
+      const candidates = explicit !== undefined ? [...applicable, ...installs] : applicable;
 
       let pluginRoot: string | undefined;
       for (const candidate of candidates) {
@@ -782,7 +788,7 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
         skills.push({
           name,
           path: file.skillPath,
-          enabled: true,
+          enabled: explicit !== false,
           scope: "plugin",
           ...(frontmatter.kind === "parsed" && frontmatter.description
             ? { description: frontmatter.description }

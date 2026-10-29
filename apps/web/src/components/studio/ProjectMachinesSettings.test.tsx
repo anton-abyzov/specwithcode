@@ -67,6 +67,8 @@ vi.mock("../../lib/machineLastSeen", () => ({
   machineLastSeenAt: (id: string) => state.lastSeen[id] ?? null,
   useMachineLastSeenVersion: () => 0,
 }));
+// Automatic takeover has its own tests; this file covers the copies and links.
+vi.mock("./CoordinatorStandbySettings", () => ({ CoordinatorStandbySettings: () => null }));
 vi.mock("./ProjectLinkDialog", () => ({
   ProjectLinkDialog: (props: Record<string, unknown>) => {
     state.dialog = props;
