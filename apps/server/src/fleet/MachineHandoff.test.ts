@@ -1268,3 +1268,72 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+describe("MachineHandoff project memory", () => {
+  it.effect("moves 4.4 MB of memory intact and records every verified note", () => {
+    const h = makeHarness();
+    const source = h.memory.get(projectId)!;
+    for (let i = 0; i < 20; i += 1)
+      source.set(`topic_${i}.md`, String.fromCharCode(97 + i).repeat(220_000));
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const bundle = imported((yield* service.prepare(preview)).bundle);
+      expect(bundle.context.notes).toHaveLength(21);
+      const receipt = yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
+      expect(receipt.verifiedNotes).toBe(21);
+      expect(Object.fromEntries(h.memory.get(receipt.projectId)!)).toEqual(
+        Object.fromEntries(source),
+      );
+      const replay = yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
+      expect(replay).toMatchObject({ replayed: true, verifiedNotes: 21 });
+    }).pipe(Effect.provide(h.layer));
+  });
+  it.effect("fails the receive and starts nothing when a moved note reads back changed", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const bundle = imported((yield* service.prepare(preview)).bundle);
+      h.state.corruptMemoryWrites = true;
+      const input = { projectId, operationId: id, bundle, mode: "start" as const };
+      expect((yield* failureOnly(service.receive(input))).code).toBe("memory_mismatch");
+      expect(h.state.starts).toHaveLength(0);
+      // The bad file was the move's own and is gone, so the retry writes the note itself.
+      expect([...h.memory.get(`machine-handoff:${id}`)!.keys()]).toEqual([]);
+      h.state.corruptMemoryWrites = false;
+      expect((yield* service.receive(input)).verifiedNotes).toBe(1);
+      expect(Object.fromEntries(h.memory.get(`machine-handoff:${id}`)!)).toEqual({
+        "MEMORY.md": "Actual durable decision",
+      });
+    }).pipe(Effect.provide(h.layer));
+  });
+  it.effect("refuses a read error at the destination instead of overwriting the note", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const bundle = imported((yield* service.prepare(preview)).bundle);
+      h.memory.set(`machine-handoff:${id}`, new Map([["MEMORY.md", "Destination note"]]));
+      h.projects.set(`machine-handoff:${id}`, {
+        ...h.projects.get(projectId)!,
+        id: ProjectId.make(`machine-handoff:${id}`),
+      });
+      h.state.memoryReadFailure = true;
+      const input = { projectId, operationId: id, bundle, mode: "start" as const };
+      expect((yield* failureOnly(service.receive(input))).code).toBe("storage_failed");
+      expect(h.state.memoryWrites).toHaveLength(0);
+      expect(h.state.materializations).toBe(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+  it.effect("refuses people's and agents' memory writes only while the project moves", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      expect(yield* service.guardMemoryWrite(projectId, Effect.succeed("saved"))).toBe("saved");
+      const first = yield* service.prepare(preview);
+      yield* service.prepare({ ...preview, publish: true, expectedDigest: first.bundle.digest });
+      const refused = yield* failureOnly(
+        service.guardMemoryWrite(projectId, Effect.succeed("saved")),
+      );
+      expect(refused).toMatchObject({ _tag: "ProjectWorkspaceError", code: "moving" });
+      expect(refused.message).toContain("moving to another machine");
+    }).pipe(Effect.provide(h.layer));
+  });
+});

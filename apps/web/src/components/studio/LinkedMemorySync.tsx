@@ -18,7 +18,9 @@ const SYNC_EVERY_MS = 60_000;
 /**
  * Keeps project memory the same on every reachable copy of a linked project,
  * in both directions: the last writer wins per file and the other version is
- * kept beside it. Machines too old for two-way memory are left out.
+ * kept beside it. Memory larger than one message goes over in pages, and each
+ * pass ends by checking both copies agree. Machines too old for two-way memory
+ * are left out.
  */
 export function LinkedMemorySync() {
   const projects = useProjects();
@@ -53,10 +55,10 @@ export function LinkedMemorySync() {
     if (running.current || groups.length === 0) return;
     running.current = true;
     void syncLinkedMemory(groups, {
-      exportMemory: async (member) => {
+      exportMemory: async (member, options) => {
         const result = await exportMemory({
           environmentId: member.environmentId,
-          input: { projectId: member.projectId },
+          input: { projectId: member.projectId, ...options },
         });
         return result._tag === "Success" ? result.value : null;
       },

@@ -7,6 +7,7 @@ import {
   WsProjectKnowledgeRpcGroup,
   ProjectThreadsDeleteError,
   type ProjectThreadsDeleteInput,
+  type ProjectMemoryWriteInput,
   type AssetAccessError,
   type AssetCreateUrlResult,
   type AssetResource,
@@ -32,6 +33,10 @@ import * as ProjectService from "./ProjectService.ts";
 import { applyWorkspaceImport } from "./ProjectEnvironmentAdoption.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectWorktreeCleanup from "./ProjectWorktreeCleanup.ts";
+
+type ProjectMemoryDeleteInput = Parameters<
+  ProjectWorkspaceService.ProjectWorkspaceService["Service"]["deleteMemory"]
+>[0];
 export const handlers = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const handoff = yield* MachineHandoff.MachineHandoff;
@@ -58,8 +63,11 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsWorkspaceRead]: workspace.readWorkspace,
     [WS_METHODS.projectsStarterSuggestions]: starters.read,
     [WS_METHODS.projectsMemoryRead]: workspace.readMemory,
-    [WS_METHODS.projectsMemoryWrite]: workspace.writeMemory,
-    [WS_METHODS.projectsMemoryDelete]: workspace.deleteMemory,
+    // People edit memory here; while the project moves, the move's copy must stay the last word.
+    [WS_METHODS.projectsMemoryWrite]: (input: ProjectMemoryWriteInput) =>
+      handoff.guardMemoryWrite(input.projectId, workspace.writeMemory(input)),
+    [WS_METHODS.projectsMemoryDelete]: (input: ProjectMemoryDeleteInput) =>
+      handoff.guardMemoryWrite(input.projectId, workspace.deleteMemory(input)),
     [WS_METHODS.projectsLibraryRead]: workspace.readLibrary,
     [WS_METHODS.projectsLibraryAddArtifact]: workspace.addLibraryArtifact,
     [WS_METHODS.projectsThreadReportsRead]: reports.read,

@@ -26,6 +26,8 @@ export class CoordinatorReplicas extends Context.Service<
       projectId: ProjectId,
       replica: ProjectCoordinatorReplica,
     ) => Effect.Effect<void, CoordinatorReplicaError>;
+    /** Drops a deleted project's replica; a missing file is already dropped. */
+    readonly remove: (projectId: ProjectId) => Effect.Effect<void, CoordinatorReplicaError>;
   }
 >()("specweave-studio/project/CoordinatorReplicas") {}
 
@@ -72,6 +74,8 @@ export const layer = Layer.effect(
           );
           yield* fileSystem.rename(temporary, file);
         }).pipe(Effect.mapError(failed)),
+      remove: (projectId) =>
+        fileSystem.remove(fileOf(projectId), { force: true }).pipe(Effect.mapError(failed)),
     });
   }),
 );
@@ -82,5 +86,6 @@ export const layerMemory = Layer.sync(CoordinatorReplicas, () => {
   return CoordinatorReplicas.of({
     read: (projectId) => Effect.sync(() => Option.fromNullishOr(replicas.get(projectId))),
     write: (projectId, replica) => Effect.sync(() => void replicas.set(projectId, replica)),
+    remove: (projectId) => Effect.sync(() => void replicas.delete(projectId)),
   });
 });

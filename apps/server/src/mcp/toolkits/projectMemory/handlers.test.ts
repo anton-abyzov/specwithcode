@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   EventId,
   ProjectId,
+  ProjectWorkspaceError,
   ProviderInstanceId,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -18,6 +19,7 @@ import * as Access from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import { ProjectMemoryToolkit } from "./tools.ts";
 import * as Handlers from "./handlers.ts";
+import * as MachineHandoff from "../../../fleet/MachineHandoff.ts";
 
 it("pages a large memory list and caps one page", () => {
   const files = Array.from({ length: 1_500 }, (_, i) => ({
@@ -215,3 +217,23 @@ it.effect("read-only external clients cannot write project memory", () =>
     Effect.provide(layer),
   ),
 );
+it.effect("refuses an agent's memory write while the project moves to another machine", () => {
+  const moving = Layer.mock(MachineHandoff.MachineHandoff)({
+    guardMemoryWrite: (projectId) =>
+      Effect.fail(new ProjectWorkspaceError({ projectId, code: "moving" })),
+  });
+  const movingLayer = Access.HandlersLayer.layer(Handlers.layer).pipe(
+    Layer.provideMerge(Layer.merge(dependencies, moving)),
+  );
+  return Effect.gen(function* () {
+    const toolkit = yield* ProjectMemoryToolkit;
+    const result = yield* toolkit
+      .handle("studio_project_memory_write", { name: "MEMORY.md", content: "late" })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(result.at(-1)?.result).toMatchObject({
+      _tag: "OrchestratorMcpFailure",
+      code: "invalid_request",
+      message: expect.stringContaining("moving to another machine"),
+    });
+  }).pipe(Effect.provide(movingLayer));
+});

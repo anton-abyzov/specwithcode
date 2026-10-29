@@ -196,6 +196,7 @@ function machine(environment: string) {
           CoordinatorReplicas.CoordinatorReplicas.of({
             read: (projectId) => Effect.sync(() => Option.fromNullishOr(replicas.get(projectId))),
             write: (projectId, replica) => Effect.sync(() => void replicas.set(projectId, replica)),
+            remove: (projectId) => Effect.sync(() => void replicas.delete(projectId)),
           }),
         ),
         Layer.succeed(ProjectionStore.ProjectionStoreV2, {

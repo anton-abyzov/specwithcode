@@ -47,11 +47,13 @@ function recorder(
   mergeFails: ReadonlySet<string> = new Set(),
 ) {
   const calls: string[] = [];
+  const mismatches: string[] = [];
   return {
     calls,
+    mismatches,
     driver: {
-      exportMemory: async (target: Member) => {
-        calls.push(`export ${target.environmentId}`);
+      exportMemory: async (target: Member, options?: { digestOnly?: boolean }) => {
+        calls.push(`export ${target.environmentId}${options?.digestOnly ? " digest" : ""}`);
         const found = exports[target.environmentId];
         if (found instanceof Error) throw found;
         return found ?? null;
@@ -63,6 +65,62 @@ function recorder(
         if (mergeFails.has(target.environmentId)) throw new Error("refused");
         return true;
       },
+      reportMismatch: (left: Member, right: Member) =>
+        mismatches.push(`${left.environmentId}/${right.environmentId}`),
+    },
+  };
+}
+
+/**
+ * Machines that page: each holds files (name to hash), sends `pageSize` files
+ * per page and a digest, and a merge takes the higher hash of every file, so
+ * one pass converges unless `stubborn` refuses to take anything.
+ */
+function pagingMachines(
+  stores: Record<string, Record<string, string>>,
+  { pageSize = 2, stubborn = "" }: { pageSize?: number; stubborn?: string } = {},
+) {
+  const calls: string[] = [];
+  const mismatches: string[] = [];
+  const ordered = (environmentId: string) =>
+    Object.entries(stores[environmentId]!).toSorted(([a], [b]) =>
+      a === "MEMORY.md" ? -1 : b === "MEMORY.md" ? 1 : a < b ? -1 : 1,
+    );
+  const digest = (environmentId: string) => JSON.stringify(ordered(environmentId));
+  return {
+    calls,
+    mismatches,
+    stores,
+    driver: {
+      exportMemory: async (target: Member, options?: { cursor?: string; digestOnly?: boolean }) => {
+        const id = target.environmentId;
+        calls.push(
+          `export ${id}${options?.digestOnly ? " digest" : options?.cursor ? ` @${options.cursor}` : ""}`,
+        );
+        if (options?.digestOnly)
+          return memory(id, {}, { digest: digest(id), truncated: true } as never);
+        const start = Number(options?.cursor ?? 0);
+        const all = ordered(id);
+        const page = all.slice(start, start + pageSize);
+        const more = start + pageSize < all.length;
+        return memory(id, Object.fromEntries(page), {
+          truncated: more,
+          digest: digest(id),
+          ...(more ? { nextCursor: String(start + pageSize) } : {}),
+        } as never);
+      },
+      mergeMemory: async (target: Member, _peer: Member, from: LinkedMemoryExport) => {
+        calls.push(
+          `merge ${from.files.map((file) => file.name).join(",")} into ${target.environmentId}`,
+        );
+        if (target.environmentId === stubborn) return false;
+        const store = stores[target.environmentId]!;
+        for (const file of from.files)
+          if ((store[file.name] ?? "") < file.contentSha256) store[file.name] = file.contentSha256;
+        return true;
+      },
+      reportMismatch: (left: Member, right: Member) =>
+        mismatches.push(`${left.environmentId}/${right.environmentId}`),
     },
   };
 }
@@ -104,19 +162,26 @@ describe("linked memory sync", () => {
       c: memory("c", { "notes.md": "3" }),
     });
     await syncLinkedMemory([[member("a"), member("b"), member("c")]], driver);
-    expect(calls).toEqual([
+    expect(calls.filter((call) => call.startsWith("merge"))).toEqual([
+      "merge b into a from b",
+      "merge a into b from a",
+      "merge b into a from b",
+      "merge a into b from a",
+      "merge c into a from c",
+      "merge a into c from a",
+      "merge c into a from c",
+      "merge a into c from a",
+      "merge c into b from c",
+      "merge b into c from b",
+      "merge c into b from c",
+      "merge b into c from b",
+    ]);
+    // Neither side changes in this stub, so every pair is retried once and then reported.
+    expect(calls.slice(0, 4)).toEqual([
       "export a",
       "export b",
       "merge b into a from b",
       "merge a into b from a",
-      "export a",
-      "export c",
-      "merge c into a from c",
-      "merge a into c from a",
-      "export b",
-      "export c",
-      "merge c into b from c",
-      "merge b into c from b",
     ]);
   });
 
@@ -145,7 +210,8 @@ describe("linked memory sync", () => {
       b: memory("b", {}),
     });
     await syncLinkedMemory([[member("a"), member("b")]], driver);
-    expect(calls.filter((call) => call.startsWith("merge"))).toHaveLength(2);
+    // Two each way: the stub never converges, so the pair gets its one retry.
+    expect(calls.filter((call) => call.startsWith("merge"))).toHaveLength(4);
   });
 
   it("skips a pair when either copy cannot be read and carries on with the rest", async () => {
@@ -163,7 +229,7 @@ describe("linked memory sync", () => {
       ],
       driver,
     );
-    expect(calls).toEqual([
+    expect(calls.slice(0, 6)).toEqual([
       "export a",
       "export b",
       "export c",
@@ -179,9 +245,9 @@ describe("linked memory sync", () => {
       new Set(["a"]),
     );
     await expect(syncLinkedMemory([[member("a"), member("b")]], driver)).resolves.toBeUndefined();
-    expect(calls).toEqual([
-      "export a",
-      "export b",
+    expect(calls.filter((call) => call.startsWith("merge"))).toEqual([
+      "merge b into a from b",
+      "merge a into b from a",
       "merge b into a from b",
       "merge a into b from a",
     ]);
@@ -191,5 +257,63 @@ describe("linked memory sync", () => {
     const { calls, driver } = recorder({ a: memory("a", { "MEMORY.md": "1" }) });
     await syncLinkedMemory([[member("a", "one"), member("a", "two")]], driver);
     expect(calls).toEqual([]);
+  });
+
+  it("reports a pair that still differs after one retry", async () => {
+    const { mismatches, driver } = recorder({
+      a: memory("a", { "MEMORY.md": "1" }),
+      b: memory("b", { "MEMORY.md": "2" }),
+    });
+    await syncLinkedMemory([[member("a"), member("b")]], driver);
+    expect(mismatches).toEqual(["a/b"]);
+  });
+
+  it("does not report a copy too old to send all of its memory", async () => {
+    const { mismatches, calls, driver } = recorder({
+      a: memory("a", { "MEMORY.md": "1" }, { truncated: true }),
+      b: memory("b", { "MEMORY.md": "1" }),
+    });
+    await syncLinkedMemory([[member("a"), member("b")]], driver);
+    expect(calls.filter((call) => call.startsWith("merge"))).toHaveLength(2);
+    expect(mismatches).toEqual([]);
+  });
+
+  it("fetches every page of both sides before merging, then confirms by digest", async () => {
+    const machines = pagingMachines({
+      a: { "MEMORY.md": "1", "a1.md": "1", "a2.md": "1", "a3.md": "1" },
+      b: { "MEMORY.md": "2", "b1.md": "2" },
+    });
+    await syncLinkedMemory([[member("a"), member("b")]], machines.driver);
+    expect(machines.calls).toEqual([
+      "export a",
+      "export b",
+      "export a @2",
+      "merge MEMORY.md,b1.md into a",
+      "merge MEMORY.md,a1.md into b",
+      "merge a2.md,a3.md into b",
+      "export a digest",
+      "export b digest",
+    ]);
+    expect(machines.stores.a).toEqual(machines.stores.b);
+    expect(Object.keys(machines.stores.b!)).toHaveLength(5);
+    expect(machines.mismatches).toEqual([]);
+  });
+
+  it("stops after the first pages when both whole-memory digests already match", async () => {
+    const same = { "MEMORY.md": "1", "a1.md": "1", "a2.md": "1", "a3.md": "1" };
+    const machines = pagingMachines({ a: { ...same }, b: { ...same } });
+    await syncLinkedMemory([[member("a"), member("b")]], machines.driver);
+    expect(machines.calls).toEqual(["export a", "export b"]);
+  });
+
+  it("retries a pair whose digests differ once, then reports it", async () => {
+    const machines = pagingMachines(
+      { a: { "MEMORY.md": "1" }, b: { "MEMORY.md": "2" } },
+      { stubborn: "a" },
+    );
+    await syncLinkedMemory([[member("a"), member("b")]], machines.driver);
+    expect(machines.calls.filter((call) => call.endsWith("digest"))).toHaveLength(4);
+    expect(machines.calls.filter((call) => call.startsWith("merge"))).toHaveLength(4);
+    expect(machines.mismatches).toEqual(["a/b"]);
   });
 });

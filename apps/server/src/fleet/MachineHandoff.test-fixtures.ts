@@ -111,7 +111,16 @@ const makeHarness = (
     /** The destination's existing chats, as a project access save sees them. */
     destinationChatRuntimeMode: "approval-required" as RuntimeMode,
     runtimeModeSets: [] as Array<{ threadId: string; runtimeMode: RuntimeMode }>,
+    memoryWrites: [] as Array<{ projectId: string; name: string }>,
+    /** Every memory read fails as a storage error, not a missing file. */
+    memoryReadFailure: false,
+    /** Memory writes store other content than asked, as a broken disk would. */
+    corruptMemoryWrites: false,
   };
+  /** Project memory by project: the source starts with one durable note. */
+  const memory = new Map<string, Map<string, string>>([
+    [projectId, new Map([["MEMORY.md", "Actual durable decision"]])],
+  ]);
   const projects = new Map<string, Project>();
   projects.set(projectId, {
     id: projectId,
@@ -219,23 +228,55 @@ const makeHarness = (
     } as unknown as ProjectService.ProjectService["Service"]),
     Layer.succeed(ProjectWorkspaceService.ProjectWorkspaceService, {
       assertAdmission: () => Effect.void,
-      readWorkspace: (input: { projectId: ProjectId }) =>
-        Effect.succeed({
-          settings: projects.get(input.projectId)!.workspaceSettings!,
-          memory: {
-            files: [
-              { name: "MEMORY.md", revision: 1, updatedAt: "2026-10-13T00:00:00Z", byteLength: 5 },
-            ],
-            totalBytes: 5,
-          },
+      readWorkspace: (input: { projectId: ProjectId }) => {
+        const project = projects.get(input.projectId);
+        if (!project)
+          return Effect.fail(
+            new ProjectWorkspaceError({ projectId: input.projectId, code: "not_found" }),
+          );
+        const files = [...(memory.get(input.projectId) ?? new Map<string, string>())].map(
+          ([name, content]) => ({
+            name,
+            revision: 1,
+            updatedAt: "2026-10-13T00:00:00Z",
+            byteLength: Buffer.byteLength(content),
+          }),
+        );
+        return Effect.succeed({
+          settings: project.workspaceSettings!,
+          memory: { files, totalBytes: files.reduce((sum, file) => sum + file.byteLength, 0) },
+        });
+      },
+      readMemory: (input: { projectId: ProjectId; name: string }) => {
+        const content = memory.get(input.projectId)?.get(input.name);
+        if (state.memoryReadFailure)
+          return Effect.fail(
+            new ProjectWorkspaceError({ projectId: input.projectId, code: "operation_failed" }),
+          );
+        return content === undefined
+          ? Effect.fail(
+              new ProjectWorkspaceError({ projectId: input.projectId, code: "not_found" }),
+            )
+          : Effect.succeed({
+              name: input.name,
+              content,
+              revision: 1,
+              updatedAt: "2026-10-13T00:00:00Z",
+              byteLength: Buffer.byteLength(content),
+            });
+      },
+      writeMemory: (input: { projectId: ProjectId; name: string; content: string }) =>
+        Effect.sync(() => {
+          state.memoryWrites.push({ projectId: input.projectId, name: input.name });
+          const files = memory.get(input.projectId) ?? new Map<string, string>();
+          files.set(input.name, state.corruptMemoryWrites ? "corrupted" : input.content);
+          memory.set(input.projectId, files);
+          return { name: input.name, content: input.content, revision: 1 };
         }),
-      readMemory: () =>
-        Effect.succeed({
-          name: "MEMORY.md",
-          content: "Actual durable decision",
-          revision: 1,
-          updatedAt: "2026-10-13T00:00:00Z",
-          byteLength: 23,
+      deleteMemory: (input: { projectId: ProjectId; name: string }) =>
+        Effect.sync(() => {
+          memory.get(input.projectId)?.delete(input.name);
+          return { name: input.name };
         }),
     } as unknown as ProjectWorkspaceService.ProjectWorkspaceService["Service"]),
     Layer.succeed(ProjectionStore.ProjectionStoreV2, {
@@ -377,7 +418,12 @@ const makeHarness = (
     ),
     Layer.provideMerge(services),
   );
-  return { state, projects, layer: MachineHandoff.layer.pipe(Layer.provideMerge(access)) };
+  return {
+    state,
+    projects,
+    memory,
+    layer: MachineHandoff.layer.pipe(Layer.provideMerge(access)),
+  };
 };
 const imported = (bundle: MachineHandoffBundle): MachineHandoffBundle => {
   const { digest: _digest, ...value } = {

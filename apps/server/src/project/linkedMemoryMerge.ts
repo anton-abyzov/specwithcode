@@ -1,6 +1,6 @@
 import {
   LINKED_MEMORY_HISTORY_LIMIT,
-  LINKED_MEMORY_TOMBSTONE_LIMIT,
+  LINKED_MEMORY_STORED_TOMBSTONE_LIMIT,
   type LinkedMemoryExport,
 } from "@specweave-studio/contracts";
 
@@ -51,7 +51,7 @@ const newestTombstones = (tombstones: Readonly<Record<string, MemoryTombstone>>)
   Object.fromEntries(
     Object.entries(tombstones)
       .toSorted(([, a], [, b]) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt))
-      .slice(0, LINKED_MEMORY_TOMBSTONE_LIMIT),
+      .slice(0, LINKED_MEMORY_STORED_TOMBSTONE_LIMIT),
   );
 
 /** A write from a tool, the UI or a merge: `hash` replaced `previous`. */

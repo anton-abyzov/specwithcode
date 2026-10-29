@@ -3,8 +3,23 @@ import { ModelSelection } from "./modelSelection.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import * as Schema from "effect/Schema";
 import { EnvironmentId, ProjectId, ThreadId } from "./baseSchemas.ts";
+import {
+  PROJECT_MEMORY_FILE_BYTES,
+  PROJECT_MEMORY_MAX_FILES,
+  PROJECT_MEMORY_TOTAL_BYTES,
+} from "./projectWorkspace.ts";
 
+/** The conversation, goal and instructions: everything a bundle carries except memory notes. */
 export const MACHINE_HANDOFF_MAX_BYTES = 2_097_152;
+/** A move carries the project's whole memory, up to the per-project limit. */
+export const MACHINE_HANDOFF_MEMORY_MAX_BYTES = PROJECT_MEMORY_TOTAL_BYTES;
+/**
+ * The serialized bundle as it crosses each environment's WebSocket: 2 MiB of
+ * context plus 16 MiB of notes leaves 12 MiB for JSON escaping, and the whole
+ * stays under the 32 MiB per-message limit of the strictest WebSocket proxy in
+ * the path (the server itself accepts 100 MiB messages).
+ */
+export const MACHINE_HANDOFF_BUNDLE_MAX_BYTES = 31_457_280;
 export const MachineHandoffOperationId = Schema.String.check(
   Schema.isPattern(/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/),
 );
@@ -63,9 +78,9 @@ export const MachineHandoffContext = Schema.Struct({
    * keep the destination's own default.
    */
   runtimeMode: Schema.optional(RuntimeMode),
-  notes: Schema.Array(Schema.Struct({ name: bounded(128), content: bounded(262_144) })).check(
-    Schema.isMaxLength(4096),
-  ),
+  notes: Schema.Array(
+    Schema.Struct({ name: bounded(128), content: bounded(PROJECT_MEMORY_FILE_BYTES) }),
+  ).check(Schema.isMaxLength(PROJECT_MEMORY_MAX_FILES)),
   threads: Schema.Array(
     Schema.Struct({
       environmentId: Schema.optional(EnvironmentId),
@@ -163,6 +178,8 @@ export const MachineHandoffReceiveResult = Schema.Struct({
   workspacePath: Schema.String,
   contextPath: Schema.NullOr(Schema.String),
   replayed: Schema.Boolean,
+  /** Moved memory notes read back on this machine with the bundle's exact content. */
+  verifiedNotes: Schema.optional(Schema.Number),
 });
 export type MachineHandoffReceiveResult = typeof MachineHandoffReceiveResult.Type;
 export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>()(
@@ -186,6 +203,8 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
       "remote_unavailable",
       "storage_failed",
       "launch_failed",
+      "destination_memory_full",
+      "memory_mismatch",
     ]),
   },
 ) {
@@ -215,6 +234,10 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
       storage_failed: "The handoff could not be saved. Retry the same handoff.",
       launch_failed:
         "The context is retained, but the coordinator could not start. Retry this handoff.",
+      destination_memory_full:
+        "This machine's project memory cannot also hold the moved notes (16 MiB and 4,096 files per project). Remove notes here, then retry the same handoff.",
+      memory_mismatch:
+        "A moved memory note did not read back intact on this machine. Retry the same handoff.",
     }[this.code];
   }
 }

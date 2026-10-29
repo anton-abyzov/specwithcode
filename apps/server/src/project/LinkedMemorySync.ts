@@ -56,14 +56,48 @@ const storageFailed = () => new ProjectLinkError({ code: "storage_failed" });
 const byteLength = (content: string) => new TextEncoder().encode(content).length;
 const isSha256 = (value: string) => /^[0-9a-f]{64}$/.test(value);
 const isMemoryName = Schema.is(ProjectMemoryName);
-/** `MEMORY.md` first, then the most recently written, so a truncated export keeps what matters. */
-const exportOrder = (
-  [leftName, left]: readonly [string, LocalMemoryFile],
-  [rightName, right]: readonly [string, LocalMemoryFile],
-) =>
+type ExportEntry = readonly [name: string, file: { readonly updatedAt: string }];
+/** `MEMORY.md` first, then the most recently written, so a cut-short export keeps what matters. */
+const exportOrder = ([leftName, left]: ExportEntry, [rightName, right]: ExportEntry) =>
   Number(rightName === MEMORY_INDEX_NAME) - Number(leftName === MEMORY_INDEX_NAME) ||
   Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
   (leftName < rightName ? -1 : 1);
+/**
+ * A page ends at the last file it sent; the next starts after it in export order.
+ * The page number picks that page's slice of tombstones; an empty name means no file was sent yet.
+ */
+interface ExportCursor {
+  readonly after: ExportEntry | undefined;
+  readonly page: number;
+}
+const encodeCursor = (after: ExportEntry | undefined, page: number) =>
+  JSON.stringify([after?.[0] ?? "", after?.[1].updatedAt ?? "", page]);
+const decodeCursor = (cursor: string): ExportCursor | undefined => {
+  try {
+    const value: unknown = JSON.parse(cursor);
+    if (!Array.isArray(value) || typeof value[0] !== "string" || typeof value[1] !== "string")
+      return undefined;
+    const page = value.length === 2 ? 1 : value[2];
+    if (value.length > 3 || !Number.isSafeInteger(page) || (page as number) < 1) return undefined;
+    if (value[0] === "" && value[1] === "") return { after: undefined, page: page as number };
+    if (Number.isNaN(Date.parse(value[1]))) return undefined;
+    return { after: [value[0], { updatedAt: value[1] }], page: page as number };
+  } catch {
+    // Not JSON: refused below.
+  }
+  return undefined;
+};
+/** The same summary the client compares when a peer sends no digest. */
+const memoryDigest = (
+  files: ReadonlyMap<string, LocalMemoryFile>,
+  tombstones: ReadonlyArray<{ readonly name: string }>,
+) =>
+  LinkedMemoryHistory.memoryContentHash(
+    JSON.stringify([
+      [...files].map(([name, file]) => [name, file.sha]).toSorted(),
+      tombstones.map((tombstone) => tombstone.name).toSorted(),
+    ]),
+  );
 
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
@@ -114,24 +148,54 @@ const make = Effect.gen(function* () {
       return { files, state };
     });
 
-  const memoryExport: LinkedMemorySync["Service"]["memoryExport"] = ({ projectId }) =>
+  /**
+   * One page of this copy's memory, at most `PROJECT_LINK_MAX_BYTES` of content;
+   * `nextCursor` asks for the rest. Tombstones come with the first page only.
+   */
+  const memoryExport: LinkedMemorySync["Service"]["memoryExport"] = (input) =>
     Effect.gen(function* () {
-      const project = yield* load(projectId);
+      const project = yield* load(input.projectId);
       // A personal assistant's memory never leaves its machine.
       if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
       const identity = project.workspaceSettings?.logicalProject;
       if (!identity) return yield* fail("not_linked");
+      const cursor = input.cursor === undefined ? undefined : decodeCursor(input.cursor);
+      if (input.cursor !== undefined && !cursor)
+        return yield* fail("invalid", "The memory page cursor is not valid.");
       const environmentId = yield* environment.getEnvironmentId;
       const label = yield* machineLabel;
       const local = yield* readLocal(project.id);
+      const tombstones = Object.entries(local.state.tombstones)
+        .filter(
+          ([name]) => name !== MEMORY_INDEX_NAME && !local.files.has(name) && isMemoryName(name),
+        )
+        .toSorted(([, a], [, b]) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt))
+        .map(([name, tombstone]) => ({
+          name,
+          deletedAt: tombstone.deletedAt,
+          history: tombstone.history.filter(isSha256),
+        }));
+      const header = {
+        logicalProjectId: identity.id,
+        environmentId,
+        ...(label ? { machineLabel: label.slice(0, 200) } : {}),
+        digest: memoryDigest(local.files, tombstones),
+      };
+      if (input.digestOnly)
+        return { ...header, files: [], tombstones: [], truncated: local.files.size > 0 };
+      const after = cursor?.after;
+      const page = cursor?.page ?? 0;
       const files: LinkedMemoryFile[] = [];
       let bytes = 0;
-      let truncated = false;
+      let filesLeft = false;
       for (const [name, file] of [...local.files].toSorted(exportOrder)) {
+        if (after && exportOrder(after, [name, file]) >= 0) continue;
         const size = byteLength(file.content);
         if (bytes + size > PROJECT_LINK_MAX_BYTES) {
-          truncated = true;
-          continue;
+          // A file larger than a page is skipped, as before; anything else waits for the next page.
+          if (files.length === 0) continue;
+          filesLeft = true;
+          break;
         }
         bytes += size;
         files.push({
@@ -142,24 +206,17 @@ const make = Effect.gen(function* () {
           history: file.history,
         });
       }
-      const tombstones = Object.entries(local.state.tombstones)
-        .filter(
-          ([name]) => name !== MEMORY_INDEX_NAME && !local.files.has(name) && isMemoryName(name),
-        )
-        .toSorted(([, a], [, b]) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt))
-        .slice(0, LINKED_MEMORY_TOMBSTONE_LIMIT)
-        .map(([name, tombstone]) => ({
-          name,
-          deletedAt: tombstone.deletedAt,
-          history: tombstone.history.filter(isSha256),
-        }));
+      // Older peers read only the first page, which carries the newest tombstones as before.
+      const start = page * LINKED_MEMORY_TOMBSTONE_LIMIT;
+      const tombstonesLeft = tombstones.length > start + LINKED_MEMORY_TOMBSTONE_LIMIT;
+      const last = files.at(-1);
+      const nextAfter: ExportEntry | undefined = last ? [last.name, last] : after;
       return {
-        logicalProjectId: identity.id,
-        environmentId,
-        ...(label ? { machineLabel: label.slice(0, 200) } : {}),
+        ...header,
         files,
-        tombstones,
-        truncated,
+        tombstones: tombstones.slice(start, start + LINKED_MEMORY_TOMBSTONE_LIMIT),
+        truncated: filesLeft || tombstonesLeft,
+        ...(filesLeft || tombstonesLeft ? { nextCursor: encodeCursor(nextAfter, page + 1) } : {}),
       };
     });
 
@@ -209,6 +266,10 @@ const make = Effect.gen(function* () {
         const project = yield* load(input.projectId);
         // ...nor takes another machine's in.
         if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
+        // A moving project's bundle is already read, so a merge now would miss the move. The
+        // peer keeps its version and syncs it with the copy the project moves to.
+        if (project.workspaceSettings?.coordinatorBinding?.state === "transferring")
+          return yield* fail("handoff_in_progress");
         const identity = project.workspaceSettings?.logicalProject;
         if (!identity || identity.id !== input.export.logicalProjectId)
           return yield* fail("not_linked");
