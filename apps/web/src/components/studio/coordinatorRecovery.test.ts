@@ -173,6 +173,12 @@ describe("coordinator recovery", () => {
     );
     expect(coordinatorFolderCompatibility(true, "codex")).toBeNull();
     expect(coordinatorFolderCompatibility(true, "claudeAgent")).toBeNull();
+    expect(
+      coordinatorFolderCompatibility(true, "muse", {
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }),
+    ).toBeNull();
     expect(coordinatorFolderCompatibility(false, "acpRegistry")).toBeNull();
     expect(coordinatorFolderCompatibility(true, undefined)).toBeNull();
   });

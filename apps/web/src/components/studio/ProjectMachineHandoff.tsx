@@ -291,7 +291,9 @@ export function ProjectMachineHandoff({
       }
     : undefined;
   const showError = (cause: unknown) =>
-    setError(cause instanceof Error ? cause.message : "The move could not finish. Try it again.");
+    setError(
+      cause instanceof Error ? cause.message : "The handoff could not finish. Try it again.",
+    );
   const reviewed =
     snapshot?.publication === "unpublished" &&
     phase === "review" &&
@@ -454,7 +456,7 @@ export function ProjectMachineHandoff({
       const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
       if (pending?.publishing && pending.targetKey !== selected)
         throw new Error(
-          "An earlier move stopped while publishing. Pick its folder again to finish it.",
+          "An earlier handoff stopped while publishing. Pick its folder again to finish it.",
         );
       const operationId = pending?.targetKey === selected ? pending.operationId : randomUUID();
       // Persist before either RPC: an ambiguous response retries the same operation.
@@ -510,22 +512,24 @@ export function ProjectMachineHandoff({
         setCanRestart(prepared.value.publication === "unpublished" && !!pending);
         throw new Error(
           pending
-            ? "This earlier move used a temporary folder. Start it again to use the saved folder, or finish the published move first."
-            : "Update this machine to move projects into saved folders.",
+            ? "This earlier handoff used a temporary folder. Start it again to use the saved folder, or finish the published handoff first."
+            : "Update this machine to hand off projects into saved folders.",
         );
       }
       if (
         prepared.value.bundle.destination.environmentId !== target.environmentId ||
         prepared.value.bundle.destination.projectId !== target.id
       )
-        throw new Error("An earlier move went to a different folder. Finish that move first.");
+        throw new Error(
+          "An earlier handoff went to a different folder. Finish that handoff first.",
+        );
       const checked = await receive({
         environmentId: target.environmentId,
         input: previewInput(target.id, prepared.value.bundle),
       });
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
       if (checked.value.executionMode !== "project-folder")
-        throw new Error("Update the other machine to move projects into saved folders.");
+        throw new Error("Update the other machine to hand off projects into saved folders.");
       setSnapshot(prepared.value);
       setPreviewCheckout(checked.value.workspacePath);
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
@@ -554,7 +558,7 @@ export function ProjectMachineHandoff({
       });
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
       if (checked.value.executionMode !== "project-folder")
-        throw new Error("Update the other machine to move projects into saved folders.");
+        throw new Error("Update the other machine to hand off projects into saved folders.");
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
         await complete(checked.value, snapshot.bundle);
         return;
@@ -602,7 +606,7 @@ export function ProjectMachineHandoff({
       if (started._tag === "Failure") throw squashAtomCommandFailure(started);
       if (started.value.phase !== "started" || !started.value.coordinatorThreadId)
         throw new Error(
-          "The files are saved, but the coordinator has not started. Try the move again.",
+          "The files are saved, but the coordinator has not started. Try the handoff again.",
         );
       await complete(started.value, published.value.bundle);
     } catch (cause) {
@@ -650,7 +654,7 @@ export function ProjectMachineHandoff({
 
   return (
     <>
-      <Tip label={blockedReason ?? "Move this project to another machine"}>
+      <Tip label={blockedReason ?? "Hand off this project to another machine"}>
         {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
             tooltip and screen readers read the reason it describes. */}
         <span className="inline-flex" data-slot="handoff-trigger-wrap">
@@ -838,7 +842,9 @@ export function ProjectMachineHandoff({
         onOpenDestination={() => {
           if (!receipt || !target) return;
           if (typeof receipt.workspacePath !== "string" || !receipt.workspacePath.trim()) {
-            setError("The other machine did not report where the project is. Try the move again.");
+            setError(
+              "The other machine did not report where the project is. Try the handoff again.",
+            );
             return;
           }
           void navigate({

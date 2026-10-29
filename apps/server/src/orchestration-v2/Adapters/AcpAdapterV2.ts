@@ -7513,7 +7513,12 @@ export function makeAcpAdapterV2(
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
-            yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
+            const { projectAdditionalDirectories } = turnInput;
+            const promptOptions =
+              projectAdditionalDirectories === undefined
+                ? undefined
+                : { projectAdditionalDirectories };
+            yield* runtime.prompt({ prompt: promptParts!.prompt }, promptOptions).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
                   if (promptParts?.instructionState === undefined) return current;
@@ -7615,9 +7620,8 @@ export function makeAcpAdapterV2(
                           nativeHistoryInvalidFailure(failure.message))
                         : null;
                     if (historyError !== null) {
-                      yield* Ref.update(
-                        poisonedNativeSessionIds,
-                        (current) => new Set(current).add(requestedSessionId),
+                      yield* Ref.update(poisonedNativeSessionIds, (current) =>
+                        new Set(current).add(requestedSessionId),
                       );
                       yield* Ref.set(runtimeRestartRequired, true);
                     }

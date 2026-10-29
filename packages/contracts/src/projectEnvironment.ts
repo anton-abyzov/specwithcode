@@ -95,6 +95,14 @@ export const DEFAULT_PROJECT_ENVIRONMENT: ProjectEnvironmentSettings = {
   additionalFolders: [],
   repositories: [],
 };
+/**
+ * Providers whose native runtime receives approved project folders as enforced
+ * roots under any policy: Codex writable roots, Claude additional directories
+ * and Muse Code workspace roots.
+ */
+export function providerEnforcesProjectFolders(driver: string | undefined): boolean {
+  return driver === "codex" || driver === "claudeAgent" || driver === "muse";
+}
 /** ACP folder context preserves existing unrestricted access; it never broadens permissions. */
 export function fullAccessAcpProjectFolders(policy: {
   readonly runtimeMode: string;

@@ -66,7 +66,7 @@ function StopCopyButton({
 }) {
   return (
     <Button variant="ghost" data-leading disabled={disabled} onClick={onStop}>
-      {move ? "Stop move" : "Stop copy"}
+      {move ? "Stop handoff" : "Stop copy"}
     </Button>
   );
 }
@@ -207,7 +207,7 @@ export function HandoffCopyFooter({
           <SetupActions
             disabled={busy || setupBlocked}
             hint={machine ? null : "Choose a machine above."}
-            label={`${mode === "copy-and-move" ? "Move" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
+            label={`${mode === "copy-and-move" ? "Hand off" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
             onStart={onMeasure}
           />
         ))}

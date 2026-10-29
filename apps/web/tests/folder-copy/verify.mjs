@@ -73,7 +73,7 @@ const receipt = {
     "exactly one enabled primary on each step that waits for the person; none while busy or checking",
     "the primary is visible without scrolling and sits in the non-scrolling footer",
     "the leading ghost action (Stop copy, Change setup, Undo…) is leftmost with mr-auto",
-    "the dialog title on each screen: Move/Copy {project}, then {project} is on {machine}",
+    "the dialog title on each screen: Hand off/Copy {project}, then {project} is on {machine}",
   ],
   cases: [],
 };
@@ -280,7 +280,7 @@ const intent = (page) =>
     .locator('button[aria-pressed="true"]')
     .textContent();
 const COPY_TITLE = "Copy SpecWeave";
-const MOVE_TITLE = "Move SpecWeave";
+const MOVE_TITLE = "Hand off SpecWeave";
 const DONE_TITLE = "SpecWeave is on ministorm";
 // A copy of files only leaves the project here: its Done says copied, not on.
 const COPIED_TITLE = "SpecWeave is copied to ministorm";
@@ -529,12 +529,12 @@ const move = async (page, w) => {
   const { footer, action, pause, release, calls, body, menu, check, fixture } = w;
   await page
     .getByRole("group", { name: "What to do" })
-    .getByRole("button", { name: "Move and continue there" })
+    .getByRole("button", { name: "Hand off and continue there" })
     .click();
-  NodeAssert.equal(await intent(page), "Move and continue there");
+  NodeAssert.equal(await intent(page), "Hand off and continue there");
   await chooseFirst(page);
   await check("where", {
-    primary: "Move to ministorm",
+    primary: "Hand off to ministorm",
     steps: bar(["current", "next", "next", "next", "next", "next"], MOVE),
     leading: null,
     title: MOVE_TITLE,
@@ -558,13 +558,13 @@ const move = async (page, w) => {
   const projectOnly = page.getByRole("checkbox", { name: "Copy only this project folder" });
   NodeAssert.equal(await projectOnly.isChecked(), false, "the whole umbrella goes by default");
   await projectOnly.scrollIntoViewIfNeeded();
-  await check("umbrella-scope", { primary: "Move to ministorm" });
+  await check("umbrella-scope", { primary: "Hand off to ministorm" });
   await projectOnly.click();
   NodeAssert.equal(
     await folderBox(page).inputValue(),
     "/home/anton/Projects/github/specweave-umb/repositories/anton-abyzov/specweave",
   );
-  await check("child-scope", { primary: "Move to ministorm" });
+  await check("child-scope", { primary: "Hand off to ministorm" });
   await projectOnly.click();
   await page.locator('[data-slot="copy-destination-project"]').scrollIntoViewIfNeeded();
   NodeAssert.match(
@@ -581,28 +581,28 @@ const move = async (page, w) => {
     };
   });
   NodeAssert.ok(scroll.maximum > 0 && scroll.scrollTop > 0, "the body really scrolls");
-  await check("scrolled", { primary: "Move to ministorm" });
+  await check("scrolled", { primary: "Hand off to ministorm" });
   NodeAssert.equal((await footer.boundingBox()).y, beforeScroll.y, "the footer stays put");
 
   // Two clicks in one task start one measure.
   await pause("copyOffer");
-  await action("Move to ministorm").evaluate((element) => {
+  await action("Hand off to ministorm").evaluate((element) => {
     element.click();
     element.click();
   });
-  await check("measuring", { primary: null, leading: "Stop move" });
+  await check("measuring", { primary: null, leading: "Stop handoff" });
   // A move's last step runs in this window: the close hint says to come back for it.
-  NodeAssert.match(await body(), /then reopen it to finish the move\./);
+  NodeAssert.match(await body(), /then reopen it to finish the handoff\./);
   NodeAssert.equal(await calls("copyOffer"), 1, "a double click offers once");
   await release("copyOffer");
-  await check("what", { primary: "Preview on ministorm", leading: "Stop move" });
+  await check("what", { primary: "Preview on ministorm", leading: "Stop handoff" });
   NodeAssert.match(
     await body(),
     /Work is still running here\. Files that change during the copy won.t be included, and the project moves once that work stops\./,
   );
   await action("Preview on ministorm").click();
   await check("review", {
-    primary: "Move to ministorm",
+    primary: "Hand off to ministorm",
     steps: bar(["done", "done", "current", "next", "next", "next"], MOVE),
     leading: "Change setup",
     title: MOVE_TITLE,
@@ -615,8 +615,8 @@ const move = async (page, w) => {
   await fixture(() => {
     window.__folderCopyFixture.failCopy = true;
   });
-  await action("Move to ministorm").click();
-  await check("failed", { primary: "Retry", leading: "Stop move" });
+  await action("Hand off to ministorm").click();
+  await check("failed", { primary: "Retry", leading: "Stop handoff" });
   // The stopped step reads in the error colour, not in the plain current-step colour.
   NodeAssert.deepEqual(
     await w.step("copy").evaluate((item) => {
@@ -648,22 +648,22 @@ const move = async (page, w) => {
   });
   await release("copyOffer");
   await action("Preview on ministorm").click();
-  await check("review-retry", { primary: "Move to ministorm", leading: "Change setup" });
-  await action("Move to ministorm").click();
+  await check("review-retry", { primary: "Hand off to ministorm", leading: "Change setup" });
+  await action("Hand off to ministorm").click();
   await check("deferred", {
-    primary: "Move coordinator now",
+    primary: "Hand off coordinator now",
     steps: bar(["done", "done", "done", "done", "current", "next"], MOVE),
     title: DONE_TITLE,
   });
   NodeAssert.match(
     await page.locator('[data-slot="copy-done"]').textContent(),
-    /Files are copied\. Move the coordinator once work here is idle\./,
+    /Files are copied\. Hand off the coordinator once work here is idle\./,
   );
   await fixture(() => {
     window.__folderCopyFixture.transferReady = true;
   });
   await pause("prepare");
-  await action("Move coordinator now").click();
+  await action("Hand off coordinator now").click();
   await check("transferring", { primary: null });
   const closers = page.getByRole("dialog").getByRole("button", { name: /^(Close|Cancel)$/ });
   for (const closer of await closers.all())

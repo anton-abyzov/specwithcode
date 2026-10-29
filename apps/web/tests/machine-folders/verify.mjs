@@ -59,7 +59,7 @@ try {
     await page.goto(`http://127.0.0.1:${server.address().port}/?theme=${theme}`);
     await page.getByRole("dialog").waitFor();
     // Screen 1: title, helper, segmented intent, machine rows, the folder, More options.
-    assert.equal(await page.getByRole("heading").last().textContent(), "Move EasyChamp");
+    assert.equal(await page.getByRole("heading").last().textContent(), "Hand off EasyChamp");
     await page
       .getByText(
         "From MacBook Pro M4 to another machine. Nothing there is replaced without asking.",
@@ -67,7 +67,7 @@ try {
       .waitFor();
     assert.equal(
       await page
-        .getByRole("button", { name: "Move and continue there" })
+        .getByRole("button", { name: "Hand off and continue there" })
         .getAttribute("aria-pressed"),
       "true",
     );
@@ -88,7 +88,7 @@ try {
     await page.getByText("2 uncommitted files on MacBook Pro M4.", { exact: false }).waitFor();
     assert.equal(await page.getByRole("checkbox", { name: /Remember/ }).count(), 0);
     assert.equal(
-      await page.getByRole("button", { name: "Move to MacBook Pro M3" }).isDisabled(),
+      await page.getByRole("button", { name: "Hand off to MacBook Pro M3" }).isDisabled(),
       true,
     );
     await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
@@ -117,7 +117,7 @@ try {
       await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
       "/Users/you/Projects/another-project",
     );
-    await page.getByRole("button", { name: "Move to MacBook Pro M3", exact: true }).click();
+    await page.getByRole("button", { name: "Hand off to MacBook Pro M3", exact: true }).click();
     await page.getByText("Committed work only.", { exact: false }).waitFor();
     assert.equal(await page.locator('[data-slot="machine-option"]').count(), 0);
     const overflow = await page.evaluate(

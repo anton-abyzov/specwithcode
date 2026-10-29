@@ -137,7 +137,7 @@ describe("machine handoff dialog", () => {
     await handoff();
     const popup = document.querySelector('[role="dialog"]')!;
     expect(popup.getAttribute("aria-labelledby")).toBe(document.querySelector("h2")?.id);
-    expect(document.querySelector("h2")?.textContent).toBe("Move Product");
+    expect(document.querySelector("h2")?.textContent).toBe("Hand off Product");
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
       "From MacBook M4 to another machine. Nothing there is replaced without asking.",
     );
@@ -148,7 +148,7 @@ describe("machine handoff dialog", () => {
     expect(props.onMachineChange).toHaveBeenCalledExactlyOnceWith("m3");
     await handoff({ selected: "m3:project", machine: "m3" });
     expect(radio("Mac Mini").getAttribute("aria-checked")).toBe("true");
-    await click(button("Move to Mac Mini"));
+    await click(button("Hand off to Mac Mini"));
     expect(props.onReview).toHaveBeenCalledOnce();
   });
 
@@ -160,8 +160,8 @@ describe("machine handoff dialog", () => {
     expect(document.body.textContent).toContain("Offline");
     await handoff({ selected: "offline:project", machine: "offline" });
     expect(document.body.textContent).toContain("Connect this machine first.");
-    expect(button("Move to Offline machine").disabled).toBe(true);
-    await click(button("Move to Offline machine"));
+    expect(button("Hand off to Offline machine").disabled).toBe(true);
+    await click(button("Hand off to Offline machine"));
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
@@ -179,14 +179,14 @@ describe("machine handoff dialog", () => {
     expect(review.textContent).toContain(
       "Push these commits to their remotes and continue the project on MacBook Pro.",
     );
-    expect(button("Move to MacBook Pro").disabled).toBe(true);
-    await click(button("Move to MacBook Pro"));
+    expect(button("Hand off to MacBook Pro").disabled).toBe(true);
+    await click(button("Hand off to MacBook Pro"));
     expect(props.onContinue).not.toHaveBeenCalled();
     await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
     expect(props.onConsent).toHaveBeenCalledWith(true, expect.anything());
     await handoff({ consent: true });
-    expect(button("Move to MacBook Pro").disabled).toBe(false);
-    await click(button("Move to MacBook Pro"));
+    expect(button("Hand off to MacBook Pro").disabled).toBe(false);
+    await click(button("Hand off to MacBook Pro"));
     expect(props.onContinue).toHaveBeenCalledOnce();
   });
 
@@ -200,7 +200,7 @@ describe("machine handoff dialog", () => {
         expect(radio("Mac Mini").getAttribute("aria-disabled")).toBe("true");
         expect(button("Cancel").disabled).toBe(true);
       }
-      const action = button(phase === "checking" ? "Checking…" : "Moving…");
+      const action = button(phase === "checking" ? "Checking…" : "Handing off…");
       expect(action.disabled).toBe(true);
       await click(action);
       await escape();
@@ -231,7 +231,7 @@ describe("machine handoff dialog", () => {
       [...document.querySelectorAll('[data-slot="dialog-footer"] button')].map((node) =>
         node.textContent?.trim(),
       ),
-    ).toEqual(["Cancel", "Move to MacBook Pro"]);
+    ).toEqual(["Cancel", "Hand off to MacBook Pro"]);
     await click(document.querySelector<HTMLElement>('[data-slot="dialog-close"]')!);
     await escape();
     await click(button("Cancel"));
@@ -257,9 +257,9 @@ describe("machine handoff dialog", () => {
     await handoff({ destinations: [], machines: [], machine: null, selected: "" });
     expect(document.body.textContent).toContain("No other machine is connected.");
     // No machine picked: one filled primary, off, with what it waits for said beside it.
-    expect(button("Move").disabled).toBe(true);
+    expect(button("Hand off").disabled).toBe(true);
     expect(document.body.textContent).toContain("Choose a machine above.");
-    await click(button("Move"));
+    await click(button("Hand off"));
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
@@ -272,7 +272,7 @@ describe("machine handoff dialog", () => {
     });
     expect(document.querySelector('[data-testid="picker"]')).not.toBeNull();
     expect(() => button("Keep the saved folder")).toThrow();
-    expect(button("Move to Mac Mini").disabled).toBe(true);
+    expect(button("Hand off to Mac Mini").disabled).toBe(true);
     await handoff({ selected: "m1:project", machine: "m1", destinations });
     expect(document.querySelector('[data-testid="picker"]')).toBeNull();
     await click(button("Browse…"));
@@ -319,7 +319,7 @@ describe("machine handoff dialog", () => {
       consent: true,
     });
     expect(document.body.textContent).toContain("1 repository, 8 messages");
-    expect(button("Move to selected machine").disabled).toBe(true);
+    expect(button("Hand off to selected machine").disabled).toBe(true);
     await handoff({ phase: "complete" });
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toContain(
       "the other machine",
@@ -347,7 +347,7 @@ describe("shared handoff controls", () => {
         </Tip>
       </TooltipProvider>,
     );
-    const control = button("Move project");
+    const control = button("Hand off project");
     expect(trigger).toBe(control);
     expect(control.getAttribute("aria-label")).toBe("Continue this project on another machine");
     expect(control.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
@@ -473,7 +473,7 @@ describe("handoff file method and intent", () => {
     expect(methodRadio("Send committed work through Git only").getAttribute("aria-checked")).toBe(
       "true",
     );
-    expect(button("Move to MacBook Pro")).toBeDefined();
+    expect(button("Hand off to MacBook Pro")).toBeDefined();
     await click(methodRadio("Clone clean repositories from Git"));
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
   });
@@ -488,7 +488,7 @@ describe("handoff file method and intent", () => {
     await click(methodRadio("Send committed work through Git only"));
     expect(onMethodChange).not.toHaveBeenCalled();
     await handoff({ intent: "move" });
-    expect(document.querySelector("h2")?.textContent).toBe("Move Product");
+    expect(document.querySelector("h2")?.textContent).toBe("Hand off Product");
   });
 
   it("titles a finished copy of files only as copied, and a finished move as on", async () => {
@@ -504,7 +504,7 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector('[data-slot="handoff-intent"]')?.getAttribute("aria-label")).toBe(
       "What to do",
     );
-    expect(toggle("Move and continue there").getAttribute("aria-pressed")).toBe("true");
+    expect(toggle("Hand off and continue there").getAttribute("aria-pressed")).toBe("true");
     await click(toggle("Copy files only"));
     expect(onIntentChange).toHaveBeenCalledExactlyOnceWith("copy");
   });

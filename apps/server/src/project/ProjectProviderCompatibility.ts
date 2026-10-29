@@ -1,5 +1,6 @@
 import {
   fullAccessAcpProjectFolders,
+  providerEnforcesProjectFolders,
   type ModelSelection,
   type Project,
   type ServerProvider,
@@ -29,8 +30,7 @@ export function projectCompatibleProviders(input: {
   if (!projectNeedsAdditionalDirectoryGrants(input.project, input.cwd)) return input.providers;
   return input.providers.filter(
     (provider) =>
-      provider.driver === "codex" ||
-      provider.driver === "claudeAgent" ||
+      providerEnforcesProjectFolders(provider.driver) ||
       (provider.driver === "acpRegistry" &&
         input.runtimePolicy !== undefined &&
         fullAccessAcpProjectFolders(input.runtimePolicy) &&

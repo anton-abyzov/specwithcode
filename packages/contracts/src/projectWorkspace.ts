@@ -237,7 +237,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       coordinator_tools_required:
         "This model cannot call tools to coordinate work. Choose a coordinator model with tool support.",
       unsupported_provider:
-        "This provider cannot use additional project folders under the current permissions. Use Codex or Claude, or an ACP provider already running with Full access and no restrictive sandbox or approval override.",
+        "This provider cannot use additional project folders under the current permissions. Use Codex, Claude or Muse Code, or an ACP provider already running with Full access and no restrictive sandbox or approval override.",
       busy: "Finish or stop active project work before deleting the project.",
       transferred:
         "This coordinator handed off ownership. Open its successor; an uncertain transfer must be retried with the same handoff.",

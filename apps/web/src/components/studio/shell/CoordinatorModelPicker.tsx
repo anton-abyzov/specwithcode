@@ -487,7 +487,7 @@ export function CoordinatorModelPicker(props: {
           ) ??
             (active?.driverKind === "acpRegistry"
               ? "Project folders use this coordinator’s existing full-access permissions."
-              : "Additional folders are available with Codex and Claude.")}
+              : "Additional folders are available with Codex, Claude and Muse Code.")}
         </span>
       ) : null}
     </span>

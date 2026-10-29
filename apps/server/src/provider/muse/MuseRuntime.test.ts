@@ -148,6 +148,29 @@ describe("Muse native MSP runtime", () => {
     const ungrantedCalls = await requests(ungranted.cwd);
     expect(ungrantedCalls.some((call) => "config" in call.params)).toBe(false);
   });
+  it("grants approved project folders as Muse workspace roots and withdraws removed ones", async () => {
+    const input = await fixture();
+    const extra = await Effect.runPromise(fs.makeTempDirectory({ prefix: "studio-muse-extra-" }));
+    dirs.push(extra);
+    await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime(input);
+        yield* runtime.start();
+        yield* listen(runtime);
+        const text = [{ type: "text" as const, text: "hello" }];
+        yield* runtime.prompt({ prompt: text }, { projectAdditionalDirectories: [extra, extra] });
+        yield* runtime.prompt({ prompt: text }, { projectAdditionalDirectories: [] });
+        yield* runtime.prompt({ prompt: text });
+      }),
+    );
+    const turns = (await requests(input.cwd)).filter((call) => call.method === "turn/start");
+    const real = (path: string) => Effect.runPromise(fs.realPath(path));
+    expect(turns.map((turn) => turn.params.workspaceRoots)).toEqual([
+      [await real(input.cwd), await real(extra)],
+      [await real(input.cwd)],
+      [await real(input.cwd)],
+    ]);
+  });
   it("surfaces only native once-scoped approval choices", async () => {
     const input = await fixture();
     await run(

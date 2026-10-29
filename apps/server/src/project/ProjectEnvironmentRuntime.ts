@@ -7,6 +7,7 @@ import {
   type Project,
   ProjectEnvironmentError,
   fullAccessAcpProjectFolders,
+  providerEnforcesProjectFolders,
   type ProjectId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -74,7 +75,7 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
           session.driver === "acpRegistry" && fullAccessAcpProjectFolders(input.runtimePolicy);
         if (
           directories.length > 0 &&
-          ((session.driver !== "codex" && session.driver !== "claudeAgent" && !unrestrictedAcp) ||
+          ((!providerEnforcesProjectFolders(session.driver) && !unrestrictedAcp) ||
             (session.driver === "codex" &&
               typeof input.runtimePolicy.sandboxPolicy === "object" &&
               input.runtimePolicy.sandboxPolicy !== null &&

@@ -272,7 +272,7 @@ export function copyActivityFromSource(
 export function copyActivityText(activity: CopyActivity): string {
   const percent = activity.fraction === null ? "" : `, ${Math.floor(activity.fraction * 100)}%`;
   const label = activity.label.charAt(0).toLowerCase() + activity.label.slice(1);
-  return `${activity.move ? "Move" : "Copy"} to ${activity.machine}: ${label}${percent}`;
+  return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine}: ${label}${percent}`;
 }
 
 /** Test helper: forgets every activity, watch and opener. */

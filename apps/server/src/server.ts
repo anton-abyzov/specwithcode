@@ -180,6 +180,7 @@ import * as CloudLink from "./cloud/CloudLink.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
+import * as RelayProcessOwnership from "./cloud/RelayProcessOwnership.ts";
 import {
   MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
   MANAGED_TUNNEL_RECOVERY_COOLDOWN,
@@ -516,6 +517,7 @@ const layerAuth = LocalCliCredential.layer.pipe(
 const layerCloudManagedEndpointRuntime = Layer.mergeAll(
   layerRelayClient,
   CloudManagedEndpointRuntime.layer.pipe(
+    Layer.provide(RelayProcessOwnership.layer.pipe(Layer.provide(ProcessRunner.layer))),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(layerRelayClient),
   ),

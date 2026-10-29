@@ -8,7 +8,7 @@ A Copilot balance in Switch, or an account reported by a CLIProxyAPI usage hub, 
 
 Use **Add or manage providers** in the coordinator model picker, or **Settings → Providers**, on the machine where the chat will run. Set up the agent, complete its sign-in if required, then choose one of its available models. The provider page reports installation, sign-in and model discovery separately. An unknown sign-in state remains unverified even when the CLI is installed. A configured provider can be opened from its featured card without installing it again.
 
-Projects with additional approved folders currently require Codex or Claude. Copilot, Grok, Gemini and other ACP agents can be used in projects that do not require those extra folders; SpecWithCode retains the server-side capability check and does not silently drop folder access. Registry chat support also does not imply support for automatic commit messages, pull-request text or title generation.
+Projects with additional approved folders currently require Codex, Claude or Muse Code. Copilot, Grok, Gemini and other ACP agents can be used in projects that do not require those extra folders; SpecWithCode retains the server-side capability check and does not silently drop folder access. Registry chat support also does not imply support for automatic commit messages, pull-request text or title generation.
 
 ## Add GitHub Copilot
 

@@ -83,7 +83,7 @@ it("switches the view only after its menu has closed", async () => {
 it("moves the coordinator only from its own item", async () => {
   const calls = handlers();
   await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Move coordinator to Minis")!.click());
+  await act(async () => item("menuitem", "Hand off coordinator to Minis")!.click());
   expect(calls.onMove).toHaveBeenCalledWith("minis:p");
   expect(calls.onView).not.toHaveBeenCalled();
 });

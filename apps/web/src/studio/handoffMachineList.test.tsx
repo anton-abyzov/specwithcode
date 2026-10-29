@@ -33,13 +33,13 @@ describe("machine list while it loads", () => {
 describe("why Move project is off", () => {
   it("names the first thing to fix", () => {
     expect(moveBlockedReason({ connected: false, coordinator: false, permitted: false })).toBe(
-      "Connect this machine to move this project.",
+      "Connect this machine to hand off this project.",
     );
     expect(moveBlockedReason({ connected: true, coordinator: false, permitted: true })).toBe(
-      "Send this project its first message, then you can move it.",
+      "Send this project its first message, then you can hand it off.",
     );
     expect(moveBlockedReason({ connected: true, coordinator: true, permitted: false })).toBe(
-      "This connection needs permission to move projects.",
+      "This connection needs permission to hand off projects.",
     );
     expect(moveBlockedReason({ connected: true, coordinator: true, permitted: true })).toBeNull();
   });

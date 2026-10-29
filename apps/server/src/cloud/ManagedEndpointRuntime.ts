@@ -14,6 +14,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as RelayProcessOwnership from "./RelayProcessOwnership.ts";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -60,6 +61,7 @@ interface ActiveConnector {
   readonly config: RelayManagedEndpointRuntimeConfig;
   readonly startedAtMillis: number;
   readonly connected: Ref.Ref<boolean>;
+  readonly ownershipGeneration: string | null;
 }
 
 // A connector that exits before running this long is treated as part of a
@@ -141,6 +143,7 @@ const stopConnector = (connector: ActiveConnector | null) =>
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const ownership = yield* RelayProcessOwnership.RelayProcessOwnership;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
@@ -153,6 +156,7 @@ export const make = Effect.gen(function* () {
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
     yield* stopConnector(active);
+    if (active) yield* ownership.clear(Number(active.child.pid), active.ownershipGeneration);
   });
 
   const superviseConnector = (connector: ActiveConnector) =>
@@ -202,6 +206,7 @@ export const make = Effect.gen(function* () {
           }
           yield* Ref.set(activeRef, null);
           yield* stopConnector(connector);
+          yield* ownership.clear(Number(connector.child.pid), connector.ownershipGeneration);
 
           const desiredConfig = yield* Ref.get(desiredConfigRef);
           if (
@@ -400,6 +405,7 @@ export const make = Effect.gen(function* () {
         config,
         startedAtMillis: yield* Clock.currentTimeMillis,
         connected: yield* Ref.make(false),
+        ownershipGeneration: yield* ownership.publish(Number(child.pid), executable.executablePath),
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);

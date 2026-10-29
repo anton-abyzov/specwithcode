@@ -19,8 +19,26 @@ import { museModels, museFullEntitled } from "./MuseDiscovery.ts";
 import { MUSE_ASK_PROFILE, museRequireHumanReviewer, watchMuseRequests } from "./MuseRequests.ts";
 import { museItemUpdates, museTurnProjection } from "./MuseItems.ts";
 import { parseSessionUpdateEvent } from "../acp/AcpRuntimeModel.ts";
+import { realpathNative } from "../../workspace/WorkspaceSensitivePaths.ts";
 
 type Runtime = AcpSessionRuntime["Service"];
+
+/**
+ * Muse enforces its workspace boundary natively, so approved project folders
+ * become its runtime workspace roots: canonical existing paths (native
+ * realpath, so the on-disk letter case the host compares against), the session's
+ * own folder first. `turn/start.workspaceRoots` is a sticky replacement, so
+ * every turn sends the full set; a project with no extra folders sends only
+ * the session folder, which withdraws any folder an earlier turn granted.
+ */
+async function museWorkspaceRoots(
+  cwd: string,
+  additionalDirectories: ReadonlyArray<string> | undefined,
+  realpath: (path: string) => Promise<string>,
+): Promise<string[]> {
+  const roots = await Promise.all([cwd, ...(additionalDirectories ?? [])].map(realpath));
+  return [...new Set(roots)];
+}
 const failure = (cause: unknown) =>
   new AcpTransportError({
     detail: cause instanceof Error ? cause.message : "Muse Code request failed",
@@ -264,6 +282,9 @@ export const makeMuseRuntime = (input: {
           if (turn)
             return yield* Effect.fail(failure(new Error("A Muse turn is already running.")));
           const active = session;
+          const workspaceRoots = yield* attempt(() =>
+            museWorkspaceRoots(input.cwd, options?.projectAdditionalDirectories, realpathNative),
+          );
           if (payload.prompt.some((part) => part.type !== "text"))
             return yield* Effect.fail(
               failure(
@@ -280,6 +301,7 @@ export const makeMuseRuntime = (input: {
                   text: part.type === "text" ? part.text : "",
                 })),
                 ifBusy: "queue",
+                workspaceRoots,
               }),
               () => client.close(),
             ),

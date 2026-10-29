@@ -29,6 +29,8 @@ import struct
 import subprocess
 import time
 
+import relay_ownership
+
 
 def parse_processes(value):
     processes = {}
@@ -207,8 +209,9 @@ def _server_browsers(processes, root_pid, uid, home, candidates):
 # (packages/shared/src/relayClient.ts: <base-dir>/tools/cloudflared/<version>/<platform>-<arch>/cloudflared)
 # and starts directly with exactly these arguments; its token is in the environment, never argv.
 # It runs for as long as the service does and the restart replaces it, so it is not work: it never
-# keeps an update waiting, and no update or reap signals it. A cloudflared from anywhere else, with
-# other arguments, started deeper (from a terminal), or with anything beneath it is work as before.
+# keeps an update waiting, and no update or reap signals it. A PATH/override binary also needs
+# the runtime's versioned relay_ownership record, bound to fresh kernel birth/executable/argv.
+# Without that proof, other paths, arguments, terminal ancestry and child processes remain work.
 MANAGED_TUNNEL_ARGUMENTS = ['tunnel', '--no-autoupdate', '--loglevel', 'info', '--output', 'default', 'run']
 MANAGED_TUNNEL_MAX = 1
 
@@ -221,22 +224,31 @@ def _managed_tunnels(root_pid, uid, home, descendants):
     """The service's own tunnel among its descendants, by structure: a direct child of the root,
     owned by the service's user, running the owned cloudflared, with nothing beneath it. More than
     MANAGED_TUNNEL_MAX such processes are none of them. A capture also proves each one's kernel
-    executable and argv (_assert_managed_tunnel)."""
+    executable and argv (_assert_managed_tunnel). A non-managed path additionally needs the
+    service-published receipt and its twice-checked current kernel identities."""
     if home is None:
         return []
     executable = _managed_tunnel_executable(home)
     parents = {item['parent'] for item in descendants}
     found = [item for item in descendants if item['parent'] == root_pid and item['uid'] == uid
              and executable.fullmatch(item['executable']) and item['pid'] not in parents]
+    recorded = relay_ownership.recorded_pid(home, root_pid, uid, descendants)
+    if recorded is not None and all(item['pid'] != recorded for item in found):
+        found.extend(item for item in descendants if item['pid'] == recorded)
     return found if len(found) <= MANAGED_TUNNEL_MAX else []
 
 
-def _assert_managed_tunnel(arguments, kernel_executable, tunnel):
+def _assert_managed_tunnel(arguments, kernel_executable, tunnel, home):
     """The kernel argv and executable of a structurally matched tunnel: exactly the command
-    ManagedEndpointRuntime starts, from the file ps listed."""
+    ManagedEndpointRuntime starts, from the file ps listed. The owned download must be the
+    listed file itself. A tunnel outside it is here only through relay_ownership.recorded_pid
+    (_managed_tunnels), whose PATH binary may be a symlink (Homebrew): ps lists the symlink, the
+    kernel the resolved file, so only that listed path is resolved before comparing."""
+    listed = tunnel['executable']
+    expected = listed if _managed_tunnel_executable(home).fullmatch(listed) else posixpath.realpath(listed)
     assert isinstance(arguments, list) and len(arguments) == 1 + len(MANAGED_TUNNEL_ARGUMENTS) \
         and posixpath.basename(arguments[0]) == 'cloudflared' and arguments[1:] == MANAGED_TUNNEL_ARGUMENTS \
-        and kernel_executable == tunnel['executable'], 'Owned service has unexpected descendants'
+        and listed.startswith('/') and kernel_executable == expected, 'Owned service has unexpected descendants'
 
 
 # The two ways the recorded service process can be gone. Both refuse. An exited one (stopped,
@@ -321,7 +333,7 @@ def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader,
     for browser in first[3]:
         _server_browser_argv(kernel(argv_reader, browser['pid']), home)
     for tunnel in first[5]:
-        _assert_managed_tunnel(kernel(argv_reader, tunnel['pid']), kernel(executable_reader, tunnel['pid']), tunnel)
+        _assert_managed_tunnel(kernel(argv_reader, tunnel['pid']), kernel(executable_reader, tunnel['pid']), tunnel, home)
     for item in first[4]:
         # ps reports a name the process chose; the kernel resolves the file it actually runs.
         assert kernel(executable_reader, item['pid']) == item['executable'], 'Owned service has unexpected descendants'

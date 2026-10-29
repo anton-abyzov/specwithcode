@@ -17,6 +17,7 @@ import * as RelayClient from "@specweave-studio/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as RelayProcessOwnership from "./RelayProcessOwnership.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -35,10 +36,15 @@ const layerRelayClientAvailable = Layer.succeed(
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
+  ownership: RelayProcessOwnership.RelayProcessOwnership["Service"] = {
+    publish: () => Effect.succeed(null),
+    clear: () => Effect.void,
+  },
 ) =>
   Layer.mergeAll(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     relayClientLayer,
+    Layer.succeed(RelayProcessOwnership.RelayProcessOwnership, ownership),
     Layer.mock(ServerSecretStore.ServerSecretStore)({
       get: () => Effect.succeedNone,
     }),
@@ -47,11 +53,15 @@ const runtimeDependencies = (
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
+  ownership: RelayProcessOwnership.RelayProcessOwnership["Service"] = {
+    publish: () => Effect.succeed(null),
+    clear: () => Effect.void,
+  },
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
       ManagedEndpointRuntime.layer.pipe(
-        Layer.provide(runtimeDependencies(spawner, relayClientLayer)),
+        Layer.provide(runtimeDependencies(spawner, relayClientLayer, ownership)),
       ),
     );
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
@@ -111,6 +121,89 @@ describe("CloudManagedEndpointRuntime", () => {
       ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({ status: "unsupported" }),
     ).toBe(false);
   });
+
+  it.effect("records its actual spawn once and clears only that lifecycle generation", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(makeHandle({ pid: 700, onKill: () => {} })),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner, layerRelayClientAvailable, {
+        publish: (pid, executable) =>
+          Effect.sync(() => {
+            calls.push(["publish", pid, executable]);
+            return "generation-1";
+          }),
+        clear: (pid, generation) =>
+          Effect.sync(() => {
+            calls.push(["clear", pid, generation]);
+          }),
+      });
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "private-fixture-token",
+      };
+      expect((yield* runtime.applyConfig(config)).status).toBe("running");
+      expect((yield* runtime.applyConfig(config)).status).toBe("running");
+      expect(calls).toEqual([["publish", 700, "cloudflared"]]);
+      yield* runtime.applyConfig(null);
+      expect(calls).toEqual([
+        ["publish", 700, "cloudflared"],
+        ["clear", 700, "generation-1"],
+      ]);
+      expect(JSON.stringify(calls)).not.toContain(config.connectorToken);
+    }),
+  );
+
+  it.effect("keeps the connector alive when ownership proof cannot be published", () =>
+    Effect.gen(function* () {
+      let stopped = false;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              stopped = true;
+            }),
+          );
+          return makeHandle({
+            pid: 701,
+            onKill: () => {
+              stopped = true;
+            },
+          });
+        }),
+      );
+      const calls: unknown[] = [];
+      // RelayProcessOwnership reports an unpublished proof as a null generation (helper
+      // absent, failed or timed out); it never fails the effect.
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner, layerRelayClientAvailable, {
+        publish: (pid, executable) =>
+          Effect.sync(() => {
+            calls.push(["publish", pid, executable]);
+            return null;
+          }),
+        clear: (pid, generation) =>
+          Effect.sync(() => {
+            calls.push(["clear", pid, generation]);
+          }),
+      });
+      expect(
+        (yield* runtime.applyConfig({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "fixture",
+        })).status,
+      ).toBe("running");
+      expect(stopped).toBe(false);
+      expect(calls).toEqual([["publish", 701, "cloudflared"]]);
+      yield* runtime.applyConfig(null);
+      expect(stopped).toBe(true);
+      // Nothing was published, so the stop clears no generation.
+      expect(calls).toEqual([
+        ["publish", 701, "cloudflared"],
+        ["clear", 701, null],
+      ]);
+    }),
+  );
 
   it.effect("serializes updates to persisted cloud link state", () =>
     Effect.gen(function* () {

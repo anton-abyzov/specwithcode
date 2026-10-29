@@ -346,7 +346,7 @@ describe("switching the coordinator machine", () => {
     await renderOpen();
     expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
     await openSwitcher();
-    await act(async () => menuItem("menuitem", "Move coordinator to laptop")!.click());
+    await act(async () => menuItem("menuitem", "Hand off coordinator to laptop")!.click());
     expect(state.savedMachines).toEqual({});
     await renderOpen();
     expect(onSelectThread).not.toHaveBeenCalled();
@@ -408,7 +408,7 @@ describe("the coordinator stays in the main column", () => {
     await openFirstThread();
     await prompt("Keep my coordinator draft");
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
-    await click("Move project");
+    await click("Hand off project");
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(true);
     expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(

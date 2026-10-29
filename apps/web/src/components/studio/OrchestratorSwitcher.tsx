@@ -39,7 +39,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
   coordinator: "",
   workers: "workers only",
-  pending: "move pending",
+  pending: "handoff pending",
   independent: "independent",
 };
 
@@ -155,8 +155,8 @@ export function OrchestratorSwitcher({
             <ChevronDownIcon aria-hidden />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            Viewing {label}'s orchestrator. Viewing moves nothing; moving the coordinator is a
-            separate, confirmed action.
+            Viewing {label}'s orchestrator. Viewing changes nothing; handing off the coordinator is
+            a separate, confirmed action.
           </TooltipPopup>
         </Tooltip>
       </span>
@@ -221,7 +221,7 @@ export function OrchestratorSwitcher({
         {movable.map((copy) => (
           <MenuItem key={copy.key} onClick={() => onMove?.(copy.key)}>
             <SendIcon aria-hidden />
-            Move coordinator to {nameOf(copy)}…
+            Hand off coordinator to {nameOf(copy)}…
           </MenuItem>
         ))}
         <MenuItem

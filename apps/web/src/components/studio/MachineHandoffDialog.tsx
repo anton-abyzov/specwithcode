@@ -64,7 +64,7 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
       aria-label="Continue this project on another machine"
     >
       <LaptopIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Move project</span>
+      <span>Hand off project</span>
     </Button>
   );
 }
@@ -192,7 +192,7 @@ export function MachineHandoffDialog({
                 ? `${projectTitle} ${intent === "copy" ? "is copied to" : "is on"} ${copyDoneOn}`
                 : complete
                   ? `${projectTitle} is on ${targetLabel}`
-                  : `${intent === "copy" ? "Copy" : "Move"} ${projectTitle}`}
+                  : `${intent === "copy" ? "Copy" : "Hand off"} ${projectTitle}`}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}
             {!(copying && copyDoneOn) && (
@@ -298,7 +298,7 @@ export function MachineHandoffDialog({
                   disabled={busy || !consent || !target || !!target.unavailable}
                   onClick={onContinue}
                 >
-                  {busy ? "Moving…" : `Move to ${target?.label ?? "selected machine"}`}
+                  {busy ? "Handing off…" : `Hand off to ${target?.label ?? "selected machine"}`}
                 </Button>
               </>
             ) : (
@@ -320,7 +320,7 @@ export function MachineHandoffDialog({
                   disabled={busy || !target || !!target.unavailable}
                   onClick={onReview}
                 >
-                  {busy ? "Checking…" : machineLabel ? `Move to ${machineLabel}` : "Move"}
+                  {busy ? "Checking…" : machineLabel ? `Hand off to ${machineLabel}` : "Hand off"}
                 </Button>
               </>
             )}
@@ -404,7 +404,7 @@ function GitWhere({
           </div>
         ) : saved.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Add this project on {machineLabel} first, then move it there.
+            Add this project on {machineLabel} first, then hand it off there.
           </p>
         ) : (
           <SavedFolderField

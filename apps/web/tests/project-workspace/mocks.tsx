@@ -80,7 +80,7 @@ let shells = recovery
           lastError:
             recovery === "full-access"
               ? "The previous provider session ended before answering. Retry the message."
-              : "This provider cannot enforce additional project folder access. Choose a Codex or Claude coordinator for this project.",
+              : "This provider cannot enforce additional project folder access. Choose a Codex, Claude or Muse Code coordinator for this project.",
         },
         modelSelection: settings.coordinatorModelSelection,
         runtimeMode: recovery === "full-access" ? "full-access" : "approval-required",

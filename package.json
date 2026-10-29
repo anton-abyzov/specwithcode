@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "prepare": "effect-tsgo patch && vp config --no-agent",
+    "install:lane": "pnpm install --frozen-lockfile --filter '!studio-relay'",
+    "install:relay": "pnpm install --frozen-lockfile --filter 'studio-relay...'",
     "dev": "node scripts/dev-runner.ts dev",
     "dev:share": "node scripts/dev-runner.ts dev --share",
     "dev:server": "node scripts/dev-runner.ts dev:server",
