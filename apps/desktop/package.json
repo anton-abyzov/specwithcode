@@ -1,6 +1,6 @@
 {
   "name": "@specweave-studio/desktop",
-  "version": "1.0.118",
+  "version": "1.0.119",
   "private": true,
   "type": "module",
   "main": "dist-electron/boot.cjs",

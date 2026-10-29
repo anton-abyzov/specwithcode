@@ -7,8 +7,9 @@ import {
   sessionGrantsScope,
 } from "@specweave-studio/contracts";
 import { useMemo } from "react";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -147,6 +148,32 @@ export function readEnvironmentScope(
   return sessionHasScope(
     appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
     scope,
+  );
+}
+
+/**
+ * Like readEnvironmentScope, but loads the grant first when no view holds it.
+ * The session record is dropped after five idle minutes, so a dialog opened
+ * later would otherwise read an empty record and report a missing permission.
+ */
+export function awaitEnvironmentScope(
+  environmentId: EnvironmentId,
+  scope: AuthEnvironmentScope,
+): Promise<boolean> {
+  const atom = environmentSession.sessionStateAtom(environmentId);
+  return Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* AtomRegistry.mount(appAtomRegistry, atom);
+        const session = yield* AtomRegistry.getResult(appAtomRegistry, atom, {
+          suspendOnWaiting: false,
+        }).pipe(
+          Effect.timeoutOption(6_000),
+          Effect.catchCause(() => Effect.succeed(Option.none<AuthSessionState>())),
+        );
+        return Option.isSome(session) && sessionGrantsScope(session.value, scope);
+      }),
+    ),
   );
 }
 
