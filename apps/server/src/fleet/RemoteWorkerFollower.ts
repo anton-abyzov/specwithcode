@@ -3,6 +3,7 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Notification,
+  projectExecutionIsFenced,
   ThreadId,
 } from "@specweave-studio/contracts";
 import {
@@ -71,7 +72,14 @@ export interface ReconciledLaunch {
   readonly model: string | null;
 }
 
-type WakeOutcome = "sent" | "pending" | "disposed";
+/**
+ * "transferred": the caller is the coordinator of a copy that gave the
+ * coordinator to another machine. The orchestrator refuses it every message,
+ * and the machine that took over follows the worker now.
+ */
+type WakeOutcome = "sent" | "pending" | "disposed" | "transferred";
+
+const TRANSFERRED_MESSAGE = "Another machine took over as coordinator. It follows this worker now.";
 
 /**
  * The status a followed worker shows while its run is blocked on the person
@@ -212,6 +220,12 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => undefined),
       );
       if (project === undefined) return "pending" satisfies WakeOutcome;
+      // Only a settled handoff: a coordinator still moving may come back here.
+      if (
+        project.workspaceSettings?.coordinatorBinding?.state === "transferred" &&
+        projectExecutionIsFenced(project.workspaceSettings, project.id, row.callerThreadId)
+      )
+        return "transferred" satisfies WakeOutcome;
       if (project.workspaceSettings?.paused || project.workspaceSettings?.archived)
         return "pending" satisfies WakeOutcome;
       return yield* threads
@@ -292,7 +306,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const waiting = yield* waitsOnPerson(row);
       const shown =
-        waiting === true || (waiting === undefined && row.lastStatus === REMOTE_WORKER_WAITING_ON_YOU)
+        waiting === true ||
+        (waiting === undefined && row.lastStatus === REMOTE_WORKER_WAITING_ON_YOU)
           ? REMOTE_WORKER_WAITING_ON_YOU
           : status;
       if (row.lastStatus !== shown) yield* update(row.id, () => ({ lastStatus: shown }));
@@ -376,6 +391,14 @@ const make = Effect.gen(function* () {
         yield* update(row.id, () => ({ state: "disposed", lastStatus: status }));
         return false;
       }
+      if (outcome === "transferred") {
+        yield* update(row.id, () => ({
+          state: "stopped",
+          lastStatus: status,
+          lastError: TRANSFERRED_MESSAGE,
+        }));
+        return false;
+      }
       const next = yield* update(row.id, (current) =>
         // A newer run's own wake will tell the caller; keep following it.
         movedOn(current, runId)
@@ -415,6 +438,10 @@ const make = Effect.gen(function* () {
           }
           if (outcome === "disposed") {
             yield* update(rowId, () => ({ state: "disposed" }));
+            return;
+          }
+          if (outcome === "transferred") {
+            yield* update(rowId, () => ({ state: "stopped", lastError: TRANSFERRED_MESSAGE }));
             return;
           }
         }
@@ -536,6 +563,8 @@ const make = Effect.gen(function* () {
       );
       if (outcome === "sent") yield* update(row.id, () => ({ lostContactNotified: true }));
       if (outcome === "disposed") yield* update(row.id, () => ({ state: "disposed" }));
+      if (outcome === "transferred")
+        yield* update(row.id, () => ({ state: "stopped", lastError: TRANSFERRED_MESSAGE }));
     });
 
   const follow: RemoteWorkerFollower["Service"]["follow"] = (rowId) =>

@@ -278,14 +278,15 @@ function ComposerSkillRow({ item }: { item: ComposerSkillItem }) {
     : "";
   return (
     <li
-      className={cn(
-        "flex min-w-0 items-center gap-2 px-3 py-1 text-xs",
-        !item.enabled && "opacity-50",
-      )}
+      className="flex min-w-0 items-center gap-2 px-3 py-1 text-xs"
       data-skill-name={item.name}
       data-skill-enabled={item.enabled ? "true" : "false"}
     >
-      <span className="min-w-0 flex-1 truncate">
+      {/* Only the name greys out, so the Manage link keeps full contrast. */}
+      <span
+        className={cn("min-w-0 flex-1 truncate", !item.enabled && "opacity-50")}
+        data-testid="composer-skill-label"
+      >
         <span className={cn("font-medium", !item.enabled && "line-through decoration-1")}>
           {item.displayName}
         </span>
@@ -302,7 +303,20 @@ function ComposerSkillRow({ item }: { item: ComposerSkillItem }) {
           </span>
         ) : null}
       </span>
-      {!item.enabled ? <span className="shrink-0 text-2xs text-muted-foreground">off</span> : null}
+      {!item.enabled ? (
+        <>
+          <span className="shrink-0 text-2xs text-muted-foreground">off</span>
+          <Link
+            to="/settings/skills"
+            search={{ skill: item.name }}
+            className="shrink-0 rounded-sm text-2xs text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`Manage ${item.displayName} in Skills settings`}
+            data-testid="composer-skill-manage"
+          >
+            Manage
+          </Link>
+        </>
+      ) : null}
       <Badge variant={item.missing ? "warning" : "outline"} className="shrink-0">
         {item.levelLabel}
       </Badge>

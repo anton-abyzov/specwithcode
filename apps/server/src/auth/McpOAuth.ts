@@ -33,6 +33,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import { countsAsCredentialGuess } from "./CredentialFailureLimiter.ts";
 import { coordinatorOfWorkerLabel } from "../fleet/workGrantPolicy.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { COORDINATOR_EPOCHS_HEADER, withCoordinatorEpochs } from "../fleet/WorkerEpochStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
@@ -670,6 +671,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                   ...(client.principal ? { principal: client.principal } : {}),
                   label: client.label,
                   access: client.access,
+                  ...withCoordinatorEpochs(request.headers[COORDINATOR_EPOCHS_HEADER]),
                 },
                 capabilities: new Set<McpInvocationContext.McpCapability>([
                   "orchestration",

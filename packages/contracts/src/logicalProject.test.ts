@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import {
+  COORDINATOR_STANDBY_AFTER_MINUTES,
+  DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES,
   LogicalProject,
   LogicalProjectMember,
   logicalProjectMemberKey,
@@ -118,4 +120,98 @@ it("rejects duplicate binding keys and keeps acknowledged worker execution indep
   expect(projectExecutionIsFenced(settings, "project", "coordinator")).toBe(true);
   expect(projectExecutionIsFenced(settings, "project", "worker")).toBe(false);
   expect(projectExecutionIsFenced(settings, "project", null)).toBe(false);
+});
+
+describe("coordinator standby", () => {
+  const member = {
+    environmentId: "m1",
+    projectId: "easychamp-m1",
+    coordinatorThreadId: "project-coordinator:easychamp-m1",
+  };
+  const standby = { member, afterMinutes: 15, enabledAt: "2026-10-26T14:00:00.000Z" };
+
+  it("leaves bindings written before the standby without one", () => {
+    const binding = Schema.decodeUnknownSync(ProjectCoordinatorBinding)({
+      state: "active",
+      epoch: 3,
+      takenOverAt: "2026-10-26T14:00:00.000Z",
+    });
+    expect(binding.standby).toBeUndefined();
+    expect(binding.takenOverBy).toBeUndefined();
+  });
+
+  it("records one standby with an allowed delay", () => {
+    const binding = Schema.decodeUnknownSync(ProjectCoordinatorBinding)({
+      state: "active",
+      epoch: 3,
+      standby,
+    });
+    expect(binding.standby).toEqual(standby);
+    expect(projectCoordinatorIsFenced({ coordinatorBinding: binding })).toBe(false);
+    expect(COORDINATOR_STANDBY_AFTER_MINUTES).toEqual([5, 15, 30, 60]);
+    expect(COORDINATOR_STANDBY_AFTER_MINUTES).toContain(DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES);
+  });
+
+  it("rejects delays outside 5, 15, 30 or 60 minutes", () => {
+    for (const afterMinutes of [0, 1, 10, 61, 1440, 15.5, "15"]) {
+      expect(
+        Schema.is(ProjectCoordinatorBinding)({
+          state: "active",
+          epoch: 3,
+          standby: { ...standby, afterMinutes },
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects a standby without a full member or start time", () => {
+    const { coordinatorThreadId: _, ...partial } = member;
+    expect(
+      Schema.is(ProjectCoordinatorBinding)({
+        state: "active",
+        epoch: 3,
+        standby: { ...standby, member: partial },
+      }),
+    ).toBe(false);
+    expect(
+      Schema.is(ProjectCoordinatorBinding)({
+        state: "active",
+        epoch: 3,
+        standby: { member, afterMinutes: 15 },
+      }),
+    ).toBe(false);
+  });
+
+  it("says who took over, a person or the standby", () => {
+    for (const takenOverBy of ["person", "auto"] as const) {
+      const binding = Schema.decodeUnknownSync(ProjectCoordinatorBinding)({
+        state: "active",
+        epoch: 4,
+        takenOverAt: "2026-10-26T14:30:00.000Z",
+        takenOverBy,
+        predecessor: member,
+      });
+      expect(binding.takenOverBy).toBe(takenOverBy);
+    }
+    expect(
+      Schema.is(ProjectCoordinatorBinding)({ state: "active", epoch: 4, takenOverBy: "robot" }),
+    ).toBe(false);
+  });
+
+  it("keeps the standby out of ordinary settings updates", () => {
+    const patch = Schema.decodeUnknownSync(ProjectWorkspacePatch)({
+      expectedRevision: 0,
+      coordinatorBinding: { state: "active", epoch: 3, standby },
+    });
+    expect(patch).toEqual({ expectedRevision: 0 });
+  });
+
+  it("fits the automatic takeover operation id in the binding's 128 characters", () => {
+    // "auto:" + 32 hex characters + ":" + the largest safe epoch.
+    const operationId = `auto:${"a".repeat(32)}:${Number.MAX_SAFE_INTEGER}`;
+    expect(operationId.length).toBeLessThanOrEqual(128);
+    expect(Schema.is(ProjectCoordinatorBinding)({ state: "active", epoch: 4, operationId })).toBe(
+      true,
+    );
+  });
 });

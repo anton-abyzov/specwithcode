@@ -14,9 +14,13 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { parseJson } from "../json.ts";
 import { clientRuntimeModeCeiling } from "../mcp/McpInvocationContext.ts";
+import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
+  COORDINATOR_REPLICA_MAX_BYTES,
+  CoordinatorLeaseRequest,
+  CoordinatorReplicaRequest,
   decodeFrame,
   HANDOFF_FRAME_META_MAX_BYTES,
   HANDOFF_JSON_MAX_BYTES,
@@ -84,6 +88,9 @@ export const layer = HttpRouter.add(
       });
     }
     if (grant.value.revoked) {
+      // A standby stops standing by for a coordinator this machine revoked.
+      if (path === "coordinator-lease")
+        yield* (yield* CoordinatorLeaseReceiver).grantRefused(grant.value.coordinatorEnvironmentId);
       return refusal(403, "This machine revoked that machine's work here.", {
         code: "needs_grant",
         check: "grant",
@@ -97,7 +104,12 @@ export const layer = HttpRouter.add(
       runtimeCeiling: clientRuntimeModeCeiling(client.value),
     };
 
-    const limit = path === "replicate" ? MAX_BODY_BYTES : HANDOFF_JSON_MAX_BYTES;
+    const limit =
+      path === "replicate"
+        ? MAX_BODY_BYTES
+        : path === "coordinator-replica"
+          ? COORDINATOR_REPLICA_MAX_BYTES
+          : HANDOFF_JSON_MAX_BYTES;
     const contentLength = Number(request.headers["content-length"] ?? "0");
     if (!Number.isFinite(contentLength) || contentLength > limit) {
       return refusal(413, "The request is too large.", { code: "too_large" });
@@ -142,6 +154,18 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer(receiver.heartbeat(caller, input.value));
+      }
+      case "coordinator-lease": {
+        const input = decodeJson(CoordinatorLeaseRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* CoordinatorLeaseReceiver).lease(caller, input.value));
+      }
+      case "coordinator-replica": {
+        const input = decodeJson(CoordinatorReplicaRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* CoordinatorLeaseReceiver).replica(caller, input.value));
       }
       case "replicate": {
         let frame: { meta: unknown; bundle: Uint8Array };

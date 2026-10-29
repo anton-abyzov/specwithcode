@@ -26,6 +26,12 @@ import {
   ProjectUnlinkInput,
   ProjectUnlinkResult,
 } from "./projectLink.ts";
+import {
+  ProjectAcceptStandbyInput,
+  ProjectAcceptStandbyResult,
+  ProjectSetStandbyInput,
+  ProjectSetStandbyResult,
+} from "./projectLinkStandby.ts";
 
 export const PROJECT_LINK_RPC_METHODS = {
   projectsFingerprint: "projects.fingerprint",
@@ -39,6 +45,8 @@ export const PROJECT_LINK_RPC_METHODS = {
   projectTakeover: "projectLink.takeover",
   projectSupersede: "projectLink.supersede",
   projectStartCoordinator: "projectLink.startCoordinator",
+  projectSetStandby: "projectLink.setStandby",
+  projectAcceptStandby: "projectLink.acceptStandby",
 } as const;
 const error = Schema.Union([ProjectLinkError, EnvironmentAuthorizationError]);
 export const projectLinkRpcs = [
@@ -95,6 +103,16 @@ export const projectLinkRpcs = [
   Rpc.make(PROJECT_LINK_RPC_METHODS.projectStartCoordinator, {
     payload: ProjectStartCoordinatorInput,
     success: ProjectStartCoordinatorResult,
+    error,
+  }),
+  Rpc.make(PROJECT_LINK_RPC_METHODS.projectSetStandby, {
+    payload: ProjectSetStandbyInput,
+    success: ProjectSetStandbyResult,
+    error,
+  }),
+  Rpc.make(PROJECT_LINK_RPC_METHODS.projectAcceptStandby, {
+    payload: ProjectAcceptStandbyInput,
+    success: ProjectAcceptStandbyResult,
     error,
   }),
 ] as const;

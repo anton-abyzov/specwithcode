@@ -1,3 +1,4 @@
+import { HandoffCopyFooter } from "../../src/components/studio/HandoffCopyFooter";
 import { useState } from "react";
 import type {
   FolderCopyRow,
@@ -88,6 +89,22 @@ const status: FolderCopyStatus = {
 };
 export function PreviewClarity() {
   const [lastChoice, setLastChoice] = useState<Readonly<Record<string, FolderCopyChoice>>>({});
+  const availabilityCase = new URLSearchParams(location.search).get("availability");
+  const footerCopy = {
+    ...status,
+    rows:
+      availabilityCase && availabilityCase !== "choices"
+        ? rows.map((row) => ({
+            ...row,
+            needsDecision: false,
+            decision: "take-theirs" as const,
+            conflicts: row.conflicts.map((file) => ({ ...file, decision: "take-theirs" as const })),
+          }))
+        : rows,
+    totals: { ...status.totals!, decisionsNeeded: availabilityCase === "choices" ? 53 : 0 },
+    disk: availabilityCase === "disk" ? ({ needed: 100, available: 0 } as never) : null,
+  };
+  const noop = () => {};
   return (
     <main className="min-h-screen bg-background p-4 text-foreground">
       <section className="mx-auto max-w-3xl space-y-4 rounded-xl border bg-background p-4 sm:p-6">
@@ -96,13 +113,56 @@ export function PreviewClarity() {
           From MacBook M4 to another machine. Nothing there is replaced without asking.
         </p>
         <CopyPlanPreview
-          status={status}
+          status={availabilityCase ? footerCopy : status}
           onDecide={setLastChoice}
           onClone={() => {}}
           disabled={false}
           machines={{ here: "ministorm", source: "MacBook M4" }}
           rootLabel="Umbrella root"
         />
+        {availabilityCase && (
+          <HandoffCopyFooter
+            stage="preview"
+            error={null}
+            busy={availabilityCase === "busy"}
+            working={false}
+            pending={null}
+            copy={footerCopy}
+            machine={"linux" as never}
+            mode="copy-only"
+            targetLabel="ministorm"
+            auto={false}
+            chooseFirst={false}
+            selection={[]}
+            setupBlocked={false}
+            replaced="Some files"
+            approveLabel="Copy to ministorm"
+            secretsUnconfirmed={availabilityCase === "secrets"}
+            failedBeforeApply={false}
+            undoPreview={null}
+            copyAgain={false}
+            contextTransferred={false}
+            link={null}
+            transferRecovery={false}
+            sourceDropped={false}
+            onTransfer={null}
+            onCancelMeasure={noop}
+            onResume={noop}
+            onMeasure={noop}
+            onPlan={noop}
+            onStop={noop}
+            onReplaceAll={noop}
+            onApply={noop}
+            onCopyAgain={noop}
+            onRetry={noop}
+            onUndo={noop}
+            onEndSourceHold={noop}
+            onOpen={noop}
+            onLink={noop}
+            onStartNew={noop}
+            onChangeSetup={noop}
+          />
+        )}
         <p className="text-xs text-muted-foreground">
           Synthetic comparison only. No transfer can run in this fixture.
         </p>

@@ -112,6 +112,14 @@ export interface HandoffMovesPort {
     input: HandoffContinueHereInput,
     options?: HandoffContinueHereOptions,
   ) => Effect.Effect<HandOffResult, HandoffModeError>;
+  /**
+   * Continue here under a given reason. Internal: automatic continuation passes
+   * "auto-takeover"; the WebSocket input stays `continueHere`.
+   */
+  readonly continueHereAs: (
+    input: HandoffContinueHereInput,
+    reason: "continue-here" | "auto-takeover",
+  ) => Effect.Effect<HandOffResult, HandoffModeError>;
   readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
   readonly preflight: (
     input: HandoffPreflightInput,

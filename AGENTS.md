@@ -54,6 +54,8 @@ Document changes to user tasks and durable architectural constraints, not copies
 
 ## Commands
 
+Skills action regressions: from `apps/server`, `node ../../node_modules/vite-plus/bin/vp test run src/project/ProjectSkillsActions.test.ts src/project/ProjectSkillsToggles.test.ts src/provider/Drivers/ClaudeSkills.test.ts`; from `apps/web`, run the settings component suites. Plugin disable tests must rediscover the target before Undo, and update tests must change the registry between preview and apply.
+
 Releases: `bash scripts/release/release.sh <version>` (try `--dry-run` first); the runbook is docs/studio/releasing.md.
 
 Focused ACP permission regression: `node node_modules/vite-plus/bin/vp test run apps/server/src/provider/acp/AcpPermissions.test.ts apps/server/src/provider/acp/AcpPermissions.lifecycle.test.ts apps/web/src/components/chat/unifiedPermissions.test.tsx`. Headless composer check: `node apps/web/tests/unified-permissions/check.mjs` (set `PLAYWRIGHT_MODULE` / `PLAYWRIGHT_EXECUTABLE` for a scoped installed runtime).

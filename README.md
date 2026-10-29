@@ -14,6 +14,10 @@ Automatic fallback requires an explicit configured choice before selecting ACP a
 
 HTML reports open from a compact preview into a focused reader. The conversation stays available through Show thread. See the [report experience](docs/reports/report-experience.md) for behavior and compatibility limits.
 
+## Skills
+
+Settings > Skills manages versions and agent visibility. Claude plugin skills use the whole-plugin control; disabled plugins stay visible so you can turn them back on or Undo. Version updates require a fresh preview if the registry changes before confirmation.
+
 ## What it does
 
 | Instead of                              | In SpecWithCode                                                                                                                                                                                                           |

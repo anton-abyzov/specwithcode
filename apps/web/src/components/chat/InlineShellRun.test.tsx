@@ -240,7 +240,9 @@ describe("inline shell code block runs", () => {
     const renderer = await render("```bash\n" + COMMAND + "\n```", target("full-access"));
 
     const output = renderer.root.findByProps({ "aria-label": "Command output" });
-    expect(output.props.children).toBe("error: no zip");
+    // Plain output renders as itself: no link or code segments.
+    expect(output.props.children.props.text).toBe("error: no zip");
+    expect(output.children).toEqual([expect.objectContaining({ children: ["error: no zip"] })]);
     const status = renderer.root.findByProps({ "data-shell-run-status": "" });
     expect(status.props.children).toBe("Exit 9");
 

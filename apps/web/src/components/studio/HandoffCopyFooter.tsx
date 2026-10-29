@@ -5,6 +5,7 @@ import type {
   FolderCopyStatus,
   FolderCopyUndoResult,
 } from "@specweave-studio/contracts";
+import { useId } from "react";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { Button } from "../ui/button";
 import { HandoffCopyActions } from "./HandoffCopyActions";
@@ -159,6 +160,26 @@ export function HandoffCopyFooter({
   /** Review's way back: stops this copy and opens the setup with its choices. */
   readonly onChangeSetup: () => void;
 }) {
+  const availabilityId = useId();
+  const blockers = [
+    ...(busy ? ["Wait for the current check to finish."] : []),
+    ...(sourceChanged ? ["The source changed. Measure and compare again."] : []),
+    ...(copy?.disk ? ["The destination needs more disk space before copying."] : []),
+    ...(secretsUnconfirmed ? ["Confirm sending the selected secret files, or deselect them."] : []),
+  ];
+  const decisions = copy?.totals?.decisionsNeeded;
+  const choicesReason =
+    decisions === undefined
+      ? "Wait for the comparison totals."
+      : decisions > 0
+        ? `Choose what to keep for ${decisions} remaining ${decisions === 1 ? "item" : "items"} above.`
+        : null;
+  const copyReasons = [...blockers, ...(choicesReason ? [choicesReason] : [])];
+  const copyBlocked = copyReasons.length > 0;
+  const replaceBlocked = blockers.length > 0;
+  const availability = copyBlocked
+    ? `Copy unavailable: ${copyReasons.join(" ")}`
+    : "Ready to copy with the choices shown above.";
   return (
     <HandoffCopyActions>
       {error && (
@@ -199,39 +220,34 @@ export function HandoffCopyFooter({
       )}
       {stage === "preview" && copy && (
         <>
-          {replaced ? (
-            <>
-              <Button
-                disabled={
-                  busy ||
-                  sourceChanged ||
-                  !!copy.disk ||
-                  (copy.totals?.decisionsNeeded ?? 1) > 0 ||
-                  secretsUnconfirmed
-                }
-                onClick={onApply}
-              >
-                Copy with my choices
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy || sourceChanged || !!copy.disk || secretsUnconfirmed}
-                onClick={onReplaceAll}
-              >
-                Replace everything
-              </Button>
-            </>
-          ) : (
+          <p
+            id={availabilityId}
+            role="status"
+            className="order-first basis-full text-sm text-muted-foreground"
+          >
+            {availability}
+            {replaced &&
+              choicesReason &&
+              !replaceBlocked &&
+              " Replace everything is available and uses the source versions for the remaining choices."}
+          </p>
+          <Button
+            disabled={copyBlocked}
+            aria-describedby={availabilityId}
+            className="disabled:opacity-45"
+            onClick={onApply}
+          >
+            {replaced ? "Copy with my choices" : approveLabel}
+          </Button>
+          {replaced && (
             <Button
-              disabled={
-                busy ||
-                sourceChanged ||
-                (copy.totals?.decisionsNeeded ?? 1) > 0 ||
-                secretsUnconfirmed
-              }
-              onClick={onApply}
+              variant="outline"
+              disabled={replaceBlocked}
+              aria-describedby={availabilityId}
+              className="disabled:opacity-45"
+              onClick={onReplaceAll}
             >
-              {approveLabel}
+              Replace everything
             </Button>
           )}
           <Tooltip>

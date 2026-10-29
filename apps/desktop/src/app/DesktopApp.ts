@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { formatStorageFreeSpace } from "@specweave-studio/contracts";
 import * as NetService from "@specweave-studio/shared/Net";
@@ -18,10 +19,15 @@ import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
-import { registerHandoffSleepNotice } from "./DesktopHandoffSleep.ts";
+import {
+  DesktopSuspendNoticeError,
+  notifyServerOfSuspend,
+  registerHandoffSleepNotice,
+} from "./DesktopHandoffSleep.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
 import { embeddedBackendRefusal, reservedServicePorts } from "../backend/localServiceAttach.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -600,9 +606,34 @@ const startup = Effect.gen(function* () {
   yield* powerMonitor.onSimpleEvent("unlock-screen", checkIfStale("unlock"));
   // Handoff mode: the main window asks the local server to move running threads
   // to the chosen machine before this Mac sleeps (no reveal; it may be hidden).
+  // The main process also tells the server directly, with the desktop service
+  // credential, so coordinator standbys hear of the sleep with no window open.
   const handoffWindow = yield* DesktopWindow.DesktopWindow;
-  yield* registerHandoffSleepNotice(powerMonitor, (action) =>
-    handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" }),
+  const sleepLocalService = yield* DesktopLocalService.DesktopLocalService;
+  const sleepPool = yield* DesktopBackendPool.DesktopBackendPool;
+  const sleepAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+  const sleepHttpClient = yield* HttpClient.HttpClient;
+  const localServer = Effect.gen(function* () {
+    const attached = yield* sleepLocalService.attached;
+    const primaryConfig = Option.isSome(attached)
+      ? Option.none()
+      : yield* (yield* sleepPool.primary).currentConfig;
+    const httpBaseUrl = Option.isSome(attached)
+      ? attached.value.httpBaseUrl
+      : Option.isSome(primaryConfig)
+        ? primaryConfig.value.httpBaseUrl
+        : null;
+    if (httpBaseUrl === null) {
+      return yield* new DesktopSuspendNoticeError({ reason: "no local server is running" });
+    }
+    return { httpBaseUrl, bearerToken: yield* sleepAuth.getBearerToken };
+  });
+  yield* registerHandoffSleepNotice(
+    powerMonitor,
+    (action) => handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" }),
+    notifyServerOfSuspend(localServer).pipe(
+      Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
+    ),
   );
   yield* electronApp.on("browser-window-focus", checkIfStale("focus"));
   yield* DesktopRemoteUpdates.listen;

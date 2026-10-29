@@ -28,6 +28,7 @@ import { useAttachedTerminalSession, useKnownTerminalSessions } from "../../stat
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TerminalActionBar, TerminalLinkedText } from "./TerminalTextActions";
 import {
   inlineRunTerminalId,
   shellRunNeedsConfirmation,
@@ -300,6 +301,7 @@ export function InlineShellRunPanel() {
       data-shell-run={run.status}
       {...(run.exitCode !== null ? { "data-shell-run-exit": String(run.exitCode) } : {})}
     >
+      {run.output.length > 0 ? <TerminalActionBar text={run.output} /> : null}
       {run.output.length > 0 ? (
         <pre
           ref={outputRef}
@@ -312,7 +314,7 @@ export function InlineShellRunPanel() {
               element.scrollHeight - element.scrollTop - element.clientHeight < 24;
           }}
         >
-          {run.output}
+          <TerminalLinkedText text={run.output} />
         </pre>
       ) : null}
       <div className="flex items-center gap-2 px-3 py-1.5 text-2xs select-none">

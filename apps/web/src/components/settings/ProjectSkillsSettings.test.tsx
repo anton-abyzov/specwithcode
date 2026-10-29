@@ -16,16 +16,96 @@ const state = vi.hoisted(() => ({
   error: null as string | null,
   isPending: false,
   copied: [] as string[],
+  versions: null as unknown,
+  actions: [] as Array<{ preview: boolean; action: unknown; expected?: unknown }>,
+  search: {} as Record<string, unknown>,
+  navigations: [] as Array<{ replace?: boolean; search?: unknown }>,
+  toasts: [] as Array<{
+    title?: string;
+    actionProps?: { children?: unknown; onClick?: () => void };
+  }>,
 }));
 
-vi.mock("../../studio/projectWorkspace", () => ({ projectWorkspace: { skills: () => ({}) } }));
+vi.mock("../../studio/projectWorkspace", () => ({
+  projectWorkspace: {
+    skills: () => ({ kind: "skills" }),
+    skillVersions: () => ({ kind: "versions" }),
+    skillAction: { label: "skill-action" },
+    skillFleetPush: { label: "skill-fleet-push" },
+    skillStudioLink: { label: "skill-studio-link" },
+  },
+}));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => ({
-    refresh: () => {},
-    data: state.data,
-    error: state.error,
-    isPending: state.isPending,
-  }),
+  useEnvironmentQuery: (atom: { kind?: string } | null) =>
+    atom === null
+      ? { refresh: () => {}, data: null, error: null, isPending: false }
+      : atom.kind === "versions"
+        ? { refresh: () => {}, data: state.versions, error: null, isPending: false }
+        : {
+            refresh: () => {},
+            data: state.data,
+            error: state.error,
+            isPending: state.isPending,
+          },
+}));
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => true,
+}));
+vi.mock("../../studio/fleet", () => ({
+  useStudioFleet: () => ({ snapshot: null, loading: false, failed: false, refresh: () => {} }),
+}));
+vi.mock("@tanstack/react-router", () => ({
+  useSearch: () => state.search,
+  useNavigate: () => (options: { replace?: boolean; search?: unknown }) => {
+    state.navigations.push(options);
+    return Promise.resolve();
+  },
+}));
+vi.mock("../ui/toast", () => ({
+  toastManager: {
+    add: (toast: (typeof state.toasts)[number]) => {
+      state.toasts.push(toast);
+      return "toast";
+    },
+    close: () => {},
+  },
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand:
+    () =>
+    async ({
+      input,
+    }: {
+      input: { preview: boolean; action: { kind: string; enabled?: boolean }; expected?: unknown };
+    }) => {
+      state.actions.push({
+        preview: input.preview,
+        action: input.action,
+        ...(input.expected ? { expected: input.expected } : {}),
+      });
+      return input.preview
+        ? {
+            _tag: "Success",
+            value: {
+              preview: {
+                files: ["/work/app/.claude/settings.local.json"],
+                summary: "Turn off deploy for Claude.",
+                liveness: "next-session",
+                expected: { fileHash: "h1" },
+              },
+            },
+          }
+        : {
+            _tag: "Success",
+            value: {
+              applied: true,
+              summary: "Turned off deploy for Claude.",
+              liveness: "next-session",
+              effectiveEnabled: input.action.enabled,
+            },
+          };
+    },
 }));
 vi.mock("~/hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({
@@ -82,6 +162,8 @@ const snapshot: ProjectSkillsSnapshot = {
         source: "github:acme/deploy",
         sha: "abc",
         installedAt: null,
+        pinnedVersion: "1.2.0",
+        skillId: "acme/deploy/deploy",
       },
       drift: "match",
     }),
@@ -116,6 +198,11 @@ beforeEach(() => {
   state.error = null;
   state.isPending = false;
   state.copied = [];
+  state.versions = null;
+  state.actions = [];
+  state.toasts = [];
+  state.search = {};
+  state.navigations = [];
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -156,7 +243,8 @@ describe("ProjectSkillsView", () => {
       "deploy",
       "Claude",
       "Project",
-      "1.2.0",
+      // The version, then its pinned chip.
+      "1.2.0pinned",
       "VERIFIED",
       // The repository, then the skill's verified-skill.com page under it.
       "acme/deployverified-skill.com",
@@ -259,18 +347,246 @@ describe("ProjectSkillsView", () => {
     );
   });
 
-  it("copies the SKILL.md path and disables copy when nothing loads the skill", async () => {
-    await render();
-    const copy = container.querySelector<HTMLButtonElement>(
-      "button[aria-label='Copy the SKILL.md path of review']",
+  async function openRowMenu(skill: string) {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      `button[aria-label='More actions for ${skill}']`,
     )!;
-    await act(async () => copy.click());
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      trigger.click();
+    });
+    return (label: string) =>
+      [...document.querySelectorAll<HTMLElement>("[role=menuitem]")].find(
+        (item) => item.textContent === label,
+      )!;
+  }
+
+  it("copies the SKILL.md path from the row menu and disables copy when nothing loads the skill", async () => {
+    await render();
+    let item = await openRowMenu("review");
+    await act(async () => item("Copy path").click());
     expect(state.copied).toEqual(["/work/app/.claude/skills/review/SKILL.md"]);
+    await act(async () =>
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    item = await openRowMenu("ghost");
     expect(
-      container.querySelector<HTMLButtonElement>(
-        "button[aria-label='Copy the SKILL.md path of ghost']",
-      )?.disabled,
-    ).toBe(true);
+      item("Copy path").getAttribute("aria-disabled") ??
+        item("Copy path").getAttribute("data-disabled"),
+    ).not.toBeNull();
+    // A local skill has no registry versions to change or push.
+    expect(item("Change version…").hasAttribute("data-disabled")).toBe(true);
+  });
+
+  it("shows the version, and previews a switch before it writes, with Undo after", async () => {
+    state.versions = {
+      skill: "deploy",
+      skillId: "acme/deploy/deploy",
+      lockScope: "project",
+      installedVersion: "1.2.0",
+      pinnedVersion: "1.2.0",
+      versions: [
+        { version: "1.3.0", certTier: "VERIFIED", createdAt: null, installed: false },
+        { version: "1.2.0", certTier: "VERIFIED", createdAt: null, installed: true },
+      ],
+      outdated: { latest: "1.3.0", updateAvailable: true, pinned: true, pinnedVersion: "1.2.0" },
+    };
+    await render();
+    await act(async () =>
+      container.querySelector<HTMLElement>("button[aria-label='Show details for deploy']")!.click(),
+    );
+    const panel = document.querySelector("[data-testid=skill-details]")!;
+    const version = panel.querySelector("[data-testid=skill-version]")!;
+    expect(version.textContent).toContain("1.2.0");
+    expect(version.textContent).toContain("pinned");
+    expect(version.textContent).toContain("Update to 1.3.0");
+    // The row learns about the update once its versions were read.
+    expect(
+      container.querySelector("tr[data-skill=deploy] [data-testid=version-update]")?.textContent,
+    ).toBe("↑1.3.0");
+    expect(panel.querySelector("[data-testid=skill-liveness]")?.textContent).toBe("Next session");
+
+    const toggle = panel.querySelector<HTMLElement>("[data-testid=skill-agent-switch]")!;
+    await act(async () => toggle.click());
+    expect(state.actions).toEqual([
+      {
+        preview: true,
+        action: {
+          kind: "toggle-skill",
+          provider: "claudeAgent",
+          instanceId: "claudeAgent",
+          enabled: false,
+          scope: "local",
+        },
+      },
+    ]);
+    const card = panel.querySelector("[data-testid=skill-action-preview]")!;
+    expect(card.textContent).toContain("Turn off deploy for Claude.");
+    expect(card.textContent).toContain("Edits /work/app/.claude/settings.local.json");
+    expect(card.textContent).toContain("Takes effect: Next session");
+
+    await act(async () =>
+      panel.querySelector<HTMLButtonElement>("[data-testid=skill-action-apply]")!.click(),
+    );
+    expect(state.actions[1]).toMatchObject({ preview: false, expected: { fileHash: "h1" } });
+    expect(panel.querySelector("[data-testid=skill-action-preview]")).toBeNull();
+    expect(state.toasts[0]?.title).toBe("Turned off deploy for Claude.");
+    expect(state.toasts[0]?.actionProps?.children).toBe("Undo");
+
+    // Undo previews the inverse and applies it with what that preview saw.
+    await act(async () => state.toasts[0]!.actionProps!.onClick!());
+    expect(state.actions.slice(2)).toEqual([
+      expect.objectContaining({
+        preview: true,
+        action: expect.objectContaining({ enabled: true }),
+      }),
+      expect.objectContaining({ preview: false, expected: { fileHash: "h1" } }),
+    ]);
+  });
+
+  it("says why Pin and Unpin are disabled for a skill in the user's lock", async () => {
+    const userLock = {
+      lockPath: "/home/me/.agents/vskill.lock",
+      lockScope: "user" as const,
+      version: "1.0.0",
+      tier: "VERIFIED",
+      source: "github:acme/brain",
+      sha: "abc",
+      installedAt: null,
+      pinnedVersion: "1.0.0",
+      skillId: "acme/brain/brain",
+    };
+    state.data = { ...snapshot, rows: [row("brain", { lock: userLock, drift: "match" })] };
+    await render();
+    await act(async () =>
+      container.querySelector<HTMLElement>("button[aria-label='Show details for brain']")!.click(),
+    );
+    const version = document.querySelector(
+      "[data-testid=skill-details] [data-testid=skill-version]",
+    )!;
+    const unpin = [...version.querySelectorAll("button")].find(
+      (button) => button.textContent === "Unpin",
+    )!;
+    expect(unpin.disabled).toBe(true);
+    // The reason sits on a focusable wrapper, since a disabled button gets no hover or focus.
+    const wrapper = unpin.closest<HTMLElement>("[data-testid=skill-control-reason]")!;
+    expect(wrapper.tabIndex).toBe(0);
+    const described = document.getElementById(wrapper.getAttribute("aria-describedby")!);
+    expect(described?.textContent).toContain("vskill pins only in a project folder's own lock");
+    // The Install section no longer repeats the links and version shown above it.
+    const install = document.querySelector("[data-testid=skill-details] [aria-label=Install]")!;
+    expect(install.textContent).not.toContain("verified-skill.com");
+    expect(install.textContent).not.toContain("Version");
+  });
+
+  it("opens the linked skill once, leaves the URL, and says when it is not loaded here", async () => {
+    state.search = { skill: "deploy" };
+    await render();
+    expect(document.querySelector("[data-testid=skill-details]")?.textContent).toContain("deploy");
+    expect(state.navigations).toEqual([expect.objectContaining({ replace: true })]);
+    const strip = state.navigations[0]!.search as (prev: Record<string, unknown>) => unknown;
+    expect(strip({ skill: "deploy", tab: "x" })).toEqual({ tab: "x" });
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    state.search = { skill: "nope" };
+    await render();
+    expect(document.querySelector("[data-testid=skills-linked-missing]")?.textContent).toContain(
+      "nope is not loaded in this project.",
+    );
+  });
+
+  it("can turn a disabled Claude plugin back on after a rescan", async () => {
+    state.data = {
+      ...snapshot,
+      rows: [
+        row("sw:do", {
+          providers: [
+            {
+              ...claude,
+              path: "/home/me/.claude/plugins/cache/specweave/sw/1.0.0/skills/do/SKILL.md",
+              scope: "plugin",
+              enabled: false,
+              name: "sw:do",
+            },
+          ],
+        }),
+      ],
+    };
+    await render();
+    await act(async () =>
+      container.querySelector<HTMLElement>("button[aria-label='Show details for sw:do']")!.click(),
+    );
+    const panel = document.querySelector("[data-testid=skill-details]")!;
+    const button = [...panel.querySelectorAll("button")].find(
+      (element) => element.textContent === "Turn on plugin sw",
+    )!;
+    expect(button).toBeDefined();
+    await act(async () => button.click());
+    expect(state.actions[0]).toMatchObject({
+      preview: true,
+      action: { kind: "toggle-plugin", pluginId: "sw@specweave", enabled: true },
+    });
+  });
+
+  it("shows Grok's skill switch disabled and offers turning off a plugin", async () => {
+    state.data = {
+      ...snapshot,
+      rows: [
+        row("sw:do", {
+          providers: [
+            {
+              instanceId: ProviderInstanceId.make("grok"),
+              driver: ProviderDriverKind.make("grok"),
+              label: "Grok",
+              path: "/home/me/.grok/installed-plugins/sw-1a2b3c4d/skills/do/SKILL.md",
+              scope: "plugin",
+              enabled: true,
+            },
+            {
+              ...claude,
+              path: "/home/me/.claude/plugins/cache/specweave/sw/1.0.0/skills/do/SKILL.md",
+              scope: "plugin",
+              enabled: true,
+              name: "sw:do",
+            },
+          ],
+        }),
+      ],
+    };
+    await render();
+    await act(async () =>
+      container.querySelector<HTMLElement>("button[aria-label='Show details for sw:do']")!.click(),
+    );
+    const panel = document.querySelector("[data-testid=skill-details]")!;
+    const switches = [...panel.querySelectorAll<HTMLElement>("[data-testid=skill-agent-switch]")];
+    expect(switches.map((element) => element.getAttribute("data-driver"))).toEqual([
+      "grok",
+      "claudeAgent",
+    ]);
+    expect(switches[0]!.hasAttribute("data-disabled")).toBe(true);
+    expect(switches[1]!.hasAttribute("data-disabled")).toBe(true);
+    const plugin = [...panel.querySelectorAll("button")].find(
+      (button) =>
+        button.textContent === "Turn off plugin sw" &&
+        button.closest("li")?.textContent?.includes("Claude"),
+    )!;
+    await act(async () => plugin.click());
+    expect(state.actions[0]).toEqual({
+      preview: true,
+      action: {
+        kind: "toggle-plugin",
+        provider: "claudeAgent",
+        instanceId: "claudeAgent",
+        pluginId: "sw@specweave",
+        enabled: false,
+        scope: "user",
+      },
+    });
+    expect(panel.querySelector("[data-testid=skill-version]")?.textContent).toContain(
+      "Local skill. No registry versions.",
+    );
   });
 
   it("shows loading, error and empty states", async () => {

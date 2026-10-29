@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
+import { claimCoordinatorEpoch } from "../../workGrantAccess.ts";
 import { MachinesToolkit } from "./tools.ts";
 
 export const layer = McpToolAccess.toLayer(MachinesToolkit, {
@@ -16,5 +17,8 @@ export const layer = McpToolAccess.toLayer(MachinesToolkit, {
         probe: context.caller !== undefined,
       });
     }),
+  ),
+  studio_coordinator_claim_epoch: McpToolAccess.writes((input) =>
+    readCaller().pipe(Effect.flatMap((context) => claimCoordinatorEpoch(context, input))),
   ),
 });

@@ -160,6 +160,7 @@ import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as CredentialFailureLimiter from "./auth/CredentialFailureLimiter.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
+import * as WorkerEpochStore from "./fleet/WorkerEpochStore.ts";
 import * as WorkGrants from "./fleet/WorkGrants.ts";
 import * as WorkGrantRevokeSweeper from "./fleet/workGrantRevokeSweeper.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
@@ -210,9 +211,12 @@ import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as StaleRunWatchdog from "./orchestration-v2/StaleRunWatchdog.ts";
 import * as StrandedSubagents from "./orchestration-v2/StrandedSubagents.ts";
 import * as HandoffModeReactor from "./handoff/HandoffModeReactor.ts";
+import * as CoordinatorLease from "./project/CoordinatorLease.ts";
+import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
+import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
 import * as HandoffRoute from "./handoff/handoffRoute.ts";
 import * as LimitHandoffAdapter from "./orchestration-v2/LimitHandoffAdapter.ts";
@@ -630,6 +634,14 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// Automatic coordinator takeover, coordinator side: the lease loop and the
+// release guard ProjectLink's handlers call before a change. One value, so the
+// reactor and the handlers share one instance.
+const layerCoordinatorLease = CoordinatorLease.layer.pipe(
+  Layer.provide(HandoffPeers.layer),
+  Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Coordinator workers on the owner's other machines: grants, follower and their renewal.
@@ -659,7 +671,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Serves the checkpoint Claude awaits before an Agent launch (same layer as the adapters').
   Layer.effectDiscard(HandoffModeReactor.start).pipe(
     Layer.provide(SubagentLaunchCheckpoints.layer),
+    Layer.provide(layerCoordinatorLease),
   ),
+  layerCoordinatorLease,
   // Records a routine turn that fails after its message was dispatched.
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
   // Handoff moves between machines; the receiver also serves the peer route.
@@ -833,7 +847,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerServerEnvironment),
   // Who may run work here, from other machines: read by /mcp sign-in, the
   // thread tools and Settings, so it sits under all of them.
-  Layer.provideMerge(WorkGrants.layer),
+  // Coordinator epochs claimed here after an automatic takeover, read by the same tools.
+  Layer.provideMerge(Layer.merge(WorkGrants.layer, WorkerEpochStore.layer)),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(
@@ -920,6 +935,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     FolderTransferRoute.layer,
     HandoffRoute.layer,
+    CoordinatorSuspendRoute.layer,
     MachineNicknameSync.routeLayer,
     GitHubCredentialRoute.routeLayer,
     GoogleOAuthRoute.layer,

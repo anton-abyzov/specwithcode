@@ -19,6 +19,7 @@ import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { HighlightedTokens } from "./HighlightedTokens";
 import { terminalOutputPlainText, withoutTerminalEscapes } from "./shellCodeBlocks";
+import { TerminalActionBar, TerminalLinkedText } from "./TerminalTextActions";
 
 export interface ToolPresentationBlock {
   readonly label: string;
@@ -455,6 +456,10 @@ export function ToolCodePanel({
           {notice}
         </p>
       ) : null}
+      {/* Command output only: a file that was read keeps its own text, links inline. */}
+      {(terminal && !source) || (!terminal && label === "Output") ? (
+        <TerminalActionBar text={plain ?? content} />
+      ) : null}
       {showsPaging && paging.anchor === "end" ? (
         <PagingBar
           paging={paging}
@@ -489,7 +494,7 @@ export function ToolCodePanel({
               </Suspense>
             </RenderErrorBoundary>
           ) : (
-            displayContent
+            <TerminalLinkedText text={displayContent} />
           )}
         </code>
       </pre>

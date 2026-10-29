@@ -1,339 +1,33 @@
-// @effect-diagnostics nodeBuiltinImport:off - real folders give each copy its repository fingerprint.
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-
 import {
-  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
-  EventId,
   LogicalProject,
   type LogicalProjectMember,
-  type Project,
-  type ProjectCoordinatorReplica,
   ProjectId,
-  ProjectLinkError,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import * as Exit from "effect/Exit";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   isLogicalProjectBinding,
   logicalProjectBindingMatch,
 } from "../fleet/remoteWorkerMatching.ts";
-import { planProjectCommand } from "../orchestration-v2/ProjectCommands.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import type { ProjectRow } from "../orchestration-v2/ProjectStore.ts";
-import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as ProjectLink from "./ProjectLink.ts";
-import * as ProjectService from "./ProjectService.ts";
-import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
+import { autoTakeoverOperationId } from "./ProjectLinkStandby.ts";
+import {
+  checkout,
+  legacyPair,
+  link,
+  machine,
+  operationId,
+  removeCheckouts,
+  unlinkId,
+  withoutRoot,
+} from "./ProjectLink.testkit.ts";
 
-const folders: string[] = [];
-afterEach(() => {
-  for (const folder of folders.splice(0)) NodeFS.rmSync(folder, { recursive: true, force: true });
-});
-/** A folder whose root `.git` names `origin`; enough for the read-only fingerprint scan. */
-const checkout = (origin: string) => {
-  const folder = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "link-")));
-  folders.push(folder);
-  NodeFS.mkdirSync(NodePath.join(folder, ".git"));
-  NodeFS.writeFileSync(
-    NodePath.join(folder, ".git/config"),
-    `[remote "origin"]\n\turl = ${origin}\n`,
-  );
-  return folder;
-};
-
-const operationId = "11111111-1111-4111-8111-111111111111";
-const unlinkId = "22222222-2222-4222-8222-222222222222";
-
-/**
- * One machine: its projects, notes and coordinator activity, with project writes
- * planned by the real command rules so every ownership mode is enforced.
- */
-function machine(environment: string) {
-  const environmentId = EnvironmentId.make(environment);
-  const projects = new Map<string, Project>();
-  const notes = new Map<string, Map<string, { content: string; revision: number }>>();
-  const receipts = new Map<string, Result.Result<Project, ProjectService.ProjectOperationError>>();
-  const busy = new Set<string>();
-  const ownershipModes: string[] = [];
-  /** Note names whose next write fails, as a storage failure would. */
-  const failingWrites = new Set<string>();
-  /** Coordinator runs by thread: when each was requested and what it asked. */
-  const runs = new Map<string, Array<{ id: string; requestedAt: string; text: string }>>();
-  const replicas = new Map<string, ProjectCoordinatorReplica>();
-  const toRow = (project: Project): ProjectRow =>
-    ({
-      projectId: project.id,
-      title: project.title,
-      workspaceRoot: project.workspaceRoot,
-      defaultModelSelection: null,
-      defaultThreadEnvMode: null,
-      autoPull: false,
-      faviconPath: null,
-      projectIcon: null,
-      scripts: [],
-      createdAt: project.createdAt,
-      updatedAt: project.updatedAt,
-      deletedAt: null,
-      workspaceSettings: project.workspaceSettings,
-    }) as ProjectRow;
-  const update = (input: ProjectService.ProjectUpdateInput) =>
-    Effect.suspend((): Effect.Effect<Project, ProjectService.ProjectServiceError> => {
-      const replay = receipts.get(input.commandId);
-      if (replay)
-        return Result.isSuccess(replay)
-          ? Effect.succeed(replay.success)
-          : Effect.fail(replay.failure);
-      const current = projects.get(input.projectId);
-      if (!current)
-        return Effect.fail(new ProjectService.ProjectNotFoundError({ projectId: input.projectId }));
-      if (input.ownership) ownershipModes.push(input.ownership.mode);
-      const planned = planProjectCommand({
-        command: {
-          type: "project.meta.update",
-          commandId: input.commandId,
-          projectId: input.projectId,
-          ...(input.ownership ? { ownership: input.ownership } : {}),
-          ...(input.workspaceSettings ? { workspaceSettings: input.workspaceSettings } : {}),
-        },
-        state: { project: toRow(current), workspaceOwner: undefined },
-        eventId: EventId.make(`event:${input.commandId}`),
-        now: DateTime.makeUnsafe("2026-10-19T12:00:00.000Z"),
-      });
-      if (Result.isFailure(planned)) {
-        const failure = new ProjectService.ProjectOperationError({
-          operation: "dispatch-project-command",
-          projectId: input.projectId,
-          cause: planned.failure,
-        });
-        receipts.set(input.commandId, Result.fail(failure));
-        return Effect.fail(failure);
-      }
-      const payload = planned.success.payload as {
-        workspaceSettings?: Project["workspaceSettings"];
-      };
-      const next = {
-        ...current,
-        workspaceSettings: payload.workspaceSettings ?? current.workspaceSettings,
-      };
-      projects.set(input.projectId, next);
-      receipts.set(input.commandId, Result.succeed(next));
-      return Effect.succeed(next);
-    });
-  const notesOf = (projectId: string) => {
-    const existing = notes.get(projectId) ?? new Map();
-    notes.set(projectId, existing);
-    return existing;
-  };
-  const layer = ProjectLink.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.succeed(ServerEnvironment.ServerEnvironment, {
-          getEnvironmentId: Effect.succeed(environmentId),
-          getDescriptor: Effect.die("unused"),
-        }),
-        Layer.succeed(ProjectService.ProjectService, {
-          getById: (projectId: ProjectId) =>
-            Effect.succeed(Option.fromNullishOr(projects.get(projectId))),
-          update,
-        } as unknown as ProjectService.ProjectService["Service"]),
-        Layer.succeed(ProjectWorkspaceService.ProjectWorkspaceService, {
-          readWorkspace: ({ projectId }: { projectId: ProjectId }) =>
-            Effect.succeed({
-              settings: projects.get(projectId)!.workspaceSettings!,
-              memory: {
-                files: [...notesOf(projectId)].map(([name, note]) => ({
-                  name,
-                  revision: note.revision,
-                  updatedAt: "2026-10-19T00:00:00.000Z",
-                  byteLength: Buffer.byteLength(note.content),
-                })),
-                totalBytes: 0,
-              },
-            }),
-          readMemory: ({ projectId, name }: { projectId: ProjectId; name: string }) => {
-            const note = notesOf(projectId).get(name);
-            return note
-              ? Effect.succeed({
-                  name,
-                  ...note,
-                  updatedAt: "2026-10-19T00:00:00.000Z",
-                  byteLength: Buffer.byteLength(note.content),
-                })
-              : Effect.fail({ code: "not_found" });
-          },
-          writeMemory: (input: {
-            projectId: ProjectId;
-            name: string;
-            content: string;
-            expectedRevision: number | null;
-          }) =>
-            Effect.suspend(() => {
-              if (failingWrites.delete(input.name)) return Effect.fail({ code: "storage_failed" });
-              const existing = notesOf(input.projectId).get(input.name);
-              if ((existing?.revision ?? null) !== input.expectedRevision)
-                return Effect.fail({ code: "conflict" });
-              const note = { content: input.content, revision: (existing?.revision ?? 0) + 1 };
-              notesOf(input.projectId).set(input.name, note);
-              return Effect.succeed({ name: input.name, ...note });
-            }),
-        } as unknown as ProjectWorkspaceService.ProjectWorkspaceService["Service"]),
-        Layer.succeed(
-          CoordinatorReplicas.CoordinatorReplicas,
-          CoordinatorReplicas.CoordinatorReplicas.of({
-            read: (projectId) => Effect.sync(() => Option.fromNullishOr(replicas.get(projectId))),
-            write: (projectId, replica) => Effect.sync(() => void replicas.set(projectId, replica)),
-            remove: (projectId) => Effect.sync(() => void replicas.delete(projectId)),
-          }),
-        ),
-        Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-          getThreadProjection: (threadId: ThreadId) =>
-            Effect.succeed({
-              runs: (runs.get(threadId) ?? []).map((run) => ({
-                id: run.id,
-                requestedAt: DateTime.makeUnsafe(run.requestedAt),
-                userMessageId: `message:${run.id}`,
-              })),
-              messages: (runs.get(threadId) ?? []).map((run) => ({
-                id: `message:${run.id}`,
-                text: run.text,
-              })),
-            }),
-          getThreadShell: (threadId: ThreadId) =>
-            Effect.succeed({
-              id: threadId,
-              activeRunId: busy.has(threadId) ? "run" : null,
-              latestRunRequestedAt: DateTime.makeUnsafe("2026-10-18T09:00:00.000Z"),
-              latestUserMessageAt: null,
-            }),
-        } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
-      ),
-    ),
-  );
-  const run = <A>(
-    use: (link: ProjectLink.ProjectLink["Service"]) => Effect.Effect<A, ProjectLinkError>,
-  ) =>
-    Effect.runPromiseExit(
-      Effect.gen(function* () {
-        return yield* use(yield* ProjectLink.ProjectLink);
-      }).pipe(Effect.provide(layer)),
-    ).then((exit) => {
-      if (Exit.isSuccess(exit)) return exit.value;
-      throw Cause.squash(exit.cause);
-    });
-  const fails = async (effect: Promise<unknown>) => {
-    const error = await effect.then(
-      () => null,
-      (cause: unknown) => cause,
-    );
-    expect(error).toBeInstanceOf(ProjectLinkError);
-    return error as ProjectLinkError;
-  };
-  const add = (
-    id: string,
-    root: string,
-    settings: Partial<NonNullable<Project["workspaceSettings"]>> = {},
-  ) => {
-    const project = {
-      id: ProjectId.make(id),
-      title: "EasyChamp",
-      workspaceRoot: root,
-      defaultModelSelection: null,
-      scripts: [],
-      createdAt: "2026-10-01T00:00:00.000Z",
-      updatedAt: "2026-10-01T00:00:00.000Z",
-      deletedAt: null,
-      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, ...settings },
-    } as Project;
-    projects.set(id, project);
-    return project;
-  };
-  const member = (id: string): LogicalProjectMember => ({
-    environmentId,
-    projectId: ProjectId.make(id),
-    coordinatorThreadId: ThreadId.make(`project-coordinator:${id}`),
-  });
-  return {
-    environmentId,
-    projects,
-    notes: notesOf,
-    failingWrites,
-    busy,
-    ownershipModes,
-    runs,
-    replicas,
-    run,
-    fails,
-    add,
-    member,
-  };
-}
-
-/** Both copies of EasyChamp from before shared identities, as on the M4 and the M3. */
-const legacyPair = () => {
-  const m4 = machine("m4");
-  const m3 = machine("m3");
-  const keptRoot = m4.add(
-    "easychamp-m4",
-    checkout("git@github.com:anton/sw-easychamp.git"),
-  ).workspaceRoot;
-  const joiningRoot = m3.add(
-    "easychamp-m3",
-    checkout("https://github.com/anton/sw-easychamp.git"),
-  ).workspaceRoot;
-  // Each server records its own copy's folder in the member it builds.
-  return {
-    m4,
-    m3,
-    kept: { ...m4.member("easychamp-m4"), workspaceRoot: keptRoot },
-    joining: { ...m3.member("easychamp-m3"), workspaceRoot: joiningRoot },
-  };
-};
-
-/** A member as servers listed it before members recorded their folder. */
-const withoutRoot = (member: LogicalProjectMember): LogicalProjectMember => ({
-  environmentId: member.environmentId,
-  projectId: member.projectId,
-  coordinatorThreadId: member.coordinatorThreadId,
-});
-
-const link = async (pair: ReturnType<typeof legacyPair>) => {
-  const prepared = await pair.m4.run((service) =>
-    service.prepare({ operationId, projectId: pair.kept.projectId, joining: pair.joining }),
-  );
-  const accepted = await pair.m3.run((service) =>
-    service.accept({
-      operationId,
-      projectId: pair.joining.projectId,
-      kept: prepared.kept,
-      logicalProject: prepared.logicalProject,
-      coordinatorBinding: prepared.coordinatorBinding,
-      keptFingerprint: prepared.fingerprint,
-    }),
-  );
-  const committed = await pair.m4.run((service) =>
-    service.commit({
-      operationId,
-      projectId: pair.kept.projectId,
-      joining: accepted.member,
-      notes: [],
-    }),
-  );
-  return { prepared, accepted, committed };
-};
+afterEach(removeCheckouts);
 
 describe("ProjectLink", () => {
   it("adopts an identity for a legacy kept copy, then links both ways so remote workers bind", async () => {
@@ -1170,6 +864,225 @@ describe("ProjectLink", () => {
       expect(
         pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
       ).toEqual({ epoch: 0, state: "active" });
+    });
+
+    describe("automatic takeover", () => {
+      const standbyId = "55555555-5555-4555-8555-555555555555";
+      const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+      /** M4 names the M3 copy its standby and the M3 copy accepts M4 at epoch 0. */
+      const armed = async () => {
+        const linked = await linkedWithReplica();
+        const { pair } = linked;
+        await pair.m4.run((service) =>
+          service.setStandby({
+            operationId: standbyId,
+            projectId: pair.kept.projectId,
+            standby: { member: pair.joining, afterMinutes: 15 },
+          }),
+        );
+        const logicalProjectId = linked.replica.logicalProjectId;
+        await pair.m3.run((service) =>
+          service.acceptStandby({
+            projectId: pair.joining.projectId,
+            logicalProjectId,
+            standby: { coordinator: pair.kept, epoch: 0, afterMinutes: 15 },
+          }),
+        );
+        /** A lease heard `minutesAgo`, inside an unbroken watch. */
+        const heard = (minutesAgo: number, epoch = 0) => {
+          const record = pair.m3.standby.get(logicalProjectId)!;
+          const at = DateTime.toEpochMillis(DateTime.nowUnsafe()) - minutesAgo * 60_000;
+          pair.m3.standby.set(logicalProjectId, {
+            ...record,
+            epoch,
+            lastLeaseAt: iso(at),
+            lastSeq: 3,
+            watchingSince: iso(at - 60_000),
+            leaseSinceWatching: true,
+          });
+        };
+        return { ...linked, logicalProjectId, heard };
+      };
+
+      it("is armed only by the owner on both machines, and the standby never runs a coordinator", async () => {
+        const { pair, replica } = await linkedWithReplica();
+        const logicalProjectId = replica.logicalProjectId;
+        const accept = (machine: typeof pair.m3, projectId: ProjectId, coordinator = pair.kept) =>
+          machine.run((service) =>
+            service.acceptStandby({
+              projectId,
+              logicalProjectId,
+              standby: { coordinator, epoch: 0, afterMinutes: 15 },
+            }),
+          );
+        // The active copy runs its own coordinator, so it cannot stand by.
+        expect((await pair.m4.fails(accept(pair.m4, pair.kept.projectId, pair.joining))).code).toBe(
+          "not_member",
+        );
+        pair.m3.capabilities.coordinatorStandby = false;
+        expect((await pair.m3.fails(accept(pair.m3, pair.joining.projectId))).code).toBe("invalid");
+        pair.m3.capabilities.coordinatorStandby = true;
+        expect(
+          (await pair.m3.fails(accept(pair.m3, pair.joining.projectId, pair.joining))).code,
+        ).toBe("invalid");
+        expect(pair.m3.standby.size).toBe(0);
+
+        const set = (machine: typeof pair.m4, projectId: ProjectId, member: LogicalProjectMember) =>
+          machine.run((service) =>
+            service.setStandby({
+              operationId: standbyId,
+              projectId,
+              standby: { member, afterMinutes: 15 },
+            }),
+          );
+        expect((await pair.m4.fails(set(pair.m4, pair.kept.projectId, pair.kept))).code).toBe(
+          "invalid",
+        );
+        expect((await pair.m3.fails(set(pair.m3, pair.joining.projectId, pair.kept))).code).toBe(
+          "not_coordinator",
+        );
+        const chosen = await set(pair.m4, pair.kept.projectId, pair.joining);
+        expect(chosen.replayed).toBe(false);
+        expect(chosen.coordinatorBinding).toMatchObject({
+          epoch: 0,
+          state: "active",
+          standby: { member: pair.joining, afterMinutes: 15 },
+        });
+        expect((await set(pair.m4, pair.kept.projectId, pair.joining)).replayed).toBe(true);
+        expect(pair.m4.ownershipModes.filter((mode) => mode === "set-standby")).toHaveLength(1);
+
+        const accepted = await accept(pair.m3, pair.joining.projectId);
+        expect(accepted).toMatchObject({
+          replayed: false,
+          standby: { coordinator: pair.kept, epoch: 0, afterMinutes: 15 },
+        });
+        expect(pair.m3.standby.get(logicalProjectId)).toMatchObject({
+          projectId: pair.joining.projectId,
+          lastLeaseAt: null,
+          lastSeq: null,
+          leaseSinceWatching: false,
+        });
+        expect((await accept(pair.m3, pair.joining.projectId)).replayed).toBe(true);
+        // A new delay keeps the watch that is running.
+        const watching = pair.m3.standby.get(logicalProjectId)!.watchingSince;
+        await pair.m3.run((service) =>
+          service.acceptStandby({
+            projectId: pair.joining.projectId,
+            logicalProjectId,
+            standby: { coordinator: pair.kept, epoch: 0, afterMinutes: 30 },
+          }),
+        );
+        expect(pair.m3.standby.get(logicalProjectId)).toMatchObject({
+          afterMinutes: 30,
+          watchingSince: watching,
+        });
+
+        // Off on both sides.
+        const off = await pair.m3.run((service) =>
+          service.acceptStandby({
+            projectId: pair.joining.projectId,
+            logicalProjectId,
+            standby: null,
+          }),
+        );
+        expect(off).toEqual({ standby: null, replayed: false });
+        expect(pair.m3.standby.size).toBe(0);
+        const cleared = await pair.m4.run((service) =>
+          service.setStandby({
+            operationId: standbyId,
+            projectId: pair.kept.projectId,
+            standby: null,
+          }),
+        );
+        expect(cleared.coordinatorBinding).toEqual({ epoch: 0, state: "active" });
+      });
+
+      it("takes over only when its clock fires, at the epoch its operation names", async () => {
+        const { pair, logicalProjectId, heard, replica } = await armed();
+        await pair.m3.run((service) =>
+          service.replicate({ projectId: pair.joining.projectId, replica }),
+        );
+        const auto = () => pair.m3.run((service) => service.autoTakeover({ logicalProjectId }));
+        // Accepted, but no lease heard while watching.
+        expect(await auto()).toEqual({ outcome: "not-due", reason: "no-lease-while-watching" });
+        heard(2);
+        expect(await auto()).toEqual({ outcome: "not-due", reason: "waiting" });
+        expect(pair.m3.ownershipModes).toEqual(["join-as-member"]);
+
+        // Silent for 20 minutes, and the lease named epoch 4: the new epoch is 5.
+        heard(20, 4);
+        const taken = await auto();
+        if (taken.outcome !== "taken-over") throw new Error(taken.outcome);
+        const operationId = autoTakeoverOperationId(logicalProjectId, 5);
+        expect(operationId.length).toBeLessThanOrEqual(128);
+        expect(taken.result.replayed).toBe(false);
+        expect(taken.result.coordinatorBinding).toMatchObject({
+          epoch: 5,
+          state: "active",
+          operationId,
+          predecessor: pair.kept,
+          takenOverBy: "auto",
+        });
+        expect(taken.result.coordinatorBinding.standby).toBeUndefined();
+        expect(pair.m3.notes(pair.joining.projectId).get("decisions.md")?.content).toBe("Ship 2.0");
+        expect(pair.m3.ownershipModes).toEqual(["join-as-member", "takeover"]);
+        // Asked again, it replays instead of moving the epoch on.
+        const again = await auto();
+        expect(again).toMatchObject({ outcome: "taken-over", result: { replayed: true } });
+        // A person's takeover is recorded as such.
+        const { pair: other } = await armed();
+        const manual = await other.m3.run((service) =>
+          service.takeover({ operationId: takeoverId, projectId: other.joining.projectId }),
+        );
+        expect(manual.coordinatorBinding.takenOverBy).toBe("person");
+      });
+
+      it("keeps the coordinator's own copy as the replica and says when it changed the instructions", async () => {
+        const { pair, logicalProjectId, heard, replica } = await armed();
+        await pair.m3.run((service) =>
+          service.replicate({ projectId: pair.joining.projectId, replica }),
+        );
+        const pushed = {
+          goal: replica.goal,
+          instructions: "Ship on Fridays only.",
+          notes: replica.notes,
+          notesTruncated: false,
+        };
+        const content = { ...pushed, digest: ProjectLink.coordinatorContentDigest(pushed) };
+        const push = (input: { callerEnvironmentId?: string; epoch?: number; digest?: string }) =>
+          pair.m3.run((service) =>
+            service.replicateFromPeer({
+              logicalProjectId,
+              callerEnvironmentId: input.callerEnvironmentId ?? "m4",
+              epoch: input.epoch ?? 0,
+              content: { ...content, digest: input.digest ?? content.digest },
+            }),
+          );
+        expect((await pair.m3.fails(push({ callerEnvironmentId: "m1" }))).code).toBe("not_member");
+        expect((await pair.m3.fails(push({ epoch: 1 }))).code).toBe("not_member");
+        expect((await pair.m3.fails(push({ digest: "0".repeat(64) }))).code).toBe("invalid");
+        expect((await push({})).replayed).toBe(false);
+        expect((await push({})).replayed).toBe(true);
+        const held = pair.m3.replicas.get(pair.joining.projectId)!;
+        expect(held).toMatchObject({ from: pair.kept, instructions: "Ship on Fridays only." });
+        expect(held.peer?.instructionsChangedAt).toBe(held.replicatedAt);
+        // The app's own copy is the baseline again; it never claims to come from the peer.
+        await pair.m3.run((service) =>
+          service.replicate({
+            projectId: pair.joining.projectId,
+            replica: { ...replica, peer: held.peer },
+          }),
+        );
+        expect(pair.m3.replicas.get(pair.joining.projectId)!.peer).toBeUndefined();
+        await push({});
+        heard(20);
+        const taken = await pair.m3.run((service) => service.autoTakeover({ logicalProjectId }));
+        if (taken.outcome !== "taken-over") throw new Error(taken.outcome);
+        expect(taken.instructionsChangedAt).not.toBeNull();
+        expect(pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!.instructions).toBe(
+          "Ship on Fridays only.",
+        );
+      });
     });
   });
 

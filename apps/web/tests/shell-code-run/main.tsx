@@ -34,6 +34,12 @@ Start the dev server:
 
 \`\`\`sh
 sleep 30 && pnpm dev
+\`\`\`
+
+Authorize the requested CLI scopes:
+
+\`\`\`sh
+gh auth refresh -h github.com -s user -s admin:org
 \`\`\``;
 
 function target(runtimeMode: RuntimeMode, threadId: string) {

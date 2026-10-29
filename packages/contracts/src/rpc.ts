@@ -35,6 +35,7 @@ import {
   PROJECT_WORKSPACE_RPC_METHODS,
   projectPlanningRpcs,
   projectKnowledgeRpcs,
+  projectSkillsActionRpcs,
   projectWorkspaceRpcs,
 } from "./projectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
@@ -2306,6 +2307,10 @@ export const WsProjectKnowledgeRpcGroup = RpcGroup.make(...projectKnowledgeRpcs)
   RpcScopeAuthorization,
 );
 
+/** The Skills control center (versions, switches, fleet push), its own group for depth. */
+export const WsProjectSkillsActionsRpcGroup = RpcGroup.make(...projectSkillsActionRpcs).middleware(
+  RpcScopeAuthorization,
+);
 /** Designs, slides and design systems; its own group for the same depth reason. */
 export const WsDesignRpcGroup = RpcGroup.make(...designRpcs).middleware(RpcScopeAuthorization);
 
@@ -2345,6 +2350,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsFolderCopyRpcGroup)
   .merge(WsProjectKnowledgeRpcGroup)
   .merge(WsProjectPlanningRpcGroup)
+  .merge(WsProjectSkillsActionsRpcGroup)
   .merge(WsHandoffModeRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
   .merge(WsProvisionRpcGroup)

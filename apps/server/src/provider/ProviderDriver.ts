@@ -60,6 +60,18 @@ export interface ProviderDriverMetadata {
   readonly supportsMultipleInstances?: boolean;
 }
 
+/**
+ * How Settings > Skills reaches an agent's own CLI and config to switch a
+ * skill or plugin: the binary and environment the instance runs with, and
+ * its config folder (Claude's `CLAUDE_CONFIG_DIR`, Codex's `CODEX_HOME`).
+ */
+export interface ProviderSkillsControl {
+  readonly binaryPath: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly homePath?: string | undefined;
+  readonly launchArgs?: string | undefined;
+}
+
 export type ProviderWorkspaceSnapshot = ServerProvider &
   Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending">;
 
@@ -103,6 +115,8 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
+  /** Claude, Codex and Grok: what the Skills switches run. */
+  readonly skillsControl?: ProviderSkillsControl;
   readonly orchestrationAdapter: ProviderAdapterV2Shape;
   readonly textGeneration: TextGeneration["Service"];
   readonly auth?: ProviderAuthController;

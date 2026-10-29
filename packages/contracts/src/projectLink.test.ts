@@ -29,6 +29,8 @@ describe("project link contracts", () => {
     WS_METHODS.projectLinkMemoryMerge,
     WS_METHODS.projectTakeover,
     WS_METHODS.projectSupersede,
+    WS_METHODS.projectSetStandby,
+    WS_METHODS.projectAcceptStandby,
   ])("requires settings write and operate for %s, like a handoff", (method) => {
     expect(clientRpcRequiredScopes(method, {})).toEqual([
       AuthSettingsWriteScope,

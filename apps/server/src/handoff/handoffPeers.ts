@@ -35,6 +35,10 @@ import * as FleetWorkerGrants from "../fleet/FleetWorkerGrants.ts";
 import { stringifyJson } from "../json.ts";
 import { FleetError, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
 import {
+  CoordinatorLeaseRequest,
+  CoordinatorLeaseResponse,
+  CoordinatorReplicaRequest,
+  CoordinatorReplicaResponse,
   encodeFrame,
   HANDOFF_JSON_MAX_BYTES,
   HANDOFF_PEER_PREFIX,
@@ -59,6 +63,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   preflight: 30_000,
   takeover: 180_000,
   heartbeat: 10_000,
+  "coordinator-lease": 10_000,
+  "coordinator-replica": 10_000,
 };
 
 export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
@@ -120,6 +126,15 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
       request: HeartbeatRequest,
     ) => Effect.Effect<HeartbeatResponse, HandoffPeerError>;
+    /** To the armed standby: the coordinator is alive, pausing, or releasing it. */
+    readonly coordinatorLease: (
+      environmentId: EnvironmentId,
+      request: CoordinatorLeaseRequest,
+    ) => Effect.Effect<CoordinatorLeaseResponse, HandoffPeerError>;
+    readonly coordinatorReplica: (
+      environmentId: EnvironmentId,
+      request: CoordinatorReplicaRequest,
+    ) => Effect.Effect<CoordinatorReplicaResponse, HandoffPeerError>;
   }
 >()("specweave-studio/handoff/handoffPeers") {}
 
@@ -128,12 +143,16 @@ const encodeMeta = Schema.encodeSync(ReplicateMeta);
 const encodePreflight = Schema.encodeSync(PeerPreflightRequest);
 const encodeTakeover = Schema.encodeSync(TakeoverRequest);
 const encodeHeartbeat = Schema.encodeSync(HeartbeatRequest);
+const encodeCoordinatorLease = Schema.encodeSync(CoordinatorLeaseRequest);
+const encodeCoordinatorReplica = Schema.encodeSync(CoordinatorReplicaRequest);
 const decodeError = Schema.decodeUnknownOption(PeerErrorBody);
 const decodeNegotiate = Schema.decodeUnknownOption(NegotiateResponse);
 const decodeReplicate = Schema.decodeUnknownOption(ReplicateResponse);
 const decodePreflight = Schema.decodeUnknownOption(PeerPreflightResponse);
 const decodeTakeover = Schema.decodeUnknownOption(TakeoverResponse);
 const decodeHeartbeat = Schema.decodeUnknownOption(HeartbeatResponse);
+const decodeCoordinatorLease = Schema.decodeUnknownOption(CoordinatorLeaseResponse);
+const decodeCoordinatorReplica = Schema.decodeUnknownOption(CoordinatorReplicaResponse);
 
 const jsonBody = (value: unknown) => new TextEncoder().encode(stringifyJson(value));
 
@@ -357,6 +376,20 @@ export const make = Effect.gen(function* () {
       postJson(environmentId, "takeover", encodeTakeover(request), decodeTakeover),
     heartbeat: (environmentId, request) =>
       postJson(environmentId, "heartbeat", encodeHeartbeat(request), decodeHeartbeat),
+    coordinatorLease: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "coordinator-lease",
+        encodeCoordinatorLease(request),
+        decodeCoordinatorLease,
+      ),
+    coordinatorReplica: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "coordinator-replica",
+        encodeCoordinatorReplica(request),
+        decodeCoordinatorReplica,
+      ),
   });
 });
 

@@ -23,6 +23,11 @@ import {
   reachFleetMachine,
 } from "./fleetTransport.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
+import {
+  COORDINATOR_EPOCHS_HEADER,
+  CoordinatorEpochSource,
+  encodeCoordinatorEpochs,
+} from "./WorkerEpochStore.ts";
 
 /**
  * The only tools this server calls on another machine's `/mcp`. Project
@@ -41,6 +46,8 @@ export const REMOTE_TOOL_ALLOWLIST = [
   "studio_thread_interrupt",
   // chrome_* calls for a thread here, run in the Chrome paired on that machine.
   "chrome_peer",
+  // After an automatic takeover: claims the project's coordinator epoch there.
+  "studio_coordinator_claim_epoch",
 ] as const;
 export type RemoteTool = (typeof REMOTE_TOOL_ALLOWLIST)[number];
 
@@ -99,6 +106,12 @@ interface Session {
   readonly origin: string;
   identityCheckedAt: number;
   rejected: boolean;
+  /**
+   * The coordinator epochs this machine names there, refreshed before each
+   * call: a worker machine that saw a newer coordinator claim a linked
+   * project refuses steering that names an older epoch or none.
+   */
+  coordinatorEpochs: string | undefined;
 }
 
 export class RemoteStudioMcpClient extends Context.Service<
@@ -157,6 +170,7 @@ const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
   const link = FleetTargets.linkOf(targets);
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
+  const epochSource = yield* CoordinatorEpochSource;
   const sessions = yield* Ref.make<ReadonlyMap<string, Session>>(new Map());
 
   const close = (session: Session) =>
@@ -234,6 +248,9 @@ const make = Effect.gen(function* () {
         ))
           headers.set(name, value);
         headers.delete("origin");
+        headers.delete(COORDINATOR_EPOCHS_HEADER);
+        const epochs = holder.session?.coordinatorEpochs;
+        if (epochs !== undefined) headers.set(COORDINATOR_EPOCHS_HEADER, epochs);
         const response = await link
           .fetch(url, { ...init, headers, redirect: "error" })
           .catch((error: unknown) => {
@@ -258,6 +275,7 @@ const make = Effect.gen(function* () {
         origin,
         identityCheckedAt: now,
         rejected: false,
+        coordinatorEpochs: undefined,
       };
       holder.session = session;
       yield* Effect.tryPromise({
@@ -317,6 +335,9 @@ const make = Effect.gen(function* () {
       if (!(REMOTE_TOOL_ALLOWLIST as ReadonlyArray<string>).includes(input.tool))
         return yield* new RemoteMcpError({ reason: "refused" });
       const { session, credential } = yield* sessionFor(input.machineId);
+      session.coordinatorEpochs = encodeCoordinatorEpochs(
+        yield* epochSource.epochsFor(credential.target.environmentId),
+      );
       const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const result = yield* Effect.tryPromise({
         try: () =>

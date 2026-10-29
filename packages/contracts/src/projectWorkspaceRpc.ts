@@ -83,9 +83,18 @@ import {
   ThreadIncrementProgressSnapshot,
 } from "./threadIncrementProgress.ts";
 import {
+  ProjectSkillsActionError,
+  ProjectSkillsActionInput,
+  ProjectSkillsActionResult,
+  ProjectSkillsFleetPushInput,
+  ProjectSkillsFleetPushResult,
   ProjectSkillsReadError,
   ProjectSkillsReadInput,
   ProjectSkillsSnapshot,
+  ProjectSkillsStudioLink,
+  ProjectSkillsStudioLinkInput,
+  ProjectSkillsVersions,
+  ProjectSkillsVersionsInput,
 } from "./projectSkills.ts";
 export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentRead: "projects.environmentRead",
@@ -107,6 +116,10 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsPlanExport: "projects.planExport",
   projectsUsageRead: "projects.usageRead",
   projectsSkillsRead: "projects.skillsRead",
+  projectsSkillsVersions: "projects.skillsVersions",
+  projectsSkillsAction: "projects.skillsAction",
+  projectsSkillsFleetPush: "projects.skillsFleetPush",
+  projectsSkillsStudioLink: "projects.skillsStudioLink",
   projectsWorkspaceRead: "projects.workspaceRead",
   projectsStarterSuggestions: "projects.starterSuggestions",
   projectsMemoryRead: "projects.memoryRead",
@@ -349,5 +362,34 @@ export const projectKnowledgeRpcs = [
     payload: ProjectKnowledgeReindexInput,
     success: ProjectKnowledgeStatus,
     error: knowledgeError,
+  }),
+] as const;
+
+/**
+ * The Skills control center: versions, per-agent switches, fleet push and the
+ * Skill Studio hand-off. Its own group for the same depth reason (see
+ * `WsProjectSkillsActionsRpcGroup`).
+ */
+const skillsActionError = Schema.Union([ProjectSkillsActionError, EnvironmentAuthorizationError]);
+export const projectSkillsActionRpcs = [
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsVersions, {
+    payload: ProjectSkillsVersionsInput,
+    success: ProjectSkillsVersions,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsAction, {
+    payload: ProjectSkillsActionInput,
+    success: ProjectSkillsActionResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsFleetPush, {
+    payload: ProjectSkillsFleetPushInput,
+    success: ProjectSkillsFleetPushResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsStudioLink, {
+    payload: ProjectSkillsStudioLinkInput,
+    success: ProjectSkillsStudioLink,
+    error: skillsActionError,
   }),
 ] as const;

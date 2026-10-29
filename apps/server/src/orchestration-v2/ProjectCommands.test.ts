@@ -1039,4 +1039,212 @@ describe("explicit link ownership modes", () => {
         }),
       );
   });
+  it("lets only the active coordinator set, change or clear a listed standby", () => {
+    const third = {
+      environmentId: "m1" as never,
+      projectId: ProjectId.make("m1-copy"),
+      coordinatorThreadId: "project-coordinator:m1-copy" as never,
+    };
+    const linked = { ...shared, members: [self, other, third] };
+    const binding = { epoch: 4, state: "active" as const, operationId: "link-op" };
+    const owner = { logicalProject: linked, coordinatorBinding: binding };
+    const standby = {
+      member: third,
+      afterMinutes: 15 as const,
+      enabledAt: "2026-10-26T14:00:00.000Z",
+    };
+    const armed = { ...binding, standby };
+    const event = payloadOf(
+      apply(owner, { mode: "set-standby", logicalProject: linked, coordinatorBinding: armed }),
+    );
+    assert.deepInclude(event.workspaceSettings, { coordinatorBinding: armed });
+
+    // Changing the delay or the member, and turning it off, keep the rest of the binding.
+    const ownerArmed = { ...owner, coordinatorBinding: armed };
+    for (const coordinatorBinding of [
+      { ...binding, standby: { ...standby, afterMinutes: 60 as const } },
+      { ...binding, standby: { ...standby, member: other } },
+      binding,
+    ])
+      assert.deepInclude(
+        payloadOf(
+          apply(ownerArmed, { mode: "set-standby", logicalProject: linked, coordinatorBinding }),
+        ).workspaceSettings,
+        { coordinatorBinding },
+      );
+
+    // A project from before bindings coordinates as an active epoch-0 owner.
+    payloadOf(
+      apply(
+        { logicalProject: linked },
+        {
+          mode: "set-standby",
+          logicalProject: linked,
+          coordinatorBinding: { epoch: 0, state: "active" as const, standby },
+        },
+      ),
+    );
+
+    assert.include(
+      failureText(
+        apply(
+          {
+            ...owner,
+            coordinatorBinding: {
+              epoch: 4,
+              state: "transferred",
+              operationId: "x",
+              successor: other,
+            },
+          },
+          {
+            mode: "set-standby",
+            logicalProject: linked,
+            coordinatorBinding: {
+              epoch: 4,
+              state: "transferred",
+              operationId: "x",
+              successor: other,
+              standby,
+            },
+          },
+        ),
+      ),
+      "Only the active coordinator",
+    );
+    assert.include(
+      failureText(
+        apply(
+          { coordinatorBinding: binding },
+          { mode: "set-standby", logicalProject: linked, coordinatorBinding: armed },
+        ),
+      ),
+      "shared identity",
+    );
+    assert.include(
+      failureText(
+        apply(owner, {
+          mode: "set-standby",
+          logicalProject: linked,
+          coordinatorBinding: { ...armed, standby: { ...standby, member: self } },
+        }),
+      ),
+      "another member listed",
+    );
+    for (const ownership of [
+      { coordinatorBinding: { ...armed, epoch: 5 } },
+      { coordinatorBinding: { ...armed, operationId: "other-op" } },
+      { coordinatorBinding: { ...armed, state: "transferring" as const } },
+      { coordinatorBinding: { ...armed, successor: other } },
+      { coordinatorBinding: { ...armed, predecessor: other } },
+      { coordinatorBinding: { ...armed, takenOverAt: "2026-10-26T14:00:00.000Z" } },
+      { coordinatorBinding: { ...armed, takenOverBy: "auto" as const } },
+      { coordinatorBinding: { ...armed, releaseReason: "why" } },
+      {
+        coordinatorBinding: {
+          ...armed,
+          standby: { ...standby, member: { ...third, projectId: ProjectId.make("stranger") } },
+        },
+      },
+      {
+        coordinatorBinding: {
+          ...armed,
+          standby: { ...standby, member: { ...third, coordinatorThreadId: "elsewhere" } },
+        },
+      },
+      { logicalProject: { ...linked, members: [self, other] } },
+      {
+        logicalProject: {
+          ...linked,
+          members: [self, other, third, { ...third, projectId: ProjectId.make("extra") }],
+        },
+      },
+      { logicalProject: { ...linked, title: "Renamed" } },
+      { logicalProject: { ...linked, id: "logical:other" } },
+      { acceptedHandoffOperationId: "link-op" },
+      { releasedHandoffOperationId: "link-op" },
+    ])
+      failureOf(
+        apply(owner, {
+          mode: "set-standby",
+          logicalProject: linked,
+          coordinatorBinding: armed,
+          ...ownership,
+        }),
+      );
+  });
+
+  it("never carries a standby into a takeover, a start or a giving way", () => {
+    const standby = {
+      member: other,
+      afterMinutes: 15 as const,
+      enabledAt: "2026-10-26T14:00:00.000Z",
+    };
+    const memberSide = { ...shared, members: [other, self] };
+    const relinquishedMember = {
+      logicalProject: memberSide,
+      coordinatorBinding: {
+        epoch: 4,
+        state: "transferred" as const,
+        operationId: "link-op",
+        successor: other,
+      },
+    };
+    const taken = {
+      epoch: 5,
+      state: "active" as const,
+      operationId: "auto-op",
+      predecessor: other,
+      takenOverAt: "2026-10-26T14:30:00.000Z",
+      takenOverBy: "auto" as const,
+    };
+    payloadOf(
+      apply(relinquishedMember, {
+        mode: "takeover",
+        logicalProject: memberSide,
+        coordinatorBinding: taken,
+      }),
+    );
+    failureOf(
+      apply(relinquishedMember, {
+        mode: "takeover",
+        logicalProject: memberSide,
+        coordinatorBinding: { ...taken, standby: { ...standby, member: self } },
+      }),
+    );
+    for (const coordinatorBinding of [
+      {
+        epoch: 5,
+        state: "active" as const,
+        operationId: "start-op",
+        standby: { ...standby, member: self },
+      },
+      { epoch: 5, state: "active" as const, operationId: "start-op", takenOverBy: "auto" as const },
+    ])
+      failureOf(
+        apply(relinquishedMember, {
+          mode: "start-coordinator",
+          logicalProject: memberSide,
+          coordinatorBinding,
+        }),
+      );
+    const ownerSide = { ...shared, members: [self, other] };
+    failureOf(
+      apply(
+        { logicalProject: ownerSide, coordinatorBinding: { epoch: 4, state: "active", standby } },
+        {
+          mode: "superseded",
+          logicalProject: ownerSide,
+          coordinatorBinding: {
+            epoch: 5,
+            state: "transferred" as const,
+            operationId: "auto-op",
+            successor: other,
+            takenOverAt: "2026-10-26T14:30:00.000Z",
+            standby,
+          },
+        },
+      ),
+    );
+  });
 });

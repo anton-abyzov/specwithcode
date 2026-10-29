@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - a random temp name keeps two writers from sharing one file.
 import * as NodeCrypto from "node:crypto";
 import {
+  AuthSessionId,
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
   EnvironmentId,
@@ -258,6 +259,12 @@ export interface FleetAddResult {
   readonly previousUrl?: string;
   /** The machine's SpecWithCode Connect address, when the invitation carried one. */
   readonly connectUrl?: string;
+  /**
+   * The management session a v2 line was redeemed for on that machine, so a
+   * caller that only needed it for setup can revoke it there. Absent for a
+   * v1 line, whose invitation already names its session.
+   */
+  readonly sessionId?: AuthSessionId;
 }
 
 /**
@@ -323,7 +330,7 @@ export async function addFleetMachine(input: {
       : toFleetLink(fetcher);
   const reached = await reachFleetMachine(link, machine);
   const label = (input.label ?? invite.label).trim() || reached.machineName || invite.label;
-  const managementToken = isFleetJoinV2(invite)
+  const redeemed = isFleetJoinV2(invite)
     ? await redeemFleetInvitation({
         baseDir: input.baseDir,
         link,
@@ -331,7 +338,10 @@ export async function addFleetMachine(input: {
         redeem: invite.redeem,
         coordinatorEnvironmentId: input.localEnvironmentId!,
       })
-    : invite.managementToken;
+    : { token: invite.managementToken };
+  const managementToken = redeemed.token;
+  const redeemedSession =
+    redeemed.sessionId === undefined ? {} : { sessionId: AuthSessionId.make(redeemed.sessionId) };
   // An invitation whose token cannot open sessions there would be saved as
   // "Added" yet never connect, so check it before writing anything.
   const wantedScopes = (
@@ -371,6 +381,7 @@ export async function addFleetMachine(input: {
       environmentId,
       change: "updated",
       ...(previousUrl === savedUrl ? {} : { previousUrl }),
+      ...redeemedSession,
     };
   } else {
     const id = input.id ?? fleetMachineIdFor(label, taken);
@@ -389,6 +400,7 @@ export async function addFleetMachine(input: {
       ...(connectUrl === undefined ? {} : { connectUrl }),
       environmentId,
       change: "added",
+      ...redeemedSession,
     };
   }
   const next = { ...document, machines };
@@ -412,7 +424,7 @@ async function redeemFleetInvitation(input: {
   readonly machine: Pick<FleetTarget, "url" | "connectUrl" | "environmentId">;
   readonly redeem: string;
   readonly coordinatorEnvironmentId: string;
-}): Promise<string> {
+}): Promise<{ readonly token: string; readonly sessionId?: string | undefined }> {
   const key = await loadOrCreateFleetProofKey(input.baseDir).catch(() => {
     throw new FleetError("connect-key-missing");
   });
@@ -454,7 +466,10 @@ async function redeemFleetInvitation(input: {
     tokenProofThumbprint(token) !== key.thumbprint
   )
     throw new FleetError("pairing-unavailable");
-  return token;
+  const sessionId = isRecord(body) ? body.sessionId : undefined;
+  return typeof sessionId === "string" && sessionId.length > 0 && sessionId.length <= 256
+    ? { token, sessionId }
+    : { token };
 }
 
 /** Removes a configured machine by id or label. Workers allowed there stay until revoked there. */

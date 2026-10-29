@@ -232,6 +232,7 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ProjectSkillsActionsRpc from "./project/ProjectSkillsActionsRpc.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
@@ -3379,6 +3380,7 @@ const inferredWebSocketLayer = Layer.unwrap(
                   ProjectWorkspaceRpc.layerPlanningRpcHandlers,
                   designLayers.layerRpcHandlers(session),
                   UsageLimitHistory.layerRpcHandlers,
+                  ProjectSkillsActionsRpc.layerSkillsActionsRpcHandlers,
                 ),
               ),
               Layer.merge(

@@ -123,7 +123,8 @@ each copy that runs workers. Before then it says how many minutes are left.
 Choose it and confirm once. That copy becomes the coordinator and starts from
 the notes, goal and instructions it last copied. A note of its own with
 different text is kept under a second name ending in `-before-takeover`.
-Nothing changes over on its own: the app never takes over without you.
+This button never acts on its own. Only a standby you turned on (below) takes
+over without a click.
 
 When the old coordinator's machine is reachable again, the app makes it give
 way: it becomes a copy that runs workers. Any coordinator turns it ran while
@@ -133,6 +134,54 @@ coordinator. Code stays in git on each machine; nothing is merged for you.
 
 The machine you take over on must run a version of SpecWithCode with takeover;
 an older one shows **Update SpecWithCode on <machine> to take over.**
+
+## Automatic takeover (off by default)
+
+You can choose one copy that takes over the coordinator on its own when the
+coordinator's machine goes quiet, for example while your laptop lid is closed.
+It is off until you turn it on, and only the SpecWithCode desktop app can turn
+it on, with full access to every machine involved.
+
+In **Settings > Project > Machines**, under **If this Mac goes quiet**, pick the
+copy in **Take over automatically on**, then pick **After**: 5, 15, 30 or 60
+minutes. The app then asks each machine that runs this project's workers to let
+that copy reach them. Each row shows **Ready** or **Not ready**, with the reason,
+such as a machine that did not answer. **Allow** tries again. Nothing is turned
+on until every row is ready. The access each machine gives covers only its copy
+of this project, never more than the coordinator itself has there. The setup
+access the app uses for this is removed when it is done. That access lapses
+after about 30 days without renewal; choose **Allow** again then.
+
+While it is on:
+
+- The coordinator tells the standby every 30 seconds that it is still there.
+  When it stops for an update or the Mac sleeps, it says so first, and the
+  standby waits.
+- The standby takes over only after the whole delay passes in silence while the
+  standby itself was awake. A standby that just woke up waits to hear from the
+  coordinator again first.
+- After the takeover the standby is the coordinator. It starts from the notes,
+  goal and instructions it last copied, and the workers on other machines report
+  to it. Threads in handoff mode continue there from their last copy. Other
+  threads wait for the old machine. Edits that were never copied stay on the old
+  machine.
+- When the old machine comes back, it gives way and runs workers. Its row says
+  **<standby> took over while this Mac was away.** Choose **Review turns** to see
+  what it ran meanwhile, or **Make this Mac the coordinator again** to hand the
+  coordinator back. Nothing hands it back on its own.
+
+**The standby must stay awake.** The coordinator pauses itself shortly before
+the standby could act if it cannot reach the standby, so two coordinators never
+run at once. You then see **Checking with <standby> before running.** Choose
+**Run here anyway** to run on this Mac; this turns off automatic takeover. If
+both machines sleep, nothing moves.
+
+Turning it off, changing the standby, unlinking, archiving or a coordinator
+handoff first tells the standby to stand down. If it does not answer, the change
+waits for you to choose **Change anyway**.
+
+Automatic takeover needs both machines to run a version of SpecWithCode with it.
+The machines reach each other over Tailscale or over SpecWithCode Connect.
 
 ## How remote workers find the project
 

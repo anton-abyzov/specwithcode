@@ -409,6 +409,8 @@ const scenario = (
           ),
         ),
       heartbeat: (_, request) => viaNetwork(destinationReceiver.heartbeat(asSource, request)),
+      coordinatorLease: () => Effect.die("unused"),
+      coordinatorReplica: () => Effect.die("unused"),
     });
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;

@@ -301,6 +301,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Replicates project memory both ways between linked members
       (`projectLink.memoryExport`, `memoryMerge`). Absent on older servers. */
   linkedMemorySync: Schema.optionalKey(Schema.Boolean),
+  /** Can be armed as a linked project's standby coordinator and take over
+      automatically (`projectLink.acceptStandby`, `coordinator-lease`). Absent
+      on older servers, which cannot be chosen as a standby. */
+  coordinatorStandby: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

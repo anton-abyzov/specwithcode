@@ -226,6 +226,10 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        skillsControl: {
+          binaryPath: effectiveConfig.binaryPath || "grok",
+          environment: processEnv,
+        },
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
