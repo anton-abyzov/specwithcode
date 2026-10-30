@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   stageCodexUpdate,
   providerProcessesInUse,
+  findProviderProcessesInUse,
+  shortProcessLabel,
   type StagedCodexUpdate,
 } from "./stagedProviderUpdate.ts";
 const homes: string[] = [];
@@ -125,5 +127,157 @@ describe("installer process ownership", () => {
         "@earendil-works/pi-coding-agent",
       ),
     ).toBe(false);
+  });
+  it("reports the matching pid with a short label that drops later arguments", () => {
+    const ps = [
+      "  101     1 /usr/lib/systemd/systemd --user",
+      "638656   101 /usr/bin/node /home/me/.nvm/versions/node/v22/lib/node_modules/@openai/codex/bin/codex",
+      "638700   101 /home/me/.codex/bin/codex app-server --token secret",
+      "638800   101 claude -p 'private prompt'",
+    ].join("\n");
+    const matches = findProviderProcessesInUse(ps, "codex", [], "@openai/codex");
+    expect(matches.map((match) => match.pid)).toEqual([638656, 638700]);
+    expect(shortProcessLabel(matches[0]!.command)).toBe("node .../bin/codex");
+    expect(shortProcessLabel("/home/me/.codex/bin/codex app-server --token secret")).toBe(
+      "codex app-server",
+    );
+    expect(shortProcessLabel("claude -p 'private prompt'")).toBe("claude");
+    // Neither paths nor a package: the bare-name fallback.
+    expect(findProviderProcessesInUse(ps, "claudeAgent", [])[0]?.pid).toBe(638800);
+    expect(findProviderProcessesInUse(ps, "codex", []).map((match) => match.pid)).toEqual([
+      638656, 638700,
+    ]);
+  });
+});
+
+describe("installer in-use names", () => {
+  it("matches the CLI by argv0, not the desktop app or a folder named after it", () => {
+    const ps = [
+      "  10     1 /Applications/Claude.app/Contents/MacOS/Claude",
+      "  11    10 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper",
+      "  12     1 node /Users/me/Projects/codex/server.js",
+      "  13     1 vim /Users/me/work/claude/notes.md",
+      "  14     1 /Users/me/.local/bin/claude -p hi",
+    ].join("\n");
+    expect(findProviderProcessesInUse(ps, "claudeAgent", ["/x/claude"]).map((m) => m.pid)).toEqual([
+      14,
+    ]);
+    expect(findProviderProcessesInUse(ps, "codex", [], "@openai/codex")).toEqual([]);
+  });
+
+  it("exempts the managed package store only for Codex, and only as argv0", () => {
+    const ps = [
+      "  20     1 /home/me/.codex/packages/app-server-daemon/releases/1/bin/codex app-server",
+      "  21     1 codex exec -C /home/me/.codex/packages/x",
+      "  22     1 claude -p --add-dir /home/me/.codex/packages/x",
+    ].join("\n");
+    expect(findProviderProcessesInUse(ps, "codex", [], "@openai/codex").map((m) => m.pid)).toEqual([
+      21,
+    ]);
+    expect(
+      findProviderProcessesInUse(ps, "claudeAgent", [], "@anthropic-ai/claude-code").map(
+        (m) => m.pid,
+      ),
+    ).toEqual([22]);
+  });
+});
+
+describe("installer in-use scope", () => {
+  const daemon =
+    "/home/anton/.codex/packages/app-server-daemon/releases/0.166.0-x86_64-unknown-linux-musl/bin/codex app-server --listen unix:///run/user/1000/codex/app-server.sock --managed-daemon";
+  const vendorCodex =
+    "/home/anton/.local/share/fnm/node-versions/v24.22.0/installation/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex";
+  const shimCodex = "node /run/user/1000/fnm_multishells/1/bin/codex";
+
+  it("ignores Codex's managed app-server daemon when the npm package is known", () => {
+    expect(providerProcessesInUse(`4100 1 ${daemon}`, "codex", [], "@openai/codex")).toBe(false);
+    // The daemon still counts for an action that knows neither paths nor a package.
+    expect(providerProcessesInUse(`4100 1 ${daemon}`, "codex", [])).toBe(true);
+  });
+
+  it("still counts a terminal Codex from the npm package", () => {
+    expect(providerProcessesInUse(`4200 4000 ${vendorCodex}`, "codex", [], "@openai/codex")).toBe(
+      true,
+    );
+    expect(providerProcessesInUse(`4300 4000 ${shimCodex}`, "codex", [], "@openai/codex")).toBe(
+      true,
+    );
+    const ps = [`4100 1 ${daemon}`, `4200 4000 ${vendorCodex}`, `4300 4000 ${shimCodex}`].join(
+      "\n",
+    );
+    expect(
+      findProviderProcessesInUse(ps, "codex", [], "@openai/codex").map((match) => match.pid),
+    ).toEqual([4200, 4300]);
+  });
+
+  it("still counts a shell-started bare-name CLI when paths or a package are known", () => {
+    const paths = ["/run/user/1000/fnm_multishells/1/bin/codex"];
+    const ps = [`4100 1 ${daemon}`, `4300 4000 ${shimCodex}`, "4400 4000 codex exec"].join("\n");
+    expect(findProviderProcessesInUse(ps, "codex", paths).map((match) => match.pid)).toEqual([
+      4300, 4400,
+    ]);
+    expect(
+      findProviderProcessesInUse(ps, "codex", [], "@openai/codex").map((match) => match.pid),
+    ).toEqual([4300, 4400]);
+    expect(
+      providerProcessesInUse(
+        "4500 4000 claude -p 'hi'",
+        "claudeAgent",
+        [],
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBe(true);
+  });
+
+  it("skips this server and every process descended from it", () => {
+    const self = 5000;
+    const ps = [
+      "   1     0 /sbin/init",
+      `5000     1 node /opt/specwithcode/server.js`,
+      `5100  5000 ${vendorCodex} app-server`,
+      `5200  5100 ${shimCodex}`,
+      `5300  4000 ${vendorCodex}`,
+    ].join("\n");
+    expect(
+      findProviderProcessesInUse(ps, "codex", [], "@openai/codex", { selfPid: self }).map(
+        (match) => match.pid,
+      ),
+    ).toEqual([5300]);
+    expect(
+      providerProcessesInUse(ps.split("\n").slice(0, 4).join("\n"), "codex", [], "@openai/codex", {
+        selfPid: self,
+      }),
+    ).toBe(false);
+    // Without the server pid the same sessions count.
+    expect(
+      findProviderProcessesInUse(ps, "codex", [], "@openai/codex").map((match) => match.pid),
+    ).toEqual([5100, 5200, 5300]);
+  });
+
+  it("counts a server descendant started from an interactive shell (a terminal tab)", () => {
+    const self = 5000;
+    const ps = [
+      `5000     1 node /opt/specwithcode/server.js`,
+      `5100  5000 codex app-server`,
+      `5150  5000 -zsh`,
+      `5200  5150 node /home/me/.nvm/versions/node/v22/bin/codex`,
+      `5250  5000 /bin/bash -l`,
+      `5260  5250 /usr/bin/env node`,
+      `5270  5260 codex exec`,
+    ].join("\n");
+    expect(
+      findProviderProcessesInUse(ps, "codex", [], "@openai/codex", { selfPid: self }).map(
+        (match) => match.pid,
+      ),
+    ).toEqual([5200, 5270]);
+  });
+
+  it("tolerates a cyclic parent map", () => {
+    const ps = [`10 11 ${vendorCodex}`, `11 10 ${vendorCodex}`].join("\n");
+    expect(
+      findProviderProcessesInUse(ps, "codex", [], "@openai/codex", { selfPid: 99 }).map(
+        (match) => match.pid,
+      ),
+    ).toEqual([10, 11]);
   });
 });

@@ -15,13 +15,19 @@ iPhone and to let your main computer start work there. This page also sets up Ta
 an optional direct route your main computer falls back to when Connect does not answer. To skip it, link Connect on the
 host (`specwithcode connect`) and make the line with `--via connect`.
 
-> **Use API keys on a VPS, never a subscription.** We do not recommend signing
+A Linux worker signs its agents in exactly as a Mac or Windows worker does:
+with each agent's own sign-in, such as `claude auth login` for Claude Code or
+Connect with ChatGPT (or `codex login`) for Codex. Subscriptions work, and
+SpecWithCode requires no API key. On a Linux machine you own, at home or in an
+office, sign in with your subscriptions as you would on a Mac.
+
+> **On a server you rent, we recommend API keys.** We do not recommend signing
 > Claude Code (Pro or Max) or Codex (ChatGPT) subscriptions in on Hetzner, AWS
-> or any other rented server or VPN. Providers treat sign-ins from datacenter
+> or any other rented server or VPN. Providers can treat sign-ins from datacenter
 > addresses, and one account active on several machines at once, as signs of
-> reselling, and accounts get locked. A VPS worker is for API keys only: an
-> Anthropic Console key or an OpenAI API key, billed per token. Keep your
-> subscription sign-ins on your own computers at home or in the office. Never
+> reselling, and accounts have been locked for it. Use an Anthropic Console key
+> or an OpenAI API key there, billed per token. This is advice: SpecWithCode
+> does not check what kind of machine it runs on before a sign-in. Never
 > route a subscription through a proxy to a server; Anthropic does not allow its
 > subscription credentials to be held or relayed by other tools.
 
@@ -66,8 +72,9 @@ steps below.
 - SpecWithCode Connect linked on the host, or the same Tailscale tailnet as your
   Mac with MagicDNS, or both. The fleet accepts private `*.ts.net` HTTPS
   addresses and SpecWithCode Connect addresses.
-- The provider CLIs you want to run there (`claude`, `codex`), using API keys
-  only (see [Give the agents API keys](#give-the-agents-api-keys) and
+- The provider CLIs you want to run there (`claude`, `codex`), signed in with
+  your subscriptions on a machine you own, or with API keys on a rented server
+  (see [Give the agents API keys](#give-the-agents-api-keys) and
   [Add a machine](./add-a-machine.md#keep-your-provider-accounts-safe)).
 - A `specwithcode` release that ships Linux archives:
   `studio-<version>-linux-<arch>-<commit>.tar.gz` next to `SHA256SUMS`.
@@ -137,6 +144,9 @@ the command above, when it is idle.
 details and troubleshooting.
 
 ## Give the agents API keys
+
+Follow these steps on a rented server. On a machine you own, you can skip them
+and sign in with `claude auth login` and `codex login` instead.
 
 Create a key in the [Claude Console](https://platform.claude.com/settings/keys)
 (set a spend limit on its workspace) and save it in a file only you can read.

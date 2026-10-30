@@ -10,6 +10,8 @@
  *
  * @module provider/loginWatch
  */
+import * as NodeOS from "node:os";
+
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -37,6 +39,12 @@ function field(value: unknown, key: string): unknown {
 function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
+
+/** The CLI keeps the account record beside its settings, or in the home directory by default. */
+export const claudeAccountConfigPath = (configDir: string | undefined) =>
+  Effect.map(Path.Path, (path) =>
+    configDir ? path.join(configDir, ".claude.json") : path.join(NodeOS.homedir(), ".claude.json"),
+  );
 
 /** The signed-in Claude account recorded in `.claude.json` (`oauthAccount`). */
 export function claudeLoginIdentity(contents: string): string | undefined {

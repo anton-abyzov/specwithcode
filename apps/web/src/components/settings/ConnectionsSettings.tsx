@@ -2832,10 +2832,13 @@ export function ConnectionsSettings() {
       const environmentId = environment.environmentId;
       setRemovingSavedEnvironmentId(environmentId);
       setSavedBackendError(null);
+      // A removed private machine stays removed until it is connected by hand.
+      // Recorded before the catalog drops it, so automatic connection cannot
+      // add it back in between; a failed removal lifts it again.
+      setFleetEnvironmentSkipped(environmentId, true);
       const result = await removeEnvironment(environmentId);
       setRemovingSavedEnvironmentId(null);
-      // A removed private machine stays removed until it is connected by hand.
-      if (result._tag !== "Failure") setFleetEnvironmentSkipped(environmentId, true);
+      if (result._tag === "Failure") setFleetEnvironmentSkipped(environmentId, false);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         const message = error instanceof Error ? error.message : "Failed to remove backend.";

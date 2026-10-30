@@ -2,6 +2,7 @@ import { useRememberProjectDestination } from "../../studio/projectReturnNavigat
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
+import { ConnectLinkedMachine } from "./ConnectLinkedMachine";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
@@ -244,9 +245,10 @@ export function ProjectWorkspace({
           <div className="project-empty">
             <h1>{unknownLabel}'s orchestrator: Unknown</h1>
             <p className="mt-2 max-w-prose text-muted-foreground">
-              {unknownLabel} is unreachable and this device has no synced copy of its orchestrator.
+              This app has no connection to {unknownLabel}, so it has no copy of its orchestrator.
               Nothing is shown in its place, and nothing typed here is sent to another machine.
             </p>
+            <ConnectLinkedMachine environmentId={unknownRef.environmentId} label={unknownLabel} />
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {onSelectCheckout && machinesLoaded
                 ? members.map((checkout) => (

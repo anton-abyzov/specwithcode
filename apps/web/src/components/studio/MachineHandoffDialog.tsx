@@ -289,7 +289,7 @@ export function MachineHandoffDialog({
               />
             ) : complete ? (
               <Button
-                className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-2 sm:h-auto sm:min-h-8"
+                className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-[calc(--spacing(1.5)-1px)] sm:h-auto sm:min-h-8 sm:py-[calc(--spacing(1)-1px)]"
                 onClick={onOpenDestination}
               >
                 Open on {targetLabel}
@@ -302,7 +302,7 @@ export function MachineHandoffDialog({
                   </Button>
                 )}
                 <Button
-                  className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-2 sm:h-auto sm:min-h-8"
+                  className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-[calc(--spacing(1.5)-1px)] sm:h-auto sm:min-h-8 sm:py-[calc(--spacing(1)-1px)]"
                   disabled={busy || !consent || !target || !!target.unavailable}
                   onClick={onContinue}
                 >
@@ -558,7 +558,7 @@ function GitReview({
         </div>
       )}
       <Collapsible data-slot="handoff-commits">
-        <CollapsibleTrigger className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+        <CollapsibleTrigger className="group -mx-1 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground">
           Details
           <ChevronDownIcon
             className="size-3.5 transition-transform group-data-panel-open:rotate-180"

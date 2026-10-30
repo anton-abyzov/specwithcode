@@ -12,7 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 interface TestToast {
   readonly id: string;
   options: {
+    readonly title?: string;
     readonly description?: string | null;
+    readonly actionProps?: { readonly children?: string; readonly onClick?: () => void };
     readonly data?: { readonly onClose?: () => void };
   };
   open: boolean;
@@ -23,6 +25,7 @@ const testState = vi.hoisted(() => ({
   toasts: [] as TestToast[],
   nextToastId: 0,
   manageAccess: "granted" as "granted" | "denied" | "signed-out" | "unknown",
+  updateProvider: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => undefined }));
@@ -41,7 +44,7 @@ vi.mock("../state/session", () => ({
   providerManageBlockedText: (access: string) =>
     access === "granted" ? null : `blocked: ${access}`,
 }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => testState.updateProvider }));
 vi.mock("./chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
 vi.mock("./ui/toast", () => ({
   hiddenToastActionProps: {},
@@ -63,6 +66,7 @@ vi.mock("./ui/toast", () => ({
   },
 }));
 
+import { AsyncResult } from "effect/reactivity";
 import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { PROVIDER_UPDATE_DISMISSALS_STORAGE_KEY } from "../providerUpdateDismissal";
 import { ProviderUpdatePrimaryNotification } from "./ProviderUpdatePrimaryNotification";
@@ -111,6 +115,7 @@ beforeEach(() => {
   removeLocalStorageItem(PROVIDER_UPDATE_DISMISSALS_STORAGE_KEY);
   testState.toasts = [];
   testState.manageAccess = "granted";
+  testState.updateProvider.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -187,5 +192,39 @@ describe("ProviderUpdatePrimaryNotification", () => {
     await act(async () => root.render(<Harness />));
     expect(openToasts()).toHaveLength(1);
     expect(openToasts()[0]?.options.description).toBe("blocked: signed-out");
+  });
+
+  it("offers Update anyway when the CLI was running and retries with force", async () => {
+    const behind = codexBehind("0.162.6");
+    testState.providers = [behind];
+    const refused: ServerProvider = {
+      ...behind,
+      updateState: {
+        status: "failed",
+        startedAt: "2026-10-09T19:00:00.000Z",
+        finishedAt: "2026-10-09T19:00:01.000Z",
+        message: "codex is running (pid 7: codex). No processes were stopped.",
+        output: null,
+        inUse: true,
+      },
+    };
+    testState.updateProvider
+      .mockResolvedValueOnce(AsyncResult.success({ providers: [refused] }))
+      .mockResolvedValueOnce(AsyncResult.success({ providers: [refused] }));
+    await act(async () => root.render(<Harness />));
+
+    await act(async () => openToasts()[0]?.options.actionProps?.onClick?.());
+    const failed = openToasts().at(-1);
+    expect(failed?.options.title).toBe("Codex is running");
+    expect(failed?.options.description).toContain("pid 7");
+    expect(failed?.options.actionProps?.children).toBe("Update anyway");
+    expect(testState.updateProvider.mock.calls[0]?.[0].input.force).toBeUndefined();
+
+    await act(async () => failed?.options.actionProps?.onClick?.());
+    expect(testState.updateProvider).toHaveBeenCalledTimes(2);
+    expect(testState.updateProvider.mock.calls[1]?.[0].input).toMatchObject({
+      instanceId: behind.instanceId,
+      force: true,
+    });
   });
 });

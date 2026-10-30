@@ -38,7 +38,8 @@ export const NON_AGENT_PROVIDER_SPAWNS: Readonly<Record<string, string>> = {
   "provider/CodexInstallation.ts": "codex install and version checks",
   "provider/GrokProvider.ts": "grok CLI version and model probes",
   "provider/Drivers/GrokSkills.ts": "grok inspect --json skill listing",
-  "provider/Drivers/MuseDriver.ts": "muse usage --json fallback probe when the Muse host reports no usage",
+  "provider/Drivers/MuseDriver.ts":
+    "muse usage --json fallback probe when the Muse host reports no usage",
   "provider/PiProvider.ts": "pi --version probe",
   "provider/providerDiscovery.ts": "startup grok and opencode version and sign-in probes",
   "provider/OpenCodeServerLedger.ts": "stops leftover opencode servers",
@@ -46,7 +47,6 @@ export const NON_AGENT_PROVIDER_SPAWNS: Readonly<Record<string, string>> = {
   "provider/acp/AcpRegistrySupport.ts": "registry agent version probes",
   "provider/acp/CopilotStartupModel.ts": "copilot --version and --help probes",
   "provider/antigravityAuthSupport.ts": "Antigravity sign-in browser preflight helper",
-  "provider/claudeResetCredits.ts": "reads the Claude CLI keychain item for usage credits",
   "provider/providerMaintenance.ts": "Homebrew provider upgrades",
   "provider/providerMaintenanceRunner.ts": "provider install and update commands",
   "provider/providerSnapshot.ts": "spawnAndCollect runner shared by the probes above",

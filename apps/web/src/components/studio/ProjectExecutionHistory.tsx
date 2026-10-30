@@ -5,7 +5,7 @@ import { useEnvironment, useEnvironments } from "../../state/environments";
 import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
 import { ProjectMessageBody } from "./ProjectMessageBody";
 import { useProviderEntries } from "./shell/ModelBadge";
@@ -129,6 +129,8 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
   );
 }
 
+const RAW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
+
 /** Also names declared hosts absent from the local catalog, so missing rows are never silently complete. */
 export function ProjectThreadAvailability({
   scopes,
@@ -136,10 +138,16 @@ export function ProjectThreadAvailability({
   scopes: readonly ProjectExecutionScope[];
 }) {
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   return (
     <>
       {[...new Set(scopes.map((scope) => scope.environmentId))].map((environmentId) => {
         const environment = environments.find((entry) => entry.environmentId === environmentId);
+        // A machine never saved here has no label: its nickname names it, never its raw id.
+        const known = nickname(environmentId);
+        const name =
+          environment?.label ??
+          (known === environmentId && RAW_ID.test(known) ? "another machine" : known);
         return environment?.connection.phase === "connected" ? null : (
           <p
             key={environmentId}
@@ -147,8 +155,8 @@ export function ProjectThreadAvailability({
             role="status"
             data-unavailable-thread-host={environmentId}
           >
-            {environment?.label ?? environmentId} is offline — the thread list may be incomplete.
-            Cached threads may be out of date.
+            {environment ? `${name} is offline` : `This app is not connected to ${name}`} — the
+            thread list may be incomplete. Cached threads may be out of date.
           </p>
         );
       })}

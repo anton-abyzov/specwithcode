@@ -410,10 +410,7 @@ export function DraftMachinePicker(props: Props) {
         )}
         {fixRow && <span className="shrink-0 text-xs text-muted-foreground">Fix</span>}
         {!reason && !isRetrying && options.usableAction && (
-          <span className="shrink-0 text-xs text-muted-foreground">
-            <span aria-hidden>· </span>
-            {options.usableAction}
-          </span>
+          <span className="shrink-0 text-xs text-muted-foreground">{options.usableAction}</span>
         )}
       </>
     );

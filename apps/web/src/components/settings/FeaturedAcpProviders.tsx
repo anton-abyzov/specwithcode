@@ -129,7 +129,10 @@ export function FeaturedAcpProviderCards({
             catalog.isPending ||
             unavailable;
           return (
-            <article key={id} className="grid min-w-0 gap-3 rounded-lg border border-border/70 p-3">
+            <article
+              key={id}
+              className="grid min-w-0 grid-rows-[1fr_auto] gap-3 rounded-lg border border-border/70 p-3"
+            >
               <div className="flex min-w-0 items-start gap-2.5">
                 <ProviderInstanceIcon
                   driverKind={ProviderDriverKind.make("acpRegistry")}

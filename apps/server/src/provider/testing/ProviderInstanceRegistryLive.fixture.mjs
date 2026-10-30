@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 if (process.argv.includes("--version")) {
   process.stdout.write("claude 2.1.219\n");
@@ -10,16 +9,6 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.type !== "control_request") return;
   if (message.request?.subtype === "get_usage") {
-    const marker = process.env.STUDIO_CLAUDE_RESET_MARKER;
-    if (process.env.STUDIO_CLAUDE_USAGE_FAILS_AFTER_CLAIM && marker && NodeFS.existsSync(marker)) {
-      process.stdout.write(
-        JSON.stringify({
-          type: "control_response",
-          response: { subtype: "error", request_id: message.request_id, error: "usage failed" },
-        }) + "\n",
-      );
-      return;
-    }
     process.stdout.write(
       JSON.stringify({
         type: "control_response",
@@ -31,10 +20,7 @@ lines.on("line", (line) => {
             subscription_type: "pro",
             rate_limits_available: true,
             rate_limits: {
-              five_hour: {
-                utilization: marker && NodeFS.existsSync(marker) ? 0 : 100,
-                resets_at: null,
-              },
+              five_hour: { utilization: 100, resets_at: null },
               // A subscription answer carries both account windows; one
               // without the weekly window is treated as invalid evidence.
               seven_day: { utilization: 12, resets_at: null },

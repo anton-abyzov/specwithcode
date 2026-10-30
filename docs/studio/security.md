@@ -32,10 +32,13 @@ subscriptions and offers them as one API endpoint. SpecWithCode does not need it
 through the official Codex and Claude Code CLIs on each machine, which bypass the hub entirely.
 
 SpecWithCode's only use of a hub is read-only usage plus one action: under **Settings → Providers → Usage
-providers → Add hub** it reads each pooled account's 5-hour and weekly limits, banked resets and
-Codex credit balance so they appear in **Usage → Limits**, and it can redeem a banked Codex or Claude
-reset. Sending agent requests through the
-hub is a separate, manual provider setting and carries the provider-terms risk below. Without a hub,
+providers → Add hub** it reads each pooled Codex account's 5-hour and weekly limits, banked resets and
+credit balance so they appear in **Usage → Limits**, and it can redeem a banked Codex reset. It skips
+Claude accounts in a hub and never asks the hub to use their tokens: Anthropic does not let other apps
+collect, use or relay Claude.ai sign-ins, or route requests through Pro, Max or Ultra plans on behalf
+of users ([Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)).
+Do not point a Claude Code instance's `ANTHROPIC_BASE_URL` at a hub that holds Claude subscription
+sign-ins; a gateway in front of your own API key is fine. Without a hub,
 SpecWithCode still shows limits for the accounts signed in on each machine.
 
 ## What each layer protects
@@ -58,8 +61,8 @@ desktop app.
 ### 1. The hub management key is every pooled account
 
 CLIProxyAPI's management API includes `api-call`, which sends a request to a caller-chosen URL with a
-pooled account's OAuth token substituted into the headers. SpecWithCode uses it to read Codex and Claude
-usage and to redeem their banked resets. Anyone holding the management key can therefore use, or
+pooled account's OAuth token substituted into the headers. SpecWithCode uses it only for Codex accounts,
+to read their usage and redeem their banked resets. Anyone holding the management key can therefore use, or
 send away, the token of every account on the hub.
 
 SpecWithCode enforces:

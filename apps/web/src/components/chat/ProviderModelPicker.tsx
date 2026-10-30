@@ -10,11 +10,8 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
-import {
-  ModelPickerContent,
-  resolveModelPickerSelectedModel,
-  type ModelStateHeader,
-} from "./ModelPickerContent";
+import { ModelPickerContent, type ModelStateHeader } from "./ModelPickerContent";
+import { resolveModelPickerSelectedModel } from "./modelPickerOptions";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {

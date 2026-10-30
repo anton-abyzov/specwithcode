@@ -181,65 +181,19 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("maps Claude scoped windows without a scheduler plugin", () =>
+  it.effect("skips Claude accounts without sending their sign-in anywhere", () =>
     Effect.gen(function* () {
       const test = fixture({
-        accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: () => ({
-          status: 200,
-          body: {
-            five_hour: { utilization: 10, resets_at: null },
-            seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
-            limits: [
-              {
-                kind: "weekly_scoped",
-                percent: 80,
-                resets_at: null,
-                scope: { model: { display_name: "Fable" } },
-              },
-            ],
-          },
-        }),
+        accounts: [{ ...accounts[0]!, provider: "claude" }, accounts[1]!],
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.id)).toEqual([accounts[1]!.id]);
+      const consumed = yield* api.consume(config, accounts[0]!.id, "grant_a").pipe(Effect.result);
+      expect(consumed._tag).toBe("Failure");
       expect(
-        result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
-      ).toEqual([
-        ["five_hour", 10],
-        ["seven_day", 50],
-        ["seven_day_fable", 80],
-      ]);
-    }),
-  );
-
-  it.effect("reads Claude banked resets with the CLI's usage query", () =>
-    Effect.gen(function* () {
-      const test = fixture({
-        accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: (request) => {
-          expect(request.url).toBe(
-            "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1",
-          );
-          return {
-            status: 200,
-            body: {
-              five_hour: { utilization: 100, resets_at: null },
-              cedar_ember: {
-                eligible: true,
-                next_grant_id: "grant_a",
-                grants: [{ id: "grant_a", resets_left: 2, usable_now: true }],
-              },
-            },
-          };
-        },
-      });
-      const api = yield* test.api;
-      const [account] = yield* api.readAccounts(config);
-      expect(account?.usageLimits.resetCredits).toEqual({
-        availableCount: 2,
-        nextCreditId: "grant_a",
-      });
+        test.requests.some((request) => request.body?.auth_index === accounts[0]!.auth_index),
+      ).toBe(false);
     }),
   );
 
@@ -265,65 +219,6 @@ describe("CLIProxyAPI built-in management API", () => {
         unlimited: false,
         balance: "56687",
       });
-    }),
-  );
-
-  it.effect("claims a Claude reset for the account's organization", () =>
-    Effect.gen(function* () {
-      const claims: Array<string | undefined> = [];
-      let answer = "reset";
-      const test = fixture({
-        accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: (request) => {
-          if (request.url === "https://api.anthropic.com/api/oauth/profile") {
-            expect(request.method).toBe("GET");
-            return {
-              status: 200,
-              body: { organization: { uuid: "5b1c7e2a-9d4f-4a3b-8c6d-1e2f3a4b5c6d" } },
-            };
-          }
-          expect(request.method).toBe("POST");
-          expect(request.url).toBe(
-            "https://api.anthropic.com/api/organizations/5b1c7e2a-9d4f-4a3b-8c6d-1e2f3a4b5c6d/reset_rate_limits",
-          );
-          expect(request.header?.["Content-Type"]).toBe("application/json");
-          claims.push(request.data);
-          return { status: 200, body: { result: answer } };
-        },
-      });
-      const api = yield* test.api;
-      expect(yield* api.consume(config, "first.json", "grant_a")).toEqual({ outcome: "reset" });
-      answer = "cooldown";
-      const cooling = yield* api.consume(config, "first.json", "grant_a").pipe(Effect.result);
-      expect(cooling).toMatchObject({
-        _tag: "Failure",
-        failure: { detail: "Claude resets are cooling down. Try again later." },
-      });
-      // A retry of the same grant is the same claim.
-      expect(claims[0]).toBe(claims[1]);
-      expect(claims[0]).toBe(
-        encodeJson({
-          program: "cedar_ember",
-          grant_id: "grant_a",
-          // UUIDv5 of "first.json:grant_a".
-          request_id: "d2dd2da6-7762-50a4-b90a-31d6a76f70b2",
-        }),
-      );
-      expect(
-        test.requests
-          .filter((request) => request.path.endsWith("/reset-quota"))
-          .map((request) => request.body?.auth_index),
-      ).toEqual(["a"]);
-    }),
-  );
-
-  it.effect("refuses a malformed Claude grant without calling Claude", () =>
-    Effect.gen(function* () {
-      const test = fixture({ accounts: [{ ...accounts[0]!, provider: "claude" }] });
-      const api = yield* test.api;
-      const result = yield* api.consume(config, "first.json", "Bad Grant").pipe(Effect.result);
-      expect(result._tag).toBe("Failure");
-      expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
     }),
   );
 

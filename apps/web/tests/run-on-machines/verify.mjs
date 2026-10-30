@@ -164,7 +164,7 @@ try {
 
     await menu.getByRole("menuitem", { name: "Add to another machine" }).click();
     await menu.getByText("Add EasyChamp to").waitFor();
-    await menu.getByText("Has a copy at /Users/anton/Code/champ-old · Link").waitFor();
+    await menu.getByText("Has a copy at /Users/anton/Code/champ-oldLink").waitFor();
     // M1 is saved but not connected: its row links to Settings instead of offering a clone.
     assert.equal(
       await menu

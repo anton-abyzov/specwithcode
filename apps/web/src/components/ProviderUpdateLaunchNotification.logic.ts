@@ -153,6 +153,13 @@ export function isProviderUpdateActive(provider: Pick<ServerProvider, "updateSta
   return provider.updateState?.status === "queued" || provider.updateState?.status === "running";
 }
 
+/** The update failed only because the CLI was running; a forced retry can proceed. */
+export function isProviderUpdateBlockedInUse(
+  provider: Pick<ServerProvider, "updateState">,
+): boolean {
+  return provider.updateState?.status === "failed" && provider.updateState.inUse === true;
+}
+
 export function collectProviderUpdateCandidates(
   providers: ReadonlyArray<ServerProvider>,
 ): ProviderUpdateCandidate[] {
@@ -285,7 +292,9 @@ export function getProviderUpdateProgressToastView(input: {
     return {
       phase: "failed",
       type: "error",
-      title: failedProviders.length === 1 ? "Provider update failed" : "Provider updates failed",
+      title:
+        getInUseProviderUpdateTitle(failedProviders) ??
+        (failedProviders.length === 1 ? "Provider update failed" : "Provider updates failed"),
       description: getFailedProviderUpdateDescription(failedProviders),
     };
   }
@@ -495,9 +504,10 @@ export function getProviderUpdateSidebarPillView(
         .join("|")}`,
       tone: "error",
       title:
-        failedProviders.length === 1
+        getInUseProviderUpdateTitle(failedProviders) ??
+        (failedProviders.length === 1
           ? getProviderFailedUpdateTitle(failedProvider)
-          : `${failedProviders.length} provider updates failed`,
+          : `${failedProviders.length} provider updates failed`),
       description: getFailedProviderUpdateDescription(failedProviders),
       dismissible: true,
     });
@@ -587,12 +597,28 @@ function getProviderUpdateInitialToastTitle(
   return `Updates Available: ${providers.length} providers`;
 }
 
+/** "Codex is running" / "Codex and Claude are running" when every failure was only in use. */
+function getInUseProviderUpdateTitle(providers: ReadonlyArray<ServerProvider>): string | null {
+  if (providers.length === 0 || !providers.every(isProviderUpdateBlockedInUse)) return null;
+  return `${formatProviderList(providers)} ${providers.length === 1 ? "is" : "are"} running`;
+}
+
 function getFailedProviderUpdateDescription(providers: ReadonlyArray<ServerProvider>): string {
   if (providers.length === 1) {
     const provider = providers[0]!;
     if (provider.updateState?.message) {
       return provider.updateState.message;
     }
+  }
+  const inUse = providers.filter(isProviderUpdateBlockedInUse);
+  const others = providers.filter((provider) => !isProviderUpdateBlockedInUse(provider));
+  const running = `${formatProviderList(inUse)} ${inUse.length === 1 ? "is" : "are"} running`;
+  if (inUse.length > 0 && others.length === 0) {
+    return `${running}. Update anyway installs ${inUse.length === 1 ? "it" : "them"} now; running sessions keep their version until they restart.`;
+  }
+  if (inUse.length > 0) {
+    // "Update anyway" retries only the running ones; name them so the others are not assumed.
+    return `${running}; ${formatProviderList(others)} failed to update. Update anyway installs ${formatProviderList(inUse)} now.`;
   }
   return `${formatProviderList(providers)} failed to update. Check provider settings for details.`;
 }

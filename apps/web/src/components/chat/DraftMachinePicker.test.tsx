@@ -662,7 +662,7 @@ it("offers Link, never Clone, when the machine has an unlinked checkout of the s
   await click("Add to another machine");
   // The M3 project shares only a title; a name is never proof of the same repository.
   expect(button("M3").textContent).toContain("Clone it there");
-  await click("M1Has a copy at /m1/code/data· Link");
+  await click("M1Has a copy at /m1/code/dataLink");
   expect(document.querySelector("[data-link-dialog]")?.getAttribute("data-link-dialog")).toBe(
     "copy-m1",
   );

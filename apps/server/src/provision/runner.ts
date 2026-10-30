@@ -347,7 +347,7 @@ async function assemble(
   if (provider("claude")?.found && provider("claude")?.signedIn === false)
     userSteps.push({
       id: "claude-signin",
-      title: "Sign in to Claude Code (on a VPS use an API key helper instead).",
+      title: "Sign in to Claude Code (on a rented server we recommend an API key helper).",
       command: "claude",
       optional: false,
     });

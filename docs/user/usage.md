@@ -82,10 +82,11 @@ first, or by the first available window when no account reports a 5-hour limit. 
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
-where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
+where it is signed in, and its reset time. On web, you can hover too. Codex accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.
-On macOS, SpecWithCode reads Claude's login from the Keychain item Claude Code keeps there, the same way
-Claude Code does; if macOS asks, allow it on that Mac. On narrow screens, numbered rows below
+Claude banked resets are not shown: reading them needs Claude Code's own sign-in token, which
+Anthropic lets only Claude Code use, so redeem them in Claude Code. SpecWithCode reads Claude's
+limits from Claude Code itself and never opens its Keychain item or `.credentials.json`. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
@@ -212,7 +213,7 @@ Three more rows run before any fallback, under **Offer the fallback** and **Swit
 alike (never under **Wait for the reset**), and all are off until you turn them on:
 
 - **Redeem a banked reset first**: when a turn stops on the limit and the account holds a banked
-  reset (Claude's and Codex's own reset grants, the ones **Use reset** redeems by hand), SpecWithCode
+  reset (Codex's own reset grants, the ones **Use reset** redeems by hand), SpecWithCode
   redeems one and continues the stopped turn on the same provider. Turning it on asks you to
   confirm, because a redeemed reset is gone. Before redeeming, SpecWithCode re-reads the account's usage
   and redeems only when that fresh read shows a window at its limit (a stopped turn alone is not
@@ -315,12 +316,13 @@ resets in an hour. Use it only in a test home.
 
 ## Connect a CLIProxyAPI hub
 
-To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
+To see Codex accounts pooled in a hub, open **Settings → Providers → Usage providers → Add hub**. Choose the
 environment that will connect to the hub and enter its URL and management key.
 
-The accounts appear under **Usage → Limits**. Codex and Claude accounts show banked reset credits;
-select an account and choose **Use reset** to redeem one. Codex accounts also show their paid credit
-balance. No hub plugin is required.
+The Codex accounts appear under **Usage → Limits** with their banked reset credits; select an
+account and choose **Use reset** to redeem one. They also show their paid credit balance. Claude
+accounts in a hub are skipped and never sent a request: Anthropic does not let other apps use or
+relay Claude.ai sign-ins ([Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)). No hub plugin is required.
 
 ### A hub on the same machine
 

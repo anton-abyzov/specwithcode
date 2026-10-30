@@ -31,6 +31,7 @@ import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArrowDownIcon,
+  ArrowRightLeftIcon,
   ArrowUpIcon,
   BellIcon,
   BellOffIcon,
@@ -41,6 +42,7 @@ import {
   PencilIcon,
   PinIcon,
   PinOffIcon,
+  Share2Icon,
 } from "lucide-react";
 import {
   useCallback,
@@ -85,6 +87,7 @@ import type {
 import { coordinatorMachineKey } from "../../../studio/projectCoordinatorMachine";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { copyRolesSummary } from "../../../studio/projectDomain";
+import { sharedProjectBadge } from "../../../studio/linkedMachines";
 import type { ArrangedProjects, ProjectDropTarget } from "../../../studio/projectOrder";
 import { isScratchMember, type ScratchRootLookup } from "../../../studio/projectListVisibility";
 import { Tip } from "./Tip";
@@ -549,6 +552,17 @@ export function ProjectRow(props: {
   const copies = copyRolesSummary(group.memberProjects, (member) =>
     nickname(member.environmentId, member.environmentLabel),
   );
+  // A project shared with or handed off from another machine wears a badge.
+  const shared = personal
+    ? null
+    : sharedProjectBadge(
+        props.displayedProject ?? group.memberProjects[0],
+        group.memberProjects,
+        (id) => {
+          const name = nickname(id);
+          return name === id ? "another machine" : name;
+        },
+      );
   // A folder copy to another machine running in the background: dimmed with its progress.
   const copying = useCopyActivity(group.memberProjects);
   const copyingText = copying ? copyActivityText(copying) : null;
@@ -589,7 +603,7 @@ export function ProjectRow(props: {
           label={
             personal
               ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-              : `${displayName} · ${project.workspaceRoot}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
+              : `${displayName} · ${project.workspaceRoot}${shared ? ` · ${shared.label}` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
           }
         >
           <Link
@@ -620,6 +634,23 @@ export function ProjectRow(props: {
               <span className="sws-side-row-hint sws-side-row-namesake" title={props.hint}>
                 {props.hint}
               </span>
+            ) : null}
+            {shared ? (
+              shared.role === "workers" ? (
+                <ArrowRightLeftIcon
+                  className="sws-side-row-pin sws-side-row-shared"
+                  data-shared-project="workers"
+                  aria-label={shared.label}
+                  role="img"
+                />
+              ) : (
+                <Share2Icon
+                  className="sws-side-row-pin sws-side-row-shared"
+                  data-shared-project="coordinator"
+                  aria-label={shared.label}
+                  role="img"
+                />
+              )
             ) : null}
             {muted && !archived ? (
               <BellOffIcon className="sws-side-row-pin" aria-label="Notifications off" role="img" />

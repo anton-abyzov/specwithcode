@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
+  type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import {
@@ -26,6 +27,7 @@ import {
   firstRejectedProviderUpdateMessage,
   getProviderUpdateProgressToastView,
   getProviderUpdateSidebarPillView,
+  isProviderUpdateBlockedInUse,
   isTerminalProviderUpdatePhase,
   resolveEnvironmentUpdateRowStatus,
   type LocalEnvironmentUpdateGroup,
@@ -120,10 +122,13 @@ function EnvironmentUpdateRow({
   group,
   status,
   onUpdate,
+  onUpdateAnyway,
 }: {
   readonly group: LocalEnvironmentUpdateGroup;
   readonly status: ProviderUpdateRowStatus;
   readonly onUpdate: () => void;
+  /** Set when the failure was only a running CLI; retries skipping the idle check. */
+  readonly onUpdateAnyway?: (() => void) | undefined;
 }) {
   const connection = useEnvironment(group.environmentId)?.connection;
   const manageAccess = useEnvironmentScopeAccess(
@@ -144,9 +149,21 @@ function EnvironmentUpdateRow({
     case "failed":
     case "unchanged":
       trailing = (
-        <Button size="xs" variant="outline" disabled={!canManageProviders} onClick={onUpdate}>
-          Retry
-        </Button>
+        <div className="flex gap-1">
+          {status.kind === "failed" && onUpdateAnyway ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canManageProviders}
+              onClick={onUpdateAnyway}
+            >
+              Update anyway
+            </Button>
+          ) : null}
+          <Button size="xs" variant="outline" disabled={!canManageProviders} onClick={onUpdate}>
+            Retry
+          </Button>
+        </div>
       );
       break;
     default:
@@ -216,6 +233,11 @@ export function ProviderUpdateEnvironmentRows({
   const [resultByEnvironment, setResultByEnvironment] = useState<
     ReadonlyMap<EnvironmentId, ProviderUpdateToastView>
   >(() => new Map());
+  // Per environment, the instances whose last update was refused only because
+  // their CLI was running. "Update anyway" forces exactly these.
+  const [inUseByEnvironment, setInUseByEnvironment] = useState<
+    ReadonlyMap<EnvironmentId, ReadonlySet<ProviderInstanceId>>
+  >(() => new Map());
 
   const clearPending = useCallback((environmentId: EnvironmentId) => {
     setPendingEnvironments((previous) => {
@@ -229,7 +251,9 @@ export function ProviderUpdateEnvironmentRows({
   }, []);
 
   const handleUpdate = useCallback(
-    async (environmentId: EnvironmentId) => {
+    // `forceInstanceIds` comes only from "Update anyway": it dispatches just those
+    // in-use instances, each with `force`, and leaves the other candidates alone.
+    async (environmentId: EnvironmentId, forceInstanceIds?: ReadonlySet<ProviderInstanceId>) => {
       if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
       const group = groupByEnvironment.get(environmentId);
       if (!group || group.candidates.length === 0) {
@@ -244,11 +268,18 @@ export function ProviderUpdateEnvironmentRows({
       const isCurrentRequest = () =>
         requestVersionRef.current.get(environmentId) === requestVersion;
       onInteract?.();
-      const providerCount = group.candidates.length;
-      const targets = group.candidates.map((candidate) => ({
-        driver: candidate.driver,
-        instanceId: candidate.instanceId,
-      }));
+      const force = forceInstanceIds !== undefined;
+      const targets = group.candidates
+        .filter((candidate) => !force || forceInstanceIds.has(candidate.instanceId))
+        .map((candidate) => ({
+          driver: candidate.driver,
+          instanceId: candidate.instanceId,
+        }));
+      if (targets.length === 0) {
+        inFlightEnvironmentsRef.current.delete(environmentId);
+        return;
+      }
+      const providerCount = targets.length;
 
       setPendingEnvironments((previous) => new Set(previous).add(environmentId));
       setErrorByEnvironment((previous) => {
@@ -260,6 +291,14 @@ export function ProviderUpdateEnvironmentRows({
         return next;
       });
       setResultByEnvironment((previous) => {
+        if (!previous.has(environmentId)) {
+          return previous;
+        }
+        const next = new Map(previous);
+        next.delete(environmentId);
+        return next;
+      });
+      setInUseByEnvironment((previous) => {
         if (!previous.has(environmentId)) {
           return previous;
         }
@@ -292,7 +331,11 @@ export function ProviderUpdateEnvironmentRows({
             try {
               const result = await updateProvider({
                 environmentId,
-                input: { provider: target.driver, instanceId: target.instanceId },
+                input: {
+                  provider: target.driver,
+                  instanceId: target.instanceId,
+                  ...(force ? { force: true } : {}),
+                },
               });
               return toProviderUpdateOutcome({
                 environmentId,
@@ -340,8 +383,24 @@ export function ProviderUpdateEnvironmentRows({
           );
           return;
         }
+        const snapshots = collectProviderUpdateOutcomeSnapshots(results);
+        const inUseInstanceIds = new Set<ProviderInstanceId>();
+        for (const outcome of results) {
+          if (
+            outcome.status === "fulfilled" &&
+            outcome.value.provider &&
+            isProviderUpdateBlockedInUse(outcome.value.provider)
+          ) {
+            inUseInstanceIds.add(outcome.value.provider.instanceId);
+          }
+        }
+        if (inUseInstanceIds.size > 0) {
+          setInUseByEnvironment((previous) =>
+            new Map(previous).set(environmentId, inUseInstanceIds),
+          );
+        }
         const view = getProviderUpdateProgressToastView({
-          providers: collectProviderUpdateOutcomeSnapshots(results),
+          providers: snapshots,
           providerCount,
         });
         // Only persist a terminal outcome. A non-terminal ("running"/"initial")
@@ -404,14 +463,23 @@ export function ProviderUpdateEnvironmentRows({
 
   return (
     <div className="mt-0.5 flex flex-col gap-1">
-      {rows.map(({ group, status }) => (
-        <EnvironmentUpdateRow
-          key={group.environmentId}
-          group={group}
-          status={status}
-          onUpdate={() => handleUpdate(group.environmentId)}
-        />
-      ))}
+      {rows.map(({ group, status }) => {
+        const inUse = new Set(inUseByEnvironment.get(group.environmentId));
+        for (const candidate of group.candidates) {
+          if (isProviderUpdateBlockedInUse(candidate)) inUse.add(candidate.instanceId);
+        }
+        return (
+          <EnvironmentUpdateRow
+            key={group.environmentId}
+            group={group}
+            status={status}
+            onUpdate={() => handleUpdate(group.environmentId)}
+            onUpdateAnyway={
+              inUse.size > 0 ? () => handleUpdate(group.environmentId, inUse) : undefined
+            }
+          />
+        );
+      })}
     </div>
   );
 }

@@ -15,14 +15,13 @@ describe("CLIProxyAPI loopback HTTP integration", () => {
         );
         const api = yield* makeCliproxyApi;
         const accounts = yield* api.readAccounts(hub.config);
-        expect(accounts.map((a) => a.id)).toEqual(["codex.json", "claude.json"]);
+        expect(accounts.map((a) => a.id)).toEqual(["codex.json"]);
         expect(accounts[0]?.usageLimits.windows.map((w) => w.usedPercent)).toEqual([20, 75]);
         expect(accounts[0]?.usageLimits.resetCredits).toEqual({
           availableCount: 2,
           nextCreditId: "first",
           nextExpiresAt: "2099-01-01T00:00:00.000Z",
         });
-        expect(accounts[1]?.usageLimits.windows.map((w) => w.usedPercent)).toEqual([15, 40, 50]);
         const calls = hub.requests.filter((r) => r.body?.url);
         expect(calls.every((r) => r.method === "POST" && r.body?.method === "GET")).toBe(true);
         expect(
@@ -30,11 +29,8 @@ describe("CLIProxyAPI loopback HTTP integration", () => {
             .filter((r) => r.body?.auth_index === "codex-index")
             .every((r) => r.body?.header?.["Chatgpt-Account-Id"] === "synthetic-account"),
         ).toBe(true);
-        expect(
-          calls.find((r) => r.body?.auth_index === "claude-index")?.body?.header?.[
-            "anthropic-beta"
-          ],
-        ).toBe("oauth-2025-04-20");
+        // Claude sign-ins never leave Claude Code, so the hub is never asked to use one.
+        expect(hub.requests.some((r) => r.body?.auth_index === "claude-index")).toBe(false);
         expect(hub.violations).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(transport)),
   );
@@ -45,15 +41,10 @@ describe("CLIProxyAPI loopback HTTP integration", () => {
       Effect.gen(function* () {
         const hub = yield* makeHub;
         const api = yield* makeCliproxyApi;
-        hub.state.malformedUsage.add("claude-index");
         hub.state.creditsStatus = 503;
         const accounts = yield* api.readAccounts(hub.config);
         expect(accounts[0]?.usageLimits.windows.map((w) => w.usedPercent)).toEqual([20, 75]);
         expect(accounts[0]?.usageLimits.resetCredits).toBeUndefined();
-        expect(accounts[1]?.usageLimits).toMatchObject({
-          windows: [],
-          unavailable: { reason: "probeFailed" },
-        });
         expect(hub.violations).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(transport)),
   );
@@ -129,8 +120,8 @@ describe("CLIProxyAPI loopback HTTP integration", () => {
           );
         hub.state.accounts[1]!.disabled = false;
         expect(
-          (yield* api.consume(hub.config, "claude.json", "Not A Grant!").pipe(Effect.flip)).detail,
-        ).toBe("Claude returned a malformed reset.");
+          (yield* api.consume(hub.config, "claude.json", "first").pipe(Effect.flip)).detail,
+        ).toBe("The hub account is missing or disabled.");
         expect(hub.requests.every((r) => r.path.endsWith("auth-files"))).toBe(true);
         hub.state.accounts[0]!.disabled = false;
         hub.state.consumeCode = "unexpected";

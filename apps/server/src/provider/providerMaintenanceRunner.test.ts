@@ -23,6 +23,7 @@ import { SpawnExecutableResolution } from "@specweave-studio/shared/shell";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
+import { ProviderInUseError } from "./stagedProviderUpdate.ts";
 import {
   makeProviderMaintenanceCapabilities,
   ProviderVersionCache,
@@ -1035,6 +1036,7 @@ it.effect("refuses an in-use installer without running its command", () => {
       Effect.fail(
         new ProviderMaintenanceRunner.ProviderMaintenanceCommandError({
           message: "CLI is in use. Retry when idle.",
+          inUse: true,
         }),
       ),
     );
@@ -1044,6 +1046,7 @@ it.effect("refuses an in-use installer without running its command", () => {
       result.providers[0]?.updateState?.message,
       "CLI is in use. Retry when idle.",
     );
+    assert.strictEqual(result.providers[0]?.updateState?.inUse, true);
     assert.strictEqual(calls, 0);
   }).pipe(
     Effect.provide(
@@ -1056,5 +1059,122 @@ it.effect("refuses an in-use installer without running its command", () => {
         }),
       ),
     ),
+  );
+});
+
+it.effect("a forced update proceeds past an in-use refusal and runs the command", () => {
+  let calls = 0;
+  let idleChecks = 0;
+  return Effect.gen(function* () {
+    const { registry } = yield* makeRegistry(baseNativeCliProvider);
+    const updater = yield* makeTestRunner(registry, undefined, () => {
+      idleChecks++;
+      return Effect.fail(
+        new ProviderMaintenanceRunner.ProviderMaintenanceCommandError({
+          message: "CLI is in use.",
+          inUse: true,
+        }),
+      );
+    });
+    const result = yield* updater.updateProvider({ provider: NATIVE_CLI_DRIVER, force: true });
+    assert.strictEqual(idleChecks, 1);
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+    assert.strictEqual(result.providers[0]?.updateState?.inUse, undefined);
+
+    // Without force the same runner refuses.
+    const refused = yield* updater.updateProvider({ provider: NATIVE_CLI_DRIVER });
+    assert.strictEqual(idleChecks, 2);
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(refused.providers[0]?.updateState?.inUse, true);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        layerLatestVersionHttpClient("0.0.0"),
+        layerMockSpawner(() => {
+          calls++;
+          return { stdout: "updated" };
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("a forced update is still refused when the installer cannot be verified idle", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const { registry } = yield* makeRegistry(baseNativeCliProvider);
+    const updater = yield* makeTestRunner(registry, undefined, () =>
+      Effect.tryPromise({
+        try: () =>
+          Promise.reject(
+            new Error(
+              "Cannot verify that this installer is idle. Update with its owning installer after closing provider sessions.",
+            ),
+          ),
+        catch: ProviderMaintenanceRunner.maintenanceCommandError,
+      }),
+    );
+    const result = yield* updater.updateProvider({ provider: NATIVE_CLI_DRIVER, force: true });
+    assert.strictEqual(calls, 0);
+    assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+    assert.match(result.providers[0]?.updateState?.message ?? "", /Cannot verify/);
+    assert.strictEqual(result.providers[0]?.updateState?.inUse, undefined);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        layerLatestVersionHttpClient("0.0.0"),
+        layerMockSpawner(() => {
+          calls++;
+          return { stdout: "updated" };
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("maps a ProviderInUseError from the idle check to updateState.inUse", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const { registry } = yield* makeRegistry(baseNativeCliProvider);
+    const updater = yield* makeTestRunner(registry, undefined, () =>
+      Effect.tryPromise({
+        try: () => Promise.reject(new ProviderInUseError("native-cli is running (pid 42: codex).")),
+        catch: ProviderMaintenanceRunner.maintenanceCommandError,
+      }),
+    );
+    const refused = yield* updater.updateProvider({ provider: NATIVE_CLI_DRIVER });
+    assert.strictEqual(calls, 0);
+    assert.strictEqual(refused.providers[0]?.updateState?.status, "failed");
+    assert.strictEqual(refused.providers[0]?.updateState?.inUse, true);
+    assert.match(refused.providers[0]?.updateState?.message ?? "", /pid 42/);
+    const forced = yield* updater.updateProvider({ provider: NATIVE_CLI_DRIVER, force: true });
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(forced.providers[0]?.updateState?.status, "succeeded");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        layerLatestVersionHttpClient("0.0.0"),
+        layerMockSpawner(() => {
+          calls++;
+          return { stdout: "updated" };
+        }),
+      ),
+    ),
+  );
+});
+
+it("maintenanceCommandError marks only ProviderInUseError as in use", () => {
+  assert.strictEqual(
+    ProviderMaintenanceRunner.maintenanceCommandError(new ProviderInUseError("codex is running"))
+      .inUse,
+    true,
+  );
+  assert.strictEqual(
+    ProviderMaintenanceRunner.maintenanceCommandError(new Error("Cannot verify")).inUse,
+    undefined,
   );
 });

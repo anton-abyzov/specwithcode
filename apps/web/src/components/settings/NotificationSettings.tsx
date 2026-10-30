@@ -154,11 +154,11 @@ export function NotificationSettings() {
           </div>
         }
       />
-      <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
+      <p className="px-3 text-sm text-muted-foreground sm:px-4" role="status" aria-live="polite">
         {status}
       </p>
       {message ? (
-        <p className="text-sm text-muted-foreground" role="status">
+        <p className="px-3 text-sm text-muted-foreground sm:px-4" role="status">
           {message}
         </p>
       ) : null}

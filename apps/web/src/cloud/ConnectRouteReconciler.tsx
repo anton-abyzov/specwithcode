@@ -9,9 +9,12 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import { useProjects } from "../state/entities";
 import { useEnvironments, useRelayEnvironmentDiscovery } from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
+import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
+import { linkedMachinesToConnect } from "../studio/linkedMachines";
 import {
   connectFirstRouteOrder,
   isConnectRouteRemoving,
@@ -31,10 +34,14 @@ const UNREACHABLE_REFRESH_MS = 5 * 60_000;
  * saved machine this account reaches, placed first when it is added so
  * Tailscale and other direct routes become fallbacks. A route dropped by a
  * sign-out or a failed add comes back; only one the user removed from the
- * route list stays removed. The caller keys this by account.
+ * route list stays removed. A machine a shared project names but this device
+ * never saved, such as the machine a handed-off project came from, is saved
+ * with a Connect route, unless the user removed it here. The caller keys this
+ * by account.
  */
 export function ConnectRouteReconciler() {
   const { environments } = useEnvironments();
+  const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
   const register = useAtomCommand(environmentCatalog.register, {
     label: "Add SpecWithCode Connect route",
@@ -103,7 +110,29 @@ export function ConnectRouteReconciler() {
         setPendingOrder((current) => new Set(current).add(machine.environmentId));
       });
     }
-  }, [discovery, environments, register]);
+    // Linked machines this device has no entry for: Connect is their only route here.
+    const linked = linkedMachinesToConnect({
+      projects,
+      savedEnvironmentIds: new Set(environments.map((machine) => machine.environmentId)),
+      discovered: discovery.environments,
+      skip: new Set([...skip, ...readSkippedFleetEnvironments()]),
+    });
+    for (const machine of linked) {
+      inFlightRef.current.add(machine.environmentId);
+      addAttemptsRef.current.set(
+        machine.environmentId,
+        (addAttemptsRef.current.get(machine.environmentId) ?? 0) + 1,
+      );
+      void register(
+        new RelayConnectionRegistration({
+          target: new RelayConnectionTarget({
+            environmentId: machine.environmentId,
+            label: machine.label,
+          }),
+        }),
+      ).then(() => inFlightRef.current.delete(machine.environmentId));
+    }
+  }, [discovery, environments, projects, register]);
 
   // Reorder once the catalog shows the new route, so the order lists every route.
   useEffect(() => {

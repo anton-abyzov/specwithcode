@@ -97,8 +97,8 @@ export function AddUsageLimitSourceDialog({
         <DialogHeader>
           <DialogTitle>Add a CLIProxyAPI usage hub</DialogTitle>
           <DialogDescription>
-            Read account quotas on {environmentLabel}. This does not connect chat models or sign in
-            an agent. The key stays on that server.
+            Read Codex account quotas on {environmentLabel}. Claude accounts are skipped. This does
+            not connect chat models or sign in an agent. The key stays on that server.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

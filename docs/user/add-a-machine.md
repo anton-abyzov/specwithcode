@@ -428,9 +428,10 @@ Tailscale changes nothing about how a provider sees your account.
   you own on a home or office connection. We do not recommend them on Hetzner,
   AWS or any other rented server or VPN: sign-ins from datacenter addresses
   draw extra scrutiny and can get the account locked, and Anthropic describes
-  subscription sign-in as meant for ordinary, individual use. A rented server
-  runs agents on API keys only; [Linux worker](./linux-worker.md#give-the-agents-api-keys)
-  shows how.
+  subscription sign-in as meant for ordinary, individual use. On a rented
+  server we recommend API keys; [Linux worker](./linux-worker.md#give-the-agents-api-keys)
+  shows how. SpecWithCode does not enforce this: every worker, on a Mac, Linux
+  or Windows, uses each agent's own sign-in.
 - Using your own subscription on several of your machines is ordinary use, but
   every machine signed in to one account shares that account's limits. Running
   agents on all of them at once spends the limits faster, not slower.

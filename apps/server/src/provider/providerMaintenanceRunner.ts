@@ -21,7 +21,11 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { stageCodexUpdate, assertProviderInstallerIdle } from "./stagedProviderUpdate.ts";
+import {
+  stageCodexUpdate,
+  assertProviderInstallerIdle,
+  ProviderInUseError,
+} from "./stagedProviderUpdate.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -70,6 +74,11 @@ export interface ProviderMaintenanceRunnerShape {
           readonly provider: ProviderDriverKind;
           readonly instanceId?: ProviderInstanceId | undefined;
           readonly targetVersion?: string | undefined;
+          /**
+           * Proceed past an in-use refusal; running sessions keep the old files. An
+           * installer that cannot be verified idle (Windows) is still refused.
+           */
+          readonly force?: boolean | undefined;
         },
   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
 }
@@ -84,12 +93,16 @@ export class ProviderMaintenanceCommandError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly cause?: unknown;
+  /** Refused only because a matching CLI process is running; a forced retry may proceed. */
+  readonly inUse?: boolean;
 }> {}
 
-function maintenanceCommandError(cause: unknown): ProviderMaintenanceCommandError {
+/** Maps an installer failure; only a `ProviderInUseError` refusal is marked `inUse`. */
+export function maintenanceCommandError(cause: unknown): ProviderMaintenanceCommandError {
   return new ProviderMaintenanceCommandError({
     message: cause instanceof Error ? cause.message : "Provider maintenance failed.",
     cause,
+    ...(cause instanceof ProviderInUseError ? { inUse: true } : {}),
   });
 }
 
@@ -229,6 +242,7 @@ function makeUpdateState(input: {
   readonly finishedAt: string | null;
   readonly message: string | null;
   readonly output?: string | null;
+  readonly inUse?: boolean;
 }): ServerProviderUpdateState {
   return {
     status: input.status,
@@ -236,6 +250,7 @@ function makeUpdateState(input: {
     finishedAt: input.finishedAt,
     message: input.message,
     output: input.output ?? null,
+    ...(input.inUse ? { inUse: true } : {}),
   };
 }
 
@@ -341,6 +356,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ? defaultInstanceIdForDriver(provider)
         : (target.instanceId ?? defaultInstanceIdForDriver(provider));
     const targetVersion = typeof target === "string" ? undefined : target.targetVersion;
+    const force = typeof target === "string" ? false : target.force === true;
     const targetKey = `instance:${instanceId}`;
     const capabilities = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
       instanceId,
@@ -457,7 +473,12 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   stderrTruncated: false,
                 }
               : yield* Effect.gen(function* () {
-                  yield* checkInstallerIdle(provider, command);
+                  yield* checkInstallerIdle(provider, command).pipe(
+                    Effect.catchIf(
+                      (error) => force && error.inUse === true,
+                      () => Effect.void,
+                    ),
+                  );
                   return yield* runMaintenanceCommand(command);
                 });
             const finishedAt = yield* nowIso;
@@ -526,6 +547,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 finishedAt: yield* nowIso,
                 message: failure instanceof Error ? failure.message : "Update command failed.",
                 output: null,
+                inUse: failure instanceof ProviderMaintenanceCommandError && failure.inUse === true,
               }),
             );
           },
