@@ -127,6 +127,16 @@ class ServiceHold(object):
     def prepare_flags(self):
         return (['--hold', '--if-idle'] if self.wait_for_idle else ['--stop-work', '--hold']) + ['--reason', 'install']
 
+    def counted_copies(self):
+        """The folder copies the service counts now (its prepareServiceUpdate answer without --stop-work
+        or --hold, which stops and holds nothing), seen even when its updates/folder-work.json cannot be
+        written. 0 from a service too old to count them."""
+        supported, reason = self.support()
+        if not supported:
+            raise HoldUnsupported(reason)
+        copies = self._call([], RELEASE_TIMEOUT).get('folderCopies')
+        return copies if type(copies) is int and copies > 0 else 0
+
     def release(self):
         """Releases the hold, as Cancel update does, so work can start again."""
         supported, reason = self.support()

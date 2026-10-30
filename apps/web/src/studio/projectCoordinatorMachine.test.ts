@@ -5,6 +5,7 @@ import {
   checkoutKeyEnvironmentId,
   checkoutUnavailableReason,
   chooseCoordinatorView,
+  coordinatorElsewhere,
   coordinatorMachineKey,
   heldCheckoutKey,
   orchestratorCopies,
@@ -12,6 +13,7 @@ import {
   unloadedMachineRef,
   unloadedMachineRefs,
   WORKERS_ONLY_PROBLEM,
+  workersOnlyProblem,
 } from "./projectCoordinatorMachine";
 import { COORDINATOR_PENDING_PROBLEM } from "./projectDomain";
 
@@ -173,6 +175,66 @@ describe("chooseCoordinatorView for linked copies", () => {
     expect(view(pending, [pending])).toBe(COORDINATOR_PENDING_PROBLEM);
     expect(view(old, [old, successor])).toBe(SUPERSEDED_COORDINATOR_PROBLEM);
     expect(view(successor, [old, successor])).toBeNull();
+  });
+});
+
+describe("a workers-only copy whose coordinator is on another machine", () => {
+  const ref = (environmentId: string, projectId: string) => ({
+    environmentId,
+    projectId,
+    coordinatorThreadId: `project-coordinator:${projectId}`,
+  });
+  const copyOf = (
+    environmentId: string,
+    id: string,
+    binding: { state: BindingState; successor?: ReturnType<typeof ref> },
+  ) =>
+    ({
+      environmentId,
+      id,
+      workspaceSettings: {
+        logicalProject: { id: "logical:one", title: "One", coordinatorId: "c", members: [] },
+        coordinatorBinding: { epoch: 1, ...binding },
+      },
+    }) as unknown as EnvironmentProject;
+  const m4 = copyOf("env-m4", "a", { state: "active" });
+  // "Copy files only" leaves the new copy transferred to the machine it was copied from.
+  const minis = copyOf("env-minis", "b", { state: "transferred", successor: ref("env-m4", "a") });
+
+  it("names the coordinator's checkout to start work from", () => {
+    expect(coordinatorElsewhere(minis, [m4, minis])).toEqual(ref("env-m4", "a"));
+    // Known even before that machine's copy loads here.
+    expect(coordinatorElsewhere(minis, [minis])).toEqual(ref("env-m4", "a"));
+  });
+
+  it("follows the coordinator along later moves", () => {
+    const moved = copyOf("env-m4", "a", { state: "transferred", successor: ref("env-m1", "c") });
+    const m1 = copyOf("env-m1", "c", { state: "active" });
+    expect(coordinatorElsewhere(minis, [moved, m1, minis])).toEqual(ref("env-m1", "c"));
+  });
+
+  it("is null for a coordinator, a copy with no successor, a loop or the same machine", () => {
+    expect(coordinatorElsewhere(m4, [m4, minis])).toBeNull();
+    expect(coordinatorElsewhere(linked("env-m3", "c", "transferred"), [m4])).toBeNull();
+    const back = copyOf("env-m4", "a", { state: "transferred", successor: ref("env-minis", "b") });
+    expect(coordinatorElsewhere(minis, [back, minis])).toBeNull();
+    const sameMachine = copyOf("env-minis", "z", {
+      state: "transferred",
+      successor: ref("env-minis", "y"),
+    });
+    expect(coordinatorElsewhere(sameMachine, [sameMachine])).toBeNull();
+  });
+
+  it("keeps the history wording only for a copy that had a conversation", () => {
+    const fresh = workersOnlyProblem("Anton's MacBook", false);
+    expect(fresh).toBe(
+      "This copy runs workers only. Its coordinator is on Anton's MacBook. Start work for this copy from there.",
+    );
+    expect(fresh).not.toContain("history");
+    expect(workersOnlyProblem("Anton's MacBook", true)).toBe(
+      "This project now runs on Anton's MacBook. The conversation here is kept as history. Start work for this copy from Anton's MacBook.",
+    );
+    expect(workersOnlyProblem(null, false)).toContain("Its coordinator is on another machine.");
   });
 });
 

@@ -45,13 +45,13 @@ import {
 } from "./handoffFolderCopyPending";
 import type { CopyMachine } from "./HandoffCopySetup";
 import { copyHeld } from "./HandoffCopyDone";
-import { messageOf, useCoordinatorTransfer } from "./useCoordinatorTransfer";
+import { messageOf } from "./useCoordinatorTransfer";
+import { useCoordinatorMove } from "./useCoordinatorMove";
 import {
   nextStepText,
   workingLine,
   recompareFor,
   stageForStatus,
-  transferRefusal,
   type CopyRecompare,
   type CopyStage,
 } from "./handoffCopySteps";
@@ -199,16 +199,11 @@ export function HandoffFolderCopy({
   const [pending, setPending] = useState<PendingCopy | null>(null);
   const [undoPreview, setUndoPreview] = useState<FolderCopyUndoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [transferNotice, setTransferNotice] = useState<string | null>(null);
-  const [contextTransferred, setContextTransferred] = useState(false);
-  // Move anyway transferred context: the pointer is gone, the wording stays.
-  const [movedAnyway, setMovedAnyway] = useState(false);
   // The source dropped an undone copy that the destination could not give back.
   const [sourceDropped, setSourceDropped] = useState(false);
   const [copyAgain, setCopyAgain] = useState(false);
   // Why the destination compares again; null for the first compare.
   const [recompare, setRecompare] = useState<CopyRecompare>(null);
-  const [transferRecovery, setTransferRecovery] = useState(false);
   const [working, setWorking] = useState(false);
   // Clone and skip choices not yet in the destination's plan, and whether it is re-comparing.
   const [repositoryChoices, setRepositoryChoices] = useState<RepositoryChoices | null>(null);
@@ -234,11 +229,6 @@ export function HandoffFolderCopy({
       ? known
       : null;
   };
-  const { contextPublished, continueThere } = useCoordinatorTransfer({
-    project,
-    coordinatorId,
-    knownProject,
-  });
   const abort = useRef(new AbortController());
   // Aborted by the Cancel button while measuring; the dialog closing uses `abort`.
   const measureStop = useRef<AbortController | null>(null);
@@ -278,6 +268,30 @@ export function HandoffFolderCopy({
       /* The copy still runs; only resuming after a reload needs the pointer. */
     }
   };
+  const {
+    transferNotice,
+    contextTransferred,
+    movedAnyway,
+    transferRecovery,
+    setTransferRecovery,
+    sourceReview,
+    leftOnSource,
+    keptHere,
+    moveCoordinator,
+    ...move
+  } = useCoordinatorMove({
+    project,
+    coordinatorId,
+    knownProject,
+    sourceLabel,
+    targetLabel,
+    copy,
+    folder,
+    latestPending,
+    remember,
+    setStage,
+    setCopyAgain,
+  });
   const { link, setLink, markLinked } = useCopyLink({
     project,
     sourceLabel,
@@ -678,59 +692,6 @@ export function HandoffFolderCopy({
     setForm: { machine: setMachine, folder: setFolder, mode: setMode, chooseFirst: setChooseFirst },
     onResume: resume,
   });
-
-  /**
-   * After the files are applied, the coordinator continues on the destination. Differences
-   * stop it unless the person chose Move anyway on a held copy.
-   */
-  const moveCoordinator = async (
-    operationId: string,
-    environmentId: EnvironmentId,
-    projectId: ProjectId,
-    applied: FolderCopyStatus | null = copy,
-    anyway = false,
-  ) => {
-    if (!anyway && applied && copyProblem(applied, sourceLabel) !== null) {
-      setCopyAgain(true);
-      setTransferNotice("Copy again before handing off the coordinator.");
-      setStage("done");
-      return;
-    }
-    setStage("moving");
-    setTransferRecovery(true);
-    try {
-      await continueThere(
-        operationId,
-        environmentId,
-        projectId,
-        applied?.projectFolder ??
-          copiedProjectFolder(
-            applied?.targetFolder ?? folder,
-            applied?.projectRelativePath ?? latestPending.current?.projectRelativePath,
-          ),
-      );
-    } catch (cause) {
-      const refused = transferRefusal(cause, contextPublished.current, targetLabel, sourceLabel);
-      if (refused.copyAgain !== null) setCopyAgain(refused.copyAgain);
-      if (!refused.recovery) setTransferRecovery(false);
-      const saved = latestPending.current;
-      // Copy again is the answer now; a reopen must not offer the transfer instead.
-      if (refused.copyAgain && saved?.moveAnyway) {
-        const { moveAnyway: _dropped, ...rest } = saved;
-        remember(rest);
-      }
-      setTransferNotice(refused.notice);
-      setStage("done");
-      return;
-    }
-    setTransferRecovery(false);
-    setContextTransferred(true);
-    if (anyway) setMovedAnyway(true);
-    setTransferNotice(null);
-    // Undo is for copies only; a finished move has nothing left to resume.
-    remember(null);
-    setStage("done");
-  };
 
   /** A move registers the copied project under one id; a known folder keeps its own. */
   const destinationProjectId = (
@@ -1194,8 +1155,7 @@ export function HandoffFolderCopy({
     const finished = latestPending.current;
     if (finished?.mode === "copy-only" && copy?.state === "applied" && copy.committed)
       draft.archive(finished);
-    setTransferRecovery(false);
-    contextPublished.current = false;
+    move.reset();
     remember(null);
     setOffer(null);
     setSummary(null);
@@ -1203,9 +1163,6 @@ export function HandoffFolderCopy({
     setUndoPreview(null);
     setLink(null);
     setError(null);
-    setTransferNotice(null);
-    setContextTransferred(false);
-    setMovedAnyway(false);
     setSourceDropped(false);
     setCopyAgain(false);
     setRecompare(null);
@@ -1304,6 +1261,16 @@ export function HandoffFolderCopy({
           )
       : null;
   const openCopy = () => openCopiedProject(machine, copy, pending, onOpenProject);
+  // The source listed what changed after copying: move without it, or keep the coordinator.
+  const moveWithout = () =>
+    void run(async () => {
+      if (pending && machine && copy?.projectId)
+        await move.moveWithout(pending.operationId, machine, copy.projectId, copy, movingAnyway);
+    });
+  const keepHere = () =>
+    void run(async () => {
+      if (pending) await move.keepHere(pending.operationId);
+    });
 
   return (
     <div className="space-y-4" data-slot="handoff-folder-copy" data-stage={stage}>
@@ -1400,6 +1367,9 @@ export function HandoffFolderCopy({
             transferNotice={transferNotice}
             movingAnyway={movingAnyway}
             copyAgain={offerCopyAgain}
+            sourceReview={sourceReview}
+            leftOnSource={leftOnSource}
+            keptHere={keptHere}
             secretsNote={secretsNote}
             link={link}
             linkDialog={linkDialog}
@@ -1475,6 +1445,9 @@ export function HandoffFolderCopy({
             contextTransferred={contextTransferred}
             link={link}
             transferRecovery={transferRecovery}
+            sourceReview={offerCopyAgain ? sourceReview : null}
+            onMoveWithout={moveWithout}
+            onKeepHere={keepHere}
             onCancelMeasure={() => measureStop.current?.abort()}
             onResume={resume}
             onMeasure={() => void measure()}

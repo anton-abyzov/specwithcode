@@ -9,7 +9,9 @@ import type {
   FolderCopySourceSummary,
   FolderCopyStatus,
   FolderCopyUndoResult,
+  MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
+import type { LeftOnSource } from "./HandoffSourceChanges";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { formatBytes } from "../../studio/folderCopy";
 import { HandoffSecretsStep } from "./HandoffSecretsStep";
@@ -87,6 +89,9 @@ export function HandoffCopyStepPanels({
   transferNotice,
   movingAnyway,
   copyAgain,
+  sourceReview,
+  leftOnSource,
+  keptHere,
   secretsNote,
   link,
   linkDialog,
@@ -146,6 +151,12 @@ export function HandoffCopyStepPanels({
   readonly transferNotice: string | null;
   readonly movingAnyway: boolean;
   readonly copyAgain: boolean;
+  /** The source's list of paths that changed after copying, while the person decides. */
+  readonly sourceReview: MachineHandoffSourceChanges | null;
+  /** What a finished move left only on the source. */
+  readonly leftOnSource: LeftOnSource | null;
+  /** The person kept the coordinator on the source. */
+  readonly keptHere: boolean;
   readonly secretsNote: string | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
   readonly linkDialog: boolean;
@@ -333,6 +344,9 @@ export function HandoffCopyStepPanels({
           transferNotice={transferNotice}
           movingAnyway={movingAnyway}
           copyAgain={copyAgain}
+          sourceReview={sourceReview}
+          leftOnSource={leftOnSource}
+          keptHere={keptHere}
           secretsNote={secretsNote}
           link={link}
           undoPreview={undoPreview}

@@ -3,8 +3,10 @@ import { execFile } from "node:child_process";
 import * as FSP from "node:fs/promises";
 import * as Path from "node:path";
 
+/** The source filesystem cannot prove a captured copy; a moving copy falls back to live checks. */
+export class CaptureFilesystemRefused extends Error {}
 const unsupported = () =>
-  new Error(
+  new CaptureFilesystemRefused(
     "Captured copies need a supported local filesystem (APFS, ext4, XFS, Btrfs, tmpfs or local NTFS). This source filesystem could not be verified. Nothing was copied.",
   );
 const run = (command: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> =>
@@ -104,7 +106,7 @@ export function sourceFilesystemAdmission(
       roots.set(root, admitted);
     }
     if ((await admitted) !== device)
-      throw new Error(
+      throw new CaptureFilesystemRefused(
         "This copy crosses a source filesystem boundary. Copy that mounted folder separately from a supported local filesystem.",
       );
   };

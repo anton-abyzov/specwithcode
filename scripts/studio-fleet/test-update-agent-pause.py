@@ -51,6 +51,10 @@ class FakeHold(object):
         self.case.control()  # The drain stopped the work: the next snapshot is idle.
         return {'held': True, 'stoppedThreads': 1, 'interruptedRuns': 1, 'openTerminals': 0}
 
+    def counted_copies(self):
+        self.calls.append(('count',))
+        return self.case.counted
+
     def release(self):
         self.calls.append(('release',))
         if self.case.on_release:
@@ -77,7 +81,7 @@ class AutomaticPause(AgentCase):
     def setUp(self):
         AgentCase.setUp(self)
         self.fake.add_release()
-        self.hold, self.on_prepare, self.on_release = FakeHold(self), None, None
+        self.hold, self.on_prepare, self.on_release, self.counted = FakeHold(self), None, None, 0
         patcher = mock.patch.object(pause, 'HOLD', self.hold)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -249,8 +253,10 @@ class AutomaticPause(AgentCase):
             self.control(snapshotFail=True, snapshotError=BUSY)
             self.assertEqual(self.run_agent(), 0, self.log)
         self.assertEqual(self.state()['status'], 'installed', self.log)
-        self.assertEqual(calls.read_text().split(), ['service', 'prepare-update', '--base-dir', str(self.own),
-                                                     '--stop-work', '--hold', '--reason', 'install', '--json'])
+        base = ['service', 'prepare-update', '--base-dir', str(self.own)]
+        # The service's own count of folder copies first, which stops nothing, then the drain.
+        self.assertEqual([line.split() for line in calls.read_text().splitlines()],
+                         [base + ['--json'], base + ['--stop-work', '--hold', '--reason', 'install', '--json']])
         self.assertIn('(2 threads, 1 turn, 1 terminal)', self.log)
 
     def test_services_without_the_cli_credential_wait_for_quiet_without_a_pause(self):
@@ -415,6 +421,90 @@ class AutomaticPause(AgentCase):
                 self.assertEqual(state['status'], 'waiting-for-quiet')
                 self.assertIsNone(state['automaticPauseAt'])
         self.assertEqual(self.hold.prepared(), [])
+
+    def copy_pass(self):
+        self.control(snapshotFail=True, snapshotError='AssertionError: Folder copies are in progress\n'
+                     'REFUSAL folder-copy operations=1')
+        self.assertEqual(self.run_agent(), 0, self.log)
+        return self.state()
+
+    def test_a_folder_copy_waits_without_a_pause(self):
+        # 2026-10-29: a restart cut off a folder copy the database and process checks cannot see.
+        waiting = self.busy_pass()
+        self.advance(10)
+        state = self.copy_pass()
+        self.assertEqual((state['status'], state['message']),
+                         ('waiting-for-quiet', 'Waiting for a folder copy to or from another machine to finish'))
+        # The copy hides the work behind it: the grace keeps the time it has, and the pass is no gap.
+        for key in ('automaticWaitSince', 'automaticPauseAt'):
+            self.assertEqual(state[key], waiting[key])
+        self.assertGreater(update_agent.parse_time(state['automaticLastBusyAt']),
+                           update_agent.parse_time(waiting['automaticLastBusyAt']))
+        self.assertEqual(self.hold.prepared(), [])
+        self.assertEqual(self.apply_calls(), [])
+
+    def test_a_folder_copy_between_busy_passes_never_postpones_the_pause(self):
+        self.busy_pass()
+        self.advance(10)
+        self.copy_pass()
+        self.advance(10)  # The copy ended; the work still runs and the pause is overdue: this pass drains.
+        self.control(snapshotFail=True, snapshotError=BUSY)
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(len(self.hold.prepared()), 1)
+        self.assertEqual(self.state()['status'], 'installed')
+
+    def test_copies_the_service_counts_skip_the_drain(self):
+        # Its updates/folder-work.json could not be written, so the snapshot saw running work only.
+        self.busy_pass()
+        self.advance(10)
+        self.counted = 1
+        state = self.busy_pass()
+        self.assertEqual((state['status'], state['message']),
+                         ('waiting-for-quiet', 'Waiting for a folder copy to or from another machine to finish'))
+        self.assertEqual(self.hold.prepared(), [])  # Nothing was stopped.
+        self.assertIsNone(state['automaticPausedAt'])
+        self.assertIsNone(self.read_config().get('installRequestedAt'))
+        self.counted = 0
+        self.advance(10)
+        self.control(snapshotFail=True, snapshotError=BUSY)
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(len(self.hold.prepared()), 1)
+
+    def test_the_automatic_forced_request_still_waits_for_folder_copies(self):
+        seen = {}
+
+        def drained():
+            self.control()
+            return {'held': True, 'stoppedThreads': 1, 'interruptedRuns': 1, 'openTerminals': 0}
+
+        original = update_request.write_request
+
+        def write(*args, **kwargs):
+            written = original(*args, **kwargs)
+            seen.update(self.read_config())
+            return written
+        self.on_prepare = drained
+        self.busy_pass()
+        self.advance(10)
+        self.control(snapshotFail=True, snapshotError=BUSY)
+        with mock.patch.object(update_request, 'write_request', write):
+            self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(seen['installMode'], 'force')
+        self.assertEqual(seen[update_request.WAITS_FOR_FOLDER_COPIES], seen['installRequestedAt'])
+
+    def test_a_folder_copy_that_starts_during_the_drain_is_not_installed_over(self):
+        self.busy_pass()
+        self.advance(10)
+        self.on_prepare = lambda: {'held': True, 'stoppedThreads': 1, 'openTerminals': 0, 'folderCopies': 2}
+        self.control(snapshotFail=True, snapshotError=BUSY)
+        self.assertEqual(self.run_agent(), 0, self.log)
+        state = self.state()
+        self.assertEqual((state['status'], state['message']),
+                         ('waiting-for-quiet', 'Waiting for 2 folder copies to or from another machine to finish'))
+        self.assertEqual(len(self.hold.released()), 1)  # Work starts again.
+        self.assertIsNone(self.read_config().get('installRequestedAt'))
+        self.assertIsNone(state['automaticPausedAt'])  # Not a drain that failed: the next pass may pause.
+        self.assertEqual(self.apply_calls(), [])
 
     def assert_forgotten(self, state):
         self.assertEqual((state['automaticWaitSince'], state['automaticPauseAt'], state['automaticLastBusyAt']),

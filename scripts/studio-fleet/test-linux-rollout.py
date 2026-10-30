@@ -44,7 +44,8 @@ class FakeWorker(object):
 
     def __init__(self, version='1.0.94', active='active', idle=True, preview_rc=0, update_rc=0,
                  switch_after_update=True, blockers=None, query_ok=True, load='loaded', running=None,
-                 selected=None, pending=False, starts=True, busy_at_restart=False, update_error=None):
+                 selected=None, pending=False, starts=True, busy_at_restart=False, update_error=None,
+                 folder_copies=None):
         self.unit = version
         self.running = version if running is None else running
         self.selected = version if selected is None else selected
@@ -52,6 +53,7 @@ class FakeWorker(object):
         self.preview_rc, self.update_rc, self.switch, self.starts = preview_rc, update_rc, switch_after_update, starts
         self.busy_at_restart, self.update_error = busy_at_restart, update_error
         self.blockers = blockers or []
+        self.folder_copies = folder_copies
         self.calls = []
         self.restarted = False
 
@@ -77,6 +79,8 @@ class FakeWorker(object):
             if self.preview_rc:
                 return subprocess.CompletedProcess(argv, self.preview_rc, '', 'Unknown subcommand prepare-update')
             reply = {'idle': self.idle, 'blockers': self.blockers, 'held': False, 'stoppedThreads': 0}
+            if self.folder_copies is not None:
+                reply['folderCopies'] = self.folder_copies
             return subprocess.CompletedProcess(argv, 0, json.dumps(reply) + '\n', '')
         if action in ('update', 'update-if-idle'):
             if self.update_error:
@@ -114,10 +118,11 @@ class Clock(object):
 ENTRY = {'os': 'linux', 'host': 'lx1', 'sshConfig': True, 'studioHome': STUDIO_HOME}
 
 
-def roll(fake):
+def roll(fake, local_copies=None):
     lines, clock = [], Clock()
     worker = linux_rollout.Worker('lx1', ENTRY, run=fake)
-    result = linux_rollout.roll_worker(worker, NEW, lines.append, sleep=clock.sleep, clock=clock)
+    result = linux_rollout.roll_worker(worker, NEW, lines.append, sleep=clock.sleep, clock=clock,
+                                       local_copies=local_copies)
     return result, lines
 
 
@@ -139,6 +144,29 @@ class RollWorker(unittest.TestCase):
         self.assertNotIn('update-if-idle', fake.actions())
         self.assertNotIn('update', fake.actions())
         self.assertTrue(any('WARNING' in line and '1 run (Fix tests)' in line for line in lines), lines)
+
+    def test_a_worker_copying_a_folder_is_skipped_and_names_the_copy(self):
+        # 2026-10-29: ministorm restarted mid-copy and the copy failed; nothing else ran there.
+        fake = FakeWorker(idle=False, folder_copies=1)
+        result, lines = roll(fake)
+        self.assertEqual(result['result'], 'skipped-busy')
+        self.assertFalse(fake.restarted)
+        self.assertIn('1 folder copy', result['reason'])
+        self.assertTrue(any('WARNING' in line and '1 folder copy' in line for line in lines), lines)
+
+    def test_an_older_worker_is_skipped_while_this_machine_copies_a_folder(self):
+        # Its idle answer has no folderCopies and its --if-idle hold would not wait for a copy with M4.
+        fake = FakeWorker()
+        result, lines = roll(fake, local_copies=lambda: 1)
+        self.assertEqual(result['result'], 'skipped-busy')
+        self.assertFalse(fake.restarted)
+        self.assertEqual(fake.actions(), ['status', 'preview'])
+        self.assertIn('too old to count folder copies', result['reason'])
+        # One that counts its own copies (none here) is updated: a copy with M4 would be its own.
+        fake = FakeWorker(folder_copies=0)
+        self.assertEqual(roll(fake, local_copies=lambda: 1)[0]['result'], 'installed')
+        # With no copy here an older worker is updated as before.
+        self.assertEqual(roll(FakeWorker(), local_copies=lambda: 0)[0]['result'], 'installed')
 
     def test_work_arriving_after_the_preview_is_not_interrupted(self):
         fake = FakeWorker(busy_at_restart=True)

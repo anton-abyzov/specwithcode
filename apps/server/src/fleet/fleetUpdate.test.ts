@@ -53,6 +53,14 @@ interface Fakes {
   readonly agentCalls: Array<ReadonlyArray<string>>;
   readonly prepareCalls: Array<ServerPrepareServiceUpdateInput>;
   readonly selfUpdates: string[];
+  /** Versions the self-update handed to the launcher, after its `installing` report. */
+  readonly switched: string[];
+}
+
+/** What runs on the machine, as an if-idle hold sees it. */
+interface Machine {
+  folderCopies: number;
+  runs: number;
 }
 
 function worker(
@@ -66,9 +74,14 @@ function worker(
     readonly selfUpdate?: Effect.Effect<unknown, { readonly reason: string }>;
     /** How long the agent takes to answer a status read. */
     readonly statusDelayMs?: number;
+    /** What an if-idle hold finds; idle when absent. */
+    readonly machine?: Machine;
+    readonly quietWait?: FleetUpdateWorkerDeps["quietWait"];
+    /** Runs after an if-idle hold is granted, before its answer arrives. */
+    readonly heldBeforeAnswer?: Effect.Effect<void>;
   } = {},
 ) {
-  const fakes: Fakes = { agentCalls: [], prepareCalls: [], selfUpdates: [] };
+  const fakes: Fakes = { agentCalls: [], prepareCalls: [], selfUpdates: [], switched: [] };
   const deps: FleetUpdateWorkerDeps = {
     serverVersion: options.serverVersion ?? "1.0.109",
     method: Effect.succeed(options.method === undefined ? "service-agent" : options.method),
@@ -93,8 +106,35 @@ function worker(
         );
       }),
     prepare: (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         fakes.prepareCalls.push(input);
+        if (input.ifIdle === true) {
+          const machine = options.machine ?? { folderCopies: 0, runs: 0 };
+          const idle = machine.folderCopies === 0 && machine.runs === 0;
+          const look: ServerPrepareServiceUpdateResult = {
+            idle,
+            stoppedThreads: 0,
+            blockers:
+              machine.runs === 0
+                ? []
+                : [
+                    {
+                      kind: "run",
+                      count: machine.runs,
+                      threadId: null,
+                      threadTitle: null,
+                      projectId: null,
+                      projectTitle: null,
+                    },
+                  ],
+            held: idle,
+            ...(idle ? { holdToken: "lease-1" } : {}),
+            openTerminals: 0,
+            folderCopies: machine.folderCopies,
+          };
+          if (idle && options.heldBeforeAnswer !== undefined) yield* options.heldBeforeAnswer;
+          return look;
+        }
         const result: ServerPrepareServiceUpdateResult = {
           idle: true,
           stoppedThreads: 2,
@@ -109,8 +149,10 @@ function worker(
         fakes.selfUpdates.push(version);
         yield* report("downloading");
         yield* report("installing");
+        fakes.switched.push(version);
         return yield* options.selfUpdate ?? Effect.succeed({ targetVersion: version });
       }),
+    ...(options.quietWait === undefined ? {} : { quietWait: options.quietWait }),
   };
   return { fakes, service: Effect.runSync(makeFleetUpdateWorker(deps)) };
 }
@@ -302,6 +344,152 @@ describe("a fleet machine taking its primary's update request", () => {
     await settled(service);
     expect(fakes.prepareCalls).toEqual([{ stopWork: true, hold: true, reason: "install" }]);
     expect(fakes.agentCalls.filter((args) => args[0] === "request")).toHaveLength(1);
+  });
+});
+
+/** Polls the worker's status until `done` holds. */
+async function until(
+  service: ReturnType<typeof worker>["service"],
+  done: (status: Awaited<ReturnType<typeof settled>>) => boolean,
+) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const status = await Effect.runPromise(service.status);
+    if (done(status)) return status;
+    await Effect.runPromise(Effect.sleep("5 millis"));
+  }
+  throw new Error("the worker never reached the expected state");
+}
+
+// 2026-10-29, 1.0.123 to 1.0.125: the fleet primary asked ministorm (a Linux boot service) for a
+// normal update while it copied a folder from the M4; it restarted within seconds and the copy failed.
+describe("a normal update on a Linux boot service", () => {
+  const boot = (machine: Machine, maxMs = 5_000) =>
+    worker({
+      method: "boot-service",
+      serverVersion: "1.0.123",
+      machine,
+      quietWait: { pollMs: 10, maxMs },
+    });
+
+  it("waits while a folder copy runs, says so, and installs once it ends", async () => {
+    const machine = { folderCopies: 1, runs: 0 };
+    const { fakes, service } = boot(machine);
+    const answer = await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
+    expect(answer).toMatchObject({ method: "boot-service", result: "accepted" });
+    const waiting = await until(service, (status) => status.phase === "requested");
+    expect(waiting).toMatchObject({ phase: "requested", targetVersion: "1.0.125" });
+    expect(waiting.lastError).toContain("1 folder copy");
+    // Downloaded, but nothing handed to the launcher, and nothing was stopped.
+    expect(fakes.selfUpdates).toEqual(["1.0.125"]);
+    expect(fakes.switched).toEqual([]);
+    expect(
+      fakes.prepareCalls.every((call) => call.stopWork === false && call.ifIdle === true),
+    ).toBe(true);
+    // Asked again meanwhile (fleet_rollout's request window ended): the same wait answers.
+    expect(
+      await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" })),
+    ).toMatchObject({ result: "accepted", phase: "requested" });
+    expect(fakes.selfUpdates).toEqual(["1.0.125"]);
+
+    machine.folderCopies = 0;
+    const done = await until(service, (status) => status.phase === "handed-off");
+    expect(done).toMatchObject({ phase: "handed-off", targetVersion: "1.0.125" });
+    expect(fakes.switched).toEqual(["1.0.125"]);
+    expect(fakes.prepareCalls.at(-1)).toEqual({
+      stopWork: false,
+      hold: true,
+      ifIdle: true,
+      reason: "install",
+    });
+  });
+
+  it("waits for running turns too, and gives up as busy after its wait", async () => {
+    const { fakes, service } = boot({ folderCopies: 1, runs: 2 }, 60);
+    await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
+    const failed = await until(service, (status) => status.phase === "failed");
+    expect(failed).toMatchObject({ phase: "failed", lastErrorReason: "busy" });
+    expect(failed.lastError).toContain("1 folder copy, 2 running tasks");
+    expect(fakes.switched).toEqual([]);
+  });
+
+  it("is withdrawn by a cancel while it waits, and releases any hold it took", async () => {
+    const machine = { folderCopies: 1, runs: 0 };
+    const { fakes, service } = boot(machine);
+    await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
+    await until(service, (status) => status.phase === "requested");
+    expect(
+      await Effect.runPromise(service.request({ cancel: "2026-10-29T20:00:00.000Z" })),
+    ).toMatchObject({ method: "boot-service", result: "cancelled", phase: "cancelled" });
+    // The copy ends: nothing waits any more, so nothing switches over.
+    machine.folderCopies = 0;
+    const asked = fakes.prepareCalls.length;
+    await Effect.runPromise(Effect.sleep("60 millis"));
+    expect(fakes.prepareCalls).toHaveLength(asked);
+    expect(fakes.switched).toEqual([]);
+    expect(await Effect.runPromise(service.status)).toMatchObject({ phase: "cancelled" });
+    // Nothing waits now, so a cancel is refused; a new request starts afresh.
+    await expect(
+      Effect.runPromise(service.request({ cancel: "2026-10-29T20:00:00.000Z" })),
+    ).rejects.toMatchObject({ reason: "unsupported" });
+    await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
+    expect(await until(service, (status) => status.phase === "handed-off")).toMatchObject({
+      phase: "handed-off",
+    });
+  });
+
+  it("installs at once on a quiet machine", async () => {
+    const { fakes, service } = boot({ folderCopies: 0, runs: 0 });
+    await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
+    expect(await until(service, (status) => status.phase === "handed-off")).toMatchObject({
+      phase: "handed-off",
+    });
+    expect(fakes.prepareCalls).toHaveLength(1);
+  });
+
+  it("goes ahead when forced, replacing a normal request that waits", async () => {
+    const { fakes, service } = boot({ folderCopies: 1, runs: 0 });
+    await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
+    await until(service, (status) => status.phase === "requested");
+    await Effect.runPromise(service.request({ version: "1.0.125", mode: "force" }));
+    // The wait ended with the request: no look after it.
+    const asked = fakes.prepareCalls.length;
+    expect(await until(service, (status) => status.phase === "handed-off")).toMatchObject({
+      phase: "handed-off",
+      targetVersion: "1.0.125",
+    });
+    // The forced install looks for no quiet moment, and the waiting one never switched over.
+    expect(fakes.switched).toEqual(["1.0.125"]);
+    expect(fakes.prepareCalls).toHaveLength(asked);
+  });
+
+  it("releases the hold it was granted when a forced request replaces it before the switch-over", async () => {
+    let granted!: () => void;
+    let answer!: () => void;
+    const grantedNow = new Promise<void>((resolve) => (granted = resolve));
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    const { fakes, service } = worker({
+      method: "boot-service",
+      serverVersion: "1.0.123",
+      machine: { folderCopies: 0, runs: 0 },
+      quietWait: { pollMs: 10, maxMs: 5_000 },
+      heldBeforeAnswer: Effect.promise(() => {
+        granted();
+        return answered;
+      }),
+    });
+    await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
+    await grantedNow;
+    // The service granted the if-idle hold; its answer is still on the way when the force arrives.
+    const forced = Effect.runPromise(service.request({ version: "1.0.125", mode: "force" }));
+    answer();
+    await forced;
+    await until(service, (status) => status.phase === "handed-off");
+    expect(fakes.prepareCalls).toContainEqual({
+      stopWork: false,
+      releaseHold: true,
+      holdToken: "lease-1",
+    });
+    expect(fakes.switched).toEqual(["1.0.125"]);
   });
 });
 
@@ -687,6 +875,50 @@ describe("the primary asking a fleet machine to update", () => {
         }),
       ).rejects.toMatchObject({ reason });
     expect(calls).toHaveLength(1);
+  });
+
+  // The 2026-10-29 setup: the primary copies a folder with a machine that predates the quiet
+  // wait, which installs a normal request at once.
+  it("holds a normal request to an older machine back while it copies a folder itself", async () => {
+    const posts: unknown[] = [];
+    const answer = ({ method, body }: { method: string; body: unknown }) => {
+      if (method === "POST") posts.push(body);
+      return Response.json({
+        method: "boot-service",
+        result: "accepted",
+        phase: "downloading",
+        serverVersion: "1.0.123",
+      });
+    };
+    const older = await primary({
+      up: [CONNECT],
+      capabilities: { fleetUpdateRequest: true },
+      serverVersion: "1.0.123",
+      answer,
+    });
+    const ask = (machine: typeof older, hold: boolean, localFolderCopies: number) =>
+      runFleetUpdate({
+        link: machine.link,
+        target: machine.target,
+        coordinatorEnvironmentId: PRIMARY,
+        action: { kind: "request", version: "1.0.126", hold },
+        localFolderCopies,
+      });
+    const refused = await ask(older, false, 2).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ reason: "busy" });
+    expect((refused as Error).message).toContain("this machine has 2 folder copies in progress");
+    expect(posts).toEqual([]);
+    // Forced, or with nothing copying here, it is asked as before.
+    await expect(ask(older, true, 2)).resolves.toMatchObject({ result: "requested" });
+    await expect(ask(older, false, 0)).resolves.toMatchObject({ result: "requested" });
+    // A machine that waits for its own copies is asked at once.
+    const waits = await primary({
+      up: [CONNECT],
+      capabilities: { fleetUpdateRequest: true, fleetUpdateWaitsForFolderCopies: true },
+      answer,
+    });
+    await expect(ask(waits, false, 2)).resolves.toMatchObject({ result: "requested" });
+    expect(posts).toHaveLength(3);
   });
 
   it("says an older macOS machine updates itself", async () => {

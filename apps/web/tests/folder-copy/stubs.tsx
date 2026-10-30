@@ -110,6 +110,13 @@ export const fixture = {
   destinationHasFiles: false,
   captured: false,
   failCopy: false,
+  sourceChanges: null as null | {
+    digest: string;
+    total: number;
+    truncated: boolean;
+    acceptable: boolean;
+    rows: Array<{ path: string; kind: string; size?: number }>;
+  },
   pauseNext(name: string) {
     let release!: () => void;
     const promise = new Promise<void>((resolve) => {
@@ -185,6 +192,16 @@ export const useAtomCommand =
         return {
           _tag: "Failure",
           error: Object.assign(new Error("Work is running"), { code: "busy" }),
+        };
+      // Files changed on the source after copying: refused until this exact list is accepted.
+      const changes = fixture.sourceChanges;
+      if (input.publish && changes && input.acceptedSourceChanges !== changes.digest)
+        return {
+          _tag: "Failure",
+          error: Object.assign(
+            new Error("Files changed on the source after the copy. Review them before moving."),
+            { code: "source_changed", changes },
+          ),
         };
       published ||= input.publish === true;
       value = {
@@ -263,6 +280,27 @@ export const useAtomCommand =
         undone: !input.preview,
         kept: [],
         problems: [],
+      };
+    } else if (name === "copyDrift") {
+      // After a move without the reviewed paths, the source still holds them.
+      const rows = published && fixture.sourceChanges ? fixture.sourceChanges.rows : [];
+      value = {
+        drift: {
+          digest: "b".repeat(64),
+          total: rows.length,
+          rows,
+          truncated: false,
+          acceptable: true,
+        },
+        ...(rows.length > 0
+          ? {
+              leftOnSource: {
+                digest: "b".repeat(64),
+                total: rows.length,
+                recordedAt: 1793063000000,
+              },
+            }
+          : {}),
       };
     } else if (name === "copyRelease") value = { released: true };
     else if (name === "copySourceCancel") value = { state: "cancelled" };

@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   settings: {} as typeof DEFAULT_SERVER_SETTINGS,
   update: vi.fn(),
   multiple: false,
+  targets: [{ environmentId: "fixture" }] as Array<Record<string, unknown>>,
   member: undefined as
     | Pick<SidebarProjectGroupMember, "environmentId" | "workspaceSettings">
     | undefined,
@@ -18,12 +19,13 @@ const state = vi.hoisted(() => ({
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
     scope: state.member ? { kind: "checkout", members: [state.member] } : { kind: "environment" },
-    targets: [{ environmentId: "fixture" }],
+    targets: state.targets,
+    target: state.targets[0] ?? null,
     connectedEnvironments: (state.multiple ? ["one", "two"] : ["one"]).map((environmentId) => ({
       environmentId,
       serverConfig: {
         environment: {
-          capabilities: { worktreeLocationMode: true },
+          capabilities: { worktreeLocationMode: true, storageCleanup: true },
           defaultWorktreesDirectory: "/app/worktrees",
         },
       },
@@ -37,6 +39,25 @@ vi.mock("./useScopedSettings", () => ({
   useClearScopedSettings: () => vi.fn(),
 }));
 vi.mock("./SettingsScopeNotice", () => ({ SettingsScopeNotice: () => null }));
+vi.mock("./InactiveThreadArchiveSetting", () => ({ InactiveThreadArchiveSetting: () => null }));
+vi.mock("../ui/switch", () => ({
+  Switch: (props: { "aria-label": string; checked: boolean; mixed?: boolean }) => (
+    <input
+      type="checkbox"
+      aria-label={props["aria-label"]}
+      checked={props.checked}
+      data-mixed={props.mixed ? "" : undefined}
+      readOnly
+    />
+  ),
+}));
+vi.mock("../ui/number-field", () => ({
+  NumberField: () => null,
+  NumberFieldDecrement: () => null,
+  NumberFieldGroup: () => null,
+  NumberFieldIncrement: () => null,
+  NumberFieldInput: () => null,
+}));
 vi.mock("./settingsLayout", () => ({
   SettingsRow: ({
     title,
@@ -87,7 +108,7 @@ vi.mock("../ui/select", () => ({
   SelectValue: () => null,
   SelectPopup: ({ children }: { children: ReactNode }) => children,
 }));
-import { WorktreesDirectoryRow } from "./StorageSettings";
+import { StorageSettingsPanel, WorktreesDirectoryRow } from "./StorageSettings";
 import { WorkspaceModeControl } from "../chat/WorkspaceModeControl";
 let renderer: ReactTestRenderer;
 beforeEach(() => {
@@ -95,6 +116,7 @@ beforeEach(() => {
   state.settings = { ...DEFAULT_SERVER_SETTINGS };
   state.multiple = false;
   state.member = undefined;
+  state.targets = [{ environmentId: "fixture" }];
   state.update.mockClear();
 });
 afterEach(() => {
@@ -178,4 +200,57 @@ it("keeps the selected repository unknown when its checkout is unprepared", () =
   expect(JSON.stringify(renderer.toJSON())).toContain(
     "<selected Git repository>/.specwithcode/worktrees",
   );
+});
+
+it("shows a cleanup switch as mixed, not on, when the selected machines disagree", () => {
+  const machine = (worktreeOnDelete: boolean) => ({
+    environmentId: worktreeOnDelete ? "m4" : "m1",
+    sources: {},
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, worktreeOnDelete },
+    },
+  });
+  state.targets = [machine(true), machine(false)];
+  state.settings = state.targets[0]!.settings as typeof DEFAULT_SERVER_SETTINGS;
+  state.multiple = true;
+  act(() => {
+    renderer = create(<StorageSettingsPanel />);
+  });
+  const toggle = (label: string) =>
+    renderer.root.find((node) => node.type === "input" && node.props["aria-label"] === label).props;
+  expect(toggle("Delete worktrees with deleted threads")).toMatchObject({
+    checked: false,
+    "data-mixed": "",
+  });
+  // Rules the machines agree on keep their real state.
+  expect(toggle("Delete merged worktrees")["data-mixed"]).toBeUndefined();
+});
+
+it("keeps a retention rule on when machines only differ in day counts", () => {
+  const machine = (environmentId: string, worktreeAfterDays: number | null) => ({
+    environmentId,
+    sources: {},
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, worktreeAfterDays },
+    },
+  });
+  const toggle = () =>
+    renderer.root.find(
+      (node) => node.type === "input" && node.props["aria-label"] === "Delete inactive worktrees",
+    ).props;
+  state.multiple = true;
+  state.targets = [machine("m4", 7), machine("m1", 14)];
+  state.settings = state.targets[0]!.settings as typeof DEFAULT_SERVER_SETTINGS;
+  act(() => {
+    renderer = create(<StorageSettingsPanel />);
+  });
+  expect(toggle()).toMatchObject({ checked: true, "data-mixed": undefined });
+  act(() => renderer.unmount());
+  state.targets = [machine("m4", 7), machine("m1", null)];
+  act(() => {
+    renderer = create(<StorageSettingsPanel />);
+  });
+  expect(toggle()).toMatchObject({ checked: false, "data-mixed": "" });
 });

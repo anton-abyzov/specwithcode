@@ -14,6 +14,8 @@ import {
   projectWorkspaceIntentText,
 } from "../studio/projectCoordinatorDraft";
 import { projectWorkspaceSearch } from "../studio/projectPaneThreads";
+import { useMachineNicknames } from "../studio/machineNickname";
+import { coordinatorCheckout } from "../studio/workersOnlyCopy";
 import { formatReviewCommentFence, type ReviewCommentContext } from "../reviewCommentContext";
 import { toastManager } from "../components/ui/toast";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -30,16 +32,32 @@ export interface ProjectCoordinatorHandoff {
   readonly model?: ModelSelection | undefined;
 }
 
-/** Keep review evidence and checkout intent in the request the user will send. */
-export function projectCoordinatorHandoffText(task: ProjectCoordinatorHandoff): string {
+/** A workers-only copy whose request goes to its coordinator on another machine. */
+export interface WorkersOnlyCopyTarget {
+  readonly machine: string;
+  readonly folder: string;
+}
+
+/**
+ * Keep review evidence and checkout intent in the request the user will send.
+ * A request sent on from a workers-only copy names that copy first, so its
+ * coordinator works there and not in its own checkout.
+ */
+export function projectCoordinatorHandoffText(
+  task: ProjectCoordinatorHandoff,
+  copy?: WorkersOnlyCopyTarget,
+): string {
   return [
+    copy
+      ? `This request is for the copy on ${copy.machine}, in ${copy.folder}. That copy runs workers only. Delegate the work to a worker there.`
+      : null,
     task.prompt?.trim(),
     task.url ? `Pull request: ${task.url}` : null,
     projectWorkspaceIntentText(task),
     task.mode === "worktree"
       ? "When I send this request, prepare the pull request in its own worktree and delegate the work to a project worker."
       : task.mode === "local"
-        ? "When I send this request, prepare the pull request in this checkout and delegate the work to a project worker. Preserve existing local work."
+        ? `When I send this request, prepare the pull request in ${copy ? "that copy's" : "this"} checkout and delegate the work to a project worker. Preserve existing local work.`
         : null,
     ...(task.reviewComments ?? []).map((comment) =>
       [
@@ -67,6 +85,7 @@ export function useProjectCoordinatorHandoff() {
   const legacy = useLegacySidebarEnabled();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const grouping = useClientSettings(selectProjectGroupingSettings);
+  const machineName = useMachineNicknames();
   const router = useRouter();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   return useCallback(
@@ -75,12 +94,13 @@ export function useProjectCoordinatorHandoff() {
       task: ProjectCoordinatorHandoff = {},
     ): Promise<ProjectCoordinatorEntryResult> => {
       if (legacy) return { kind: "standalone" };
-      const project = readProjects().find(
+      const projects = readProjects();
+      const chosen = projects.find(
         (candidate) =>
           candidate.environmentId === projectRef.environmentId &&
           candidate.id === projectRef.projectId,
       );
-      if (!project) {
+      if (!chosen) {
         toastManager.add({
           type: "error",
           title: "Project unavailable",
@@ -99,18 +119,33 @@ export function useProjectCoordinatorHandoff() {
         });
         return { kind: "unavailable" };
       }
-      if (isScratchProject(project, scratchRoot)) return { kind: "standalone" };
-      const text = projectCoordinatorHandoffText(task);
-      if (text) enqueueProjectCoordinatorDraft({ ...projectRef, text });
+      if (isScratchProject(chosen, scratchRoot)) return { kind: "standalone" };
+      // A workers-only copy cannot take messages: its coordinator, on another machine, opens.
+      // A model picked for the copy's machine is not forced on that coordinator,
+      // and the request names the copy the person picked.
+      const project = coordinatorCheckout(chosen, projects);
+      const model = project === chosen ? task.model : undefined;
+      const text = projectCoordinatorHandoffText(
+        task,
+        project === chosen
+          ? undefined
+          : { machine: machineName(chosen.environmentId), folder: chosen.workspaceRoot },
+      );
+      if (text)
+        enqueueProjectCoordinatorDraft({
+          environmentId: project.environmentId,
+          projectId: project.id,
+          text,
+        });
       try {
-        if (task.model) {
+        if (model) {
           const saved = await updateProject({
             environmentId: project.environmentId,
             input: {
               projectId: project.id,
               workspaceSettings: {
                 expectedRevision: project.workspaceSettings?.revision ?? 0,
-                coordinatorModelSelection: task.model,
+                coordinatorModelSelection: model,
               },
             },
           });
@@ -142,6 +177,6 @@ export function useProjectCoordinatorHandoff() {
       }
       return { kind: "unavailable" };
     },
-    [legacy, configs, grouping, router, updateProject],
+    [legacy, configs, grouping, machineName, router, updateProject],
   );
 }

@@ -348,6 +348,24 @@ describe("Update now when requests, reads and presses cross", () => {
       expect(label()).toBe("Updating…");
     });
 
+    it("asks a silent agent again while a folder copy keeps the service from reading idle", async () => {
+      await pressAndWait();
+      // A copy runs: nothing blocks a forced install, but the service is not idle.
+      state.prepare.mockImplementation(
+        async (value: { input: ServerPrepareServiceUpdateInput }) => {
+          calls.push(prepareCall(value.input));
+          const copying = { ...IDLE, idle: false, folderCopies: 1 };
+          return {
+            _tag: "Success",
+            value: value.input.stopWork ? { ...copying, held: true } : copying,
+          };
+        },
+      );
+      await advance(45_000);
+      expect(asksAgain()).toEqual(["installServiceUpdate:force"]);
+      expect(label()).toBe("Updating…");
+    });
+
     it("renews a request whose lapse the read before asking again finds, without asking for it first", async () => {
       const pressedAt = await pressBeforeAgentHasRelease();
       const has = agentHasRelease(pressedAt);

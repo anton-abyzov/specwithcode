@@ -49,6 +49,15 @@ function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
 
+/** How long the look for folder copies may take before the update goes ahead without it. */
+const COPY_LOOK_MS = 5_000;
+
+/** The question before an update that would cut off folder copies on that machine. */
+export function describeServerUpdateCopies(serverLabel: string, copies: number): string {
+  const one = copies === 1;
+  return `${serverLabel} is ${one ? "copying a folder" : `copying ${copies} folders`} to or from another machine. Updating restarts it and cuts ${one ? "the copy" : "the copies"} off; ${one ? "it" : "they"} may need Retry. Update anyway?`;
+}
+
 export interface ServerUpdateTarget {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
@@ -68,6 +77,22 @@ type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" 
 
 function useServerUpdate() {
   const updateServer = useAtomCommand(serverEnvironment.updateServer, { reportFailure: false });
+  const prepare = useAtomCommand(serverEnvironment.prepareServiceUpdate, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  /** Folder copies that machine serves or pulls now; 0 when it cannot say (older servers omit it). */
+  const folderCopiesOn = async (environmentId: EnvironmentId): Promise<number> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const answer = await Promise.race([
+      prepare({ environmentId, input: { stopWork: false } }).catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), COPY_LOOK_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    return answer?._tag === "Success" ? (answer.value.folderCopies ?? 0) : 0;
+  };
   return async (target: ServerUpdateTarget, failureTitle = "Server update failed") => {
     const { environmentId, serverLabel, selfUpdate, targetVersion } = target;
     if (
@@ -77,6 +102,13 @@ function useServerUpdate() {
       return;
     pendingUpdateEnvironmentIds.add(environmentId);
     try {
+      // The update restarts that machine's service, which serves or pulls a folder copy in-process.
+      const copies = await folderCopiesOn(environmentId);
+      if (
+        copies > 0 &&
+        !((await requestConfirmDialog(describeServerUpdateCopies(serverLabel, copies))) ?? true)
+      )
+        return;
       const result = await updateServer({
         environmentId,
         input: {

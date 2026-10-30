@@ -126,6 +126,12 @@ export const ServerPrepareServiceUpdateResult = Schema.Struct({
   interruptedRuns: Schema.optional(NonNegativeInt),
   /** Terminals that are open now, or that this call closed when it stops work. */
   openTerminals: Schema.optional(NonNegativeInt),
+  /**
+   * Folder copies in flight here, as source or destination, and coordinators moving with
+   * one. While any is in flight `idle` is false and an if-idle hold is refused, so a normal
+   * update waits; a forced one goes ahead and they may need Retry. Older services omit it.
+   */
+  folderCopies: Schema.optional(NonNegativeInt),
 });
 export type ServerPrepareServiceUpdateResult = typeof ServerPrepareServiceUpdateResult.Type;
 

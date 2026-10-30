@@ -688,8 +688,7 @@ export function advanceServiceUpdateProgress(
         return {
           ...progress,
           phase: "failed",
-          message:
-            `The install has not finished after ${INSTALL_TIMEOUT_MS / 60_000} minutes. See Settings > About for the receipt.`,
+          message: `The install has not finished after ${INSTALL_TIMEOUT_MS / 60_000} minutes. See Settings > About for the receipt.`,
         };
       }
       return {
@@ -928,7 +927,7 @@ function describeClosedQuestions(
  * work it ends. Null when nothing runs, so the update starts without asking.
  */
 export function describeServiceUpdateStop(
-  check: Pick<ServerPrepareServiceUpdateResult, "blockers" | "openTerminals">,
+  check: Pick<ServerPrepareServiceUpdateResult, "blockers" | "openTerminals" | "folderCopies">,
 ): string | null {
   // A project that continues threads after restarts gets its work back on its own.
   const continuing = check.blockers.filter((blocker) => blocker.continuesAfterRestart === true);
@@ -940,6 +939,7 @@ export function describeServiceUpdateStop(
   const questions = blockerCount(check.blockers, ["request"]);
   const steps = blockerCount(check.blockers, ["effect", "session"]);
   const terminals = check.openTerminals ?? 0;
+  const copies = check.folderCopies ?? 0;
   const lines = [
     tasks > 0
       ? `${plural(tasks, "task", "tasks")} will be interrupted. You can continue ${tasks === 1 ? "it" : "them"} after the update.`
@@ -954,6 +954,10 @@ export function describeServiceUpdateStop(
     ...(questions > 0 ? describeClosedQuestions(check.blockers, questions) : []),
     terminals > 0 ? `${plural(terminals, "terminal", "terminals")} will close.` : null,
     steps > 0 ? `${plural(steps, "agent step", "agent steps")} will be stopped.` : null,
+    // An update stops no copy, but its restart can cut one off.
+    copies > 0
+      ? `${plural(copies, "folder copy", "folder copies")} to or from another machine ${copies === 1 ? "is" : "are"} in progress and may need Retry after the update.`
+      : null,
   ].filter((line): line is string => line !== null);
   if (lines.length === 0) return null;
   return ["Stop running work and update now?", ...lines].join("\n");
@@ -965,7 +969,7 @@ export function describeServiceUpdateStop(
  * runs, so the restart goes ahead without asking.
  */
 export function describeAppRestartWarning(
-  check: Pick<ServerPrepareServiceUpdateResult, "blockers">,
+  check: Pick<ServerPrepareServiceUpdateResult, "blockers" | "folderCopies">,
   options: {
     readonly version?: string | null;
     /** The dialog lists the work itself, so the text only summarizes it. */
@@ -973,7 +977,9 @@ export function describeAppRestartWarning(
   } = {},
 ): string | null {
   const groups = groupRunningWork(check.blockers);
-  if (groups.length === 0) return null;
+  // The app restart takes its bundled service down, and a folder copy it serves or pulls with it.
+  const copies = check.folderCopies ?? 0;
+  if (groups.length === 0 && copies === 0) return null;
   const version = options.version ? ` SpecWithCode ${options.version}` : " the update";
   // Restarting now drains the service as Update now does (0991): the questions
   // and approvals it closes are named, and said to be asked again. An older
@@ -981,11 +987,16 @@ export function describeAppRestartWarning(
   const questions = blockerCount(check.blockers, ["request"]);
   return [
     `Restart to install${version}?`,
-    `${summarizeRunningWork(groups)}. ${
-      check.blockers.every((blocker) => blocker.continuesAfterRestart === true)
-        ? "Restarting interrupts this work; it continues after the restart."
-        : "Restarting interrupts this work."
-    }`,
+    groups.length === 0
+      ? null
+      : `${summarizeRunningWork(groups)}. ${
+          check.blockers.every((blocker) => blocker.continuesAfterRestart === true)
+            ? "Restarting interrupts this work; it continues after the restart."
+            : "Restarting interrupts this work."
+        }`,
+    copies > 0
+      ? `${plural(copies, "folder copy", "folder copies")} to or from another machine ${copies === 1 ? "is" : "are"} in progress. Restarting cuts ${copies === 1 ? "it" : "them"} off, and ${copies === 1 ? "it" : "they"} may need Retry.`
+      : null,
     ...(questions > 0
       ? describeClosedQuestions(check.blockers, questions, { withoutSplit: false })
       : []),

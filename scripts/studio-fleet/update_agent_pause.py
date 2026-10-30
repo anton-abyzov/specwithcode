@@ -85,6 +85,22 @@ WILL_PAUSE = '%s; running work will be paused at %s and continue after the updat
 NOT_PAUSED = '%s; the automatic pause did not install the update. Choose Update now to pause running work and install'
 
 
+COPIES_TAIL = ' to or from another machine to finish'
+
+
+def copies_waiting(count):
+    """Why an install waits for folder copies; never a drain's running work, so nothing is paused for it."""
+    return 'Waiting for %s%s' % (
+        'a folder copy' if count == 1 else '%d folder copies' % count if count else 'folder copies', COPIES_TAIL)
+
+
+def copying(refused):
+    """True for a refusal a folder copy caused (copies_waiting). It hides any running work behind it,
+    so it neither starts nor ends the wait for running work: the grace keeps the time it has."""
+    return refused[0] == 'waiting-for-quiet' and refused[1].startswith('Waiting for ') \
+        and refused[1].endswith(COPIES_TAIL)
+
+
 def refusal_reason(refusal, outcome):
     """(status, message) for a refused snapshot. The helper's last REFUSAL line wins; older
     helpers print none, so the phrase table stays. Only an environment fault, or a database fault
@@ -101,6 +117,8 @@ def refusal_reason(refusal, outcome):
         parts = ['%d %s%s' % (counts[key], noun, '' if counts[key] == 1 else 's')
                  for key, noun in WORK_NOUNS if counts.get(key)]
         return 'waiting-for-quiet', WAITING_REASONS[0][1] + (' (%s)' % ', '.join(parts) if parts else '')
+    if code == 'folder-copy':  # update.py via folder_work.py: a copy to or from another machine runs.
+        return 'waiting-for-quiet', copies_waiting(int((re.findall(r'operations=(\d{1,6})', detail) or ['0'])[0]))
     if code in ('descendants', 'idle-agents'):
         pairs = re.findall(r'([A-Za-z0-9._+-]{1,40})=(\d{1,4})', detail)
         names = ['%s%s' % (name, '' if count == '1' else ' x' + count)
@@ -188,6 +206,10 @@ def after_refusal(agent, verified, refused):
     if ua.recovery.automatic_superseded(agent):  # Update now pressed as the snapshot ran: run_once serves it next,
         state['automaticRetry'] = None  # so no refusal of this pass stands as its answer.
         return agent.finish('downloaded', ua.recovery.SETTINGS_CHANGED)
+    if copying(refused):  # Neither running work nor quiet: the grace keeps the time it has.
+        if state.get('automaticWaitSince') is not None:  # And the wait is not taken for a gap.
+            state['automaticLastBusyAt'] = ua.iso(ua.utcnow())
+        return agent.finish(*refused)
     if not running_work(refused):
         state['automaticPauseAt'] = None  # Not waiting on work now; the grace starts again.
         return agent.finish(*refused)
@@ -273,10 +295,19 @@ def _pause_and_request(agent, verified, refused):
     the hold inserts a session row, which would fail the guarded prestate of a request written first.
     The request is served by run_once's second iteration, which installs it inside this pass's lock."""
     ua, version = _ua(agent), verified['version']
+    hold = HOLD(agent.identity, agent.home, run=_background_run(ua))
+    try:
+        # The service's own count first, which stops nothing: a heartbeat it could not write must not
+        # let a drain stop running work every pass only to find a copy and let go again. Nothing was
+        # drained, so the wait stays as it is and the next busy pass may pause.
+        copies = hold.counted_copies()
+    except service_hold.HoldUnavailable:  # Unsupported or unanswered: the drain below says why.
+        copies = 0
+    if copies:
+        return agent.finish('waiting-for-quiet', copies_waiting(copies))
     agent.state['automaticPausedAt'] = {'version': version, 'at': ua.iso(ua.utcnow())}
     agent.state['automaticPauseAt'] = None  # The drain starts: the desktop offers no Later from here (set_status saves it).
     agent.set_status('waiting-for-quiet', PAUSING % version)  # The service holds only for a pending update.
-    hold = HOLD(agent.identity, agent.home, run=_background_run(ua))
     try:
         reply = hold.prepare()
     except service_hold.HoldUnsupported as error:  # Its CLI has no such command: nothing was held.
@@ -285,13 +316,20 @@ def _pause_and_request(agent, verified, refused):
         return _keep_waiting(agent, refused, '%s: %s' % (type(error).__name__, error), hold)
     if not isinstance(reply, dict) or reply.get('held') is not True:
         return _keep_waiting(agent, refused, 'the service did not hold: ' + _describe(reply if isinstance(reply, dict) else {}), hold)
+    copies = reply.get('folderCopies')
+    if type(copies) is int and copies > 0:  # A copy started during the drain: the drain stops none, nothing installs over it.
+        _release(agent, hold)
+        agent.state['automaticPausedAt'] = None  # No drain that failed to install: the next pass may pause again.
+        return agent.finish('waiting-for-quiet', copies_waiting(copies))
     if ua.recovery.automatic_superseded(agent):  # Installs turned off, or Update now pressed, during the drain.
         if not _newer_update_now(agent):
             _release(agent, hold)
         return agent.finish('downloaded', ua.recovery.SETTINGS_CHANGED)
     try:
+        # Nobody chose to force it, so it still waits for folder copies (update.py snapshot).
         written = update_request.write_request(agent.home, agent.identity, version, force=True,
-                                               hold_minutes=update_request.HOLD_MAX_MINUTES, now=ua.utcnow())
+                                               hold_minutes=update_request.HOLD_MAX_MINUTES, now=ua.utcnow(),
+                                               waits_for_folder_copies=True)
     except (update_request.RequestError, OSError) as error:
         return _keep_waiting(agent, refused, 'no install request: %s' % type(error).__name__, hold)
     forget(agent.state)  # A failed install waits DRAIN_EVERY, then a new grace, before work is paused again.

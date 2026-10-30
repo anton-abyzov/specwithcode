@@ -26,7 +26,10 @@ CLI's own `update` write (docs/user/linux-worker.md). For each worker, over SSH:
    and the update starts it.
 4. When the service is active, ask it what still runs with `service prepare-update --json`
    without --stop-work, a read-only look that stops nothing. Anything left (a running turn, a
-   queued message, a pending request, a provider session) skips the worker with a warning.
+   queued message, a pending request, a provider session, a folder copy) skips the worker with a
+   warning. An older service counts no folder copies (its answer has no folderCopies), so while this
+   machine's own service reports one (folder_work.py) such a worker is skipped too: its restart
+   would cut off a copy with this machine.
 5. Run the CLI's own self-update, `STUDIO_ENABLE_SELF_UPDATE=true specweave-studio update
    <version> --yes`, which downloads the Linux archive from the public release, pins it under
    runtime/versions/<version>, rewrites the unit and restarts the service. For an active service
@@ -218,14 +221,18 @@ def tail(result):
 
 
 def describe_blockers(reply):
-    left = ', '.join('%s %s%s' % (blocker.get('count'), blocker.get('kind'),
-                                  ' (%s)' % blocker['threadTitle'] if blocker.get('threadTitle') else '')
-                     for blocker in reply.get('blockers') or [] if isinstance(blocker, dict))
+    copies = reply.get('folderCopies')
+    left = ', '.join((['%d folder cop%s' % (copies, 'y' if copies == 1 else 'ies')]
+                      if type(copies) is int and copies > 0 else []) +
+                     ['%s %s%s' % (blocker.get('count'), blocker.get('kind'),
+                                   ' (%s)' % blocker['threadTitle'] if blocker.get('threadTitle') else '')
+                      for blocker in reply.get('blockers') or [] if isinstance(blocker, dict)])
     return left or 'work the service did not name'
 
 
-def roll_worker(worker, version, say, sleep=time.sleep, clock=time.monotonic):
-    """Updates one worker; returns {'identity', 'result', 'from', ...}. Never raises."""
+def roll_worker(worker, version, say, sleep=time.sleep, clock=time.monotonic, local_copies=None):
+    """Updates one worker; returns {'identity', 'result', 'from', ...}. Never raises. `local_copies`
+    counts this machine's own folder copies (fleet_rollout.local_folder_copies)."""
     identity = worker.identity
     begin = clock()
     outcome = {'identity': identity, 'from': None}
@@ -252,6 +259,12 @@ def roll_worker(worker, version, say, sleep=time.sleep, clock=time.monotonic):
             if not reply['idle']:
                 reason = 'still running: ' + describe_blockers(reply)
                 say('%s: WARNING: skipped, the update restarts the service and it is %s' % (identity, reason))
+                return dict(outcome, result='skipped-busy', reason=reason)
+            here = local_copies() if local_copies is not None and type(reply.get('folderCopies')) is not int else 0
+            if here:  # Its idle answer cannot see a copy, and its --if-idle hold would not wait for one.
+                reason = ('this machine copies %s, and the service there is too old to count folder copies'
+                          % ('a folder' if here == 1 else '%d folders' % here))
+                say('%s: WARNING: skipped, the update restarts the service and %s' % (identity, reason))
                 return dict(outcome, result='skipped-busy', reason=reason)
             action = 'update-if-idle'
         elif state.active in STOPPED:
@@ -289,9 +302,9 @@ def roll_worker(worker, version, say, sleep=time.sleep, clock=time.monotonic):
         return dict(outcome, result='failed', reason=str(error))
 
 
-def rollout(version, workers, say, sleep=time.sleep, clock=time.monotonic):
+def rollout(version, workers, say, sleep=time.sleep, clock=time.monotonic, local_copies=None):
     """One worker after another (a Linux worker is cheap to update; the order is the inventory's)."""
-    return [roll_worker(worker, version, say, sleep, clock) for worker in workers]
+    return [roll_worker(worker, version, say, sleep, clock, local_copies) for worker in workers]
 
 
 def main(argv=None, home=None, run=subprocess.run, sleep=time.sleep, stdout=None):
@@ -326,7 +339,7 @@ def main(argv=None, home=None, run=subprocess.run, sleep=time.sleep, stdout=None
         say('no Linux workers in the fleet inventory; nothing to update')
         print(json.dumps({'version': args.version, 'result': 'installed', 'hosts': []}), file=out)
         return 0
-    results = rollout(args.version, workers, say, sleep)
+    results = rollout(args.version, workers, say, sleep, local_copies=lambda: fleet_rollout.local_folder_copies(home))
     ok = all(result['result'] in OK_RESULTS for result in results)
     if not ok:
         say('retry once the worker is idle: python3 -B scripts/studio-fleet/linux_rollout.py --version %s%s' % (

@@ -634,7 +634,15 @@ function checkBlockers(now: number) {
       }));
       // Only this window's own request is asked again; one taken over keeps its own.
       if (installOptions === undefined) return;
-      if (!isWaitingPhase(state.progress) || !checked.idle || hold.requestInFlight !== null) return;
+      // Blockers, not `idle`: a folder copy makes the service not idle, yet a forced
+      // install ignores copies, so one must not stop the window asking a silent agent.
+      if (
+        !isWaitingPhase(state.progress) ||
+        checked.blockers.length > 0 ||
+        hold.requestInFlight !== null
+      ) {
+        return;
+      }
       const at = Date.now();
       // Nothing runs and the agent went quiet: ask again instead of waiting for its next pass.
       if (

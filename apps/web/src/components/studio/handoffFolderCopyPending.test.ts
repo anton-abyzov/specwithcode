@@ -105,6 +105,21 @@ describe("the pointer's step fields", () => {
     expect(readPendingCopy(pendingKey)).toEqual(old);
   });
 
+  it("keeps an accepted change list and drops a malformed one", () => {
+    const accepted = { digest: "a".repeat(64), total: 3 };
+    save(pendingKey, { ...pointer, acceptedSourceChanges: accepted });
+    expect(readPendingCopy(pendingKey)).toEqual({ ...pointer, acceptedSourceChanges: accepted });
+    for (const bad of [
+      "a".repeat(64),
+      { digest: "not-a-digest", total: 3 },
+      { digest: "a".repeat(64), total: 0 },
+      { digest: "a".repeat(64), total: "3" },
+    ]) {
+      save(pendingKey, { ...pointer, acceptedSourceChanges: bad });
+      expect(readPendingCopy(pendingKey)).toEqual(pointer);
+    }
+  });
+
   it("still refuses a pointer without an operation", () => {
     save(pendingKey, { environmentId: "m3", seen: "copy" });
     expect(readPendingCopy(pendingKey)).toBeNull();

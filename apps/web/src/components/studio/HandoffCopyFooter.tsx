@@ -4,6 +4,7 @@ import type {
   FolderCopyMode,
   FolderCopyStatus,
   FolderCopyUndoResult,
+  MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
 import { useId } from "react";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
@@ -11,6 +12,7 @@ import { Button } from "../ui/button";
 import { HandoffCopyActions } from "./HandoffCopyActions";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopyDoneActions, HandoffCopyFailedActions } from "./HandoffCopyDone";
+import { HandoffSourceChangesActions } from "./HandoffSourceChanges";
 import type { CopyStage } from "./handoffCopySteps";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
@@ -97,6 +99,9 @@ export function HandoffCopyFooter({
   contextTransferred,
   link,
   transferRecovery,
+  sourceReview = null,
+  onMoveWithout,
+  onKeepHere,
   onCancelMeasure,
   onResume,
   onMeasure,
@@ -142,6 +147,10 @@ export function HandoffCopyFooter({
   readonly contextTransferred: boolean;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
   readonly transferRecovery: boolean;
+  /** The source's list of paths that changed after copying: its three choices replace Done's. */
+  readonly sourceReview?: MachineHandoffSourceChanges | null;
+  readonly onMoveWithout?: () => void;
+  readonly onKeepHere?: () => void;
   readonly onCancelMeasure: () => void;
   readonly onResume: (saved: PendingCopy) => void;
   readonly onMeasure: () => void;
@@ -292,7 +301,17 @@ export function HandoffCopyFooter({
           sourceDropped={sourceDropped}
         />
       )}
-      {stage === "done" && copy && copy.projectId && machine && (
+      {stage === "done" && copy && copy.projectId && machine && sourceReview && (
+        <HandoffSourceChangesActions
+          changes={sourceReview}
+          sourceLabel={sourceLabel ?? "this machine"}
+          busy={busy}
+          onCopyAgain={onCopyAgain}
+          onMoveWithout={() => onMoveWithout?.()}
+          onKeepHere={() => onKeepHere?.()}
+        />
+      )}
+      {stage === "done" && copy && copy.projectId && machine && !sourceReview && (
         <HandoffCopyDoneActions
           copy={copy}
           mode={mode}

@@ -77,12 +77,17 @@ export function useCoordinatorTransfer({
     };
   };
 
-  /** Fences the source coordinator for a move; repeated calls return the same published bundle. */
+  /**
+   * Fences the source coordinator for a move; repeated calls return the same published bundle.
+   * `acceptedSourceChanges` names a change list the person chose to move without; the source
+   * refuses again, with a fresh list, when anything new changed since.
+   */
   const fence = async (
     operationId: string,
     environmentId: EnvironmentId,
     projectId: ProjectId,
     targetFolder: string,
+    acceptedSourceChanges?: string,
   ) => {
     if (!coordinatorId) throw new Error("Open this project’s coordinator before moving it.");
     const base = {
@@ -90,6 +95,7 @@ export function useCoordinatorTransfer({
       sourceThreadId: coordinatorId,
       operationId: operationId,
       destination: destinationPlan(environmentId, projectId, targetFolder),
+      ...(acceptedSourceChanges ? { acceptedSourceChanges } : {}),
     };
     const prepared = unwrap(
       await prepare({ environmentId: project.environmentId, input: { ...base, publish: false } }),
@@ -148,12 +154,14 @@ export function useCoordinatorTransfer({
     environmentId: EnvironmentId,
     projectId: ProjectId,
     targetFolder: string,
+    acceptedSourceChanges?: string,
   ) => {
     const bundle: MachineHandoffBundle = await fence(
       operationId,
       environmentId,
       projectId,
       targetFolder,
+      acceptedSourceChanges,
     );
     const started = unwrap(
       await receive({

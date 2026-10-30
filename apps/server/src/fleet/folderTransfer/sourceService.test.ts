@@ -13,6 +13,7 @@ import { runGit } from "./git.ts";
 import { readManifestFile } from "./manifest.ts";
 import { handleSourceRequest } from "./sourceRoutes.ts";
 import { SourceTransfers } from "./sourceService.ts";
+import { liveMovingCopies } from "./sourceTestServer.testkit.ts";
 import { CHUNK_CHANGED, CHUNK_OK } from "./wire.ts";
 import { TRANSFER_GRANT_IDLE_MS } from "./transferGrant.ts";
 
@@ -128,7 +129,7 @@ describe("a completed copy before coordinator context transfer", () => {
       yield* Effect.promise(() => restarted.assertCurrentSnapshot(operationId));
       expect(
         yield* makeFolderCopyManifest(restarted)(operationId, projectId, "destination", folder),
-      ).toMatchObject({ operationId });
+      ).toMatchObject({ manifest: { operationId } });
     }),
   );
 
@@ -320,10 +321,11 @@ describe("terminal source snapshot cleanup", () => {
   });
 
   it("serves a chunk from an unchanged duplicate when the file it was indexed from changed", async () => {
+    // Live chunk reads are what an uncaptured move serves.
     const { sources, state, folder, loaded } = await snapshot(
       false,
       false,
-      {},
+      { verifyCaptureFilesystem: liveMovingCopies },
       {
         "a-first.txt": "same bytes\n",
         "b-copy.txt": "same bytes\n",

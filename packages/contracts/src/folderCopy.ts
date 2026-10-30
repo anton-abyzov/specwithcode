@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { EnvironmentId, ProjectId } from "./baseSchemas.ts";
-import { MachineHandoffOperationId } from "./machineHandoff.ts";
+import { MachineHandoffOperationId, MachineHandoffSourceChanges } from "./machineHandoff.ts";
 
 /**
  * Folder copy: the destination pulls the project folder from the source over
@@ -224,6 +224,25 @@ export const FolderCopySentSecrets = Schema.Struct({
   ),
 });
 export type FolderCopySentSecrets = typeof FolderCopySentSecrets.Type;
+
+/** Source: what differs since a committed copy-and-move, read again after the coordinator moved. */
+export const FolderCopyDriftInput = Schema.Struct({
+  projectId: ProjectId,
+  operationId: MachineHandoffOperationId,
+});
+export type FolderCopyDriftInput = typeof FolderCopyDriftInput.Type;
+export const FolderCopyDriftResult = Schema.Struct({
+  drift: MachineHandoffSourceChanges,
+  /** The paths the person moved without; they stay only on the source. */
+  leftOnSource: Schema.optional(
+    Schema.Struct({
+      digest: MachineHandoffSourceChanges.fields.digest,
+      total: count,
+      recordedAt: count,
+    }),
+  ),
+});
+export type FolderCopyDriftResult = typeof FolderCopyDriftResult.Type;
 
 export const FolderCopySourceStatusInput = Schema.Struct({
   operationId: MachineHandoffOperationId,

@@ -60,6 +60,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machineHandoffCopyScopes]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopyCapabilities]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopySourceStatus]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffCopyDrift]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopySourceCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffCopyRelease]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffCopyStart]: AuthOrchestrationOperateScope,
@@ -233,6 +234,7 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
     case WS_METHODS.machineHandoffCopyScopes:
     case WS_METHODS.machineHandoffCopyCapabilities:
     case WS_METHODS.machineHandoffCopySourceStatus:
+    case WS_METHODS.machineHandoffCopyDrift:
     case WS_METHODS.machineHandoffCopyStatus:
     case WS_METHODS.machineHandoffSentSecrets:
     case WS_METHODS.machineHandoffReadiness:

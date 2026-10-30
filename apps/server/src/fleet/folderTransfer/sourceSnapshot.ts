@@ -1,13 +1,18 @@
-// @effect-diagnostics nodeBuiltinImport:off - operation-owned immutable pack reads use no-follow descriptors.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - operation-owned immutable pack reads use no-follow descriptors; retries pause between tries; file stamps are compared with the wall clock.
 import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
 import * as FSP from "node:fs/promises";
 import * as Path from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import { privateDirectory, writeJson } from "./durable.ts";
 import { CHUNK_SIZE, type ManifestEntry } from "./manifest.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import { sha256Hex } from "./wire.ts";
-import { sourceFilesystemAdmission, admitAncestorDevices } from "./sourceCaptureFilesystem.ts";
+import {
+  CaptureFilesystemRefused,
+  sourceFilesystemAdmission,
+  admitAncestorDevices,
+} from "./sourceCaptureFilesystem.ts";
 
 export interface CapturedSource {
   readonly version: 1;
@@ -16,14 +21,50 @@ export interface CapturedSource {
   readonly indexHash: string;
   readonly manifestHash: string;
 }
+/** A captured file's identity when its bytes were read, as decimal strings, for later drift checks. */
+export interface CapturedStat {
+  readonly size: string;
+  readonly mtimeNs: string;
+  readonly ctimeNs: string;
+  readonly ino: string;
+  readonly dev: string;
+}
+/**
+ * A file whose change or modification time is this close to when it was read may have
+ * been rewritten within the same clock tick: Linux before multigrain timestamps and
+ * NTFS stamp files from a coarse clock. Such a stat is never trusted to skip a read.
+ */
+const RACY_SLACK_NS = 2_000_000_000n;
+/** Whether a stat is old enough, against `readAtNs`, to stand for the bytes read with it. */
+export function settledStat(
+  stat: Pick<CapturedStat, "mtimeNs" | "ctimeNs">,
+  readAtNs: bigint,
+): boolean {
+  return (
+    BigInt(stat.mtimeNs) < readAtNs - RACY_SLACK_NS &&
+    BigInt(stat.ctimeNs) < readAtNs - RACY_SLACK_NS
+  );
+}
 export type CapturedIndex = Readonly<
   Record<string, { readonly offset: number; readonly size: number }>
 >;
 const BUFFER = 1024 * 1024;
+/**
+ * A busy machine changes folders above the project (the home folder, agent
+ * ledgers) for moments at a time. Each try still needs one unchanged window;
+ * waiting longer between tries only lets that window come around.
+ */
+export const STABLE_ATTEMPTS = 12;
+/** All the pauses for one file together, so one restless file cannot stall the capture. */
+const FILE_WAIT_MS = 15_000;
+const stableDelay = (attempt: number) => Math.min(25 * 2 ** attempt, 2000);
+const sleep = (ms: number) => NodeTimersPromises.setTimeout(ms);
 const invalid = () =>
   new Error("The captured copy files are missing or changed. Measure and compare again.");
 
 class SourceDirectoryChanged extends Error {}
+/** Too little room on the source to capture: a moving copy falls back to live checks. */
+export class CaptureSpaceRefused extends CaptureFilesystemRefused {}
 
 /**
  * Observe ancestors top-down before opening and bottom-up afterwards. Including
@@ -68,14 +109,16 @@ async function openStableSource(
   relative: string,
   stop: () => void,
   admit: ReturnType<typeof sourceFilesystemAdmission>,
+  wait: (attempt: number) => Promise<void>,
 ) {
   for (let attempt = 0; ; attempt++) {
     stop();
     try {
       return await openContained(root, relative, admit);
     } catch (cause) {
-      if (!(cause instanceof SourceDirectoryChanged) || attempt >= 2) throw cause;
+      if (!(cause instanceof SourceDirectoryChanged) || attempt >= STABLE_ATTEMPTS - 1) throw cause;
     }
+    await wait(attempt);
   }
 }
 
@@ -185,9 +228,29 @@ export async function captureSourceFiles(input: {
   readonly stop: () => void;
   readonly progress?: (value: { files: number; bytes: number }) => void;
   readonly freeBytes?: () => Promise<number>;
-}): Promise<Omit<CapturedSource, "capturedAt" | "manifestHash">> {
+  /** The pause before another try at a file or folder that changed; tests skip it. */
+  readonly retryWait?: (attempt: number) => Promise<void>;
+  /**
+   * A file that changes on every try: "fail" refuses the capture; "keep-last" keeps
+   * its last read, whose hashes match the packed bytes, and lists it in `changing`.
+   */
+  readonly onChanging?: "fail" | "keep-last";
+  /** Proves the source filesystem; defaults to the native check. */
+  readonly verifyFilesystem?: (root: string) => Promise<void>;
+  /** Wall-clock milliseconds, compared with file stamps; tests pin it. */
+  readonly now?: () => number;
+}): Promise<
+  Omit<CapturedSource, "capturedAt" | "manifestHash"> & {
+    /** Each steadily read file's identity at capture; files in `changing` have none. */
+    readonly stats: Record<string, CapturedStat>;
+    readonly changing: ReadonlyArray<string>;
+  }
+> {
+  const pause = input.retryWait ?? ((attempt: number) => sleep(stableDelay(attempt)));
+  const now = input.now ?? (() => Date.now());
+  const keepLast = input.onChanging === "keep-last";
   await privateDirectory(input.root);
-  const admit = sourceFilesystemAdmission();
+  const admit = sourceFilesystemAdmission(input.verifyFilesystem);
   await admit(input.root, (await FSP.stat(input.root, { bigint: true })).dev);
   input.stop();
   const files = input.entries.filter((entry) => entry.type === "file" && entry.class !== "secret");
@@ -195,7 +258,7 @@ export async function captureSourceFiles(input: {
   const fs = await FSP.statfs(input.root);
   const free = input.freeBytes ? await input.freeBytes() : Number(fs.bavail) * Number(fs.bsize);
   if (needed > free)
-    throw new Error(
+    throw new CaptureSpaceRefused(
       `Capturing this copy needs ${needed} bytes free on the source; ${free} are available.`,
     );
   // A previous interrupted build has no published capability and may safely be replaced.
@@ -203,30 +266,44 @@ export async function captureSourceFiles(input: {
   await FSP.rm(Path.join(input.root, "index.json"), { force: true });
   const output = await FSP.open(Path.join(input.root, "files.pack"), "wx", 0o600);
   const index: Record<string, { offset: number; size: number }> = Object.create(null);
+  const stats: Record<string, CapturedStat> = Object.create(null);
+  const changing: Array<string> = [];
   let offset = 0;
   let completed = 0;
   try {
     for (const entry of files) {
       input.stop();
+      let waited = 0;
+      const wait = async (attempt: number) => {
+        waited += stableDelay(attempt);
+        if (waited > FILE_WAIT_MS)
+          throw new Error(
+            `The source kept changing while ${entry.path} was being captured. Try a new comparison.`,
+          );
+        await pause(attempt);
+      };
       for (let attempt = 0; ; attempt++) {
+        let changed = false;
         const source = await openStableSource(
           input.sourceRoot(entry),
           entry.path,
           input.stop,
           admit,
+          wait,
         );
         try {
-          const before = await source.stat();
-          await admit(input.sourceRoot(entry), BigInt(before.dev));
+          const before = await source.stat({ bigint: true });
+          await admit(input.sourceRoot(entry), before.dev);
+          const size = Number(before.size);
           const whole = Crypto.createHash("sha256");
           let chunk = Crypto.createHash("sha256");
           const chunks: string[] = [];
           let inChunk = 0;
           let position = 0;
           const buffer = Buffer.allocUnsafe(BUFFER);
-          while (position < before.size) {
+          while (position < size) {
             input.stop();
-            const want = Math.min(buffer.length, CHUNK_SIZE - inChunk, before.size - position);
+            const want = Math.min(buffer.length, CHUNK_SIZE - inChunk, size - position);
             const { bytesRead } = await source.read(buffer, 0, want, position);
             if (!bytesRead) break;
             const bytes = buffer.subarray(0, bytesRead);
@@ -251,24 +328,42 @@ export async function captureSourceFiles(input: {
               inChunk = 0;
             }
           }
-          const after = await source.stat();
-          if (
-            position !== before.size ||
+          const after = await source.stat({ bigint: true });
+          const moved =
+            position !== size ||
             after.size !== before.size ||
-            after.mtimeMs !== before.mtimeMs ||
-            after.ctimeMs !== before.ctimeMs
-          ) {
+            after.mtimeNs !== before.mtimeNs ||
+            after.ctimeNs !== before.ctimeNs;
+          // With keep-last, the try before the wait budget runs out is the last one.
+          const lastTry =
+            attempt >= STABLE_ATTEMPTS - 1 ||
+            (keepLast && waited + stableDelay(attempt) > FILE_WAIT_MS);
+          if (moved && !(keepLast && lastTry)) {
             await output.truncate(offset);
-            if (attempt < 2) continue;
+            if (attempt < STABLE_ATTEMPTS - 1) {
+              changed = true;
+              continue;
+            }
             throw new Error(
               `The file kept changing while being captured: ${entry.path}. Try a new comparison.`,
             );
           }
+          const stat = {
+            size: String(before.size),
+            mtimeNs: String(before.mtimeNs),
+            ctimeNs: String(before.ctimeNs),
+            ino: String(before.ino),
+            dev: String(before.dev),
+          };
+          if (moved) changing.push(entry.path);
+          // A file stamped within a tick of its read could change again unseen: no stat.
+          else if (settledStat(stat, BigInt(Math.trunc(now())) * 1_000_000n))
+            stats[entry.path] = stat;
           if (inChunk > 0 || chunks.length === 0) chunks.push(chunk.digest("hex"));
           entry.sha256 = whole.digest("hex");
           entry.chunks = chunks;
           entry.size = position;
-          entry.mtimeMs = Math.trunc(before.mtimeMs);
+          entry.mtimeMs = Number(before.mtimeMs);
           index[entry.path] = { offset, size: position };
           offset += position;
           completed++;
@@ -276,6 +371,8 @@ export async function captureSourceFiles(input: {
           break;
         } finally {
           await source.close();
+          // Pause with the file closed, then try it again.
+          if (changed) await wait(attempt);
         }
       }
     }
@@ -289,7 +386,7 @@ export async function captureSourceFiles(input: {
   await writeJson(Path.join(input.root, "index.json"), index);
   const indexHash = await digestFile(input.root, "index.json", input.stop);
   await syncCapturedDirectory(input.root);
-  return { version: 1, packHash, indexHash };
+  return { version: 1, packHash, indexHash, stats, changing };
 }
 
 export async function loadCapturedIndex(

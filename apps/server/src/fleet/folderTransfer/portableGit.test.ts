@@ -11,7 +11,7 @@ import { git, write } from "./folderFixture.testkit.ts";
 import { scanFolder } from "./manifest.ts";
 import { preparePortableGit } from "./portableGit.ts";
 import { SourceTransfers } from "./sourceService.ts";
-import { serveSource } from "./sourceTestServer.testkit.ts";
+import { liveMovingCopies, serveSource } from "./sourceTestServer.testkit.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -286,7 +286,10 @@ describe("portable external linked worktrees", () => {
       git(scopedMain, "worktree", "repair", scopedLinked);
       const beforeMain = git(scopedMain, "rev-parse", "HEAD");
       const beforeLinked = git(scopedLinked, "rev-parse", "HEAD");
-      const sources = new SourceTransfers(NodePath.join(root, "state"));
+      // The concurrent commits land during the live freshness check an uncaptured move runs.
+      const sources = new SourceTransfers(NodePath.join(root, "state"), {
+        verifyCaptureFilesystem: liveMovingCopies,
+      });
       const id = NodeCrypto.randomUUID();
       const offer = await sources.offer({
         operationId: id,

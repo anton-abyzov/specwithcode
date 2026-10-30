@@ -89,6 +89,9 @@ vi.mock("~/state/entities", () => ({
 vi.mock("~/state/projects", () => ({
   projectEnvironment: { update: "update", delete: "delete" },
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (_environmentId: string, label?: string | null) => label ?? "",
+}));
 vi.mock("~/state/server", () => ({
   EMPTY_SERVER_PROVIDERS: [],
   serverEnvironment: {

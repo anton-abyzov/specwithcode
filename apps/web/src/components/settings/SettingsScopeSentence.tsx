@@ -6,7 +6,8 @@ import type { ReactNode } from "react";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useServerConfigs } from "../../state/entities";
 import { ineligibleProjectLabel } from "../../studio/projectListVisibility";
-import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
+import { type EnvironmentPresentation } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { InlineButton } from "../ui/button";
@@ -58,7 +59,7 @@ interface SettingsScopeMenuProps {
 export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const pageScope = settingsPageScope(pathname);
   if (pageScope === "global") return null;

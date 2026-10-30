@@ -296,6 +296,19 @@ stage_candidate() {
   electron_runtime
 }
 
+# Playwright's headless Chromium for the browser tests of stage 1 and the server suite, for the
+# test tree's pinned playwright-core. It lives in ~/Library/Caches/ms-playwright, outside every
+# tree, and 1.0.125's stage 1 failed after 7 minutes when a cache cleanup had removed it. Present,
+# this takes under a second; missing, it downloads (about 100 MB). Before the suites start, on
+# every run, since --resume skips the candidate stage.
+playwright_shell() {
+  local cli='require("path").join(require("path").dirname(require("module").createRequire(process.cwd() + "/package.json").resolve("playwright-core/package.json")), "cli.js")'
+  CURRENT_STAGE=stage1
+  x playwright-shell -C "$TEST/apps/server" -- "${NO_GH_TOKEN[@]}" PLAYWRIGHT_HTML_OPEN=never sh -c \
+    'node "$(node -p "$1")" install --only-shell chromium' playwright-shell "$cli" ||
+    die "could not install Playwright's headless Chromium for the test tree; see above, then --resume"
+}
+
 # pnpm runs electron's postinstall (install.js, which downloads dist/) only when it links the
 # package. The build tree keeps node_modules across `git clean -e node_modules`, so with an
 # unchanged lockfile `pnpm install` changes nothing and a dist that an earlier install skipped
@@ -1409,6 +1422,8 @@ main() {
   # stage-1 failure stops the release before build and leaves the suite running for --resume of
   # the same candidate (stop_stale_server ends it for a new one). A hosted runner (--ci, 3 cores)
   # has no room for both, so there it still starts after stage 1.
+  # Not in stub mode: the self-test counts stage-1 commands, and this one is not a suite.
+  if [ "$MODE" != stub ] && { ! is_done stage1 "$SHA" || ! is_done server "$SHA"; }; then playwright_shell; fi
   if [ "$CI_MODE" -eq 0 ]; then start_server; fi
   run_stage stage1 sha
   if [ "$CI_MODE" -eq 1 ]; then start_server; fi

@@ -24,7 +24,7 @@ import {
 } from "./reconcile.ts";
 import { SourceClient } from "./sourceClient.ts";
 import { SourceTransfers } from "./sourceService.ts";
-import { serveSource } from "./sourceTestServer.testkit.ts";
+import { liveMovingCopies, serveSource } from "./sourceTestServer.testkit.ts";
 import { previewUndo, undoApply } from "./undo.ts";
 
 let base: string;
@@ -36,7 +36,10 @@ let counter = 0;
 beforeAll(async () => {
   base = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-apply-")));
   fixture = makeUmbrella(base);
-  transfers = new SourceTransfers(NodePath.join(base, "source-state"));
+  // Its moving copy exercises the live-file restore path that uncaptured volumes keep.
+  transfers = new SourceTransfers(NodePath.join(base, "source-state"), {
+    verifyCaptureFilesystem: liveMovingCopies,
+  });
   served = await serveSource(transfers, "env-source");
 }, 60_000);
 afterAll(async () => {

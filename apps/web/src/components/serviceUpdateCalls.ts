@@ -147,7 +147,9 @@ export async function confirmAppRestartForUpdate(
   } = {},
 ): Promise<AppRestartChoice> {
   const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
-  const listed = checked !== null && options.renderDetails !== undefined;
+  // Only copies run: there is no work to list under the summary.
+  const listed =
+    checked !== null && checked.blockers.length > 0 && options.renderDetails !== undefined;
   const question =
     checked === null
       ? APP_RESTART_UNKNOWN

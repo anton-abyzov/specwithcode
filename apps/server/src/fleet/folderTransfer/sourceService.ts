@@ -13,7 +13,6 @@ import { runGit } from "./git.ts";
 import {
   CHUNK_SIZE,
   expandCollapsed,
-  isSkippedWorktreesNotice,
   type FolderScan,
   FolderScanError,
   hashFile,
@@ -25,16 +24,27 @@ import {
   scanFolder,
   selectEntries,
   writeManifest,
-  type ClassTotals,
-  type RepositoryInfo,
 } from "./manifest.ts";
-import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
+import { CaptureFilesystemRefused } from "./sourceCaptureFilesystem.ts";
 import {
-  checkPortableGit,
-  PORTABLE_GIT_NOTICE,
-  preparePortableGit,
-  sourceEntryRoot,
-} from "./portableGit.ts";
+  computeDrift,
+  driftBasisFile,
+  recordServedSecret,
+  servedSecretsFile,
+  uncopyableCounts,
+  indexDigests,
+  refDigests,
+  readDriftReport,
+  type SourceDrift,
+} from "./sourceDrift.ts";
+import {
+  inventoryFingerprint,
+  summarize,
+  withGitNotice,
+  type SourceSummary,
+} from "./sourceSummary.ts";
+import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
+import { checkPortableGit, preparePortableGit, sourceEntryRoot } from "./portableGit.ts";
 import {
   MAX_SECRET_FILE_BYTES,
   type SecretApproval,
@@ -72,6 +82,7 @@ import {
 
 import { validProjectRelativePath } from "../folderCopyScope.ts";
 
+export type { SourceSummary } from "./sourceSummary.ts";
 export type CopyMode = "copy-only" | "copy-and-move";
 export type SourceState =
   | "scanning"
@@ -82,36 +93,6 @@ export type SourceState =
   | "committed"
   | "released"
   | "cancelled";
-
-export interface SourceSummary {
-  readonly totals: ClassTotals;
-  readonly repositories: ReadonlyArray<{
-    readonly path: string;
-    readonly kind: RepositoryInfo["kind"];
-    readonly head: string | null;
-    readonly branch: string | null;
-    readonly branchCount: number;
-    readonly stashCount: number;
-    readonly changedFiles: number;
-  }>;
-  readonly secretFiles: ReadonlyArray<{ readonly path: string; readonly size: number }>;
-  readonly linksOutside: number;
-  readonly warnings: ReadonlyArray<string>;
-  /** What measuring left out: rebuildable folders not opened, worktrees inside the folder not copied. */
-  readonly skipped?: {
-    readonly rebuildableFolders: number;
-    readonly worktrees: ReadonlyArray<string>;
-    /** Skipped worktrees with uncommitted changes, which stay on this machine. */
-    readonly dirtyWorktrees?: ReadonlyArray<string>;
-    /** Skipped worktrees whose check failed or timed out; they may hold changes. */
-    readonly uncheckedWorktrees?: ReadonlyArray<string>;
-    /** Skipped worktrees with commits on no branch (detached or mid-rebase/merge). */
-    readonly strandedWorktrees?: ReadonlyArray<string>;
-    /** True totals; the lists above are capped. */
-    readonly worktreeCount?: number;
-    readonly dirtyCount?: number;
-  };
-}
 
 /** What a scan or build is doing, with its running counts. */
 export interface SourceProgress {
@@ -154,6 +135,18 @@ export interface SourceOperationRecord {
   readonly warnings?: ReadonlyArray<string>;
   /** Secret files the person ticked for this destination; absent until they approve any. */
   readonly secrets?: SecretApproval | null;
+  /** The reviewed change list a coordinator move went ahead with. */
+  readonly acceptedDrift?: {
+    readonly digest: string;
+    readonly total: number;
+    readonly acceptedAt: number;
+  };
+  /** The paths that differed when the coordinator moved; they stay only on this machine. */
+  readonly leftOnSource?: {
+    readonly digest: string;
+    readonly total: number;
+    readonly recordedAt: number;
+  };
 }
 
 export class SourceTransferError extends Error {
@@ -170,6 +163,10 @@ interface Hooks {
   /** Returns the source coordinator to active after a copy-and-move fails before Apply. */
   readonly release?: (record: SourceOperationRecord, reason: string) => Promise<void>;
   readonly now?: () => number;
+  /** Proves a source filesystem for captured copies; tests stand in an unverifiable volume. */
+  readonly verifyCaptureFilesystem?: (root: string, mode: CopyMode) => Promise<void>;
+  /** The wall clock a capture compares file stamps with; tests move it past fresh files. */
+  readonly stampClock?: () => number;
 }
 
 interface ChunkPlace {
@@ -201,6 +198,8 @@ interface Loaded {
   /** When `scan` was measured, on this service's clock. */
   scannedAt: number;
   readers: Set<Promise<void>>;
+  /** When the destination last asked for anything but a keepalive, on this service's clock. */
+  pulledAt: number;
   terminalUpdate: Promise<void>;
   saving: Promise<void>;
 }
@@ -214,9 +213,6 @@ const PROGRESS_SAVE_MS = 3_000;
  * lists the folder again, so the manifest and Git snapshot match when copying starts.
  */
 const MEASURE_REUSE_MS = 30_000;
-/** Linked worktree paths kept in a summary. */
-/** Skipped worktree paths kept per list; the counts stay true. */
-const MAX_SKIPPED_WORKTREES = 200;
 
 const TERMINAL: ReadonlySet<SourceState> = new Set(["committed", "released", "cancelled"]);
 
@@ -228,7 +224,7 @@ export interface PendingAtClose {
 
 /**
  * Saves a restart must honour even after `close`: an end state, a failure, a
- * revoked grant or snapshot cleanup. A cancel or release can already have
+ * revoked grant, snapshot cleanup or what a move left here. A cancel or release can already have
  * returned the coordinator, so dropping its record would let a restarted source
  * keep serving the copy. Progress, scan results and grant refreshes stay in memory.
  */
@@ -236,115 +232,13 @@ function persistsAfterClose(patch: Partial<SourceOperationRecord>): boolean {
   return (
     (patch.state !== undefined && (TERMINAL.has(patch.state) || patch.state === "failed")) ||
     (patch.grant !== undefined && patch.grant.revokedAt !== null) ||
-    patch.snapshotCleanupPending !== undefined
+    patch.snapshotCleanupPending !== undefined ||
+    patch.leftOnSource !== undefined
   );
 }
 
 const closedStop = (cause: unknown) =>
   cause instanceof SourceTransferError && cause.code === "closed";
-
-/**
- * Whether a link's target resolves outside the scanned folder. An absolute link
- * into the folder itself, such as a worktree's node_modules pointing at its main
- * checkout, still arrives whole; a relative link that climbs out with `..` does not.
- */
-function linkLeavesRoot(root: string, path: string, target: string): boolean {
-  const resolved = NodePath.resolve(root, NodePath.dirname(path), target);
-  return resolved !== root && !resolved.startsWith(`${root}${NodePath.sep}`);
-}
-
-function inventoryFingerprint(scan: FolderScan): string {
-  return sha256Hex(
-    Buffer.from(
-      JSON.stringify({
-        entries: scan.entries
-          .filter((entry) => entry.class !== "repository")
-          .map(({ path, type, size, mtimeMs, mode, target, class: fileClass }) => ({
-            path,
-            type,
-            ...(type !== "directory" ? { size, mtimeMs } : {}),
-            mode,
-            target,
-            fileClass,
-          })),
-        repositories: scan.repositories,
-        skipped: scan.skipped,
-        warnings: scan.warnings,
-      }),
-    ),
-  );
-}
-
-function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): SourceSummary {
-  return {
-    totals: scan.totals,
-    repositories: scan.repositories.map((repo) => ({
-      path: repo.path,
-      kind: repo.kind,
-      head: repo.head,
-      branch: repo.branch,
-      branchCount: Object.keys(repo.branches).length,
-      stashCount: repo.stashCount,
-      changedFiles: repo.status.length,
-    })),
-    secretFiles: scan.entries
-      .filter((entry) => entry.class === "secret" && entry.type === "file")
-      .slice(0, 500)
-      .map((entry) => ({ path: entry.path, size: entry.size })),
-    linksOutside: scan.entries.filter(
-      (entry) =>
-        entry.type === "symlink" &&
-        typeof entry.target === "string" &&
-        linkLeavesRoot(scan.root, entry.path, entry.target),
-    ).length,
-    // The skipped-worktree notice leads, so the cap can never drop it.
-    warnings: [
-      ...new Set([
-        ...(scan.notices ?? []).filter(isSkippedWorktreesNotice),
-        ...warnings,
-        ...scan.warnings,
-        ...(scan.notices ?? []),
-      ]),
-    ].slice(0, 50),
-    ...(scan.skipped
-      ? {
-          skipped: {
-            rebuildableFolders: scan.skipped.rebuildableFolders,
-            worktrees: scan.skipped.worktrees.slice(0, MAX_SKIPPED_WORKTREES),
-            ...(scan.skipped.dirtyWorktrees
-              ? { dirtyWorktrees: scan.skipped.dirtyWorktrees.slice(0, MAX_SKIPPED_WORKTREES) }
-              : {}),
-            ...(scan.skipped.uncheckedWorktrees
-              ? {
-                  uncheckedWorktrees: scan.skipped.uncheckedWorktrees.slice(
-                    0,
-                    MAX_SKIPPED_WORKTREES,
-                  ),
-                }
-              : {}),
-            ...(scan.skipped.strandedWorktrees
-              ? {
-                  strandedWorktrees: scan.skipped.strandedWorktrees.slice(0, MAX_SKIPPED_WORKTREES),
-                }
-              : {}),
-            ...(scan.skipped.worktrees.length > 0
-              ? { worktreeCount: scan.skipped.worktrees.length }
-              : {}),
-            ...(scan.skipped.dirtyWorktrees
-              ? { dirtyCount: scan.skipped.dirtyWorktrees.length }
-              : {}),
-          },
-        }
-      : {}),
-  };
-}
-
-/** Measuring no longer snapshots Git, so the measured summary says when it happens. */
-function withGitNotice(scan: FolderScan): FolderScan {
-  return scan.repositories.length > 0
-    ? { ...scan, notices: [...(scan.notices ?? []), PORTABLE_GIT_NOTICE] }
-    : scan;
-}
 
 const newLoaded = (record: SourceOperationRecord): Loaded => ({
   record,
@@ -358,6 +252,7 @@ const newLoaded = (record: SourceOperationRecord): Loaded => ({
   stopRequested: false,
   scannedAt: 0,
   readers: new Set(),
+  pulledAt: Number.NEGATIVE_INFINITY,
   terminalUpdate: Promise.resolve(),
   saving: Promise.resolve(),
 });
@@ -424,6 +319,24 @@ export class SourceTransfers {
     return pending.filter((item): item is PendingAtClose => item !== null);
   }
 
+  /**
+   * The operations this source serves right now, for the update gate: a scan or
+   * build running, chunk reads in flight, or a destination that pulled within
+   * `recentMs`. A measured folder nobody pulls and a held copy's hourly keepalive
+   * never count, so an abandoned offer cannot hold an update back.
+   */
+  activeOperations(recentMs: number): Array<{ operationId: string; state: SourceState }> {
+    const now = this.now();
+    return [...this.operations.values()]
+      .filter(
+        (item) =>
+          !TERMINAL.has(item.record.state) &&
+          item.record.state !== "failed" &&
+          (item.building !== null || item.readers.size > 0 || now - item.pulledAt <= recentMs),
+      )
+      .map((item) => ({ operationId: item.record.operationId, state: item.record.state }));
+  }
+
   /** A scan or build stops before its next write into the state folder once closed. */
   private assertOpen() {
     if (this.closed) throw new SourceTransferError(503, "closed", "The copy service stopped.");
@@ -434,9 +347,10 @@ export class SourceTransfers {
     return NodePath.join(this.stateRoot, "folder-sources", operationId);
   }
 
-  private async save(loaded: Loaded, patch: Partial<SourceOperationRecord>) {
+  /** `durable` writes even after `close`, for a removal `persistsAfterClose` cannot see. */
+  private async save(loaded: Loaded, patch: Partial<SourceOperationRecord>, durable = false) {
     loaded.record = { ...loaded.record, ...patch };
-    if (this.closed && !persistsAfterClose(patch)) return;
+    if (this.closed && !durable && !persistsAfterClose(patch)) return;
     const record = loaded.record;
     const saved = loaded.saving.then(() =>
       writeJson(NodePath.join(this.directory(record.operationId), "operation.json"), record),
@@ -709,6 +623,7 @@ export class SourceTransfers {
         : {}),
     });
     if (!verdict.ok || !loaded) throw new SourceTransferError(401, "unauthorized");
+    if (action !== "hello") loaded.pulledAt = this.now();
     if (verdict.record.lastUsedAt - loaded.record.grant.lastUsedAt > 60_000)
       await this.save(loaded, { grant: verdict.record });
     return loaded;
@@ -793,32 +708,46 @@ export class SourceTransfers {
       });
       checkStop();
       const entries = selectEntries(scan.entries, selection);
-      const listedSizes = new Map(entries.map((entry) => [entry.path, entry.size]));
-      const toHash = entries.filter(
-        (entry) =>
-          entry.type === "file" &&
-          (loaded.record.mode === "copy-only" || entry.sha256 === undefined),
+      const listed = new Map(
+        entries.map(({ path, size, mtimeMs, sha256, chunks }) => [
+          path,
+          { size, mtimeMs, sha256, chunks },
+        ]),
       );
+      const toHash = entries.filter((entry) => entry.type === "file");
       const hashing = this.progressReporter(loaded, stop, "hashing", {
         files: toHash.length,
         bytes: toHash.reduce((sum, entry) => sum + entry.size, 0),
       });
       hashing({ files: 0, bytes: 0 });
-      // Copy-and-move retains its existing live-file/held-copy checks; active owners are never cut over.
-      const capture =
-        loaded.record.mode === "copy-only"
-          ? await captureSourceFiles({
-              root: this.capturedRoot(loaded),
-              entries,
-              stop: checkStop,
-              sourceRoot: (entry) =>
-                sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
-              progress: hashing,
-            })
-          : null;
+      // A moving copy keeps the last read of a file that never settles; its drift check lists it.
+      const moving = loaded.record.mode === "copy-and-move";
+      const capture = await captureSourceFiles({
+        root: this.capturedRoot(loaded),
+        entries,
+        stop: checkStop,
+        sourceRoot: (entry) =>
+          sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
+        progress: hashing,
+        onChanging: moving ? "keep-last" : "fail",
+        ...(this.hooks.stampClock ? { now: this.hooks.stampClock } : {}),
+        ...(this.hooks.verifyCaptureFilesystem
+          ? {
+              verifyFilesystem: (root: string) =>
+                this.hooks.verifyCaptureFilesystem!(root, loaded.record.mode),
+            }
+          : {}),
+      }).catch(async (cause: unknown) => {
+        // Network and unverified volumes, and a source without room to capture, keep
+        // the live checks a moving copy always had.
+        if (!moving || !(cause instanceof CaptureFilesystemRefused)) throw cause;
+        await removeSourceBackings([this.capturedRoot(loaded)]);
+        for (const entry of entries) Object.assign(entry, listed.get(entry.path));
+        return null;
+      });
       if (capture)
         for (const entry of entries)
-          scan.totals[entry.class].bytes += entry.size - listedSizes.get(entry.path)!;
+          scan.totals[entry.class].bytes += entry.size - listed.get(entry.path)!.size;
       if (!capture)
         await hashSelected(scan, selection, hashing, (entry) =>
           sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
@@ -845,6 +774,22 @@ export class SourceTransfers {
       };
       checkStop();
       await writeManifest(this.manifestFile(loaded.record.operationId), { header, entries });
+      // Kept outside the wire manifest; only the later drift check reads it.
+      if (moving)
+        await writeJson(driftBasisFile(this.directory(loaded.record.operationId)), {
+          capturedAt: header.capturedAt ?? this.now(),
+          stats: Object.fromEntries(
+            entries.flatMap((entry) =>
+              !entry.portableGit && capture?.stats[entry.path]
+                ? [[entry.path, capture.stats[entry.path]]]
+                : [],
+            ),
+          ),
+          changing: capture?.changing ?? [],
+          indexes: await indexDigests(this.snapshotRoot(loaded), scan.repositories),
+          refs: await refDigests(this.snapshotRoot(loaded), scan.repositories),
+          uncopyable: uncopyableCounts(scan.warnings),
+        });
       loaded.scan = scan;
       this.index(loaded, header, entries);
       const manifestHandle = await NodeFSP.open(
@@ -858,7 +803,9 @@ export class SourceTransfers {
       }
       const capturedSource: CapturedSource | undefined = capture
         ? {
-            ...capture,
+            version: capture.version,
+            packHash: capture.packHash,
+            indexHash: capture.indexHash,
             capturedAt: header.capturedAt!,
             manifestHash: sha256Hex(
               await NodeFSP.readFile(this.manifestFile(loaded.record.operationId)),
@@ -1207,55 +1154,64 @@ export class SourceTransfers {
     });
   }
 
-  /** A later context transfer must never run against an older copied tree. */
-  async assertCurrentSnapshot(operationId: string): Promise<void> {
+  /** What differs from the committed copy now; the durable copied manifest is the reference. */
+  async driftSince(operationId: string): Promise<SourceDrift> {
     const loaded = await this.load(operationId);
     if (!loaded || loaded.record.state !== "committed")
       throw new SourceTransferError(409, "not_committed");
-    // Compare against the durable original manifest, not mutable in-memory refreshes:
-    // the destination may have omitted a changing file or kept its own version.
-    const copied = await readManifestFile(this.manifestFile(operationId));
-    const selection = new Set(copied.header.selection);
-    const checkRoot = await NodeFSP.mkdtemp(
-      NodePath.join(this.directory(operationId), "git-check-"),
-    );
-    let current: FolderScan;
-    try {
-      current = await preparePortableGit(
-        await scanFolder(loaded.record.folder, {
-          expandRebuildable: selection.has("rebuildable"),
-        }),
-        checkRoot,
-      );
-      await hashSelected(current, selection, undefined, (entry) =>
-        sourceEntryRoot(loaded.record.folder, checkRoot, entry),
-      );
-    } finally {
-      await NodeFSP.rm(checkRoot, { recursive: true, force: true });
-    }
-    const entries = selectEntries(current.entries, selection);
-    const signature = (items: ReadonlyArray<ManifestEntry>) =>
-      JSON.stringify(
-        items
-          .map(({ path, type, mode, size, sha256, target }) => ({
-            path,
-            type,
-            mode,
-            size,
-            sha256,
-            target,
-          }))
-          .sort((a, b) => a.path.localeCompare(b.path)),
-      );
-    const repositories = (items: ReadonlyArray<RepositoryInfo>) =>
-      JSON.stringify(items.map(({ status: _status, worktrees: _worktrees, ...repo }) => repo));
-    if (
-      current.warnings.length > 0 ||
-      copied.entries.some((entry) => entry.unstable) ||
-      entries.some((entry) => entry.unstable) ||
-      signature(entries) !== signature(copied.entries) ||
-      repositories(current.repositories) !== repositories(copied.header.repositories)
-    )
+    const directory = this.directory(operationId);
+    return computeDrift({
+      folder: loaded.record.folder,
+      directory,
+      manifestFile: this.manifestFile(operationId),
+      basisFile: driftBasisFile(directory),
+      servedSecretsFile: servedSecretsFile(directory),
+      now: () => this.now(),
+    });
+  }
+
+  /** A change list this source produced for the operation; null for any other digest. */
+  driftReport(operationId: string, digest: string) {
+    return readDriftReport(this.directory(operationId), digest);
+  }
+
+  /**
+   * Records the reviewed list a move went ahead with, and what stays only here. Null
+   * means the move found nothing different: a list an earlier attempt saved is cleared.
+   */
+  async recordDriftDecision(
+    operationId: string,
+    decision: {
+      readonly accepted: { readonly digest: string; readonly total: number };
+      readonly leftOnSource: { readonly digest: string; readonly total: number };
+    } | null,
+  ): Promise<SourceOperationRecord> {
+    const loaded = await this.load(operationId);
+    if (!loaded) throw new SourceTransferError(404, "not_found");
+    // Queued with commit, release and abandon, so a decision never lands on an ended copy.
+    return this.transition(loaded, async () => {
+      if (loaded.record.state !== "committed")
+        throw new SourceTransferError(409, loaded.record.state);
+      if (!decision && !loaded.record.acceptedDrift && !loaded.record.leftOnSource)
+        return loaded.record;
+      if (!decision) {
+        const { acceptedDrift: _accepted, leftOnSource: _left, ...rest } = loaded.record;
+        loaded.record = rest;
+        await this.save(loaded, {}, true);
+        return loaded.record;
+      }
+      const at = this.now();
+      await this.save(loaded, {
+        acceptedDrift: { ...decision.accepted, acceptedAt: at },
+        leftOnSource: { ...decision.leftOnSource, recordedAt: at },
+      });
+      return loaded.record;
+    });
+  }
+
+  /** A later context transfer must never run against an older copied tree. */
+  async assertCurrentSnapshot(operationId: string): Promise<void> {
+    if ((await this.driftSince(operationId)).total > 0)
       throw new SourceTransferError(409, "source_changed");
   }
 
@@ -1382,6 +1338,12 @@ export class SourceTransfers {
       throw new SourceTransferError(409, "changed");
     }
     if (bytes.byteLength > MAX_SECRET_FILE_BYTES) throw new SourceTransferError(409, "changed");
+    // The drift check compares the live secret with these bytes before a move.
+    await recordServedSecret(servedSecretsFile(this.directory(loaded.record.operationId)), {
+      path,
+      sha256: sha256Hex(bytes),
+      size: bytes.byteLength,
+    });
     await this.sentSecrets.record({
       operationId: loaded.record.operationId,
       destinationEnvironmentId: loaded.record.destinationEnvironmentId,

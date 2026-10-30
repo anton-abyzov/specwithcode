@@ -15,6 +15,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { describe, expect } from "vite-plus/test";
 
+import * as FolderWork from "../fleet/folderTransfer/folderWork.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { ifIdleRestart } from "../cli/update.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
@@ -72,6 +73,8 @@ interface Fixture {
   heldAtFirstDispatch?: boolean;
   readonly hold?: Hold.ServiceUpdateHoldShape;
   readonly terminals?: { open: number };
+  /** Folder copies in flight on this machine. */
+  readonly folderWork?: FolderWork.FolderWorkActivity["Service"];
   /** How long closing one agent process takes (a hung CLI). */
   readonly releaseDelayMs?: number;
   /** Runs still `waiting` on their checkpoint when the cleanup ended stuck runs. */
@@ -204,6 +207,9 @@ const run = <E>(
       }),
     );
     const optional = Layer.mergeAll(
+      fixture.folderWork === undefined
+        ? Layer.empty
+        : Layer.succeed(FolderWork.FolderWorkActivity, fixture.folderWork),
       fixture.hold === undefined
         ? Layer.empty
         : Layer.succeed(Hold.ServiceUpdateHold, fixture.hold),
@@ -333,6 +339,7 @@ it.live(
           held: false,
           interruptedRuns: 1,
           openTerminals: 0,
+          folderCopies: 0,
         });
         // The queue goes first so the interrupt does not start it, and a plain
         // interrupt keeps the thread's pull request watches; Stop is not used.
@@ -454,6 +461,7 @@ it.live("stops the coordinator turn an interrupted worker wakes", () => {
         held: false,
         interruptedRuns: 1,
         openTerminals: 0,
+        folderCopies: 0,
       });
       assert.deepEqual(fixture.dispatched, [
         { type: "run.interrupt", threadId: "t1", runId: "r1" },
@@ -482,6 +490,7 @@ it.live(
           held: false,
           interruptedRuns: 1,
           openTerminals: 0,
+          folderCopies: 0,
         });
         // Stop would also end t2's pull request watches; the cleanup cancels its request.
         assert.deepEqual(fixture.dispatched, [
@@ -579,6 +588,7 @@ it.live("Update now holds the service before draining, then closes terminals", (
           holdReason: "install",
           interruptedRuns: 1,
           openTerminals: 2,
+          folderCopies: 0,
         });
         // The time limit starts over once drained, as the install request is written.
         const current = yield* hold.current;
@@ -737,6 +747,76 @@ it.live("an if-idle hold leaves a busy service running and unheld", () =>
         );
         // Nothing was stopped.
         assert.deepEqual(fixture.dispatched, []);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// 2026-10-29: a normal fleet update restarted ministorm while it copied a folder from the M4.
+it.live("an if-idle hold waits for a folder copy and holds once it ends", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    const folderWork = yield* FolderWork.make;
+    const items: Array<FolderWork.FolderWorkItem> = [
+      { operationId: "op-1", role: "destination", state: "transferring" },
+    ];
+    yield* folderWork.register(Effect.sync(() => items));
+    const fixture = newFixture(false, { hold, folderWork, terminals: { open: 0 } });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const look = yield* preparation.prepare({ stopWork: false });
+        assert.isFalse(look.idle);
+        assert.equal(look.folderCopies, 1);
+        const busy = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
+        assert.isFalse(busy.idle);
+        assert.isFalse(busy.held);
+        assert.equal(busy.folderCopies, 1);
+        assert.isFalse(yield* hold.isHeld);
+        assert.deepEqual(ifIdleRestart(Option.some(Option.some(busy))), {
+          held: false,
+          notRestarted: "it is still copying 1 folder to or from another machine",
+        });
+        items.length = 0;
+        const quiet = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
+        assert.isTrue(quiet.idle);
+        assert.isTrue(quiet.held);
+        assert.equal(quiet.folderCopies, 0);
+        assert.isTrue(ifIdleRestart(Option.some(Option.some(quiet))).held);
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("Update now stops no folder copy: it lets an Apply finish and reports the rest", () =>
+  Effect.gen(function* () {
+    const hold = yield* holdFor();
+    const folderWork = yield* FolderWork.make;
+    let looks = 0;
+    // Applying for the first looks, then the copy goes on to finish in the background.
+    yield* folderWork.register(
+      Effect.sync(() => {
+        looks += 1;
+        return [
+          {
+            operationId: "op-1",
+            role: "destination" as const,
+            state: looks <= 3 ? "applying" : "applied",
+          },
+        ];
+      }),
+    );
+    const fixture = newFixture(false, { hold, folderWork });
+    yield* run(
+      fixture,
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const result = yield* preparation.prepare({ stopWork: true, hold: true });
+        assert.isTrue(result.held);
+        assert.isFalse(result.idle);
+        assert.equal(result.folderCopies, 1);
+        assert.isAbove(looks, 3);
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

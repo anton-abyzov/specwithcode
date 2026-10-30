@@ -31,6 +31,10 @@ export const machineHandoff = {
     label: "machine-handoff:copy-source-cancel",
     tag: WS_METHODS.machineHandoffCopySourceCancel,
   }),
+  copyDrift: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:copy-drift",
+    tag: WS_METHODS.machineHandoffCopyDrift,
+  }),
   copyRelease: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "machine-handoff:copy-release",
     tag: WS_METHODS.machineHandoffCopyRelease,

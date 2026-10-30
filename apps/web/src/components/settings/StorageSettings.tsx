@@ -157,10 +157,14 @@ export function WorktreesDirectoryRow() {
 function RetentionControl({
   label,
   value,
+  mixed = false,
+  daysMixed = false,
   onChange,
 }: {
   label: string;
   value: number | null;
+  mixed?: boolean;
+  daysMixed?: boolean;
   onChange: (value: number | null) => void;
 }) {
   const [draft, setDraft] = useState(value);
@@ -172,7 +176,9 @@ function RetentionControl({
 
   return (
     <div className="flex items-center gap-3">
-      {value !== null ? (
+      {mixed || daysMixed ? (
+        <span className="text-xs text-muted-foreground">Mixed</span>
+      ) : value !== null ? (
         <NumberField
           value={draft}
           min={1}
@@ -208,7 +214,8 @@ function RetentionControl({
       )}
       <Switch
         aria-label={label}
-        checked={value !== null}
+        mixed={mixed}
+        checked={mixed ? false : value !== null}
         onCheckedChange={(enabled) => onChange(enabled ? 8 : null)}
       />
     </div>
@@ -231,15 +238,29 @@ export function StorageSettingsPanel() {
   const mixedModes = targets.some((entry) => projectMode(entry) !== mode);
   const updateSettings = useUpdateScopedSettings();
   const clearSettings = useClearScopedSettings();
-  const ruleStatus = (key: keyof StorageCleanupSettings) =>
-    targets.some(
+  const ruleValues = (key: keyof StorageCleanupSettings) =>
+    targets.map(
       (target) =>
         ({ ...target.settings.storageCleanup, ...resolveWorktreeCleanup(target.settings, null) })[
           key
-        ] !== settings[key],
-    )
+        ],
+    );
+  // Retention rules are mixed only when some machines have them off; machines
+  // that are all on with different day counts keep the switch on.
+  const ruleMixed = (key: keyof StorageCleanupSettings) =>
+    ruleValues(key).some((value) =>
+      typeof settings[key] === "number" || settings[key] === null
+        ? (value === null) !== (settings[key] === null)
+        : value !== settings[key],
+    );
+  const daysMixed = (key: keyof StorageCleanupSettings) =>
+    !ruleMixed(key) && ruleValues(key).some((value) => value !== settings[key]);
+  const ruleStatus = (key: keyof StorageCleanupSettings) =>
+    ruleMixed(key)
       ? "Mixed across selected machines"
-      : undefined;
+      : daysMixed(key)
+        ? "Day counts differ across selected machines"
+        : undefined;
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>
@@ -339,12 +360,14 @@ export function StorageSettingsPanel() {
             <SettingsRow
               title="Delete worktrees with deleted threads"
               status={ruleStatus("worktreeOnDelete")}
+              mixed={ruleMixed("worktreeOnDelete")}
               description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
                   aria-label="Delete worktrees with deleted threads"
-                  checked={settings.worktreeOnDelete}
+                  mixed={ruleMixed("worktreeOnDelete")}
+                  checked={ruleMixed("worktreeOnDelete") ? false : settings.worktreeOnDelete}
                   onCheckedChange={(worktreeOnDelete) => updateWorktree({ worktreeOnDelete })}
                 />
               }
@@ -352,12 +375,15 @@ export function StorageSettingsPanel() {
             <SettingsRow
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
+              mixed={ruleMixed("worktreeAfterDays")}
               description="Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
                   label="Delete inactive worktrees"
                   value={settings.worktreeAfterDays}
+                  mixed={ruleMixed("worktreeAfterDays")}
+                  daysMixed={daysMixed("worktreeAfterDays")}
                   onChange={(worktreeAfterDays) => updateWorktree({ worktreeAfterDays })}
                 />
               }
@@ -365,12 +391,14 @@ export function StorageSettingsPanel() {
             <SettingsRow
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
+              mixed={ruleMixed("worktreeOnMerge")}
               description="Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
                   aria-label="Delete merged worktrees"
-                  checked={settings.worktreeOnMerge}
+                  mixed={ruleMixed("worktreeOnMerge")}
+                  checked={ruleMixed("worktreeOnMerge") ? false : settings.worktreeOnMerge}
                   onCheckedChange={(worktreeOnMerge) => updateWorktree({ worktreeOnMerge })}
                 />
               }
@@ -378,12 +406,14 @@ export function StorageSettingsPanel() {
             <SettingsRow
               title="Delete unchanged worktrees"
               status={ruleStatus("worktreeUnchanged")}
+              mixed={ruleMixed("worktreeUnchanged")}
               description="Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
                   aria-label="Delete unchanged worktrees"
-                  checked={settings.worktreeUnchanged}
+                  mixed={ruleMixed("worktreeUnchanged")}
+                  checked={ruleMixed("worktreeUnchanged") ? false : settings.worktreeUnchanged}
                   onCheckedChange={(worktreeUnchanged) => updateWorktree({ worktreeUnchanged })}
                 />
               }
@@ -397,12 +427,15 @@ export function StorageSettingsPanel() {
           <SettingsRow
             title="Delete old browser artifacts"
             status={ruleStatus("browserArtifactsAfterDays")}
+            mixed={ruleMixed("browserArtifactsAfterDays")}
             description="Delete saved browser captures after this many days. Older capture links will no longer open."
             serverScoped
             control={
               <RetentionControl
                 label="Delete old browser artifacts"
                 value={settings.browserArtifactsAfterDays}
+                mixed={ruleMixed("browserArtifactsAfterDays")}
+                daysMixed={daysMixed("browserArtifactsAfterDays")}
                 onChange={(browserArtifactsAfterDays) => update({ browserArtifactsAfterDays })}
               />
             }
@@ -410,12 +443,15 @@ export function StorageSettingsPanel() {
           <SettingsRow
             title="Delete old rotated logs"
             status={ruleStatus("logsAfterDays")}
+            mixed={ruleMixed("logsAfterDays")}
             description="Delete inactive rotated log files after this many days. Current logs are kept."
             serverScoped
             control={
               <RetentionControl
                 label="Delete old rotated logs"
                 value={settings.logsAfterDays}
+                mixed={ruleMixed("logsAfterDays")}
+                daysMixed={daysMixed("logsAfterDays")}
                 onChange={(logsAfterDays) => update({ logsAfterDays })}
               />
             }

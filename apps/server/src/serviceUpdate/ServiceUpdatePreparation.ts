@@ -53,6 +53,13 @@
  * alone. Any other work, such as a turn still producing output, keeps the
  * install waiting as before, and the sweep touches nothing then.
  *
+ * A folder copy in flight here, as source or destination (`folderWork`), is
+ * work update.py cannot see in the database or the process table. Every answer
+ * counts it as `folderCopies` and is not idle while any runs, so an if-idle
+ * hold (`update --if-idle`, a normal fleet update on a boot service) waits for
+ * it. A forced drain stops none: it lets an Apply under way finish within its
+ * budget and reports the copies left.
+ *
  * @module ServiceUpdatePreparation
  */
 import {
@@ -89,6 +96,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import type * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 
+import * as FolderWork from "../fleet/folderTransfer/folderWork.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -376,6 +384,8 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
     const closedQuestions = yield* Effect.serviceOption(
       ClosedQuestions.ServiceUpdateClosedQuestions,
     );
+    // Absent in tools and tests that build the runtime alone: no copies then.
+    const folderWork = yield* Effect.serviceOption(FolderWork.FolderWorkActivity);
 
     const readBlockerRows = Effect.gen(function* () {
       const rows = yield* sql.unsafe<{
@@ -525,6 +535,20 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       onNone: () => Effect.succeed(0),
       onSome: (service) => service.countOpen,
     });
+    // Folder copies are invisible to the helper's database and process checks: counted here.
+    const readFolderWork = Option.match(folderWork, {
+      onNone: () => Effect.succeed<ReadonlyArray<FolderWork.FolderWorkItem>>([]),
+      onSome: (service) => service.inFlight,
+    });
+    const folderCopies = Effect.map(readFolderWork, FolderWork.countOperations);
+    /** A restart mid-Apply is recovered from its journal, but it is the worst moment for one. */
+    const awaitApplies = (deadline: number) =>
+      Effect.gen(function* () {
+        const applying = (items: ReadonlyArray<FolderWork.FolderWorkItem>) =>
+          items.some((item) => item.role === "destination" && item.state === "applying");
+        while (applying(yield* readFolderWork) && (yield* within(deadline, timings.pollMs)) > 0)
+          yield* Effect.sleep(Duration.millis(timings.pollMs));
+      });
 
     const logged =
       (label: string, detail: Record<string, unknown>) =>
@@ -888,7 +912,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         return { stoppedThreads: touched.size, interruptedRuns, closedTerminals };
       });
 
-    const report = (rows: ReadonlyArray<BlockerRow>) =>
+    const report = (rows: ReadonlyArray<BlockerRow>, copies?: number) =>
       Effect.gen(function* () {
         const summarized = summarizeBlockers(rows);
         const current = Option.isSome(settings)
@@ -902,7 +926,12 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
                 continuesAfterRestart: resolveProjectSettings(current, blocker.projectId).settings
                   .continueThreadsAfterServerUpdate,
               }));
-        return { idle: blockers.length === 0, blockers };
+        const copiesNow = copies ?? (yield* folderCopies);
+        return {
+          idle: blockers.length === 0 && copiesNow === 0,
+          blockers,
+          folderCopies: copiesNow,
+        };
       });
 
     const holdUntil = Effect.gen(function* () {
@@ -962,6 +991,9 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           );
           rows = yield* readBlockerRows;
         }
+        // A forced update stops no copy: an Apply under way may finish within the budget,
+        // and the copies still in flight are reported (`folderCopies`).
+        yield* awaitApplies(deadline);
         // The hold's time limit starts again now, as the install request is written.
         yield* acquire(false);
         return { rows, drained };
@@ -1020,15 +1052,16 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
                 yield* owner.awaitAdmissions;
                 const rows = yield* readBlockerRows;
                 const terminalCount = yield* openTerminals;
-                const confirmed =
-                  rows.length === 0 && terminalCount === 0
-                    ? yield* owner.confirmLease(token, IF_IDLE_HOLD_TTL_MS)
-                    : Option.none();
+                const copies = yield* folderCopies;
+                const idle = rows.length === 0 && terminalCount === 0 && copies === 0;
+                const confirmed = idle
+                  ? yield* owner.confirmLease(token, IF_IDLE_HOLD_TTL_MS)
+                  : Option.none();
                 const held = Option.isSome(confirmed);
                 if (!held) yield* owner.releaseLease(token, "busy");
                 return {
-                  ...(yield* report(rows)),
-                  idle: rows.length === 0 && terminalCount === 0,
+                  ...(yield* report(rows, copies)),
+                  idle,
                   stoppedThreads: 0,
                   held,
                   ...(held ? { ...(yield* holdUntil), holdToken: token } : {}),
@@ -1086,6 +1119,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           stoppedThreads: result.stoppedThreads,
           interruptedRuns: result.interruptedRuns,
           openTerminals: result.openTerminals,
+          folderCopies: result.folderCopies,
           held: result.held,
           remaining: result.blockers.length,
         });

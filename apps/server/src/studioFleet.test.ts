@@ -13,6 +13,8 @@ import {
 import * as Schema from "effect/Schema";
 import { StudioFleetConnectInput } from "@specweave-studio/contracts/studioFleet";
 import { connectFleet, discoverFleet, parseFleetConfig, readFleetConfig } from "./studioFleet.ts";
+import { loadOrCreateFleetProofKey } from "./fleet/fleetProofKey.ts";
+import { makeFleetLink } from "./fleet/fleetTransport.ts";
 const descriptor = (environmentId: string) => ({
   environmentId,
   label: "Fixture Mac",
@@ -210,6 +212,48 @@ describe("SpecWithCode Connect addresses", () => {
     ).rejects.toThrow("only through SpecWithCode Connect");
     for (const [, init] of connectOnly.mock.calls)
       expect(new Headers(init?.headers).get("authorization")).toBeNull();
+  });
+  it("pairs a browser over the tailnet when Connect also answers for a bound token", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "studio-fleet-pair-"));
+    dirs.push(baseDir);
+    const key = await loadOrCreateFleetProofKey(baseDir);
+    const bound = `${Buffer.from(JSON.stringify({ sid: "s", jkt: key.thumbprint })).toString("base64url")}.sig`;
+    const f = fetcher();
+    const result = await connectFleet(
+      parseFleetConfig(withMachine({ connectUrl: connect, managementToken: bound })),
+      "m1",
+      new Set([AuthAccessWriteScope, AuthOrchestrationReadScope]),
+      makeFleetLink({ fetch: f, baseDir }),
+    );
+    const tailnet = source().machines[0]!.url;
+    expect(result).toMatchObject({ host: tailnet, pairingCode: "one-time-synthetic" });
+    // Nothing went to the Connect address: no identity read, no code minted there.
+    expect(f.mock.calls.map(([url]) => String(url))).toEqual([
+      `${tailnet}/.well-known/studio/environment`,
+      `${tailnet}/api/auth/pairing-token`,
+    ]);
+  });
+  it("says Tailscale is needed when only Connect answers for a bound token, minting nothing", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "studio-fleet-pair-"));
+    dirs.push(baseDir);
+    const key = await loadOrCreateFleetProofKey(baseDir);
+    const bound = `${Buffer.from(JSON.stringify({ sid: "s", jkt: key.thumbprint })).toString("base64url")}.sig`;
+    const connectOnly = vi.fn<typeof fetch>(async (url) =>
+      String(url).startsWith(connect)
+        ? Response.json(descriptor("environment-m1"))
+        : Promise.reject(new TypeError("tailnet down")),
+    );
+    await expect(
+      connectFleet(
+        parseFleetConfig(withMachine({ connectUrl: connect, managementToken: bound })),
+        "m1",
+        new Set([AuthAccessWriteScope, AuthOrchestrationReadScope]),
+        makeFleetLink({ fetch: connectOnly, baseDir }),
+      ),
+    ).rejects.toMatchObject({ kind: "connect-browser-unsupported" });
+    expect(connectOnly.mock.calls.some(([url]) => String(url).endsWith("/pairing-token"))).toBe(
+      false,
+    );
   });
 });
 describe("private fleet boundary", () => {

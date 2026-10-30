@@ -62,7 +62,9 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           order.push("extract");
           const stagingDir = input.args[input.args.indexOf("-C") + 1];
           if (stagingDir === undefined) return yield* Effect.die("missing tar target");
-          yield* fs.writeFileString(path.join(stagingDir, "specweave-studio"), "#!/bin/sh\n").pipe(Effect.orDie);
+          yield* fs
+            .writeFileString(path.join(stagingDir, "specweave-studio"), "#!/bin/sh\n")
+            .pipe(Effect.orDie);
           return {
             stdout: "",
             stderr: "",
@@ -420,6 +422,35 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
       yield* Deferred.succeed(accepted, "launcher-id");
       expect((yield* Fiber.join(first)).updateId).toBe("launcher-id");
+    }),
+  );
+
+  it.effect("lets another update go ahead while one waits to switch over", () =>
+    Effect.gen(function* () {
+      // A normal fleet install waits for quiet in its installing report, for up to 30 minutes.
+      const waiting = yield* Deferred.make<void>();
+      const quiet = yield* Deferred.make<void>();
+      const { selfUpdate, order } = yield* makeHarness();
+      const waiter = yield* Effect.forkChild(
+        selfUpdate.update({ targetVersion: "1.1.0" }, (stage) =>
+          stage === "installing"
+            ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(quiet)))
+            : Effect.void,
+        ),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(waiting);
+      // Update now meanwhile: it is not refused as already in progress.
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
+      yield* Deferred.succeed(quiet, undefined);
+      expect((yield* Fiber.join(waiter).pipe(Effect.flip)).reason).toBe(
+        "Another server update went ahead while this one waited to switch over.",
+      );
+      expect(order.filter((step) => step === "accept")).toEqual(["accept"]);
+      // The update that went ahead still counts as in progress.
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "A server update is already in progress.",
+      );
     }),
   );
 });

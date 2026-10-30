@@ -30,6 +30,9 @@ vi.mock("../studio/projectCoordinatorDraft", async (original) => ({
   enqueueProjectCoordinatorDraft: runtime.enqueue,
 }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: runtime.toast } }));
+vi.mock("../studio/machineNickname", () => ({
+  useMachineNicknames: () => (id: string) => (id === "m1" ? "ministorm" : id),
+}));
 import { EnvironmentId, ProjectId, ProviderInstanceId } from "@specweave-studio/contracts";
 import {
   projectCoordinatorHandoffText,
@@ -144,4 +147,70 @@ it("waits for machine identity before classifying a cached Scratch project", asy
   runtime.projects[0].workspaceRoot = "/scratch";
   expect(await useProjectCoordinatorHandoff()(projectRef)).toEqual({ kind: "unavailable" });
   expect(runtime.navigate).not.toHaveBeenCalled();
+});
+// "Copy files only" left m1's copy running workers only; its coordinator is on m4.
+function linkWorkersOnlyCopy() {
+  const coordinator = {
+    environmentId: "m4",
+    projectId: "main",
+    coordinatorThreadId: "main-coordinator",
+  };
+  runtime.projects[0].workspaceRoot = "/ministorm/repo";
+  runtime.projects[0].workspaceSettings = {
+    logicalProject: { id: "one", title: "One", coordinatorId: "c", members: [] },
+    coordinatorBinding: { epoch: 1, state: "transferred", successor: coordinator },
+  };
+  runtime.projects.push({
+    environmentId: "m4",
+    id: "main",
+    workspaceRoot: "/repo",
+    title: "Project",
+    workspaceSettings: {
+      revision: 2,
+      coordinatorThreadId: "main-coordinator",
+      logicalProject: { id: "one", title: "One", coordinatorId: "c", members: [] },
+      coordinatorBinding: { epoch: 1, state: "active" },
+    },
+  });
+}
+const COPY_LINE =
+  "This request is for the copy on ministorm, in /ministorm/repo. That copy runs workers only. Delegate the work to a worker there.";
+it("opens a workers-only copy's coordinator on the other machine instead of the copy", async () => {
+  linkWorkersOnlyCopy();
+  const model = { instanceId: ProviderInstanceId.make("codex"), model: "chosen" };
+  expect(
+    await useProjectCoordinatorHandoff()(projectRef, { prompt: "Run it here", model }),
+  ).toEqual({ kind: "opened", threadId: "main-coordinator" });
+  expect(runtime.enqueue).toHaveBeenCalledWith({
+    environmentId: "m4",
+    projectId: "main",
+    text: `${COPY_LINE}\n\nRun it here`,
+  });
+  expect(runtime.navigate).toHaveBeenCalledWith(
+    expect.objectContaining({ search: { checkout: "m4:main" } }),
+  );
+  // The model was picked for the copy's machine; the coordinator keeps its own.
+  expect(runtime.update).not.toHaveBeenCalled();
+});
+it("aims a redirected checkout or worktree request at the copy, not the coordinator's checkout", async () => {
+  linkWorkersOnlyCopy();
+  await useProjectCoordinatorHandoff()(projectRef, {
+    url: "https://github.com/a/b/pull/1",
+    mode: "local",
+    worktreePath: "/ministorm/repo-wt",
+  });
+  const text: string = runtime.enqueue.mock.calls[0]?.[0].text;
+  expect(text.startsWith(COPY_LINE)).toBe(true);
+  expect(text).toContain("Use the existing worktree: /ministorm/repo-wt");
+  expect(text).toContain("prepare the pull request in that copy's checkout");
+  expect(text).not.toContain("this checkout");
+});
+it("names the copy even when the redirected request has no text of its own", async () => {
+  linkWorkersOnlyCopy();
+  await useProjectCoordinatorHandoff()(projectRef);
+  expect(runtime.enqueue).toHaveBeenCalledWith({
+    environmentId: "m4",
+    projectId: "main",
+    text: COPY_LINE,
+  });
 });

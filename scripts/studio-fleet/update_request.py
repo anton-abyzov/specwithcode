@@ -312,10 +312,17 @@ def _write_json(path, value):
         raise
 
 
-def write_request(home, identity, version, force=False, hold_minutes=HOLD_MAX_MINUTES, now=None):
+# Dated like installRequestedAt: the forced request it matches still waits for folder copies (folder_work.py).
+WAITS_FOR_FOLDER_COPIES = 'installWaitsForFolderCopiesAt'
+
+
+def write_request(home, identity, version, force=False, hold_minutes=HOLD_MAX_MINUTES, now=None,
+                  waits_for_folder_copies=False):
     """Writes an install request bound to `version` into config.json, atomically and mode 600.
     A forced request makes the agent retry its snapshot every few seconds until installHoldUntil
-    instead of waiting for a quiet period; it never stops running work. Other settings stay."""
+    instead of waiting for a quiet period; it never stops running work. Other settings stay.
+    `waits_for_folder_copies`: written by an automatic pause or a rollout's drain, not by a person,
+    the forced request still waits for folder copies to or from another machine."""
     if _version(version) is None:
         raise RequestError('Invalid version %r' % version)
     if force and not (isinstance(hold_minutes, int) and 1 <= hold_minutes <= HOLD_MAX_MINUTES):
@@ -328,7 +335,8 @@ def write_request(home, identity, version, force=False, hold_minutes=HOLD_MAX_MI
     config.update({'checkRequestedAt': stamp, 'installRequestedAt': stamp,
                    'installMode': 'force' if force else 'normal',
                    'installHoldUntil': _iso(now + datetime.timedelta(minutes=hold_minutes)) if force else None,
-                   'installRequest': {'at': stamp, 'version': version}, 'installRunId': None})
+                   'installRequest': {'at': stamp, 'version': version}, 'installRunId': None,
+                   WAITS_FOR_FOLDER_COPIES: stamp if waits_for_folder_copies else None})
     _write_config(updates, config)
     return {key: config[key] for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installRequest')}
 
@@ -678,6 +686,8 @@ def main(argv=None):
             command.add_argument('--force', action='store_true',
                                  help='retry the snapshot until the hold ends instead of waiting for quiet')
             command.add_argument('--hold-minutes', type=int, default=HOLD_MAX_MINUTES)
+            command.add_argument('--waits-for-folder-copies', action='store_true',
+                                 help="a forced request a rollout's drain writes: it still waits for folder copies")
         if name in ('request', 'check'):
             command.add_argument('--kickstart', action='store_true', help='start the agent now')
         if name == 'cancel':
@@ -722,7 +732,8 @@ def main(argv=None):
                 refused = ready_to_kick(args.identity) if args.kickstart else None
                 if refused:
                     raise RequestError(refused)
-                written['request'] = write_request(home, args.identity, args.version, args.force, args.hold_minutes)
+                written['request'] = write_request(home, args.identity, args.version, args.force, args.hold_minutes,
+                                                   waits_for_folder_copies=args.waits_for_folder_copies)
                 report = {'identity': args.identity, 'result': 'requested', 'request': written['request'],
                           'kicked': None, 'agent': agent}
                 if args.kickstart:

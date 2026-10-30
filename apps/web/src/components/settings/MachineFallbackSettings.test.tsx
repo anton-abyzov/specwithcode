@@ -19,6 +19,9 @@ vi.mock("../../state/environments", () => ({
     environments: [{ environmentId: "mac", serverConfig: { providers: state.providers } }],
   }),
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (_environmentId: string, label?: string | null) => label ?? "",
+}));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: { machines: state.machines } }),

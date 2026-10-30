@@ -1,11 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  museFullEntitled,
-  museModels,
-  museUsage,
-  museUsageFromCliJson,
-} from "./MuseDiscovery.ts";
+import { museFullEntitled, museModels, museUsage, museUsageFromCliJson } from "./MuseDiscovery.ts";
 import { museControl } from "./MuseConnection.ts";
 const catalog = {
   source: "providerCatalog",
@@ -38,9 +33,9 @@ describe("Muse account discovery", () => {
     // usage/read on a fresh serve host: nothing observed yet.
     expect(museFullEntitled({}, false)).toBe(true);
     expect(museFullEntitled({}, true)).toBe(false);
-    expect(
-      museModels(catalog, museFullEntitled({}, false), false).map((m) => m.slug),
-    ).toContain("muse-wonder-full");
+    expect(museModels(catalog, museFullEntitled({}, false), false).map((m) => m.slug)).toContain(
+      "muse-wonder-full",
+    );
     // Observed usage rows without a subscription tier are not "unobserved".
     expect(
       museFullEntitled(
@@ -88,6 +83,39 @@ describe("Muse account discovery", () => {
     });
     expect(museUsageFromCliJson("not logged in", 5)).toBeUndefined();
     expect(museUsageFromCliJson("{}", 5)).toBeUndefined();
+  });
+  it("labels the host's effort tiers, marks its default, and offers Ultra only when listed", () => {
+    // Shape of muse 1.4.14's model/list row for a subscription account.
+    const row = {
+      modelId: "muse-wonder-full-1.0",
+      displayLabel: "muse-wonder-full-1.0",
+      variants: ["minimal", "low", "medium", "high", "xhigh", "max"],
+      reasoningEffortVariants: [{ tier: "xhigh", description: "Deepest analysis." }],
+      defaultReasoningEffort: "high",
+    };
+    const options = (variants: string[]) => {
+      const descriptor = museModels(
+        { source: "providerCatalog", models: [{ ...row, variants }] },
+        true,
+        false,
+      )[0]?.capabilities?.optionDescriptors?.[0];
+      return descriptor?.type === "select" ? descriptor.options : [];
+    };
+    const gated = options(row.variants);
+    expect(gated.map((option) => option.label)).toEqual([
+      "Minimal",
+      "Low",
+      "Medium",
+      "High",
+      "Extra High",
+      "Max",
+    ]);
+    // Ids reach session/setReasoningEffort verbatim.
+    expect(gated.map((option) => option.id)).toEqual(row.variants);
+    expect(gated.filter((option) => option.isDefault).map((option) => option.id)).toEqual(["high"]);
+    expect(gated.find((option) => option.id === "xhigh")?.description).toBe("Deepest analysis.");
+    const open = options([...row.variants, "ultra"]);
+    expect(open.at(-1)).toEqual({ id: "ultra", label: "Ultra" });
   });
   it("keeps max effort separate from the Full model", () => {
     const models = museModels(catalog, false, false);

@@ -1,6 +1,8 @@
 import {
   FolderCopyError,
   MachineHandoffError,
+  type FolderCopyDriftInput,
+  type FolderCopyDriftResult,
   type FolderCopyReleaseInput,
   type MachineHandoffManifest,
   type MachineHandoffPrepareResult,
@@ -20,7 +22,8 @@ import {
 } from "./folderCopyScope.ts";
 import { attempt, folderCopyManifestRepositories } from "./FolderCopyHandoff.ts";
 import type { DestinationCopies } from "./folderTransfer/destinationService.ts";
-import type { SourceTransfers } from "./folderTransfer/sourceService.ts";
+import { driftRowKey, type SourceDrift } from "./folderTransfer/sourceDrift.ts";
+import type { SourceOperationRecord, SourceTransfers } from "./folderTransfer/sourceService.ts";
 
 const isHandoffError = Schema.is(MachineHandoffError);
 
@@ -65,6 +68,47 @@ export const makeProjectIdleCheck =
       ),
     );
 
+/** The wire form of a drift: the reviewed rows, and whether moving without them is offered. */
+const sourceChanges = (drift: SourceDrift, record: SourceOperationRecord) => ({
+  digest: drift.digest,
+  total: drift.total,
+  truncated: drift.truncated,
+  acceptable: Boolean(record.capturedSource),
+  rows: drift.rows,
+});
+
+/** What a move goes ahead with: the accepted list and what stays here, or null for nothing. */
+export type FolderCopyDriftDecision = Parameters<SourceTransfers["recordDriftDecision"]>[1];
+
+/**
+ * The refused drift, or the decision a publish may go ahead with: nothing differs, or
+ * every differing path is in a list this source produced and the person accepted.
+ * Matching is by path (repositories apart), so a file that keeps being written cannot bounce an accepted
+ * move; any new path needs review. Nothing is saved here: the caller records the
+ * decision only once the coordinator's fence is written.
+ */
+async function checkDrift(
+  sources: SourceTransfers,
+  record: SourceOperationRecord,
+  options: { readonly acceptedSourceChanges?: string },
+): Promise<{ readonly refused: SourceDrift } | { readonly decision: FolderCopyDriftDecision }> {
+  const drift = await sources.driftSince(record.operationId);
+  if (drift.total === 0) return { decision: null };
+  if (!record.capturedSource || !options.acceptedSourceChanges) return { refused: drift };
+  const accepted = await sources.driftReport(record.operationId, options.acceptedSourceChanges);
+  const current = await sources.driftReport(record.operationId, drift.digest);
+  if (!accepted || !current) return { refused: drift };
+  // Each row by what it describes: accepting a repository never covers a file at its path.
+  const keys = new Set(accepted.rows.map(driftRowKey));
+  if (!current.rows.every((row) => keys.has(driftRowKey(row)))) return { refused: drift };
+  return {
+    decision: {
+      accepted: { digest: accepted.digest, total: accepted.total },
+      leftOnSource: { digest: drift.digest, total: drift.total },
+    },
+  };
+}
+
 /** The manifest a folder-copy handoff carries: repositories and heads from the offered scan. */
 export const makeFolderCopyManifest =
   (
@@ -76,6 +120,7 @@ export const makeFolderCopyManifest =
     projectId: ProjectId,
     destinationEnvironmentId: string,
     workspaceRoot: string,
+    options: { readonly publish?: boolean; readonly acceptedSourceChanges?: string } = {},
   ) =>
     Effect.gen(function* () {
       const record = yield* Effect.tryPromise({
@@ -98,17 +143,37 @@ export const makeFolderCopyManifest =
       });
       if (scope.projectRelativePath !== (record.projectRelativePath ?? "."))
         return yield* new MachineHandoffError({ code: "source_changed" });
-      if (record.state === "committed")
-        yield* Effect.tryPromise({
-          try: () => sources.assertCurrentSnapshot(operationId),
+      let decision: FolderCopyDriftDecision | undefined;
+      if (record.state === "committed") {
+        const checked = yield* Effect.tryPromise({
+          try: () => checkDrift(sources, record, options),
           catch: () => new MachineHandoffError({ code: "source_changed" }),
         });
+        if ("refused" in checked)
+          return yield* new MachineHandoffError({
+            code: "source_changed",
+            changes: sourceChanges(checked.refused, record),
+          });
+        if (options.publish) decision = checked.decision;
+      }
       return {
-        version: 1 as const,
-        operationId,
-        ...(record.projectRelativePath !== undefined ? { copyScope: scope } : {}),
-        repositories: folderCopyManifestRepositories(operationId, record.summary),
+        manifest: {
+          version: 1 as const,
+          operationId,
+          ...(record.projectRelativePath !== undefined ? { copyScope: scope } : {}),
+          repositories: folderCopyManifestRepositories(operationId, record.summary),
+        },
+        // Absent unless publishing a committed copy: then the source records it after the fence.
+        ...(decision !== undefined ? { decision } : {}),
       };
+    });
+
+/** Saves what a published move went ahead with; null clears an earlier attempt's list. */
+export const makeFolderCopyDriftDecision =
+  (sources: SourceTransfers) => (operationId: string, decision: FolderCopyDriftDecision) =>
+    Effect.tryPromise({
+      try: () => sources.recordDriftDecision(operationId, decision),
+      catch: () => new MachineHandoffError({ code: "storage_failed" }),
     });
 
 /** The destination half proves its copy was applied into this exact project folder. */
@@ -184,3 +249,23 @@ export const makeFolderCopyContextCheck = (sources: SourceTransfers) => (operati
     try: () => sources.assertContextAvailable(operationId),
     catch: () => new MachineHandoffError({ code: "conflict" }),
   });
+
+/** Source, read-only: what differs since a committed copy-and-move, and what the move left here. */
+export const makeFolderCopyDrift =
+  (sources: SourceTransfers) =>
+  (input: FolderCopyDriftInput): Effect.Effect<FolderCopyDriftResult, FolderCopyError> =>
+    Effect.gen(function* () {
+      const record = yield* attempt(() => sources.read(input.operationId));
+      if (
+        !record ||
+        record.projectId !== input.projectId ||
+        record.mode !== "copy-and-move" ||
+        record.state !== "committed"
+      )
+        return yield* new FolderCopyError({ code: "invalid" });
+      const drift = yield* attempt(() => sources.driftSince(input.operationId));
+      return {
+        drift: sourceChanges(drift, record),
+        ...(record.leftOnSource ? { leftOnSource: record.leftOnSource } : {}),
+      };
+    });

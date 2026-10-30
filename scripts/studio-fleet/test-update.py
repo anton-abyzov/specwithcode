@@ -1081,7 +1081,8 @@ AGENT_1_0_65=pathlib.Path(__file__).resolve().parent/'test-fixtures/agent-1.0.65
 INSTALLED_AGENT=pathlib.Path.home()/'.specwithcode/install/updater'
 SNAPSHOT_KEYS={'schemaVersion','identity','uid','port','webSessionPolicy','serviceLabel','servicePid','archiveSha256',
                'artifactSourceCommit','fileHashes','settingsProof','rows','databaseCapture','otherListeners',
-               'otherListenersOwned','cookieName','processQuiescence','observedAt'}
+               'otherListenersOwned','cookieName','processQuiescence','observedAt',
+               'waitsForFolderCopies'}  # A normal snapshot's apply looks for folder copies again; old agents pass it on.
 PREFLIGHT_KEYS={'identity','phase','result','error','pointers'}
 VERIFIED_FLAGS=('preservedRowsAuthAndIdentity','originalServicesPreserved','onlyKnownOwnedServiceRestarted')
 class OldAgentContract(unittest.TestCase):

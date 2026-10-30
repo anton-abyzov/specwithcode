@@ -121,6 +121,40 @@ export const MachineHandoffBundle = Schema.Struct({
   digest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
 });
 export type MachineHandoffBundle = typeof MachineHandoffBundle.Type;
+/** Rows a refusal or drift read lists; the total and digest still cover every path. */
+export const MACHINE_HANDOFF_MAX_CHANGE_ROWS = 500;
+/** What differs on the source since a folder copy, by path. Edits on a listed path keep the digest. */
+export const MachineHandoffSourceChanges = Schema.Struct({
+  digest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  total: Schema.Number,
+  truncated: Schema.Boolean,
+  /** Whether the move may go ahead without these paths; older uncaptured copies may not. */
+  acceptable: Schema.Boolean,
+  rows: Schema.Array(
+    Schema.Struct({
+      path: bounded(4096),
+      kind: Schema.Literals(["changed", "added", "removed", "unreadable", "repository"]),
+      size: Schema.optional(Schema.Number),
+      /** The file was still being written when copied: the copy may mix two versions. */
+      unsettled: Schema.optional(Schema.Literal(true)),
+      repository: Schema.optional(
+        Schema.Struct({
+          headFrom: Schema.optional(bounded(64)),
+          headTo: Schema.optional(bounded(64)),
+          branchesChanged: Schema.Array(bounded(1024)),
+          stashFrom: Schema.Number,
+          stashTo: Schema.Number,
+          indexChanged: Schema.Boolean,
+          /** Tags, notes, remote-tracking or other refs differ. */
+          refsChanged: Schema.optional(Schema.Boolean),
+          /** Git config, exclude rules or hooks differ. */
+          settingsChanged: Schema.optional(Schema.Boolean),
+        }),
+      ),
+    }),
+  ).check(Schema.isMaxLength(MACHINE_HANDOFF_MAX_CHANGE_ROWS)),
+});
+export type MachineHandoffSourceChanges = typeof MachineHandoffSourceChanges.Type;
 export const MachineHandoffPrepareInput = Schema.Struct({
   destination: Schema.optional(MachineHandoffDestination),
   acknowledgment: Schema.optional(MachineHandoffAcknowledgment),
@@ -129,6 +163,8 @@ export const MachineHandoffPrepareInput = Schema.Struct({
   operationId: MachineHandoffOperationId,
   publish: Schema.Boolean,
   expectedDigest: Schema.optional(MachineHandoffBundle.fields.digest),
+  /** The digest of a source change list the person reviewed and chose to move without. */
+  acceptedSourceChanges: Schema.optional(MachineHandoffSourceChanges.fields.digest),
 });
 export type MachineHandoffPrepareInput = typeof MachineHandoffPrepareInput.Type;
 export const MachineHandoffPrepareResult = Schema.Struct({
@@ -206,6 +242,8 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
       "destination_memory_full",
       "memory_mismatch",
     ]),
+    /** source_changed after a folder copy: exactly which paths differ, for review. */
+    changes: Schema.optional(MachineHandoffSourceChanges),
   },
 ) {
   override get message(): string {
@@ -215,7 +253,9 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
       invalid: "The handoff is invalid or belongs to a different project or machine.",
       too_large: "The retained context exceeds the handoff limit. Select a smaller source chat.",
       conflict: "This handoff ID already belongs to different work. Start a new handoff.",
-      source_changed: "The source changed after the preview. Start a new handoff.",
+      source_changed: this.changes
+        ? "Files changed on the source after the copy. Review them before moving the coordinator."
+        : "The source changed after the preview. Start a new handoff.",
       worker_checkpoint:
         "A worker has separate code that is not checkpointed in this workspace. Commit and merge its changes into the source workspace before handing off.",
       dirty_source: "Commit or stash source changes before publishing this handoff.",
