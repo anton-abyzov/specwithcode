@@ -80,6 +80,24 @@ interface GitLocation {
 }
 
 const readText = (file: string) => readFile(file, "utf8").catch(() => null);
+const COMMIT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u;
+
+/** The commit `HEAD` names in a main checkout's Git directory, from its files alone. */
+async function headCommit(gitDir: string): Promise<string | null> {
+  const head = (await readText(join(gitDir, "HEAD")))?.trim() ?? "";
+  if (COMMIT.test(head)) return head;
+  // A ref name stays inside the Git directory: plain segments only, no backslash or drive.
+  const ref = /^ref:\s*(refs\/[A-Za-z0-9._/-]+)$/u.exec(head)?.[1];
+  if (!ref || ref.split("/").some((part) => part === "" || part === "." || part === ".."))
+    return null;
+  const loose = (await readText(join(gitDir, ref)))?.trim();
+  if (loose !== undefined) return COMMIT.test(loose) ? loose : null;
+  for (const line of ((await readText(join(gitDir, "packed-refs"))) ?? "").split(/\r?\n/u)) {
+    const [commit, name] = line.split(" ");
+    if (name === ref && commit !== undefined && COMMIT.test(commit)) return commit;
+  }
+  return null;
+}
 
 /** Resolves `<folder>/.git`, a directory or a `gitdir:` file of a worktree or submodule. */
 async function gitLocation(folder: string, entry: Dirent): Promise<GitLocation | null> {
@@ -101,7 +119,8 @@ async function gitLocation(folder: string, entry: Dirent): Promise<GitLocation |
  * What `root` holds: a repository at the root or a plain umbrella folder, its nested
  * repositories with their origins, and linked worktrees counted under their main
  * repository instead of as more repositories. Directory links are skipped, never
- * followed. Read-only; never runs Git.
+ * followed. Read-only; never runs Git (a local-only repository's checked-out commit
+ * is read from its files).
  */
 export async function scanRepositoryFingerprint(root: string): Promise<RepositoryFingerprint> {
   const top = await realpath(root);
@@ -143,9 +162,15 @@ export async function scanRepositoryFingerprint(root: string): Promise<Repositor
       } else {
         const config = await readText(join(location.commonDir, "config"));
         const url = config === null ? null : originUrlFromConfig(config);
+        const originKey = url === null ? null : canonicalOrigin(url);
+        // Without an origin, the checked-out commit is the only thing a copy shares.
+        const head =
+          originKey === null && !location.linkedWorktree
+            ? await headCommit(location.commonDir)
+            : null;
         repositories.set(location.commonDir, {
           main: !location.linkedWorktree,
-          entry: { path, originKey: url === null ? null : canonicalOrigin(url), worktrees: 0 },
+          entry: { path, originKey, worktrees: 0, ...(head === null ? {} : { head }) },
         });
       }
     }

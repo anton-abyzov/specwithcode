@@ -969,6 +969,81 @@ describe("worker checkpoint guard", () => {
       );
     }),
   );
+  it.effect("reports, without refusing, each of 150 workers whose code the heads lack", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const merged = NodePath.join(f.base, "merged-worker");
+      git(f.source, "worktree", "add", "-b", "merged-task", merged);
+      write(NodePath.join(merged, "merged.ts"), "export const merged = 1;\n");
+      commit(merged);
+      git(f.source, "merge", "--ff-only", "merged-task");
+      const pending = NodePath.join(f.base, "pending-worker");
+      git(f.source, "worktree", "add", "-b", "pending-task", pending);
+      write(NodePath.join(pending, "pending.ts"), "export const pending = 1;\n");
+      commit(pending);
+      const dirty = NodePath.join(f.base, "dirty-worker");
+      git(f.source, "worktree", "add", "--detach", dirty);
+      write(NodePath.join(dirty, "draft.ts"), "uncommitted\n");
+      // 146 removed checkouts whose branches were merged or never kept.
+      const settled = Array.from({ length: 146 }, (_, i) => ({
+        worktreePath: NodePath.join(f.base, `gone-${i}`),
+        branch: i % 2 === 0 ? "merged-task" : `deleted-${i}`,
+      }));
+      const workers = [
+        ...settled,
+        { worktreePath: merged, branch: "merged-task" },
+        { worktreePath: null, branch: "pending-task" },
+        { worktreePath: dirty, branch: null },
+        { worktreePath: null, branch: "--all" },
+      ];
+      const manifest = yield* inspect(f.source);
+      expect(
+        yield* run((service) =>
+          service.verifyWorkerCheckpoints({ workspaceRoot: f.source, manifest, workers }),
+        ).pipe(Effect.flip),
+      ).toMatchObject({ reason: "worker-checkpoint" });
+      const reported = yield* run((service) =>
+        service.reportWorkerCheckpoints({ workspaceRoot: f.source, manifest, workers }),
+      );
+      expect(reported).toEqual([
+        { worktreePath: null, branch: "pending-task" },
+        { worktreePath: dirty, branch: null },
+        { worktreePath: null, branch: "--all" },
+      ]);
+      git(f.source, "merge", "--ff-only", "pending-task");
+      NodeFS.rmSync(NodePath.join(dirty, "draft.ts"));
+      const later = yield* inspect(f.source);
+      expect(
+        yield* run((service) =>
+          service.reportWorkerCheckpoints({
+            workspaceRoot: f.source,
+            manifest: later,
+            workers: workers.slice(0, -1),
+          }),
+        ),
+      ).toEqual([]);
+    }),
+  );
+  it.effect("checks at most a bounded number of worktrees and reports the rest unchecked", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const merged = NodePath.join(f.base, "merged-worker");
+      git(f.source, "worktree", "add", "-b", "merged-task", merged);
+      write(NodePath.join(merged, "merged.ts"), "export const merged = 1;\n");
+      commit(merged);
+      git(f.source, "merge", "--ff-only", "merged-task");
+      // One clean, merged checkout named by more chats than a report walks.
+      const workers = Array.from({ length: HandoffGit.MAX_REPORTED_WORKTREES + 2 }, (_, i) => ({
+        worktreePath: merged,
+        branch: i === 0 ? "merged-task" : `deleted-${i}`,
+      }));
+      const manifest = yield* inspect(f.source);
+      const reported = yield* run((service) =>
+        service.reportWorkerCheckpoints({ workspaceRoot: f.source, manifest, workers }),
+      );
+      expect(reported).toEqual(workers.slice(HandoffGit.MAX_REPORTED_WORKTREES));
+    }),
+  );
   it.effect(
     "rejects missing roots, invalid operation IDs, excessive scan depth and conflicting push URLs",
     () =>

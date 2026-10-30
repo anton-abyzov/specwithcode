@@ -32,6 +32,7 @@ import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
+import { acceptsRetention, retentionOf, RETENTION_UPDATE_MESSAGE } from "./handoffRetention";
 import {
   machineHandoffStorageKey,
   parsePendingMachineHandoff,
@@ -134,6 +135,7 @@ export function ProjectMachineHandoff({
   const navigate = useNavigate();
   const prepare = useAtomCommand(machineHandoff.prepare, { reportFailure: false });
   const receive = useAtomCommand(machineHandoff.receive, { reportFailure: false });
+  const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
   const storageKey = machineHandoffStorageKey(project.environmentId, project.id);
   const [open, setOpen] = useState(false);
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
@@ -548,6 +550,15 @@ export function ProjectMachineHandoff({
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
       if (checked.value.executionMode !== "project-folder")
         throw new Error("Update the other machine to hand off projects into saved folders.");
+      // A summarized coordinator handoff needs a destination that reads the summary.
+      if (prepared.value.publication === "unpublished" && retentionOf(prepared.value.bundle)) {
+        const supported = await capabilities({
+          environmentId: target.environmentId,
+          input: {},
+        }).catch(() => null);
+        if (supported?._tag !== "Success" || !acceptsRetention(supported.value))
+          throw new Error(RETENTION_UPDATE_MESSAGE);
+      }
       setSnapshot(prepared.value);
       setPreviewCheckout(checked.value.workspacePath);
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
@@ -599,6 +610,8 @@ export function ProjectMachineHandoff({
           publish: true,
           destination: snapshot.bundle.destination ?? destinationPlan!,
           expectedDigest: snapshot.bundle.digest,
+          // The preview checked that the destination reads the summary.
+          ...(retentionOf(snapshot.bundle) ? { contextRetention: 1 as const } : {}),
         },
       });
       if (published._tag === "Failure") {
@@ -851,6 +864,7 @@ export function ProjectMachineHandoff({
             ? {
                 repositories: snapshot.bundle.manifest.repositories,
                 messageCount: snapshot.messageCount,
+                retention: retentionOf(snapshot.bundle),
               }
             : null
         }

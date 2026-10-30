@@ -69,6 +69,107 @@ export const MachineHandoffAcknowledgment = Schema.Struct({
   coordinatorThreadId: ThreadId,
   digest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
 });
+/** Worker chats a large coordinator handoff names instead of carrying their transcripts. */
+export const MACHINE_HANDOFF_SUMMARY_MAX_WORKERS = 200;
+const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+export const MachineHandoffWorkerSummary = Schema.Struct({
+  environmentId: Schema.optional(EnvironmentId),
+  threadId: ThreadId,
+  title: bounded(200),
+  branch: Schema.NullOr(bounded(1024)),
+  worktreePath: Schema.NullOr(bounded(4096)),
+  /** The chat's status on the machine it ran on, or "unknown" for one only an earlier bundle named. */
+  status: bounded(32),
+  archived: Schema.Boolean,
+  lastActivityAt: bounded(64),
+  lastMessage: Schema.optional(
+    Schema.Struct({
+      role: Schema.Literals(["user", "assistant"]),
+      text: bounded(280),
+      createdAt: bounded(64),
+      truncated: Schema.Boolean,
+    }),
+  ),
+});
+export type MachineHandoffWorkerSummary = typeof MachineHandoffWorkerSummary.Type;
+/**
+ * A worker chat left on the source whose local branch or worktree holds commits
+ * the handoff does not carry: that work stays only on the source until merged.
+ */
+export const MachineHandoffUnmergedWorker = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  title: bounded(200),
+  branch: Schema.NullOr(bounded(1024)),
+  worktreePath: Schema.NullOr(bounded(4096)),
+});
+export type MachineHandoffUnmergedWorker = typeof MachineHandoffUnmergedWorker.Type;
+/** At most this many machines are named in a retention's breakdown. */
+export const MACHINE_HANDOFF_RETENTION_MAX_MACHINES = 64;
+/**
+ * Where what a large handoff left behind lives. The first entry is the machine
+ * that wrote the bundle; the others hold chats or older messages an earlier
+ * handoff left on them. The next handoff from a machine counts that machine's
+ * chats live and keeps the other entries, so nothing is counted twice.
+ */
+export const MachineHandoffRetentionMachine = Schema.Struct({
+  environmentId: EnvironmentId,
+  /** Worker chats written on this machine, summarized or not. */
+  totalThreads: Count,
+  omittedThreads: Count,
+  omittedMessages: Count,
+});
+export type MachineHandoffRetentionMachine = typeof MachineHandoffRetentionMachine.Type;
+/** At most this many coordinator chats have their omitted messages counted one by one. */
+export const MACHINE_HANDOFF_RETENTION_MAX_SEGMENTS = 100;
+/**
+ * The older messages one coordinator chat left on the machine it ran on. A later
+ * handoff from that machine counts the live coordinator in full and so takes only
+ * that chat's share out of the machine's count, keeping a replaced one's.
+ */
+export const MachineHandoffRetentionSegment = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  omittedMessages: Count,
+});
+export type MachineHandoffRetentionSegment = typeof MachineHandoffRetentionSegment.Type;
+/**
+ * What a coordinator handoff of a large project left behind: `threads` then
+ * carries only the coordinator's newest history, and these counts say the rest
+ * stays where it was written. Absent when every transcript moved.
+ */
+export const MachineHandoffRetention = Schema.Struct({
+  note: bounded(2000),
+  coordinatorMessages: Count,
+  omittedMessages: Count,
+  truncatedMessages: Count,
+  totalThreads: Count,
+  workers: Schema.Array(MachineHandoffWorkerSummary).check(
+    Schema.isMaxLength(MACHINE_HANDOFF_SUMMARY_MAX_WORKERS),
+  ),
+  omittedThreads: Count,
+  machines: Schema.optional(
+    Schema.Array(MachineHandoffRetentionMachine).check(
+      Schema.isMaxLength(MACHINE_HANDOFF_RETENTION_MAX_MACHINES),
+    ),
+  ),
+  segments: Schema.optional(
+    Schema.Array(MachineHandoffRetentionSegment).check(
+      Schema.isMaxLength(MACHINE_HANDOFF_RETENTION_MAX_SEGMENTS),
+    ),
+  ),
+  /**
+   * Git handoffs: the source's worker chats whose branch or worktree is not in
+   * the published commits, newest first, as many as fit; the count has them all.
+   */
+  unmergedWorkers: Schema.optional(
+    Schema.Array(MachineHandoffUnmergedWorker).check(
+      Schema.isMaxLength(MACHINE_HANDOFF_SUMMARY_MAX_WORKERS),
+    ),
+  ),
+  unmergedWorkerCount: Schema.optional(Count),
+});
+export type MachineHandoffRetention = typeof MachineHandoffRetention.Type;
 export const MachineHandoffContext = Schema.Struct({
   goal: bounded(8_000),
   instructions: bounded(16_000),
@@ -103,6 +204,12 @@ export const MachineHandoffContext = Schema.Struct({
       ).check(Schema.isMaxLength(2000)),
     }),
   ).check(Schema.isMaxLength(100)),
+  /**
+   * Older peers drop it and refuse the digest. A source fences a bundle that has it only
+   * for a publish carrying `contextRetention`, which a client sends once the destination
+   * advertised `FolderCopyCapabilities.contextRetention`; an older client is refused first.
+   */
+  retention: Schema.optional(MachineHandoffRetention),
 });
 export type MachineHandoffContext = typeof MachineHandoffContext.Type;
 const logicalTransferFields = {
@@ -193,6 +300,11 @@ export const MachineHandoffPrepareInput = Schema.Struct({
   expectedDigest: Schema.optional(MachineHandoffBundle.fields.digest),
   /** The digest of a source change list the person reviewed and chose to move without. */
   acceptedSourceChanges: Schema.optional(MachineHandoffSourceChanges.fields.digest),
+  /**
+   * The destination advertised `contextRetention` to the client publishing. Without it a
+   * source refuses, before fencing, to publish a bundle whose context has a retention.
+   */
+  contextRetention: Schema.optional(Schema.Literal(1)),
 });
 export type MachineHandoffPrepareInput = typeof MachineHandoffPrepareInput.Type;
 export const MachineHandoffPrepareResult = Schema.Struct({

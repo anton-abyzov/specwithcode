@@ -32,6 +32,7 @@ const state = vi.hoisted(() => ({
   environments: [] as Array<Record<string, unknown>>,
   prepare: vi.fn(),
   receive: vi.fn(),
+  copyCapabilities: vi.fn(),
   navigate: vi.fn(),
   props: null as ComponentProps<typeof MachineHandoffDialog> | null,
   denied: new Set<string>(),
@@ -43,14 +44,14 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../studio/machineHandoff", () => ({
-  machineHandoff: { prepare: "prepare", receive: "receive" },
+  machineHandoff: { prepare: "prepare", receive: "receive", copyCapabilities: "copyCapabilities" },
 }));
 vi.mock("../../studio/projectLink", () => ({
   projectLink: {},
   linkCopyAsWorkers: async () => ({ status: "linked" }),
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (name: "prepare" | "receive") => state[name],
+  useAtomCommand: (name: "prepare" | "receive" | "copyCapabilities") => state[name],
 }));
 vi.mock("../../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchWorkspaceRootFor: () => null }),
@@ -290,6 +291,48 @@ it("previews without publishing, then rechecks the selected machine before one e
       search: { checkout: "m1:isolated" },
     }),
   );
+});
+it("confirms a large project's summary is readable there, and says so when publishing", async () => {
+  const retention = {
+    note: "Worker chats did not move.",
+    coordinatorMessages: 412,
+    omittedMessages: 9418,
+    truncatedMessages: 0,
+    totalThreads: 1628,
+    workers: [],
+    omittedThreads: 1628,
+  };
+  const summarized = { ...bundle, context: { ...bundle.context, retention } };
+  state.prepare.mockImplementation(async ({ input }) => {
+    state.order.push(input.publish ? "publish" : "inspect");
+    return {
+      _tag: "Success",
+      value: {
+        bundle: summarized,
+        publication: input.publish ? "published" : "unpublished",
+        messageCount: 412,
+      },
+    };
+  });
+  state.copyCapabilities.mockResolvedValue({ _tag: "Success", value: { scopeVersion: 1 } });
+  await mount();
+  await review();
+  // An older destination cannot read the summary: nothing is published.
+  expect(state.copyCapabilities).toHaveBeenCalledWith({ environmentId: "m1", input: {} });
+  expect(props().phase).toBe("choose");
+  expect(state.order).toEqual(["inspect", "preview"]);
+  state.copyCapabilities.mockResolvedValue({
+    _tag: "Success",
+    value: { scopeVersion: 1, contextRetention: 1 },
+  });
+  await review();
+  expect(props().phase).toBe("review");
+  expect(props().preview?.retention).toEqual(retention);
+  await consent();
+  await transfer();
+  expect(state.prepare.mock.calls.find(([call]) => call.input.publish)?.[0]).toMatchObject({
+    input: { operationId, publish: true, contextRetention: 1 },
+  });
 });
 it("blocks duplicate review clicks before React paints the pending state", async () => {
   let resolve!: (value: unknown) => void;

@@ -5,9 +5,11 @@ import type {
   FolderCopyMode,
   FolderCopyStatus,
   FolderCopyUndoResult,
+  MachineHandoffRetention,
   MachineHandoffSourceChanges,
   ProjectId,
 } from "@specweave-studio/contracts";
+import { retentionMovedText } from "./handoffRetention";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { copiedProjectFolder } from "../../studio/folderCopy";
 import { EllipsisIcon } from "lucide-react";
@@ -38,6 +40,7 @@ export function HandoffCopyDone({
   machine,
   mode,
   contextTransferred,
+  movedRetention = null,
   targetLabel,
   sourceLabel,
   transferNotice,
@@ -60,6 +63,8 @@ export function HandoffCopyDone({
   readonly machine: EnvironmentId;
   readonly mode: FolderCopyMode;
   readonly contextTransferred: boolean;
+  /** What a large project's move left on the source; null when every transcript moved. */
+  readonly movedRetention?: MachineHandoffRetention | null;
   readonly targetLabel: string;
   readonly sourceLabel: string;
   readonly transferNotice: string | null;
@@ -127,6 +132,11 @@ export function HandoffCopyDone({
           </span>
         </p>
       </div>
+      {moved && movedRetention && (
+        <p className="text-xs text-muted-foreground" data-slot="copy-done-retention">
+          {retentionMovedText(movedRetention, sourceLabel, targetLabel)}
+        </p>
+      )}
       {transferNotice && (
         <p role="status" className="text-xs text-warning-foreground">
           {transferNotice}

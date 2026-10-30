@@ -26,7 +26,11 @@ export const FolderCopyScopes = Schema.Struct({
   ),
 });
 export type FolderCopyScopes = typeof FolderCopyScopes.Type;
-export const FolderCopyCapabilities = Schema.Struct({ scopeVersion: Schema.Literal(1) });
+export const FolderCopyCapabilities = Schema.Struct({
+  scopeVersion: Schema.Literal(1),
+  /** Accepts a coordinator handoff that summarizes worker chats (`context.retention`). */
+  contextRetention: Schema.optional(Schema.Literal(1)),
+});
 const scopeFields = {
   /** Canonical source folder explicitly selected for this operation. */
   copyRoot: Schema.optional(bounded(4096)),

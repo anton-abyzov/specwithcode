@@ -4,14 +4,18 @@ import * as Result from "effect/Result";
 import {
   EnvironmentId,
   MACHINE_HANDOFF_BUNDLE_MAX_BYTES,
+  MACHINE_HANDOFF_MAX_BYTES,
   type MachineHandoffBundle,
   ProjectId,
   ProjectWorkspaceError,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { stringifyJson } from "../json.ts";
 import type * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import {
   checkBundle,
+  comparableContext,
+  contextWithinLimits,
   importDestinationNotes,
   machineHandoffDigest,
   planDestinationNotes,
@@ -208,4 +212,68 @@ describe("handoff bundle memory", () => {
       expect(files.get("decision.md")).toBe("Destination decision");
     }),
   );
+});
+describe("handoff context limit", () => {
+  it("counts a worker summary toward the 2 MiB and still leaves notes out", () => {
+    const context = {
+      goal: "g",
+      instructions: "i",
+      notes: [{ name: "MEMORY.md", content: "n".repeat(3_000_000) }],
+      threads: [],
+    };
+    const retention = (note: string) => ({
+      note,
+      coordinatorMessages: 0,
+      omittedMessages: 0,
+      truncatedMessages: 0,
+      totalThreads: 0,
+      workers: [],
+      omittedThreads: 0,
+    });
+    expect(contextWithinLimits({ ...context, retention: retention("fits") })).toBe(true);
+    const frame = Buffer.byteLength(
+      stringifyJson({ ...context, notes: [], retention: retention("") }),
+    );
+    expect(
+      contextWithinLimits({
+        ...context,
+        retention: retention("x".repeat(MACHINE_HANDOFF_MAX_BYTES - frame + 1)),
+      }),
+    ).toBe(false);
+  });
+});
+describe("comparing a retained context with its preview", () => {
+  const retention = (lastActivityAt: string) => ({
+    note: "n",
+    coordinatorMessages: 1,
+    omittedMessages: 5,
+    truncatedMessages: 0,
+    totalThreads: 1,
+    workers: [
+      {
+        threadId: ThreadId.make("w"),
+        title: "Worker",
+        branch: null,
+        worktreePath: null,
+        status: "completed",
+        archived: false,
+        lastActivityAt,
+      },
+    ],
+    omittedThreads: 0,
+  });
+  const context = {
+    goal: "g",
+    instructions: "i",
+    runtimeMode: "full-access" as const,
+    notes: [],
+    threads: [],
+  };
+  it("keeps the previewed worker summary but still sees a summary appear or vanish", () => {
+    const saved = { ...context, retention: retention("2026-10-30T00:00:00.000Z") };
+    const later = { ...context, retention: retention("2026-10-30T00:05:00.000Z") };
+    expect(comparableContext(later, saved)).toEqual(saved);
+    expect(comparableContext(context, saved)).toEqual(context);
+    expect(comparableContext(later, context)).toEqual(later);
+  });
 });

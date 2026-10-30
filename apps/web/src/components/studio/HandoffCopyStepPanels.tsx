@@ -9,6 +9,7 @@ import type {
   FolderCopySourceSummary,
   FolderCopyStatus,
   FolderCopyUndoResult,
+  MachineHandoffRetention,
   MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
 import type { LeftOnSource } from "./HandoffSourceChanges";
@@ -86,6 +87,7 @@ export function HandoffCopyStepPanels({
   failedBeforeApply,
   undoPreview,
   contextTransferred,
+  movedRetention = null,
   transferNotice,
   transferBusy = null,
   movingAnyway,
@@ -149,6 +151,8 @@ export function HandoffCopyStepPanels({
   readonly failedBeforeApply: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly contextTransferred: boolean;
+  /** What a large project's move left on the source; null when every transcript moved. */
+  readonly movedRetention?: MachineHandoffRetention | null;
   readonly transferNotice: string | null;
   readonly transferBusy?: TransferBusy | null;
   readonly movingAnyway: boolean;
@@ -341,6 +345,7 @@ export function HandoffCopyStepPanels({
           machine={machine}
           mode={mode}
           contextTransferred={contextTransferred}
+          movedRetention={movedRetention}
           targetLabel={targetLabel}
           sourceLabel={sourceLabel}
           transferNotice={transferNotice}

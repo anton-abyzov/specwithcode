@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
+import { FolderCopyCapabilities } from "./folderCopy.ts";
 import {
+  MachineHandoffContext,
   MachineHandoffPrepareInput,
   MachineHandoffReceiveInput,
   MachineHandoffError,
@@ -189,5 +191,66 @@ describe("machine handoff wire and permissions", () => {
       AuthOrchestrationOperateScope,
       ...(method === WS_METHODS.machineHandoffReceive ? [AuthSettingsWriteScope] : []),
     ]);
+  });
+});
+describe("MachineHandoffContext retention", () => {
+  const isContext = Schema.is(MachineHandoffContext);
+  const decodeContext = Schema.decodeUnknownSync(MachineHandoffContext);
+  const legacy = { goal: "g", instructions: "i", notes: [], threads: [] };
+  const worker = {
+    environmentId: "source",
+    threadId: "worker-1",
+    title: "Worker",
+    branch: "inc/1",
+    worktreePath: null,
+    status: "completed",
+    archived: false,
+    lastActivityAt: "2026-10-30T00:00:00.000Z",
+    lastMessage: {
+      role: "assistant",
+      text: "Done",
+      createdAt: "2026-10-30T00:00:00.000Z",
+      truncated: false,
+    },
+  };
+  const retention = {
+    note: "Worker chats did not move.",
+    coordinatorMessages: 412,
+    omittedMessages: 9418,
+    truncatedMessages: 0,
+    totalThreads: 1628,
+    workers: [worker],
+    omittedThreads: 1627,
+  };
+  it("still accepts a context without it, and decodes it unchanged", () => {
+    expect(isContext(legacy)).toBe(true);
+    expect(decodeContext(legacy)).toEqual(legacy);
+  });
+  it("round-trips a summary within its bounds", () => {
+    expect(decodeContext({ ...legacy, retention })).toEqual({ ...legacy, retention });
+    expect(
+      isContext({
+        ...legacy,
+        retention: { ...retention, workers: Array.from({ length: 200 }, () => worker) },
+      }),
+    ).toBe(true);
+  });
+  it.each([
+    ["201 workers", { workers: Array.from({ length: 201 }, () => worker) }],
+    ["a long note", { note: "n".repeat(2001) }],
+    ["a negative count", { omittedMessages: -1 }],
+    ["a fractional count", { totalThreads: 1.5 }],
+    [
+      "a long excerpt",
+      { workers: [{ ...worker, lastMessage: { ...worker.lastMessage, text: "t".repeat(281) } }] },
+    ],
+  ])("refuses %s", (_name, change) => {
+    expect(isContext({ ...legacy, retention: { ...retention, ...change } })).toBe(false);
+  });
+  it("advertises the capability optionally", () => {
+    const isCapabilities = Schema.is(FolderCopyCapabilities);
+    expect(isCapabilities({ scopeVersion: 1 })).toBe(true);
+    expect(isCapabilities({ scopeVersion: 1, contextRetention: 1 })).toBe(true);
+    expect(isCapabilities({ scopeVersion: 1, contextRetention: 2 })).toBe(false);
   });
 });

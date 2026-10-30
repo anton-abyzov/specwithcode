@@ -293,6 +293,12 @@ it("reads a file again when its captured stat is within a clock tick of the read
   await sources.close();
   // The default clock: every fixture file was just written, so none keeps a stat.
   sources = new SourceTransfers(state);
+  if (process.platform === "win32") {
+    // Git runs slowly there, so the fixture's files can be past the slack, settled, by the
+    // read. Date the file ahead of the read, as one written within a tick of it would be.
+    const stamp = new Date(Date.now() + 60_000);
+    await FSP.utimes(Path.join(folder, "docs/guide.md"), stamp, stamp);
+  }
   await committed();
   const basis = JSON.parse(
     await FSP.readFile(Path.join(state, "folder-sources", id, "drift-basis.json"), "utf8"),

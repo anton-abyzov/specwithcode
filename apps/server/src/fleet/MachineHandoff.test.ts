@@ -351,7 +351,6 @@ describe("MachineHandoff", () => {
   it.effect.each([
     ["busy source", { busy: true }, "busy"],
     ["missing source chat", { missingThread: true }, "not_found"],
-    ["oversized context", { text: "x".repeat(2_097_153) }, "too_large"],
   ] as const)("refuses %s without side effects", ([_name, options, code]) => {
     const h = makeHarness(options);
     return Effect.gen(function* () {

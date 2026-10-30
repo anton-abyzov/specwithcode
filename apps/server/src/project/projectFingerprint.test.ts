@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds real Git fixtures with worktrees and links
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -53,7 +53,12 @@ describe("scanRepositoryFingerprint", () => {
       repositories: [
         { path: "", originKey: "github.com/team/umbrella", worktrees: 0 },
         { path: "repositories/team/api", originKey: "github.com/team/api", worktrees: 0 },
-        { path: "repositories/team/web", originKey: null, worktrees: 0 },
+        {
+          path: "repositories/team/web",
+          originKey: null,
+          worktrees: 0,
+          head: expect.stringMatching(/^[0-9a-f]{40}$/),
+        },
       ],
       skippedLinks: 0,
       truncated: false,
@@ -78,6 +83,50 @@ describe("scanRepositoryFingerprint", () => {
       skippedLinks: 2,
       truncated: false,
     });
+  });
+});
+
+describe("a local-only repository", () => {
+  it("matches its own copy by the checked-out commit, and nothing else", async () => {
+    const source = scratch();
+    repository(source, null);
+    const copy = join(scratch(), "copy");
+    cpSync(source, copy, { recursive: true });
+    // Another repository made from the same files in the same second shares the commit,
+    // so it gets one of its own.
+    const other = scratch();
+    repository(other, null);
+    writeFileSync(join(other, "other.md"), "other\n");
+    git(other, "add", "other.md");
+    git(other, "commit", "-q", "-m", "other");
+    const here = await scanRepositoryFingerprint(source);
+    const there = await scanRepositoryFingerprint(copy);
+    const elsewhere = await scanRepositoryFingerprint(other);
+    expect(here.repositories[0]?.head).toMatch(/^[0-9a-f]{40}$/);
+    expect(compareFingerprints(there, here).rootMatches).toBe(true);
+    expect(compareFingerprints(elsewhere, here).rootMatches).toBe(false);
+    // Packed refs are read too, and a new commit on one side ends the match.
+    git(copy, "pack-refs", "--all");
+    expect(compareFingerprints(await scanRepositoryFingerprint(copy), here).rootMatches).toBe(true);
+    writeFileSync(join(copy, "next.md"), "next\n");
+    git(copy, "add", "next.md");
+    git(copy, "commit", "-q", "-m", "next");
+    expect(compareFingerprints(await scanRepositoryFingerprint(copy), here).rootMatches).toBe(
+      false,
+    );
+  });
+  it("never follows a HEAD ref that leaves the Git directory", async () => {
+    const root = scratch();
+    repository(root, null);
+    for (const ref of ["refs/../../outside", "refs/..\\..\\outside", "refs//heads/main"]) {
+      writeFileSync(join(root, ".git/HEAD"), `ref: ${ref}\n`);
+      expect((await scanRepositoryFingerprint(root)).repositories[0]).not.toHaveProperty("head");
+    }
+  });
+  it("never records a commit for a repository that has an origin", async () => {
+    const root = scratch();
+    repository(root, "https://github.com/team/app.git");
+    expect((await scanRepositoryFingerprint(root)).repositories[0]).not.toHaveProperty("head");
   });
 });
 
