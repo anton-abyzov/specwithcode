@@ -90,8 +90,9 @@ export interface DestinationRecord {
   readonly projectRelativePath?: string;
   readonly version: 1;
   readonly operationId: string;
+  /** The source's remaining address: its Tailscale one when both are offered (the fallback), or its only address. */
   readonly sourceUrl: string;
-  /** The source's SpecWithCode Connect address, used when `sourceUrl` does not answer. */
+  /** The source's SpecWithCode Connect address, pulled from first when present. */
   readonly sourceConnectUrl?: string;
   readonly token: string;
   readonly sourceEnvironmentId: string;
@@ -310,11 +311,12 @@ export class DestinationCopies {
     signal?: AbortSignal,
     once?: { readonly timeoutMs: number },
   ) {
+    // SpecWithCode Connect is the primary route; the tailnet is the fallback.
     return new SourceClient({
-      baseUrl: record.sourceUrl,
+      baseUrl: record.sourceConnectUrl ?? record.sourceUrl,
       ...(record.sourceConnectUrl !== undefined
         ? {
-            fallbackBaseUrl: record.sourceConnectUrl,
+            fallbackBaseUrl: record.sourceUrl,
             expectedEnvironmentId: record.sourceEnvironmentId,
           }
         : {}),

@@ -116,17 +116,18 @@ export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind
 
 const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
   loopback: 0,
-  lan: 1,
-  tailnet: 2,
-  public: 3,
-  ssh: 4,
-  relay: 5,
+  relay: 1,
+  lan: 2,
+  tailnet: 3,
+  public: 4,
+  ssh: 5,
 };
 
 /**
  * Where a newly added route goes: after every saved route of the same or a
- * faster kind, so LAN lands ahead of tailnet and both ahead of Studio Connect.
- * Users can reorder afterwards; this only picks a sensible starting point.
+ * preferred kind. SpecWithCode Connect is the primary way in; LAN and
+ * Tailscale routes stay behind it as direct fallbacks. Users can reorder
+ * afterwards; this only picks the starting point.
  */
 export function insertRoute(
   routes: ReadonlyArray<ConnectionRoute>,

@@ -63,11 +63,11 @@ describe("connection routes", () => {
     expect(connectionRouteLabel(RELAY)).toBe("SpecWithCode Connect");
   });
 
-  it("places a new route after faster kinds and ahead of SpecWithCode Connect", () => {
-    expect(insertRoute([RELAY], LAN)).toEqual([LAN, RELAY]);
-    expect(insertRoute([LAN, RELAY], TAILNET)).toEqual([LAN, TAILNET, RELAY]);
+  it("places SpecWithCode Connect first and direct routes behind it as fallbacks", () => {
+    expect(insertRoute([RELAY], LAN)).toEqual([RELAY, LAN]);
+    expect(insertRoute([LAN, RELAY], TAILNET)).toEqual([LAN, RELAY, TAILNET]);
     expect(insertRoute([TAILNET], LAN)).toEqual([LAN, TAILNET]);
-    expect(insertRoute([LAN, TAILNET], RELAY)).toEqual([LAN, TAILNET, RELAY]);
+    expect(insertRoute([LAN, TAILNET], RELAY)).toEqual([RELAY, LAN, TAILNET]);
   });
 
   it("keeps a user's order when a saved route is replaced", () => {
@@ -153,15 +153,15 @@ describe("learned routes", () => {
     routes?.map((route) => connectionRouteId(route.target)) ?? null;
   const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
 
-  it("learns a LAN address over SpecWithCode Connect, ahead of it, using the SpecWithCode Connect credential", () => {
+  it("learns a LAN address over SpecWithCode Connect, behind it, using the SpecWithCode Connect credential", () => {
     const routes = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://192.168.1.10:8319/" }],
       allowInsecure: true,
     });
-    expect(ids(routes)).toEqual([`learned:${ENVIRONMENT_ID}:http://192.168.1.10:8319`, "relay"]);
-    expect(profileOf(routes![0]!)).toMatchObject({
+    expect(ids(routes)).toEqual(["relay", `learned:${ENVIRONMENT_ID}:http://192.168.1.10:8319`]);
+    expect(profileOf(routes![1]!)).toMatchObject({
       learned: true,
       authorization: "studio-connect",
       wsBaseUrl: "ws://192.168.1.10:8319/",
@@ -175,19 +175,14 @@ describe("learned routes", () => {
       reported: [{ httpBaseUrl: "http://192.168.1.10:8319/" }],
       allowInsecure: true,
     })!;
-    const entry: ConnectionCatalogEntry = {
-      ...relayOnly,
-      target: first[0]!.target,
-      profile: first[0]!.profile,
-      alternateRoutes: first.slice(1),
-    };
+    const entry = entryWithRoutes(relayOnly, first);
     const moved = mergeLearnedRoutes({
       entry,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://10.0.0.42:8319/" }],
       allowInsecure: true,
     });
-    expect(ids(moved)).toEqual([`learned:${ENVIRONMENT_ID}:http://10.0.0.42:8319`, "relay"]);
+    expect(ids(moved)).toEqual(["relay", `learned:${ENVIRONMENT_ID}:http://10.0.0.42:8319`]);
   });
 
   it("keeps a learned route where the user moved it while the server reports it", () => {
@@ -198,7 +193,7 @@ describe("learned routes", () => {
       reported: [lan],
       allowInsecure: true,
     })!;
-    // The user prefers Studio Connect over the learned LAN address.
+    // The user prefers the learned LAN address over Studio Connect.
     const reordered = entryWithRoutes(relayOnly, [first[1]!, first[0]!]);
     expect(
       mergeLearnedRoutes({
@@ -208,7 +203,7 @@ describe("learned routes", () => {
         allowInsecure: true,
       }),
     ).toBeNull();
-    // A newly reported address is still placed by speed.
+    // A newly reported address is still placed by route kind.
     const next = mergeLearnedRoutes({
       entry: reordered,
       activeRoute: RELAY,
@@ -216,9 +211,9 @@ describe("learned routes", () => {
       allowInsecure: true,
     });
     expect(ids(next)).toEqual([
-      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:8319`,
-      "relay",
       `learned:${ENVIRONMENT_ID}:http://192.168.1.10:8319`,
+      "relay",
+      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:8319`,
     ]);
   });
 
@@ -364,12 +359,7 @@ describe("learned routes", () => {
       reported: [{ httpBaseUrl: "http://desk.local:8319/" }],
       allowInsecure: true,
     })!;
-    const entry: ConnectionCatalogEntry = {
-      ...relayOnly,
-      target: first[0]!.target,
-      profile: first[0]!.profile,
-      alternateRoutes: first.slice(1),
-    };
+    const entry = entryWithRoutes(relayOnly, first);
     const moved = mergeLearnedRoutes({
       entry,
       activeRoute: RELAY,
@@ -377,6 +367,6 @@ describe("learned routes", () => {
       allowInsecure: true,
     });
     expect(moved).not.toBeNull();
-    expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:8319/" });
+    expect(profileOf(moved![1]!)).toMatchObject({ httpBaseUrl: "https://desk.local:8319/" });
   });
 });

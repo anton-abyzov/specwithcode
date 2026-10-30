@@ -2080,7 +2080,7 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect("learns the LAN address over Studio Connect and moves to it", () =>
+  it.effect("learns the LAN address over Studio Connect and stays on Studio Connect", () =>
     Effect.gen(function* () {
       const relayEntry: ConnectionCatalogEntry = {
         target: RELAY_TARGET,
@@ -2128,17 +2128,22 @@ describe("EnvironmentSupervisor routes", () => {
       }).pipe(Effect.provide(harness.dependencies));
 
       // Connected over Studio Connect, the server reports its LAN address; the
-      // learned route ranks first, answers, and the session moves to it.
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2,
-      );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
+      // learned route is saved behind Studio Connect as a fallback and the
+      // session stays where it is.
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      for (
+        let iteration = 0;
+        iteration < 100 && (yield* Ref.get(learned)).length === 0;
+        iteration += 1
+      )
+        yield* Effect.yieldNow;
       expect(yield* Ref.get(learned)).toEqual([
         `learned:${TARGET.environmentId}:http://192.168.1.10:8319`,
       ]);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
     }),
   );
 });

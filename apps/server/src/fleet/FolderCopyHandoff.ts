@@ -361,8 +361,9 @@ export function undoResult(
 /**
  * Where a destination may pull a folder from this machine: its private
  * tailnet HTTPS address when it has one, and its SpecWithCode Connect address.
- * The first is the primary; the Connect address is the fallback, or the only
- * address on a machine without Tailscale. Null when it has neither.
+ * Destinations pull from the Connect address first; the tailnet address is
+ * the fallback. On a machine without Tailscale the Connect address is the
+ * only one. Null when it has neither.
  */
 export function sourceAddresses(input: {
   readonly endpoints: ReadonlyArray<{ readonly kind: string; readonly httpBaseUrl: string }>;

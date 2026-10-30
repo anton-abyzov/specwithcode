@@ -473,7 +473,7 @@ const make = Effect.gen(function* () {
   );
   // Interrupted copies continue (or replay their Apply journal) once the service is up.
   yield* Effect.promise(() => copies.resume().catch(() => undefined)).pipe(Effect.forkScoped);
-  // The tailnet address first, the SpecWithCode Connect address as the fallback.
+  // Both addresses of this machine; destinations pull over SpecWithCode Connect first, the tailnet as fallback.
   const sourceAddressesNow = Effect.gen(function* () {
     const endpoints = Option.isSome(directEndpoints) ? yield* directEndpoints.value.resolve() : [];
     const connectOrigin = Option.isSome(secretStore)

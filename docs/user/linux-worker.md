@@ -14,7 +14,7 @@ replacement.
 [SpecWithCode Connect](./remote-access.md#specwithcode-connect) is enough, with
 no Tailscale, both to open the host from your desktop app, a browser or your
 iPhone and to let your main computer start work there. This page also sets up Tailscale,
-an optional direct route your main computer tries first. To skip it, link Connect on the
+an optional direct route your main computer falls back to when Connect does not answer. To skip it, link Connect on the
 host (`specwithcode connect`) and make the line with `--via connect`.
 
 > **Use API keys on a VPS, never a subscription.** We do not recommend signing
