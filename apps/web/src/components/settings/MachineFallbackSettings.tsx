@@ -22,7 +22,7 @@ import {
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useStudioFleet } from "../../studio/fleet";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -100,7 +100,7 @@ export function MachineFallbackSettings() {
   const { target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const environmentId = target?.environmentId ?? NO_ENVIRONMENT;
   const fleet = useStudioFleet(environmentId);
   const machines = (fleet.snapshot?.machines ?? []).filter(

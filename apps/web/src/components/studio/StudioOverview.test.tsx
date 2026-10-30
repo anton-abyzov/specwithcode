@@ -437,6 +437,52 @@ describe("deliberate native session entry", () => {
       state.setModel.mock.invocationCallOrder[0]!,
     );
   });
+  it("hands a workers-only copy to the coordinator handoff, which names the copy", async () => {
+    const projects = state.projects;
+    const domain = { id: "one", title: "Atlas", coordinatorId: "c", members: [] };
+    // "Copy files only" left the worker's copy transferred to the main Mac's coordinator.
+    state.projects = [
+      {
+        ...projects[0]!,
+        workspaceSettings: {
+          logicalProject: domain,
+          coordinatorBinding: { epoch: 1, state: "active" },
+        },
+      },
+      {
+        ...projects[1]!,
+        workspaceSettings: {
+          logicalProject: domain,
+          coordinatorBinding: {
+            epoch: 1,
+            state: "transferred",
+            successor: {
+              environmentId: "host-local",
+              projectId: "project-local",
+              coordinatorThreadId: "project-coordinator:project-local",
+            },
+          },
+        },
+      },
+    ] as unknown as typeof projects;
+    try {
+      await render();
+      await click("Choose verified worker profile");
+      await select("host-worker:project-worker");
+      await click("Open native draft");
+      // The handoff opens the coordinator and names this copy; the model stays for a
+      // standalone draft on the worker's own machine.
+      expect(state.createDraft).toHaveBeenCalledWith(
+        { environmentId: "host-worker", projectId: "project-worker" },
+        {
+          environmentSelection: "manual",
+          model: { instanceId: "native-worker", model: "actual-model" },
+        },
+      );
+    } finally {
+      state.projects = projects;
+    }
+  });
   it("rejects an instance that became unavailable before the click", async () => {
     await render();
     await click("Choose verified worker profile");

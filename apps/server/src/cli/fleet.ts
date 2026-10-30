@@ -16,6 +16,7 @@
  */
 import { EnvironmentId, PortSchema } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -28,6 +29,7 @@ import { FetchHttpClient } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { secretsSentTo } from "../fleet/folderTransfer/secretsReport.ts";
+import { HEARTBEAT_FILE, heartbeatOperations } from "../fleet/folderTransfer/folderWork.ts";
 import { unlinkPhonesFrom } from "../fleet/phoneLinks.ts";
 import { join } from "../nodePath.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - the id file is read once, like the fleet file.
@@ -549,6 +551,11 @@ const updateCommand = Command.make("update", {
           "unauthorized",
           "This machine's environment ID could not be read; start its SpecWithCode service, or pass --base-dir.",
         );
+      // The copies this machine's service runs; an older target restarts on a normal request.
+      const heartbeat = yield* Effect.promise(() =>
+        readFile(join(baseDir, "updates", HEARTBEAT_FILE), "utf8").catch(() => ""),
+      );
+      const localFolderCopies = heartbeatOperations(heartbeat, yield* Clock.currentTimeMillis);
       const outcome = yield* Effect.tryPromise({
         try: () =>
           runFleetUpdate({
@@ -557,6 +564,7 @@ const updateCommand = Command.make("update", {
             coordinatorEnvironmentId,
             action,
             legacySelfUpdate: legacySelfUpdateOverSocket,
+            localFolderCopies,
           }),
         catch: (error) =>
           error instanceof FleetUpdateFailure

@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useServerConfigs } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
@@ -43,7 +43,7 @@ export function SettingsScopeNotice({
   const { selectScope, search } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const groups = useSettingsProjectGroups();
   const configs = useServerConfigs();
   const pick = (next: SettingsScopeSearch) => {

@@ -160,7 +160,8 @@ import { randomUUID } from "../../lib/utils";
 
 import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
-import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
+import { CoordinatorBlockedNotice } from "./CoordinatorBlockedNotice";
+import { type OrchestratorCopy, workersOnlyProblem } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
@@ -206,6 +207,7 @@ export function ProjectWorkspaceSurface({
   selectedEnvironmentId = null,
   restoringThread = false,
   ownershipProblem = null,
+  coordinatorElsewhere = null,
   setSelected,
 }: {
   project: EnvironmentProject;
@@ -224,6 +226,8 @@ export function ProjectWorkspaceSurface({
   selectedEnvironmentId?: string | null;
   restoringThread?: boolean;
   ownershipProblem?: string | null;
+  /** A workers-only copy's coordinator on another machine, where its work is started. */
+  coordinatorElsewhere?: { readonly key: string; readonly machine: string | null } | null;
   setSelected: SelectProjectThread;
 }) {
   const projectTitle = logicalProjectTitle(project);
@@ -463,8 +467,15 @@ export function ProjectWorkspaceSurface({
         : {}),
     },
   );
+  // A workers-only copy names where its work starts; only one that ran a coordinator keeps history.
+  const workersOnly = coordinatorElsewhere
+    ? workersOnlyProblem(
+        coordinatorElsewhere.machine,
+        shells.some((t) => t.id === mainCoordinatorId && t.environmentId === project.environmentId),
+      )
+    : null;
   // An unreachable machine refuses first: a typed message is never sent elsewhere.
-  const blocked = (connected ? null : admission) ?? ownershipProblem ?? admission;
+  const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1627,9 +1638,14 @@ export function ProjectWorkspaceSurface({
                 status={
                   <>
                     {blocked && (
-                      <p className="project-muted" role="status">
-                        {blocked}
-                      </p>
+                      <CoordinatorBlockedNotice
+                        text={blocked}
+                        coordinator={blocked === workersOnly ? coordinatorElsewhere : null}
+                        current={`${project.environmentId}:${project.id}`}
+                        members={iconCheckouts}
+                        copies={checkouts}
+                        onOpen={onCheckout}
+                      />
                     )}
                     {error && <p role="alert">{error}</p>}
                   </>

@@ -50,7 +50,7 @@ Drain OrchestrationEffectWorkerV2 or await a specific persisted event/Deferred i
 
 Check chat, Settings, command palette, keybindings and reverse actions. Preserve native plans, approvals, queues, steering and checkpoints. Keep unknown quota/offline/errors explicit. Avoid continuously repainting animations and gratuitous state payloads. Use existing semantic UI variants; layout belongs to the parent.
 
-Document changes to user tasks and durable architectural constraints, not copies of types. No publication, remote push or release service is implied by local implementation. New UI/auth needs concrete manual acceptance before increment closure.
+Document changes to user tasks and durable architectural constraints, not copies of types. No publication, remote push or release service is implied by local implementation. Require manual acceptance only when the user or increment acceptance criteria explicitly request it. Record unverified installed/native behavior as a proof limit, not an automatic closure blocker for every UI/auth change.
 
 ## Commands
 

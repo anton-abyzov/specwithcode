@@ -25,6 +25,7 @@ import {
   checkoutKeyEnvironmentId,
   checkoutUnavailableReason,
   chooseCoordinatorView,
+  coordinatorElsewhere,
   coordinatorMachineKey,
   heldCheckoutKey,
   type CheckoutUnavailableReason,
@@ -32,6 +33,7 @@ import {
   orchestratorCopies,
   unloadedMachineRef,
   unloadedMachineRefs,
+  WORKERS_ONLY_PROBLEM,
 } from "../../studio/projectCoordinatorMachine";
 import { useLinkMachines } from "./useLinkMachines";
 import { type SelectProjectThread } from "../../studio/useProjectPaneSelection";
@@ -160,6 +162,11 @@ export function ProjectWorkspace({
     const name = nickname(environmentId, label);
     return label || name !== environmentId ? name : null;
   };
+  // A workers-only copy's work starts from its coordinator on another machine.
+  const elsewhere =
+    member && ownershipProblem === WORKERS_ONLY_PROBLEM
+      ? coordinatorElsewhere(member, members)
+      : null;
   const unknownLabel = unknownRef
     ? (machineName(unknownRef.environmentId) ?? "That machine")
     : null;
@@ -328,6 +335,14 @@ export function ProjectWorkspace({
           onSelectThread ? selectedThreadEnvironmentId : localSelectedEnvironment
         }
         ownershipProblem={ownershipProblem}
+        coordinatorElsewhere={
+          elsewhere
+            ? {
+                key: `${elsewhere.environmentId}:${elsewhere.projectId}`,
+                machine: machineName(elsewhere.environmentId),
+              }
+            : null
+        }
         checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady)}
         unknownMachines={unloadedMachineRefs(members).map((ref) => ({
           key: `${ref.environmentId}:${ref.projectId}`,

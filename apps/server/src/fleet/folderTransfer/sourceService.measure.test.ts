@@ -11,6 +11,7 @@ import { git, write } from "./folderFixture.testkit.ts";
 import * as Manifest from "./manifest.ts";
 import { PORTABLE_GIT_NOTICE } from "./portableGit.ts";
 import { SourceTransfers } from "./sourceService.ts";
+import { liveMovingCopies } from "./sourceTestServer.testkit.ts";
 
 vi.mock("./manifest.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./manifest.ts")>();
@@ -278,7 +279,8 @@ it("waits for a published ready manifest to finish persisting before checking fr
   const { folder, state } = project(false);
   const actual = await vi.importActual<typeof import("./manifest.ts")>("./manifest.ts");
   vi.mocked(Manifest.scanFolder).mockImplementation(actual.scanFolder);
-  const sources = new SourceTransfers(state);
+  // An uncaptured move publishes its ready manifest before the record is durable.
+  const sources = new SourceTransfers(state, { verifyCaptureFilesystem: liveMovingCopies });
   const offered = await offer(sources, folder);
   const loaded = await sources.authorize(operationId, offered.token);
   await loaded.building;

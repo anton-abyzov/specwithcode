@@ -41,6 +41,7 @@ import after_proof
 import update_apply
 import database_continuity as continuity
 import database_restart
+import folder_work
 import idle_agents
 import install_progress
 import live_database
@@ -198,9 +199,19 @@ def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
             'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
     return proof, auth, carried
 
+# A copy that began after the snapshot: retried like other work that started then
+# (update_agent.RETRYABLE_REFUSALS), and the next snapshot waits for it.
+FOLDER_COPY_STARTED = 'Native work changed before restart: folder copies are in progress'
+
 def snapshot(identity, request=None):
+    # A normal or automatic install also waits for folder copies, which no read here can see, and so
+    # does a forced request an automatic pause or a rollout's drain wrote (folder_work.request_waits).
+    # Its apply looks again before the stop. Only a forced request a person wrote installs over them.
+    updates = studio_paths.identity_home(pathlib.Path.home().resolve(), identity) / 'updates'
+    waits = {'waitsForFolderCopies': True} if request is None or folder_work.request_waits(updates, request) else {}
+    assert not waits or not folder_work.in_progress(updates), folder_work.REFUSAL
     if request is None:
-        return _snapshot(identity, False)[0]
+        return {**_snapshot(identity, False)[0], **waits}
     # Update now already holds this service. The helper's apply takes the full baseline;
     # the agent needs only admission, identity and idle evidence, not a duplicate row hash.
     service = _service(identity)
@@ -209,7 +220,7 @@ def snapshot(identity, request=None):
     except (AssertionError, OSError, ValueError, TypeError):
         # A forced CLI request need not have a service hold. Its original full
         # snapshot remains safe; only a proven matching hold permits the shortcut.
-        return _snapshot(identity, False)[0]
+        return {**_snapshot(identity, False)[0], **waits}
     db = live_database.connect(service['own'] / 'userdata' / 'statev2.sqlite')
     try:
         db.execute('BEGIN')
@@ -221,7 +232,7 @@ def snapshot(identity, request=None):
     assert current['runtime']['pid'] == proof['servicePid'] == service['runtime']['pid'], HOLD_REFUSAL
     assert_held(current, request)
     proof.pop('databaseCapture')
-    proof.update(snapshotMode='held-service', installRequestedAt=request)
+    proof.update(snapshotMode='held-service', installRequestedAt=request, **waits)
     return proof
 
 def reap(identity, request, report=None, stale=False):
@@ -896,6 +907,12 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             base['before'] = base['expected']
     if page_mode: page_mode.held()
     assert_prestate(expected, current, current_carried, auth_baseline=before['rows'])
+    def assert_no_folder_copies():
+        # A copy is in no row compared here; only the service's heartbeat shows one that began
+        # after the snapshot. A forced install never waits for one.
+        if expected.get('waitsForFolderCopies') is True:
+            assert not folder_work.in_progress(own / 'updates'), FOLDER_COPY_STARTED
+    assert_no_folder_copies()
     lap('prestateCheck')
     # Written only once the prestate holds, so a refusal above leaves no folder behind.
     backup = own / 'owned-updates' / str(uuid.uuid4())
@@ -1055,6 +1072,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         reference_mark = passed[0]
         held = after_proof.mark(own / 'userdata' / 'statev2.sqlite')
         assert_unchanged_before_restart()
+        assert_no_folder_copies()
         after_proof.confirm(held, watermark, reference_mark, passed[0])
         watermark.close()  # No connection of this helper stays open while the service closes its own.
         # Refused before the stop, with the old service running: no room for the copy, or no time left.
@@ -1374,7 +1392,7 @@ def _refusal_detail(code, own):
 
 def refusal_line(identity, error):
     """`REFUSAL <code> <detail>` for a refused snapshot, read by the update agent. Codes:
-    native-work, descendants, timeout, busy, restart-needed and environment. Details are counts,
+    native-work, descendants, timeout, busy, folder-copy, restart-needed and environment. Details are counts,
     executable basenames or this helper's own fixed messages: never argv, paths, rows or secrets."""
     message = str(error) if isinstance(error, AssertionError) else ''
     if message in DATABASE_RESTART_REASONS:  # Only a restart recovers it (database_restart).
@@ -1388,6 +1406,9 @@ def refusal_line(identity, error):
         return ('REFUSAL %s %s' % (code, _refusal_detail(code, own))).rstrip()
     if isinstance(error, sqlite3.OperationalError) or message in BUSY_REFUSALS:
         return 'REFUSAL busy ' + type(error).__name__
+    if message == folder_work.REFUSAL:
+        own = studio_paths.identity_home(pathlib.Path.home().resolve(), identity)
+        return folder_work.refusal(folder_work.in_progress(own / 'updates'))
     if isinstance(error, AssertionError):
         detail = message if re.fullmatch(r"[A-Za-z0-9 .,;:'()_-]{1,200}", message) else 'A Studio installation check failed'
     elif isinstance(error, sqlite3.DatabaseError):

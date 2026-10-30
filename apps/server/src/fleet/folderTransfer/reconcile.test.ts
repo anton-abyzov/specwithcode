@@ -480,6 +480,58 @@ describe("files outside repositories", () => {
     expect(step(replaced, "svc").kind).toBe("replace");
     expect(replaced.actions.map((action) => action.path)).toEqual(["svc/a.ts"]);
   });
+
+  it("a replaced folder gets every source file and folder, even ones already here", () => {
+    const folder = (path: string): ManifestEntry => ({
+      ...file(path, "d", { repo: "svc" }),
+      type: "directory",
+      size: 0,
+    });
+    const result = plan({
+      repositories: [sourceRepo("."), sourceRepo("svc")],
+      // An uninitialized submodule is an empty folder at a gitlink path.
+      entries: [folder("svc/sub"), file("svc/a.ts", "a", { repo: "svc" })],
+      destination: {
+        files: [
+          { ...here("svc/sub", "", { repo: ".", class: "untracked" }), type: "directory" },
+          here("svc/a.ts", "a", { repo: ".", class: "untracked" }),
+        ],
+        repositories: [destinationRepo(".")],
+      },
+      decisions: { [repoRowId("svc")]: "take-theirs" },
+    });
+    // Apply moves the folder to the backup first, so what was here is gone.
+    expect(step(result, "svc").kind).toBe("replace");
+    expect(result.actions.map((action) => [action.path, action.kind])).toEqual([
+      ["svc/sub", "mkdir"],
+      ["svc/a.ts", "write"],
+    ]);
+  });
+
+  it("counts every file a replaced folder holds here as replaced", () => {
+    const result = plan({
+      repositories: [sourceRepo("."), sourceRepo("svc")],
+      entries: [
+        file("svc/a.ts", "a", { repo: "svc" }),
+        file("notes.txt", "n2", { repo: null, class: "untracked" }),
+      ],
+      destination: {
+        files: [
+          { ...here("svc/lib", "", { repo: ".", class: "untracked" }), type: "directory" },
+          here("svc/a.ts", "zz", { repo: ".", class: "untracked" }),
+          here("svc/lib/b.ts", "b", { repo: ".", class: "untracked" }),
+          here("svc/other.txt", "o", { repo: ".", class: "untracked" }),
+          here("notes.txt", "n1", { repo: null, class: "untracked" }),
+        ],
+        repositories: [destinationRepo(".")],
+      },
+      decisions: { [repoRowId("svc")]: "take-theirs", "file:notes.txt": "take-theirs" },
+    });
+    // The whole svc folder goes to the backup: its three files, not only a.ts.
+    expect(row(result, repoRowId("svc")).replacing).toBe(3);
+    expect(result.totals.replacing).toBe(4);
+    expect(result.actions.find((action) => action.path === "svc/a.ts")?.replaces).toBe(false);
+  });
 });
 
 it("zero actions for an occupied nested path mean an unanswered repository choice, not empty source inventory", () => {

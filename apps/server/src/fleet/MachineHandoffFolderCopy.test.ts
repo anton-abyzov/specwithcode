@@ -5,8 +5,10 @@ import * as NodePath from "node:path";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
+  MachineHandoffError,
   ThreadId,
   type MachineHandoffBundle,
   type MachineHandoffPrepareInput,
@@ -714,3 +716,95 @@ it.live(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.live("moves with source changes only after their list is reviewed and accepted", () => {
+  const folder = sourceFolder();
+  const h = makeHarness({ workspaceRoot: folder, endpoints: tailnet });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const offer = yield* service.copyOffer({
+      projectId,
+      operationId: id,
+      mode: "copy-and-move",
+      destinationEnvironmentId: other,
+    });
+    yield* scanned(service);
+    yield* commitCopiedFiles(service, offer.token);
+    const binding = () => h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding;
+    const before = yield* service.prepare(copyPreview);
+    // A saved preview is returned as it is; only publishing checks the source again.
+    const publish = { ...copyPreview, publish: true, expectedDigest: before.bundle.digest };
+    NodeFS.writeFileSync(NodePath.join(folder, "README.md"), "notes written after the copy\n");
+
+    const refused = yield* failureOnly(service.prepare(publish));
+    expect(refused.code).toBe("source_changed");
+    expect(refused.message).not.toMatch(/Git/);
+    expect(refused.changes).toMatchObject({
+      total: 1,
+      truncated: false,
+      acceptable: true,
+      rows: [{ path: "README.md", kind: "changed" }],
+    });
+    expect(binding()?.state).not.toBe("transferring");
+    const wire = yield* Schema.encodeEffect(MachineHandoffError)(refused);
+    const decoded = yield* Schema.decodeUnknownEffect(MachineHandoffError)(wire);
+    expect(decoded.changes).toEqual(refused.changes);
+    const digest = refused.changes!.digest;
+
+    // Only a list this source produced counts.
+    const madeUp = { ...publish, acceptedSourceChanges: "f".repeat(64) };
+    expect((yield* failureOnly(service.prepare(madeUp))).code).toBe("source_changed");
+    // A path that was not in the accepted list needs its own review.
+    const accepted = { ...publish, acceptedSourceChanges: digest };
+    NodeFS.writeFileSync(NodePath.join(folder, "later.md"), "new work\n");
+    const wider = yield* failureOnly(service.prepare(accepted));
+    expect(wider.changes?.digest).not.toBe(digest);
+    expect(wider.changes?.rows.map((row) => row.path)).toEqual(["README.md", "later.md"]);
+    NodeFS.rmSync(NodePath.join(folder, "later.md"));
+    expect(binding()?.state).not.toBe("transferring");
+
+    // Still writing the accepted file does not bounce the move.
+    NodeFS.appendFileSync(NodePath.join(folder, "README.md"), "and more\n");
+    const published = yield* service.prepare(accepted);
+    expect(published.publication).toBe("published");
+    expect(binding()?.state).toBe("transferring");
+    const drift = yield* service.copyDrift({ projectId, operationId: id });
+    expect(drift.drift.rows.map((row) => row.path)).toEqual(["README.md"]);
+    expect(drift.leftOnSource).toMatchObject({ digest: drift.drift.digest, total: 1 });
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.live("records what a move left on the source only once the move goes ahead", () => {
+  const folder = sourceFolder();
+  const h = makeHarness({ workspaceRoot: folder, endpoints: tailnet });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const offer = yield* service.copyOffer({
+      projectId,
+      operationId: id,
+      mode: "copy-and-move",
+      destinationEnvironmentId: other,
+    });
+    yield* scanned(service);
+    yield* commitCopiedFiles(service, offer.token);
+    const before = yield* service.prepare(copyPreview);
+    const publish = { ...copyPreview, publish: true, expectedDigest: before.bundle.digest };
+    NodeFS.writeFileSync(NodePath.join(folder, "README.md"), "notes written after the copy\n");
+    const digest = (yield* failureOnly(service.prepare(publish))).changes!.digest;
+
+    // The list is accepted, but newer coordinator context stops the move after the drift check.
+    h.state.text = "newer work";
+    const accepted = { ...publish, acceptedSourceChanges: digest };
+    expect((yield* failureOnly(service.prepare(accepted))).code).toBe("source_changed");
+    const binding = () => h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding;
+    expect(binding()?.state).not.toBe("transferring");
+    expect((yield* service.copyDrift({ projectId, operationId: id })).leftOnSource).toBeUndefined();
+
+    // Put back, nothing differs: the move goes ahead and leaves nothing listed here.
+    NodeFS.writeFileSync(NodePath.join(folder, "README.md"), "notes\n");
+    h.state.text = "Continue the actual pending change";
+    expect((yield* service.prepare(accepted)).publication).toBe("published");
+    expect(binding()?.state).toBe("transferring");
+    expect((yield* service.copyDrift({ projectId, operationId: id })).leftOnSource).toBeUndefined();
+  }).pipe(Effect.provide(h.layer));
+});

@@ -522,6 +522,15 @@ export function planReconcile(input: PlanInput): Plan {
   const skippedPrefixes: Array<string> = [];
 
   for (const repo of skippedRepos) skippedPrefixes.push(`${repo}/`);
+  // Apply moves a replaced repository's folder to the backup before any file
+  // lands, so nothing the scan found inside it is there any more: its files and
+  // folders (empty ones such as uninitialized submodules too) are all written.
+  const replacedRows = [...repoPlans.values()]
+    .filter((plan) => plan.step?.kind === "replace")
+    .map((plan) => ({ id: plan.row.id, path: key(plan.row.path) }));
+  const within = (repo: string, path: string) =>
+    repo === "." || path === repo || path.startsWith(`${repo}/`);
+  const insideReplaced = (path: string) => replacedRows.some((repo) => within(repo.path, path));
   for (const entry of input.entries) {
     if (skippedPrefixes.some((prefix) => entry.path.startsWith(prefix))) continue;
     // The skipped repository's own folder is not created either.
@@ -539,7 +548,7 @@ export function planReconcile(input: PlanInput): Plan {
     const repoPlan = entry.repo !== null ? repoPlans.get(entry.repo) : undefined;
     const rowId = repoPlan ? repoPlan.row.id : FILES_ROW;
     const count = countFor(rowId);
-    const destination = destinationFiles.get(folded) ?? null;
+    const destination = insideReplaced(folded) ? null : (destinationFiles.get(folded) ?? null);
     const inner =
       entry.repo === null || entry.repo === "."
         ? entry.path
@@ -672,10 +681,7 @@ export function planReconcile(input: PlanInput): Plan {
       destination.type === entry.type &&
       destinationRepo !== undefined &&
       !destinationRepo.destinationDirty.has(destinationInner);
-    if (
-      repoPlan?.step?.kind === "replace" ||
-      (cleanTracked && (repoPlan?.headMoves || repoPlan?.sameHead))
-    ) {
+    if (cleanTracked && (repoPlan?.headMoves || repoPlan?.sameHead)) {
       const local = kind === "write" ? localSource(entry) : null;
       actions.push({
         path: entry.path,
@@ -787,6 +793,14 @@ export function planReconcile(input: PlanInput): Plan {
   const replacing = new Map<string, number>();
   for (const action of actions)
     if (action.replaces) replacing.set(action.row, (replacing.get(action.row) ?? 0) + 1);
+  // A replaced repository's actions replace nothing one by one: Apply backs up
+  // its whole folder, so every file found there counts, and at least the folder.
+  for (const repo of replacedRows) {
+    const held = input.destination.files.filter(
+      (file) => file.type !== "directory" && within(repo.path, key(file.path)),
+    ).length;
+    replacing.set(repo.id, (replacing.get(repo.id) ?? 0) + Math.max(held, 1));
+  }
   for (const [index, row] of rows.entries())
     rows[index] = { ...row, replacing: replacing.get(row.id) ?? 0 };
   const git = [...repoPlans.values()].flatMap((plan) => (plan.step ? [plan.step] : []));

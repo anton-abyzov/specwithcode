@@ -9,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
+  /** The look for folder copies before an update (prepareServiceUpdate, stopping nothing). */
+  prepare: vi.fn(),
+  prepareCommand: Symbol("prepareServiceUpdate"),
   toast: vi.fn(),
   clipboard: vi.fn(),
   continueThreadsAfterServerUpdate: false,
@@ -38,10 +41,14 @@ vi.mock("~/state/session", () => ({
   environmentSession: { sessionStateAtom: () => testState.sessionAtom },
 }));
 vi.mock("~/state/server", () => ({
-  serverEnvironment: { updateServer: Symbol("updateServer") },
+  serverEnvironment: {
+    updateServer: Symbol("updateServer"),
+    prepareServiceUpdate: testState.prepareCommand,
+  },
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: () => testState.updateServer,
+  useAtomCommand: (command: unknown) =>
+    command === testState.prepareCommand ? testState.prepare : testState.updateServer,
 }));
 vi.mock("./ui/toast", () => ({
   toastManager: { add: testState.toast },
@@ -76,8 +83,8 @@ function renderAction(): ActionElement {
 }
 
 async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  // The update looks for folder copies first, a few promise turns before it starts.
+  for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
 }
 
 const legacyAuth = {
@@ -99,6 +106,9 @@ const currentSession = {
 describe("ServerUpdateAction", () => {
   beforeEach(() => {
     testState.updateServer.mockReset();
+    testState.prepare
+      .mockReset()
+      .mockResolvedValue(AsyncResult.success({ idle: true, blockers: [] }));
     testState.toast.mockReset();
     testState.clipboard.mockReset();
     testState.continueThreadsAfterServerUpdate = false;
@@ -208,6 +218,7 @@ describe("ServerUpdateAction", () => {
     const action = renderAction();
     action.props.onClick?.();
     action.props.onClick?.();
+    await flushPromises();
 
     expect(testState.updateServer).toHaveBeenCalledTimes(1);
     finishUpdate?.();
@@ -381,6 +392,9 @@ describe("ServerUpdatesAction", () => {
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     testState.updateServer.mockReset();
+    testState.prepare
+      .mockReset()
+      .mockResolvedValue(AsyncResult.success({ idle: true, blockers: [] }));
     testState.toast.mockReset();
     resetConfirmDialogForTests();
   });
@@ -458,6 +472,53 @@ describe("ServerUpdatesAction", () => {
     });
     expect(button.props.disabled).toBe(false);
     expect(testState.toast).toHaveBeenCalledTimes(2);
+  });
+
+  // 2026-10-29: "Update all" restarted ministorm while it pulled a 5.6 GB folder from the M4.
+  it("asks before an update that would cut off a folder copy, and updates the rest", async () => {
+    registerConfirmDialogHost();
+    testState.updateServer.mockResolvedValue(success);
+    testState.prepare.mockImplementation(async ({ environmentId }: { environmentId: string }) =>
+      AsyncResult.success({
+        idle: false,
+        blockers: [],
+        folderCopies: environmentId === "batch-a" ? 1 : 0,
+      }),
+    );
+    const button = await mount();
+    await act(async () => {
+      button.props.onClick();
+    });
+    // The look stops nothing.
+    expect(testState.prepare.mock.calls.map(([call]) => call)).toEqual([
+      { environmentId: "batch-a", input: { stopWork: false } },
+      { environmentId: "batch-b", input: { stopWork: false } },
+    ]);
+    expect(readConfirmDialogState()).toEqual(
+      expect.objectContaining({
+        status: "confirming",
+        message:
+          "Laptop is copying a folder to or from another machine. Updating restarts it and cuts the copy off; it may need Retry. Update anyway?",
+      }),
+    );
+    expect(testState.updateServer.mock.calls.map(([target]) => target.environmentId)).toEqual([
+      "batch-b",
+    ]);
+    await act(async () => {
+      respondToConfirmDialog(false);
+    });
+    expect(testState.updateServer).toHaveBeenCalledTimes(1);
+    expect(button.props.disabled).toBe(false);
+  });
+
+  it("goes ahead when that machine cannot say what it copies", async () => {
+    testState.updateServer.mockResolvedValue(success);
+    testState.prepare.mockRejectedValue(new Error("an older server"));
+    const button = await mount();
+    await act(async () => {
+      button.props.onClick();
+    });
+    expect(testState.updateServer).toHaveBeenCalledTimes(2);
   });
 
   it("asks once for desktop machines and cancels the entire batch", async () => {

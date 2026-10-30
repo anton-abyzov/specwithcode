@@ -69,6 +69,7 @@ import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceR
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ServiceUpdateClosedQuestions from "./serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import * as ServiceUpdateHold from "./serviceUpdate/ServiceUpdateHold.ts";
+import * as FolderWork from "./fleet/folderTransfer/folderWork.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -878,6 +879,8 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   // One hold for the whole service: the update drain sets it, and the
   // orchestrator, schedulers, pollers and terminals read it.
   Layer.provideMerge(ServiceUpdateHold.layer),
+  // Folder copies in flight: the handoff service registers them, a normal update waits for them.
+  Layer.provideMerge(FolderWork.layer),
   // What a forced update closed, so it is asked again after the update: the drain
   // records it, the reopen worker and restart continuations read it.
   Layer.provideMerge(ServiceUpdateClosedQuestions.layer),

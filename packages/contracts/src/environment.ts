@@ -187,6 +187,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Absent on older servers: the primary falls back to the boot service's
       self-update RPC on Linux, or reports that the machine updates itself. */
   fleetUpdateRequest: Schema.optionalKey(Schema.Boolean),
+  /** A normal fleet update request waits here until no folder copy runs (folderWork).
+      Absent on older servers, which restart at once: the primary holds a normal
+      request back while it copies a folder itself. */
+  fleetUpdateWaitsForFolderCopies: Schema.optionalKey(Schema.Boolean),
   /** Server takes its fleet primary's skill installs at `/api/studio/fleet/skills`.
       Absent on older servers: the primary reports `unsupported` for them. */
   fleetSkillUpdate: Schema.optionalKey(Schema.Boolean),

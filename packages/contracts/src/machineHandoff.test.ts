@@ -76,6 +76,50 @@ describe("machine handoff wire and permissions", () => {
       code: "unsafe_path",
     });
   });
+  it("round-trips a folder copy's source changes and bounds what it carries", () => {
+    const changes = {
+      digest: "a".repeat(64),
+      total: 2,
+      truncated: false,
+      acceptable: true,
+      rows: [
+        { path: ".specweave/ledger.jsonl", kind: "changed", size: 12 },
+        {
+          path: "repositories/svc",
+          kind: "repository",
+          repository: {
+            headFrom: "1".repeat(40),
+            headTo: "2".repeat(40),
+            branchesChanged: ["main"],
+            stashFrom: 0,
+            stashTo: 1,
+            indexChanged: false,
+          },
+        },
+      ],
+    };
+    const wire = { _tag: "MachineHandoffError", code: "source_changed", changes };
+    const error = Schema.decodeUnknownSync(MachineHandoffError)(wire);
+    expect(error.changes).toEqual(changes);
+    expect(error.message).toContain("Review them");
+    expect(Schema.encodeSync(MachineHandoffError)(error)).toEqual(wire);
+    expect(new MachineHandoffError({ code: "source_changed" }).message).toContain(
+      "Start a new handoff",
+    );
+    const decodes = (value: unknown) =>
+      Schema.decodeUnknownExit(MachineHandoffError)({ ...wire, changes: value })._tag === "Success";
+    const refs = { ...changes.rows[1]!.repository!, refsChanged: true, settingsChanged: true };
+    expect(decodes({ ...changes, rows: [{ ...changes.rows[1], repository: refs }] })).toBe(true);
+    expect(decodes({ ...changes, digest: "../report" })).toBe(false);
+    expect(decodes({ ...changes, rows: [{ path: "a", kind: "renamed" }] })).toBe(false);
+    expect(decodes({ ...changes, rows: Array.from({ length: 501 }, () => changes.rows[0]) })).toBe(
+      false,
+    );
+    const accepts = (acceptedSourceChanges: string) =>
+      isPrepareInput({ projectId: "p", operationId, publish: true, acceptedSourceChanges });
+    expect(accepts("b".repeat(64))).toBe(true);
+    expect(accepts("not-a-digest")).toBe(false);
+  });
   it("requires an explicit publish choice and safe UUID", () => {
     const input = {
       projectId: "p",

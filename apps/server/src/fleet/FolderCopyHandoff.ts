@@ -8,11 +8,13 @@ import {
   type FolderCopySourceStatus,
   type FolderCopyStatus,
   type FolderCopyUndoResult,
+  type MachineHandoffError,
   type MachineHandoffRepository,
   ProjectId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import { sha256 } from "../nodeCrypto.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import {
   CopyError,
   type DestinationRecord,
@@ -29,6 +31,38 @@ import type { SentSecret } from "./folderTransfer/secrets.ts";
 import type { UndoPreview, UndoResult } from "./folderTransfer/undo.ts";
 import { copiedProjectFolder } from "./folderCopyScope.ts";
 import { handoffRef, safeRelativePath } from "./handoffGitTypes.ts";
+
+/** A handoff refusal as the folder copy calls answer it. */
+export const asCopyError = (cause: MachineHandoffError) =>
+  new FolderCopyError({
+    code:
+      cause.code === "busy"
+        ? "busy"
+        : cause.code === "not_found"
+          ? "not_found"
+          : cause.code === "conflict"
+            ? "refused"
+            : "invalid",
+  });
+
+export const UPDATING_DETAIL =
+  "This machine is installing a SpecWithCode update. Try again once it restarts.";
+
+/**
+ * Starts a copy step (offer, start, retry, approve) only while the service is not held for an
+ * update, inside its admission: a drain either refuses the step or waits for it and then counts
+ * the copy (`folderCopies`), so no copy begins unseen and is cut off by the restart.
+ */
+export const unlessUpdating = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.flatMap(ServiceUpdateHold.optional, (hold) =>
+    hold
+      .admit("folder copy", effect)
+      .pipe(
+        Effect.catchTag("ServiceUpdateInProgressError", () =>
+          Effect.fail(new FolderCopyError({ code: "refused", detail: UPDATING_DETAIL })),
+        ),
+      ),
+  );
 
 /** Conflicts listed per row; the rest are counted so a status stays small. */
 export const MAX_ROW_CONFLICTS = 200;

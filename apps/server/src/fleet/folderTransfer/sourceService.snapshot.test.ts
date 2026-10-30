@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - isolated capture durability and cancellation tests.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - isolated capture durability and cancellation tests.
 import * as Crypto from "node:crypto";
 import * as FSP from "node:fs/promises";
 import * as OS from "node:os";
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as Zlib from "node:zlib";
 import { DEFAULT_SELECTION } from "./classify.ts";
 import * as Durable from "./durable.ts";
+import { makeUmbrella } from "./folderFixture.testkit.ts";
 import * as Capture from "./sourceSnapshot.ts";
 import { SourceTransfers } from "./sourceService.ts";
 vi.mock("./durable.ts", async (original) => {
@@ -30,7 +31,8 @@ beforeEach(async () => {
   await FSP.mkdir(folder);
   await FSP.writeFile(Path.join(folder, "a.txt"), "first source");
   await FSP.writeFile(Path.join(folder, "b.txt"), "second source");
-  source = new SourceTransfers(state);
+  // File stamps older than a tick before capture, as on a machine where files settled.
+  source = new SourceTransfers(state, { stampClock: () => Date.now() + 10_000 });
   id = Crypto.randomUUID();
 });
 afterEach(async () => {
@@ -203,7 +205,9 @@ it.each([false, true])(
   async (keepsChanging) => {
     const loaded = await offered();
     const actual = await vi.importActual<typeof Capture>("./sourceSnapshot.ts");
-    vi.mocked(Capture.captureSourceFiles).mockImplementation(actual.captureSourceFiles);
+    vi.mocked(Capture.captureSourceFiles).mockImplementation((input) =>
+      actual.captureSourceFiles({ ...input, retryWait: async () => {} }),
+    );
     const open = FSP.open;
     let creations = 0;
     vi.spyOn(FSP, "open").mockImplementation(async (path, flags, mode) => {
@@ -216,7 +220,7 @@ it.each([false, true])(
     await source.requestManifest(loaded, DEFAULT_SELECTION);
     await loaded.building;
     if (keepsChanging) {
-      expect(creations).toBe(3);
+      expect(creations).toBe(actual.STABLE_ATTEMPTS);
       expect(loaded.record.state).toBe("failed");
       expect(loaded.record.capturedSource).toBeUndefined();
       await expect(
@@ -230,3 +234,69 @@ it.each([false, true])(
     expect(await FSP.readFile(Path.join(folder, "a.txt"), "utf8")).toBe("first source");
   },
 );
+
+it("captures a moving copy like a plain one, so a growing ledger does not stale its approval", async () => {
+  const umbrella = makeUmbrella(base);
+  const ledger = Path.join(umbrella.root, ".specweave/increments/0001-x/ledger.jsonl");
+  await FSP.writeFile(ledger, '{"t":"T-01","e":"claim"}\n');
+  const actual = await vi.importActual<typeof Capture>("./sourceSnapshot.ts");
+  vi.mocked(Capture.captureSourceFiles).mockImplementation(actual.captureSourceFiles);
+  const offer = await source.offer({
+    operationId: id,
+    folder: umbrella.root,
+    projectId: "fixture",
+    mode: "copy-and-move",
+    destinationEnvironmentId: "destination",
+  });
+  const loaded = await source.authorize(id, offer.token);
+  await loaded.building;
+  await source.requestManifest(loaded, DEFAULT_SELECTION);
+  await loaded.building;
+  expect(loaded.record).toMatchObject({ state: "ready", error: null });
+  expect(loaded.record.capturedSource?.packHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(vi.mocked(Capture.captureSourceFiles).mock.calls[0]?.[0].onChanging).toBe("keep-last");
+  const basis = JSON.parse(
+    await FSP.readFile(Path.join(state, "folder-sources", id, "drift-basis.json"), "utf8"),
+  );
+  expect(basis.stats[".specweave/increments/0001-x/ledger.jsonl"]).toMatchObject({
+    size: String(Buffer.byteLength('{"t":"T-01","e":"claim"}\n')),
+  });
+  expect(Object.keys(basis.stats).some((path) => path.includes(".git/"))).toBe(false);
+  expect(basis.changing).toEqual([]);
+  expect(Object.keys(basis.indexes)).toEqual(expect.arrayContaining(["."]));
+  // The manifest the destination reads is unchanged: the basis stays beside it.
+  const manifest = await source.manifest(loaded);
+  if (!manifest.ready) throw new Error("capture not ready");
+  expect(manifest.bytes.includes(Buffer.from("ctimeNs"))).toBe(false);
+  await FSP.appendFile(ledger, '{"t":"T-01","e":"done"}\n');
+  await expect(source.validateReviewed(id)).resolves.toEqual({ current: true, captured: true });
+});
+
+it("falls back to live checks for a moving copy the source has no room to capture", async () => {
+  const actual = await vi.importActual<typeof Capture>("./sourceSnapshot.ts");
+  vi.mocked(Capture.captureSourceFiles).mockImplementation(async () => {
+    throw new actual.CaptureSpaceRefused("Capturing this copy needs 10 bytes free on the source.");
+  });
+  for (const mode of ["copy-and-move", "copy-only"] as const) {
+    const operationId = Crypto.randomUUID();
+    const offer = await source.offer({
+      operationId,
+      folder,
+      projectId: "fixture",
+      mode,
+      destinationEnvironmentId: "destination",
+    });
+    const loaded = await source.authorize(operationId, offer.token);
+    await loaded.building;
+    await source.requestManifest(loaded, DEFAULT_SELECTION);
+    await loaded.building;
+    if (mode === "copy-and-move") {
+      // As before captured moves: the live tree is hashed and served, nothing is refused.
+      expect(loaded.record).toMatchObject({ state: "ready", error: null });
+      expect(loaded.record.capturedSource).toBeUndefined();
+    } else {
+      expect(loaded.record.state).toBe("failed");
+      expect(loaded.record.error).toMatch(/needs 10 bytes free/);
+    }
+  }
+});

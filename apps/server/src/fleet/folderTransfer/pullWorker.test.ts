@@ -11,7 +11,7 @@ import type { ManifestEntry } from "./manifest.ts";
 import { finalPass, pullFiles, stagedPath, type PullFile } from "./pullWorker.ts";
 import { checkSourceUrl, SourceClient, SourceClientError } from "./sourceClient.ts";
 import { SourceTransfers } from "./sourceService.ts";
-import { serveSource } from "./sourceTestServer.testkit.ts";
+import { liveMovingCopies, serveSource } from "./sourceTestServer.testkit.ts";
 
 const operationId = "019a0000-0000-7000-8000-0000000000a1";
 let base: string;
@@ -47,7 +47,10 @@ const pullList = (): Array<PullFile> =>
 beforeAll(async () => {
   base = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-pull-")));
   fixture = makeUmbrella(base);
-  transfers = new SourceTransfers(NodePath.join(base, "source-state"));
+  // Live-file refreshes are what an uncaptured moving copy relies on.
+  transfers = new SourceTransfers(NodePath.join(base, "source-state"), {
+    verifyCaptureFilesystem: liveMovingCopies,
+  });
   served = await serveSource(transfers, "env-source");
   const offered = await transfers.offer({
     operationId,

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { DestinationCopies, type DestinationHooks } from "./destinationService.ts";
 import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import { SourceTransfers, type SourceOperationRecord } from "./sourceService.ts";
-import { serveSource } from "./sourceTestServer.testkit.ts";
+import { liveMovingCopies, serveSource } from "./sourceTestServer.testkit.ts";
 
 let base: string;
 let fixture: UmbrellaFixture;
@@ -19,7 +19,9 @@ const released: Array<string> = [];
 beforeAll(async () => {
   base = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-held-")));
   fixture = makeUmbrella(base);
+  // Held copies come from live-file moves, which uncaptured volumes keep.
   transfers = new SourceTransfers(NodePath.join(base, "source-state"), {
+    verifyCaptureFilesystem: liveMovingCopies,
     release: async (record: SourceOperationRecord) => {
       released.push(record.operationId);
     },

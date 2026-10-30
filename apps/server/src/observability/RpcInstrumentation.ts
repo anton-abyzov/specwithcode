@@ -59,6 +59,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.machineHandoffCopyCapabilities]: "projects",
   [WS_METHODS.machineHandoffCopyOffer]: "projects",
   [WS_METHODS.machineHandoffCopySourceStatus]: "projects",
+  [WS_METHODS.machineHandoffCopyDrift]: "projects",
   [WS_METHODS.machineHandoffCopySourceCancel]: "projects",
   [WS_METHODS.machineHandoffCopyRelease]: "projects",
   [WS_METHODS.machineHandoffCopyStart]: "projects",

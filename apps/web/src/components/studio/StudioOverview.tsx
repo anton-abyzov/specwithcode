@@ -287,6 +287,8 @@ export function StudioOverview() {
       ) {
         throw new Error("native-instance-unavailable");
       }
+      // A workers-only copy's request opens its coordinator on another machine. The handoff
+      // redirects it, names this copy and leaves out this machine's model; a draft stays here.
       const result = await openDestination(scopeProjectRef(project.environmentId, project.id), {
         environmentSelection: "manual",
         model: request?.model,

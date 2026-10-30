@@ -13,7 +13,9 @@
  *   SHA256SUMS;
  * - a Linux boot service: the server self-update (`ServerSelfUpdate.update`),
  *   which downloads the release archive and checks it against the release
- *   checksums before the launcher switches over.
+ *   checksums before the launcher switches over. A normal request downloads at
+ *   once but switches over only once nothing runs here (`awaitQuiet`): no turn,
+ *   terminal or folder copy, as `update --if-idle` decides it.
  *
  * The request path is narrow on purpose: install a newer published version,
  * cancel a request this path wrote (never one Update now or anything else on
@@ -33,6 +35,8 @@ import {
   type ServerPrepareServiceUpdateInput,
   type ServerPrepareServiceUpdateResult,
   type ServerSelfUpdateProgressStage,
+  type ServiceUpdateBlockerKind,
+  ServerSelfUpdateError,
   StudioFleetUpdateError,
   WS_METHODS,
   WsRpcGroup,
@@ -65,6 +69,7 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -80,6 +85,7 @@ import * as Socket from "effect/socket/Socket";
 import * as ServerConfig from "../config.ts";
 import * as ServerSelfUpdate from "../cloud/selfUpdate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { folderCopiesText } from "./folderTransfer/folderWork.ts";
 import { installedManagedUpdateHelper } from "../managedUpdates/ManagedUpdatesService.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceUpdatePreparation from "../serviceUpdate/ServiceUpdatePreparation.ts";
@@ -232,11 +238,52 @@ export interface FleetUpdateWorkerDeps {
   ) => Effect.Effect<ServerPrepareServiceUpdateResult, ServerPrepareServiceUpdateError>;
   /** True when `version` is a published release with an archive for this platform. */
   readonly releasePublished: (version: string) => Effect.Effect<boolean>;
-  /** The boot service's self-update to `version`. */
+  /**
+   * The boot service's self-update to `version`. A `report` that fails stops it
+   * before the launcher switches over.
+   */
   readonly selfUpdate: (
     version: string,
-    report: (stage: ServerSelfUpdateProgressStage) => Effect.Effect<void>,
+    report: (
+      stage: ServerSelfUpdateProgressStage,
+    ) => Effect.Effect<void, { readonly reason: string }>,
   ) => Effect.Effect<unknown, { readonly reason: string }>;
+  /** How often and how long a normal boot-service install waits for quiet; tests shorten both. */
+  readonly quietWait?: { readonly pollMs: number; readonly maxMs: number };
+}
+
+/** How often a normal boot-service install looks again while something runs. */
+export const BOOT_QUIET_POLL_MS = 30_000;
+/**
+ * How long it waits before it gives up as `busy`. Stale copies and abandoned
+ * offers never count (folderWork), so only work that still progresses keeps it
+ * waiting, and a multi-gigabyte copy over Connect can take this long. It ends
+ * well inside fleet_rollout's 60-minute worker deadline, so the primary reads
+ * the refusal rather than its own timeout.
+ */
+export const BOOT_QUIET_MAX_MS = 30 * 60_000;
+
+const WORK_NOUNS: Record<ServiceUpdateBlockerKind, readonly [string, string]> = {
+  run: ["running task", "running tasks"],
+  queued: ["queued message", "queued messages"],
+  request: ["open request", "open requests"],
+  effect: ["finishing step", "finishing steps"],
+  session: ["active session", "active sessions"],
+};
+
+/** What keeps a normal install waiting, as one list: "1 folder copy, 2 running tasks". */
+export function quietWaitReasons(result: ServerPrepareServiceUpdateResult): string {
+  const counts = new Map<ServiceUpdateBlockerKind, number>();
+  for (const blocker of result.blockers)
+    counts.set(blocker.kind, (counts.get(blocker.kind) ?? 0) + blocker.count);
+  const copies = result.folderCopies ?? 0;
+  const terminals = result.openTerminals ?? 0;
+  const parts = [
+    ...(copies > 0 ? [folderCopiesText(copies)] : []),
+    ...[...counts].map(([kind, count]) => `${count} ${WORK_NOUNS[kind][count === 1 ? 0 : 1]}`),
+    ...(terminals > 0 ? [`${terminals} open terminal${terminals === 1 ? "" : "s"}`] : []),
+  ];
+  return parts.length > 0 ? parts.join(", ") : "another update hold";
 }
 
 interface WorkerState {
@@ -268,6 +315,14 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
     const written = yield* Ref.make<ReadonlySet<string>>(new Set());
     /** True while this path holds the service: the only hold it may release. */
     const heldHere = yield* Ref.make(false);
+    /**
+     * The latest normal boot-service install: its version and fiber. It still runs
+     * while the phase is `downloading` or `requested` (waiting for quiet).
+     */
+    const quietWaiter = yield* Ref.make<
+      Option.Option<{ readonly version: string; readonly fiber: Fiber.Fiber<void> }>
+    >(Option.none());
+    const quietWait = deps.quietWait ?? { pollMs: BOOT_QUIET_POLL_MS, maxMs: BOOT_QUIET_MAX_MS };
     const remember = (request: StudioFleetUpdateRequestRecord | undefined) =>
       request?.installRequestedAt == null
         ? Effect.void
@@ -364,6 +419,94 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
         });
       });
 
+    /**
+     * Takes the if-idle hold `update --if-idle` takes, looking again every
+     * `pollMs` while anything runs, and hands its token to `held` in the same
+     * uninterruptible step, so an interrupt never leaves a hold nobody knows of;
+     * fails as `busy` after `maxMs`. Meanwhile the phase is `requested` and
+     * `lastError` says what it waits for.
+     */
+    const awaitQuiet = (version: string, held: (token: string) => Effect.Effect<void>) =>
+      Effect.gen(function* () {
+        const began = yield* Clock.currentTimeMillis;
+        while (true) {
+          const look = yield* Effect.uninterruptible(
+            deps.prepare({ stopWork: false, hold: true, ifIdle: true, reason: "install" }).pipe(
+              Effect.option,
+              Effect.tap((answer) =>
+                Option.isSome(answer) &&
+                answer.value.held === true &&
+                answer.value.holdToken !== undefined
+                  ? held(answer.value.holdToken)
+                  : Effect.void,
+              ),
+            ),
+          );
+          if (Option.isSome(look) && look.value.held === true && look.value.holdToken !== undefined)
+            return;
+          const waiting = Option.isSome(look)
+            ? quietWaitReasons(look.value)
+            : "a check of what runs here, which failed";
+          const minutes = Math.round(quietWait.maxMs / 60_000);
+          if ((yield* Clock.currentTimeMillis) - began + quietWait.pollMs > quietWait.maxMs)
+            return yield* Effect.fail({
+              reason: `${version} was not installed: this machine stayed busy for ${minutes} minutes (${waiting}). Ask again once it is quiet, or force the update.`,
+            });
+          yield* set({
+            phase: "requested",
+            targetVersion: version,
+            lastError: `Installs ${version} once this machine is quiet; waiting for ${waiting} (up to ${minutes} minutes).`,
+          });
+          yield* Effect.sleep(Duration.millis(quietWait.pollMs));
+        }
+      });
+
+    /** The boot service's self-update; a normal one switches over only once nothing runs. */
+    const bootInstall = (version: string, normal: boolean) =>
+      Effect.gen(function* () {
+        let holdToken: string | undefined;
+        let busy = false;
+        const keep = (token: string) =>
+          Effect.sync(() => {
+            holdToken = token;
+          });
+        const report = (stage: ServerSelfUpdateProgressStage) =>
+          normal && stage === "installing"
+            ? awaitQuiet(version, (token) =>
+                keep(token).pipe(Effect.andThen(set({ phase: stage, targetVersion: version }))),
+              ).pipe(
+                Effect.mapError((error) => {
+                  busy = true;
+                  return error;
+                }),
+              )
+            : set({ phase: stage, targetVersion: version });
+        // Nobody would release an if-idle hold no switch-over follows.
+        const release = Effect.suspend(() =>
+          holdToken === undefined
+            ? Effect.void
+            : deps.prepare({ stopWork: false, releaseHold: true, holdToken }).pipe(Effect.ignore),
+        );
+        yield* deps.selfUpdate(version, report).pipe(
+          // A forced request, or another release, replaced it after it took the hold.
+          Effect.onInterrupt(() => release),
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.gen(function* () {
+                yield* release;
+                yield* set(
+                  fail(
+                    { phase: "downloading", targetVersion: version },
+                    busy ? "busy" : "failed",
+                    error.reason,
+                  ),
+                );
+              }),
+            onSuccess: () => set({ phase: "handed-off", targetVersion: version }),
+          }),
+        );
+      });
+
     const started = (
       method: StudioFleetUpdateMethod,
       ask: Extract<FleetUpdateAsk, { version: string }>,
@@ -371,7 +514,18 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
       Effect.gen(function* () {
         const version = ask.version;
         const current = yield* Ref.get(state);
-        if (IN_FLIGHT.has(current.phase))
+        const latest = yield* Ref.get(quietWaiter);
+        const waiter =
+          current.phase === "downloading" || current.phase === "requested" ? latest : Option.none();
+        // Asked again for the release it waits to install: the same wait answers.
+        if (Option.isSome(waiter) && ask.mode === "normal" && waiter.value.version === version)
+          return {
+            method,
+            result: "accepted" as const,
+            phase: current.phase,
+            serverVersion: deps.serverVersion,
+          };
+        if (Option.isNone(waiter) && IN_FLIGHT.has(current.phase))
           return yield* refuse(
             "busy",
             `An update to ${current.targetVersion ?? "a new release"} is already ${current.phase} here.`,
@@ -383,19 +537,14 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
               "unknown-version",
               `${version} is not a published release with an archive for this machine.`,
             );
+          // A forced request, or another release, replaces a normal install still waiting.
+          if (Option.isSome(waiter)) yield* Fiber.interrupt(waiter.value.fiber);
           yield* set({ phase: "downloading", targetVersion: version });
-          yield* deps
-            .selfUpdate(version, (stage) => set({ phase: stage, targetVersion: version }))
-            .pipe(
-              Effect.matchEffect({
-                onFailure: (error) =>
-                  set(
-                    fail({ phase: "downloading", targetVersion: version }, "failed", error.reason),
-                  ),
-                onSuccess: () => set({ phase: "handed-off", targetVersion: version }),
-              }),
-              Effect.forkDetach,
-            );
+          const fiber = yield* bootInstall(version, ask.mode === "normal").pipe(Effect.forkDetach);
+          yield* Ref.set(
+            quietWaiter,
+            ask.mode === "normal" ? Option.some({ version, fiber }) : Option.none(),
+          );
           return {
             method,
             result: "accepted" as const,
@@ -490,13 +639,37 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
         return yield* exclusive(started(method, ask));
       });
 
-    const cancel = (method: StudioFleetUpdateMethod, request: string) =>
+    /**
+     * A normal boot-service install still downloading or waiting for quiet: it is withdrawn, and the
+     * if-idle hold it may have just taken is released (`bootInstall`'s interrupt). It has no request
+     * record, so any request names it. Once it switches over, nothing cancels it.
+     */
+    const cancelQuietWait = (method: StudioFleetUpdateMethod) =>
       Effect.gen(function* () {
-        if (method !== "service-agent")
+        const current = yield* Ref.get(state);
+        const waiter = yield* Ref.get(quietWaiter);
+        if (
+          Option.isNone(waiter) ||
+          (current.phase !== "downloading" && current.phase !== "requested")
+        )
           return yield* refuse(
             "unsupported",
-            "A boot-service update cannot be cancelled once it was asked for.",
+            "A boot-service update can be cancelled only while it waits for this machine to be quiet.",
           );
+        yield* Fiber.interrupt(waiter.value.fiber);
+        yield* Ref.set(quietWaiter, Option.none());
+        yield* set({ phase: "cancelled", targetVersion: waiter.value.version });
+        return {
+          method,
+          result: "cancelled" as const,
+          phase: "cancelled" as const,
+          serverVersion: deps.serverVersion,
+        };
+      });
+
+    const cancel = (method: StudioFleetUpdateMethod, request: string) =>
+      Effect.gen(function* () {
+        if (method !== "service-agent") return yield* cancelQuietWait(method);
         if (!(yield* Ref.get(written)).has(request))
           return yield* refuse(
             "unsupported",
@@ -656,7 +829,11 @@ export const layer = Layer.effect(
       prepare: preparation.prepare,
       releasePublished,
       selfUpdate: (version, report) =>
-        selfUpdate.update({ targetVersion: version }, (stage) => report(stage)),
+        selfUpdate.update({ targetVersion: version }, (stage) =>
+          report(stage).pipe(
+            Effect.mapError((error) => new ServerSelfUpdateError({ reason: error.reason })),
+          ),
+        ),
     });
   }),
 );
@@ -715,6 +892,8 @@ export interface FleetUpdateClientInput {
   readonly sleep?: (ms: number) => Promise<void>;
   /** Checks a version is published (its SHA256SUMS lists an archive for that platform). */
   readonly releasePublished?: (version: string, platformKey: string) => Promise<boolean>;
+  /** Folder copies in flight on this machine, as its service's heartbeat reports them. */
+  readonly localFolderCopies?: number;
 }
 
 const STATUS_KEYS = [
@@ -864,6 +1043,20 @@ export async function runFleetUpdate(input: FleetUpdateClientInput): Promise<Fle
   }
   const transport = transportOf(reached);
   const capabilities = descriptor.capabilities as Record<string, unknown>;
+  // An older machine installs a normal request at once, whatever it copies. A copy running
+  // here may be with that machine, and its restart would cut it off: the ask waits for it.
+  const copies = input.localFolderCopies ?? 0;
+  if (
+    action.kind === "request" &&
+    !action.hold &&
+    copies > 0 &&
+    capabilities.fleetUpdateWaitsForFolderCopies !== true &&
+    (capabilities.fleetUpdateRequest === true || capabilities.serverSelfUpdate === "boot-service")
+  )
+    throw new FleetUpdateFailure(
+      "busy",
+      `${target.label} runs ${descriptor.serverVersion}, which restarts at once on a normal update, and this machine has ${folderCopiesText(copies)} in progress that may be with it. Ask again once the copy finishes, or force the update.`,
+    );
   if (capabilities.fleetUpdateRequest === true)
     return runOverEndpoint({ ...input, token, transport });
   if (capabilities.serverSelfUpdate === "boot-service")

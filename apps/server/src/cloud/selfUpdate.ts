@@ -184,7 +184,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const releaseBaseUrl = Option.getOrUndefined(
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
   );
-  const inFlight = yield* Ref.make(false);
+  /** The update under way, by its own token, so one that gave way never clears another's. */
+  const inFlight = yield* Ref.make<symbol | null>(null);
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
@@ -217,7 +218,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     if (!isExactServiceVersion(targetVersion)) {
       return yield* failWith(`'${targetVersion}' is not an exact specweave-studio version.`);
     }
-    if (yield* Ref.getAndSet(inFlight, true)) {
+    const token = Symbol(targetVersion);
+    const take = Ref.modify(inFlight, (current) =>
+      current === null ? ([true, token] as const) : ([false, current] as const),
+    );
+    if (!(yield* take)) {
       return yield* failWith("A server update is already in progress.");
     }
 
@@ -310,7 +315,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         ),
       );
 
+      // The caller may wait here before the switch-over (a normal fleet install waits for
+      // quiet), so another update, Update now among them, may go ahead meanwhile.
+      yield* Ref.set(inFlight, null);
       yield* reportProgress("installing");
+      if (!(yield* take)) {
+        return yield* failWith(
+          "Another server update went ahead while this one waited to switch over.",
+        );
+      }
       const updateId = yield* Effect.uninterruptible(
         launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
           Effect.mapError((error) =>
@@ -331,7 +344,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         runtimePath: paths.entryPath,
       });
       return { targetVersion, method: "boot-service" as const, updateId };
-    }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
+    }).pipe(
+      Effect.onError(() => Ref.update(inFlight, (current) => (current === token ? null : current))),
+    );
   });
 
   return ServerSelfUpdate.of({

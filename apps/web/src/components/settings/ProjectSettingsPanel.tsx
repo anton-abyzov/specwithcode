@@ -23,7 +23,8 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { readProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectLocation } from "../studio/ProjectLocation";
@@ -71,7 +72,7 @@ export function ProjectSettingsPanel({
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
 
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const missingCheckoutEnvironments = useMemo(
     () =>
       environments.map((environment) => ({
@@ -213,7 +214,7 @@ function ProjectDetail({
   const { confirmDeletion, deletionDialog, removeConfirmedWorktrees } =
     useProjectDeletionConfirmation();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const environmentById = useMemo(
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],

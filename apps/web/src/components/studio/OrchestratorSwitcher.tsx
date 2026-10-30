@@ -283,43 +283,12 @@ export function ProjectOrchestratorSwitcher({
   const navigate = useNavigate();
   // A nickname shows as typed; only a host label drops its owner.
   const name = useMachineNickname(project.environmentId, label);
-  const startCoordinator = useAtomCommand(projectLink.startCoordinator, { reportFailure: false });
-  const starting = useRef(false);
+  const start = useStartCoordinator(members, copies);
   useMachineLastSeenVersion();
   const now = nowFromMinute(useNowMinute());
   const statusDetail = isThisDevice
     ? disconnectedLabel
     : remoteOrchestratorOfflineLabel(name, machineLastSeenAt(project.environmentId), now);
-  const start = async (key: string) => {
-    const member = members.find((item) => `${item.environmentId}:${item.id}` === key);
-    const copy = copies.find((item) => item.key === key);
-    if (!member || !copy || starting.current) return;
-    starting.current = true;
-    try {
-      const result = await startCoordinator({
-        environmentId: member.environmentId,
-        input: {
-          operationId: randomUUID(),
-          projectId: member.id,
-          knownEpoch: highestEpoch(members),
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "success",
-        title: `${copy.machine} now runs its own coordinator`,
-        description: "Each coordinator keeps the threads it started. Nothing moved.",
-      });
-    } catch (cause) {
-      toastManager.add({
-        type: "error",
-        title: `${copy.machine} did not start a coordinator`,
-        description: cause instanceof Error && cause.message ? cause.message : "Retry it.",
-      });
-    } finally {
-      starting.current = false;
-    }
-  };
   return (
     <OrchestratorSwitcher
       label={name}
@@ -345,4 +314,50 @@ export function ProjectOrchestratorSwitcher({
       }
     />
   );
+}
+
+// Projects with a coordinator start in flight. Shared by every caller (the
+// switcher and the composer notice) so two buttons never start two at once.
+const startingProjects = new Set<string>();
+
+/**
+ * Starts a coordinator on a linked workers-only copy, next to the one that runs
+ * now; each keeps the threads it started. One start per project runs at a time.
+ */
+export function useStartCoordinator(
+  members: readonly EnvironmentProject[],
+  copies: readonly OrchestratorCopy[],
+) {
+  const startCoordinator = useAtomCommand(projectLink.startCoordinator, { reportFailure: false });
+  return async (key: string) => {
+    const member = members.find((item) => `${item.environmentId}:${item.id}` === key);
+    const copy = copies.find((item) => item.key === key);
+    const project = member?.workspaceSettings?.logicalProject?.id ?? key;
+    if (!member || !copy || startingProjects.has(project)) return;
+    startingProjects.add(project);
+    try {
+      const result = await startCoordinator({
+        environmentId: member.environmentId,
+        input: {
+          operationId: randomUUID(),
+          projectId: member.id,
+          knownEpoch: highestEpoch(members),
+        },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "success",
+        title: `${copy.machine} now runs its own coordinator`,
+        description: "Each coordinator keeps the threads it started. Nothing moved.",
+      });
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: `${copy.machine} did not start a coordinator`,
+        description: cause instanceof Error && cause.message ? cause.message : "Retry it.",
+      });
+    } finally {
+      startingProjects.delete(project);
+    }
+  };
 }

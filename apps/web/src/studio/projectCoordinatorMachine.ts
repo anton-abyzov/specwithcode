@@ -11,6 +11,8 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type { LogicalProjectMember } from "@specweave-studio/contracts";
 import { COORDINATOR_PENDING_PROBLEM, logicalCoordinators } from "./projectDomain";
 
+export { coordinatorCheckout, coordinatorElsewhere, workersOnlyProblem } from "./workersOnlyCopy";
+
 export interface CoordinatorMachineMember {
   readonly environmentId: string;
   readonly id: string;

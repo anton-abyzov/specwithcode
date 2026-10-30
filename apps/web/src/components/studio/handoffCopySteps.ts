@@ -1,4 +1,8 @@
-import type { FolderCopySourceStatus, FolderCopyStatus } from "@specweave-studio/contracts";
+import type {
+  FolderCopySourceStatus,
+  FolderCopyStatus,
+  MachineHandoffSourceChanges,
+} from "@specweave-studio/contracts";
 import { formatBytes } from "../../studio/folderCopy";
 import type { ReplaceAllOutcome } from "./handoffFolderCopyPending";
 import { DestinationContextPreviewError, messageOf } from "./useCoordinatorTransfer";
@@ -151,17 +155,40 @@ export function sourceProgressText(progress: SourceProgress, sourceLabel: string
 const codeOf = (cause: unknown) =>
   typeof cause === "object" && cause !== null ? (cause as { code?: unknown }).code : undefined;
 
+/** The source's list of paths that changed after copying, when a newer source sent one. */
+const changesOf = (cause: unknown): MachineHandoffSourceChanges | null => {
+  const changes =
+    typeof cause === "object" && cause !== null
+      ? (cause as { changes?: unknown }).changes
+      : undefined;
+  return typeof changes === "object" &&
+    changes !== null &&
+    typeof (changes as MachineHandoffSourceChanges).digest === "string" &&
+    typeof (changes as MachineHandoffSourceChanges).total === "number" &&
+    Array.isArray((changes as MachineHandoffSourceChanges).rows)
+    ? (changes as MachineHandoffSourceChanges)
+    : null;
+};
+
+const paths = (value: number) => `${value.toLocaleString()} ${value === 1 ? "path" : "paths"}`;
+
 /**
  * What a refused coordinator transfer leaves: its notice, whether the recovery pointer
- * stays (the request may have fenced the source) and whether Copy again is the answer
- * (null leaves that as it was). `published` is true once context reached the destination.
+ * stays (the request may have fenced the source), whether Copy again is the answer
+ * (null leaves that as it was) and, from a newer source, exactly which paths changed.
+ * `published` is true once context reached the destination.
  */
 export function transferRefusal(
   cause: unknown,
   published: boolean,
   targetLabel: string,
   sourceLabel: string,
-): { readonly notice: string; readonly recovery: boolean; readonly copyAgain: boolean | null } {
+): {
+  readonly notice: string;
+  readonly recovery: boolean;
+  readonly copyAgain: boolean | null;
+  readonly changes?: MachineHandoffSourceChanges;
+} {
   if (cause instanceof DestinationContextPreviewError)
     // No publish was attempted. Starting fresh still asks the source to release the
     // operation, so a fence from an older session cannot be lost.
@@ -176,12 +203,22 @@ export function transferRefusal(
       recovery: false,
       copyAgain: null,
     };
-  if (codeOf(cause) === "source_changed" && !published)
-    return {
-      notice: `${sourceLabel} changed after copying. Copy again before moving the coordinator.`,
-      recovery: false,
-      copyAgain: true,
-    };
+  if (codeOf(cause) === "source_changed" && !published) {
+    const changes = changesOf(cause);
+    // Older sources send no list: Copy again stays the only answer.
+    return changes && changes.total > 0
+      ? {
+          notice: `${paths(changes.total)} changed on ${sourceLabel} after copying.`,
+          recovery: false,
+          copyAgain: true,
+          changes,
+        }
+      : {
+          notice: `${sourceLabel} changed after copying. Copy again before moving the coordinator.`,
+          recovery: false,
+          copyAgain: true,
+        };
+  }
   return {
     notice: `Moving the coordinator didn't finish: ${messageOf(cause)}`,
     recovery: true,

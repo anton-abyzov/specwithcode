@@ -212,7 +212,10 @@ const BEFORE_TRANSFER: ReadonlySet<CopyState> = new Set(["planned", "scanning", 
 export class DestinationCopies {
   private readonly root: string;
   private readonly hooks: DestinationHooks;
-  private readonly running = new Map<string, { abort: AbortController; done: Promise<void> }>();
+  private readonly running = new Map<
+    string,
+    { abort: AbortController; done: Promise<void>; step: CopyState }
+  >();
   /** Retry or Undo between its check and its work; the other one is refused meanwhile. */
   private readonly claimed = new Set<string>();
   private readonly locks = new Map<string, Promise<unknown>>();
@@ -889,6 +892,21 @@ export class DestinationCopies {
     }
   }
 
+  /**
+   * The copies working here right now, for the update gate: measuring,
+   * transferring, verifying, applying or finishing in the background. A copy
+   * waiting on a person (previewed, or applied and held) runs nothing and never counts.
+   */
+  async activeOperations(): Promise<Array<{ operationId: string; state: CopyState }>> {
+    return Promise.all(
+      [...this.running].map(async ([operationId, running]) => ({
+        operationId,
+        // The record says how far the step got: a transfer goes on to verify and apply.
+        state: (await this.read(operationId).catch(() => null))?.state ?? running.step,
+      })),
+    );
+  }
+
   async waitFor(operationId: string): Promise<void> {
     await this.running.get(operationId)?.done.catch(() => undefined);
   }
@@ -927,7 +945,7 @@ export class DestinationCopies {
         this.running.delete(operationId);
       }
     })();
-    this.running.set(operationId, { abort, done });
+    this.running.set(operationId, { abort, done, step });
   }
 
   private async fail(operationId: string, fallback: CopyState, cause: unknown, aborted: boolean) {

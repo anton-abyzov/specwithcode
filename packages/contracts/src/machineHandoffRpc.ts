@@ -14,6 +14,8 @@ import {
   FolderCopyScopes,
   FolderCopyScopesInput,
   FolderCopyDecideInput,
+  FolderCopyDriftInput,
+  FolderCopyDriftResult,
   FolderCopyError,
   FolderCopyOffer,
   FolderCopyOfferInput,
@@ -39,6 +41,7 @@ export const MACHINE_HANDOFF_RPC_METHODS = {
   machineHandoffCopyOffer: "machineHandoff.copyOffer",
   machineHandoffCopySourceStatus: "machineHandoff.copySourceStatus",
   machineHandoffCopySourceCancel: "machineHandoff.copySourceCancel",
+  machineHandoffCopyDrift: "machineHandoff.copyDrift",
   machineHandoffCopyRelease: "machineHandoff.copyRelease",
   machineHandoffCopyStart: "machineHandoff.copyStart",
   machineHandoffCopyStatus: "machineHandoff.copyStatus",
@@ -87,6 +90,11 @@ export const folderCopyRpcs = [
   Rpc.make(M.machineHandoffCopySourceStatus, {
     payload: FolderCopySourceStatusInput,
     success: FolderCopySourceStatus,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffCopyDrift, {
+    payload: FolderCopyDriftInput,
+    success: FolderCopyDriftResult,
     error: copyError,
   }),
   Rpc.make(M.machineHandoffCopySourceCancel, {

@@ -6,6 +6,7 @@ Run: cd scripts/studio-fleet && python3 -B test-update-refusal.py
 """
 import ast
 import contextlib
+import datetime
 import importlib.util
 import io
 import json
@@ -22,6 +23,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('owned_update_refusal', HERE / 'update.py')
 update = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(update)
+import folder_work  # noqa: E402
+import update_agent_pause  # noqa: E402
 
 SCHEMA = """
 CREATE TABLE projection_projects(project_id TEXT PRIMARY KEY, title TEXT);
@@ -205,6 +208,70 @@ class RefusalLine(unittest.TestCase):
                 line = update.refusal_line('m4', error)
                 self.assertEqual(line, expected)
                 self.assert_safe(line)
+
+    def folder_work(self, operations, until):
+        updates = self.home / '.specwithcode' / 'm4' / 'updates'
+        updates.mkdir(parents=True, exist_ok=True)
+        (updates / folder_work.FILE).write_text(json.dumps(
+            {'schemaVersion': 1, 'operations': operations, 'until': until.isoformat().replace('+00:00', 'Z')}))
+
+    def test_a_normal_install_waits_for_a_live_folder_copy_and_never_a_stale_one(self):
+        # 2026-10-29: a fleet update restarted ministorm mid-copy; the copy is in no table it reads.
+        now = datetime.datetime.now(datetime.timezone.utc)
+        full = patch.object(update, '_snapshot', return_value=({'servicePid': 7}, None, None))
+        full.start()
+        self.addCleanup(full.stop)
+        self.folder_work(2, now + datetime.timedelta(seconds=50))
+        with self.assertRaises(AssertionError) as refused:
+            update.snapshot('m4')
+        self.assertEqual(str(refused.exception), folder_work.REFUSAL)
+        line = update.refusal_line('m4', refused.exception)
+        self.assertEqual(line, 'REFUSAL folder-copy operations=2')
+        self.assert_safe(line)
+        self.assertEqual(update_agent_pause.refusal_reason(line, 'refused'),
+                         ('waiting-for-quiet', 'Waiting for 2 folder copies to or from another machine to finish'))
+        # A forced request is not held back by it: a forced restart goes ahead as before.
+        with patch.object(update, '_service', return_value={}), \
+                patch.object(update, 'assert_held', side_effect=AssertionError('not held')):
+            self.assertEqual(update.snapshot('m4', '2026-10-29T10:00:00Z'), {'servicePid': 7})
+        # Its service stopped writing it, it is dated further ahead than one write lasts, or it is unreadable.
+        # The snapshot marks the install, so its apply looks again before the stop.
+        admitted = {'servicePid': 7, 'waitsForFolderCopies': True}
+        for until in (now - datetime.timedelta(seconds=1), now + datetime.timedelta(minutes=10)):
+            with self.subTest(until=until):
+                self.folder_work(2, until)
+                self.assertEqual(update.snapshot('m4'), admitted)
+        (self.home / '.specwithcode' / 'm4' / 'updates' / folder_work.FILE).write_text('{"schemaVersion": 1, "operat')
+        self.assertEqual(update.snapshot('m4'), admitted)
+
+    def test_a_forced_request_nobody_chose_still_waits_for_a_folder_copy(self):
+        # The automatic pause's request and a rollout's drain request (update_request --waits-for-folder-copies).
+        import update_request
+        now = datetime.datetime.now(datetime.timezone.utc)
+        full = patch.object(update, '_snapshot', return_value=({'servicePid': 7}, None, None))
+        full.start()
+        self.addCleanup(full.stop)
+        self.folder_work(1, now + datetime.timedelta(seconds=50))
+        written = update_request.write_request(self.home, 'm4', '1.0.200', force=True, now=now,
+                                               waits_for_folder_copies=True)
+        request = written['installRequestedAt']
+        unheld = (patch.object(update, '_service', return_value={}),
+                  patch.object(update, 'assert_held', side_effect=AssertionError('not held')))
+        with unheld[0], unheld[1], self.assertRaises(AssertionError) as refused:
+            update.snapshot('m4', request)
+        self.assertEqual(str(refused.exception), folder_work.REFUSAL)
+        self.assertEqual(update.refusal_line('m4', refused.exception), 'REFUSAL folder-copy operations=1')
+        # Once the copy ends its snapshot is marked, so the apply looks again before the stop.
+        (self.home / '.specwithcode' / 'm4' / 'updates' / folder_work.FILE).unlink()
+        with unheld[0], unheld[1]:
+            self.assertEqual(update.snapshot('m4', request), {'servicePid': 7, 'waitsForFolderCopies': True})
+        # A request a person forced (written since, or without the mark) installs over it.
+        self.folder_work(1, now + datetime.timedelta(seconds=50))
+        later = update_request.write_request(self.home, 'm4', '1.0.200', force=True,
+                                             now=now + datetime.timedelta(seconds=1))['installRequestedAt']
+        self.assertFalse(folder_work.request_waits(self.home / '.specwithcode' / 'm4' / 'updates', request))
+        with unheld[0], unheld[1]:
+            self.assertEqual(update.snapshot('m4', later), {'servicePid': 7})
 
     def test_snapshot_cli_prints_the_refusal_last_and_exits_nonzero(self):
         self.add_work()

@@ -1,5 +1,4 @@
 import { stringifyJson } from "../json.ts";
-import { sha256 } from "../nodeCrypto.ts";
 import {
   previewMetadata,
   canonical,
@@ -29,9 +28,7 @@ import {
   ThreadId,
   type MachineHandoffPrepareInput,
   type MachineHandoffReceiveInput,
-  type LogicalProject,
   type ProjectCoordinatorBinding,
-  logicalProjectMemberKey,
   projectCoordinatorIsFenced,
   FolderCopyError,
   WS_METHODS,
@@ -40,6 +37,8 @@ import {
   type FolderCopyScopesInput,
   type FolderCopyCancelInput,
   type FolderCopyDecideInput,
+  type FolderCopyDriftInput,
+  type FolderCopyDriftResult,
   type FolderCopyOffer,
   type FolderCopyOfferInput,
   type FolderCopyOperationInput,
@@ -86,6 +85,7 @@ import * as HandoffGit from "./handoffGit.ts";
 import { HandoffGitError, validManifest } from "./handoffGitTypes.ts";
 import * as MachineHandoffStore from "./MachineHandoffStore.ts";
 import {
+  asCopyError,
   attempt,
   copyStatus,
   offerResult,
@@ -93,6 +93,7 @@ import {
   sentSecretsResult,
   sourceStatus,
   undoResult,
+  unlessUpdating,
 } from "./FolderCopyHandoff.ts";
 import {
   launchPrompt,
@@ -103,6 +104,7 @@ import { copiedContextPaths } from "./folderCopyContextPaths.ts";
 import { makeCopyRegistration } from "./folderCopyRegistration.ts";
 import { discoverCopyScopes, resolveCopyScope } from "./folderCopyScope.ts";
 import { checkMachineReadiness } from "./MachineReadiness.ts";
+import { newSourceRecord } from "./machineHandoffBundle.ts";
 import * as ProvisionRpc from "../provision/rpc.ts";
 import * as GitHubSignInRpc from "../sourceControl/gitHubSignInRpc.ts";
 import {
@@ -115,10 +117,13 @@ import {
   type RawResponse,
 } from "./folderTransfer/sourceRoutes.ts";
 import { SourceTransfers } from "./folderTransfer/sourceService.ts";
+import { registerHandoff } from "./folderTransfer/folderWork.ts";
 import {
   ACTIVE_COPY_WARNING,
   abandonCopiedContext,
   makeFolderCopyContextCheck,
+  makeFolderCopyDrift,
+  makeFolderCopyDriftDecision,
   makeAppliedFolderCopyCheck,
   makeFolderCopyManifest,
   makeProjectIdleCheck,
@@ -181,6 +186,10 @@ export class MachineHandoff extends Context.Service<
     readonly copySourceCancel: (
       input: FolderCopyCancelInput,
     ) => Effect.Effect<FolderCopySourceStatus, FolderCopyError>;
+    /** Source: what differs since a committed copy-and-move; read-only. */
+    readonly copyDrift: (
+      input: FolderCopyDriftInput,
+    ) => Effect.Effect<FolderCopyDriftResult, FolderCopyError>;
     /** Source: returns a fenced coordinator to this machine after a copy-and-move that did not finish. */
     readonly copyRelease: (
       input: FolderCopyReleaseInput,
@@ -392,17 +401,6 @@ const make = Effect.gen(function* () {
   const directEndpoints = yield* Effect.serviceOption(DirectEndpoints.DirectEndpoints);
   const secretStore = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  const asCopyError = (cause: MachineHandoffError) =>
-    new FolderCopyError({
-      code:
-        cause.code === "busy"
-          ? "busy"
-          : cause.code === "not_found"
-            ? "not_found"
-            : cause.code === "conflict"
-              ? "refused"
-              : "invalid",
-    });
   /** Returns a coordinator fenced for `operationId` to active; a no-op once the destination took over. */
   const releaseCoordinator = (projectId: ProjectId, operationId: string, reason: string) =>
     admission.withLock(
@@ -450,6 +448,8 @@ const make = Effect.gen(function* () {
     register: (record) => runPromise(registerCopy(record)),
   });
   yield* Effect.addFinalizer(() => Effect.promise(() => copies.close()));
+  // A normal update waits while either half works (folderWork).
+  yield* registerHandoff({ sources, destinations: copies, sql });
   yield* Effect.addFinalizer(() =>
     Effect.promise(() => sources.close()).pipe(
       Effect.flatMap((pending) =>
@@ -695,6 +695,7 @@ const make = Effect.gen(function* () {
       Effect.promise(() => handleSourceRequest(sources, environmentId, request)),
     );
   const folderCopyManifest = makeFolderCopyManifest(sources, idle);
+  const folderCopyDecision = makeFolderCopyDriftDecision(sources);
   const copyContextAvailable = makeFolderCopyContextCheck(sources);
   const appliedCopy = makeAppliedFolderCopyCheck(copies, fs, path, idle);
   const prepare: MachineHandoff["Service"]["prepare"] = (input) =>
@@ -789,19 +790,25 @@ const make = Effect.gen(function* () {
           if (folderCopy && saved) yield* copyContextAvailable(input.operationId);
           if (saved?.publication === "published" || (saved && !input.publish)) return saved;
           yield* idle(input.projectId, current.workspaceRoot);
-          const manifest = folderCopy
+          const copied = folderCopy
             ? yield* folderCopyManifest(
                 input.operationId,
                 input.projectId,
                 destination.environmentId,
                 current.workspaceRoot,
+                {
+                  publish: input.publish,
+                  ...(input.acceptedSourceChanges
+                    ? { acceptedSourceChanges: input.acceptedSourceChanges }
+                    : {}),
+                },
               )
-            : yield* gitGuarded(
-                git.inspect({
-                  operationId: input.operationId,
-                  workspaceRoot: current.workspaceRoot,
-                }),
-              );
+            : undefined;
+          const manifest =
+            copied?.manifest ??
+            (yield* gitGuarded(
+              git.inspect({ operationId: input.operationId, workspaceRoot: current.workspaceRoot }),
+            ));
           const retained =
             binding?.state === "transferring" && saved
               ? saved.bundle.context
@@ -839,77 +846,17 @@ const make = Effect.gen(function* () {
           )
             return yield* new MachineHandoffError({ code: "source_changed" });
           if (!saved) {
-            const source = {
-              environmentId: sourceEnvironmentId,
-              projectId: input.projectId,
-              coordinatorThreadId: selected,
-            };
-            const successor = {
-              environmentId: destination!.environmentId,
-              projectId:
-                destination!.executionMode === "project-folder"
-                  ? destination!.projectId
-                  : ProjectId.make(`machine-handoff:${input.operationId}`),
-              coordinatorThreadId:
-                destination!.executionMode === "project-folder"
-                  ? (destination!.coordinatorThreadId ??
-                    ThreadId.make(`project-coordinator:${destination!.projectId}`))
-                  : ThreadId.make(`project-coordinator:machine-handoff:${input.operationId}`),
-            };
-            const id =
-              current.workspaceSettings?.logicalProject?.id ??
-              `logical:${sha256([stringifyJson([sourceEnvironmentId, input.projectId])], "hex")}`;
-            const members = new Map(
-              (current.workspaceSettings?.logicalProject?.members ?? []).map((m) => [
-                logicalProjectMemberKey(m),
-                m,
-              ]),
-            );
-            members.set(logicalProjectMemberKey(source), source);
-            const destinationMember = {
-              environmentId: destination!.environmentId,
-              projectId: destination!.projectId,
-              coordinatorThreadId:
-                destination!.coordinatorThreadId ??
-                ThreadId.make(`project-coordinator:${destination!.projectId}`),
-            };
-            members.set(logicalProjectMemberKey(destinationMember), destinationMember);
-            members.set(logicalProjectMemberKey(successor), successor);
-            const logicalProject: LogicalProject = {
-              id,
-              title: current.workspaceSettings?.logicalProject?.title ?? current.title,
-              coordinatorId:
-                current.workspaceSettings?.logicalProject?.coordinatorId ?? `coordinator:${id}`,
-              members: [...members.values()],
-            };
-            const value = {
-              manifest,
+            saved = yield* newSourceRecord({
+              current,
               sourceEnvironmentId,
-              sourceProjectId: input.projectId,
-              sourceThreadId: selected,
+              projectId: input.projectId,
+              operationId: input.operationId,
+              selected,
               destination: destination!,
-              logicalProject,
-              coordinatorBinding: {
-                ...binding,
-                epoch: binding?.epoch ?? 0,
-                state: "active" as const,
-                operationId: input.operationId,
-                successor,
-              },
-              createdAt: DateTime.formatIso(yield* DateTime.now),
-              context: retained,
-            };
-            const bundle = { ...value, digest: machineHandoffDigest(value) };
-            yield* Effect.try({
-              try: () => checkBundle(bundle),
-              catch: () => new MachineHandoffError({ code: "too_large" }),
+              binding,
+              manifest,
+              retained,
             });
-            saved = {
-              bundle,
-              publication: "unpublished",
-              contextBytes: Buffer.byteLength(stringifyJson(retained)),
-              messageCount: retained.threads.reduce((sum, t) => sum + t.messages.length, 0),
-            };
             yield* store.write(`source-${input.operationId}`, saved);
           }
           if (!input.publish) return saved;
@@ -938,6 +885,9 @@ const make = Effect.gen(function* () {
               }),
               "storage_failed",
             );
+          // Only a move that went ahead records what it left on the source.
+          if (copied?.decision !== undefined)
+            yield* folderCopyDecision(input.operationId, copied.decision);
           if (saved.bundle.destination.transport !== "folder-copy")
             yield* gitGuarded(
               git.publish({
@@ -1452,6 +1402,7 @@ const make = Effect.gen(function* () {
     copyOffer,
     copySourceStatus,
     copySourceCancel,
+    copyDrift: makeFolderCopyDrift(sources),
     copyRelease,
     copyStart,
     copyStatus: copyStatusRpc,
@@ -1476,15 +1427,16 @@ const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrument
       [WS_METHODS.machineHandoffCopyScopes]: handoff.copyScopes,
       [WS_METHODS.machineHandoffCopyCapabilities]: () =>
         Effect.succeed({ scopeVersion: 1 as const }),
-      [WS_METHODS.machineHandoffCopyOffer]: handoff.copyOffer,
+      [WS_METHODS.machineHandoffCopyOffer]: (input) => unlessUpdating(handoff.copyOffer(input)),
       [WS_METHODS.machineHandoffCopySourceStatus]: handoff.copySourceStatus,
       [WS_METHODS.machineHandoffCopySourceCancel]: handoff.copySourceCancel,
+      [WS_METHODS.machineHandoffCopyDrift]: handoff.copyDrift,
       [WS_METHODS.machineHandoffCopyRelease]: handoff.copyRelease,
-      [WS_METHODS.machineHandoffCopyStart]: handoff.copyStart,
+      [WS_METHODS.machineHandoffCopyStart]: (input) => unlessUpdating(handoff.copyStart(input)),
       [WS_METHODS.machineHandoffCopyStatus]: handoff.copyStatus,
       [WS_METHODS.machineHandoffCopyDecide]: handoff.copyDecide,
-      [WS_METHODS.machineHandoffCopyApprove]: handoff.copyApprove,
-      [WS_METHODS.machineHandoffCopyRetry]: handoff.copyRetry,
+      [WS_METHODS.machineHandoffCopyApprove]: (input) => unlessUpdating(handoff.copyApprove(input)),
+      [WS_METHODS.machineHandoffCopyRetry]: (input) => unlessUpdating(handoff.copyRetry(input)),
       [WS_METHODS.machineHandoffCopyUndo]: handoff.copyUndo,
       [WS_METHODS.machineHandoffCopyCancel]: handoff.copyCancel,
       [WS_METHODS.machineHandoffCopySecrets]: handoff.copySecrets,

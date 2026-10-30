@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { DestinationCopies, type DestinationHooks } from "./destinationService.ts";
 import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import { SourceTransfers, type SourceOperationRecord } from "./sourceService.ts";
-import { serveSource } from "./sourceTestServer.testkit.ts";
+import { liveMovingCopies, serveSource } from "./sourceTestServer.testkit.ts";
 import { TRANSFER_GRANT_IDLE_MS } from "./transferGrant.ts";
 
 const HOUR = 60 * 60 * 1000;
@@ -24,7 +24,9 @@ const released: Array<string> = [];
 beforeAll(async () => {
   base = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-grant-")));
   fixture = makeUmbrella(base);
+  // Held copies come from live-file moves, which uncaptured volumes keep.
   transfers = new SourceTransfers(NodePath.join(base, "source-state"), {
+    verifyCaptureFilesystem: liveMovingCopies,
     now: () => Date.now() + skew,
     release: async (record: SourceOperationRecord) => {
       released.push(record.operationId);

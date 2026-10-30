@@ -19,6 +19,14 @@ before that request. An unheld forced request never stops running work and leave
 nothing it may stop, so a busy M4 waits for quiet and its guarded checks fail as new work starts.
 The message names the safe path (UNSUPPORTED_PATH): Update now in the app on M4 holds the same
 way, then `--only workers`. `--no-hold` is the explicit opt-in to an unheld forced request.
+The drain stops no folder copy, and the restart would cut one off: while M4's service reports a copy
+to or from another machine (updates/folder-work.json, folder_work.py), M4 is neither drained nor
+asked, and the rollout waits for it. Once a drain found copies, it drains again only after the
+service's own count, which stops nothing, shows none: a heartbeat it cannot write never makes every
+poll stop running work. Its forced request still waits for copies (update_request
+--waits-for-folder-copies), and no copy starts while the service is held. A worker is not asked while
+M4 copies: an older worker counts no copy of its own, so its restart would cut off one with M4.
+`--ignore-folder-copies` drains, asks and installs over them.
 The script polls the installed version and finalized guarded receipt, never 'downloaded',
 and asks again (holding again first) only after the hold has ended, because each new request
 restarts the agent's escalation. An install already under way for the version is joined, not
@@ -85,6 +93,7 @@ import urllib.parse
 
 import desktop_app_rollout
 import fleet_hosts
+import folder_work
 import service_hold
 import studio_paths
 import update_request
@@ -460,8 +469,20 @@ def fleet(home=None, connect=None):
 class ServiceHold(service_hold.ServiceHold):
     """M4's drain and hold (service_hold.ServiceHold, shared with the update agent's automatic pause)."""
 
+    ignore_folder_copies = False
+
     def __init__(self, identity=LOCAL, home=None, run=subprocess.run):
         service_hold.ServiceHold.__init__(self, identity, home, run)
+
+    def folder_copies(self):
+        """The folder copies the service reports in progress here; 0 for none or an older service."""
+        return local_folder_copies(self.home, self.identity)
+
+
+def local_folder_copies(home=None, identity=LOCAL):
+    """The folder copies this machine's service reports in progress (its heartbeat, folder_work.py)."""
+    return folder_work.in_progress(studio_paths.identity_home(pathlib.Path(home or pathlib.Path.home()), identity)
+                                   / 'updates')
 
 
 def offers(status, version):
@@ -571,11 +592,14 @@ def requested_by_update_now(status, version, now=None):
             or status.get('status') == 'installing' or 'left to finish' in (status.get('message') or ''))
 
 
-def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say, hold=None):
+def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say, hold=None,
+              local_copies=None, ignore_copies=False):
     """Asks one host for `version` and waits until it reports it installed. With `hold` (M4's
     ServiceHold), each forced request follows Update now's drain and hold, which waits until the
     agent offers `version`; before that the agent is only asked to check. A rollout that gives up
-    cancels the forced request it wrote and releases the hold it took once nothing needs it."""
+    cancels the forced request it wrote and releases the hold it took once nothing needs it.
+    `local_copies` (a worker's): M4's own folder copies, which keep each request back until they end.
+    `ignore_copies` (--ignore-folder-copies): no wait for copies, and a forced request installs over them."""
     begin = clock()
     status = call(['status', '--identity', identity])
     current = status.get('version')
@@ -590,6 +614,9 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     sent = [0]  # Requests this rollout wrote.
     written = [None]  # installRequestedAt of the last forced request this rollout wrote.
     waited = [None]  # installRequestedAt of the last held request someone else wrote that this rollout waits on.
+    copying = [0]  # Folder copies the forced drain, or a worker's request, waits for, as last seen.
+    counted = [0]  # Copies a drain found: no drain again until the service's own count shows none.
+    deferred = [False]  # A worker's request held back while M4 copies.
 
     def unheld(reason):
         """A wanted hold that cannot be taken stops the rollout before any further forced request."""
@@ -602,10 +629,39 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         Raises RolloutError when the service cannot be held."""
         if holder[0] is None or status.get('status') == 'installing' or not offers(status, version):
             return False
+        # The forced drain stops no copy, and from its hold on the copy's other side gets 503s until
+        # it gives up. An if-idle hold is refused while one runs.
+        waits = not getattr(holder[0], 'wait_for_idle', False) and not getattr(holder[0], 'ignore_folder_copies', False)
+        copies = holder[0].folder_copies() if waits else 0
+        if waits and not copies and counted[0]:
+            try:  # Stops nothing; a heartbeat that cannot be written reads as no copy.
+                copies = holder[0].counted_copies()
+            except HoldUnavailable as error:
+                say('%s: could not count folder copies (%s); still waiting for them' % (identity, error))
+                copies = counted[0]
+            counted[0] = copies
+        if copies:
+            if copying[0] != copies:
+                say('%s: waiting for %s to or from another machine before draining for %s '
+                    '(--ignore-folder-copies installs over them)'
+                    % (identity, 'a folder copy' if copies == 1 else '%d folder copies' % copies, version))
+            copying[0] = copies
+            return False
+        copying[0] = 0
         try:
             reply = holder[0].prepare()
         except HoldUnavailable as error:
             raise unheld(error) from None
+        if waits and type(reply.get('folderCopies')) is int and reply['folderCopies'] > 0:
+            # A copy began during the drain: let work start again and wait for it.
+            try:
+                holder[0].release()
+            except HoldUnavailable as error:
+                say('%s: WARNING: could not release the hold (%s); it ends on its own within %d minutes'
+                    % (identity, error, hold_minutes))
+            copying[0] = counted[0] = reply['folderCopies']
+            say('%s: a folder copy began during the drain; released the hold and waits for it' % identity)
+            return False
         if getattr(holder[0], 'wait_for_idle', False):
             # The service closes admission before checking work. A busy answer releases
             # only its temporary lease; we neither interrupt work nor send an install.
@@ -626,6 +682,8 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         argv = ['request', '--identity', identity, '--version', version, '--kickstart']
         if force:
             argv += ['--force', '--hold-minutes', str(hold_minutes)]
+            if not ignore_copies:  # Nobody forced it over copies: its snapshot still waits (update.py).
+                argv += ['--waits-for-folder-copies']
         reply = {}
         try:
             reply = call(argv)
@@ -644,6 +702,15 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         if first[0] is None:  # The host's own clock, the one its agent dates lastInstall by.
             first[0] = update_request._time((reply.get('request') or {}).get('installRequestedAt'))
         return clock()
+
+    def held_back():
+        """True while a worker's request waits for M4's own folder copies (`local_copies`)."""
+        copies = local_copies() if holder[0] is None and local_copies is not None and not ignore_copies else 0
+        if copies and copying[0] != copies:
+            say('%s: waiting for %s on M4 to finish before asking for %s (--ignore-folder-copies asks anyway)'
+                % (identity, 'a folder copy' if copies == 1 else '%d folder copies' % copies, version))
+        copying[0], deferred[0] = copies, bool(copies)
+        return deferred[0]
 
     def check():
         """Asks the agent only to look for the release (Check now), so nothing is asked to install
@@ -736,8 +803,10 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             if not supported:  # Before the first request or check.
                 raise unheld(reason)
             held_request = drain(status)
-            if held_request or holder[0] is None:
+            if held_request or (holder[0] is None and not held_back()):
                 asked, requests = ask(), 1
+            elif copying[0]:  # The release is offered; the drain (or a worker's request) waits for the copies.
+                asked, requests = clock(), 0
             elif status.get('status') == 'installing':  # Never a forced request before the hold.
                 # The install under way, not joined (automatic, or its hold ran out): the agent
                 # saved 'installing' before it started, so its failure, dated after, is reported
@@ -749,8 +818,10 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         seen, failures = None, 0
         while True:
             if clock() - begin >= deadline:
-                raise RolloutError('%s did not install %s within %d min; last: %s %s' % (
-                    identity, version, deadline // 60, status.get('status'), status.get('message') or ''))
+                raise RolloutError('%s did not install %s within %d min; last: %s %s%s' % (
+                    identity, version, deadline // 60, status.get('status'), status.get('message') or '',
+                    '; still waiting for %s here' % ('a folder copy' if copying[0] == 1 else '%d folder copies' % copying[0])
+                    if copying[0] else ''))
             sleep(poll)
             try:
                 status = call(['status', '--identity', identity])
@@ -797,6 +868,10 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 seen = line
             if joined or status.get('version') == version:
                 continue
+            if deferred[0]:  # A worker's request, once M4's copies ended; a window of its own from here.
+                if not held_back():
+                    asked, requests = ask(), requests + 1
+                continue
             if not held_request and not pressed(status) and drain(status):
                 # The agent offers the release now: the forced request follows the hold, so the
                 # snapshot its apply is checked against already counts the hold's session row.
@@ -812,31 +887,36 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 # on M4 would follow no drain: that install ends the hold.
                 continue
             if holder[0] is not None and not held_request:
-                asked = check()  # Still not offered.
+                asked = clock() if copying[0] else check()  # Waits for copies, or still not offered.
                 continue
             say('%s: the %s window ended without an install; asking once more' % (identity, 'hold' if force else 'request'))
             held_request = drain(status)
-            if held_request or holder[0] is None:
+            if held_request or (holder[0] is None and not held_back()):
                 asked, requests = ask(), requests + 1
-            else:  # It no longer offers the release.
-                asked = check()
+            elif deferred[0]:
+                asked = clock()
+            else:  # It waits for copies, or no longer offers the release.
+                asked = clock() if copying[0] else check()
     except (RolloutError, KeyboardInterrupt):
         release(status)
         raise
 
 
 def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60, worker_deadline=60 * 60,
-            worker_force=False, poll=5, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None):
+            worker_force=False, poll=5, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None,
+            local_copies=None, ignore_folder_copies=False):
     """M4 first (drained and held through `hold`, its ServiceHold, when given), then every other
     host in `hosts` together (M1 and M3, and any Connect-only machine), never held; an Unreachable
-    one is reported as skipped. With `desktop` (desktop_app_rollout.DesktopApps), each worker's desktop app
+    one is reported as skipped. `local_copies` (local_folder_copies) counts M4's own folder copies,
+    which keep every worker's request back, as runFleetUpdate does on the Connect route. With `desktop` (desktop_app_rollout.DesktopApps), each worker's desktop app
     follows once its service is confirmed on `version`. Returns {identity: result}; raises
     RolloutError, or DesktopAppsFailed once every service is done when only an app update failed."""
     say = say or Printer(clock=clock)
     results = {}
     if only in ('all', LOCAL):
         results[LOCAL] = roll_host(LOCAL, hosts[LOCAL], version, True, hold_minutes, local_deadline, poll,
-                                   clock, sleep, say, hold=hold)
+                                   clock, sleep, say, hold=hold,
+                                   ignore_copies=ignore_folder_copies or getattr(hold, 'ignore_folder_copies', False))
     if only in ('all', 'workers'):
         if only == 'workers':
             status = hosts[LOCAL](['status', '--identity', LOCAL])
@@ -869,7 +949,8 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
                 host.say = say  # FallbackHost names the route it falls back to.
             try:
                 result = roll_host(identity, host, version, worker_force, hold_minutes,
-                                   worker_deadline, poll, clock, sleep, say)
+                                   worker_deadline, poll, clock, sleep, say, local_copies=local_copies,
+                                   ignore_copies=ignore_folder_copies)
                 route = getattr(host, 'route', None)
                 if route:
                     result['route'] = route
@@ -936,6 +1017,9 @@ def main(argv=None):
                         help='acquire a service-owned idle hold; never interrupt running work')
     parser.add_argument('--no-hold', action='store_true',
                         help="do not drain and hold M4's service first (a busy M4 then waits for its work)")
+    parser.add_argument('--ignore-folder-copies', action='store_true',
+                        help="drain and install on M4, and ask the workers, while M4 copies a folder to or "
+                             "from another machine; the copy may need Retry")
     parser.add_argument('--no-desktop-apps', action='store_true',
                         help="leave M1's and M3's desktop apps as they are (by default each follows its service)")
     parser.add_argument('--dry-run', action='store_true', help='print the order and commands; contact no host')
@@ -964,6 +1048,7 @@ def main(argv=None):
     hold = None if args.no_hold or args.only == 'workers' else ServiceHold()
     if hold is not None:
         hold.wait_for_idle = args.wait_for_idle
+        hold.ignore_folder_copies = args.ignore_folder_copies
     supported, reason = hold.support() if hold else (True, None)
     if args.dry_run:
         order = ([LOCAL] if args.only in ('all', LOCAL) else []) + (
@@ -985,7 +1070,8 @@ def main(argv=None):
     try:
         results = rollout(args.version, hosts, args.only, args.hold_minutes, args.m4_deadline_minutes * 60,
                           args.worker_deadline_minutes * 60, args.worker_force, args.poll_seconds, hold=hold,
-                          desktop=desktop)
+                          desktop=desktop, local_copies=local_folder_copies,
+                          ignore_folder_copies=args.ignore_folder_copies)
     except DesktopAppsFailed as error:
         print('fleet_rollout: every service is on %s, but %s' % (args.version, error), file=sys.stderr)
         print(json.dumps({'version': args.version, 'result': 'failed', 'error': str(error), 'hosts': error.results}))

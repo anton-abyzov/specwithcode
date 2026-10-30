@@ -2,8 +2,14 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
-import { OrchestratorSwitcher } from "./OrchestratorSwitcher";
+
+const startCoordinator = vi.hoisted(() => vi.fn());
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => startCoordinator }));
+vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+
+import { OrchestratorSwitcher, useStartCoordinator } from "./OrchestratorSwitcher";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -168,4 +174,38 @@ it("shows a nickname as typed, never trimming its owner", async () => {
     ),
   );
   expect(container.querySelector(".sws-host-name")?.textContent).toBe("Anna's Air");
+});
+
+it("runs one coordinator start at a time across the switcher and the composer notice", async () => {
+  let finish!: (value: { _tag: "Success" }) => void;
+  startCoordinator
+    .mockReset()
+    .mockResolvedValue({ _tag: "Success" })
+    .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+  const members = [
+    { environmentId: "minis", id: "p", workspaceSettings: { logicalProject: { id: "atlas" } } },
+  ] as unknown as EnvironmentProject[];
+  const copies = [copy("minis:p", "Minis", "workers", true)];
+  const starts: Array<(key: string) => Promise<void>> = [];
+  // Two buttons on one page, each with its own hook, as the switcher and the notice are.
+  function Starter() {
+    starts.push(useStartCoordinator(members, copies));
+    return null;
+  }
+  await act(async () =>
+    root.render(
+      <>
+        <Starter />
+        <Starter />
+      </>,
+    ),
+  );
+  const first = starts[0]!("minis:p");
+  await starts[1]!("minis:p");
+  expect(startCoordinator).toHaveBeenCalledTimes(1);
+  finish({ _tag: "Success" });
+  await first;
+  // Once that start settles, another may run.
+  await starts[1]!("minis:p");
+  expect(startCoordinator).toHaveBeenCalledTimes(2);
 });

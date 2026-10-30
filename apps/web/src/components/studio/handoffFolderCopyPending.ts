@@ -49,6 +49,11 @@ export interface PendingCopy {
    * of that step and a reopened dialog go ahead despite the differences.
    */
   readonly moveAnyway?: boolean;
+  /**
+   * The source's list of paths that changed after copying, which the person chose to move
+   * without. A retried or reopened move sends it; Copy again starts a pointer without it.
+   */
+  readonly acceptedSourceChanges?: { readonly digest: string; readonly total: number };
   /** A move to a folder that already held a project: the sidebar keeps listing that project. */
   readonly existingDestination?: boolean;
   /**
@@ -91,6 +96,18 @@ const COPYABLE_CLASSES: Readonly<Record<Exclude<FolderCopyFileClass, "secret">, 
   rebuildable: true,
 };
 
+const acceptedChanges = (value: unknown): value is PendingCopy["acceptedSourceChanges"] => {
+  const accepted = value as PendingCopy["acceptedSourceChanges"] | null;
+  return (
+    typeof accepted === "object" &&
+    accepted !== null &&
+    typeof accepted.digest === "string" &&
+    /^[a-f0-9]{64}$/.test(accepted.digest) &&
+    Number.isSafeInteger(accepted.total) &&
+    accepted.total > 0
+  );
+};
+
 /** A pointer read back from storage, with every optional field checked; null when unusable. */
 function parsePendingCopy(value: unknown): PendingCopy | null {
   const pointer = value as PendingCopy | null;
@@ -109,6 +126,7 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     replaceAll,
     replaceAllOutcome,
     moveAnyway,
+    acceptedSourceChanges,
     cancelled,
     seen,
     viewed,
@@ -129,6 +147,7 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
       ? { replaceAllOutcome }
       : {}),
     ...(moveAnyway === true ? { moveAnyway } : {}),
+    ...(acceptedChanges(acceptedSourceChanges) ? { acceptedSourceChanges } : {}),
     ...(cancelled === true ? { cancelled } : {}),
     ...(isCopyStepId(seen) ? { seen } : {}),
     ...(isCopyStepId(viewed) ? { viewed } : {}),

@@ -490,6 +490,7 @@ export const ifIdleRestart = (
   if (
     result.idle === true &&
     result.openTerminals === 0 &&
+    (result.folderCopies ?? 0) === 0 &&
     result.held === true &&
     typeof result.holdToken === "string" &&
     result.holdToken.length > 0
@@ -500,9 +501,11 @@ export const ifIdleRestart = (
     notRestarted:
       (result.openTerminals ?? 0) > 0
         ? `it still has ${result.openTerminals} open terminals`
-        : result.idle
-          ? "the running service could not hold itself for the restart (it predates update --if-idle)"
-          : `it is still running ${result.blockers.map((blocker) => `${blocker.count} ${blocker.kind}`).join(", ")}`,
+        : (result.folderCopies ?? 0) > 0
+          ? `it is still copying ${result.folderCopies} ${result.folderCopies === 1 ? "folder" : "folders"} to or from another machine`
+          : result.idle
+            ? "the running service could not hold itself for the restart (it predates update --if-idle)"
+            : `it is still running ${result.blockers.map((blocker) => `${blocker.count} ${blocker.kind}`).join(", ")}`,
   };
 };
 

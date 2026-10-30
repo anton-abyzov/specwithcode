@@ -201,6 +201,68 @@ describe("StudioThreadLink", () => {
       params: { environmentId: "env-m1", threadId: "b-thread" },
     });
   });
+  it("opens a bare link naming a thread on a connected peer machine", async () => {
+    state.shells.push({
+      id: "peer-thread",
+      environmentId: "env-m1",
+      title: "Ministorm proof run",
+      deletedAt: null,
+      runtime: null,
+      latestRun: null,
+    });
+    // The coordinator's message is scoped to "host"; the worker lives on env-m1.
+    await render(
+      "studio://thread/peer-thread",
+      null,
+      "host" as EnvironmentId,
+      "Ministorm proof run",
+    );
+    const chip = container.querySelector("a")!;
+    expect(chip.getAttribute("data-thread-link-dead")).toBeNull();
+    expect(chip.getAttribute("data-markdown-copy")).toBe(
+      "[Ministorm proof run](studio://thread/env-m1/peer-thread)",
+    );
+    await act(async () => chip.click());
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "env-m1", threadId: "peer-thread" },
+    });
+  });
+  it("opens a bare title link naming a thread only a connected peer machine has", async () => {
+    state.shells.push({
+      id: "peer-thread",
+      environmentId: "env-m1",
+      title: "Ministorm proof run",
+      deletedAt: null,
+      runtime: null,
+      latestRun: null,
+    });
+    await render(
+      "studio://thread/Ministorm%20proof%20run",
+      null,
+      "host" as EnvironmentId,
+      "Ministorm proof run",
+    );
+    await act(async () => container.querySelector("a")!.click());
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "env-m1", threadId: "peer-thread" },
+    });
+  });
+  it("keeps a bare link to a deleted peer thread dead", async () => {
+    state.shells.push({
+      id: "peer-gone",
+      environmentId: "env-m1",
+      title: "Peer gone",
+      deletedAt: "2026-10-11T00:00:00Z",
+      runtime: null,
+      latestRun: null,
+    });
+    await render("studio://thread/peer-gone", null, "host" as EnvironmentId, "Peer gone");
+    expect(container.querySelector("a")).toBeNull();
+    const chip = container.querySelector('[role="link"]')!;
+    expect(chip.getAttribute("data-thread-link-dead")).toBe("deleted");
+  });
   it("says a worker is on a machine this browser is not connected to", async () => {
     const target = parseStudioThreadTarget(
       "studio://thread/5b0c3c1e-8d4f-4a52-9f3e-2b7d6c1a9e40/b-thread",

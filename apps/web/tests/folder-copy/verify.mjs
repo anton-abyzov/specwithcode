@@ -776,10 +776,54 @@ const capturedCopy = async (page, w) => {
   NodeAssert.equal(await calls("copyApprove"), 1, "only the person's click approves the copy");
 };
 
+/**
+ * A ledger written on the source after the copy: the move lists it, the person moves
+ * without it, and Done names the path that stayed on the source.
+ */
+const moveWithout = async (page, w) => {
+  const { action, fixture, check, calls, body } = w;
+  const ledger = ".specweave/increments/0001-move/ledger.jsonl";
+  await fixture(() => {
+    window.__folderCopyFixture.transferReady = true;
+    window.__folderCopyFixture.sourceChanges = {
+      digest: "c".repeat(64),
+      total: 1,
+      truncated: false,
+      acceptable: true,
+      rows: [{ path: ".specweave/increments/0001-move/ledger.jsonl", kind: "changed", size: 2048 }],
+    };
+  });
+  await page
+    .getByRole("group", { name: "What to do" })
+    .getByRole("button", { name: "Hand off and continue there" })
+    .click();
+  await action("Hand off to ministorm").click();
+  await page.locator('[data-slot="source-changes"]').waitFor();
+  await check("source-changes", { primary: "Copy again", title: DONE_TITLE });
+  NodeAssert.match(
+    await page.locator('[data-slot="source-changes"]').textContent(),
+    /ledger\.jsonl/,
+  );
+  NodeAssert.doesNotMatch(await body(), /The coordinator now runs on ministorm/);
+  await action("Move without this path").click();
+  await page.locator('[data-slot="copy-left-on-source"]').waitFor();
+  await check("moved-without", { primary: "Open on ministorm", title: DONE_TITLE });
+  NodeAssert.match(
+    await page.locator('[data-slot="copy-done"]').textContent(),
+    /The coordinator now runs on ministorm\./,
+  );
+  NodeAssert.ok(
+    (await page.locator('[data-slot="copy-left-on-source"]').textContent()).includes(ledger),
+    "Done names the path left on the source",
+  );
+  NodeAssert.ok((await calls("copyDrift")) >= 1, "Done reads what stayed on the source");
+};
+
 const FLOWS = {
   choosing,
   "one-click": oneClick,
   move,
+  "move-without": moveWithout,
   "stale-recovery": staleRecovery,
   "captured-copy": capturedCopy,
 };

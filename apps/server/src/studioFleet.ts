@@ -8,6 +8,8 @@ import { parseFleetOrigin } from "./fleet/fleetOrigin.ts";
 import { tokenProofThumbprint } from "./fleet/fleetProofKey.ts";
 import {
   type FleetLink,
+  type FleetReached,
+  fleetAddresses,
   fleetRequest,
   reachFleetMachine,
   toFleetLink,
@@ -462,18 +464,37 @@ export async function connectFleet(
   if (!scopes.includes(AuthOrchestrationReadScope)) throw new FleetError("forbidden");
   if (!target.managementToken) throw new FleetError("pairing-unavailable");
   const managed = { ...target, managementToken: target.managementToken };
-  // Never forwards the token before an address answers as this machine.
-  const address = await reachFleetMachine(link, target, { token: target.managementToken });
   // The browser turns this code into a plain bearer or cookie, which must
   // never live on the internet-facing Connect address (the worker refuses
-  // it there too). Pairing waits for the tailnet.
-  if (address.transport !== "tailnet") throw new FleetError("connect-browser-unsupported");
+  // it there too). So pairing uses only the tailnet address, even when
+  // Connect answers first for work sent to the machine.
+  const tailnet = fleetAddresses(target).find((entry) => entry.transport === "tailnet");
+  // Without a tailnet answer, say so only when the machine still answers over Connect.
+  const connectOnly = async (): Promise<never> => {
+    await reachFleetMachine(link, target, {
+      token: managed.managementToken,
+      ...(tailnet === undefined ? {} : { exclude: new Set([tailnet.origin]) }),
+    });
+    throw new FleetError("connect-browser-unsupported");
+  };
+  if (tailnet === undefined) return connectOnly();
+  const pairingTarget = { environmentId: target.environmentId, url: tailnet.origin };
+  // Never forwards the token before an address answers as this machine. Reaching
+  // the tailnet here makes it the remembered address for a few minutes, so
+  // worker calls use it too until the address book entry goes stale.
+  let address: FleetReached;
+  try {
+    address = await reachFleetMachine(link, pairingTarget, { token: managed.managementToken });
+  } catch (error) {
+    if (error instanceof FleetError && error.kind === "unreachable") return connectOnly();
+    throw error;
+  }
   let result: unknown;
   let host = address.origin;
   try {
     const { response, address: used } = await fleetRequest(
       link,
-      target,
+      pairingTarget,
       "/api/auth/pairing-token",
       {
         method: "POST",

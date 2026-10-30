@@ -25,12 +25,21 @@ export function StudioThreadLink(props: {
   // Without an environment, or before this machine's threads have loaded, nothing
   // can say the thread is missing yet: the link reads as its label.
   if (props.environmentId === null) return <span>{props.label}</span>;
-  const resolved = resolveStudioThreadLink(
+  const scoped = resolveStudioThreadLink(
     threads,
     props.candidates,
     props.label,
     props.environmentId,
   );
+  // A coordinator on one machine names workers it started on another with a
+  // bare or title link; scoped to the message's machine those never resolve.
+  // Fall back to every connected machine's threads (exact ID, else a title
+  // only one thread has), the same aggregate the remote-worker cards check.
+  // A thread deleted on the scoped machine stays deleted.
+  const resolved =
+    scoped.kind === "thread" || scoped.kind === "deleted"
+      ? scoped
+      : resolveStudioThreadLink(threads, props.candidates, props.label, null);
   // A link to another machine's thread keeps naming that machine when copied.
   const linkEnvironment = props.linkedEnvironment ? props.environmentId : undefined;
   if (resolved.kind !== "thread") {
@@ -61,7 +70,9 @@ export function StudioThreadLink(props: {
       copyMarkdown={formatStudioThreadLink(
         thread.id,
         thread.title.trim() || props.label,
-        linkEnvironment,
+        // A cross-machine match keeps naming its own machine when copied.
+        linkEnvironment ??
+          (thread.environmentId !== props.environmentId ? thread.environmentId : undefined),
       )}
     />
   );

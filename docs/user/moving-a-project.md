@@ -36,10 +36,14 @@ Both machines must be in your private fleet. If they are not yet, follow
      [Shared projects](shared-projects.md#link-two-copies). If
      the link needs a choice (project notes that differ, or a refusal), the
      dialog says why and **Link…** opens the link review.
-   - **Copy and transfer coordinator context**: files copy first. Once the source
-     is idle and its copied snapshot is still current, its coordinator context
-     and responsibility transfer to the destination. If work is active, the
-     files remain copied and the dialog offers an explicit later retry.
+   - **Copy and transfer coordinator context**: files copy first. The copy is
+     captured the same way as **Copy files only**, so it needs temporary space
+     on the source for the selected bytes. Once the source is idle, its
+     coordinator context and responsibility transfer to the destination. If
+     files changed on the source after the copy, the dialog lists them first;
+     see [Files that change while moving](#files-that-change-while-moving). If
+     work is active, the files remain copied and the dialog offers an explicit
+     later retry.
 6. Use **Measure the folder** in the dialog footer, check the sizes, then **Preview on
    &lt;destination&gt;**, and finally **Copy and apply on &lt;destination&gt;** (or
    **Copy and transfer context to &lt;destination&gt;**). These actions stay in the
@@ -49,7 +53,7 @@ The source keeps working while the copy runs. Unfinished tasks and uncommitted
 edits are allowed. Active writers produce a warning because the copy is not an
 atomic snapshot. Only the final coordinator-context transfer requires idle work;
 it never silently stops an active provider session. If files have changed since
-the copied snapshot, copy again before transferring context.
+the copy, the dialog shows exactly which ones before the coordinator moves.
 
 ## When a saved comparison is out of date
 
@@ -68,15 +72,18 @@ selected; review the new comparison and choose what to keep again. Earlier
 conflict choices and secret approvals are not reused against different files.
 Destination edits after review still stop Apply until you review them again.
 
-Older saved jobs and **Copy and transfer coordinator context** retain strict live
-freshness checks. If those files changed, or captured files are missing or damaged,
-the copy stops and offers **Measure and compare again**. Reopening the dialog keeps
-that recovery step rather than retrying a refused copy. Updating the source enables
-new captured copies; older destination servers can consume them through the same
-validated transfer protocol. Both apps should be updated to show the capture wording.
+Older saved jobs, and moves from volumes the source cannot capture (network,
+unknown or coarse-timestamp, or crossing a filesystem boundary), retain strict
+live freshness checks. If those files changed, or
+captured files are missing or damaged, the copy stops and offers **Measure and
+compare again**. Reopening the dialog keeps that recovery step rather than
+retrying a refused copy. Updating the source enables new captured copies; older
+destination servers can consume them through the same validated transfer
+protocol. Both apps should be updated to show the capture wording.
 
 Capturing needs temporary space on the source for the selected bytes and metadata.
-If space runs out, source files stay untouched. Captured files survive an app restart
+If space runs out, source files stay untouched; a move falls back to the live checks
+above. Captured files survive an app restart
 and are removed when the copy finishes or is cancelled. A paused review keeps them
 until you finish or stop that copy. Secret-like files remain outside this capture
 and still need their separate explicit approval.
@@ -92,6 +99,52 @@ your saved copy and choices. A timeout never marks the scan current or approves 
 copy. After a refresh, worktree notices describe the new scan rather than combining
 it with the saved list. Counts include worktrees whose names were shortened from
 the preview; the list says when additional names were not included.
+
+## Files that change while moving
+
+Agents and logs can keep writing while a move copies. The copy uses the files as
+they were when they were captured. A file that never stops changing is copied from
+its last read, which may mix two versions. If it differs on the source later, the
+list marks it **Copied mid-write**: the copy of it on the destination may be
+incomplete.
+
+Before the coordinator moves, the source compares its folder with the copy. When
+nothing differs, the move goes ahead. When something differs, the coordinator
+stays on the source and the dialog lists every path that changed: edited, new,
+removed and unreadable files, approved secret files that changed after the
+destination received them, folders holding a new file whose name cannot be
+copied, and repositories whose commit, branches, stashes, staged changes, tags and
+other refs, or Git settings and hooks moved. A file and a repository at the same
+path are listed apart. You then choose one of three things:
+
+- **Copy again**: a fresh copy brings the changes over. It compares first and
+  copies only what changed.
+- **Move without these N paths**: the coordinator moves now. Changed and new
+  paths keep their newer version only on the source. A removed path is gone from
+  the source but still in the copy on the destination; delete it there if the
+  coordinator should not see it. If another path changes before the move, the
+  dialog shows a new list and asks again. Closing and reopening the dialog keeps
+  your choice; **Copy again** clears it. If the source is busy when you choose
+  it, the list and the three choices stay for the next try.
+- **Keep the coordinator on &lt;source&gt;**: the move ends and the coordinator
+  stays where it is. The copied files stay on the destination.
+
+After the move, the done screen names the paths that differ on the source from
+the copy.
+When it can, it splits them into the ones you chose to leave and the ones that
+changed after the handoff, for example a file that a program outside SpecWithCode
+wrote after the pause. Copy those paths yourself if the coordinator needs them.
+
+Moving without the listed paths needs a captured copy. On network, unknown or
+coarse-timestamp volumes the source cannot capture, and when the source has too
+little temporary space to capture, the move falls back to the older live checks.
+Older saved jobs work the same way, and any file the source could not read or
+copy refuses them. The dialog still lists the changes, but only **Copy again**
+and **Keep the coordinator on &lt;source&gt;** are offered.
+
+The comparison skips reading a file whose size, inode and change time match the
+capture. A file changed within a moment of being captured is always read again,
+because some filesystems stamp changes from a coarse clock.
 
 ## Which folder moves
 
@@ -158,11 +211,11 @@ only answers requests that carry a grant for this one copy, and the grant ends
 when the copy ends. Every file is checked against the source's checksum before it
 is used.
 
-For older saved jobs and coordinator moves, files that change during transfer are
-retried. Files that keep changing or
-disappear are listed and skipped during Apply. New files created after the scan
-may be absent. Review the warnings and copy again after work settles when you
-need a complete snapshot. An incomplete or stale copy cannot be used to transfer
+For older saved jobs, and for moves from volumes the source cannot capture,
+files that change during transfer are retried. Files that
+keep changing or disappear are listed and skipped during Apply. New files created
+after the scan may be absent. Review the warnings and copy again after work
+settles when you need a complete snapshot. An incomplete or stale copy cannot be used to transfer
 coordinator responsibility.
 
 ## Copying into an existing folder

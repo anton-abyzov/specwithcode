@@ -5,6 +5,7 @@ import type {
   FolderCopyMode,
   FolderCopyStatus,
   FolderCopyUndoResult,
+  MachineHandoffSourceChanges,
   ProjectId,
 } from "@specweave-studio/contracts";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
@@ -18,6 +19,11 @@ import { CopyUndoPreview } from "./HandoffCopyPreview";
 import { ProjectLinkDialog } from "./ProjectLinkDialog";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
+import {
+  HandoffLeftOnSource,
+  HandoffSourceChanges,
+  type LeftOnSource,
+} from "./HandoffSourceChanges";
 
 /** Paths listed for files that changed on the source while copying; the rest are counted. */
 const UNSTABLE_SHOWN = 20;
@@ -35,6 +41,9 @@ export function HandoffCopyDone({
   transferNotice,
   movingAnyway = false,
   copyAgain = false,
+  sourceReview = null,
+  leftOnSource = null,
+  keptHere = false,
   secretsNote = null,
   link,
   undoPreview,
@@ -55,6 +64,12 @@ export function HandoffCopyDone({
   readonly movingAnyway?: boolean;
   /** Copy again is offered; its advice is never shown without the button. */
   readonly copyAgain?: boolean;
+  /** The source's list of paths that changed after copying; the footer holds the choices. */
+  readonly sourceReview?: MachineHandoffSourceChanges | null;
+  /** What the move left only on the source, read once after it finished. */
+  readonly leftOnSource?: LeftOnSource | null;
+  /** The person kept the coordinator on the source after seeing the list. */
+  readonly keptHere?: boolean;
   /** Secret-like files that stayed on the source, said once the copy is done. */
   readonly secretsNote?: string | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
@@ -88,9 +103,13 @@ export function HandoffCopyDone({
           {moved
             ? `The coordinator now runs on ${targetLabel}.`
             : mode === "copy-and-move"
-              ? copyAgain
-                ? "The coordinator stays here until you copy again."
-                : "Files are copied. Hand off the coordinator once work here is idle."
+              ? keptHere
+                ? `The coordinator stays on ${sourceLabel}. The copied files stay on ${targetLabel}.`
+                : sourceReview && copyAgain
+                  ? "The coordinator stays here until you choose below."
+                  : copyAgain
+                    ? "The coordinator stays here until you copy again."
+                    : "Files are copied. Hand off the coordinator once work here is idle."
               : `${targetLabel} has a copy. The coordinator stays here.`}
         </p>
         <p className="text-xs text-muted-foreground wrap-anywhere">
@@ -107,6 +126,21 @@ export function HandoffCopyDone({
         <p role="status" className="text-xs text-warning-foreground">
           {transferNotice}
         </p>
+      )}
+      {sourceReview && copyAgain && !moved && (
+        <HandoffSourceChanges
+          changes={sourceReview}
+          sourceLabel={sourceLabel}
+          targetLabel={targetLabel}
+          capturedAt={copy.capturedAt}
+        />
+      )}
+      {moved && leftOnSource && (
+        <HandoffLeftOnSource
+          left={leftOnSource}
+          sourceLabel={sourceLabel}
+          targetLabel={targetLabel}
+        />
       )}
       {secretsNote && (
         <p className="text-xs text-warning-foreground" data-slot="copy-secrets-left">

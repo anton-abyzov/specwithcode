@@ -28,6 +28,24 @@ export function museFullEntitled(usageResult: unknown, apiKey: boolean): boolean
   return !("window" in usage || "weekly" in usage || "observedAtMs" in usage);
 }
 
+/**
+ * Muse Code's closed effort vocabulary (MSP `ReasoningEffort`). Each catalog
+ * row's `variants` lists the tiers that account can select; `ultra` appears
+ * only while Meta's `ultra_reasoning_effort` gate is open for it. With the
+ * gate closed the host still acks `ultra` but records `xhigh`, so a tier the
+ * row omits is never offered here.
+ */
+const MUSE_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra",
+};
+
 /** A bundled catalog is not account entitlement; only the host's provider catalog lists models. */
 export function museModels(
   catalog: unknown,
@@ -52,6 +70,21 @@ export function museModels(
     const efforts = Array.isArray(row.variants)
       ? row.variants.filter((v): v is string => typeof v === "string")
       : [];
+    const defaultEffort = efforts.includes(row.defaultReasoningEffort as string)
+      ? (row.defaultReasoningEffort as string)
+      : undefined;
+    const effortDescriptions = new Map(
+      (Array.isArray(row.reasoningEffortVariants) ? row.reasoningEffortVariants : []).flatMap(
+        (value) => {
+          const described = record(value);
+          return typeof described.tier === "string" &&
+            typeof described.description === "string" &&
+            described.description.trim() !== ""
+            ? [[described.tier, described.description.trim()] as const]
+            : [];
+        },
+      ),
+    );
     const contextWindow = positiveInt(row.contextLimit);
     const maxOutput = positiveInt(row.outputLimit);
     return [
@@ -71,7 +104,15 @@ export function museModels(
                   id: "reasoningEffort",
                   label: "Reasoning effort",
                   type: "select" as const,
-                  options: efforts.map((id) => ({ id, label: id })),
+                  options: efforts.map((id) => {
+                    const description = effortDescriptions.get(id);
+                    return {
+                      id,
+                      label: MUSE_EFFORT_LABELS[id] ?? id,
+                      ...(description === undefined ? {} : { description }),
+                      ...(id === defaultEffort ? { isDefault: true } : {}),
+                    };
+                  }),
                 },
               ]
             : [],
@@ -89,7 +130,8 @@ export function museUsage(result: unknown): ServerProviderUsageLimits | undefine
       DateTime.make(observed).pipe(
         Option.map(DateTime.toEpochMillis),
         Option.getOrElse(() => Number.NaN),
-      )) ||
+      ),
+    ) ||
     observed <= 0 ||
     typeof usage.tier !== "string"
   )
@@ -109,7 +151,8 @@ export function museUsage(result: unknown): ServerProviderUsageLimits | undefine
         DateTime.make(row.resetsAtMs).pipe(
           Option.map(DateTime.toEpochMillis),
           Option.getOrElse(() => Number.NaN),
-        )) ||
+        ),
+      ) ||
       row.resetsAtMs <= 0
     )
       return undefined;
