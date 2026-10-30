@@ -348,6 +348,62 @@ it("recovers an ambiguous start after remount without launching another coordina
   );
   expect(state.receive.mock.calls.at(-1)?.[0].input.mode).toBe("preview");
 });
+it("names the threads a busy machine refused with, on the machine that refused", async () => {
+  const busy = {
+    total: 2,
+    threads: [
+      {
+        threadId: "lanes",
+        title: "1050 repair lanes C and D",
+        projectId: "source",
+        reason: "waiting_for_answer",
+      },
+      {
+        threadId: "review",
+        title: "1048 fresh review r2",
+        projectId: "source",
+        reason: "waiting_for_answer",
+      },
+    ],
+  };
+  const refusal = () => ({
+    _tag: "Failure",
+    error: Object.assign(new Error("2 threads are still working or waiting for you."), {
+      code: "busy",
+      busy,
+    }),
+  });
+  await mount();
+  // The source refuses the Git method's first check.
+  state.prepare.mockResolvedValueOnce(refusal());
+  await review();
+  expect(props().error).toBe("2 threads are still working or waiting for you.");
+  const named = props().errorDetails as React.ReactElement<{
+    busy: unknown;
+    environmentId: string;
+    machineLabel: string;
+  }>;
+  expect(named.props).toMatchObject({ busy, environmentId: "m4", machineLabel: "M4" });
+  // The destination refuses its preview: its threads open there.
+  state.receive.mockResolvedValueOnce(refusal());
+  await review();
+  expect(
+    (props().errorDetails as React.ReactElement<{ environmentId: string }>).props,
+  ).toMatchObject({ environmentId: "m1", machineLabel: "M1" });
+  // A clean try clears the list with the error.
+  await review();
+  expect(props().error).toBeNull();
+  expect(props().errorDetails).toBeUndefined();
+  // The destination refuses starting after the source published.
+  await consent();
+  state.receive
+    .mockImplementationOnce(state.receive.getMockImplementation()!)
+    .mockResolvedValueOnce(refusal());
+  await transfer();
+  expect(
+    (props().errorDetails as React.ReactElement<{ environmentId: string }>).props,
+  ).toMatchObject({ environmentId: "m1" });
+});
 it("allows a new preview only after an explicit source-changed refusal", async () => {
   await mount();
   await review();

@@ -47,6 +47,8 @@ export function copyNoticeWarnings(
 const SEPARATE = /^(.+?): this worktree will become an independent Git repository/;
 /** The source's running-work notice, from this version or an older one. */
 const ACTIVE_WORK = /^Work is still running (?:in this folder|here)\./;
+/** The source naming threads that wait for the person; only a move waits for them. */
+const WAITING_THREADS = /^(?:A thread here is|[\d,]+ threads here are) waiting for you: /;
 const ACTIVE_WORK_COPY =
   "Work is still running here. Files that change during the copy won't be included.";
 const ACTIVE_WORK_MOVE = `${ACTIVE_WORK_COPY.slice(0, -1)}, and the project moves once that work stops.`;
@@ -122,6 +124,11 @@ export function groupCopyNotices(input: {
     if (inside) {
       // Newer sources list them all in `skipped`; older ones only in this notice.
       if (!skipped) worktrees.push(...namesOf(inside[2]!));
+      continue;
+    }
+    if (WAITING_THREADS.test(warning)) {
+      // A copy of files leaves the questions where they are; Done never repeats it.
+      if (input.activeWork === "copy-and-move") lines.push(warning.trim());
       continue;
     }
     if (ACTIVE_WORK.test(warning)) {

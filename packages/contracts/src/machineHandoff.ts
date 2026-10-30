@@ -155,6 +155,34 @@ export const MachineHandoffSourceChanges = Schema.Struct({
   ).check(Schema.isMaxLength(MACHINE_HANDOFF_MAX_CHANGE_ROWS)),
 });
 export type MachineHandoffSourceChanges = typeof MachineHandoffSourceChanges.Type;
+/** Threads a busy refusal names; `total` still counts every blocking thread. */
+export const MACHINE_HANDOFF_MAX_BUSY_THREADS = 10;
+/** Why a thread keeps a project from moving: what the person can do about it differs. */
+export const MachineHandoffBusyReason = Schema.Literals([
+  "running",
+  "waiting_for_answer",
+  "waiting_for_sign_in",
+  "pending_approval",
+  "provider_session",
+  "pending_effect",
+]);
+export type MachineHandoffBusyReason = typeof MachineHandoffBusyReason.Type;
+export const MachineHandoffBusyThread = Schema.Struct({
+  threadId: ThreadId,
+  title: bounded(512),
+  projectId: ProjectId,
+  projectTitle: Schema.optional(bounded(512)),
+  reason: MachineHandoffBusyReason,
+});
+export type MachineHandoffBusyThread = typeof MachineHandoffBusyThread.Type;
+/** The threads that keep a project busy, first ones first. */
+export const MachineHandoffBusyThreads = Schema.Struct({
+  total: Schema.Number,
+  threads: Schema.Array(MachineHandoffBusyThread).check(
+    Schema.isMaxLength(MACHINE_HANDOFF_MAX_BUSY_THREADS),
+  ),
+});
+export type MachineHandoffBusyThreads = typeof MachineHandoffBusyThreads.Type;
 export const MachineHandoffPrepareInput = Schema.Struct({
   destination: Schema.optional(MachineHandoffDestination),
   acknowledgment: Schema.optional(MachineHandoffAcknowledgment),
@@ -244,12 +272,16 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
     ]),
     /** source_changed after a folder copy: exactly which paths differ, for review. */
     changes: Schema.optional(MachineHandoffSourceChanges),
+    /** busy: which threads hold the project, from newer machines; older ones send none. */
+    busy: Schema.optional(MachineHandoffBusyThreads),
   },
 ) {
   override get message(): string {
     return {
       not_found: "The handoff project or source chat is no longer available.",
-      busy: "Finish active work in this project before handing it off.",
+      busy: this.busy?.total
+        ? `${this.busy.total === 1 ? "A thread is" : `${this.busy.total} threads are`} still working or waiting for you. Answer or close what each one asks, or stop its work, then try again.`
+        : "Finish active work in this project before handing it off.",
       invalid: "The handoff is invalid or belongs to a different project or machine.",
       too_large: "The retained context exceeds the handoff limit. Select a smaller source chat.",
       conflict: "This handoff ID already belongs to different work. Start a new handoff.",

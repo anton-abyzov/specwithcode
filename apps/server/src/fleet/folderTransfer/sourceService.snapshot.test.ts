@@ -214,6 +214,10 @@ it.each([false, true])(
       if (path === Path.join(folder, "a.txt") && (keepsChanging || creations === 0)) {
         creations++;
         await FSP.writeFile(Path.join(folder, `new-sibling-${creations}.txt`), "ordinary new work");
+        // NTFS stamps a folder from a ~15ms clock, so tries within one tick leave its
+        // modification time unchanged. Give each creation its own stamp, as a fine clock would.
+        const stamp = new Date(Date.UTC(2020, 0, 1) + creations * 1000);
+        await FSP.utimes(folder, stamp, stamp);
       }
       return open(path, flags, mode);
     });

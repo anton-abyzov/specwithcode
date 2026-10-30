@@ -1365,6 +1365,7 @@ export function HandoffFolderCopy({
             undoPreview={undoPreview}
             contextTransferred={contextTransferred}
             transferNotice={transferNotice}
+            transferBusy={move.transferBusy}
             movingAnyway={movingAnyway}
             copyAgain={offerCopyAgain}
             sourceReview={sourceReview}

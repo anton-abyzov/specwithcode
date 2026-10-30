@@ -19,6 +19,8 @@ import { CopyUndoPreview } from "./HandoffCopyPreview";
 import { ProjectLinkDialog } from "./ProjectLinkDialog";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
+import { HandoffBusyThreads } from "./HandoffBusyThreads";
+import type { TransferBusy } from "./handoffCopySteps";
 import {
   HandoffLeftOnSource,
   HandoffSourceChanges,
@@ -39,6 +41,7 @@ export function HandoffCopyDone({
   targetLabel,
   sourceLabel,
   transferNotice,
+  transferBusy = null,
   movingAnyway = false,
   copyAgain = false,
   sourceReview = null,
@@ -60,6 +63,8 @@ export function HandoffCopyDone({
   readonly targetLabel: string;
   readonly sourceLabel: string;
   readonly transferNotice: string | null;
+  /** The threads a busy machine named when it refused the move; each one opens. */
+  readonly transferBusy?: TransferBusy | null;
   /** The person chose Move anyway: context transfers with the differences listed. */
   readonly movingAnyway?: boolean;
   /** Copy again is offered; its advice is never shown without the button. */
@@ -126,6 +131,14 @@ export function HandoffCopyDone({
         <p role="status" className="text-xs text-warning-foreground">
           {transferNotice}
         </p>
+      )}
+      {transferNotice && transferBusy && !moved && (
+        <HandoffBusyThreads
+          busy={transferBusy.busy}
+          environmentId={transferBusy.on === "source" ? project.environmentId : machine}
+          machineLabel={transferBusy.on === "source" ? sourceLabel : targetLabel}
+          projectTitle={project.title}
+        />
       )}
       {sourceReview && copyAgain && !moved && (
         <HandoffSourceChanges

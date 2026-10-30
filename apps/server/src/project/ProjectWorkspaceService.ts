@@ -1,3 +1,7 @@
+import {
+  PROACTIVE_BRIEFING_COMMAND,
+  PROACTIVE_BRIEFING_TITLE,
+} from "@specweave-studio/shared/routineTemplates";
 import { stringifyJson } from "../json.ts";
 import * as DateTime from "effect/DateTime";
 import { projectCoordinatorIsFenced } from "@specweave-studio/contracts";
@@ -174,6 +178,7 @@ export function projectContextText(input: {
               "After routing, answer in one line per project with the returned coordinatorLink copied verbatim, for example 'Sent to <link>'. The work's results stay in that project; do not wait for them, poll them or repeat them here unless the user asks.",
               "Repeating personal work the user does again and again (monthly tax prep, a profit and loss report, a research brief, email triage with draft replies) belongs in a routine, not a new chat each time: offer one in a line and, when they agree, create it with schedule_task using {type:'manual'} and a brief with the inputs they name, prepareOnly true. Each Run now then continues that routine's own thread. Turn on a cadence (monthly, daily) only when the user asks for one, and never point a routine at an account or folder they did not name.",
               "A routine prepares and drafts; the user files, pays, sends and posts. A routine run never takes such an action: it ends with what is ready and the steps left for the user.",
+              `Proactive help (being told what needs them, a daily briefing, keeping up with mail): when asked, create or retime the one schedule_task titled '${PROACTIVE_BRIEFING_TITLE}', {type:'fixed_time', timeOfDay:'08:00'} or their time, prompt '${PROACTIVE_BRIEFING_COMMAND}' plus their wishes, prepareOnly true; never a second. Say when it runs and that replies are drafts they send.`,
             ]
           : [
               "A message that opens with 'Routed from personal assistant' is the user's request that their assistant judged to belong to this project; the text after that first line is the user's own words. Handle it as if the user typed it here, with this project's own memory, owners and thread list. The assistant's note, when present, is the assistant's, not the user's. If the request does not belong to this project, say so in one line instead of doing it. Never restart or revive a cancelled or stopped thread because of a routed message unless its words ask for that thread.",

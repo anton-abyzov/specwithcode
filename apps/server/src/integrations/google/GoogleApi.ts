@@ -1,6 +1,6 @@
 /**
- * GoogleApi - the OAuth token calls and authenticated GETs the Google account
- * makes.
+ * GoogleApi - the OAuth token calls, authenticated GETs and the one POST
+ * (saving a Gmail draft) the Google account makes.
  *
  * Request URLs carry search terms and tokens travel in headers and bodies, so
  * the HTTP client's tracing is turned off and failures keep only the
@@ -66,6 +66,13 @@ export class GoogleApi extends Context.Service<
       readonly operation: string;
       readonly url: string;
       readonly query?: Record<string, string | ReadonlyArray<string> | undefined>;
+      readonly accessToken: Redacted.Redacted<string>;
+    }) => Effect.Effect<unknown, GoogleApiError>;
+    /** POST a JSON body and read the JSON answer. Used only to save Gmail drafts. */
+    readonly postJson: (input: {
+      readonly operation: string;
+      readonly url: string;
+      readonly body: unknown;
       readonly accessToken: Redacted.Redacted<string>;
     }) => Effect.Effect<unknown, GoogleApiError>;
     /** GET a body as text, refusing anything larger than `maxBytes`. */
@@ -206,6 +213,20 @@ const make = Effect.gen(function* () {
         );
         if (response.status >= 400) return yield* failWith(operation, response.status, body);
         return body as unknown;
+      }),
+    postJson: ({ operation, url, body, accessToken }) =>
+      Effect.gen(function* () {
+        const request = yield* HttpClientRequest.post(url).pipe(
+          HttpClientRequest.bearerToken(accessToken),
+          HttpClientRequest.bodyJson(body),
+          Effect.mapError(() => new GoogleApiError({ operation })),
+        );
+        const response = yield* send(operation, request);
+        const answer = yield* response.json.pipe(
+          Effect.mapError(() => new GoogleApiError({ operation, status: response.status })),
+        );
+        if (response.status >= 400) return yield* failWith(operation, response.status, answer);
+        return answer as unknown;
       }),
     getText: ({ operation, url, query, accessToken, maxBytes }) =>
       Effect.gen(function* () {

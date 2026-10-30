@@ -116,6 +116,12 @@ export function googleHealthRequest(service: GoogleService, endpoints: GoogleEnd
         url: `${endpoints.drive}/files`,
         query: { pageSize: "1", fields: "kind" },
       };
+    case "gmailDrafts":
+      return {
+        operation: "Gmail drafts connection check",
+        url: `${endpoints.gmail}/users/me/drafts`,
+        query: { maxResults: "1", fields: "resultSizeEstimate" },
+      };
   }
 }
 

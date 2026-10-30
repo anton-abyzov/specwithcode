@@ -142,7 +142,9 @@ private struct ChatScreen: View {
             .id(Self.typingId)
         }
       }
-      .containerRelativeFrame(.horizontal) { width, _ in max(0, width - 2 * WeaveSpacing.gutter) }
+      // Not containerRelativeFrame: on iPhone Duo it resolves against the scene,
+      // so the transcript, header and composer spill past the chat column.
+      .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.horizontal, WeaveSpacing.gutter)
       .padding(.top, WeaveSpacing.s4)
       .padding(.bottom, WeaveSpacing.s4)

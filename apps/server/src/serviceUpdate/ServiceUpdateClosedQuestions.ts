@@ -256,20 +256,36 @@ export function reopenedQuestions(
 
 /** The request id of a card that asks a closed approval again. */
 export const REOPENED_APPROVAL_PREFIX = "update-reopen-approval:";
-const REOPENED_QUESTION_PREFIX = "update-reopen:";
+export const REOPENED_QUESTION_PREFIX = "update-reopen:";
+/** Every reopen prefix in front of a request id (older releases stacked one per update). */
+const REOPEN_PREFIXES = /^(?:update-reopen(?:-approval)?:)+/;
 
 /** Whether a pending request is a card asking a closed approval again (it waits like one). */
 export const isReopenedApprovalRequestId = (requestId: string) =>
   requestId.startsWith(REOPENED_APPROVAL_PREFIX);
 
+/** Whether `requestId` is a card that asks a closed request again. */
+export const isReopenCardRequestId = (requestId: string) => REOPEN_PREFIXES.test(requestId);
+
+/**
+ * The request a card asks again: `requestId` without its reopen prefixes, so
+ * one stacked by older releases names the same request as a fresh one.
+ */
+export function reopenFamilyRequestId(requestId: string): string {
+  return requestId.replace(REOPEN_PREFIXES, "");
+}
+
 /**
  * The request id of the card that asks `entry` again, derived from it so a
- * second reopen records nothing new. A closed approval, or a card that asked
- * one again and was closed in turn, keeps the approval prefix.
+ * second reopen records nothing new. It carries one prefix however often
+ * updates closed it: a card that asked a closed request again and was closed
+ * in turn is asked again under its own id, not a longer one. A closed
+ * approval, or a card that asked one again, keeps the approval prefix.
  */
 export function reopenCardRequestId(entry: Pick<ClosedQuestion, "kind" | "requestId">): string {
-  const approval = isApprovalKind(entry.kind) || isReopenedApprovalRequestId(entry.requestId);
-  return `${approval ? REOPENED_APPROVAL_PREFIX : REOPENED_QUESTION_PREFIX}${entry.requestId}`;
+  const prefixes = REOPEN_PREFIXES.exec(entry.requestId)?.[0] ?? "";
+  const approval = isApprovalKind(entry.kind) || prefixes.includes(REOPENED_APPROVAL_PREFIX);
+  return `${approval ? REOPENED_APPROVAL_PREFIX : REOPENED_QUESTION_PREFIX}${entry.requestId.slice(prefixes.length)}`;
 }
 
 /**
@@ -384,6 +400,18 @@ export function mergeRecorded(
     const existing = next[index]!;
     // Reopened, yet still open now: that close never happened, this one counts.
     if (existing.reopenedAt !== null) {
+      next[index] = stamped;
+      changed = true;
+      continue;
+    }
+    // A card asking a closed request again keeps its id across updates, and
+    // only a pending request is recorded: the card was put back (its mark may
+    // not have been written) and this is a new close. The reopen's command ids
+    // carry `closedAt`, so it must be this close's, or the put-back replays.
+    if (
+      isReopenCardRequestId(entry.requestId) &&
+      Date.parse(stamped.closedAt) > Date.parse(existing.closedAt)
+    ) {
       next[index] = stamped;
       changed = true;
       continue;

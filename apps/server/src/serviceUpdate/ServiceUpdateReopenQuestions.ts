@@ -280,18 +280,35 @@ function latestRun<R extends RunOrder>(runs: ReadonlyArray<R>): R | undefined {
   );
 }
 
+/**
+ * The restart continuation of `runId` that can ask a request closed at
+ * `closedAt` again: one requested since that close. A continuation an earlier
+ * update's restart started ended before this close, so it never asks it.
+ */
+export function continuationSince<
+  R extends Pick<OrchestrationV2Run, "restartContinuationOfRunId" | "requestedAt">,
+>(runs: ReadonlyArray<R>, runId: string, closedAt: string | undefined): R | undefined {
+  const closedMs = closedAt === undefined ? Number.NaN : Date.parse(closedAt);
+  return runs.find(
+    (run) =>
+      run.restartContinuationOfRunId === runId &&
+      (Number.isNaN(closedMs) || DateTime.toEpochMillis(run.requestedAt) >= closedMs),
+  );
+}
+
 export function continuationExpected(
   runs: ReadonlyArray<
     Pick<
       OrchestrationV2Run,
-      "id" | "status" | "restartContinuationOfRunId" | "ordinal" | "completedAt"
+      "id" | "status" | "restartContinuationOfRunId" | "requestedAt" | "ordinal" | "completedAt"
     >
   >,
   runId: string,
   continues: boolean,
+  closedAt?: string,
 ): boolean {
   if (!continues) return false;
-  if (runs.some((run) => run.restartContinuationOfRunId === runId)) return true;
+  if (continuationSince(runs, runId, closedAt) !== undefined) return true;
   const latest = latestRun(runs);
   return latest?.id === runId && latest.status === "interrupted";
 }
@@ -385,6 +402,19 @@ export const makeReopener = Effect.gen(function* () {
       return false;
     });
 
+  /**
+   * The id of one write that reopens `entry`. A card that asks a closed
+   * request again keeps its id when a later update closes it in turn, so each
+   * such close (`closedAt`) writes under its own command id; the same entry
+   * reopened twice still repeats nothing.
+   */
+  const reopenCommandId = (entry: ClosedQuestions.ClosedQuestion, write: "note" | "card") =>
+    CommandId.make(
+      ClosedQuestions.isReopenCardRequestId(entry.requestId)
+        ? `service-update:reopen:${ClosedQuestions.reopenCardRequestId(entry)}:${entry.closedAt}:${write}`
+        : `service-update:reopen:${entry.requestId}:${write}`,
+    );
+
   const postNote = (
     entry: ClosedQuestions.ClosedQuestion,
     run: OrchestrationV2Run,
@@ -392,7 +422,7 @@ export const makeReopener = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const threadId = ThreadId.make(entry.threadId);
-      const commandId = CommandId.make(`service-update:reopen:${entry.requestId}:note`);
+      const commandId = reopenCommandId(entry, "note");
       const now = yield* DateTime.now;
       const event: OrchestrationV2DomainEvent = {
         id: yield* ids.allocate.event({ threadId, commandId }),
@@ -439,22 +469,27 @@ export const makeReopener = Effect.gen(function* () {
     entry: ClosedQuestions.ClosedQuestion,
     run: OrchestrationV2Run,
     rootNodeId: NodeId,
-  ) =>
-    threads.dispatch({
+  ) => {
+    // The card's ids name the request it asks again, without reopen prefixes,
+    // so every update that closes it puts back the same card.
+    const family = ClosedQuestions.reopenFamilyRequestId(entry.requestId);
+    return threads.dispatch({
       type: "user_input_request.record",
-      commandId: CommandId.make(`service-update:reopen:${entry.requestId}:card`),
+      commandId: reopenCommandId(entry, "card"),
       threadId: ThreadId.make(entry.threadId),
       runId: run.id,
       nodeId: rootNodeId,
-      requestNodeId: NodeId.make(`node:update-reopen:${entry.requestId}`),
-      // Recording a request id that exists already leaves it as it is. A
-      // closed approval's card keeps an approval id, so a later automatic
-      // install's stale-wait sweep can release it as it released the approval.
+      requestNodeId: NodeId.make(`node:update-reopen:${family}`),
+      // Recording a request id that is open already leaves it as it is; one a
+      // later update closed is put back. A closed approval's card keeps an
+      // approval id, so a later automatic install's stale-wait sweep can
+      // release it as it released the approval.
       requestId: RuntimeRequestId.make(ClosedQuestions.reopenCardRequestId(entry)),
-      turnItemId: TurnItemId.make(`turn-item:update-reopen:${entry.requestId}`),
+      turnItemId: TurnItemId.make(`turn-item:update-reopen:${family}`),
       questions: ClosedQuestions.reopenedQuestions(entry),
       reopenedFromAskedAt: entry.askedAt,
     });
+  };
 
   const reopenOne = (entry: ClosedQuestions.ClosedQuestion) =>
     Effect.gen(function* () {
@@ -502,11 +537,15 @@ export const makeReopener = Effect.gen(function* () {
       // Only a restart continues a turn, and only one that started asks again.
       if (
         restarted &&
-        continuationExpected(runs, run.id, yield* projectContinues(thread.projectId))
+        continuationExpected(
+          runs,
+          run.id,
+          yield* projectContinues(thread.projectId),
+          entry.closedAt,
+        )
       ) {
-        const continuation = runs.find(
-          (candidate) => candidate.restartContinuationOfRunId === run.id,
-        );
+        // Only a continuation started since this close can ask it again.
+        const continuation = continuationSince(runs, run.id, entry.closedAt);
         if (continuation !== undefined) {
           // Asked again by the agent while it runs; whether it did shows once it ends.
           if (!ENDED_RUN_STATUSES.has(continuation.status))

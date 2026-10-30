@@ -15,7 +15,10 @@ import {
   replaceRegularFile,
   shellQuote,
 } from "./shellLauncher.ts";
-import { repointShellLaunchers } from "./update.ts";
+import {
+  repointShellLaunchers,
+  repointShellLaunchersAfterServiceUpdate,
+} from "./shellLauncherRepoint.ts";
 
 const REPO = NodePath.resolve(import.meta.dirname, "../../../..");
 const FLEET = NodePath.join(REPO, "scripts/studio-fleet");
@@ -177,6 +180,68 @@ it.layer(NodeServices.layer)("shell launchers", (it) => {
           "specweave-studio",
           "specwithcode",
         ]);
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "repoints after a launcher-committed service update, and only after one",
+    () =>
+      Effect.gen(function* () {
+        const { home } = makeHome();
+        // A Linux worker's service home (~/.specwithcode/ministorm), updated by its launcher.
+        const baseDir = NodePath.join(home, ".specwithcode/ministorm");
+        const versions = NodePath.join(baseDir, "runtime/versions");
+        for (const version of ["1.0.123", "1.0.124", "1.0.125"])
+          release(NodePath.join(versions, version), version);
+        const old = installShLauncher({
+          home,
+          studioHome: baseDir,
+          versionDir: NodePath.join(versions, "1.0.123"),
+        });
+        const ours = NodePath.join(home, ".local/bin/specwithcode");
+        const alias = NodePath.join(home, ".local/bin/specweave-studio");
+        install(ours, old, 0o700);
+        install(alias, old, 0o755);
+        const afterUpdate = (
+          outcome: Parameters<typeof repointShellLaunchersAfterServiceUpdate>[0]["outcome"],
+        ) =>
+          repointShellLaunchersAfterServiceUpdate({ baseDir, outcome }).pipe(
+            Effect.provideService(HostProcessEnvironment, { PATH: "/nonexistent", HOME: home }),
+            Effect.provideService(HostProcessPlatform, "linux"),
+          );
+        const update = { id: "u1", fromVersion: "1.0.123", targetVersion: "1.0.124" };
+
+        // No update, or one the launcher rolled back or failed: the launchers stay.
+        expect(yield* afterUpdate(undefined)).toEqual([]);
+        expect(yield* afterUpdate({ ...update, status: "rolled-back", reason: "x" })).toEqual([]);
+        expect(yield* afterUpdate({ ...update, status: "failed", reason: "x" })).toEqual([]);
+        expect(run(ours).stdout).toBe("1.0.123\n");
+
+        // A committed update repoints both names to the version the service now runs.
+        const repointed = yield* afterUpdate({
+          ...update,
+          fromVersion: "1.0.124",
+          targetVersion: "1.0.125",
+          status: "committed",
+        });
+        expect([...repointed].sort()).toEqual([alias, ours].sort());
+        for (const launcher of [ours, alias]) expect(run(launcher).stdout).toBe("1.0.125\n");
+        // Every later start still sees that committed update; nothing left to change.
+        expect(
+          yield* afterUpdate({
+            ...update,
+            fromVersion: "1.0.124",
+            targetVersion: "1.0.125",
+            status: "committed",
+          }),
+        ).toEqual([]);
+
+        // Best effort: a committed version whose runtime is gone changes nothing and fails nothing.
+        NodeFS.rmSync(NodePath.join(versions, "1.0.125"), { recursive: true });
+        expect(
+          yield* afterUpdate({ ...update, targetVersion: "9.9.9", status: "committed" }),
+        ).toEqual([]);
+        expect(NodeFS.statSync(ours).mode & 0o777).toBe(0o700);
       }),
   );
 

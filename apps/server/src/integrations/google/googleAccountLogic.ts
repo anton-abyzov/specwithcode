@@ -8,11 +8,16 @@
 import { GOOGLE_SERVICES, type GoogleService } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 
-/** Read-only scopes; nothing here can send, change or delete. */
+/**
+ * Read-only scopes, plus Gmail compose for reply drafts. Google has no
+ * draft-only scope (compose also allows sending a draft), so the no-send rule
+ * is Studio's own: it has no send call and no send tool.
+ */
 export const GOOGLE_SERVICE_SCOPES: Record<GoogleService, string> = {
   gmail: "https://www.googleapis.com/auth/gmail.readonly",
   calendar: "https://www.googleapis.com/auth/calendar.readonly",
   drive: "https://www.googleapis.com/auth/drive.readonly",
+  gmailDrafts: "https://www.googleapis.com/auth/gmail.compose",
 };
 const IDENTITY_SCOPES = ["openid", "email"];
 
@@ -151,11 +156,11 @@ export const GoogleAccountState = Schema.Struct({
   email: Schema.NullOr(Schema.String),
   /** The client that obtained the saved refresh token; absent in state saved before it was kept. */
   clientId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  services: Schema.Array(Schema.Literals(["gmail", "calendar", "drive"])),
+  services: Schema.Array(Schema.Literals(["gmail", "calendar", "drive", "gmailDrafts"])),
   projects: Schema.Array(
     Schema.Struct({
       projectId: Schema.String,
-      services: Schema.Array(Schema.Literals(["gmail", "calendar", "drive"])),
+      services: Schema.Array(Schema.Literals(["gmail", "calendar", "drive", "gmailDrafts"])),
     }),
   ),
 });
@@ -320,6 +325,73 @@ export function readGmailMessage(message: GmailMessage) {
       })),
   };
 }
+
+/** Longest reply body an agent may save as a draft. */
+export const GMAIL_DRAFT_BODY_LIMIT = 10_000;
+
+/** A header value with line breaks removed, so it cannot add headers of its own. */
+const headerValue = (value: string): string => value.replace(/[\r\n]+/gu, " ").trim();
+
+/** RFC 2047 encoding for a header that is not plain ASCII. */
+const encodedWord = (value: string): string =>
+  /^[\x20-\x7e]*$/u.test(value)
+    ? value
+    : `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+
+const addressOf = (value: string): string =>
+  (/<([^>]+)>/u.exec(value)?.[1] ?? value).trim().toLowerCase();
+
+export interface GmailReplyDraft {
+  readonly to: string;
+  readonly subject: string;
+  /** The RFC 2822 message, base64url, as Gmail's drafts.create takes it. */
+  readonly raw: string;
+}
+
+/**
+ * A plain-text reply to `message`, threaded under it. It goes to Reply-To or
+ * the sender; when the person sent the original themselves, back to its
+ * recipients. Null when the original names nobody to reply to.
+ */
+export function buildGmailReplyDraft(input: {
+  readonly message: GmailMessage;
+  readonly body: string;
+  readonly selfEmail: string | null;
+}): GmailReplyDraft | null {
+  const part = input.message.payload;
+  const from = header(part, "From");
+  const fromSelf =
+    from !== null && input.selfEmail !== null && addressOf(from) === input.selfEmail.toLowerCase();
+  const to = headerValue(
+    (fromSelf ? header(part, "To") : null) ?? header(part, "Reply-To") ?? from ?? "",
+  );
+  if (to === "") return null;
+  const original = headerValue(header(part, "Subject") ?? "");
+  const subject = /^re:/iu.test(original) ? original : `Re: ${original}`.trim();
+  const messageId = header(part, "Message-ID") ?? header(part, "Message-Id");
+  const references = [header(part, "References"), messageId]
+    .filter((value): value is string => value !== null && value.trim() !== "")
+    .map(headerValue)
+    .join(" ");
+  const lines = [
+    `To: ${to}`,
+    `Subject: ${encodedWord(subject)}`,
+    ...(messageId ? [`In-Reply-To: ${headerValue(messageId)}`] : []),
+    ...(references ? [`References: ${references}`] : []),
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(input.body.replace(/\r?\n/gu, "\r\n"), "utf8")
+      .toString("base64")
+      .replace(/(.{76})/gu, "$1\r\n"),
+  ];
+  return { to, subject, raw: Buffer.from(lines.join("\r\n"), "utf8").toString("base64url") };
+}
+
+/** Where the person opens a saved draft in Gmail on the web. */
+export const gmailDraftLink = (messageId: string): string =>
+  `https://mail.google.com/mail/#drafts?compose=${encodeURIComponent(messageId)}`;
 
 export interface CalendarEvent {
   readonly id: string;

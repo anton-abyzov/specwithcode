@@ -3,22 +3,33 @@ import * as Schema from "effect/Schema";
 import { ProjectId } from "./baseSchemas.ts";
 
 /**
- * Google account: read-only Gmail, Calendar and Drive for chosen projects.
+ * Google account: Gmail, Calendar and Drive for chosen projects. Every service
+ * reads only, except Gmail drafts, which saves reply drafts for the person to
+ * review and send; nothing in Studio can send mail.
  *
  * Studio releases ship their own Google OAuth client ("Desktop app" type), so
  * connecting is one click: Google's consent screen opens in the browser and
  * sends the person back to this host. A person or organisation that prefers
  * its own Google Cloud client can still save one, and it replaces Studio's.
  * Studio keeps the refresh token in the host's secret store and never sends
- * it or the client secret back to clients. Only scopes that read are ever
- * requested. A project's agents can use a service only after the person turns
+ * it or the client secret back to clients. Only scopes that read are
+ * requested, plus Gmail's compose scope when the person ticks Gmail drafts. A
+ * project's agents can use a service only after the person turns
  * it on for that project.
  */
 
-export const GoogleService = Schema.Literals(["gmail", "calendar", "drive"]);
+export const GoogleService = Schema.Literals(["gmail", "calendar", "drive", "gmailDrafts"]);
 export type GoogleService = typeof GoogleService.Type;
 
-export const GOOGLE_SERVICES: ReadonlyArray<GoogleService> = ["gmail", "calendar", "drive"];
+export const GOOGLE_SERVICES: ReadonlyArray<GoogleService> = [
+  "gmail",
+  "calendar",
+  "drive",
+  "gmailDrafts",
+];
+
+/** Services a new sign-in asks for unless the person ticks more: the read-only ones. */
+export const GOOGLE_READ_SERVICES: ReadonlyArray<GoogleService> = ["gmail", "calendar", "drive"];
 
 /** Desktop-app client ids look like `1234-abc.apps.googleusercontent.com`. */
 export const GOOGLE_CLIENT_ID_PATTERN =

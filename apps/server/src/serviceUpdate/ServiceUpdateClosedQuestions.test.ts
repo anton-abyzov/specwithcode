@@ -277,6 +277,30 @@ it("records again a request reopened while still open, and takes the latest clos
   assert.strictEqual(ClosedQuestions.mergeRecorded(same, [entry("q2")], "boot-1"), same);
 });
 
+it("takes a later close of a reopen card whose reopen was never marked", () => {
+  // The card was put back but its mark not written; the next update closes it again.
+  const unmarked = [entry("update-reopen:q1", { closedIn: "boot-2" })];
+  const later = entry("update-reopen:q1", { closedAt: "2026-10-22T10:00:00.000Z" });
+  const [again] = ClosedQuestions.mergeRecorded(unmarked, [later], "boot-3");
+  assert.equal(again!.closedAt, "2026-10-22T10:00:00.000Z");
+  assert.equal(again!.closedIn, "boot-3");
+  // The same close recorded twice still changes nothing.
+  assert.strictEqual(
+    ClosedQuestions.mergeRecorded(unmarked, [entry("update-reopen:q1")], "boot-2"),
+    unmarked,
+  );
+  // An original request keeps its first close: it is never put back under its own id.
+  const original = [entry("q1", { closedIn: "boot-2" })];
+  assert.strictEqual(
+    ClosedQuestions.mergeRecorded(
+      original,
+      [entry("q1", { closedAt: "2026-10-22T10:00:00.000Z" })],
+      "boot-2",
+    ),
+    original,
+  );
+});
+
 it.effect("never overwrites a record it cannot read, and keeps entries it cannot decode", () =>
   withStore(({ recordPath, store }) =>
     Effect.gen(function* () {

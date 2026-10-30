@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProviderTurnId,
   type RunId,
+  RuntimeRequestId,
   SERVICE_UPDATE_STOP_REASON,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -702,6 +703,139 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
       assert.deepEqual(
         cards.map((card) => [card.status, card.responseMode, card.questions[0]?.question]),
         [["waiting", "message", "Which database should I use?"]],
+      );
+    }),
+  );
+  // October 30, 1.0.126: each update closed the card the last one put back and
+  // reopened it under one more prefix, so ids grew by one prefix per update.
+  // Now every update puts back the same card, which the person can answer.
+  it.effect("puts the same card back through consecutive updates, and it stays answerable", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, runId } = yield* interruptedThread("reopen-repeat", "service_update");
+      const original: ClosedQuestions.ClosedQuestion = {
+        requestId: "ask-user:repeat",
+        threadId,
+        threadTitle: "reopen-repeat",
+        runId,
+        kind: "user_input",
+        text: "Which database should I use?",
+        questions: [
+          {
+            id: "q1",
+            header: "Database",
+            question: "Which database should I use?",
+            options: [{ label: "Postgres", description: "The usual one." }],
+            allowCustomAnswer: true,
+          },
+        ],
+        askedAt: null,
+        closedAt: "2026-10-21T10:00:00.000Z",
+        reopenedAt: null,
+      };
+      const reopenEntry = (entry: ClosedQuestions.ClosedQuestion) =>
+        Effect.gen(function* () {
+          const pending = yield* Ref.make<ReadonlyArray<ClosedQuestions.ClosedQuestion>>([entry]);
+          const store = ClosedQuestions.ServiceUpdateClosedQuestions.of({
+            bootId: "after-the-restart",
+            record: () => Effect.succeed(true),
+            pending: Ref.get(pending),
+            forRun: () => Effect.succeed([entry]),
+            markReopened: () => Ref.set(pending, []).pipe(Effect.as(true)),
+            draining: (effect) => effect,
+            isDraining: Effect.succeed(false),
+            reopening: (effect) => effect,
+          });
+          const reopener = yield* ReopenQuestions.makeReopener.pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(ClosedQuestions.ServiceUpdateClosedQuestions, store),
+                IdAllocator.layer,
+                ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }),
+              ),
+            ),
+          );
+          return yield* reopener.reopenPending;
+        });
+      const card = "update-reopen:ask-user:repeat";
+      const reopenRequests = Effect.map(orchestrator.getThreadProjection(threadId), (after) =>
+        after.runtimeRequests.filter((request) => request.id.startsWith("update-reopen")),
+      );
+      const first = yield* reopenEntry(original);
+      assert.deepEqual(first[0]?.outcome, { type: "reopened", by: "card" });
+      for (let update = 2; update <= 4; update += 1) {
+        // The next update's drain dismisses the card, as it dismisses any message-mode question.
+        yield* orchestrator.dispatch({
+          type: "thread.user-input.dismiss",
+          commandId: CommandId.make(`reopen-repeat:update-${update}:dismiss`),
+          threadId,
+          requestId: RuntimeRequestId.make(card),
+        });
+        assert.deepEqual(
+          (yield* reopenRequests).map((request) => [request.id, request.status]),
+          [[card, "resolved"]],
+        );
+        const again = yield* reopenEntry({
+          ...original,
+          requestId: card,
+          closedAt: `2026-10-2${update}T10:00:00.000Z`,
+        });
+        assert.deepEqual(again[0]?.outcome, { type: "reopened", by: "card" });
+        // One card, one prefix, open again.
+        assert.deepEqual(
+          (yield* reopenRequests).map((request) => [request.id, request.status]),
+          [[card, "pending"]],
+        );
+      }
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const cards = after.turnItems.flatMap((item) =>
+        item.type === "user_input_request" && item.requestId.startsWith("update-reopen")
+          ? [item]
+          : [],
+      );
+      assert.deepEqual(
+        cards.map((item) => [item.requestId, item.status, item.questions[0]?.question]),
+        [[card, "waiting", "Which database should I use?"]],
+      );
+      assert.isTrue(after.nodes.every((node) => !node.id.includes("update-reopen:update-reopen")));
+      // Only the first close is noted on the turn.
+      const notes = after.turnItems.filter(
+        (item) => item.type === "system_notice" && item.title === "Closed by the update",
+      );
+      assert.lengthOf(notes, 1);
+      // The person answers the card that came back.
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("reopen-repeat:answer"),
+        threadId,
+        requestId: RuntimeRequestId.make(card),
+        answers: { q1: "Postgres" },
+      });
+      const answered = yield* orchestrator.getThreadProjection(threadId);
+      const request = answered.runtimeRequests.find((candidate) => candidate.id === card);
+      assert.equal(request?.status, "resolved");
+      assert.deepEqual(request?.answers, { q1: "Postgres" });
+      // Answered, it is not asked again: neither the copy nor the original.
+      const later = yield* reopenEntry({
+        ...original,
+        requestId: card,
+        closedAt: "2026-10-26T10:00:00.000Z",
+      });
+      assert.deepEqual(later[0]?.outcome, { type: "skipped", reason: "request-resolved" });
+      const fromOriginal = yield* reopenEntry({
+        ...original,
+        closedAt: "2026-10-27T10:00:00.000Z",
+      });
+      assert.deepEqual(fromOriginal[0]?.outcome, {
+        type: "skipped",
+        reason: "request-family-answered",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests.find(
+          (candidate) => candidate.id === card,
+        )?.status,
+        "resolved",
       );
     }),
   );

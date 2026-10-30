@@ -53,6 +53,10 @@ export const layer = Access.toLayer(GoogleToolkit, {
   studio_google_gmail_read: Access.reads((input) =>
     read((service, projectId) => service.gmailRead(projectId, input.messageId)),
   ),
+  // Saves a draft in the user's own mailbox, never sends; only a live project thread may.
+  studio_google_gmail_create_draft: Access.actsAsCaller((input) =>
+    read((service, projectId) => service.gmailCreateDraft(projectId, input)),
+  ),
   studio_google_calendar_events: Access.reads((input) =>
     read((service, projectId) => service.calendarEvents(projectId, input)),
   ),

@@ -94,6 +94,8 @@ const makeHarness = (
 ) => {
   const state = {
     busy: options.busy ?? false,
+    /** The retained chat still streams an answer: the context read refuses as busy. */
+    streaming: false,
     text: options.text ?? "Continue the actual pending change",
     head: "a".repeat(40),
     pushes: 0,
@@ -175,9 +177,13 @@ const makeHarness = (
             state.busy
               ? [
                   {
+                    threadId: "busy-thread",
+                    title: "Busy worker",
                     projectId: options.busyProject ?? projectId,
+                    projectTitle: "Busy project",
                     workspaceRoot: options.busyRoot ?? "/source/project",
                     worktreePath: null,
+                    running: 1,
                   },
                 ]
               : [],
@@ -313,7 +319,7 @@ const makeHarness = (
               id: "message1",
               role: "user",
               text: state.text,
-              streaming: false,
+              streaming: state.streaming,
               createdAt: DateTime.makeUnsafe("2026-10-13T00:00:00Z"),
             },
           ],

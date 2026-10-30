@@ -1214,6 +1214,7 @@ export const environmentSession = {
 };
 export const primaryServerSettingsAtom = fixtureAtom("serverSettings", DEFAULT_SERVER_SETTINGS);
 export const readEnvironmentScope = () => true;
+export const awaitEnvironmentScope = async () => true;
 export const readPreparedConnection = () => (recovery ? { httpBaseUrl: location.origin } : null);
 export const usePreparedConnection = () => Option.none();
 export const useAllEnvironmentShellsBootstrapped = () => true;

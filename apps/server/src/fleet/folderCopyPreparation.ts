@@ -1,6 +1,7 @@
 import {
   FolderCopyError,
   MachineHandoffError,
+  type MachineHandoffBusyReason,
   type FolderCopyDriftInput,
   type FolderCopyDriftResult,
   type FolderCopyReleaseInput,
@@ -21,6 +22,7 @@ import {
   validProjectRelativePath,
 } from "./folderCopyScope.ts";
 import { attempt, folderCopyManifestRepositories } from "./FolderCopyHandoff.ts";
+import { busyHandoffError, busyReasonOf, type BusyThreadInput } from "./handoffBusyThreads.ts";
 import type { DestinationCopies } from "./folderTransfer/destinationService.ts";
 import { driftRowKey, type SourceDrift } from "./folderTransfer/sourceDrift.ts";
 import type { SourceOperationRecord, SourceTransfers } from "./folderTransfer/sourceService.ts";
@@ -30,38 +32,103 @@ const isHandoffError = Schema.is(MachineHandoffError);
 export const ACTIVE_COPY_WARNING =
   "Work is still running here. Files that change during the copy won't be included, and the project moves once that work stops.";
 
+const WAITS_FOR_PERSON: ReadonlySet<MachineHandoffBusyReason> = new Set([
+  "waiting_for_answer",
+  "waiting_for_sign_in",
+  "pending_approval",
+]);
+const MAX_WARNING_NAMES = 5;
+const quoted = (title: string) => `"${title.length > 120 ? `${title.slice(0, 119)}…` : title}"`;
+
+/**
+ * What the copy step says about a busy refusal. Running work stops on its own, so the
+ * running-work notice fits it; a question, sign-in or approval waiting for the person never
+ * does, so those threads are named, and the move waits until they are answered or closed.
+ */
+export function busyCopyWarnings(cause: MachineHandoffError): ReadonlyArray<string> {
+  const threads = cause.busy?.threads ?? [];
+  const waiting = threads.filter((thread) => WAITS_FOR_PERSON.has(thread.reason));
+  if (waiting.length === 0) return [ACTIVE_COPY_WARNING];
+  const unlisted = Math.max(0, (cause.busy?.total ?? threads.length) - threads.length);
+  const names = waiting.slice(0, MAX_WARNING_NAMES).map((thread) => quoted(thread.title));
+  const more = waiting.length - names.length;
+  const one = waiting.length === 1;
+  const lead = one
+    ? "A thread here is waiting for you"
+    : `${waiting.length} threads here are waiting for you`;
+  const rest =
+    unlisted > 0
+      ? ` ${unlisted.toLocaleString("en-US")} more ${unlisted === 1 ? "thread is" : "threads are"} busy too.`
+      : "";
+  const warning = `${lead}: ${names.join(", ")}${more > 0 ? ` and ${more} more` : ""}. ${one ? "It doesn't" : "They don't"} stop on ${one ? "its" : "their"} own: answer or close what ${one ? "it asks" : "each one asks"} before the coordinator moves.${rest}`;
+  return threads.length > waiting.length ? [ACTIVE_COPY_WARNING, warning] : [warning];
+}
+
+/**
+ * Refuses with every thread that keeps this folder busy: running work, a question, sign-in
+ * or approval waiting for the person, a tool call the app is still answering, a provider
+ * session still running, or an effect still pending. A waiting question blocks too:
+ * moving would drop it.
+ */
 export const makeProjectIdleCheck =
   (sql: SqlClient.SqlClient, fs: FileSystem.FileSystem, path: Path.Path) =>
   (id: ProjectId, root: string) =>
     Effect.gen(function* () {
       const rows = yield* sql<{
+        threadId: string;
+        title: string | null;
         projectId: string;
+        projectTitle: string | null;
         workspaceRoot: string;
         worktreePath: string | null;
+        running: number;
+        waitingForAnswer: number;
+        waitingForSignIn: number;
+        pendingApproval: number;
+        toolCall: number;
+        pendingEffect: number;
+        providerSession: number;
       }>`
-      SELECT DISTINCT t.project_id AS "projectId", p.workspace_root AS "workspaceRoot",
-        json_extract(t.payload_json, '$.worktreePath') AS "worktreePath"
-      FROM orchestration_v2_projection_threads t JOIN projection_projects p ON p.project_id=t.project_id
-      WHERE EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id AND r.status NOT IN ('completed','interrupted','failed','cancelled','rolled_back'))
-      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id=t.thread_id AND r.status='pending')
-      OR EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox e WHERE e.thread_id=t.thread_id AND (e.status IS NULL OR e.status NOT IN ('succeeded','failed','cancelled')))
-      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_provider_sessions s WHERE s.thread_id=t.thread_id AND s.status IN ('running','working','connecting','starting'))
+      SELECT * FROM (
+        SELECT t.thread_id AS "threadId", t.title AS "title", t.project_id AS "projectId",
+          p.title AS "projectTitle", p.workspace_root AS "workspaceRoot",
+          json_extract(t.payload_json, '$.worktreePath') AS "worktreePath", t.updated_at AS "updatedAt",
+          EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id AND r.status NOT IN ('completed','interrupted','failed','cancelled','rolled_back')) AS "running",
+          EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id=t.thread_id AND r.status='pending' AND r.kind='user_input') AS "waitingForAnswer",
+          EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id=t.thread_id AND r.status='pending' AND r.kind='auth_refresh') AS "waitingForSignIn",
+          EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id=t.thread_id AND r.status='pending' AND r.kind NOT IN ('user_input','auth_refresh','dynamic_tool_call')) AS "pendingApproval",
+          EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id=t.thread_id AND r.status='pending' AND r.kind='dynamic_tool_call') AS "toolCall",
+          EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox e WHERE e.thread_id=t.thread_id AND (e.status IS NULL OR e.status NOT IN ('succeeded','failed','cancelled'))) AS "pendingEffect",
+          EXISTS (SELECT 1 FROM orchestration_v2_projection_provider_sessions s WHERE s.thread_id=t.thread_id AND s.status IN ('running','working','connecting','starting')) AS "providerSession"
+        FROM orchestration_v2_projection_threads t JOIN projection_projects p ON p.project_id=t.project_id
+      )
+      WHERE "running" OR "waitingForAnswer" OR "waitingForSignIn" OR "pendingApproval" OR "toolCall" OR "pendingEffect" OR "providerSession"
+      ORDER BY "updatedAt" DESC, "threadId"
     `;
+      // Busy threads of one project share its root: resolve each path once.
+      const resolved = new Map<string, string>();
       const normalized = (value: string) =>
-        fs.realPath(value).pipe(Effect.orElseSucceed(() => path.resolve(value)));
+        resolved.has(value)
+          ? Effect.succeed(resolved.get(value)!)
+          : fs.realPath(value).pipe(
+              Effect.orElseSucceed(() => path.resolve(value)),
+              Effect.tap((real) => Effect.sync(() => resolved.set(value, real))),
+            );
       const left = yield* normalized(root);
       const overlaps = (right: string) =>
         left === right ||
         left.startsWith(`${right}${path.sep}`) ||
         right.startsWith(`${left}${path.sep}`);
+      const blocking: Array<BusyThreadInput> = [];
       for (const row of rows) {
         if (
           row.projectId === id ||
           overlaps(yield* normalized(row.workspaceRoot)) ||
           (row.worktreePath && overlaps(yield* normalized(row.worktreePath)))
         )
-          return yield* new MachineHandoffError({ code: "busy" });
+          blocking.push({ ...row, reason: busyReasonOf(row) });
       }
+      if (blocking.length > 0) return yield* busyHandoffError(blocking);
     }).pipe(
       Effect.mapError((cause) =>
         isHandoffError(cause) ? cause : new MachineHandoffError({ code: "storage_failed" }),

@@ -55,6 +55,17 @@ atomic snapshot. Only the final coordinator-context transfer requires idle work;
 it never silently stops an active provider session. If files have changed since
 the copy, the dialog shows exactly which ones before the coordinator moves.
 
+When work holds the coordinator on a machine, the dialog lists the threads that
+hold it (up to 10, then a count of the rest) and why: running work, waiting for
+your answer, waiting for you to sign in again, waiting for your approval, an
+agent session still running, or a step still pending. Each title opens that
+thread. Both the folder copy and the Git method list them, for the source and
+for the destination. Answer or close each question, or stop the work, then try
+again. A question still waiting for you blocks the move even when nothing runs,
+because moving would drop it, so the copy step already names those threads
+instead of saying work is running. Older machines name no threads and only say
+that work is still running.
+
 ## When a saved comparison is out of date
 
 For **Copy files only**, a new comparison captures the selected non-secret files

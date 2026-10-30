@@ -1,8 +1,8 @@
 /**
  * A short form for a reusable routine, started from a template: what it does,
  * what it works from, where the result goes, and when it runs. It runs only
- * when asked unless the person picks a monthly day; nothing is saved until
- * they press Save.
+ * when asked unless the person picks the template's cadence (a monthly day, or
+ * a daily time); nothing is saved until they press Save.
  */
 import { useId, useRef, useState } from "react";
 import {
@@ -42,9 +42,13 @@ export function RoutineQuickForm({
     template.inputs.slice(0, ROUTINE_BRIEF_MAX_INPUTS).map((entry) => ({ ...entry, location: "" })),
   );
   const [output, setOutput] = useState(template.output ?? "");
-  const [monthly, setMonthly] = useState(false);
-  const [dayOfMonth, setDayOfMonth] = useState(template.suggestedCadence?.dayOfMonth ?? 1);
-  const [timeOfDay, setTimeOfDay] = useState(template.suggestedCadence?.timeOfDay ?? "09:00");
+  const suggested = template.suggestedCadence;
+  const daily = suggested?.type === "fixed_time";
+  const [scheduled, setScheduled] = useState(template.cadenceOnByDefault === true);
+  const [dayOfMonth, setDayOfMonth] = useState(
+    suggested?.type === "monthly" ? suggested.dayOfMonth : 1,
+  );
+  const [timeOfDay, setTimeOfDay] = useState(suggested?.timeOfDay ?? "09:00");
   const [prepareOnly, setPrepareOnly] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -61,9 +65,11 @@ export function RoutineQuickForm({
       setError("A routine needs a name and what to do.");
       return;
     }
-    const schedule: ScheduledTaskUpsertSchedule = monthly
-      ? { type: "monthly", dayOfMonth, timeOfDay }
-      : { type: "manual" };
+    const schedule: ScheduledTaskUpsertSchedule = !scheduled
+      ? { type: "manual" }
+      : daily
+        ? { type: "fixed_time", timeOfDay }
+        : { type: "monthly", dayOfMonth, timeOfDay };
     setSaving(true);
     setError(null);
     try {
@@ -162,8 +168,8 @@ export function RoutineQuickForm({
           <input
             type="radio"
             name={`${id}-when`}
-            checked={!monthly}
-            onChange={() => setMonthly(false)}
+            checked={!scheduled}
+            onChange={() => setScheduled(false)}
           />
           When you ask (Run now)
         </label>
@@ -171,23 +177,25 @@ export function RoutineQuickForm({
           <input
             type="radio"
             name={`${id}-when`}
-            checked={monthly}
-            onChange={() => setMonthly(true)}
+            checked={scheduled}
+            onChange={() => setScheduled(true)}
           />
-          Every month
+          {daily ? "Every day" : "Every month"}
         </label>
-        {monthly ? (
+        {scheduled ? (
           <div className="sws-routine-when">
-            <label>
-              Day
-              <select value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))}>
-                {DAYS.map((day) => (
-                  <option key={day} value={day}>
-                    {day}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {daily ? null : (
+              <label>
+                Day
+                <select value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))}>
+                  {DAYS.map((day) => (
+                    <option key={day} value={day}>
+                      {day}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>
               Time
               <input type="time" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)} />
@@ -205,6 +213,7 @@ export function RoutineQuickForm({
       </label>
       <p className="project-muted">
         Runs in a thread of its own, named after the routine; each run continues it.
+        {scheduled ? " Each scheduled run uses your plan's limits." : ""}
       </p>
       {error ? <p role="alert">{error}</p> : null}
       <div className="project-actions">

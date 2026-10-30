@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -192,6 +193,7 @@ it.effect("parks pull and settings normalisation until activation, keeping readi
           address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 8319),
         }),
         Path.layer,
+        NodeFileSystem.layer,
       );
 
       yield* Effect.gen(function* () {
