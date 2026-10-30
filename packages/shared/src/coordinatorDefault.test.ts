@@ -6,6 +6,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  coordinatorSelectionProblem,
   defaultCoordinatorModelSelection,
   defaultModelOptions,
   defaultProjectModelSelection,
@@ -134,6 +135,24 @@ describe("defaultWorkerModelSelection", () => {
       instanceId: "claudeAgent",
       model: "claude-opus-5-5",
     });
+  });
+});
+
+describe("coordinatorSelectionProblem", () => {
+  const copilot = provider("copilot", "copilot", ["default"], { auth: { status: "unknown" } });
+  const pick = { instanceId: ProviderInstanceId.make("copilot"), model: "default" };
+
+  it("accepts a ready provider that never reports its sign-in, as a worker would", () => {
+    expect(coordinatorSelectionProblem(pick, [copilot])).toBeNull();
+  });
+
+  it("refuses an unknown sign-in before the status check passed, and a signed-out one", () => {
+    expect(coordinatorSelectionProblem(pick, [{ ...copilot, status: "warning" }])).toBe(
+      "provider_unavailable",
+    );
+    expect(
+      coordinatorSelectionProblem(pick, [{ ...copilot, auth: { status: "unauthenticated" } }]),
+    ).toBe("provider_unavailable");
   });
 });
 

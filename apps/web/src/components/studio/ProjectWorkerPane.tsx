@@ -26,6 +26,7 @@ export function ProjectWorkerPane({
   suspendShortcuts,
   toolsSlot,
   peek = null,
+  coordinatorBlocked = false,
 }: {
   project: EnvironmentProject;
   thread: EnvironmentThreadShell;
@@ -46,8 +47,13 @@ export function ProjectWorkerPane({
     readonly entry: SubagentEntry | null;
     readonly onClose: () => void;
   } | null;
+  /** The viewed copy runs workers only, so its coordinator refuses every relay. */
+  coordinatorBlocked?: boolean;
 }) {
   const local = thread.environmentId === project.environmentId;
+  // A thread on another machine is answered there when this copy's coordinator
+  // would refuse the relay, instead of failing every reply.
+  const direct = local || coordinatorBlocked;
   const routedMessages = useRoutedThreadMessages(project, local ? coordinatorId : null, thread);
   return (
     <SelectedThreadShell value={thread}>
@@ -56,8 +62,8 @@ export function ProjectWorkerPane({
         value={{
           coordinatorThreadId: coordinatorId,
           // A worker here takes the user's message itself; only a thread on
-          // another machine still goes through the coordinator.
-          direct: local,
+          // another machine still goes through the coordinator, when it can.
+          direct,
           openCoordinator,
           openThread,
           routedMessages,

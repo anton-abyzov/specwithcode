@@ -541,6 +541,20 @@ export const checkAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.check
   },
 );
 
+/**
+ * The readiness placeholder published before each background probe keeps a
+ * sign-out the last probe found, so a signed-out agent never reads as ready
+ * with an unknown sign-in while its next probe runs.
+ */
+export function withLastProbedSignOut(
+  placeholder: ServerProvider,
+  lastProbedAuth: ServerProvider["auth"]["status"] | null,
+): ServerProvider {
+  return placeholder.auth.status === "unknown" && lastProbedAuth === "unauthenticated"
+    ? { ...placeholder, auth: { ...placeholder.auth, status: "unauthenticated" } }
+    : placeholder;
+}
+
 /** Publishes local executable readiness without starting an ACP process. */
 export const checkAcpRegistryProviderReadiness = Effect.fn(
   "AcpRegistryDriver.checkProviderReadiness",
@@ -685,9 +699,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 }),
               );
         });
+      const lastProbedAuth = yield* Ref.make<ServerProvider["auth"]["status"] | null>(null);
       const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.flatMap(withLiveRuntimeState),
+        Effect.flatMap((provider) =>
+          Ref.get(lastProbedAuth).pipe(Effect.map((auth) => withLastProbedSignOut(provider, auth))),
+        ),
       );
       const enrichProvider = checkAcpRegistryProviderStatus(
         {
@@ -773,7 +791,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     Ref.get(enrichmentCache).pipe(
                       Effect.flatMap((current) =>
                         current.generation === generation
-                          ? withLiveRuntimeState(provider).pipe(Effect.flatMap(publishSnapshot))
+                          ? Ref.set(lastProbedAuth, provider.auth.status).pipe(
+                              Effect.andThen(withLiveRuntimeState(provider)),
+                              Effect.flatMap(publishSnapshot),
+                            )
                           : Effect.void,
                       ),
                     ),

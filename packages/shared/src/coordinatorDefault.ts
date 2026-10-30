@@ -42,19 +42,32 @@ function automaticModels(provider: ServerProvider): ServerProvider {
   };
 }
 
-/** Explicit choices may be paid, but must still support coordinator tools. */
+/**
+ * Explicit choices may be paid, but must still support coordinator tools.
+ * An unreported sign-in is accepted once the provider's status check passed:
+ * ACP providers such as Copilot never report one, yet take turns as workers.
+ */
 export function coordinatorSelectionProblem(
   selection: ModelSelection,
   providers: ReadonlyArray<ServerProvider>,
 ): "provider_unavailable" | "coordinator_tools_required" | null {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  if (!provider || !usable(provider)) return "provider_unavailable";
+  if (
+    !provider ||
+    !provider.enabled ||
+    !provider.installed ||
+    !isProviderAvailable(provider) ||
+    provider.status === "error"
+  )
+    return "provider_unavailable";
   const model = provider.models.find(
     (candidate) =>
       candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
   );
-  if (provider.auth.status !== "authenticated" && model?.billing !== "local")
-    return "provider_unavailable";
+  const signedIn =
+    provider.auth.status === "authenticated" ||
+    (provider.auth.status === "unknown" && provider.status === "ready");
+  if (!signedIn && model?.billing !== "local") return "provider_unavailable";
   if (model?.toolCalls === false) return "coordinator_tools_required";
   return null;
 }
