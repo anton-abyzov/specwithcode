@@ -10,6 +10,18 @@ const COPY_EXACTLY =
   "Thread IDs are opaque: copy threadId, or the href of threadLink, exactly as a tool returned it; the leading `thread:` and any `%3A` are part of the ID.";
 
 /**
+ * Claude projects (claude.ai) and Claude Code remote sessions use IDs like
+ * `session_01…` and `cmsg_01…`. They turn up in briefs copied from those
+ * products, and an agent that treats one as a thread here goes looking for a
+ * way to reach it, down to signing in to claude.ai in a browser. Nothing here
+ * can reach them, so the answer says so and points at the work's own record.
+ */
+const FOREIGN_SESSION_ID = /^(session|cmsg)_[0-9A-Za-z]{10,}$/;
+
+const foreignSessionMessage = (threadId: string) =>
+  `${threadId} is a Claude projects or Claude Code session or message ID, not a SpecWithCode thread. SpecWithCode has no transport to those sessions, and signing in to Claude in a browser will not connect one. Get what you need from the work's own record instead (the pull request, commits, CI or a saved receipt), or ask the user once to relay it. Do not open a browser or start another worker to reach it.`;
+
+/**
  * A `thread_not_found` an agent can act on. When the ID it passed is a
  * near miss of a thread that exists (see threadIdNearMisses), the answer names
  * that thread; the tool still acts only on the ID it was given, so access
@@ -22,6 +34,11 @@ export const explainThreadNotFound = (threadId: string, failure: OrchestratorMcp
     const context = yield* loadCaller();
     // The ID was right and the thread is gone: the original answer says so.
     if ((yield* context.threads.getThreadShell(ThreadId.make(threadId))) !== null) return failure;
+    if (FOREIGN_SESSION_ID.test(threadId))
+      return new OrchestratorMcpFailure({
+        code: "thread_not_found",
+        message: foreignSessionMessage(threadId),
+      });
     const meant =
       (yield* workGrantOf(context)) !== undefined
         ? undefined

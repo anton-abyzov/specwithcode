@@ -132,6 +132,7 @@ export function ProjectWorkspaceSettings({
   onDeleted,
   onOpenThread,
   canOperate,
+  accessNotice = "Read-only connection. Reconnect with permission to edit this project.",
 }: {
   project: EnvironmentProject;
   /** The model the project's coordinator thread runs on, once it has one. */
@@ -150,6 +151,8 @@ export function ProjectWorkspaceSettings({
   onDeleted: () => void;
   onOpenThread: (id: ThreadId) => void;
   canOperate: boolean;
+  /** Why editing is off; defaults to a missing permission. */
+  accessNotice?: string | undefined;
 }) {
   const countId = useId();
   const nameInput = useRef<HTMLInputElement>(null);
@@ -377,11 +380,7 @@ export function ProjectWorkspaceSettings({
               </ProjectSettingsSearch>
             </nav>
             <div className="project-settings-body" ref={bodyRef}>
-              {!canOperate && (
-                <p className="project-notice">
-                  Read-only connection. Reconnect with permission to edit this project.
-                </p>
-              )}
+              {!canOperate && <p className="project-notice">{accessNotice}</p>}
               {error && (
                 <p className="project-notice" role="alert">
                   {error}

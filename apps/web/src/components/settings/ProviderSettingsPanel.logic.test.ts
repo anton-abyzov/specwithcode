@@ -175,6 +175,18 @@ describe("primary operate access", () => {
     ).toBe("denied");
   });
 
+  it("keeps a cached grant when a re-check fails", () => {
+    expect(
+      resolvePrimaryOperateAccess({
+        isPrimary: true,
+        hasDesktopBridge: false,
+        session: { authenticated: true, permissions: ["providers:manage"] },
+        isPending: false,
+        hasError: true,
+      }),
+    ).toBe("granted");
+  });
+
   it("denies unauthenticated sessions and sessions without the operate scope", () => {
     expect(
       resolvePrimaryOperateAccess({

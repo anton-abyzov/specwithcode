@@ -10,7 +10,11 @@ import {
 import { useMemo, useState, type ReactElement, type ReactNode } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
+import {
+  awaitEnvironmentScope,
+  readEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "../../state/session";
 import { projectEnvironment } from "../../state/projects";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -59,10 +63,14 @@ export function useProjectIconEditor({
       environments.find((entry) => entry.environmentId === member.environmentId)?.connection
         .phase !== "connected",
   );
+  // A machine that is not connected has no confirmed grant yet: ask to connect
+  // it rather than reporting a permission it may well have.
   const blocked =
     blockedMember === undefined
       ? null
-      : writable.has(blockedMember.environmentId)
+      : writable.has(blockedMember.environmentId) ||
+          environments.find((entry) => entry.environmentId === blockedMember.environmentId)
+            ?.connection.phase !== "connected"
         ? `Connect ${environmentLabel(blockedMember)} to change this project's icon.`
         : `This connection cannot change the icon on ${environmentLabel(blockedMember)}.`;
   const pickExternal =
@@ -82,9 +90,15 @@ export function useProjectIconEditor({
   // Resolves false when the change was not saved, so the picker shows the saved icon again.
   const save = useLatestIconSave(async (change: IconChange) => {
     if (locked) return false;
-    const denied = members.find(
-      (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+    // The cached grant can be empty after an idle period; load it before denying.
+    const granted = await Promise.all(
+      members.map(
+        async (member) =>
+          readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope) ||
+          (await awaitEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope)),
+      ),
     );
+    const denied = members.find((_, index) => !granted[index]);
     if (denied) {
       toastManager.add({
         type: "error",

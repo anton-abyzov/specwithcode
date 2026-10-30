@@ -27,12 +27,9 @@ function makeCommandPermissions<R, E>(
         const scopes = scopeKey.split(",").filter(Boolean) as AuthEnvironmentScope[];
         if (scopes.length === 0) return true;
         const result = get(sessions.sessionStateAtom(environmentId));
+        // A failed re-check keeps the last grant the host confirmed.
         const session = Option.getOrNull(AsyncResult.value(result));
-        return (
-          result._tag !== "Failure" &&
-          session !== null &&
-          scopes.every((scope) => sessionGrantsScope(session, scope))
-        );
+        return session !== null && scopes.every((scope) => sessionGrantsScope(session, scope));
       }),
     ),
   );
@@ -55,6 +52,9 @@ function makeCommandPermissions<R, E>(
           }).pipe(
             Effect.timeoutOption(6_000),
             Effect.catch(() => Effect.succeed(Option.none<AuthSessionState>())),
+            Effect.map((fresh) =>
+              Option.orElse(fresh, () => AsyncResult.value(registry.get(atom))),
+            ),
           );
           const missing = scopes.find(
             (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),

@@ -62,7 +62,6 @@ const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
       );
       if (
         !connected ||
-        session._tag === "Failure" ||
         !grant ||
         !sessionGrantsScope(grant, AuthOrchestrationReadScope) ||
         !prepared
@@ -96,13 +95,7 @@ const workGrantsAtom = Atom.family((environmentId: EnvironmentId | null) =>
       const prepared = Option.getOrNull(
         get(environmentSession.preparedConnectionValueAtom(environmentId)),
       );
-      if (
-        !connected ||
-        session._tag === "Failure" ||
-        !grant ||
-        !sessionGrantsScope(grant, AuthAccessReadScope) ||
-        !prepared
-      )
+      if (!connected || !grant || !sessionGrantsScope(grant, AuthAccessReadScope) || !prepared)
         return Effect.succeed(null);
       return requestWorkGrants(prepared);
     })
@@ -123,7 +116,6 @@ const remoteWorkersAtom = Atom.family((key: string) => {
       );
       if (
         !connected ||
-        session._tag === "Failure" ||
         !grant ||
         !sessionGrantsScope(grant, AuthOrchestrationReadScope) ||
         !prepared ||

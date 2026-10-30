@@ -1,4 +1,6 @@
 import type { AuthSessionState } from "@specweave-studio/contracts";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -41,6 +43,21 @@ describe("environmentScopeAccess", () => {
         "providers:manage",
       ),
     ).toBe("unknown");
+  });
+
+  it("keeps the last confirmed grant when a re-check fails", () => {
+    const failedRecheck = (scopes: ReadonlyArray<string>) =>
+      AsyncResult.failure<AuthSessionState, Error>(Cause.fail(new Error("timed out")), {
+        previousSuccess: Option.some(signedIn(scopes)),
+      });
+    expect(
+      environmentScopeAccess(failedRecheck(["orchestration:operate"]), "orchestration:operate", {
+        phase: "connected",
+      }),
+    ).toBe("granted");
+    expect(
+      environmentScopeAccess(failedRecheck(["orchestration:read"]), "orchestration:operate"),
+    ).toBe("denied");
   });
 
   it("does not trust a cached grant while the connection is down", () => {

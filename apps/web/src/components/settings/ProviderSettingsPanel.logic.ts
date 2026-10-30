@@ -76,14 +76,16 @@ export type ProviderEnvironmentAccess =
  */
 export type ProviderOperateAccess = "granted" | "denied" | "pending";
 
-/** Cached grants remain usable during revalidation; unknown or failed lookups grant nothing. */
+/**
+ * Cached grants remain usable during revalidation and after a failed re-check;
+ * unknown lookups, or a failed first lookup, grant nothing.
+ */
 function resolveSessionOperateAccess(input: {
   readonly session: SessionGrantInput | null;
   readonly isPending: boolean;
   readonly hasError: boolean;
 }): ProviderOperateAccess {
-  if (input.hasError) return "denied";
-  if (input.session === null) return input.isPending ? "pending" : "denied";
+  if (input.session === null) return input.isPending && !input.hasError ? "pending" : "denied";
   return sessionGrantsScope(input.session, AuthProvidersManageScope) ? "granted" : "denied";
 }
 

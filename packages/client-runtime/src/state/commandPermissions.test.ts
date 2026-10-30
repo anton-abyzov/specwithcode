@@ -120,6 +120,25 @@ describe("command permissions", () => {
         }),
       ),
   );
+  it.effect("keeps the last confirmed grant when a re-check fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const failedRecheck = (allowed: boolean) =>
+          AsyncResult.failure<AuthSessionState, string>(Cause.fail("timed out"), {
+            previousSuccess: Option.some(AsyncResult.success(grant(allowed))),
+          });
+        registry.set(sessions(env), failedRecheck(true));
+        expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+        yield* permissions.authorize(registry, env);
+        registry.set(sessions(env), failedRecheck(false));
+        expect(registry.get(permissions.permissionAtom(env))).toBe(false);
+        expect((yield* permissions.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
   it("rechecks permission after waiting in a serial command lane", async () => {
     const registry = AtomRegistry.make();
     const unmount = registry.mount(sessions(env));
