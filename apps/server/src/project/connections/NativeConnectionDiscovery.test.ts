@@ -345,6 +345,29 @@ describe("plugin and other-tool discovery", () => {
       expect(JSON.stringify(result)).not.toMatch(/stale|hidden|private\.invalid|tok|app-69a1/);
     }),
   );
+  it.effect("lists account plugin servers when config.toml has no plugin tables", () =>
+    Effect.gen(function* () {
+      yield* put("custom-codex/config.toml", 'model = "gpt-5"\n');
+      const remote = "custom-codex/plugins/cache/openai-curated-remote";
+      yield* put(`${remote}/notion/.codex-remote-plugin-install.json`, { schema_version: 1 });
+      yield* put(`${remote}/notion/2.0.0/.codex-plugin/plugin.json`, {
+        name: "notion",
+        interface: { displayName: "Notion" },
+      });
+      yield* put(`${remote}/notion/2.0.0/.mcp.json`, {
+        mcpServers: { notion: { type: "http", url: "https://private.invalid/mcp" } },
+      });
+      yield* put(`${remote}/gmail/.codex-remote-plugin-install.json`, {});
+      yield* put(`${remote}/gmail/1/.app.json`, { apps: { gmail: { id: "connector_gmail" } } });
+      const result = yield* scan();
+      expect(result.connections.map((c) => [c.name, c.plugin, c.transport, c.state])).toEqual([
+        ["gmail", "gmail", "http", "configured"],
+        ["notion", "Notion", "http", "configured"],
+      ]);
+      expect(result.sources.find((s) => s.id === "codex-plugins")?.status).toBe("read");
+      expect(JSON.stringify(result)).not.toMatch(/private\.invalid|connector_gmail/);
+    }),
+  );
   it.effect("lists account plugins and reads a Codex plugin as off when its skills are", () =>
     Effect.gen(function* () {
       yield* put(
