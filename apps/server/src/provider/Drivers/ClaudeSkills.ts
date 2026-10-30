@@ -807,6 +807,23 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
 );
 
 /**
+ * Claude's own `skillOverrides` as they stand on disk now, by skill folder name:
+ * `true` on, `false` off. The Skills view applies them over a workspace snapshot
+ * that may predate a switch, since rescanning the folder can take a while.
+ */
+export const readClaudeSkillSwitches = Effect.fn("readClaudeSkillSwitches")(function* (
+  configDirPath: string,
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyMap<string, boolean>, never, FileSystem.FileSystem | Path.Path> {
+  const repositoryRoot = yield* findRepositoryRoot(cwd);
+  const overrides = yield* readSkillOverrides(
+    yield* readClaudeSettingsFiles(configDirPath, cwd, environment, repositoryRoot),
+  );
+  return new Map([...overrides].map(([name, override]) => [name, override.enabled]));
+});
+
+/**
  * Enumerate Claude Code skills from the user config dir and the project
  * `.claude/skills` folders from the cwd up to the repository root. Discovery is best-effort: unreadable roots and malformed
  * skill entries are skipped so a broken skill never degrades the provider

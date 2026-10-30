@@ -17,6 +17,7 @@ import {
   projectSkillSourceLinks,
   projectSkillStatusBadge,
   projectSkillVersions,
+  pickSkillsMember,
 } from "./ProjectSkillsSettings.logic";
 
 function presence(
@@ -397,5 +398,33 @@ describe("versions, levels and labels", () => {
     const [badge] = projectSkillProviderBadges(hidden);
     expect(badge).toMatchObject({ enabled: true, agentOnly: true });
     expect(badge?.title).toContain("not in its slash menu");
+  });
+});
+
+describe("pickSkillsMember", () => {
+  const offline = { environmentId: "m3", physicalProjectKey: "m3:fleet" };
+  const local = { environmentId: "m4", physicalProjectKey: "m4:easychamp" };
+  const connected = { environmentId: "ministorm", physicalProjectKey: "ministorm:easychamp" };
+  const isConnected = (id: string) => id === "m4" || id === "ministorm";
+  const base = { machine: null, checkout: undefined, primaryEnvironmentId: "m4", isConnected };
+
+  it("reads this Mac's copy with All environments, even when an offline copy is listed first", () => {
+    expect(pickSkillsMember([offline, connected, local], base)).toBe(local);
+  });
+
+  it("falls back to a connected machine when this Mac has no copy", () => {
+    expect(pickSkillsMember([offline, connected], base)).toBe(connected);
+  });
+
+  it("keeps a machine the user picked, even when it is offline", () => {
+    expect(pickSkillsMember([local, offline], { ...base, machine: "m3" })).toBe(offline);
+  });
+
+  it("keeps a picked checkout", () => {
+    expect(pickSkillsMember([local, offline], { ...base, checkout: "m3:fleet" })).toBe(offline);
+  });
+
+  it("returns null when nothing matches", () => {
+    expect(pickSkillsMember([local], { ...base, machine: "m1" })).toBeNull();
   });
 });

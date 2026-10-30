@@ -1,15 +1,9 @@
 const REPO = "anton-abyzov/specwithcode";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
-export const NIGHTLY_RELEASES_URL = `${RELEASES_URL}?q=nightly&expanded=true`;
 
 const LATEST_API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-// The `latest` endpoint skips prereleases, so nightly needs the list. GitHub
-// returns it newest first and nightlies land several times a day, so the first
-// nightly tag in a small page is the current build.
-const LIST_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
-
-export type ReleaseChannel = "stable" | "nightly";
+const CACHE_KEY = "studio-stable-release";
 
 export interface ReleaseAsset {
   name: string;
@@ -23,32 +17,14 @@ export interface Release {
   assets: ReleaseAsset[];
 }
 
-function cacheKey(channel: ReleaseChannel) {
-  return `studio-${channel}-release`;
-}
-
-async function fetchStable(): Promise<Release> {
-  return fetch(LATEST_API_URL).then((r) => r.json());
-}
-
-async function fetchNightly(): Promise<Release> {
-  const list: Release[] = await fetch(LIST_API_URL).then((r) => r.json());
-  const nightly = Array.isArray(list)
-    ? list.find((release) => release.tag_name?.includes("-nightly."))
-    : undefined;
-  if (!nightly) throw new Error("No nightly release in the latest page");
-  return nightly;
-}
-
-export async function fetchLatestRelease(channel: ReleaseChannel = "stable"): Promise<Release> {
-  const key = cacheKey(channel);
-  const cached = sessionStorage.getItem(key);
+export async function fetchLatestRelease(): Promise<Release> {
+  const cached = sessionStorage.getItem(CACHE_KEY);
   if (cached) return JSON.parse(cached);
 
-  const data = channel === "nightly" ? await fetchNightly() : await fetchStable();
+  const data: Release = await fetch(LATEST_API_URL).then((r) => r.json());
 
   if (data?.assets) {
-    sessionStorage.setItem(key, JSON.stringify(data));
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
   }
 
   return data;

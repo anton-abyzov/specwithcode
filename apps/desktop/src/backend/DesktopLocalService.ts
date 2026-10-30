@@ -232,6 +232,12 @@ interface StudioHomeCandidate {
   readonly serviceInstalled: boolean;
   readonly launchdTarget?: string;
   readonly port?: number;
+  /**
+   * For a home found only by its runtime state: the environment id stored in
+   * it, which the server that answers must have. A copied home whose stale
+   * runtime names a live server elsewhere is not attached to.
+   */
+  readonly environmentId?: string;
 }
 
 /** An installed service found on this machine, wherever its home is. */
@@ -452,6 +458,37 @@ export const make = Effect.gen(function* () {
     environment.baseDir === brandedRoot ||
     environment.baseDir === legacyRoot;
 
+  const serviceManagedHome = (
+    studioRoot: string,
+    directoryName: string,
+  ): StudioHomeCandidate | null => {
+    const baseDir = environment.path.join(studioRoot, directoryName);
+    const stateDir = environment.path.join(baseDir, "userdata");
+    if (stateDir === environment.stateDir) return null;
+    let runtime: RunningServerRuntimeState | null;
+    try {
+      runtime = parseServerRuntimeState(
+        NodeFS.readFileSync(environment.path.join(stateDir, "server-runtime.json"), "utf8"),
+      );
+    } catch {
+      return null;
+    }
+    if (runtime?.serviceManaged !== true) return null;
+    let environmentId: string;
+    try {
+      environmentId = NodeFS.readFileSync(
+        environment.path.join(stateDir, "environment-id"),
+        "utf8",
+      ).trim();
+    } catch {
+      return null;
+    }
+    // Not counted as installed: a stopped one is skipped, never waited on.
+    return environmentId.length > 0
+      ? { baseDir, stateDir, serviceInstalled: false, environmentId }
+      : null;
+  };
+
   // Every home the fleet installer created: the installed service runs from
   // `~/.specwithcode/<identity>` (or an unmigrated `~/.specweave-studio/<identity>`).
   const scanInstallations = Effect.sync((): ReadonlyArray<StudioHomeCandidate> => {
@@ -481,6 +518,14 @@ export const make = Effect.gen(function* () {
             "utf8",
           );
         } catch {
+          // A boot service set up without the fleet installer (a systemd unit on
+          // Linux) leaves no receipt, only its runtime state. Attach to it while
+          // it runs, rather than open an empty home beside it.
+          const bootService = serviceManagedHome(studioRoot, entry.name);
+          if (bootService !== null) {
+            seen.add(entry.name);
+            installed.push(bootService);
+          }
           continue;
         }
         const installation = parseStudioInstallation(text, {
@@ -585,6 +630,17 @@ export const make = Effect.gen(function* () {
             continue;
           }
           const descriptor = yield* probeDescriptor(runtime.origin);
+          if (
+            Option.isSome(descriptor) &&
+            candidate.environmentId !== undefined &&
+            descriptor.value.environmentId !== candidate.environmentId
+          ) {
+            yield* logWarning("skipped a home whose runtime names another server", {
+              baseDir: candidate.baseDir,
+              origin: runtime.origin,
+            });
+            continue;
+          }
           if (Option.isSome(descriptor)) {
             yield* logInfo("found a running Studio server", {
               pid: runtime.pid,

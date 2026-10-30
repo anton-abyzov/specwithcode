@@ -7,7 +7,8 @@
  * The title outranks the controls: as the panel narrows, the chips give way
  * first, then the chat's panel toggles fold into the action menu and Resolve
  * drops its label, so the title stays readable; hovering it shows it whole.
- * A coordinator names its workers, so their titles are read-only here.
+ * Double-clicking the title renames the thread, a coordinator's worker too:
+ * the person's title wins here, and the coordinator still finds it by id.
  */
 import { ThreadArtifactsMenu } from "../../chat/ThreadArtifacts";
 import { TimelineDetailMenu } from "../../chat/TimelineDetailMenu";
@@ -43,7 +44,7 @@ import { useOrchestrationCommand } from "../../../state/use-orchestration-comman
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
 import { toastManager } from "../../ui/toast";
 import type { SubagentEntry } from "../../../studio/threadSubagents";
-import { isCoordinatorNamedThread, threadTitleTip } from "../../../studio/threadTitles";
+import { threadTitleTip } from "../../../studio/threadTitles";
 import { ModelBadge, ThreadModelBadge, useProviderEntries } from "./ModelBadge";
 import { RoutingDecisionChip } from "./RoutingDecisionChip";
 import { ThreadOriginBadge } from "../../chat/ThreadOriginBadge";
@@ -119,8 +120,18 @@ export function ProjectThreadHeader(props: {
     [thread.environmentId, thread.projectId],
   );
   const [renaming, setRenaming] = useState<string | null>(null);
-  const titleLocked = isCoordinatorNamedThread(thread);
-  const canRename = props.canChange && !titleLocked;
+  // Set once Enter, Escape or blur ends an edit, so the blur that follows the
+  // input's removal neither saves twice nor saves an edit Escape cancelled.
+  const renameSettled = useRef(false);
+  const canRename = props.canChange;
+  const startRename = () => {
+    renameSettled.current = false;
+    setRenaming(thread.title);
+  };
+  const cancelRename = () => {
+    renameSettled.current = true;
+    setRenaming(null);
+  };
   const toolsSlot = useRef<HTMLSpanElement | null>(null);
   const { toolsSlotRef } = props;
   const setToolsSlot = useCallback(
@@ -137,7 +148,7 @@ export function ProjectThreadHeader(props: {
     threadRef,
     projectCwd: props.projectCwd,
     onStartRename: () => {
-      if (canRename) setRenaming(thread.title);
+      if (canRename) startRename();
     },
   });
   const menuButton = useRef<HTMLButtonElement>(null);
@@ -154,6 +165,8 @@ export function ProjectThreadHeader(props: {
   const pr = link ? { ...PULL_REQUEST_STATE_PRESENTATION[prState], url: link.url } : null;
 
   const commitRename = (value: string) => {
+    if (renameSettled.current) return;
+    renameSettled.current = true;
     setRenaming(null);
     const title = value.trim();
     if (title.length === 0) {
@@ -205,16 +218,13 @@ export function ProjectThreadHeader(props: {
               if (event.key === "Enter") commitRename(event.currentTarget.value);
               else if (event.key === "Escape") {
                 event.stopPropagation();
-                setRenaming(null);
+                cancelRename();
               }
             }}
           />
         ) : (
           <Tip label={threadTitleTip(thread)}>
-            <h2
-              data-title-locked={titleLocked ? "true" : undefined}
-              onDoubleClick={canRename ? () => setRenaming(thread.title) : undefined}
-            >
+            <h2 onDoubleClick={canRename ? startRename : undefined}>
               {thread.title || "Untitled thread"}
             </h2>
           </Tip>

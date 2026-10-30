@@ -844,7 +844,7 @@ describe("release-windows-linux.yml", () => {
     const fixed = [...workflow.matchAll(/^\s+runs-on:\s*([^$\s]\S*)$/gm)].map((match) => match[1]);
     const matrix = [...workflow.matchAll(/^\s+runner:\s*(\S+)/gm)].map((match) => match[1]);
     expect(new Set(fixed)).toEqual(new Set(["ubuntu-24.04"]));
-    expect(matrix).toEqual(["windows-2025", "windows-11-arm", "ubuntu-24.04", "ubuntu-24.04-arm"]);
+    expect(matrix).toEqual(["windows-2025", "windows-11-arm", "ubuntu-22.04", "ubuntu-22.04-arm"]);
     expect(workflow.match(/runs-on: \$\{\{ matrix\.runner \}\}/g)).toHaveLength(2);
   });
 
@@ -908,11 +908,157 @@ describe("release-windows-linux.yml", () => {
     expect(publish).toMatch(/concurrency:\n\s+group: .*\n\s+cancel-in-progress: false/);
   });
 
-  it("builds both platforms from the commit Plan resolved, unsigned as before", () => {
+  it("builds both platforms from the commit Plan resolved", () => {
     expect(workflow.match(/fetch --no-tags --depth=1 origin "\$COMMIT"/g)).toHaveLength(2);
     expect(workflow).toContain('commit="$(resolve "${ref:-refs/tags/v$version}")"');
-    expect(workflow).toContain('STUDIO_DESKTOP_SIGNED: "false"');
     expect(workflow).toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"');
+  });
+
+  // Windows signing takes all seven Azure Trusted Signing secrets or none; Plan decides once.
+  describe("Windows signing", () => {
+    const secrets = [
+      "AZURE_TENANT_ID",
+      "AZURE_CLIENT_ID",
+      "AZURE_CLIENT_SECRET",
+      "AZURE_TRUSTED_SIGNING_ENDPOINT",
+      "AZURE_TRUSTED_SIGNING_ACCOUNT_NAME",
+      "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME",
+      "AZURE_TRUSTED_SIGNING_PUBLISHER_NAME",
+    ];
+    const windows = job("windows", "linux");
+    const linux = job("linux", "publish");
+    const planStep = workflow.slice(
+      workflow.indexOf("      - name: Resolve version and commit\n"),
+      workflow.indexOf("\n  windows:\n"),
+    );
+    const decide = planStep.slice(
+      planStep.indexOf("          azure=("),
+      planStep.indexOf('          {\n            echo "version=$version"'),
+    );
+
+    const runDecide = (set: readonly string[]) => {
+      const root = tempRoot("signing fixture-");
+      const output = NodePath.join(root, "output");
+      NodeFS.writeFileSync(output, "");
+      const env: Record<string, string> = { PATH: process.env.PATH ?? "" };
+      for (const name of set) env[name] = "set";
+      const result = NodeChildProcess.spawnSync(
+        "bash",
+        ["-c", `set -euo pipefail\n${decide}\necho "windows_signing=$windows_signing"`],
+        { encoding: "utf8", env },
+      );
+      return { status: result.status, stdout: result.stdout };
+    };
+
+    it("Plan passes every secret's presence, never its value", () => {
+      for (const name of secrets) {
+        expect(planStep).toContain(`${name}: \${{ secrets.${name} != '' && 'set' || '' }}`);
+      }
+      expect(workflow).toContain("windows_signing: ${{ steps.plan.outputs.windows_signing }}");
+    });
+
+    it("signs with all seven, builds unsigned with none, and fails with some", () => {
+      expect(runDecide(secrets)).toMatchObject({ status: 0, stdout: "windows_signing=true\n" });
+      const none = runDecide([]);
+      expect(none.status).toBe(0);
+      expect(none.stdout).toContain("::notice::");
+      expect(none.stdout).toContain("windows_signing=false\n");
+      const some = runDecide(secrets.slice(0, 3));
+      expect(some.status).toBe(1);
+      expect(some.stdout).toContain("AZURE_TRUSTED_SIGNING_ENDPOINT");
+    });
+
+    it("lets electron-builder sign the installer, and signs the CLI's executables", () => {
+      expect(windows).toContain(
+        "STUDIO_DESKTOP_SIGNED: ${{ needs.plan.outputs.windows_signing == 'true' && 'true' || 'false' }}",
+      );
+      for (const step of [
+        "Prepare Azure Trusted Signing",
+        "Sign the CLI's resource monitor",
+        "Check the Windows signatures",
+      ]) {
+        expect(windows).toMatch(
+          new RegExp(
+            `- name: ${step}\\n\\s+if: needs\\.plan\\.outputs\\.windows_signing == 'true'`,
+          ),
+        );
+      }
+      const build = windows.slice(
+        windows.indexOf("      - name: Build installer\n"),
+        windows.indexOf("      - name: Smoke test the packaged main process\n"),
+      );
+      for (const name of secrets) expect(build).toContain(`${name}: \${{ secrets.${name} }}`);
+      // The cached monitor is copied before it is signed, never signed in place.
+      const sign = windows.indexOf("- name: Sign the CLI's resource monitor");
+      expect(windows.indexOf("- name: Stage resource monitor for the CLI archive")).toBeLessThan(
+        sign,
+      );
+      expect(sign).toBeLessThan(windows.indexOf("- name: Build CLI archive"));
+      expect(windows.indexOf("- name: Check the Windows signatures")).toBeGreaterThan(
+        windows.indexOf("- name: Smoke test CLI archive"),
+      );
+      expect(linux).not.toContain("AZURE_");
+      expect(linux).not.toContain("STUDIO_DESKTOP_SIGNED");
+    });
+
+    // The CLI zip also ships node-pty's OpenConsole.exe (signed by Microsoft) and @cursor/sdk's
+    // unsigned cursorsandbox.exe and rg.exe; only our two executables there carry our name.
+    it("requires our publisher only on our own CLI executables, and leaves PSModulePath alone", () => {
+      const windows = job("windows", "linux");
+      const check = windows.slice(
+        windows.indexOf("      - name: Check the Windows signatures\n"),
+        windows.indexOf("      - name: Collect assets\n"),
+      );
+      expect(check).toContain("-Filter specweave-studio.exe $cli");
+      expect(check).toContain("-Filter studio-resource-monitor.exe $cli");
+      expect(check).not.toMatch(/-Filter \*\.exe \$cli/);
+      expect(windows).not.toContain("PSModulePath");
+    });
+  });
+
+  // Ubuntu 22.04 has glibc 2.35. v1.0.132, built on 24.04, shipped studio-kde-snap-shot needing
+  // GLIBC_2.39 (pidfd_spawnp), which does not load there.
+  it("builds Linux on Ubuntu 22.04 and checks the glibc floor", () => {
+    const linux = job("linux", "publish");
+    expect(linux).toContain("floor=2.35");
+    expect(linux.indexOf("- name: Check the glibc floor")).toBeGreaterThan(
+      linux.indexOf("- name: Check the packages' update feed"),
+    );
+    for (const key of [
+      "key: resource-monitor-${{ matrix.rust_target }}-glibc2.35-",
+      "key: linux-capture-helpers-${{ matrix.rust_target }}-glibc2.35-",
+    ]) {
+      expect(linux).toContain(key);
+    }
+  });
+
+  it("restores the native helpers native-cache.yml saves, for both arches", () => {
+    const nativeCache = NodeFS.readFileSync(
+      new URL("../.github/workflows/native-cache.yml", import.meta.url),
+      "utf8",
+    );
+    const keys = (text: string) =>
+      [...text.matchAll(/^\s+key: (.+?)\$\{\{ hashFiles\((.*)\) \}\}$/gm)].map(
+        (match) => `${match[1]}|${match[2]}`,
+      );
+    const restored = new Set(keys(workflow));
+    expect(restored.size).toBe(3);
+    expect(new Set(keys(nativeCache))).toEqual(restored);
+    for (const target of [
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+    ]) {
+      expect(nativeCache).toContain(`rust_target: ${target}`);
+    }
+    expect(nativeCache).toContain("Microsoft.VisualStudio.Component.VC.Runtimes.ARM64.Spectre");
+    expect([...nativeCache.matchAll(/^\s+runner:\s*(\S+)/gm)].map((match) => match[1])).toEqual([
+      "ubuntu-22.04",
+      "ubuntu-22.04-arm",
+      "windows-2025",
+      "windows-11-arm",
+    ]);
   });
 
   // Every release build downloaded all ~1,350 packages (pnpm "reused 0"). Linux restores
@@ -936,8 +1082,8 @@ describe("release-windows-linux.yml", () => {
     expect(linux).toMatch(setupVp("true"));
   });
 
-  // A nightly that built while another run attached the same version ends without uploading.
-  // Both nightly checks, run in bash against a stub gh and the real helper: only a complete,
+  // A catch-up run that built while another run attached the same version ends without uploading.
+  // Both catch-up checks, run in bash against a stub gh and the real helper: only a complete,
   // consistent attach on both releases skips; none on either builds; anything else fails.
   const block = (job: string, from: string, to: string) => {
     const text = workflow.slice(workflow.indexOf(`\n  ${job}:\n`));
@@ -993,7 +1139,7 @@ describe("release-windows-linux.yml", () => {
   describe.each([
     ["Plan", planBlock, "skip=true\n"],
     ["Read the releases", publishBlock, "already=true\n"],
-  ] as const)("nightly check in %s", (_name, script, flag) => {
+  ] as const)("catch-up check in %s", (_name, script, flag) => {
     it("skips when both releases hold a complete attach", () => {
       const run = runNightly(script, { private: attach("first"), public: attach("first") });
       expect(run.status).toBe(0);

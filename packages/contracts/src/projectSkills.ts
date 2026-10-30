@@ -254,7 +254,7 @@ export const ProjectSkillsVersions = Schema.Struct({
 export type ProjectSkillsVersions = typeof ProjectSkillsVersions.Type;
 
 /**
- * One change from the control center. Version kinds run vskill; toggles
+ * One change from the control center. Version kinds and remove run vskill; toggles
  * switch a skill or a whole plugin for one agent.
  */
 export const ProjectSkillsAction = Schema.Union([
@@ -267,6 +267,8 @@ export const ProjectSkillsAction = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("pin"), version: StudioFleetUpdateVersion }),
   Schema.Struct({ kind: Schema.Literal("unpin") }),
   Schema.Struct({ kind: Schema.Literal("update-latest") }),
+  /** `vskill remove`: every agent's copy of a vskill-installed skill, and its lock entry. */
+  Schema.Struct({ kind: Schema.Literal("remove") }),
   Schema.Struct({
     kind: Schema.Literal("toggle-skill"),
     provider: ProviderDriverKind,

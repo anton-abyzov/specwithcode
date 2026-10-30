@@ -41,6 +41,21 @@ const releaseHttpClient = (checksums: string, requests: string[] = []) =>
     const body = request.url.endsWith("/SHA256SUMS") ? checksums : archiveBytes;
     return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body)));
   });
+// Serves each release asset by name; a name not in `assets` answers 404.
+const assetHttpClient = (assets: Readonly<Record<string, string>>, requests: string[] = []) =>
+  HttpClient.make((request) => {
+    requests.push(request.url);
+    const name = request.url.slice(request.url.lastIndexOf("/") + 1);
+    const body = Object.hasOwn(assets, name) ? assets[name] : undefined;
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        body === undefined
+          ? new Response("Not Found", { status: 404 })
+          : new Response(name.startsWith("SHA256SUMS") ? body : archiveBytes),
+      ),
+    );
+  });
 const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: string[] = []) =>
   ProcessRunner.ProcessRunner.of({
     run: (input) =>
@@ -629,5 +644,209 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const versionsDir = path.join(baseDir, "runtime", "versions");
       assert.deepEqual(yield* fs.readDirectory(versionsDir), []);
     }),
+  );
+
+  // SHA256SUMS (release.sh) never lists the Windows zips; SHA256SUMS-windows-linux does.
+  it.effect.each([
+    { arch: "arm64", zip: `studio-${version}-win32-arm64.zip` },
+    { arch: "x64", zip: `studio-${version}-win32-x64.zip` },
+  ])("installs the $arch Windows zip listed in SHA256SUMS-windows-linux", ({ arch, zip }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-win-sums-" });
+      const hex = yield* archiveHex(archiveBytes);
+      const requests: string[] = [];
+      const tarArgs: string[][] = [];
+      const runner = writingRunner(fs, path, "specweave-studio.exe");
+      const paths = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "win32",
+        arch,
+        httpClient: assetHttpClient(
+          {
+            SHA256SUMS: `${hex}  studio-${version}-linux-x64-043e9db88a6e.tar.gz\n`,
+            "SHA256SUMS-windows-linux": [
+              `${hex}  studio-${version}-win32-arm64.zip`,
+              `${hex}  studio-${version}-win32-x64.zip`,
+              "",
+            ].join("\n"),
+            [`studio-${version}-win32-arm64.zip`]: "",
+            [`studio-${version}-win32-x64.zip`]: "",
+          },
+          requests,
+        ),
+        releaseBaseUrl: "https://releases.example/download",
+        runner: ProcessRunner.ProcessRunner.of({
+          run: (input) => {
+            tarArgs.push([...input.args]);
+            return runner.run(input);
+          },
+        }),
+        validate: () => Effect.void,
+      });
+      assert.deepEqual(requests, [
+        `https://releases.example/download/v${version}/SHA256SUMS`,
+        `https://releases.example/download/v${version}/SHA256SUMS-windows-linux`,
+        `https://releases.example/download/v${version}/${zip}`,
+      ]);
+      // The zip wraps everything in one directory named after its stem.
+      assert.isTrue(tarArgs[0]!.includes("--strip-components=1"));
+      assert.equal(paths.entryPath, path.join(paths.versionDir, "specweave-studio.exe"));
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+    }),
+  );
+
+  it.effect("gives Windows on ARM the x64 zip when the release has no arm64 zip", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-win-arm-x64-" });
+      const hex = yield* archiveHex(archiveBytes);
+      const requests: string[] = [];
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "win32",
+        arch: "arm64",
+        httpClient: assetHttpClient(
+          {
+            SHA256SUMS: "",
+            "SHA256SUMS-windows-linux": `${hex}  studio-${version}-win32-x64.zip\n`,
+            [`studio-${version}-win32-x64.zip`]: "",
+          },
+          requests,
+        ),
+        releaseBaseUrl: "https://releases.example/download",
+        runner: writingRunner(fs, path, "specweave-studio.exe"),
+        validate: () => Effect.void,
+      });
+      assert.equal(
+        requests.at(-1),
+        `https://releases.example/download/v${version}/studio-${version}-win32-x64.zip`,
+      );
+    }),
+  );
+
+  it.effect("reads an older release without SHA256SUMS-windows-linux from SHA256SUMS alone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-win-old-" });
+      const hex = yield* archiveHex(archiveBytes);
+      const requests: string[] = [];
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "win32",
+        arch: "arm64",
+        httpClient: assetHttpClient(
+          {
+            SHA256SUMS: `${hex}  studio-${version}-win32-x64.zip\n`,
+            [`studio-${version}-win32-x64.zip`]: "",
+          },
+          requests,
+        ),
+        releaseBaseUrl: "https://releases.example/download",
+        runner: writingRunner(fs, path, "specweave-studio.exe"),
+        validate: () => Effect.void,
+      });
+      assert.deepEqual(requests, [
+        `https://releases.example/download/v${version}/SHA256SUMS`,
+        `https://releases.example/download/v${version}/SHA256SUMS-windows-linux`,
+        `https://releases.example/download/v${version}/studio-${version}-win32-x64.zip`,
+      ]);
+    }),
+  );
+
+  it.effect("never downloads an archive that neither checksum file lists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-win-unlisted-" });
+      const requests: string[] = [];
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "win32",
+        arch: "x64",
+        httpClient: assetHttpClient(
+          {
+            SHA256SUMS: "",
+            "SHA256SUMS-windows-linux": "",
+            [`studio-${version}-win32-x64.zip`]: "",
+          },
+          requests,
+        ),
+        releaseBaseUrl: "https://releases.example/download",
+        runner: writingRunner(fs, path, "specweave-studio.exe"),
+        validate: () => Effect.die("must not validate an unlisted archive"),
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, PinnedRuntimeInstallError);
+      assert.equal(
+        error.step,
+        `finding a win32-x64 archive in the specweave-studio ${version} release checksums`,
+      );
+      assert.isFalse(requests.some((url) => url.endsWith(".zip")));
+    }),
+  );
+
+  // The macOS bundle runs through a POSIX shell launcher.
+  it.effect.skipIf(process.platform === "win32")(
+    "installs the macOS Node bundle, named without a platform, from SHA256SUMS alone",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-darwin-" });
+        const hex = yield* archiveHex(archiveBytes);
+        const bundleName = `studio-${version}-ca452067cd93.tar.gz`;
+        const requests: string[] = [];
+        const tarArgs: string[][] = [];
+        const runner = writingRunner(fs, path, "bin.mjs");
+        const paths = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "darwin",
+          arch: "arm64",
+          httpClient: assetHttpClient(
+            {
+              SHA256SUMS: [
+                `${hex}  ${bundleName}`,
+                `${hex}  studio-${version}-deployment-helpers-ca452067cd93.tar.gz`,
+                `${hex}  studio-${version}-linux-arm64-ca452067cd93.tar.gz`,
+                "",
+              ].join("\n"),
+              [bundleName]: "",
+            },
+            requests,
+          ),
+          releaseBaseUrl: "https://releases.example/download",
+          runner: ProcessRunner.ProcessRunner.of({
+            run: (input) => {
+              tarArgs.push([...input.args]);
+              return runner.run(input);
+            },
+          }),
+          validate: () => Effect.void,
+        });
+        assert.deepEqual(requests, [
+          `https://releases.example/download/v${version}/SHA256SUMS`,
+          `https://releases.example/download/v${version}/${bundleName}`,
+        ]);
+        assert.isFalse(tarArgs[0]!.includes("--strip-components=1"));
+        assert.include(yield* fs.readFileString(paths.entryPath), "specwithcode-install launcher");
+      }),
   );
 });

@@ -323,3 +323,36 @@ export function projectSkillProviderBadges(row: ProjectSkillRow): ReadonlyArray<
 export function projectSkillAttentionCount(rows: ReadonlyArray<ProjectSkillRow>): number {
   return rows.filter((row) => row.attention).length;
 }
+
+export interface SkillsMemberCandidate {
+  readonly environmentId: string;
+  readonly physicalProjectKey: string;
+}
+
+/**
+ * Which copy of a project the Skills page reads. A picked machine or checkout
+ * narrows the list; among what is left this Mac comes first, then a machine that
+ * is connected now, so "All environments" never reads from an offline one when
+ * another copy can answer.
+ */
+export function pickSkillsMember<Member extends SkillsMemberCandidate>(
+  members: ReadonlyArray<Member>,
+  input: {
+    readonly machine: string | null;
+    readonly checkout: string | undefined;
+    readonly primaryEnvironmentId: string | null;
+    readonly isConnected: (environmentId: string) => boolean;
+  },
+): Member | null {
+  const candidates = members.filter(
+    (candidate) =>
+      (input.machine === null || candidate.environmentId === input.machine) &&
+      (input.checkout === undefined || candidate.physicalProjectKey === input.checkout),
+  );
+  return (
+    candidates.find((candidate) => candidate.environmentId === input.primaryEnvironmentId) ??
+    candidates.find((candidate) => input.isConnected(candidate.environmentId)) ??
+    candidates[0] ??
+    null
+  );
+}

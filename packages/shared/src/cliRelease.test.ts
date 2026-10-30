@@ -3,11 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   chooseCliArchive,
   cliArchiveFileName,
+  cliChecksumsHaveOwnArchive,
   cliArchivePlatformKey,
   cliArchiveTarCommand,
   cliReleaseDownloadBaseUrl,
+  cliReleaseAssetsHaveArchive,
   cliReleaseChannelOf,
   cliReleaseIndexPageUrl,
+  mergeChecksums,
   newestCliReleaseVersion,
   parseChecksums,
 } from "./cliRelease.ts";
@@ -129,5 +132,136 @@ describe("cliRelease", () => {
         "linux-x64",
       ),
     ).toBeUndefined();
+  });
+
+  // The asset names v1.0.132 really published, split the way its two checksum files list them.
+  const release132 = {
+    sums: [
+      "SpecWithCode-1.0.132-arm64.dmg",
+      "SpecWithCode-1.0.132-arm64.zip",
+      "latest-mac.yml",
+      "studio-1.0.132-linux-x64-ca452067cd93.tar.gz",
+      "studio-1.0.132-linux-arm64-ca452067cd93.tar.gz",
+      "install.sh",
+      "studio-1.0.132-ca452067cd93.tar.gz",
+      "studio-1.0.132-deployment-helpers-ca452067cd93.tar.gz",
+      "studio-update.json",
+    ],
+    windowsLinux: [
+      "SpecWithCode-1.0.132-amd64.deb",
+      "SpecWithCode-1.0.132-arm64.exe",
+      "SpecWithCode-1.0.132-x64.exe",
+      "latest.yml",
+      "studio-1.0.132-win32-arm64.zip",
+      "studio-1.0.132-win32-x64.zip",
+    ],
+  };
+  const listed = (names: ReadonlyArray<string>, digit = "a") =>
+    new Map(names.map((name) => [name, digit.repeat(64)]));
+
+  it("finds the Windows zips only in SHA256SUMS-windows-linux and the rest in SHA256SUMS", () => {
+    const sums = listed(release132.sums);
+    for (const key of ["win32-x64", "win32-arm64"] as const) {
+      expect(cliChecksumsHaveOwnArchive(sums, "1.0.132", key)).toBe(false);
+      expect(chooseCliArchive(sums, "1.0.132", key)).toBeUndefined();
+    }
+    const both = mergeChecksums(sums, listed(release132.windowsLinux));
+    expect(chooseCliArchive(both, "1.0.132", "win32-x64")).toEqual({
+      fileName: "studio-1.0.132-win32-x64.zip",
+      layout: "single-executable",
+    });
+    expect(chooseCliArchive(both, "1.0.132", "win32-arm64")).toEqual({
+      fileName: "studio-1.0.132-win32-arm64.zip",
+      layout: "single-executable",
+    });
+    for (const key of ["linux-x64", "linux-arm64", "darwin-arm64"] as const) {
+      expect(cliChecksumsHaveOwnArchive(sums, "1.0.132", key)).toBe(true);
+    }
+  });
+
+  it("picks the macOS Node bundle, which has no platform in its name", () => {
+    expect(chooseCliArchive(listed(release132.sums), "1.0.132", "darwin-arm64")).toEqual({
+      fileName: "studio-1.0.132-ca452067cd93.tar.gz",
+      layout: "node-bundle",
+    });
+    // Linux never takes the macOS bundle, and the deployment helpers are never a runtime.
+    expect(
+      chooseCliArchive(
+        listed([
+          "studio-1.0.132-ca452067cd93.tar.gz",
+          "studio-1.0.132-deployment-helpers-ca452067cd93.tar.gz",
+        ]),
+        "1.0.132",
+        "linux-x64",
+      ),
+    ).toBeUndefined();
+    expect(
+      chooseCliArchive(
+        listed(["studio-1.0.132-deployment-helpers-ca452067cd93.tar.gz"]),
+        "1.0.132",
+        "darwin-arm64",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("gives Windows on ARM the x64 zip only when the release has no arm64 zip", () => {
+    const x64Only = listed(["studio-1.0.100-win32-x64.zip"]);
+    expect(chooseCliArchive(x64Only, "1.0.100", "win32-arm64")).toEqual({
+      fileName: "studio-1.0.100-win32-x64.zip",
+      layout: "single-executable",
+    });
+    // The fallback does not settle the choice: the other file may still hold the arm64 zip.
+    expect(cliChecksumsHaveOwnArchive(x64Only, "1.0.100", "win32-arm64")).toBe(false);
+    // x64 never falls back to arm64.
+    expect(
+      chooseCliArchive(listed(["studio-1.0.100-win32-arm64.zip"]), "1.0.100", "win32-x64"),
+    ).toBeUndefined();
+  });
+
+  it("never accepts a file the two checksum files list with different digests", () => {
+    const merged = mergeChecksums(
+      listed(["studio-1.0.132-win32-x64.zip", "same.txt"], "a"),
+      listed(["studio-1.0.132-win32-x64.zip"], "b"),
+      listed(["same.txt", "studio-1.0.132-win32-arm64.zip"], "a"),
+    );
+    expect(merged.has("studio-1.0.132-win32-x64.zip")).toBe(false);
+    expect(merged.get("same.txt")).toBe("a".repeat(64));
+    expect(merged.get("studio-1.0.132-win32-arm64.zip")).toBe("a".repeat(64));
+    expect(chooseCliArchive(merged, "1.0.132", "win32-x64")).toBeUndefined();
+  });
+
+  it("skips releases whose assets lack this platform's archive, as install.ps1 does", () => {
+    const assets = (...names: string[]) => names.map((name) => ({ name }));
+    // 1.0.133 before release-windows-linux.yml attached its zips; 1.0.132 complete.
+    const releases = [
+      {
+        tag_name: "v1.0.133",
+        assets: assets("SHA256SUMS", "studio-1.0.133-0123456789ab.tar.gz"),
+      },
+      {
+        tag_name: "v1.0.132",
+        assets: assets(
+          "SHA256SUMS",
+          "SHA256SUMS-windows-linux",
+          "studio-1.0.132-ca452067cd93.tar.gz",
+          "studio-1.0.132-linux-x64-ca452067cd93.tar.gz",
+          "studio-1.0.132-win32-x64.zip",
+        ),
+      },
+    ];
+    expect(newestCliReleaseVersion(releases, "stable", "darwin-arm64")).toBe("1.0.133");
+    expect(newestCliReleaseVersion(releases, "stable", "win32-x64")).toBe("1.0.132");
+    // Windows on ARM takes the x64 zip when the release has no arm64 one.
+    expect(newestCliReleaseVersion(releases, "stable", "win32-arm64")).toBe("1.0.132");
+    expect(newestCliReleaseVersion(releases, "stable", "linux-arm64")).toBeUndefined();
+    // Without a platform key, or without an asset list, nothing is filtered.
+    expect(newestCliReleaseVersion(releases, "stable")).toBe("1.0.133");
+    expect(newestCliReleaseVersion([{ tag_name: "v1.0.133" }], "stable", "win32-x64")).toBe(
+      "1.0.133",
+    );
+    expect(
+      cliReleaseAssetsHaveArchive(["studio-1.0.132-win32-arm64.zip"], "1.0.132", "win32-arm64"),
+    ).toBe(true);
+    expect(cliReleaseAssetsHaveArchive(["SHA256SUMS"], "1.0.132", "win32-x64")).toBe(false);
   });
 });

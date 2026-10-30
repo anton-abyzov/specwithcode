@@ -122,6 +122,10 @@ describe("ssh tunnel scripts", () => {
       'STUDIO_ARCHIVE="studio-$STUDIO_ARCHIVE_VERSION-$STUDIO_PLATFORM-$STUDIO_ARCH.tar.gz"',
     );
     assert.include(script, "SHA256SUMS");
+    assert.include(
+      script,
+      'grep -o "studio-$STUDIO_ARCHIVE_VERSION-[0-9a-f]\\{7,40\\}\\.tar\\.gz$"',
+    );
     assert.include(script, 'exec "$STUDIO_RUNTIME_DIR/specweave-studio" "$@"');
     assert.notInclude(script, "npx");
     assert.notInclude(script, "npm exec");
@@ -226,6 +230,54 @@ describe("ssh tunnel scripts", () => {
         // The second launch reuses the pinned runtime without downloading again.
         yield* fs.remove(`${root}/release`, { recursive: true });
         assert.equal(run().trim(), "specweave-studio v1.2.3 --version");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // release.sh names the macOS bundle studio-<v>-<commit>.tar.gz, with no
+  // platform; only an Apple silicon Mac can run this end to end.
+  it.effect.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
+    "installs the platform-less macOS Node bundle on an Apple silicon host",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-ssh-mac-bundle-" });
+        const { execFileSync } = yield* Effect.promise(() => import("node:child_process"));
+        const { createHash } = yield* Effect.promise(() => import("node:crypto"));
+        const version = "1.0.132";
+        const bundle = `${root}/bundle`;
+        const release = `${root}/release/v${version}`;
+        yield* fs.makeDirectory(bundle, { recursive: true });
+        yield* fs.makeDirectory(release, { recursive: true });
+        yield* fs.writeFileString(
+          `${bundle}/bin.mjs`,
+          "console.log(`${process.env.STUDIO_CLI_NAME} v1.0.132 ${process.argv.slice(2).join(' ')}`);\n",
+        );
+        const archive = `studio-${version}-ca452067cd93.tar.gz`;
+        execFileSync("tar", ["-czf", `${release}/${archive}`, "-C", bundle, "."]);
+        const sum = createHash("sha256")
+          .update(new Uint8Array(yield* fs.readFile(`${release}/${archive}`)))
+          .digest("hex");
+        // The real 1.0.132 SHA256SUMS also lists the Linux and helper tarballs.
+        yield* fs.writeFileString(
+          `${release}/SHA256SUMS`,
+          [
+            `${"0".repeat(64)}  studio-${version}-linux-arm64-ca452067cd93.tar.gz`,
+            `${"0".repeat(64)}  studio-${version}-deployment-helpers-ca452067cd93.tar.gz`,
+            `${sum}  ${archive}`,
+            "",
+          ].join("\n"),
+        );
+        const home = `${root}/home`;
+        yield* fs.makeDirectory(home);
+        const script = SshTunnel.buildRemoteStudioRunnerScript({
+          archiveVersion: version,
+          releaseBaseUrl: `file://${root}/release`,
+        });
+        const output = execFileSync("sh", ["-c", script, "runner", "--version"], {
+          encoding: "utf8",
+          env: { HOME: home, PATH: `${process.execPath.replace(/\/node$/, "")}:/usr/bin:/bin` },
+        });
+        assert.equal(output.trim(), "specweave-studio v1.0.132 --version");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 

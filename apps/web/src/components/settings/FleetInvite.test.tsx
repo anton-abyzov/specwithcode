@@ -30,6 +30,8 @@ vi.mock("../../studio/fleet", () => {
     signInStudioFleetTailscale: vi.fn(),
   };
 });
+const cloud = vi.hoisted(() => ({ configured: true }));
+vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => cloud.configured }));
 vi.mock("../../localApi", () => ({
   ensureLocalApi: () => ({ shell: { openExternal: vi.fn(async () => undefined) } }),
 }));
@@ -41,6 +43,7 @@ import { FleetInviteFailure } from "../../studio/fleet";
 import type { StudioFleetTailscaleStatus } from "@specweave-studio/contracts/studioFleet";
 import {
   FleetInvitePanel,
+  ConnectReadinessNotice,
   TailscaleReadinessNotice,
   countsAsTailscaleCheckFailure,
   fleetInviteValidity,
@@ -275,6 +278,7 @@ describe("Tailscale on this machine before the line", () => {
   const readiness = (status: StudioFleetTailscaleStatus | null) => ({
     status,
     failed: false,
+    ready: status?.state === "running" && status.magicDns,
     signingIn: false,
     loginUrl: null,
     problem: null,
@@ -331,6 +335,77 @@ describe("Tailscale on this machine before the line", () => {
     expect(
       TailscaleReadinessNotice({
         readiness: readiness(tailscale()),
+        canManage: true,
+        onCopyCommand: vi.fn(),
+      }),
+    ).toBeNull();
+  });
+
+  it("asks for SpecWithCode Connect first, never to install Tailscale", () => {
+    cloud.configured = true;
+    const tree = ConnectReadinessNotice({
+      readiness: readiness(
+        tailscale({ state: "not_installed", backendState: null, homebrew: true }),
+      ),
+      canManage: true,
+      onCopyCommand: vi.fn(),
+    });
+    expect(text(tree)).toContain("Link SpecWithCode Connect first");
+    expect(text(tree)).toContain("Your main machine does not need to be signed in.");
+    expect(text(tree)).not.toContain("Install Tailscale");
+    expect(text(tree)).not.toContain("brew install");
+  });
+
+  it("keeps the Tailscale guidance in a build without SpecWithCode Connect", () => {
+    cloud.configured = false;
+    try {
+      const tree = ConnectReadinessNotice({
+        readiness: readiness(tailscale({ state: "signed_out", backendState: "NeedsLogin" })),
+        canManage: true,
+        onCopyCommand: vi.fn(),
+      }) as { type: unknown };
+      expect(tree.type).toBe(TailscaleReadinessNotice);
+    } finally {
+      cloud.configured = true;
+    }
+  });
+
+  it("shows nothing once Connect is linked, or while a Tailscale fallback already works", () => {
+    expect(
+      ConnectReadinessNotice({
+        readiness: readiness(
+          tailscale({
+            state: "not_installed",
+            backendState: null,
+            connect: { linked: true, origin: "https://prod-0123456789abcdef.spec-weave.com" },
+          }),
+        ),
+        canManage: true,
+        onCopyCommand: vi.fn(),
+      }),
+    ).toBeNull();
+    expect(
+      ConnectReadinessNotice({
+        readiness: readiness(tailscale()),
+        canManage: true,
+        onCopyCommand: vi.fn(),
+      }),
+    ).toBeNull();
+  });
+
+  it("says it is checking until the first answer, and nothing when the check failed", () => {
+    expect(
+      text(
+        ConnectReadinessNotice({
+          readiness: readiness(null),
+          canManage: true,
+          onCopyCommand: vi.fn(),
+        }),
+      ),
+    ).toBe("Checking SpecWithCode Connect…");
+    expect(
+      ConnectReadinessNotice({
+        readiness: { ...readiness(null), failed: true },
         canManage: true,
         onCopyCommand: vi.fn(),
       }),

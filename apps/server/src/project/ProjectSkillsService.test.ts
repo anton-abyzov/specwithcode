@@ -224,3 +224,41 @@ it("allowedSkillsCwd keeps the stored spelling of the folder it matches", () => 
     null,
   );
 });
+
+it("Claude's on-disk switches override a snapshot taken before them, except plugin skills", () => {
+  const source = {
+    instanceId: ProviderInstanceId.make("claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    label: "Claude",
+    skills: [
+      {
+        name: "turned-off",
+        path: "/p/.claude/skills/turned-off/SKILL.md",
+        enabled: true,
+        scope: "project",
+      },
+      {
+        name: "turned-on",
+        path: "/h/.claude/skills/turned-on/SKILL.md",
+        enabled: false,
+        scope: "user",
+      },
+      { name: "plugin-skill", path: "/h/plugins/cache/x/SKILL.md", enabled: true, scope: "plugin" },
+    ],
+  };
+  const switched = ProjectSkillsService.withClaudeSkillSwitches(
+    source,
+    new Map([
+      ["turned-off", false],
+      ["plugin-skill", false],
+    ]),
+  );
+  assert.deepStrictEqual(
+    switched.skills.map((skill) => [skill.name, skill.enabled]),
+    [
+      ["turned-off", false],
+      ["turned-on", true],
+      ["plugin-skill", true],
+    ],
+  );
+});

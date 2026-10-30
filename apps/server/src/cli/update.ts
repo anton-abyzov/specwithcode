@@ -9,9 +9,11 @@ import {
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
+  cliArchivePlatformKey,
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
   newestCliReleaseVersion,
+  type CliArchivePlatformKey,
   type CliReleaseChannel,
 } from "@specweave-studio/shared/cliRelease";
 import * as Console from "effect/Console";
@@ -56,6 +58,7 @@ const ReleaseIndex = Schema.Array(
   Schema.Struct({
     tag_name: Schema.String,
     draft: Schema.optional(Schema.Boolean),
+    assets: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
   }),
 );
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
@@ -65,9 +68,14 @@ const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 // a channel genuinely has nothing published.
 const RELEASE_INDEX_MAX_PAGES = 10;
 
-/** Asks GitHub for the newest published version on a channel, page by page. */
+/**
+ * Asks GitHub for the newest published version on a channel, page by page,
+ * that has this platform's archive. The Windows zips are attached by a later
+ * workflow, so the newest release can briefly lack them.
+ */
 const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
+  platformKey: CliArchivePlatformKey | undefined,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
   for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
@@ -99,11 +107,13 @@ const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
           }),
       ),
     );
-    const version = newestCliReleaseVersion(releases, channel);
+    const version = newestCliReleaseVersion(releases, channel, platformKey);
     if (version !== undefined) return version;
     if (releases.length === 0) break;
   }
-  return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
+  return yield* new CliUpdateError({
+    reason: `No published ${channel} release was found${platformKey === undefined ? "" : ` with a ${platformKey} archive`}.`,
+  });
 });
 
 /** Whether a launcher target lives inside `<baseDir>/runtime/versions`. */
@@ -438,7 +448,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   progress.status("Checking for updates...");
   const targetVersion = yield* (
     input.requestedVersion === undefined
-      ? resolveNewestVersion(channel)
+      ? resolveNewestVersion(channel, cliArchivePlatformKey(platform, arch))
       : Effect.succeed(input.requestedVersion)
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
@@ -604,12 +614,15 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     Effect.catchIf(
       (error): error is PinnedRuntimeInstallError =>
         error._tag === "PinnedRuntimeInstallError" &&
-        error.step.startsWith("downloading the specweave-studio release checksums") &&
-        String(error.cause).includes("404"),
-      () =>
+        ((error.step.startsWith("downloading the specweave-studio release checksums") &&
+          String(error.cause).includes("404")) ||
+          error.step.startsWith("finding a ")),
+      (error) =>
         Effect.fail(
           new CliUpdateError({
-            reason: `No release archive was published for specweave-studio@${targetVersion}.`,
+            reason: error.step.startsWith("finding a ")
+              ? `specweave-studio@${targetVersion} has no release archive for ${platform}-${arch} yet.`
+              : `No release archive was published for specweave-studio@${targetVersion}.`,
           }),
         ),
     ),

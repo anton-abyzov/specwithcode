@@ -196,24 +196,68 @@ describe("an open thread's header", () => {
       input: { threadId: "worker", title: "Auto-update" },
     });
   });
-  it("keeps a coordinator-named worker's title read-only", async () => {
+  it("renames a coordinator-named worker's title too", async () => {
+    await render(false, { createdBy: "agent" } as Partial<EnvironmentThreadShell>);
+    await act(async () =>
+      container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Thread title"]')!;
+    input.value = "Release notes";
+    await act(async () =>
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(state.rename).toHaveBeenCalledWith({
+      environmentId: "host",
+      input: { threadId: "worker", title: "Release notes" },
+    });
+  });
+  it("cancels a rename on Escape and keeps the title", async () => {
+    await render();
+    await act(async () =>
+      container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Thread title"]')!;
+    input.value = "Discarded";
+    // Chromium blurs a focused input as it leaves the page; that blur must not save.
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(container.querySelector('[aria-label="Thread title"]')).toBeNull();
+    expect(container.querySelector("h2")?.textContent).toBe("Studio background auto-update");
+    expect(state.rename).not.toHaveBeenCalled();
+  });
+  it("saves once when Enter is followed by the input's blur", async () => {
+    await render();
+    await act(async () =>
+      container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Thread title"]')!;
+    input.value = "Once";
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(state.rename).toHaveBeenCalledOnce();
+  });
+  it("keeps the title read-only without permission to change the thread", async () => {
     await act(() =>
       root.render(
         <ProjectThreadHeader
-          thread={{ ...thread, createdBy: "agent" } as EnvironmentThreadShell}
+          thread={thread}
           subagents={[]}
           onPeekSubagent={vi.fn()}
           providerEntry={null}
           projectCwd="/scratch/atlas"
-          canChange
+          canChange={false}
           expanded={false}
           {...handlers}
         />,
       ),
     );
-    const title = container.querySelector("h2")!;
-    expect(title.dataset.titleLocked).toBe("true");
-    await act(async () => title.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    await act(async () =>
+      container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
     expect(container.querySelector('[aria-label="Thread title"]')).toBeNull();
   });
   it("folds the chat's hidden panel toggles into the action menu", async () => {

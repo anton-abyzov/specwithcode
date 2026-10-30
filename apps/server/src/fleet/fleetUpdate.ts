@@ -55,9 +55,12 @@ import type {
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHECKSUMS_FILE,
+  CLI_RELEASE_WINDOWS_LINUX_CHECKSUMS_FILE,
   chooseCliArchive,
   cliArchivePlatformKey,
+  cliChecksumsHaveOwnArchive,
   cliReleaseDownloadBaseUrl,
+  mergeChecksums,
   parseChecksums,
 } from "@specweave-studio/shared/cliRelease";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -809,18 +812,30 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const key = cliArchivePlatformKey(platform, arch);
         if (key === undefined) return false;
-        const body = yield* httpClient
-          .execute(
-            HttpClientRequest.get(
-              `${cliReleaseDownloadBaseUrl(version, releaseBaseUrl)}/${CLI_RELEASE_CHECKSUMS_FILE}`,
-            ),
-          )
-          .pipe(
-            Effect.flatMap(HttpClientResponse.filterStatusOk),
-            Effect.flatMap((response) => response.text),
-            Effect.timeout(Duration.seconds(20)),
-          );
-        return chooseCliArchive(parseChecksums(body), version, key) !== undefined;
+        // A missing file reads as empty only for SHA256SUMS-windows-linux, which
+        // releases from before release-windows-linux.yml do not have.
+        const read = (name: string, optional: boolean) =>
+          httpClient
+            .execute(
+              HttpClientRequest.get(
+                `${cliReleaseDownloadBaseUrl(version, releaseBaseUrl)}/${name}`,
+              ),
+            )
+            .pipe(
+              Effect.flatMap((response) =>
+                optional && response.status === 404
+                  ? Effect.succeed("")
+                  : HttpClientResponse.filterStatusOk(response).pipe(
+                      Effect.flatMap((ok) => ok.text),
+                    ),
+              ),
+              Effect.map(parseChecksums),
+              Effect.timeout(Duration.seconds(20)),
+            );
+        const primary = yield* read(CLI_RELEASE_CHECKSUMS_FILE, false);
+        if (cliChecksumsHaveOwnArchive(primary, version, key)) return true;
+        const windowsLinux = yield* read(CLI_RELEASE_WINDOWS_LINUX_CHECKSUMS_FILE, true);
+        return chooseCliArchive(mergeChecksums(primary, windowsLinux), version, key) !== undefined;
       }).pipe(Effect.orElseSucceed(() => false));
     return yield* makeFleetUpdateWorker({
       serverVersion: descriptor.serverVersion,
@@ -890,7 +905,10 @@ export interface FleetUpdateClientInput {
   readonly waitMs?: number;
   readonly pollMs?: number;
   readonly sleep?: (ms: number) => Promise<void>;
-  /** Checks a version is published (its SHA256SUMS lists an archive for that platform). */
+  /**
+   * Checks a version is published (SHA256SUMS or SHA256SUMS-windows-linux
+   * lists an archive for that platform).
+   */
   readonly releasePublished?: (version: string, platformKey: string) => Promise<boolean>;
   /** Folder copies in flight on this machine, as its service's heartbeat reports them. */
   readonly localFolderCopies?: number;
@@ -994,25 +1012,30 @@ const nowMillis = () => Effect.runSync(Clock.currentTimeMillis);
 const isoNow = () => DateTime.formatIso(DateTime.makeUnsafe(nowMillis()));
 
 /** The public `/.well-known` descriptor GitHub release check for an older boot-service machine. */
-async function defaultReleasePublished(
+export async function defaultReleasePublished(
   fetcher: typeof fetch,
   version: string,
   platformKey: string,
 ): Promise<boolean> {
   try {
-    const response = await fetcher(
-      `${cliReleaseDownloadBaseUrl(version, process.env[CLI_RELEASE_BASE_URL_ENV])}/${CLI_RELEASE_CHECKSUMS_FILE}`,
-      { redirect: "follow", signal: AbortSignal.timeout(20_000) },
-    );
-    if (!response.ok) return false;
     const key = cliArchivePlatformKey(
       platformKey.split("-")[0] as NodeJS.Platform,
       platformKey.split("-")[1] ?? "",
     );
-    return (
-      key !== undefined &&
-      chooseCliArchive(parseChecksums(await response.text()), version, key) !== undefined
-    );
+    if (key === undefined) return false;
+    const base = cliReleaseDownloadBaseUrl(version, process.env[CLI_RELEASE_BASE_URL_ENV]);
+    const read = (name: string) =>
+      fetcher(`${base}/${name}`, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
+    const response = await read(CLI_RELEASE_CHECKSUMS_FILE);
+    if (!response.ok) return false;
+    const primary = parseChecksums(await response.text());
+    if (cliChecksumsHaveOwnArchive(primary, version, key)) return true;
+    // The Windows zips are listed in SHA256SUMS-windows-linux; releases from
+    // before release-windows-linux.yml have no such file.
+    const extra = await read(CLI_RELEASE_WINDOWS_LINUX_CHECKSUMS_FILE);
+    if (!extra.ok && extra.status !== 404) return false;
+    const windowsLinux = extra.ok ? parseChecksums(await extra.text()) : new Map<string, string>();
+    return chooseCliArchive(mergeChecksums(primary, windowsLinux), version, key) !== undefined;
   } catch {
     return false;
   }

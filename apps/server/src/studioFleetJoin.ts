@@ -79,6 +79,7 @@ export class FleetJoinError extends Error {
     | "unknown-machine"
     | "write"
     | "invitation-used"
+    | "wrong-coordinator"
     | "coordinator-unknown";
   constructor(kind: FleetJoinError["kind"]) {
     super(
@@ -90,7 +91,9 @@ export class FleetJoinError extends Error {
         "unknown-machine": "No configured machine has that name.",
         write: "The private machine list could not be saved.",
         "invitation-used":
-          "This invitation was already used, has expired, or was made for a different main machine. On that machine choose Invite this machine again and add the new line here.",
+          "This invitation was already used or has expired. On that machine choose Invite this machine again and add the new line here.",
+        "wrong-coordinator":
+          "This line was made for a different main machine, so it no longer works. On that machine choose Invite this machine again, paste this machine's environment ID (Settings > Connections) as the main machine environment ID, and add the new line here.",
         "coordinator-unknown":
           "Start SpecWithCode on this machine first: adding this machine needs its environment ID.",
       }[kind],
@@ -448,7 +451,15 @@ async function redeemFleetInvitation(input: {
   } catch {
     throw new FleetError("unreachable");
   }
-  if (response.status === 401 || response.status === 400) {
+  if (response.status === 400) {
+    // The machine spends the line, then says when it named another main machine.
+    const body = await readBoundedJson(response).catch(() => null);
+    const message = isRecord(body) && typeof body.message === "string" ? body.message : "";
+    throw new FleetJoinError(
+      /different main machine/iu.test(message) ? "wrong-coordinator" : "invitation-used",
+    );
+  }
+  if (response.status === 401) {
     await response.body?.cancel().catch(() => undefined);
     throw new FleetJoinError("invitation-used");
   }

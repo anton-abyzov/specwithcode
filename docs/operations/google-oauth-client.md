@@ -30,7 +30,7 @@ STUDIO_GOOGLE_OAUTH_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
 STUDIO_GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-...
 ```
 
-For builds in GitHub Actions (`release.yml` and `release-macos.yml`), add them as repository secrets with the same names. The server build bakes them in (`apps/server/vite.config.ts`). The same variables set on a running service override the baked values, which is how to test a client without a rebuild. A build without them shows the "use your own OAuth client" form instead of the Connect button.
+For builds in GitHub Actions (`release-macos.yml` and `release-windows-linux.yml`), add them as repository secrets with the same names. The server build bakes them in (`apps/server/vite.config.ts`). The same variables set on a running service override the baked values, which is how to test a client without a rebuild. A build without them shows the "use your own OAuth client" form instead of the Connect button.
 
 Google documents that an installed app's client secret cannot be kept secret, so shipping it in the app is expected; PKCE and the loopback redirect protect the authorization code. Do not commit the values to git anyway, since secret scanners flag them.
 

@@ -192,6 +192,8 @@ export function inverseSkillAction(
         : { kind: "unpin" };
     case "unpin":
       return before?.pinnedVersion ? { kind: "pin", version: before.pinnedVersion } : null;
+    case "remove":
+      return null;
     case "install-version":
     case "update-latest":
       if (!before?.installedVersion || !/^\d+\.\d+\.\d+$/.test(before.installedVersion))
@@ -214,6 +216,8 @@ export function skillActionLabel(action: ProjectSkillsAction, skill: string): st
       return `Unpin ${skill}`;
     case "update-latest":
       return `Update ${skill} to the latest version`;
+    case "remove":
+      return `Remove ${skill}`;
     case "toggle-skill":
       return `${action.enabled ? "Turn on" : "Turn off"} ${skill}`;
     case "toggle-plugin":

@@ -10,12 +10,12 @@ import {
 import type { ElectronUpdaterFeedUrl } from "../electron/ElectronUpdater.ts";
 
 /**
- * Windows and Linux apps are attached to a release after release.sh has published it
- * (release-windows-linux.yml runs nightly or by hand), so GitHub's Latest release often has no
- * latest.yml or latest-linux.yml yet. electron-updater's github provider reads only the Latest
- * release, so every check then fails ("Cannot find latest-linux.yml") and the app stays where it
- * is until a release that has its feed is Latest again. This finds the newest release that does
- * carry this platform's manifest and points the updater at that release instead.
+ * Windows and Linux apps are attached to a release after release.sh has published it (it dispatches
+ * release-windows-linux.yml, which also runs a daily catch-up), so GitHub's Latest release often
+ * has no latest.yml or latest-linux.yml yet. electron-updater's github provider reads only the
+ * Latest release, so every check then fails ("Cannot find latest-linux.yml") and the app stays
+ * where it is until a release that has its feed is Latest again. This finds the newest release that
+ * does carry this platform's manifest and points the updater at that release instead.
  */
 
 /** electron-builder's manifest for a channel on Windows or Linux; null on macOS. */

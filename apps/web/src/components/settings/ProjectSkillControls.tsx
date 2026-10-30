@@ -89,7 +89,8 @@ export interface SkillControls {
   readonly setPushOpen: (open: boolean) => void;
 }
 
-const AGENT_RESCAN_MS = 4_000;
+/** Agents rescan on their own after a write; a slow one can take several seconds. */
+const AGENT_RESCAN_DELAYS_MS = [4_000, 12_000] as const;
 
 const SkillControlsContext = createContext<SkillControls | null>(null);
 
@@ -201,12 +202,14 @@ export function SkillControlsProvider({
   const landed = useCallback(
     (action: ProjectSkillsAction) => {
       onChanged();
-      // Each agent rescans the folder on its own after a write; read once more when it has.
-      const id = window.setTimeout(() => {
-        rescans.current.delete(id);
-        onChanged();
-      }, AGENT_RESCAN_MS);
-      rescans.current.add(id);
+      // Each agent rescans the folder on its own after a write; read again when it has.
+      for (const delay of AGENT_RESCAN_DELAYS_MS) {
+        const id = window.setTimeout(() => {
+          rescans.current.delete(id);
+          onChanged();
+        }, delay);
+        rescans.current.add(id);
+      }
       if (action.kind !== "toggle-skill" && action.kind !== "toggle-plugin") refreshVersions();
     },
     [onChanged, refreshVersions],
