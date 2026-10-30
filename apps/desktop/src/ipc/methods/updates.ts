@@ -1,4 +1,5 @@
 import {
+  DesktopRestartTraceMarkSchema,
   DesktopUpdateActionResultSchema,
   DesktopUpdateChannelSchema,
   DesktopUpdateCheckResultSchema,
@@ -9,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as DesktopUpdates from "../../updates/DesktopUpdates.ts";
+import { recordWindowMark } from "../../updates/restartTrace.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import { syncServiceAgentConfig } from "./serviceUpdates.ts";
@@ -82,4 +84,12 @@ export const checkForUpdateIfStale = DesktopIpc.makeIpcMethod({
       retryMinAgeMs: DesktopUpdates.SETTINGS_CHECK_MIN_AGE_MS,
     });
   }),
+});
+
+/** One timed step of a "Restart to update" press, written to desktop.trace.ndjson. */
+export const markRestartTrace = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UPDATE_RESTART_TRACE_CHANNEL,
+  payload: DesktopRestartTraceMarkSchema,
+  result: Schema.Void,
+  handler: (mark) => recordWindowMark(mark),
 });

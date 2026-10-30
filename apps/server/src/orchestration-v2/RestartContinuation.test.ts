@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   MessageId,
+  NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ import {
   continueRestartedRun,
   resumeQueueAfterRestart,
 } from "./RestartContinuation.ts";
+import { continuationStartRetryDelayMs } from "./RestartBackgroundNote.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -47,6 +49,8 @@ function makeProjection() {
       providerInstanceId: instanceId,
       archivedAt: null,
       deletedAt: null,
+      lineage: { parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
     },
     runs: [
       {
@@ -748,6 +752,206 @@ it.effect("continues a resumed queued run that ran after an earlier continuation
       runs: [...cut.runs, finishedContinuation],
     } as unknown as OrchestrationV2ThreadProjection);
     assert.deepEqual(texts, ["Continue where you left off."]);
+  }),
+);
+
+it("backs off twice from a continuation the provider never took, then lets it fail", () => {
+  const base = makeProjection();
+  const now = DateTime.makeUnsafe("2026-10-03T10:00:00.000Z");
+  const failedStart = (id: string, of: RunId) => ({
+    ...base.runs[0]!,
+    id: RunId.make(id),
+    activeAttemptId: RunAttemptId.make(`attempt:${id}`),
+    status: "failed" as const,
+    restartContinuationOfRunId: of,
+  });
+  const first = failedStart("run:retry-1", runId);
+  const second = failedStart("run:retry-2", first.id);
+  const third = failedStart("run:retry-3", second.id);
+  const projection = (failureClass = "provider_error", providerTurns = base.providerTurns) =>
+    ({
+      runs: [{ ...base.runs[0]!, status: "cancelled" }, first, second, third],
+      providerTurns,
+      turnItems: [first, second, third].map((run) => ({
+        id: `error:${run.id}`,
+        type: "error",
+        status: "failed",
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        ordinal: 1,
+        updatedAt: now,
+        failure: { class: failureClass, message: "Failed.", code: null, retryable: null },
+      })),
+    }) as unknown as Parameters<typeof continuationStartRetryDelayMs>[1];
+  assert.deepEqual(
+    [first, second, third].map((run) => continuationStartRetryDelayMs(run, projection())),
+    [60_000, 180_000, undefined],
+  );
+  for (const failureClass of ["usage_limit", "permission_error", "validation_error"])
+    assert.isUndefined(continuationStartRetryDelayMs(first, projection(failureClass)));
+  // Once the provider took the prompt, starting again would repeat the turn.
+  assert.isUndefined(
+    continuationStartRetryDelayMs(
+      first,
+      projection("provider_error", [
+        { ...base.providerTurns[0]!, runAttemptId: first.activeAttemptId, status: "failed" },
+      ] as never),
+    ),
+  );
+  // An earlier attempt of the same run took the prompt before a retry replaced it.
+  const earlierAttempt = RunAttemptId.make("attempt:run:retry-1:earlier");
+  assert.isUndefined(
+    continuationStartRetryDelayMs(first, {
+      ...projection("provider_error", [
+        { ...base.providerTurns[0]!, runAttemptId: earlierAttempt, status: "failed" },
+      ] as never),
+      attempts: [{ id: earlierAttempt, runId: first.id }],
+    }),
+  );
+});
+
+it.effect("continues again after a continuation fails before its prompt", () =>
+  Effect.gen(function* () {
+    const cut = cutMidTurn();
+    const failedStart = {
+      ...cut.runs[0]!,
+      id: RunId.make("run:failed-start"),
+      ordinal: 2,
+      activeAttemptId: RunAttemptId.make("attempt:failed-start"),
+      status: "failed",
+      restartContinuationOfRunId: runId,
+    };
+    const dispatched: Array<RunId | undefined> = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: failedStart.id }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () =>
+              Effect.succeed({ ...cut, runs: [...cut.runs, failedStart] } as never),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: (command) => {
+              if (command.type === "message.dispatch")
+                dispatched.push(command.restartContinuationOfRunId);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.deepEqual(dispatched, [failedStart.id]);
+  }),
+);
+
+it.effect.each([
+  ["running", null, 0],
+  ["completed", "Done.", 1],
+] as const)(
+  "a parent's Stop on the task's run blocks the child only while the task is %s",
+  ([status, result, expected]) =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:parent");
+      const parentRunId = RunId.make("run:parent");
+      const taskId = NodeId.make("node:task");
+      const cut = cutMidTurn();
+      const child = {
+        ...cut,
+        thread: {
+          ...cut.thread,
+          lineage: { parentThreadId, relationshipToParent: "subagent" },
+          forkedFrom: { type: "node", nodeId: taskId },
+        },
+      } as unknown as OrchestrationV2ThreadProjection;
+      const parent = {
+        thread: { id: parentThreadId },
+        subagents: [
+          {
+            id: taskId,
+            runId: parentRunId,
+            childThreadId: threadId,
+            origin: "app_owned",
+            status,
+            result,
+          },
+        ],
+        turnItems: [{ id: "turn-item:stop", runId: parentRunId, type: "run_interrupt_request" }],
+      };
+      let dispatched = 0;
+      yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: (id) =>
+                Effect.succeed((id === parentThreadId ? parent : child) as never),
+              recoverDelegatedTask: () => Effect.void,
+              dispatch: () =>
+                Effect.sync(() => {
+                  dispatched += 1;
+                  return {} as never;
+                }),
+            }),
+            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          ),
+        ),
+      );
+      assert.equal(dispatched, expected);
+    }),
+);
+
+it.effect("a parent's service-update interrupt does not block the child's continuation", () =>
+  Effect.gen(function* () {
+    const parentThreadId = ThreadId.make("thread:parent");
+    const parentRunId = RunId.make("run:parent");
+    const taskId = NodeId.make("node:task");
+    const cut = cutMidTurn();
+    const child = {
+      ...cut,
+      thread: {
+        ...cut.thread,
+        lineage: { parentThreadId, relationshipToParent: "subagent" },
+        forkedFrom: { type: "node", nodeId: taskId },
+      },
+    } as unknown as OrchestrationV2ThreadProjection;
+    const parent = {
+      thread: { id: parentThreadId },
+      subagents: [
+        {
+          id: taskId,
+          runId: parentRunId,
+          childThreadId: threadId,
+          origin: "app_owned",
+          status: "running",
+          result: null,
+        },
+      ],
+      turnItems: [
+        {
+          id: "turn-item:update",
+          runId: parentRunId,
+          type: "run_interrupt_request",
+          cause: "service_update",
+        },
+      ],
+    };
+    let dispatched = 0;
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: (id) =>
+              Effect.succeed((id === parentThreadId ? parent : child) as never),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: () =>
+              Effect.sync(() => {
+                dispatched += 1;
+                return {} as never;
+              }),
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.equal(dispatched, 1);
   }),
 );
 

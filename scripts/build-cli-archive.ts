@@ -282,6 +282,74 @@ const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, ta
   }
 });
 
+/**
+ * Node links libatomic.so.1, which Ubuntu server and container images lack,
+ * so the Linux archive carries its own next to the executable.
+ */
+const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input: {
+  readonly repoRoot: string;
+  readonly contentDir: string;
+  readonly executablePath: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const ldd = yield* spawner.string(ChildProcess.make("ldd", [input.executablePath]));
+  const source = /libatomic\.so\.1 => (\/\S+)/.exec(ldd)?.[1];
+  if (source === undefined) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: "libatomic.so.1",
+      hint: `ldd did not resolve it for ${input.executablePath}. Install libatomic1 on the build host.`,
+    });
+  }
+  yield* fs.makeDirectory(path.join(input.contentDir, "lib"));
+  yield* fs.copyFile(source, path.join(input.contentDir, "lib/libatomic.so.1"));
+
+  // libatomic is GPL-3.0-or-later WITH GCC-exception-3.1, so its terms and a
+  // source reference travel with it.
+  const owner = yield* spawner.string(
+    ChildProcess.make("dpkg-query", ["-S", yield* fs.realPath(source)]),
+  );
+  // Keep the arch qualifier so a second installed arch cannot add its own line.
+  const [, qualifiedPkg, pkg] = /^(([^:\s]+)(?::[^:\s]+)?): /.exec(owner) ?? [];
+  const versions = qualifiedPkg
+    ? yield* spawner.string(
+        ChildProcess.make("dpkg-query", [
+          "-W",
+          "-f=${Version} ${source:Package} ${source:Version}",
+          qualifiedPkg,
+        ]),
+      )
+    : "";
+  const [version, sourcePackage, sourceVersion] = versions.trim().split(" ");
+  if (!pkg || !version || !sourcePackage || !sourceVersion) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: `dpkg package for ${source}`,
+      hint: "The archive records libatomic's Ubuntu package and source version next to it.",
+    });
+  }
+  const header = [
+    `libatomic.so.1 is copied from the Ubuntu package ${pkg} ${version}.`,
+    `Source: https://launchpad.net/ubuntu/+source/${sourcePackage}/${sourceVersion}`,
+  ].join("\n");
+  // Vendored because CI runner images strip /usr/share/doc.
+  const license = yield* fs.readFileString(
+    path.join(input.repoRoot, "scripts/licenses/libatomic.LICENSE"),
+  );
+  yield* fs.writeFileString(
+    path.join(input.contentDir, "lib/libatomic.so.1.LICENSE"),
+    `${header}\n\n${license}`,
+  );
+
+  // RUNPATH resolves through symlinks and is not inherited by child
+  // processes, unlike LD_LIBRARY_PATH.
+  yield* runCommand(
+    ChildProcess.make("patchelf", ["--set-rpath", "$ORIGIN/lib", input.executablePath]),
+    "patchelf --set-rpath",
+  );
+  yield* Effect.log(`[cli-archive] Bundled ${source} as lib/libatomic.so.1.`);
+});
+
 const MacSigningConfig = Config.all({
   identity: Config.String("STUDIO_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
   appleApiKey: Config.String("APPLE_API_KEY").pipe(Config.option),
@@ -346,7 +414,10 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
   }
   // notarytool only accepts archives, and a bare executable cannot be stapled,
   // so notarize a zip of the binary and rely on the online ticket lookup.
-  const notarizeZip = path.join(path.dirname(input.executablePath), ".notarize-specweave-studio.zip");
+  const notarizeZip = path.join(
+    path.dirname(input.executablePath),
+    ".notarize-specweave-studio.zip",
+  );
   yield* runCommand(
     ChildProcess.make("ditto", ["-c", "-k", "--keepParent", input.executablePath, notarizeZip]),
     "ditto (notarization zip)",
@@ -494,7 +565,10 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     builtExecutable,
     `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
   );
-  yield* requireInput(path.join(webClient, "index.html"), "Run `vp run --filter specweave-studio build` first.");
+  yield* requireInput(
+    path.join(webClient, "index.html"),
+    "Run `vp run --filter specweave-studio build` first.",
+  );
   yield* requireInput(
     resourceMonitorDir,
     "Build the resource monitor or pass --resource-monitor-dir.",
@@ -518,6 +592,9 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   });
 
   const executablePath = path.join(contentDir, executableName);
+  if (input.platform === "linux") {
+    yield* bundleLinuxLibatomic({ repoRoot, contentDir, executablePath });
+  }
   if (input.platform === "mac") {
     yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
   } else if (input.platform === "win") {
@@ -581,7 +658,11 @@ const command = Command.make(
     ),
   },
   (input) => buildCliArchive(input).pipe(Effect.scoped),
-).pipe(Command.withDescription("Package the specweave-studio single-executable into a per-platform archive."));
+).pipe(
+  Command.withDescription(
+    "Package the specweave-studio single-executable into a per-platform archive.",
+  ),
+);
 
 if (import.meta.main) {
   Command.run(command, { version: "0.0.0" }).pipe(

@@ -2,7 +2,9 @@ import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -230,5 +232,76 @@ describe("GitWorkflowService", () => {
         }),
       ),
     );
+  });
+
+  it.effect("holds a commit's checkout so a branch switch waits until it lands", () => {
+    const events: Array<string> = [];
+    const commitStarted = Deferred.makeUnsafe<void>();
+    const releaseCommit = Deferred.makeUnsafe<void>();
+    const gitHandle = {
+      kind: "git",
+      repository: {
+        kind: "git",
+        rootPath: "/repo-that-does-not-exist",
+        metadataPath: "/repo-that-does-not-exist/.git",
+        freshness: {
+          source: "live-local",
+          observedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+          expiresAt: Option.none(),
+        },
+      },
+      driver: {} as VcsDriverRegistry.VcsDriverHandle["driver"],
+    } as unknown as VcsDriverRegistry.VcsDriverHandle;
+    const layerTest = GitWorkflowService.layer.pipe(
+      Layer.provide(removalDependencies),
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          resolve: () => Effect.succeed(gitHandle),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          switchRef: () =>
+            Effect.sync(() => {
+              events.push("switch");
+              return { refName: "other" } as never;
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitManager.GitManager)({
+          runStackedAction: () =>
+            Effect.gen(function* () {
+              events.push("commit:start");
+              yield* Deferred.succeed(commitStarted, undefined);
+              yield* Deferred.await(releaseCommit);
+              events.push("commit:end");
+              return {} as never;
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const commit = yield* workflow
+        .runStackedAction({
+          cwd: "/repo-that-does-not-exist/nested",
+          actionId: "commit",
+          action: "commit",
+          commitMessage: "Commit",
+        } as never)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(commitStarted);
+      const switched = yield* workflow
+        .switchRef({ cwd: "/repo-that-does-not-exist", refName: "other" } as never)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(events, ["commit:start"]);
+      yield* Deferred.succeed(releaseCommit, undefined);
+      yield* Fiber.join(commit);
+      yield* Fiber.join(switched);
+      assert.deepStrictEqual(events, ["commit:start", "commit:end", "switch"]);
+    }).pipe(Effect.provide(layerTest));
   });
 });

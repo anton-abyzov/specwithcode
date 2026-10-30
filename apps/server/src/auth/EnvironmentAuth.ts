@@ -782,6 +782,7 @@ export const make = Effect.gen(function* () {
     input?: {
       readonly proofKeyThumbprint?: string;
       readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
     },
   ): Effect.Effect<
     ResolvedBootstrapGrant,
@@ -800,6 +801,12 @@ export const make = Effect.gen(function* () {
     }
     return sessions.verify(credential).pipe(
       mapSessionVerificationErrors,
+      Effect.filterOrFail(
+        (session) =>
+          input?.requiredScopes === undefined ||
+          input.requiredScopes.every((scope) => session.scopes.includes(scope)),
+        () => new ServerAuthScopeNotGrantedError({}),
+      ),
       Effect.map(
         (session) =>
           ({
@@ -1284,7 +1291,7 @@ export const make = Effect.gen(function* () {
     access,
   ) =>
     // No proof key: a code bound to a Studio Connect client's key fails without being spent.
-    resolveBootstrapGrant(code.trim()).pipe(
+    resolveBootstrapGrant(code.trim(), { requiredScopes: mcpClientScopes(access) }).pipe(
       Effect.catchTags({
         ServerAuthInvalidCredentialError: () =>
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "unknown_or_used" })),
@@ -1298,9 +1305,7 @@ export const make = Effect.gen(function* () {
             ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "reapproval_required" }))
             : grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
               ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
-              : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
-                ? Effect.succeed(principalApproval(grant))
-                : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
+              : Effect.succeed(principalApproval(grant)),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );

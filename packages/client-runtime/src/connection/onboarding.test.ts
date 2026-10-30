@@ -13,13 +13,18 @@ import * as Option from "effect/Option";
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import { fetchRemoteSessionState } from "../authorization/remote.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
-import { BearerConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  type ConnectionRoute,
+} from "./catalog.ts";
+import { BearerConnectionTarget, ConnectionBlockedError } from "./model.ts";
 import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
 } from "./onboarding.ts";
+import * as EnvironmentRegistry from "./registry.ts";
 
 const layerClientPresentation = Layer.succeed(
   ClientCapabilities.ClientPresentation,
@@ -31,6 +36,25 @@ const layerClientPresentation = Layer.succeed(
     },
   }),
 );
+
+/** Only the address check that pairing without a target environment runs. */
+function layerPairingRegistry(
+  checks: Array<string> = [],
+  savedLabel?: string,
+): Layer.Layer<EnvironmentRegistry.EnvironmentRegistry> {
+  return Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+    assertKnownAddress: (route: ConnectionRoute) =>
+      Effect.gen(function* () {
+        checks.push(route.target.environmentId);
+        if (savedLabel !== undefined) {
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            detail: `That address claims to be ${savedLabel}, which is already saved.`,
+          });
+        }
+      }),
+  } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+}
 
 function layerPairingHttp(
   calls: Array<{ readonly url: string; readonly init: RequestInit }>,
@@ -129,7 +153,11 @@ describe("connection onboarding", () => {
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layerClientPresentation, layerPairingRegistry(), layerPairingHttp(calls)),
+        ),
+      );
 
       expect(registration).toMatchObject({
         _tag: "BearerConnectionRegistration",
@@ -178,6 +206,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
+            layerPairingRegistry(),
             layerPairingHttp(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1 }),
           ),
         ),
@@ -199,7 +228,9 @@ describe("connection onboarding", () => {
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(Layer.mergeAll(layerClientPresentation, httpLayer)));
+      }).pipe(
+        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingRegistry(), httpLayer)),
+      );
 
       const session = yield* fetchRemoteSessionState({
         httpBaseUrl: registration.profile.httpBaseUrl,
@@ -211,6 +242,56 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("refuses a pairing link that claims a saved environment from a new address", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const checks: Array<string> = [];
+      const error = yield* preparePairingRegistration({
+        host: "attacker.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerClientPresentation,
+            layerPairingRegistry(checks, "Paired environment"),
+            layerPairingHttp(calls),
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+      expect(checks).toEqual(["environment-paired"]);
+      // The code is not redeemed, so it still works from the environment's own settings.
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://attacker.example.test/.well-known/studio/environment",
+      ]);
+    }),
+  );
+
+  it.effect("adds a route without the saved-address check when pairing targets it", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const checks: Array<string> = [];
+      const registration = yield* preparePairingRegistration({
+        host: "lan.example.test",
+        pairingCode: "pairing-token",
+        expectedEnvironmentId: EnvironmentId.make("environment-paired"),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerClientPresentation,
+            layerPairingRegistry(checks, "Paired environment"),
+            layerPairingHttp(calls),
+          ),
+        ),
+      );
+
+      expect(registration.profile.httpBaseUrl).toBe("https://lan.example.test/");
+      expect(checks).toEqual([]);
+    }),
+  );
+
   it.effect("refuses to add a route that reaches a different machine, keeping the code", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
@@ -219,7 +300,9 @@ describe("connection onboarding", () => {
         pairingCode: "pairing-token",
         expectedEnvironmentId: EnvironmentId.make("some-other-machine"),
       }).pipe(
-        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))),
+        Effect.provide(
+          Layer.mergeAll(layerClientPresentation, layerPairingRegistry(), layerPairingHttp(calls)),
+        ),
         Effect.flip,
       );
       expect(error).toMatchObject({ reason: "configuration" });
@@ -240,6 +323,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
+            layerPairingRegistry(),
             layerPairingHttp(calls, {
               protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1,
               selfUpdate: true,
@@ -262,6 +346,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
+            layerPairingRegistry(),
             layerPairingHttp(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }),
           ),
         ),
@@ -286,6 +371,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
+            layerPairingRegistry(),
             layerPairingHttp(calls, { failDescriptor: true }),
           ),
         ),
@@ -305,7 +391,9 @@ describe("connection onboarding", () => {
         host: "",
         pairingCode: "",
       }).pipe(
-        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))),
+        Effect.provide(
+          Layer.mergeAll(layerClientPresentation, layerPairingRegistry(), layerPairingHttp(calls)),
+        ),
         Effect.flip,
       );
 

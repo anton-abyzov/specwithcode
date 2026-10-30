@@ -1,10 +1,12 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as RelayDb from "../db.ts";
 import { relayDeliveryAttempts } from "../persistence/schema.ts";
+import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 
 describe("DeliveryAttempts", () => {
@@ -411,4 +413,78 @@ describe("DeliveryAttempts", () => {
       ),
     );
   });
+
+  const pruneWith = (batches: ReadonlyArray<number>) => {
+    const deleteCalls: number[] = [];
+    const fakeDb = {
+      delete: () => ({
+        where: () => ({
+          returning: () => {
+            const size = batches[deleteCalls.length] ?? 0;
+            deleteCalls.push(size);
+            return Effect.succeed(Array.from({ length: size }, (_, index) => ({ id: `${index}` })));
+          },
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+    const run = DeliveryAttempts.DeliveryAttempts.pipe(
+      Effect.flatMap((attempts) => attempts.pruneExpired),
+      Effect.provide(
+        DeliveryAttempts.layer.pipe(
+          Layer.provide(NodeCryptoLayer.layer),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
+        ),
+      ),
+    );
+    return { run, deleteCalls };
+  };
+
+  it.effect("stops pruning once a batch comes back short", () => {
+    const full = DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE;
+    const { run, deleteCalls } = pruneWith([full, 12]);
+    return Effect.gen(function* () {
+      expect(yield* run).toBe(full + 12);
+      expect(deleteCalls).toEqual([full, 12]);
+    });
+  });
+
+  it.effect("caps each run at the batch limit while a backlog remains", () => {
+    const full = DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE;
+    const { run, deleteCalls } = pruneWith(Array.from({ length: 10 }, () => full));
+    return Effect.gen(function* () {
+      expect(yield* run).toBe(full * DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_MAX_BATCHES);
+      expect(deleteCalls).toHaveLength(DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_MAX_BATCHES);
+    });
+  });
+
+  // Runs the real query on D1-shaped SQLite, so the subquery has to render and run.
+  it.effect("prunes only attempts older than the retention period", () =>
+    Effect.gen(function* () {
+      const db = yield* RelayDb.RelayDb;
+      const now = yield* DateTime.now;
+      const iso = (days: number) => DateTime.formatIso(DateTime.subtract(now, { days }));
+      const row = (id: string, createdAt: string) => ({ id, createdAt, kind: "live_activity" });
+      yield* db
+        .insert(relayDeliveryAttempts)
+        .values([
+          row("expired-1", iso(DeliveryAttempts.DELIVERY_ATTEMPT_RETENTION_DAYS + 1)),
+          row("expired-2", iso(30)),
+          row("recent", iso(1)),
+        ]);
+
+      const attempts = yield* DeliveryAttempts.DeliveryAttempts;
+      expect(yield* attempts.pruneExpired).toBe(2);
+      const remaining = yield* db
+        .select({ id: relayDeliveryAttempts.id })
+        .from(relayDeliveryAttempts);
+      expect(remaining.map((entry) => entry.id)).toEqual(["recent"]);
+    }).pipe(
+      Effect.provide(
+        DeliveryAttempts.layer.pipe(
+          Layer.provideMerge(layerSqliteRelayDb()),
+          Layer.provide(NodeCryptoLayer.layer),
+        ),
+      ),
+    ),
+  );
 });

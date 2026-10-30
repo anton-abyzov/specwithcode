@@ -3,6 +3,8 @@ import {
   CommandId,
   RuntimeRequestId,
   EnvironmentId,
+  MessageId,
+  RunId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
@@ -24,6 +26,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
@@ -80,7 +83,9 @@ const SNAPSHOT: OrchestrationV2ShellSnapshot = {
   ],
 };
 
-const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
+const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (options?: {
+  readonly loadEarlier?: () => Effect.Effect<ThreadHistoryController.ThreadHistoryLoadEarlierResult>;
+}) {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
     reply: Deferred.Deferred<{ sequence: number }, Error>;
@@ -89,6 +94,9 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
       Option.some({
+        initialConfig: Effect.succeed({
+          environment: { capabilities: { serverResolvedCommandContext: true } },
+        }),
         client: {
           [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
             Effect.gen(function* () {
@@ -106,6 +114,17 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
         run: (_environmentId, effect) =>
           Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+      options?.loadEarlier === undefined
+        ? Layer.empty
+        : Layer.succeed(
+            ThreadHistoryController.ThreadHistoryController,
+            ThreadHistoryController.ThreadHistoryController.of({
+              boundLongTurns: false,
+              register: () => Effect.die("unused"),
+              unregister: () => Effect.void,
+              loadEarlier: options.loadEarlier,
+            } as ThreadHistoryController.ThreadHistoryController["Service"]),
+          ),
       Layer.succeed(
         Crypto.Crypto,
         Crypto.make({
@@ -122,6 +141,63 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
   const visibleAtom = commands.snapshotAtom(ENVIRONMENT_ID);
   registry.mount(visibleAtom);
   return { registry, commands, snapshotAtom, visibleAtom, requests };
+});
+
+describe("history loading", () => {
+  it.effect("sends a message on the thread while earlier history is loading", () =>
+    Effect.gen(function* () {
+      const historyStarted = yield* Deferred.make<void>();
+      const historyReply =
+        yield* Deferred.make<ThreadHistoryController.ThreadHistoryLoadEarlierResult>();
+      const h = yield* makeHarness({
+        loadEarlier: () =>
+          Deferred.succeed(historyStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(historyReply)),
+          ),
+      });
+      yield* Effect.addFinalizer(() => Deferred.succeed(historyReply, { _tag: "loaded" }));
+      const history = h.commands.loadEarlierHistory.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      yield* Deferred.await(historyStarted);
+      const send = h.commands.startTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: {
+          threadId: THREAD_ID,
+          commandId: CommandId.make("send"),
+          message: {
+            messageId: MessageId.make("message"),
+            role: "user",
+            text: "Send while history loads",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+      });
+      // Dispatched after Send on another thread, so it arrives first only if Send is queued.
+      const controlThreadId = ThreadId.make("control-thread");
+      const control = h.commands.interruptTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: {
+          threadId: controlThreadId,
+          commandId: CommandId.make("control"),
+          runId: RunId.make("control-run"),
+        },
+      });
+      const first = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(first.reply, { sequence: 1 });
+      yield* Deferred.succeed(historyReply, { _tag: "loaded" });
+      const second = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(second.reply, { sequence: 2 });
+      const results = yield* Effect.promise(() => Promise.all([history, send, control]));
+
+      expect(first.command).toMatchObject({ type: "message.dispatch", threadId: THREAD_ID });
+      expect(second.command).toMatchObject({ type: "run.interrupt", threadId: controlThreadId });
+      expect(results.map((value) => value._tag)).toEqual(["Success", "Success", "Success"]);
+    }),
+  );
 });
 
 describe("remote thread lifecycle commands", () => {

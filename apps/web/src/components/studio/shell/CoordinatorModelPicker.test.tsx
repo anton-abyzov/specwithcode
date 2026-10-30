@@ -87,6 +87,24 @@ vi.mock("../../chat/TraitsPicker", () => ({
     state.traitsProps = props;
     return null;
   },
+  // The picker's effort strip: one fixed level, writing back through the same options.
+  useTraitsEffortControl: (
+    input: {
+      model: string;
+      onModelOptionsChange: (options: unknown) => void;
+    } | null,
+  ) =>
+    input
+      ? {
+          options: [{ id: "high", label: "High" }],
+          value: "high",
+          locked: null,
+          select: (id: string) =>
+            input.onModelOptionsChange([{ id: "reasoningEffort", value: id }]),
+          fast: null,
+          model: input.model,
+        }
+      : null,
 }));
 vi.mock("./ModelBadge", () => ({
   ModelBadge: (props: { state?: ModelState | null }) => (
@@ -964,6 +982,25 @@ describe("CoordinatorModelPicker limit fallback", () => {
         { id: "reasoningEffort", value: "high" },
       ]),
     );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      instanceId: "codex",
+      model: "gpt-6",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+
+  it("hands the model picker an effort strip for the saved model, writing the same selection", async () => {
+    state.entries = [entry("codex", true)];
+    const selection = {
+      instanceId: "codex",
+      model: "gpt-6",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    } as never;
+    const { onChange } = await mount(false, { value: selection });
+    const effort = (state.pickerProps as { effort?: { select: (id: string) => void } } | null)
+      ?.effort;
+    expect(effort).toBeDefined();
+    await act(async () => effort!.select("high"));
     expect(onChange).toHaveBeenCalledExactlyOnceWith({
       instanceId: "codex",
       model: "gpt-6",

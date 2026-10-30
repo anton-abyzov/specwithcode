@@ -163,6 +163,34 @@ describe("makeRunFollowUp", () => {
     }),
   );
 
+  it.effect("asks again a second after main refused because the gate had not opened yet", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(T0 + 1_000);
+      const { files, installs, followUp } = setup("1.0.69", [
+        {
+          accepted: false,
+          failed: false,
+          message: "The app update waits for the service on this Mac.",
+          reason: "service-behind",
+        },
+        { accepted: true, failed: false, message: null },
+      ]);
+      yield* followUp.advance(verified);
+      yield* settle;
+      expect(readRunApp(files)).toMatchObject({ appPhase: "installing", retryDelayMs: 1_000 });
+      yield* TestClock.setTime(T0 + 1_999);
+      yield* followUp.advance(verified);
+      yield* settle;
+      expect(installs).toHaveLength(1);
+      // Not the 30 seconds of a refusal that takes long to clear.
+      yield* TestClock.setTime(T0 + 2_000);
+      yield* followUp.advance(verified);
+      yield* settle;
+      expect(installs).toHaveLength(2);
+      expect(readRunApp(files)).toMatchObject({ appPhase: "relaunching", attempts: 2 });
+    }),
+  );
+
   it.effect("a relaunch on the target settles the run before any check", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(T0 + 90_000);
@@ -277,6 +305,8 @@ describe("installAppRelease", () => {
         accepted: false,
         failed: false,
         message: "The app update waits for the service on this Mac.",
+        // The reason too: a refusal like this one is asked again within seconds.
+        reason: "service-behind",
       });
     }),
   );

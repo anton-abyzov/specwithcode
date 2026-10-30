@@ -141,7 +141,7 @@ const makeHarness = Effect.fn("TestThisMachineHarness.make")(function* (options:
       ConnectionDriver.ConnectionDriver.of({
         connect,
         checkRoute: () => Effect.succeed("unchecked"),
-        preflight: () => Effect.succeed(false),
+        preflight: () => Effect.succeed("unchecked"),
       }),
     ),
   );

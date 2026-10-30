@@ -166,5 +166,10 @@ it.effect(
       const cap = helper.match(/^APPLY_BUDGET_SECONDS = min\((\d+), /m);
       assert.isNotNull(cap);
       assert.isAtMost(Number(cap![1]) * 1000, Gate.INSTALL_GATE_MAX_MS);
+      // The held service's acknowledgement is read where it is written, and goes with the gate.
+      const service = yield* readScript("update_service.py");
+      assert.include(service, `INSTALL_GATE_ACK_FILE = '${Gate.INSTALL_GATE_ACK_FILE}'`);
+      assert.include(service, "owned_path(own / 'updates' / INSTALL_GATE_ACK_FILE, home)");
+      assert.include(helper, "for name in (INSTALL_GATE_FILE, INSTALL_GATE_ACK_FILE):");
     }).pipe(Effect.provide(NodeServices.layer)),
 );

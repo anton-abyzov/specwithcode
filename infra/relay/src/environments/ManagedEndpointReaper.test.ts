@@ -857,8 +857,9 @@ describe("ManagedEndpointReaper", () => {
     }).pipe(Effect.provide(state.layer));
   });
 
-  it.effect("limits each cleanup run to 100 tunnel deletions", () => {
-    const entries = Array.from({ length: 105 }, (_, index) =>
+  it.effect("limits each cleanup run to the attempt budget of tunnel deletions", () => {
+    const limit = ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT;
+    const entries = Array.from({ length: limit + 5 }, (_, index) =>
       tunnel({
         id: `tunnel-${index}`,
         suffix: index.toString(16).padStart(16, "0"),
@@ -871,8 +872,8 @@ describe("ManagedEndpointReaper", () => {
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MILLIS);
       const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
-      expect((yield* reaper.sweep).deleted).toBe(100);
-      expect(state.deleted).toHaveLength(100);
+      expect((yield* reaper.sweep).deleted).toBe(limit);
+      expect(state.deleted).toHaveLength(limit);
     }).pipe(Effect.provide(state.layer));
   });
 
@@ -998,7 +999,8 @@ describe("ManagedEndpointReaper", () => {
   });
 
   it.effect("caps failed deletion attempts and Cloudflare list pages", () => {
-    const entries = Array.from({ length: 250 }, (_, index) =>
+    const limit = ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT;
+    const entries = Array.from({ length: limit + 50 }, (_, index) =>
       tunnel({
         id: `failed-${index}`,
         suffix: index.toString(16).padStart(16, "0"),
@@ -1016,9 +1018,9 @@ describe("ManagedEndpointReaper", () => {
       yield* TestClock.setTime(NOW_MILLIS);
       const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
       expect(yield* reaper.sweep).toMatchObject({
-        attempted: 100,
+        attempted: limit,
         deleted: 0,
-        failed: 100,
+        failed: limit,
         truncated: true,
       });
       expect(state.listRequests.length).toBeLessThanOrEqual(
@@ -1028,7 +1030,8 @@ describe("ManagedEndpointReaper", () => {
   });
 
   it.effect("rotates the deletion order so persistent failures do not starve later tunnels", () => {
-    const entries = Array.from({ length: 200 }, (_, index) =>
+    const limit = ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT;
+    const entries = Array.from({ length: limit * 2 }, (_, index) =>
       tunnel({
         id: `tunnel-${index}`,
         suffix: index.toString(16).padStart(16, "0"),
@@ -1036,11 +1039,11 @@ describe("ManagedEndpointReaper", () => {
         timestamp: "2026-08-25T11:00:00.000Z",
       }),
     );
-    // The first 100 candidates always fail to delete.
+    // The first attempt budget of candidates always fails to delete.
     const state = harness({
       tunnels: entries,
       allocations: recoverableOwners(entries),
-      failDeleteWhen: (id) => Number(id.split("-")[1]) < 100,
+      failDeleteWhen: (id) => Number(id.split("-")[1]) < limit,
     });
 
     return Effect.gen(function* () {
@@ -1049,7 +1052,7 @@ describe("ManagedEndpointReaper", () => {
       yield* reaper.sweep;
       yield* TestClock.setTime(NOW_MILLIS + 5 * 60 * 1_000);
       yield* reaper.sweep;
-      const later = state.deleted.filter((id) => Number(id.split("-")[1]) >= 100);
+      const later = state.deleted.filter((id) => Number(id.split("-")[1]) >= limit);
       expect(later.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(state.layer));
   });
@@ -1091,8 +1094,9 @@ describe("ManagedEndpointReaper", () => {
   });
 
   it.effect("rotates the attempt budget across both statuses over consecutive sweeps", () => {
+    const limit = ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT;
     const entries = (["down", "inactive"] as const).flatMap((status) =>
-      Array.from({ length: 100 }, (_, index) =>
+      Array.from({ length: limit }, (_, index) =>
         tunnel({
           id: `${status}-${index}`,
           suffix: `${status === "down" ? "a" : "b"}${index.toString(16).padStart(15, "0")}`,
@@ -1108,13 +1112,13 @@ describe("ManagedEndpointReaper", () => {
       yield* TestClock.setTime(NOW_MILLIS);
       yield* reaper.sweep;
       const firstStatus = state.deleted[0]!.split("-")[0];
-      expect(state.deleted).toHaveLength(100);
+      expect(state.deleted).toHaveLength(limit);
       expect(state.deleted.every((id) => id.startsWith(`${firstStatus}-`))).toBe(true);
 
       state.deleted.length = 0;
       yield* TestClock.setTime(NOW_MILLIS + 5 * 60 * 1_000);
       yield* reaper.sweep;
-      expect(state.deleted).toHaveLength(100);
+      expect(state.deleted).toHaveLength(limit);
       expect(state.deleted.every((id) => !id.startsWith(`${firstStatus}-`))).toBe(true);
     }).pipe(Effect.provide(state.layer));
   });

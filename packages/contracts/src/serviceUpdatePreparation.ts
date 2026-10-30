@@ -95,6 +95,13 @@ export const ServerPrepareServiceUpdateInput = Schema.Struct({
    * agent. Older services ignore it.
    */
   reason: Schema.optional(ServiceUpdatePrepareReason),
+  /**
+   * With `stopWork` and an `install` reason: a person pressed Update now or
+   * Restart to update and waits for it. The drain is bounded tighter (a turn
+   * gets 8 s to stop before it is ended, 15 s in all) and an idle service is
+   * held without the full stop pass. Older services ignore it.
+   */
+  interactive: Schema.optional(Schema.Boolean),
 });
 export type ServerPrepareServiceUpdateInput = typeof ServerPrepareServiceUpdateInput.Type;
 
@@ -132,6 +139,12 @@ export const ServerPrepareServiceUpdateResult = Schema.Struct({
    * update waits; a forced one goes ahead and they may need Retry. Older services omit it.
    */
   folderCopies: Schema.optional(NonNegativeInt),
+  /**
+   * After a drain that stopped work: processes still running beneath the service other than
+   * its supervisor, server browser and tunnel. The update helper refuses to install while any
+   * is left, so `idle` is false. Omitted when none is left or the count could not be read.
+   */
+  leftoverProcesses: Schema.optional(NonNegativeInt),
 });
 export type ServerPrepareServiceUpdateResult = typeof ServerPrepareServiceUpdateResult.Type;
 

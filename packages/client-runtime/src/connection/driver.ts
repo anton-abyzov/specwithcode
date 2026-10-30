@@ -46,6 +46,8 @@ export interface EnvironmentConnectionLease {
  * routes have no cheap check, so they are "unchecked".
  */
 export type RouteCheck = "answered" | "silent" | "unchecked";
+/** "unprepared" means the route answered its check but could not be prepared. */
+export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
 /** How long a direct route has to answer before it counts as unreachable from here. */
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
@@ -71,7 +73,7 @@ export class ConnectionDriver extends Context.Service<
     readonly preflight: (
       entry: ConnectionCatalogEntry,
       route: ConnectionRoute,
-    ) => Effect.Effect<boolean>;
+    ) => Effect.Effect<RoutePreflight>;
   }
 >()("@specweave-studio/client-runtime/connection/driver/ConnectionDriver") {}
 
@@ -206,13 +208,13 @@ export const make = Effect.gen(function* () {
 
   const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
     checkRoute(entry, route).pipe(
-      Effect.flatMap((check) =>
-        check === "answered"
-          ? resolver.prepare(routeEntry(entry, route)).pipe(
-              Effect.as(true),
-              Effect.orElseSucceed(() => false),
-            )
-          : Effect.succeed(false),
+      Effect.filterOrElse(
+        (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
+        () =>
+          resolver.prepare(routeEntry(entry, route)).pipe(
+            Effect.as<RoutePreflight>("ready"),
+            Effect.orElseSucceed((): RoutePreflight => "unprepared"),
+          ),
       ),
       Effect.withSpan("ConnectionDriver.preflight"),
     );

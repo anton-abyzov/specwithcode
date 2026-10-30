@@ -117,6 +117,53 @@ it.each(["preparing", "starting"] as const)(
   },
 );
 
+// An interrupt-restart steer cancels Copilot's background agents.
+it("queues a steer for a provider that cannot steer either way", () => {
+  const projection = dispatchProjection(
+    capabilities((current) => ({
+      ...current,
+      turns: {
+        ...current.turns,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: false,
+        supportsQueuedMessages: true,
+      },
+    })),
+  );
+  for (const deliveryIntent of ["auto", "steer"] as const) {
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        deliveryIntent,
+      ),
+      { type: "queue_after_active" },
+    );
+  }
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, {
+      type: "steer_active",
+      targetRunId: activeRunId,
+    }),
+    { type: "queue_after_active" },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, {
+      type: "steer_active",
+      targetRunId: RunId.make("command-policy-missing-run"),
+    }),
+    { type: "steer_active", targetRunId: RunId.make("command-policy-missing-run") },
+  );
+});
+
 it("targets the latest active run for explicit steer and restart intent", () => {
   const projection = dispatchProjection(baseCapabilities);
   assert.deepEqual(

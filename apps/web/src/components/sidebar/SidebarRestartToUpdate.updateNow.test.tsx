@@ -602,7 +602,8 @@ describe("Update now for the service and the app", () => {
       expect(label()).toMatch(/^Restarts when idle, or in 2:0\d$/);
       checked = { idle: true, stoppedThreads: 0, blockers: [] };
       await advance(15_000);
-      expect(calls).toEqual(["prepare:false", ...APP_ONLY]);
+      // The question's look, the wait's first look at once, then the check that found it idle.
+      expect(calls).toEqual(["prepare:false", "prepare:false", ...APP_ONLY]);
     });
 
     it("restarts only the app when pressed while it waits for running work", async () => {
@@ -623,7 +624,8 @@ describe("Update now for the service and the app", () => {
       await act(async () => {
         respondToConfirmDialog("alternate");
       });
-      expect(calls).toEqual(["prepare:false", ...APP_ONLY]);
+      // The wait's first look ran at once, before the press.
+      expect(calls).toEqual(["prepare:false", "prepare:false", ...APP_ONLY]);
     });
 
     it("follows the agent's own install after it failed in a window that took over a hold", async () => {

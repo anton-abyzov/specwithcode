@@ -45,6 +45,7 @@ export const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 export const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 export const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 export const UPDATE_CHECK_IF_STALE_CHANNEL = "desktop:update-check-if-stale";
+export const UPDATE_RESTART_TRACE_CHANNEL = "desktop:update-restart-trace";
 export const UPDATE_GET_PREFERENCES_CHANNEL = "desktop:update-get-preferences";
 export const UPDATE_SET_PREFERENCES_CHANNEL = "desktop:update-set-preferences";
 export const SERVICE_UPDATE_STATE_CHANNEL = "desktop:service-update-state";

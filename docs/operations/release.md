@@ -149,7 +149,7 @@ because those builds register recovery and replace a deleted tunnel after wake.
 
 The job runs every five minutes with a five-minute grace period for tunnels that lost their
 connector, so a candidate is usually removed five to ten minutes after it goes down. Tunnels that
-never connected wait an hour. One sweep attempts at most 100 deletions, so a backlog takes longer.
+never connected wait an hour. One sweep attempts at most 200 deletions, so a backlog takes longer.
 Changing `RELAY_TUNNEL_CLEANUP_MODE`, including turning cleanup off during an incident, needs a relay
 deploy without force. Confirm the new `mode` on the next sweep span.
 
@@ -187,10 +187,10 @@ column in its first deploy with this change; the legacy switch stays `off` until
 3. Run the legacy steps of the disposable-host canary below.
 4. Before enabling, confirm the web and mobile builds that show the "update SpecWithCode on that computer"
    message are live. Without them, a user whose older host lost its tunnel only sees it as offline.
-5. Set the legacy mode to `enabled`. One sweep deletes at most 100 tunnels, four at a time, and
-   stops starting new deletions after 90 seconds. A backlog of 20,000 takes about 17 hours if each
-   sweep finishes its 100. Watch `deletedLegacy`, `attempted`, `failed`, and `truncated`. An
-   `attempted` well under 100 with `truncated` set means the sweep stopped early: either the time
+5. Set the legacy mode to `enabled`. One sweep deletes at most 200 tunnels, four at a time, and
+   stops starting new deletions after 90 seconds. A backlog of 20,000 takes about 8 hours if each
+   sweep finishes its 200. Watch `deletedLegacy`, `attempted`, `failed`, and `truncated`. An
+   `attempted` well under 200 with `truncated` set means the sweep stopped early: either the time
    budget ran out or Cloudflare rate-limited a deletion. The counters don't say which; the relay
    logs a warning with the Cloudflare error for each failed deletion.
 

@@ -425,6 +425,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   checkForUpdateIfStale: () => ipcRenderer.invoke(IpcChannels.UPDATE_CHECK_IF_STALE_CHANNEL),
   downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: (options) => ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL, options),
+  markRestartTrace: (mark) => ipcRenderer.invoke(IpcChannels.UPDATE_RESTART_TRACE_CHANNEL, mark),
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

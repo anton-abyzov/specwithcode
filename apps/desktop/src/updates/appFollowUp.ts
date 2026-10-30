@@ -19,10 +19,22 @@ import {
 
 /** An accepted install quits the app within seconds; still running after this, it did not apply. */
 export const APP_INSTALL_APPLY_MS = DESKTOP_INSTALL_APPLY_MS;
-/** A refused install (updater busy, the gate not open yet) is asked again this often. */
+/** A refused install (the release not on disk yet, say) is asked again this often. */
 export const APP_INSTALL_RETRY_MS = 30_000;
-/** Refused this many times in a row, the follow-up fails with the last reason. */
+/**
+ * Refused this many times in a row at that interval, the follow-up fails with
+ * the last reason. The waits between those attempts are the follow-up's whole
+ * budget for refusals, whatever their interval.
+ */
 export const APP_INSTALL_MAX_ATTEMPTS = 10;
+export const APP_INSTALL_RETRY_BUDGET_MS = (APP_INSTALL_MAX_ATTEMPTS - 1) * APP_INSTALL_RETRY_MS;
+/**
+ * A busy updater, or a gate that has not seen the verified service yet, lets
+ * go within seconds: those refusals are asked again after 1, 2, then every 5
+ * seconds instead of 30, inside the same budget.
+ */
+export const APP_INSTALL_QUICK_RETRY_MS: ReadonlyArray<number> = [1_000, 2_000, 5_000];
+const QUICK_REFUSALS: ReadonlySet<string> = new Set(["busy", "service-behind"]);
 export const APP_DID_NOT_APPLY = "App update did not apply.";
 
 const atLeast = (version: string, target: string): boolean => {
@@ -88,7 +100,7 @@ export function decideFollowUp(input: {
       ? { type: "write", record: finished(own, "failed", nowMs, APP_DID_NOT_APPLY), install: false }
       : none;
   }
-  if (since < APP_INSTALL_RETRY_MS) return none;
+  if (since < (own.retryDelayMs ?? APP_INSTALL_RETRY_MS)) return none;
   return { type: "write", record: { ...own, updatedAt: isoAt(nowMs) }, install: true };
 }
 
@@ -100,10 +112,33 @@ export function beforeInstall(own: RunAppRecord, nowMs: number): RunAppRecord {
   return { ...own, appPhase: "relaunching", updatedAt: isoAt(nowMs) };
 }
 
+/**
+ * The wait before the next attempt after a refusal: quick for a refusal that
+ * clears within seconds, counting the quick refusals in a row, else the
+ * regular interval.
+ */
+export function retryDelayAfter(
+  own: Pick<RunAppRecord, "retryDelayMs">,
+  reason: string | null | undefined,
+): number {
+  if (reason === undefined || reason === null || !QUICK_REFUSALS.has(reason)) {
+    return APP_INSTALL_RETRY_MS;
+  }
+  const quick = APP_INSTALL_QUICK_RETRY_MS;
+  const previous = own.retryDelayMs === undefined ? -1 : quick.indexOf(own.retryDelayMs);
+  return quick[Math.min(previous + 1, quick.length - 1)]!;
+}
+
 /** What an install call answered, recorded on the run's app half. */
 export function afterInstall(
   own: RunAppRecord,
-  result: { readonly accepted: boolean; readonly failed: boolean; readonly message: string | null },
+  result: {
+    readonly accepted: boolean;
+    readonly failed: boolean;
+    readonly message: string | null;
+    /** Why main refused it ("busy", "service-behind", ...), when it said. */
+    readonly reason?: string | null;
+  },
   nowMs: number,
 ): RunAppRecord {
   const attempts = own.attempts + 1;
@@ -111,10 +146,20 @@ export function afterInstall(
     // The app quits now; a relaunched app settles the run.
     return { ...own, appPhase: "relaunching", attempts, message: null, updatedAt: isoAt(nowMs) };
   }
-  if (result.failed || attempts >= APP_INSTALL_MAX_ATTEMPTS) {
+  const retryDelayMs = retryDelayAfter(own, result.reason);
+  // A record from before quick retries waited the regular interval each time.
+  const retryWaitMs = (own.retryWaitMs ?? own.attempts * APP_INSTALL_RETRY_MS) + retryDelayMs;
+  if (result.failed || retryWaitMs > APP_INSTALL_RETRY_BUDGET_MS) {
     return finished({ ...own, attempts }, "failed", nowMs, result.message ?? APP_DID_NOT_APPLY);
   }
-  return { ...own, attempts, message: result.message, updatedAt: isoAt(nowMs) };
+  return {
+    ...own,
+    attempts,
+    message: result.message,
+    updatedAt: isoAt(nowMs),
+    retryDelayMs,
+    retryWaitMs,
+  };
 }
 
 /**
@@ -146,8 +191,10 @@ export function retryFollowUp(
 ): RunAppRecord | null {
   const own = run.phase === "verified" ? appForRun(run, app) : null;
   if (own === null || own.appPhase !== "failed") return null;
+  // A new budget: the waits of the failed attempts are over.
+  const { retryDelayMs: _delay, retryWaitMs: _waited, ...rest } = own;
   return {
-    ...own,
+    ...rest,
     appPhase: "installing",
     attempts: 0,
     message: null,

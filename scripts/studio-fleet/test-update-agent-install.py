@@ -20,12 +20,20 @@ from unittest import mock
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import update_agent  # noqa: E402
+import update_agent_reap  # noqa: E402
 import update_request  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location('agent_tests_for_install', str(HERE / 'test-update-agent.py'))
 agent_tests = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(agent_tests)
 AgentCase, later = agent_tests.AgentCase, agent_tests.later
+
+
+def held_snapshots_within(seconds):
+    """The most snapshots a forced request takes in `seconds`: HELD_RETRY_SECONDS apart at first,
+    then RETRY_SECONDS apart, plus the first."""
+    fast = update_agent_reap.HELD_RETRY_SECONDS
+    return len(fast) + (seconds - sum(fast)) / update_agent.RETRY_SECONDS + 1
 
 
 class InstallNow(AgentCase):
@@ -65,7 +73,7 @@ class InstallNow(AgentCase):
         self.assertEqual(state['status'], 'installed')
         self.assertEqual(state['handledInstallRequestAt'], self.REQUESTED)
         self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (3, 1))
-        self.assertEqual(self.sleeps, [update_agent.RETRY_SECONDS] * 2)
+        self.assertEqual(self.sleeps, [1, 2])  # A forced request's first retries come sooner (HELD_RETRY_SECONDS).
         self.assertEqual(seen, ['Waiting for running tasks, queued messages and open questions to finish (attempt 1)',
                                 'Waiting for running tasks, queued messages and open questions to finish (attempt 2)'])
 
@@ -97,7 +105,7 @@ class InstallNow(AgentCase):
             self.run_agent()
         self.assertLessEqual(self.offset, datetime.timedelta(minutes=2))
         self.assertGreater(self.offset, datetime.timedelta(minutes=1))
-        self.assertLessEqual(len(self.snapshot_calls()) - before, 13)
+        self.assertLessEqual(len(self.snapshot_calls()) - before, held_snapshots_within(120))
         self.assertEqual(update_agent.FORCE_WINDOW, datetime.timedelta(minutes=15))
 
     def test_cancel_stops_the_loop_and_drops_the_request(self):
@@ -824,7 +832,7 @@ class InstallNow(AgentCase):
         self.assert_ended_as_the_refused_apply()
         retries = len(self.snapshot_calls()) - 1
         self.assertGreater(retries, 1)  # Not one snapshot and out, as when clipped by installHoldUntil.
-        self.assertLessEqual(retries, update_agent.APPLY_RETRY_WINDOW.total_seconds() / update_agent.RETRY_SECONDS + 1)
+        self.assertLessEqual(retries, held_snapshots_within(update_agent.APPLY_RETRY_WINDOW.total_seconds()))
 
     def test_install_settings_are_validated(self):
         for values in ({'installMode': 'now'}, {'installHoldUntil': 5}, {'installCancelledAt': ''}):

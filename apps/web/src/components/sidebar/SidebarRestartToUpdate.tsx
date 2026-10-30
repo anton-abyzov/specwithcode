@@ -29,6 +29,7 @@ import {
   startServiceUpdateNow,
   useServiceUpdateFlow,
 } from "../serviceUpdateFlow";
+import { beginRestartPress } from "../restartTrace";
 import { retryServiceUpdateRunApp, syncServiceUpdateRunToast } from "../serviceUpdateRunFlow";
 import {
   describeAutomaticInstallWait,
@@ -404,6 +405,8 @@ function SidebarRestartToUpdateButton() {
         return;
       }
       if (!bridge || !view || pending || checkingWork || fetching || service.starting) return;
+      // One id and clock for the press, so its steps can be timed afterwards.
+      beginRestartPress(options.confirmed ? "idle wait came due" : undefined);
       // Install the newest release, never one a newer release has replaced:
       // ask the feed again and fetch what it offers before anything restarts.
       let appVersion = view.appVersion;
@@ -620,6 +623,9 @@ function SidebarRestartToUpdateButton() {
         if (active && running === false) restartNow();
       });
     };
+    // The first look right away: work that ended while the question was open
+    // restarts now, not a full interval later.
+    check();
     const timer = window.setInterval(check, IDLE_CHECK_MS);
     const deadline = window.setTimeout(
       check,

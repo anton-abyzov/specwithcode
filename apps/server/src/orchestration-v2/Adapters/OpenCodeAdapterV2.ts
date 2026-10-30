@@ -965,16 +965,21 @@ export function makeOpenCodeAdapterV2(
           binaryPath: options.settings.binaryPath,
           directory: cwd,
           serverUrl: options.settings.serverUrl,
+          ...(options.settings.serverPassword
+            ? { serverPassword: options.settings.serverPassword }
+            : {}),
           environment: withSpecweaveAgentEnvironment(options.environment, {
             threadId: input.threadId,
             tool: "opencode",
           }),
         });
+        // The connection carries the password it resolved: the settings value, or
+        // OPENCODE_SERVER_PASSWORD for a server this adapter started.
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
           directory: cwd,
-          ...(connection.external && options.settings.serverPassword
-            ? { serverPassword: options.settings.serverPassword }
+          ...(connection.serverPassword !== undefined
+            ? { serverPassword: connection.serverPassword }
             : {}),
         });
 

@@ -93,6 +93,72 @@ describe("DesktopUpdates Squirrel staging", () => {
     }),
   );
 
+  it.effect("a live run stages its app release once the gate opens, before its install", () =>
+    Effect.gen(function* () {
+      const service = serviceOn("1.2.3");
+      const harness = makeHarness({
+        squirrel: true,
+        checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+        downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          // Install-on-quit off: only the run stages the release.
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setUpdatePreferences({ installAutomatically: false });
+          const updates = yield* downloadWhileGateClosed(harness, service);
+          assert.equal(harness.downloadCount(), 1);
+          // The service is still installing: the gate stays closed, nothing stages.
+          yield* updates.stageForRun("1.2.4");
+          yield* settle;
+          assert.isFalse(harness.installOnQuit());
+          assert.equal(harness.downloadCount(), 1);
+          // The service runs 1.2.4: the run's next look stages it at once.
+          service.set("1.2.4");
+          yield* updates.stageForRun("1.2.4");
+          yield* settle;
+          assert.isTrue(harness.installOnQuit());
+          assert.equal(harness.downloadCount(), 2);
+          // The run's install finds it staged: no fetch at the click.
+          const result = yield* updates.installPrepared("1.2.4");
+          assert.isTrue(result.accepted);
+          assert.isFalse(result.failed);
+          assert.equal(harness.downloadCount(), 2);
+          assert.equal(harness.quits(), 1);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("a run that ends gives install-on-quit back to the preference", () =>
+    Effect.gen(function* () {
+      const service = serviceOn("1.2.4");
+      const harness = makeHarness();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setUpdatePreferences({ installAutomatically: false });
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.registerLocalServiceProbe(service.probe);
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          yield* updates.download;
+          yield* settle;
+          assert.isFalse(harness.installOnQuit());
+          yield* updates.stageForRun("1.2.4");
+          assert.isTrue(harness.installOnQuit());
+          // A run for another release stages nothing of this one.
+          yield* updates.stageForRun("1.2.5");
+          assert.isFalse(harness.installOnQuit());
+          yield* updates.stageForRun("1.2.4");
+          yield* updates.stageForRun(null);
+          assert.isFalse(harness.installOnQuit());
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
   it.effect("an install restages an unstaged download instead of a no-op quitAndInstall", () =>
     Effect.gen(function* () {
       let downloads = 0;

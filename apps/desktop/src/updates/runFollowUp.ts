@@ -42,6 +42,8 @@ export interface AppInstallAnswer {
   readonly failed: boolean;
   /** Why it was refused or failed, in words a person reads. */
   readonly message: string | null;
+  /** Main's refusal reason ("busy", "service-behind", ...): a quick one is asked again sooner. */
+  readonly reason?: string | null;
 }
 
 export interface RunFollowUpDeps {
@@ -240,6 +242,7 @@ export const installAppRelease =
       }
       yield* beforeApply;
       const result = yield* updates.installPrepared(version);
+      const refused = !result.accepted && !result.failed;
       return {
         accepted: result.accepted,
         failed: result.failed,
@@ -248,6 +251,7 @@ export const installAppRelease =
           : result.accepted
             ? null
             : (REFUSALS[result.reason ?? "busy"] ?? null),
+        ...(refused ? { reason: result.reason ?? "busy" } : {}),
       };
     });
 

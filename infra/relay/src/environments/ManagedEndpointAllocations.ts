@@ -709,9 +709,8 @@ export const make = Effect.gen(function* () {
       const claimed = yield* db
         .update(relayManagedEndpointAllocations)
         .set({
-          updatedAt: now,
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
-          ...(input.markReleased === true ? { tunnelReleasedAt: now } : {}),
+          ...(input.markReleased === true ? { tunnelReleasedAt: now, updatedAt: now } : {}),
         })
         .where(
           and(
@@ -774,10 +773,9 @@ export const make = Effect.gen(function* () {
     ) {
       const claimed = yield* db
         .update(relayManagedEndpointAllocations)
-        .set({
-          updatedAt: DateTime.formatIso(yield* DateTime.now),
-          generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
-        })
+        // Claims move only the generation: updated_at moves only on provisioning writes,
+        // which the in-flight window of the tunnel limit reads.
+        .set({ generation: sql`${relayManagedEndpointAllocations.generation} + 1` })
         .where(
           and(
             whereAllocation(input),

@@ -1,7 +1,7 @@
 """Update now's fallback for update_agent.py: stop the processes a held service left behind.
 
 "Update now" drains and holds the service, then the agent snapshots every RETRY_SECONDS
-until update.py accepts it. A provider that never answers its interrupt, or a command left
+(sooner at first: HELD_RETRY_SECONDS) until update.py accepts it. A provider that never answers its interrupt, or a command left
 running beneath a closed terminal, keeps every snapshot refusing until the hold ends. Once a
 forced request has been refused for running work or leftover processes for REAP_AFTER, the
 agent asks the verified helper (`update.py --reap`) to stop the processes it can prove belong
@@ -37,6 +37,10 @@ STALE_REAP_LIMIT = 2
 REAP_LIMIT = 2
 REAP_TIMEOUT = 120
 REAPING = 'Stopping agent processes that did not finish, so the update can install'
+# A forced request's first refused snapshots in each retry window are tried again sooner than every
+# RETRY_SECONDS: the drain has just ended, and what refuses then (a process still exiting, a last
+# commit) is mostly gone within seconds; 1.0.124 waited a whole 10 s for one. Later ones keep RETRY_SECONDS.
+HELD_RETRY_SECONDS = (1, 2, 2)
 COMPANIONS = ('update_agent_reap.py',)
 
 
@@ -127,7 +131,18 @@ def before_retry(agent, helper_dir, refused, started, window=None):
                                                      + ['--request', agent.config['installRequestedAt']]),
                                 str(helper_dir), agent.helper_env(), REAP_TIMEOUT,
                                 log_path=record.with_suffix('.log'), home=agent.home)
-    return host.RETRY_SECONDS
+    return _retry_wait(agent, host, refused, window or started)
+
+
+def _retry_wait(agent, host, refused, window):
+    """HELD_RETRY_SECONDS in turn for a forced request's refusals in one retry window, then RETRY_SECONDS."""
+    if agent.config.get('installMode') != 'force' or refused[0] != 'waiting-for-quiet':
+        return host.RETRY_SECONDS
+    key = (agent.config.get('installRequestedAt'), window)
+    if getattr(agent, 'held_retry_key', None) != key:
+        agent.held_retry_key, agent.held_retries = key, 0
+    agent.held_retries += 1
+    return HELD_RETRY_SECONDS[agent.held_retries - 1] if agent.held_retries <= len(HELD_RETRY_SECONDS) else host.RETRY_SECONDS
 
 
 def install_beside(script, home, same, write):

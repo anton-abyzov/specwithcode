@@ -218,12 +218,15 @@ export function formatPrepareResult(
     `Stopped ${count(result.stoppedThreads, "thread", "threads")}, interrupted ${count(result.interruptedRuns, "turn", "turns")}, ${count(result.openTerminals, "terminal", "terminals")} open or closed.`,
     result.idle
       ? "Nothing the update waits for is left."
-      : `Still running: ${result.blockers
-          .map(
+      : `Still running: ${[
+          ...result.blockers.map(
             (blocker) =>
               `${blocker.count} ${blocker.kind}${blocker.threadTitle === null ? "" : ` (${blocker.threadTitle})`}`,
-          )
-          .join(", ")}.`,
+          ),
+          ...(result.leftoverProcesses === undefined
+            ? []
+            : [count(result.leftoverProcesses, "process", "processes")]),
+        ].join(", ")}.`,
   ];
   return lines.join("\n");
 }

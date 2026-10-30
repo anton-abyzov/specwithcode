@@ -104,6 +104,8 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   if (visited.has(resolvedPath) || !(yield* fs.exists(resolvedPath))) {
     return NO_HOSTS;
   }
+  // An Include glob such as `config.d/*` also matches directories; ssh skips them.
+  if ((yield* fs.stat(resolvedPath)).type === "Directory") return NO_HOSTS;
   visited.add(resolvedPath);
 
   const aliases = new Set<string>();

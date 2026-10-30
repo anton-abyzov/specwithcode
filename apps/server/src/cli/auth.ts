@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, type HttpClient } from "effect/http";
 
@@ -118,6 +119,15 @@ const subjectFlag = Flag.String("subject").pipe(
 );
 
 const baseUrlFlag = Flag.String("base-url").pipe(
+  Flag.withSchema(
+    Schema.URLFromString.pipe(
+      Schema.check(
+        Schema.makeFilter((url) => url.protocol === "http:" || url.protocol === "https:", {
+          expected: "an http:// or https:// URL",
+        }),
+      ),
+    ),
+  ),
   Flag.withDescription("Optional public base URL used to print a ready `/pair#token=...` link."),
   Flag.optional,
 );
@@ -163,7 +173,7 @@ const pairingCreateCommand = Command.make("create", {
           });
           const output = formatIssuedPairingCredential(issued, {
             json: flags.json,
-            ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
+            ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value.href } : {}),
           });
           yield* Console.log(output);
         }),
@@ -189,7 +199,7 @@ const pairingCreateCommand = Command.make("create", {
               { ...issued, scopes: flags.scopes },
               {
                 json: flags.json,
-                ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
+                ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value.href } : {}),
               },
             ),
           );

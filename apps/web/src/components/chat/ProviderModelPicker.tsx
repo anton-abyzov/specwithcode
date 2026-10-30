@@ -24,11 +24,8 @@ import {
 } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { isAvailabilityBlocking } from "../../studio/modelAvailability";
-import {
-  ComposerControl,
-  ComposerControlChevron,
-  type ComposerControlSize,
-} from "./ComposerControl";
+import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
+import type { ModelPickerEffort } from "./ModelPickerEffortStrip";
 import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
@@ -100,6 +97,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
    * point at a model that is only out until its reset.
    */
   usage?: ModelPickerUsageConfig;
+  /** The picked model's effort and Fast mode, set from the strip at the foot of the list. */
+  effort?: ModelPickerEffort | null;
   /** Classes that hide the trigger's usage number when the composer is narrow. */
   usageValueHiddenClassName?: string;
   /**
@@ -408,7 +407,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     ) : null}
                   </span>
                 ) : triggerEntry && props.triggerLabel === undefined ? (
-                  <span className="relative flex shrink-0 items-center">
+                  // The mark gives way before the model name is cut short (modelChipFit.ts).
+                  <span
+                    className="relative flex shrink-0 items-center"
+                    data-chat-provider-model-picker-icon=""
+                    {...(parts ? { "data-model-chip-part": "mark" } : {})}
+                  >
                     <ProviderInstanceIcon
                       driverKind={triggerEntry.driverKind}
                       displayName={triggerEntry.displayName}
@@ -497,9 +501,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   </Badge>
                 ) : null}
               </span>
-              <span aria-hidden="true" className="flex shrink-0 items-center">
-                <ComposerControlChevron size={size} />
-              </span>
               {selectedUsageText ? (
                 <span id={usageDescriptionId} hidden>
                   {selectedUsageText}
@@ -517,7 +518,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         padding="none"
       >
         {showingSecondary && props.secondaryView ? (
-          <div className="w-screen max-w-90 p-3" data-model-picker-secondary="">
+          <div
+            className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
+            data-model-picker-secondary=""
+            data-sws-picker=""
+          >
             {props.secondaryView.render({
               back: () => setShowingSecondary(false),
               close: () => setIsMenuOpen(false),
@@ -569,6 +574,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               : {})}
             {...(props.quickSetup && !props.disabled ? { quickSetup: props.quickSetup } : {})}
             {...(usage ? { usage } : {})}
+            {...(props.effort && !props.disabled ? { effort: props.effort } : {})}
             {...(props.secondaryView
               ? {
                   secondaryAction: {

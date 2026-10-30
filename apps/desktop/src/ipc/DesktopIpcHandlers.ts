@@ -43,6 +43,7 @@ import {
   downloadUpdate,
   getUpdateState,
   installUpdate,
+  markRestartTrace,
   setUpdateChannel,
 } from "./methods/updates.ts";
 import {
@@ -174,6 +175,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
   yield* ipc.handle(checkForUpdateIfStale);
+  yield* ipc.handle(markRestartTrace);
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);
   }

@@ -434,7 +434,11 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       ),
     checkRoute: (_entry, route) => checkRoute(route),
     preflight: (_entry, route) =>
-      checkRoute(route).pipe(Effect.map((check) => check === "answered")),
+      checkRoute(route).pipe(
+        Effect.map((check): ConnectionDriver.RoutePreflight =>
+          check === "answered" ? "ready" : check,
+        ),
+      ),
   });
 
   const layerCache = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
@@ -1914,6 +1918,48 @@ describe("EnvironmentRegistry routes", () => {
         const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId);
         expect(entry?.target).toEqual(RELAY_TARGET);
         expect(entry?.alternateRoutes?.map((route) => route.target)).toEqual([LAN_TARGET]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a pairing that targets no environment cannot add a route to a saved one", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [LAN_TARGET, RELAY_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const attacker = new BearerConnectionTarget({ ...LAN_TARGET, connectionId: "bearer:new" });
+        const attackerProfile = new BearerConnectionProfile({
+          ...LAN_PROFILE,
+          connectionId: attacker.connectionId,
+          httpBaseUrl: "https://attacker.example.test/",
+          wsBaseUrl: "wss://attacker.example.test/",
+        });
+
+        const checked = yield* registry
+          .assertKnownAddress({ target: attacker, profile: Option.some(attackerProfile) })
+          .pipe(Effect.flip);
+        const refused = yield* registry
+          .register(lanRegistration(attacker, attackerProfile), { knownAddressOnly: true })
+          .pipe(Effect.flip);
+
+        expect(checked).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+        expect(refused).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          LAN_TARGET,
+          RELAY_TARGET,
+        ]);
+
+        // Re-pairing an address it already has still replaces that route.
+        yield* registry.register(lanRegistration(), { knownAddressOnly: true });
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          LAN_TARGET,
+          RELAY_TARGET,
+        ]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

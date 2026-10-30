@@ -60,11 +60,21 @@
  * it. A forced drain stops none: it lets an Apply under way finish within its
  * budget and reports the copies left.
  *
+ * A person who pressed Update now or Restart to update waits on the drain
+ * (`interactive`), so theirs is bounded tighter (`INTERACTIVE_TIMINGS`): a turn
+ * that does not stop within 8 s is ended the way a hung one is (it ends
+ * `interrupted`, so it can still be continued), the checkpoint and effect
+ * graces share one 5 s window, and the whole drain gets 15 s. A held service
+ * with nothing running, no terminal and no folder copy after the hold skips
+ * the stop pass: what was asked is recorded, idle agent processes close and
+ * the hold is renewed. After agent processes and terminals close, every drain
+ * waits up to `DESCENDANT_SETTLE_MS` for them to exit
+ * (`ServiceUpdateDescendants`) and reports any still left.
+ *
  * @module ServiceUpdatePreparation
  */
 import {
   CommandId,
-  ProjectId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -75,7 +85,6 @@ import {
   type ServerPrepareServiceUpdateInput,
   type ServerPrepareServiceUpdateResult,
   type ServiceUpdatePrepareReason,
-  type ServiceUpdateBlocker,
   type ServiceUpdateBlockerKind,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
@@ -102,9 +111,17 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import { type BlockerRow, summarizeBlockers } from "./ServiceUpdateBlockers.ts";
 import * as ServiceUpdateCleanup from "./ServiceUpdateCleanup.ts";
 import * as ClosedQuestions from "./ServiceUpdateClosedQuestions.ts";
+import * as Descendants from "./ServiceUpdateDescendants.ts";
 import * as ServiceUpdateHold from "./ServiceUpdateHold.ts";
+import {
+  DEFAULT_TIMINGS,
+  DESCENDANT_SETTLE_MS,
+  INTERACTIVE_TIMINGS,
+  type ServiceUpdatePreparationTimings,
+} from "./ServiceUpdatePreparationTimings.ts";
 import { captureOpenRequests } from "./ServiceUpdateReopenQuestions.ts";
 
 /** The questions and approvals a drain is about to close could not be recorded. */
@@ -226,91 +243,14 @@ const atOrBefore = (value: string | null, cutoffMs: number) => {
  */
 export const IF_IDLE_HOLD_TTL_MS = 120_000;
 
-export interface ServiceUpdatePreparationTimings {
-  /** How long Stop gets before a turn that is still running is ended locally. */
-  readonly interruptGraceMs: number;
-  /** How long the forced end and the outbox get to settle afterwards. */
-  readonly settleMs: number;
-  /** How long effects get to finish on their own before they are cancelled. */
-  readonly effectGraceMs: number;
-  /**
-   * The whole drain's budget. Waits shrink to fit it; the cleanup that follows
-   * them only writes, so the call ends shortly after.
-   */
-  readonly deadlineMs: number;
-  readonly pollMs: number;
-}
+export {
+  DEFAULT_TIMINGS,
+  DESCENDANT_SETTLE_MS,
+  INTERACTIVE_TIMINGS,
+  type ServiceUpdatePreparationTimings,
+} from "./ServiceUpdatePreparationTimings.ts";
 
-export const DEFAULT_TIMINGS: ServiceUpdatePreparationTimings = {
-  // Longer than the Claude adapter's 10 s interrupt acknowledgement, so a slow
-  // provider is ended by its own adapter before it is forced here.
-  interruptGraceMs: 21_000,
-  settleMs: 10_000,
-  effectGraceMs: 20_000,
-  deadlineMs: 70_000,
-  pollMs: 400,
-};
-
-export interface BlockerRow {
-  readonly kind: ServiceUpdateBlockerKind;
-  readonly threadId: string | null;
-  readonly threadTitle: string | null;
-  readonly projectId: string | null;
-  readonly projectTitle: string | null;
-  /** Set for `run` and `queued` rows. */
-  readonly runId?: string | null;
-  /** Set for `request` rows: the runtime request's kind. */
-  readonly requestKind?: string | null;
-}
-
-const KIND_ORDER: Record<ServiceUpdateBlockerKind, number> = {
-  run: 0,
-  request: 1,
-  queued: 2,
-  session: 3,
-  effect: 4,
-};
-
-/** One entry per thread and kind, running work first, then by project and thread. */
-export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<ServiceUpdateBlocker> {
-  const grouped = new Map<string, ServiceUpdateBlocker>();
-  for (const row of rows) {
-    const key = `${row.kind}\u0000${row.threadId ?? ""}`;
-    const existing = grouped.get(key);
-    if (existing) {
-      grouped.set(key, { ...existing, count: existing.count + 1 });
-      continue;
-    }
-    grouped.set(key, {
-      kind: row.kind,
-      count: 1,
-      threadId: row.threadId === null ? null : ThreadId.make(row.threadId),
-      threadTitle: row.threadTitle,
-      projectId: row.projectId === null ? null : ProjectId.make(row.projectId),
-      projectTitle: row.projectTitle,
-    });
-  }
-  // What a forced press closes and asks again: questions and approvals by thread.
-  for (const row of rows) {
-    if (row.kind !== "request" || row.requestKind === undefined) continue;
-    const key = `${row.kind}\u0000${row.threadId ?? ""}`;
-    const blocker = grouped.get(key);
-    if (blocker === undefined) continue;
-    const kind = row.requestKind ?? "";
-    grouped.set(key, {
-      ...blocker,
-      questions:
-        (blocker.questions ?? 0) + (ClosedQuestions.QUESTION_REQUEST_KINDS.has(kind) ? 1 : 0),
-      approvals: (blocker.approvals ?? 0) + (ClosedQuestions.APPROVAL_KINDS.has(kind) ? 1 : 0),
-    });
-  }
-  return [...grouped.values()].toSorted(
-    (left, right) =>
-      KIND_ORDER[left.kind] - KIND_ORDER[right.kind] ||
-      (left.projectTitle ?? "").localeCompare(right.projectTitle ?? "") ||
-      (left.threadTitle ?? "").localeCompare(right.threadTitle ?? ""),
-  );
-}
+export { type BlockerRow, summarizeBlockers } from "./ServiceUpdateBlockers.ts";
 
 export interface ActiveRun {
   readonly runId: string;
@@ -370,7 +310,10 @@ const WORKING_SESSIONS_SQL = quoted(WORKING_SESSION_STATUSES);
  * The service and what its sweep uses: `releaseStaleWaits` and whether this
  * process holds itself for an update.
  */
-export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =>
+export const makePartsWithTimings = (
+  timings: ServiceUpdatePreparationTimings,
+  interactiveTimings: ServiceUpdatePreparationTimings = INTERACTIVE_TIMINGS,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const threads = yield* ThreadManagementService.ThreadManagementService;
@@ -386,6 +329,8 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
     );
     // Absent in tools and tests that build the runtime alone: no copies then.
     const folderWork = yield* Effect.serviceOption(FolderWork.FolderWorkActivity);
+    // Absent off the service and in tests: no wait for processes then.
+    const descendants = yield* Effect.serviceOption(Descendants.ServiceUpdateDescendants);
 
     const readBlockerRows = Effect.gen(function* () {
       const rows = yield* sql.unsafe<{
@@ -650,6 +595,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       deadline: number,
       only: (run: ActiveRun) => boolean = () => true,
       record: Effect.Effect<void, ClosedQuestionsNotRecorded> = Effect.void,
+      budget: ServiceUpdatePreparationTimings = timings,
     ) =>
       Effect.gen(function* () {
         // Closing a process cancels what its turn asked: recorded first.
@@ -685,7 +631,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           deadline,
           Effect.forEach(runs, endRun, { concurrency: "unbounded", discard: true }),
         );
-        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), only, record);
+        yield* awaitRunsSettled(yield* within(deadline, budget.settleMs), only, record);
       });
 
     /** Rollbacks the cancel stopped before they ran: their thread is told so it stops waiting. */
@@ -762,6 +708,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       touched: Set<string>,
       deadline: number,
       record: Effect.Effect<void, ClosedQuestionsNotRecorded>,
+      budget: ServiceUpdatePreparationTimings,
     ) =>
       Effect.gen(function* () {
         // What a turn asked since the last round, before this round stops it.
@@ -803,12 +750,43 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         }
         if (
           !(yield* awaitRunsSettled(
-            yield* within(deadline, timings.interruptGraceMs),
+            yield* within(deadline, budget.interruptGraceMs),
             undefined,
             record,
           ))
         )
-          yield* forceEndRuns(nonce, deadline, undefined, record);
+          yield* forceEndRuns(nonce, deadline, undefined, record, budget);
+      });
+
+    /** Closes agent processes, busy ones too, no longer than the drain's budget. */
+    const releaseIdleSessions = (deadline: number) =>
+      boundedBy(
+        deadline,
+        providerSessions
+          .releaseIdle({
+            detail: RELEASE_DETAIL,
+            includeBusy: true,
+            keepMcpCredentials: true,
+            endStreams: true,
+          })
+          .pipe(logged("release-sessions-failed", {})),
+      );
+
+    /**
+     * Waits briefly for closed agent processes and shells to exit, since the
+     * helper refuses an install while one is left; how many are still left.
+     */
+    const settleProcesses = (deadline: number) =>
+      Option.match(descendants, {
+        onNone: () => Effect.succeed(Option.none<number>()),
+        onSome: (service) =>
+          Effect.flatMap(within(deadline, DESCENDANT_SETTLE_MS), (budget) =>
+            Descendants.settleDescendants(
+              service.countLeftover,
+              Math.max(timings.pollMs, budget),
+              timings.pollMs,
+            ),
+          ),
       });
 
     /**
@@ -820,6 +798,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       nonce: string,
       deadline: number,
       record: Effect.Effect<void, ClosedQuestionsNotRecorded>,
+      budget: ServiceUpdatePreparationTimings,
     ) =>
       Effect.gen(function* () {
         // Closing an agent process cancels what its turn asked: recorded first.
@@ -829,25 +808,15 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         // cut here: its stream ends rather than fails, so finalizeStuckRuns below
         // marks it stopped for the update and the restart continues it. A turn
         // still starting would fail its start instead, so starts finish first.
-        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), isStartInFlight, record);
-        yield* boundedBy(
-          deadline,
-          providerSessions
-            .releaseIdle({
-              detail: RELEASE_DETAIL,
-              includeBusy: true,
-              keepMcpCredentials: true,
-              endStreams: true,
-            })
-            .pipe(logged("release-sessions-failed", {})),
-        );
+        yield* awaitRunsSettled(yield* within(deadline, budget.settleMs), isStartInFlight, record);
+        yield* releaseIdleSessions(deadline);
         // Closing a busy session can end its turn through the provider's own events.
         if ((yield* readActiveRuns).length > 0)
-          yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), undefined, record);
+          yield* awaitRunsSettled(yield* within(deadline, budget.settleMs), undefined, record);
         // A finished turn waits on its checkpoint; a restart would replay it, so it
         // gets what is left of the effect grace before the turn is closed without one.
         const captureUntil =
-          (yield* Clock.currentTimeMillis) + (yield* within(deadline, timings.effectGraceMs));
+          (yield* Clock.currentTimeMillis) + (yield* within(deadline, budget.effectGraceMs));
         while ((yield* countPendingCaptures) > 0) {
           if ((yield* Clock.currentTimeMillis) >= captureUntil) break;
           yield* Effect.sleep(Duration.millis(timings.pollMs));
@@ -873,10 +842,13 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           .cancelPendingRequests({ nonce, reason: STOP_REASON })
           .pipe(logged("cancel-requests-failed", {}));
         yield* cleanup.reconcileOrphanedSessions.pipe(logged("reconcile-sessions-failed", {}));
-        // Effects get a moment to finish, typically the interrupts above; the rest is cancelled.
+        // Effects get a moment to finish, typically the interrupts above; the rest is
+        // cancelled. A shared window gives them what the checkpoints left of it.
         yield* settleEffects(
           "cancel-effects-failed",
-          yield* within(deadline, timings.effectGraceMs),
+          budget.sharedEffectGrace === true
+            ? Math.max(timings.pollMs, captureUntil - (yield* Clock.currentTimeMillis))
+            : yield* within(deadline, budget.effectGraceMs),
         );
         // Shells end; their scrollback stays for after the restart.
         return yield* Option.match(terminals, {
@@ -889,6 +861,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       readonly rounds: number;
       readonly deadline: number;
       readonly record: Effect.Effect<void, ClosedQuestionsNotRecorded>;
+      readonly budget: ServiceUpdatePreparationTimings;
     }) =>
       Effect.gen(function* () {
         const nonce = yield* Clock.currentTimeMillis;
@@ -897,7 +870,13 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         // An interrupted worker can wake its coordinator, which queues or starts a new
         // turn; later rounds stop that too. A held service defers those wakes.
         for (let round = 0; round < input.rounds; round += 1) {
-          yield* stopRound(`${nonce}:${round}`, touched, input.deadline, input.record);
+          yield* stopRound(
+            `${nonce}:${round}`,
+            touched,
+            input.deadline,
+            input.record,
+            input.budget,
+          );
           const left = yield* readBlockerRows;
           if (!left.some((row) => row.kind === "run" || row.kind === "queued")) break;
         }
@@ -905,14 +884,25 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           `${nonce}:cleanup`,
           input.deadline,
           input.record,
+          input.budget,
         );
+        const leftoverProcesses = yield* settleProcesses(input.deadline);
         const interruptedRuns = (yield* readRunStatuses(activeBefore)).filter(
           (row) => row.status === "interrupted",
         ).length;
-        return { stoppedThreads: touched.size, interruptedRuns, closedTerminals };
+        return {
+          stoppedThreads: touched.size,
+          interruptedRuns,
+          closedTerminals,
+          leftoverProcesses,
+        };
       });
 
-    const report = (rows: ReadonlyArray<BlockerRow>, copies?: number) =>
+    const report = (
+      rows: ReadonlyArray<BlockerRow>,
+      copies?: number,
+      leftover: Option.Option<number> = Option.none(),
+    ) =>
       Effect.gen(function* () {
         const summarized = summarizeBlockers(rows);
         const current = Option.isSome(settings)
@@ -927,10 +917,12 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
                   .continueThreadsAfterServerUpdate,
               }));
         const copiesNow = copies ?? (yield* folderCopies);
+        const processes = Option.getOrElse(leftover, () => 0);
         return {
-          idle: blockers.length === 0 && copiesNow === 0,
+          idle: blockers.length === 0 && copiesNow === 0 && processes === 0,
           blockers,
           folderCopies: copiesNow,
+          ...(processes > 0 ? { leftoverProcesses: processes } : {}),
         };
       });
 
@@ -945,9 +937,41 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       };
     });
 
+    /**
+     * The fast path of a drain a person waits on: when, behind the hold and its
+     * admission fence, nothing runs and no terminal or folder copy is open,
+     * what was asked is recorded and idle agent processes close; no stop pass.
+     * None when there is work after all, and the full drain runs.
+     */
+    const drainIdle = (
+      deadline: number,
+      known: Set<string>,
+      budget: ServiceUpdatePreparationTimings,
+    ) =>
+      Effect.gen(function* () {
+        // Commands already past admission commit first, so the look below is a fence.
+        if (Option.isNone(hold)) return Option.none();
+        const fenced = yield* hold.value.awaitAdmissions.pipe(
+          Effect.timeoutOption(Duration.millis(yield* within(deadline, budget.settleMs))),
+        );
+        if (Option.isNone(fenced)) return Option.none();
+        if ((yield* readBlockerRows).length > 0) return Option.none();
+        if ((yield* openTerminals) > 0 || (yield* folderCopies) > 0) return Option.none();
+        yield* recordOpenRequests(known);
+        yield* releaseIdleSessions(deadline);
+        const leftoverProcesses = yield* settleProcesses(deadline);
+        const rows = yield* awaitIdle(yield* within(deadline, budget.settleMs));
+        if (rows.length > 0) return Option.none();
+        return Option.some({
+          rows,
+          drained: { stoppedThreads: 0, interruptedRuns: 0, closedTerminals: 0, leftoverProcesses },
+        });
+      });
+
     const drain = (input: {
       readonly holding: boolean;
       readonly reason: ServiceUpdatePrepareReason;
+      readonly interactive: boolean;
     }) =>
       Effect.gen(function* () {
         // An app restart may never be followed by an install request: hold briefly.
@@ -961,19 +985,28 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
                 ...(ttlMs === undefined ? {} : { ttlMs }),
               })
             : Effect.void;
+        const budget = input.interactive ? interactiveTimings : timings;
         // Held before the drain, so nothing new starts behind it.
         yield* acquire(true);
-        const deadline = (yield* Clock.currentTimeMillis) + timings.deadlineMs;
+        const deadline = (yield* Clock.currentTimeMillis) + budget.deadlineMs;
         // Recorded before any turn stops (an interrupt can cancel its own
         // request), and again before each step that can close one.
         const known = new Set<string>();
+        if (input.interactive && input.holding) {
+          const idle = yield* drainIdle(deadline, known, budget);
+          if (Option.isSome(idle)) {
+            yield* acquire(false);
+            return idle.value;
+          }
+        }
         const drained = yield* stopWork({
           rounds: input.holding ? HELD_STOP_ROUNDS : STOP_ROUNDS,
           deadline,
           record: recordOpenRequests(known),
+          budget,
         });
         // At least one look, even when the budget is spent.
-        let rows = yield* awaitIdle(yield* within(deadline, timings.settleMs));
+        let rows = yield* awaitIdle(yield* within(deadline, budget.settleMs));
         // A message that passed the hold check just before it began, or a watch
         // wake already in flight, can queue after the single held round.
         if (input.holding && rows.some((row) => row.kind === "queued")) {
@@ -985,8 +1018,8 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           yield* settleEffects(
             "cancel-late-effects-failed",
             Math.max(
-              yield* within(deadline, timings.effectGraceMs),
-              Math.min(timings.effectGraceMs, timings.pollMs * LATE_EFFECT_POLLS),
+              yield* within(deadline, budget.effectGraceMs),
+              Math.min(budget.effectGraceMs, timings.pollMs * LATE_EFFECT_POLLS),
             ),
           );
           rows = yield* readBlockerRows;
@@ -1009,6 +1042,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
             stopWork: input.stopWork,
             hold: input.hold === true,
             releaseHold: input.releaseHold === true,
+            interactive: input.interactive === true,
           });
         }
         if (input.releaseHold === true) {
@@ -1098,7 +1132,11 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           yield* Effect.logWarning("service-update.hold.refused", {
             reason: "no service update is on its way",
           });
-        const { rows, drained } = yield* whileDraining(drain({ holding, reason })).pipe(
+        // A person waits on an install they pressed for: a tighter drain.
+        const interactive = input.interactive === true && reason === "install";
+        const { rows, drained } = yield* whileDraining(
+          drain({ holding, reason, interactive }),
+        ).pipe(
           // A drain that failed or was cut off (a closed window) installs nothing:
           // nobody would release the hold, so work may start again now.
           Effect.onError(() =>
@@ -1107,7 +1145,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         );
         const held = yield* isHeld;
         const result = {
-          ...(yield* report(rows)),
+          ...(yield* report(rows, undefined, drained.leftoverProcesses)),
           stoppedThreads: drained.stoppedThreads,
           held,
           ...(held ? yield* holdUntil : {}),
@@ -1116,10 +1154,12 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         };
         yield* Effect.logWarning("service-update.prepare", {
           reason,
+          interactive,
           stoppedThreads: result.stoppedThreads,
           interruptedRuns: result.interruptedRuns,
           openTerminals: result.openTerminals,
           folderCopies: result.folderCopies,
+          leftoverProcesses: result.leftoverProcesses ?? 0,
           held: result.held,
           remaining: result.blockers.length,
         });

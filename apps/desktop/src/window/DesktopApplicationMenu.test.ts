@@ -73,6 +73,7 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   applyPreferences: Effect.void,
   registerLocalServiceProbe: () => Effect.void,
   refreshActivation: Effect.void,
+  stageForRun: () => Effect.void,
   appTargetForRun: Effect.succeed(null),
 } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 

@@ -6,7 +6,9 @@ Each update unpacks a release of about 340 MB under
 After a verified update this keeps:
 - the release the service now runs and the one it ran before (the rollback target);
 - every release named by any ~/.specwithcode/<identity>/launch.sh or
-  installation.json, so another identity's service is never broken;
+  installation.json, so another identity's service is never broken, and the
+  one its update agent staged ahead of the apply (updates/staged-release.json,
+  release_stage.py), so a pending Restart to update need not unpack it again;
 - anything unpacked in the last hour, which may belong to an update in flight;
 - anything that is not a plain <sha20> directory.
 
@@ -83,14 +85,15 @@ def releases_root(home):
 
 
 def referenced_releases(home):
-    """Release names that any Studio identity's launcher or receipt points at."""
+    """Release names that any Studio identity's launcher or receipt points at, or that its update
+    agent staged ahead of the apply (release_stage.RECORD_FILE)."""
     names = set()
     roots = [root for root in (studio_paths.branded_root(home), studio_paths.legacy_root(home))
              if root.is_dir() and not root.is_symlink()]
     for identity in (entry for root in roots for entry in root.iterdir()):
         if identity.is_symlink() or not identity.is_dir():
             continue
-        for file_name in ('launch.sh', 'installation.json'):
+        for file_name in ('launch.sh', 'installation.json', 'updates/staged-release.json'):
             path = identity / file_name
             try:
                 text = path.read_text(errors='replace')

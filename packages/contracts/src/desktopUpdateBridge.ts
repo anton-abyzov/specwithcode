@@ -9,6 +9,7 @@ import type { DesktopUpdateChannel, DesktopUpdateState } from "./desktopUpdateSt
 import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
+  DesktopRestartTraceMark,
   DesktopUpdateInstallOptions,
   StudioServiceInstallOptions,
 } from "./desktopUpdateActions.ts";
@@ -34,6 +35,11 @@ export interface DesktopUpdateBridge {
   checkForUpdateIfStale?: () => Promise<void>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: (options?: DesktopUpdateInstallOptions) => Promise<DesktopUpdateActionResult>;
+  /**
+   * Writes one timed step of a "Restart to update" press to the desktop's
+   * trace, so a press can be timed afterwards. Absent on older desktops.
+   */
+  markRestartTrace?: (mark: DesktopRestartTraceMark) => Promise<void>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /** Update preferences; absent on desktop builds predating them. */
   requestManagedUpdateConsent?: (

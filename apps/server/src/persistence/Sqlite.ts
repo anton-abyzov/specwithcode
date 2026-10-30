@@ -54,6 +54,9 @@ const layerSetupWith = <R>(afterOpen: Effect.Effect<void, never, R>) =>
       // last commits, never corrupt the database) and skips the fsync on every
       // commit, which on a slow or nearly full disk held the event loop.
       yield* sql`PRAGMA synchronous = NORMAL;`;
+      // Keep statement journals and sort spills off the main thread's disk path.
+      // Large statements and open savepoints can increase peak memory use.
+      yield* sql`PRAGMA temp_store = MEMORY;`;
       // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
       // largest size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);

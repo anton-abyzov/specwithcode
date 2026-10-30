@@ -18,7 +18,10 @@ export const MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES = 5;
 // cloudflared download or a user who walked away mid-pairing. Give it an hour.
 export const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
 export const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
-export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
+// About two Cloudflare calls per deletion plus up to ten list calls keeps one
+// run near 410 calls, under the default 1,200 calls per five minutes with room
+// for provisioning traffic.
+export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 200;
 export const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
 // Age buckets for legacy candidates, in days since the tunnel went down (or
 // was created, for one that never connected).

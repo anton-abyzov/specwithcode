@@ -87,6 +87,44 @@ describe("updateMachine", () => {
     expect(failed.message).toBeNull();
   });
 
+  it("dates only feed answers in feedCheckedAt, never a failed check", () => {
+    const initial = {
+      ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
+      enabled: true,
+    };
+    const found = reduceDesktopUpdateStateOnUpdateAvailable(
+      reduceDesktopUpdateStateOnCheckStart(initial, "2026-03-04T00:00:00.000Z"),
+      "1.1.0",
+      "2026-03-04T00:00:01.000Z",
+    );
+    expect(found.feedCheckedAt).toBe("2026-03-04T00:00:01.000Z");
+    const downloaded = reduceDesktopUpdateStateOnDownloadComplete(found, "1.1.0");
+    const none = reduceDesktopUpdateStateOnNoUpdate(
+      reduceDesktopUpdateStateOnCheckStart(downloaded, "2026-03-04T00:01:00.000Z"),
+      "2026-03-04T00:01:01.000Z",
+    );
+    expect(none.feedCheckedAt).toBe("2026-03-04T00:01:01.000Z");
+
+    // A check that fails with the download on disk returns to "downloaded"
+    // with a new checkedAt, but the last feed answer keeps its time.
+    const checking = reduceDesktopUpdateStateOnCheckStart(none, "2026-03-04T00:02:00.000Z");
+    expect(checking.feedCheckedAt).toBe("2026-03-04T00:01:01.000Z");
+    const failed = reduceDesktopUpdateStateOnCheckFailure(
+      checking,
+      "network unavailable",
+      "2026-03-04T00:02:01.000Z",
+    );
+    expect(failed.status).toBe("downloaded");
+    expect(failed.checkedAt).toBe("2026-03-04T00:02:01.000Z");
+    expect(failed.feedCheckedAt).toBe("2026-03-04T00:01:01.000Z");
+    const failedEmpty = reduceDesktopUpdateStateOnCheckFailure(
+      reduceDesktopUpdateStateOnCheckStart(initial, "2026-03-04T00:03:00.000Z"),
+      "network unavailable",
+      "2026-03-04T00:03:01.000Z",
+    );
+    expect(failedEmpty.feedCheckedAt).toBeUndefined();
+  });
+
   it("keeps the installer when the feed still offers its version", () => {
     const releaseNotes = [{ version: "1.1.0", items: ["fix: queued update"], totalItems: 1 }];
     const state = reduceDesktopUpdateStateOnUpdateAvailable(

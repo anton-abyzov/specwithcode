@@ -391,3 +391,53 @@ describe("model chip", () => {
     expect(markup).not.toContain("data-model-chip-part");
   });
 });
+
+describe("Weave picker button", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const picker = (extra: Partial<ComponentProps<typeof ProviderModelPicker>> = {}) => (
+    <ProviderModelPicker
+      activeInstanceId={instanceId}
+      model="gpt-6.1-sol"
+      lockedProvider={null}
+      instanceEntries={[providerEntry("codex", "codex")]}
+      modelOptionsByInstance={
+        new Map([[instanceId, [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }]]])
+      }
+      onInstanceModelChange={() => {}}
+      {...extra}
+    />
+  );
+
+  it("has no chevron, plain or as a chip", () => {
+    expect(renderToStaticMarkup(picker())).not.toContain("data-composer-control-chevron");
+    expect(
+      renderToStaticMarkup(picker({ triggerParts: { provider: "Codex", model: "GPT-6.1-Sol" } })),
+    ).not.toContain("data-composer-control-chevron");
+  });
+
+  it("marks the provider icon as a chip part that gives way before the model name", () => {
+    const chip = renderToStaticMarkup(
+      picker({ triggerParts: { provider: "Codex", model: "GPT-6.1-Sol" }, fit: "name" }),
+    );
+    expect(chip).toMatch(/data-chat-provider-model-picker-icon=""[^>]*data-model-chip-part="mark"/);
+    // A plain picker keeps its icon as it was, outside any fit.
+    const plain = renderToStaticMarkup(picker());
+    expect(plain).toContain("data-chat-provider-model-picker-icon");
+    expect(plain).not.toContain('data-model-chip-part="mark"');
+  });
+
+  it("hands the effort strip to the list only while the picker is enabled", () => {
+    contentState.render = true;
+    const effort = {
+      options: [{ id: "high", label: "High" }],
+      value: "high",
+      locked: null,
+      select: vi.fn(),
+      fast: null,
+    };
+    renderToStaticMarkup(picker({ effort }));
+    expect(contentState.props?.effort).toBe(effort);
+    renderToStaticMarkup(picker({ effort, disabled: true }));
+    expect(contentState.props?.effort).toBeUndefined();
+  });
+});

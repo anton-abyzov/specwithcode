@@ -57,6 +57,7 @@ import {
 import { resolveUpdateFeed } from "./platformFeed.ts";
 import { getAutoUpdateDisabledReason, isUpstreamUpdateFeed } from "./updateFeedGate.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
+import { markRestartStep, markRestartStepFromNow } from "./restartTrace.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
   describeUpdateNotice,
@@ -205,6 +206,8 @@ export class DesktopUpdates extends Context.Service<
     readonly registerLocalServiceProbe: (probe: LocalServiceProbe) => Effect.Effect<void>;
     /** Reads the local service again and applies the swap gate. */
     readonly refreshActivation: Effect.Effect<void>;
+    /** The app release a live Update now run installs next, or null (appActivationControl.ts). */
+    readonly stageForRun: (version: string | null) => Effect.Effect<void>;
     /**
      * The app release an Update now run installs after the service when its
      * window named none: what this launch's checks found, else a download an
@@ -843,6 +846,7 @@ export const make = Effect.gen(function* () {
     Effect.scoped(
       Effect.gen(function* () {
         if (yield* activation.refusesInstall(expectedVersion, serviceLacksRelease)) {
+          yield* markRestartStep("app-install", { detail: "service-behind" });
           return {
             accepted: false,
             completed: false,
@@ -898,8 +902,10 @@ export const make = Effect.gen(function* () {
           }
         }
         if (admission === "refused") {
+          yield* markRestartStep("app-install", { detail: refusal });
           return { accepted: false, completed: false, failed: false, reason: refusal };
         }
+        yield* markRestartStep("app-install", { detail: "admitted" });
 
         // Taken at admission, so an older install's watch never acts on this one.
         const attempt = ++installAttempt;
@@ -907,7 +913,10 @@ export const make = Effect.gen(function* () {
           attempt === installAttempt ? recoverStalledInstall : Effect.void,
         );
 
-        if (!(yield* electronUpdater.installReady)) {
+        const markStaged = yield* markRestartStepFromNow("staged");
+        if (yield* electronUpdater.installReady) {
+          yield* markStaged("staged before the install");
+        } else {
           stagingForInstall = true;
           const staged = yield* stageForInstall(restaged).pipe(
             Effect.onInterrupt(() =>
@@ -922,8 +931,12 @@ export const make = Effect.gen(function* () {
             // Back to the install-on-quit setting the preference and gate allow.
             yield* activation.applyActivation;
             yield* logUpdaterError(INSTALL_NOT_STAGED);
+            yield* markStaged("not staged");
             return { accepted: true, completed: false, failed: true };
           }
+          yield* markStaged(
+            restaged ? "staged at the install, after a restage" : "staged at the install",
+          );
         }
 
         yield* Ref.set(desktopState.quitting, true);
@@ -946,6 +959,7 @@ export const make = Effect.gen(function* () {
             (instance) => instance.stop({ timeout: Duration.seconds(5) }),
             { concurrency: "unbounded" },
           );
+          yield* markRestartStep("quit-and-install");
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
@@ -1461,6 +1475,7 @@ export const make = Effect.gen(function* () {
     applyPreferences: applyInstallPreference,
     registerLocalServiceProbe: activation.registerProbe,
     refreshActivation: activation.applyActivation,
+    stageForRun: activation.stageForRun,
     appTargetForRun,
   });
 });

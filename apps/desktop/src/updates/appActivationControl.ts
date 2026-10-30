@@ -76,6 +76,11 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
   // tick (the update run's follow-up) waits for it instead of racing it.
   // Holds whether the restage handed the download to Squirrel.
   let restaging: Deferred.Deferred<boolean> | null = null;
+  // The app release a live Update now run installs once its service is
+  // verified (stageForRun). Its download is staged as soon as the gate opens,
+  // whatever the install preference, so the run's install does not stage it
+  // after the service is verified.
+  let runInstalls: string | null = null;
 
   const readActivation = (targetVersion: string | null, serviceLacksRelease = false) =>
     Effect.gen(function* () {
@@ -148,8 +153,12 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
   const applyActivation: Effect.Effect<void> = Effect.gen(function* () {
     if (!(yield* deps.updaterConfigured)) return;
     const before = yield* deps.getState;
-    const swapGate = yield* readActivation(activationTarget(before));
-    const installOnQuit = installOnQuitAllowed(yield* deps.installAutomatically, swapGate);
+    const target = activationTarget(before);
+    const swapGate = yield* readActivation(target);
+    // A run installs this very release within seconds: stage it now, on an open gate.
+    const forRun = runInstalls !== null && runInstalls === target && swapGate.gate === "open";
+    const installOnQuit =
+      installOnQuitAllowed(yield* deps.installAutomatically, swapGate) || forRun;
     yield* deps.setAutoInstallOnAppQuit(installOnQuit || (yield* deps.holdInstallOnQuit));
     const after = yield* deps.getState;
     if (!sameActivation(after.swapGate, swapGate)) {
@@ -239,5 +248,18 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
           ),
     );
 
-  return { applyActivation, awaitRestage, refusesInstall, registerProbe };
+  /**
+   * Called on every look at a live run (2 seconds) with the app release it
+   * installs next, so the gate is read as soon as the service moves rather
+   * than at the 20-second poll; null once no run does, and install-on-quit
+   * goes back to what the preference allows.
+   */
+  const stageForRun = (version: string | null) =>
+    Effect.suspend(() => {
+      const changed = runInstalls !== version;
+      runInstalls = version;
+      return version !== null || changed ? applyActivation : Effect.void;
+    });
+
+  return { applyActivation, awaitRestage, refusesInstall, registerProbe, stageForRun };
 }

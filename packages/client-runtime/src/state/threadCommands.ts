@@ -407,7 +407,9 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency: {
         mode: "serial",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+        // Its own key, so loading history never queues a send on the same thread.
+        key: ({ environmentId, input }) =>
+          `history:${JSON.stringify([environmentId, input.threadId])}`,
       },
     }),
     uploadFeedback: createEnvironmentRpcCommand(runtime, {

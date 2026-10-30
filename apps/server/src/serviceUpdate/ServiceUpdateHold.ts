@@ -106,6 +106,8 @@ export const NO_REQUEST_RELEASE_MS = 60_000;
 export const HOLD_MAX_MS = 110 * 60_000;
 /** How often a held service reads the update agent's state. */
 export const AGENT_POLL_MS = 5_000;
+/** How often a held service looks for an install gate to acknowledge (`UpdateInstallGate` INSTALL_GATE_ACK_FILE). */
+export const GATE_ACK_POLL_MS = 100;
 /** `update_agent.py` SNAPSHOT_TIMEOUT: a snapshot begun just before its deadline runs this long. */
 export const AGENT_SNAPSHOT_TIMEOUT_MS = 600_000;
 /** `update_agent.py` RETRY_SECONDS: a forced pass gives up once its next retry would pass the deadline. */
@@ -564,6 +566,8 @@ export interface ServiceUpdateHoldOptions {
   readonly noRequestMs?: number;
   /** The helper's install gate; `install-gate.json` beside the state by default. */
   readonly installGatePath?: string;
+  /** How often a held service looks for a gate to acknowledge; `GATE_ACK_POLL_MS` by default. */
+  readonly gateAckPollMs?: number;
   /** Whether the helper named by the gate still runs; for tests. */
   readonly isAlive?: (pid: number) => boolean;
   /** When the machine started (epoch ms), null when unknown; read from the OS by default. */
@@ -1050,6 +1054,36 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       });
       if (Option.isSome(moved)) yield* writeMarker(moved.value);
     });
+
+    // While held, a gate the helper writes is acknowledged within gateAckPollMs, once every
+    // command admitted before it has ended (update_service.await_gate_ack): the helper's checks
+    // then start at once instead of after a fixed settle. Each gate is acknowledged once.
+    const gateAckPath = path.join(
+      path.dirname(installGatePath),
+      UpdateInstallGate.INSTALL_GATE_ACK_FILE,
+    );
+    let acknowledged: string | null = null;
+    const acknowledgeGate = Effect.gen(function* () {
+      if (Option.isNone(yield* Ref.get(state))) return;
+      const text = yield* fileSystem.readFileString(installGatePath).pipe(Effect.option);
+      if (Option.isNone(text) || text.value === acknowledged) return;
+      yield* awaitAdmissions;
+      const at = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+      const content = UpdateInstallGate.installGateAck(text.value, process.pid, at);
+      acknowledged = text.value;
+      if (content === null) return;
+      const temporary = `${gateAckPath}.${process.pid}.tmp`;
+      yield* fileSystem.writeFileString(temporary, `${content}\n`, { mode: 0o600 });
+      yield* fileSystem.rename(temporary, gateAckPath);
+      yield* Effect.logInfo("service-update.gate.acknowledged");
+    }).pipe(
+      Effect.catchCause((cause) => Effect.logDebug("service-update.gate.ack-failed", { cause })),
+    );
+    yield* Effect.sleep(Duration.millis(options.gateAckPollMs ?? GATE_ACK_POLL_MS)).pipe(
+      Effect.andThen(acknowledgeGate),
+      Effect.forever,
+      Effect.forkScoped,
+    );
 
     yield* Effect.sleep(Duration.millis(pollMs)).pipe(
       Effect.andThen(refreshGate),

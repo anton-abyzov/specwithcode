@@ -393,16 +393,18 @@ describe("SidebarRestartToUpdate", () => {
     await act(async () => {
       respondToConfirmDialog(true);
     });
-    expect(calls).toEqual(["prepare:false"]);
+    // The wait looks once right away: the work still runs.
+    expect(calls).toEqual(["prepare:false", "prepare:false"]);
     expect(label()).toBe("Restarts when idle, or in 2:00");
     // Still running at the next check: nothing restarts.
     await act(async () => {
       vi.advanceTimersByTime(15_000);
     });
-    expect(calls).toEqual(["prepare:false", "prepare:false"]);
+    expect(calls).toEqual(["prepare:false", "prepare:false", "prepare:false"]);
     checked = { idle: true, stoppedThreads: 0, blockers: [] };
     await advance(15_000);
     expect(calls).toEqual([
+      "prepare:false",
       "prepare:false",
       "prepare:false",
       "prepare:false",
@@ -410,6 +412,27 @@ describe("SidebarRestartToUpdate", () => {
       "installUpdate:0.2.5",
     ]);
     expect(readConfirmDialogState().status).not.toBe("confirming");
+    expect(label()).toBe("Restarting…");
+  });
+
+  it("restarts at once when the work ended while the question was open", async () => {
+    checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+    registerConfirmDialogHost();
+    render();
+    await click();
+    // The run finished before the person chose to wait for it.
+    checked = { idle: true, stoppedThreads: 0, blockers: [] };
+    await act(async () => {
+      respondToConfirmDialog(true);
+    });
+    await advance(0);
+    // No 15-second wait for the first look.
+    expect(calls).toEqual([
+      "prepare:false",
+      "prepare:false",
+      "prepare:true+hold",
+      "installUpdate:0.2.5",
+    ]);
     expect(label()).toBe("Restarting…");
   });
 

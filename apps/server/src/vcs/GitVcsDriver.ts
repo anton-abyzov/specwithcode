@@ -850,11 +850,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     execute({
       operation,
       cwd,
-      args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      // The full ref, because --short prints heads/<name> when a tag shares the branch's name.
+      args: ["symbolic-ref", "--quiet", "HEAD"],
       allowNonZeroExit: true,
     }).pipe(
       Effect.map((result) => {
-        const branch = result.stdout.trim();
+        const ref = result.stdout.trim();
+        const branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
         if (result.exitCode === 0 && branch.length > 0) return branch;
         // --quiet exits 1 without a message only when HEAD is detached.
         return result.exitCode === 1 ? null : undefined;
