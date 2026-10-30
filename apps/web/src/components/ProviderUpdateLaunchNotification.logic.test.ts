@@ -24,6 +24,7 @@ import {
   getProviderUpdateRunToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
+  isProviderUpdateBlockedInUse,
   isProviderUpdateCandidate,
   isProviderSettingsUpdateCandidate,
   isTerminalProviderUpdatePhase,
@@ -342,6 +343,62 @@ describe("provider update launch notification logic", () => {
     expect(
       shouldShowPrimaryProviderUpdateToast(getProviderUpdateRejectedToastView(1, "boom")),
     ).toBe(true);
+  });
+
+  const failedUpdate = (name: string, inUse: boolean, message?: string) =>
+    provider({
+      driver: driver(name),
+      updateState: {
+        status: "failed",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: message ?? (inUse ? `${name} is running (pid 1: ${name}).` : "npm exited 1."),
+        output: null,
+        ...(inUse ? { inUse: true } : {}),
+      },
+    });
+
+  it("tells the user each CLI was only running, not broken, when every refusal was in use", () => {
+    const view = getProviderUpdateProgressToastView({
+      providers: [failedUpdate("codex", true), failedUpdate("claudeAgent", true)],
+      providerCount: 2,
+    });
+    expect(view.title).toBe("Codex and Claude are running");
+    expect(view.title).not.toContain("failed");
+    expect(view.description).toBe(
+      "Codex and Claude are running. Update anyway installs them now; running sessions keep their version until they restart.",
+    );
+    const single = getProviderUpdateProgressToastView({
+      providers: [failedUpdate("codex", true)],
+      providerCount: 1,
+    });
+    expect(single.title).toBe("Codex is running");
+    expect(single.description).toBe("codex is running (pid 1: codex).");
+    expect(isProviderUpdateBlockedInUse(failedUpdate("codex", true))).toBe(true);
+    expect(isProviderUpdateBlockedInUse(failedUpdate("codex", false))).toBe(false);
+    expect(isProviderUpdateBlockedInUse(provider({ driver: driver("codex") }))).toBe(false);
+  });
+
+  it("names which provider Update anyway retries when failures are mixed", () => {
+    const view = getProviderUpdateProgressToastView({
+      providers: [failedUpdate("codex", true), failedUpdate("claudeAgent", false)],
+      providerCount: 2,
+    });
+    expect(view.title).toBe("Provider updates failed");
+    expect(view.description).toBe(
+      "Codex is running; Claude failed to update. Update anyway installs Codex now.",
+    );
+    const pill = getProviderUpdateSidebarPillView([
+      failedUpdate("codex", true),
+      failedUpdate("claudeAgent", false),
+    ]);
+    expect(pill).toMatchObject({
+      title: "2 provider updates failed",
+      description: "Codex is running; Claude failed to update. Update anyway installs Codex now.",
+    });
+    expect(
+      getProviderUpdateSidebarPillView([failedUpdate("codex", true), failedUpdate("cursor", true)]),
+    ).toMatchObject({ title: "Codex and Cursor are running" });
   });
 
   it("uses server failure state for failed progress", () => {

@@ -261,6 +261,9 @@ export const ServerProviderUpdateState = Schema.Struct({
   finishedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(TrimmedNonEmptyString),
   output: Schema.NullOr(Schema.String.check(Schema.isMaxLength(10_000))),
+  // Set on a failure caused only by a running CLI process, so clients can
+  // offer a forced retry instead of a plain one.
+  inUse: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
@@ -1016,6 +1019,9 @@ export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,
   targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
   instanceId: Schema.optionalKey(ProviderInstanceId),
+  // Skip the installer-idle check. Running sessions keep the old files until
+  // they restart; the installer replaces them by unlink/rename.
+  force: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 

@@ -1,6 +1,11 @@
+import { ProviderInstanceId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import {
+  buildModelPickerSearchText,
+  countModelSearchMatches,
+  scoreModelPickerSearch,
+} from "./modelPickerSearch";
 
 describe("buildModelPickerSearchText", () => {
   it("builds provider-agnostic search text from generic fields", () => {
@@ -134,5 +139,26 @@ describe("scoreModelPickerSearch", () => {
     expect(scoreModelPickerSearch({ ...base, name: "Opus 5.5" }, "claude")).not.toBeNull();
     expect(scoreModelPickerSearch({ ...base, name: "Sonnet 5" }, "claude code")).not.toBeNull();
     expect(scoreModelPickerSearch({ ...base, name: "Sonnet 5" }, "codex")).toBeNull();
+  });
+});
+
+describe("countModelSearchMatches", () => {
+  it("counts matches per provider, for All and for Favorites", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const copilot = ProviderInstanceId.make("copilot_work");
+    const counts = countModelSearchMatches(
+      [
+        { instanceId: claude, slug: "claude-opus-5-5" },
+        { instanceId: copilot, slug: "claude-opus-5-5" },
+        { instanceId: copilot, slug: "claude-opus-5" },
+      ],
+      new Set(["copilot_work:claude-opus-5"]),
+    );
+    expect(Object.fromEntries(counts)).toEqual({
+      all: 3,
+      favorites: 1,
+      claudeAgent: 1,
+      copilot_work: 2,
+    });
   });
 });

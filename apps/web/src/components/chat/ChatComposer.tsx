@@ -280,7 +280,7 @@ import type { ModelStateHeader } from "./ModelPickerContent";
 import { fallbackModelState } from "./ModelStateTag";
 import { modelLabel } from "../../studio/shellModel";
 import { MachineLimitsPanel } from "../studio/shell/ProjectUsageIndicator";
-import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
+import { resolveModelPickerSelectedModel } from "./modelPickerOptions";
 import {
   type ComposerCommandItem,
   ComposerCommandMenu,

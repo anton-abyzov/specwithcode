@@ -555,7 +555,7 @@ function FacetGroup({
         variant="default"
         size="compact"
         multiple
-        className="flex-wrap"
+        className="flex-wrap gap-1.5"
         value={[...value]}
         onValueChange={(next) => onChange(next as Array<string>)}
       >
@@ -569,7 +569,7 @@ function FacetGroup({
           >
             {renderIcon?.(option.value)}
             {option.label}
-            <span className="ms-1 text-muted-foreground tabular-nums">{option.count}</span>
+            <span className="text-muted-foreground tabular-nums">{option.count}</span>
           </Toggle>
         ))}
       </ToggleGroup>

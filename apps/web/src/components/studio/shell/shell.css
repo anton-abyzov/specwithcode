@@ -31,7 +31,9 @@ html[data-theme-id=""] {
   --sidebar-row-active: #e4e4e3;
   --sidebar-row-selected: #edece9;
   --sidebar-border: #e3e3e2;
-  --shell-serif: "Iowan Old Style", "Palatino Linotype", Palatino, ui-serif, Georgia, serif;
+  --shell-serif:
+    "Iowan Old Style", "Palatino Linotype", Palatino, "P052", "URW Palladio L", ui-serif,
+    "Noto Serif", Georgia, serif;
   --shell-waiting: #9a4f08;
   --shell-working: #2563a8;
   --shell-done: #35704a;
@@ -119,7 +121,9 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* A chosen theme has no status colors of its own; borrow its semantic ones. */
 :root {
-  --shell-serif: "Iowan Old Style", "Palatino Linotype", Palatino, ui-serif, Georgia, serif;
+  --shell-serif:
+    "Iowan Old Style", "Palatino Linotype", Palatino, "P052", "URW Palladio L", ui-serif,
+    "Noto Serif", Georgia, serif;
   --shell-waiting: var(--warning-foreground);
   --shell-working: var(--info-foreground);
   --shell-done: var(--success-foreground);
@@ -495,6 +499,20 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   background: var(--update-surface);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 30%, transparent);
 }
+/* The provider column: plain rows that tint on hover and when chosen, no outline. */
+.sws-picker-provider {
+  color: var(--muted-foreground);
+}
+.sws-picker-provider:not(:disabled):hover,
+.sws-picker-provider:focus-visible {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--primary) 8%, transparent);
+}
+.sws-picker-provider[aria-pressed="true"] {
+  color: var(--update-foreground);
+  background: var(--update-surface);
+  font-weight: 500;
+}
 .sws-picker-group {
   color: var(--muted-foreground);
 }
@@ -832,6 +850,11 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   height: 12px;
   margin: 0;
   color: var(--sidebar-muted-foreground);
+}
+
+/* A project shared with or handed off from another machine. */
+.sws-side-row > .sws-side-row-shared {
+  color: var(--primary);
 }
 /* Reserve independent badge and menu space: hover never hides a live count. */
 .sws-side-row-end {

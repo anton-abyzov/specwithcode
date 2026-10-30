@@ -49,6 +49,7 @@ import { readStudioProjectFile } from "../lib/studioProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { followNewestModels } from "./followNewestModels";
 import { useClientSettings, useLegacySidebarEnabled } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
@@ -83,6 +84,10 @@ export function useNewThreadHandler() {
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const modelFollowLatest = useClientSettings((settings) => settings.modelFollowLatest);
+  const providerModelPreferences = useClientSettings(
+    (settings) => settings.providerModelPreferences,
+  );
   const runFolderCheck = useProjectFolderCheckCommand();
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
@@ -108,6 +113,8 @@ export function useNewThreadHandler() {
       const projects = readProjects();
       const targetServerSettings =
         environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
+      const targetProviders =
+        environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [];
       const {
         getComposerDraft,
         getDraftSessionByLogicalProjectKey,
@@ -350,6 +357,7 @@ export function useNewThreadHandler() {
           const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
           const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
           if (!storedDraftHasExplicitModelPick) {
+            followNewestModels(targetProviders, modelFollowLatest, providerModelPreferences);
             applyStickyState(emptyStoredDraftThread.draftId);
             const modelSelectionOverride = resolveModelSelectionOverride(
               emptyStoredDraftThread.draftId,
@@ -489,6 +497,7 @@ export function useNewThreadHandler() {
           ...pickExplicitEnvironmentSelection(options),
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
+        followNewestModels(targetProviders, modelFollowLatest, providerModelPreferences);
         applyStickyState(draftId);
         const modelSelectionOverride = resolveModelSelectionOverride(draftId);
         if (modelSelectionOverride) {
@@ -507,6 +516,8 @@ export function useNewThreadHandler() {
     [
       environmentServerConfigs,
       getCurrentRouteTarget,
+      modelFollowLatest,
+      providerModelPreferences,
       projectGroupingSettings,
       router,
       legacySidebarEnabled,

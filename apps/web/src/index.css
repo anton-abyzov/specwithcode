@@ -682,9 +682,27 @@ code {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollbar styling */
+/* Native checkboxes, radios and sliders follow the theme accent instead of
+   the platform's (GTK and Windows draw them in their own blue). */
+@layer base {
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"],
+  progress {
+    accent-color: var(--primary);
+  }
+}
+
+/* Scrollbar styling. macOS overlays its scrollbars, so only Linux and Windows
+   show the height and corner: without them a horizontal bar is the classic
+   15px platform bar with a white square where two bars meet. */
 ::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
+  height: var(--app-scrollbar-width);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 ::-webkit-scrollbar-track {
@@ -703,7 +721,9 @@ code {
 /* A worker report in its reader reads as a document: serif prose on a
    narrow measure, like a document viewer rather than a chat reply. */
 .report-document {
-  --report-serif: "New York", ui-serif, "Iowan Old Style", Charter, Georgia, serif;
+  --report-serif:
+    "New York", ui-serif, "Iowan Old Style", Charter, "Bitstream Charter", "Noto Serif", Georgia,
+    serif;
 }
 
 /* The one page every report and document opens on, Markdown or HTML, in

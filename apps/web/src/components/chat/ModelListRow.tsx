@@ -44,6 +44,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
   showProvider: boolean;
   /** A group header above names the provider, so the row keeps only its usage. */
   providerInHeader?: boolean;
+  /**
+   * A header above names the model (search groups one model across providers), so the
+   * row leads with its provider and plan instead.
+   */
+  providerAsTitle?: { readonly plan: string | null } | undefined;
   /** The effort this model runs at: the chosen one for the picked row, else its default. */
   effort?: { readonly id: string; readonly label: string } | null;
   preferShortName?: boolean;
@@ -80,14 +85,36 @@ export const ModelListRow = memo(function ModelListRow(props: {
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 truncate text-sm leading-snug">
-            {props.useTriggerLabel
-              ? getTriggerDisplayModelLabel(props.model)
-              : getDisplayModelName(
-                  props.model,
-                  props.preferShortName ? { preferShortName: true } : undefined,
-                )}
-          </div>
+          {props.providerAsTitle ? (
+            <>
+              <ProviderInstanceIcon
+                driverKind={props.driverKind}
+                displayName={props.providerDisplayName}
+                accentColor={props.providerAccentColor}
+                acpRegistryAgentId={props.acpRegistryAgentId}
+                acpRegistryIconUrl={props.acpRegistryIconUrl}
+                className="size-3.5 shrink-0"
+                iconClassName="size-3.5"
+              />
+              <div className="min-w-0 truncate text-sm leading-snug">{providerLabel}</div>
+              {props.providerAsTitle.plan ? (
+                <span className="sws-picker-pill shrink-0" data-model-row-plan="">
+                  {props.providerAsTitle.plan}
+                </span>
+              ) : null}
+              {/* The header shows the model; screen readers hear it on the row. */}
+              <span className="sr-only">{getDisplayModelName(props.model)}</span>
+            </>
+          ) : (
+            <div className="min-w-0 truncate text-sm leading-snug">
+              {props.useTriggerLabel
+                ? getTriggerDisplayModelLabel(props.model)
+                : getDisplayModelName(
+                    props.model,
+                    props.preferShortName ? { preferShortName: true } : undefined,
+                  )}
+            </div>
+          )}
           {props.showNewBadge ? (
             <span
               className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
@@ -117,7 +144,13 @@ export const ModelListRow = memo(function ModelListRow(props: {
             </Badge>
           ) : null}
         </div>
-        {props.showProvider && props.providerInHeader ? (
+        {props.providerAsTitle ? (
+          props.availability ? (
+            <div className="mt-0.5 flex min-w-0 text-xs leading-snug">
+              <ModelRowAvailability text={props.availability} />
+            </div>
+          ) : null
+        ) : props.showProvider && props.providerInHeader ? (
           <>
             {/* The group header shows the provider; screen readers hear it on the row. */}
             <span className="sr-only">{providerLabel}</span>

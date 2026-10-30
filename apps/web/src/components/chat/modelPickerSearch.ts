@@ -1,4 +1,6 @@
+import type { ProviderInstanceId } from "@specweave-studio/contracts";
 import { normalizeSearchQuery, scoreQueryMatch } from "@specweave-studio/shared/searchRanking";
+import { providerModelKey } from "../../modelOrdering";
 
 type ModelPickerSearchableModel = {
   /** Driver kind — indexed so "codex" still matches a Codex Personal instance. */
@@ -84,4 +86,65 @@ export function scoreModelPickerSearch(
   }
 
   return model.isFavorite ? score - MODEL_PICKER_FAVORITE_SCORE_BOOST : score;
+}
+
+type RankableModel = {
+  readonly name: string;
+  readonly shortName?: string | undefined;
+  readonly subProvider?: string | undefined;
+  readonly driverKind: string;
+  readonly instanceDisplayName: string;
+};
+
+/** The models matching `query`, best first; favorites win ties, then the search text. */
+export function rankModelPickerSearch<T extends RankableModel>(
+  models: ReadonlyArray<T>,
+  query: string,
+  isFavorite: (model: T) => boolean,
+): T[] {
+  const ranked: Array<{ model: T; score: number; isFavorite: boolean; tieBreaker: string }> = [];
+  for (const model of models) {
+    const searchable = {
+      name: model.name,
+      ...(model.shortName ? { shortName: model.shortName } : {}),
+      ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+      driverKind: model.driverKind,
+      providerDisplayName: model.instanceDisplayName,
+    };
+    const favorite = isFavorite(model);
+    const score = scoreModelPickerSearch({ ...searchable, isFavorite: favorite }, query);
+    if (score === null) continue;
+    ranked.push({
+      model,
+      score,
+      isFavorite: favorite,
+      tieBreaker: buildModelPickerSearchText(searchable),
+    });
+  }
+  return ranked
+    .toSorted(
+      (a, b) =>
+        a.score - b.score ||
+        (a.isFavorite === b.isFavorite ? 0 : a.isFavorite ? -1 : 1) ||
+        a.tieBreaker.localeCompare(b.tieBreaker),
+    )
+    .map((entry) => entry.model);
+}
+
+/** How many search matches each provider offers, plus All and Favorites. */
+export function countModelSearchMatches(
+  matches: ReadonlyArray<{ readonly instanceId: ProviderInstanceId; readonly slug: string }>,
+  favorites: ReadonlySet<string>,
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>([
+    ["all", matches.length],
+    ["favorites", 0],
+  ]);
+  for (const model of matches) {
+    counts.set(model.instanceId, (counts.get(model.instanceId) ?? 0) + 1);
+    if (favorites.has(providerModelKey(model.instanceId, model.slug))) {
+      counts.set("favorites", counts.get("favorites")! + 1);
+    }
+  }
+  return counts;
 }

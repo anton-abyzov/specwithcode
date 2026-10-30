@@ -15,7 +15,7 @@ import {
   type SourceControlInspectDestinationResult,
 } from "@specweave-studio/contracts";
 import { ArrowRightIcon } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { newProjectId, randomUUID } from "~/lib/utils";
 import { waitForProject } from "~/state/entities";
@@ -466,13 +466,16 @@ function AddToMachineBody({
       </DialogHeader>
       <DialogPanel>
         <div className="space-y-4">
-          <div className="flex min-w-0 items-center gap-2 text-sm" data-slot="add-route">
+          <div className="flex min-w-0 items-stretch gap-2 text-sm" data-slot="add-route">
             <MachinePlace
               kind={resolveEnvironmentMachineKind(sourceEnvironment?.serverConfig ?? null)}
               name={sourceName}
               path={source.workspaceRoot}
             />
-            <ArrowRightIcon aria-label="to" className="size-4 shrink-0 text-muted-foreground" />
+            <ArrowRightIcon
+              aria-label="to"
+              className="size-4 shrink-0 self-center text-muted-foreground"
+            />
             <MachinePlace
               kind={resolveEnvironmentMachineKind(destinationEnvironment?.serverConfig ?? null)}
               name={destName}
@@ -559,7 +562,19 @@ function MachinePlace({
       <EnvironmentMachineIcon kind={kind} aria-hidden className="mt-0.5 size-4 shrink-0" />
       <div className="min-w-0">
         <p className="truncate font-medium">{name}</p>
-        <p className="wrap-anywhere font-mono text-muted-foreground text-xs">{path}</p>
+        <p className="break-words font-mono text-muted-foreground text-xs">
+          {/* Break long paths only after a separator, never mid-name. */}
+          {path.split("/").map((segment, index, segments) => (
+            <Fragment key={index}>
+              {segment}
+              {index < segments.length - 1 && (
+                <>
+                  /<wbr />
+                </>
+              )}
+            </Fragment>
+          ))}
+        </p>
       </div>
     </div>
   );

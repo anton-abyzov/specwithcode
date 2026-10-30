@@ -37,17 +37,18 @@ Scenes (`?scene=`), each at 1440x900 in light and dark:
   "Restarts when idle, or in m:ss" (the forced-restart countdown) after that choice. The fake
   update feed answers that 1.0.25 is already the newest release. It asserts no install call
   was made.
-- `server`: one remote server on 1.0.20 with `serverSelfUpdate: "boot-service"`. Asserts the
-  row shows "Server" above "1.0.20 → 1.0.25" with its Update and × buttons ("Server" above
-  "→ 1.0.25" at the 20px text size where the sidebar is narrowest), that screen readers hear it
-  as "Server 1.0.20 to 1.0.25", and that hovering the row text and the Update button shows the
-  same tooltip: "SpecWithCode on the server runs 1.0.20; this app runs 1.0.25. Update installs
-  1.0.25 on the server and restarts it. Threads running there stop for the restart. Nothing
-  else on the server changes: no settings, no other software." Only the Update button carries
-  that text as its `aria-description`, so a screen reader reads it once per row. The runner
-  then switches the row's update to running ("Updating server", "Downloading…", no buttons) and
-  to failed ("Could not update server", Retry and ×) at each text size and width, and asserts
-  the idle, running and failed rows are the same height.
+- `server`: one remote server, "Build box", on 1.0.20 with `serverSelfUpdate: "boot-service"`.
+  A lone server is still named by its machine. Asserts the row shows "Build box" above
+  "1.0.20 → 1.0.25" with its Update and × buttons ("Build box" above "→ 1.0.25" at the 20px
+  text size where the sidebar is narrowest), that screen readers hear it as "Build box 1.0.20
+  to 1.0.25", and that hovering the row text and the Update button shows the same tooltip:
+  "SpecWithCode on Build box runs 1.0.20; this app runs 1.0.25. Update installs 1.0.25 on Build
+  box and restarts its server. Threads running there stop for the restart. Nothing else on
+  Build box changes: no settings, no other software." Only the Update button carries that text
+  as its `aria-description`, so a screen reader reads it once per row. The runner then switches
+  the row's update to running ("Updating Build box server", "Downloading…", no buttons) and to
+  failed ("Could not update Build box server", Retry and ×) at each text size and width, and
+  asserts the idle, running and failed rows are the same height.
 - `server-desktop`: "ministorm" on 1.0.20 with `serverSelfUpdate: "desktop-managed"` and
   `desktopAppUpdate`, next to a second server already on 1.0.25 (no row), so the row is named
   by its machine, "ministorm", over the versions. Asserts the tooltip says Update installs the

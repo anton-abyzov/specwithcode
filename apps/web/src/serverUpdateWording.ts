@@ -2,7 +2,7 @@ import type { ServerSelfUpdateCapability } from "@specweave-studio/contracts";
 
 /** One server that runs an older SpecWithCode than this app, as its update row describes it. */
 export interface ServerUpdateWordingInput {
-  /** The machine's name, or null when it is the only server: it is then "the server". */
+  /** The machine's name, or null when it has none: it is then "the server". */
   readonly machine: string | null;
   readonly serverVersion: string;
   readonly clientVersion: string;

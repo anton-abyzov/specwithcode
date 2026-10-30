@@ -189,7 +189,9 @@ it("names an unavailable predecessor without presenting missing history as an em
     root.render(<ProjectThreadAvailability scopes={[scopes[0]!, scopes[2]!, scopes[2]!]} />),
   );
   expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
-  expect(container.textContent).toContain("m3 is offline — the thread list may be incomplete");
+  expect(container.textContent).toContain(
+    "This app is not connected to m3 — the thread list may be incomplete",
+  );
 });
 
 it("does not invent handoff history for an unlinked legacy project", async () => {

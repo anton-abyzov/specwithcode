@@ -284,6 +284,9 @@ function handleMessage(message: JsonRpcMessage): void {
 }
 
 writeStatus();
+// The adapter sends SIGTERM as soon as it reads the last answer. Node runs this handler
+// between ticks, so the kill never lands between that answer and its status write.
+process.on("SIGTERM", () => process.exit());
 flushInbound();
 
 const input = NodeReadline.createInterface({ input: process.stdin, crlfDelay: Infinity });

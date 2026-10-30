@@ -16,7 +16,7 @@ import SWCWire
     let connector: FakeConnector
   }
 
-  func harness(permissions: [String] = ["orchestration:read", "orchestration:operate"], failing: [String: String] = [:]) async throws -> Harness {
+  func harness(permissions: [String] = ["orchestration:read", "orchestration:operate"], failing: [String: String] = [:], staleThreadGrace: Duration = .seconds(3), resyncInterval: Duration = .seconds(10)) async throws -> Harness {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("swcsync-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let registry = MachineRegistry(fileURL: directory.appendingPathComponent("machines.json"))
@@ -37,7 +37,9 @@ import SWCWire
         connection: MachineConnection.Configuration(probeStagger: .milliseconds(5), stableConnection: .zero),
         monitorsNetwork: false,
         resubscribeDelay: .milliseconds(5),
-        resubscribeMaximum: .milliseconds(20)
+        resubscribeMaximum: .milliseconds(20),
+        staleThreadGrace: staleThreadGrace,
+        resyncInterval: resyncInterval
       )
     )
     let model = AppModel(engine: engine)
@@ -311,6 +313,108 @@ import SWCWire
     #expect(await until { h.machine.payloads("orchestration.subscribeThread").count == 3 })
     #expect(h.machine.payloads("orchestration.subscribeThread").last?["afterSequence"] == .number(99))
     #expect(await until { !session.isStale })
+    h.engine.close(session)
+  }
+
+  @Test func threadStreamThatEndsSubscribesAgainOnTheSameSocket() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    let session = h.model.session(for: .thread(ThreadRef(environmentId: env, threadId: "thr_1")))
+    h.engine.open(session)
+    #expect(await until { session.rows.count == 1 && !session.isStale })
+
+    // The server ends the stream while the socket stays open: the chat must not freeze.
+    let threadId = try #require(h.machine.requests("orchestration.subscribeThread").last?["id"]?.intValue)
+    let socket = try #require(h.connector.connections.values.last)
+    socket.push(FakeMachine.exit(threadId, "null"))
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").count == 2 })
+    #expect(h.machine.payloads("orchestration.subscribeThread").last?["afterSequence"] == .number(99))
+    #expect(h.connector.connections.values.count == 1)
+    #expect(await until { !session.isStale })
+    h.engine.close(session)
+  }
+
+  @Test func reopeningAChatCatchesItUp() async throws {
+    let h = try await harness(resyncInterval: .zero)
+    #expect(await loaded(h))
+    let session = h.model.session(for: .thread(ThreadRef(environmentId: env, threadId: "thr_1")))
+    h.engine.open(session)
+    #expect(await until { session.rows.count == 1 })
+    h.engine.open(session)
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").count == 2 })
+    #expect(h.machine.payloads("orchestration.subscribeThread").last?["afterSequence"] == .number(99))
+    #expect(await until { !session.isStale && session.rows.count == 1 })
+    h.engine.close(session)
+  }
+
+  @Test func foregroundCatchesUpLiveStreams() async throws {
+    let h = try await harness(resyncInterval: .zero)
+    #expect(await loaded(h))
+    let session = h.model.session(for: .thread(ThreadRef(environmentId: env, threadId: "thr_1")))
+    h.engine.open(session)
+    #expect(await until { session.rows.count == 1 })
+    let shells = h.machine.payloads("orchestration.subscribeShell").count
+    // Back in front without the socket closing (Control Center, a banner).
+    h.engine.setActive(true)
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").count == 2 })
+    #expect(await until { h.machine.payloads("orchestration.subscribeShell").count == shells + 1 })
+    #expect(h.connector.connections.values.count == 1)
+    h.engine.close(session)
+  }
+
+  @Test func chatTrailingTheThreadListSubscribesAgainOnce() async throws {
+    let h = try await harness(staleThreadGrace: .milliseconds(20))
+    #expect(await loaded(h))
+    let session = h.model.session(for: .thread(ThreadRef(environmentId: env, threadId: "thr_1")))
+    h.engine.open(session)
+    #expect(await until { session.rows.count == 1 && !session.isStale })
+    try await Task.sleep(for: .milliseconds(60))
+    #expect(h.machine.payloads("orchestration.subscribeThread").count == 1)
+
+    // The list moves on but the thread stream delivers nothing, as when it stalls.
+    let shellId = try #require(h.machine.requests("orchestration.subscribeShell").last?["id"]?.intValue)
+    let socket = try #require(h.connector.connections.values.last)
+    let newer = FixtureJSON.threadShell.replacingOccurrences(of: #""updatedAt": "2026-10-18T04:00:01.500Z""#, with: #""updatedAt": "2026-10-19T09:00:00.000Z""#)
+    socket.push(FakeMachine.chunk(shellId, #"{"kind":"thread.updated","sequence":44,"thread":\#(newer)}"#))
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").count == 2 })
+    #expect(h.machine.payloads("orchestration.subscribeThread").last?["afterSequence"] == .number(99))
+    // Still behind after catching up (nothing newer arrived): no loop.
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(h.machine.payloads("orchestration.subscribeThread").count == 2)
+    h.engine.close(session)
+  }
+
+  @Test func projectChatFollowsANewCoordinatorThread() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    let session = h.model.session(for: .project(ProjectRef(environmentId: env, projectId: "proj_1")))
+    h.engine.open(session)
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").count == 1 })
+    #expect(h.machine.payloads("orchestration.subscribeThread").last?["threadId"] == .string("project-coordinator:proj_1"))
+
+    let shellId = try #require(h.machine.requests("orchestration.subscribeShell").last?["id"]?.intValue)
+    let socket = try #require(h.connector.connections.values.last)
+    let moved = FixtureJSON.project.replacingOccurrences(of: #""coordinatorThreadId": "project-coordinator:proj_1""#, with: #""coordinatorThreadId": "thr_coord_2""#)
+    socket.push(FakeMachine.chunk(shellId, #"{"kind":"project.updated","sequence":43,"project":\#(moved)}"#))
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").last?["threadId"] == .string("thr_coord_2") })
+    h.engine.close(session)
+  }
+
+  @Test func projectChatKeepsTheThreadASendStartedBeforeTheProjectNamesIt() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    let target = ChatTarget.project(ProjectRef(environmentId: env, projectId: "proj_1"))
+    let session = h.model.session(for: target)
+    h.engine.open(session)
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").count == 1 })
+    // The machine answers the send with a new coordinator thread while the project still names the old one.
+    try await h.engine.send("hello", to: target)
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").last?["threadId"] == .string("thr_coord") })
+    let shellId = try #require(h.machine.requests("orchestration.subscribeShell").last?["id"]?.intValue)
+    let socket = try #require(h.connector.connections.values.last)
+    socket.push(FakeMachine.chunk(shellId, #"{"kind":"project.updated","sequence":43,"project":\#(FixtureJSON.project)}"#))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(h.machine.payloads("orchestration.subscribeThread").last?["threadId"] == .string("thr_coord"))
     h.engine.close(session)
   }
 

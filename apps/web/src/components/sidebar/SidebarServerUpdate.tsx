@@ -33,15 +33,15 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function SidebarServerUpdate() {
   const configs = useServerConfigs();
   const { environments } = useEnvironments();
-  const many = configs.size > 1;
   const labels = new Map(
     environments.map((environment) => [environment.environmentId, environment.label]),
   );
   return (
     <>
       {[...configs].map(([environmentId, config]) => {
-        // One server is "the server"; with more, each row names its machine.
-        const machine = many ? (labels.get(environmentId) ?? config.environment.label) : null;
+        // Every row names its machine: a lone "Server" read as some other machine's, not this
+        // one's own background service.
+        const machine = labels.get(environmentId) ?? config.environment.label ?? null;
         return (
           <SidebarServerUpdateRow
             key={environmentId}

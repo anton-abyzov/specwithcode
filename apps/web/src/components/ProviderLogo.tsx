@@ -135,6 +135,33 @@ export function providerBrandFor(input: {
   return BRAND_BY_ACP_AGENT.find(([pattern]) => pattern.test(agentId))?.[1] ?? null;
 }
 
+/** Words in a provider's own name that identify a bundled brand ("Copilot Enterprise"). */
+const BRAND_BY_NAME: ReadonlyArray<readonly [RegExp, ProviderBrand]> = [
+  [/\bcopilot\b/i, "copilot"],
+  [/\bgemini\b/i, "gemini"],
+  [/\bgrok\b/i, "grok"],
+  [/\bcursor\b/i, "cursor"],
+  [/\bclaude\b/i, "claude"],
+  [/\b(?:codex|openai)\b/i, "openai"],
+  [/\bopencode\b/i, "opencode"],
+  [/\bqwen\b/i, "qwen"],
+  [/\bkimi\b/i, "kimi"],
+  [/\bmistral\b/i, "mistral"],
+  [/\bkiro\b/i, "kiro"],
+  [/\bdeepseek\b/i, "deepseek"],
+];
+
+/**
+ * The bundled brand a provider's name points to, for an ACP instance whose registry
+ * identity was never recorded. Never a guess from partial words.
+ */
+export function providerBrandForName(
+  ...names: ReadonlyArray<string | undefined>
+): ProviderBrand | null {
+  const text = names.filter(Boolean).join(" ").replace(/[-_]/g, " ");
+  return BRAND_BY_NAME.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+}
+
 /**
  * The one way the web app draws a provider's mark. Multicolour marks keep their
  * brand colours; monochrome ones follow the surrounding text colour.

@@ -7,7 +7,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import {
   isProviderInstancePickerSelectable,
-  shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 
@@ -32,15 +31,25 @@ export function describeUnavailableInstance(entry: ProviderInstanceEntry): strin
   return msg ? `${label} — ${kind}. ${msg}` : `${label} — ${kind}.`;
 }
 
+/**
+ * How the providers sit: a labelled column beside the models when the picker is wide, or
+ * chips that wrap onto more lines under the search when it is narrow. Neither scrolls
+ * sideways, which trackpads and Linux mice handle badly.
+ */
+export type ModelPickerProvidersLayout = "column" | "wrap";
+
 const CHIP_CLASS =
   "sws-picker-chip relative isolate inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs whitespace-nowrap transition-colors focus-visible:outline-none";
+const COLUMN_ITEM_CLASS =
+  "sws-picker-provider relative isolate flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-xs transition-colors focus-visible:outline-none";
 
 /**
- * Provider chips under the search: All, Favorites and one per configured instance. They
- * replace the old icon column; each keeps its usage mark, "new" badge, disabled state
- * and tooltip. The row scrolls sideways when the providers do not fit.
+ * The providers beside or under the search: All, Favorites and one per configured instance,
+ * each with its usage mark, "new" badge, disabled state and tooltip. In the column each
+ * also says how many models it has.
  */
 export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(props: {
+  layout: ModelPickerProvidersLayout;
   selected: ModelPickerView;
   onSelect: (view: ModelPickerView) => void;
   onFocusSearch: () => void;
@@ -61,9 +70,29 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
   getInstanceUsage?: (
     entry: ProviderInstanceEntry,
   ) => { readonly tone: "warn" | "full"; readonly text: string } | null;
+  /** While searching: matches per view ("all", "favorites", instance id). Empty ones dim. */
+  counts?: ReadonlyMap<string, number>;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
-  // Keep the chosen chip in view when the row scrolls sideways.
+  const column = props.layout === "column";
+  const counts = props.counts;
+  // The provider's own model count in the column, or its matches while searching.
+  const countBadge = (view: ModelPickerView, total: number | null) => {
+    const count = counts ? (counts.get(view) ?? 0) : total;
+    if (count === null || (!counts && (!column || count === 0))) return null;
+    return (
+      <span
+        className="ms-auto shrink-0 tabular-nums text-2xs text-muted-foreground"
+        data-model-picker-provider-count={count}
+        aria-hidden
+      >
+        {count}
+      </span>
+    );
+  };
+  const noMatches = (view: ModelPickerView) => counts !== undefined && !counts.get(view);
+  const itemClass = column ? COLUMN_ITEM_CLASS : CHIP_CLASS;
+  // Keep the chosen provider in view when the list scrolls.
   const selected = props.selected;
   useLayoutEffect(() => {
     const chip = rowRef.current?.querySelector<HTMLElement>(
@@ -77,7 +106,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
     return (
       <div className="relative" data-model-picker-provider={view}>
         <Toolbar.Button
-          className={CHIP_CLASS}
+          className={cn(itemClass, noMatches(view) && "opacity-55")}
           onClick={() => props.onSelect(view)}
           type="button"
           aria-label={label}
@@ -88,6 +117,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
             aria-hidden
           />
           {label}
+          {countBadge(view, null)}
         </Toolbar.Button>
       </div>
     );
@@ -95,14 +125,20 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
 
   return (
     <Toolbar.Root
-      className="shrink-0 overflow-hidden"
+      className={cn(
+        "shrink-0 overflow-hidden",
+        column && "relative w-40 border-e border-border/60",
+      )}
       data-model-picker-sidebar="true"
       data-model-picker-chips="true"
+      data-model-picker-providers-layout={props.layout}
       aria-label="Providers"
-      orientation="horizontal"
+      orientation={column ? "vertical" : "horizontal"}
       onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-        if (event.key === "ArrowUp") {
+        const first = rowRef.current?.querySelector("button") === event.target;
+        // Up from the wrapped chips, or from the column's first item, returns to the search.
+        if (event.key === "ArrowUp" && (!column || first)) {
           event.preventDefault();
           props.onFocusSearch();
         }
@@ -110,10 +146,16 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
     >
       <div
         ref={rowRef}
-        className="flex items-center gap-1 overflow-x-auto overscroll-x-contain px-2 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className={cn(
+          "overscroll-y-contain",
+          column
+            ? "absolute inset-0 flex flex-col gap-0.5 overflow-y-auto px-1.5 py-1.5"
+            : "flex max-h-[6.25rem] flex-wrap items-center gap-1 overflow-y-auto px-2 pb-2",
+        )}
       >
         {plainChip("all", "All", LayersIcon)}
         {plainChip("favorites", "Favorites", StarIcon)}
+        {column ? <div className="mx-2 my-1 h-px shrink-0 bg-border/60" aria-hidden /> : null}
         {props.instanceEntries.map((entry) => {
           const isUnavailable = !isProviderInstancePickerSelectable(entry);
           const isContextDisabled = props.disabledInstanceIds?.has(entry.instanceId) ?? false;
@@ -133,8 +175,9 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
           const button = (
             <Toolbar.Button
               className={cn(
-                CHIP_CLASS,
+                itemClass,
                 isDisabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
+                !isDisabled && noMatches(entry.instanceId) && "opacity-55",
               )}
               data-provider-accent-color={entry.accentColor}
               onClick={() => !isDisabled && props.onSelect(entry.instanceId)}
@@ -156,12 +199,14 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
                 accentColor={entry.accentColor}
                 acpRegistryAgentId={entry.acpRegistryAgentId}
                 acpRegistryIconUrl={entry.acpRegistryIconUrl}
-                showBadge={shouldShowInstanceBadge(entry, props.instanceEntries)}
+                // The name sits beside the mark, so two Copilots need no initials badge on it.
+                showBadge={false}
                 className="size-4 shrink-0"
                 iconClassName="size-4"
-                {...(entry.accentColor ? { badgeClassName: "h-3 min-w-3 px-0.5 text-5xs" } : {})}
               />
-              <span className="max-w-28 truncate">{entry.displayName}</span>
+              <span className={column ? "min-w-0 flex-1 truncate" : "max-w-28 truncate"}>
+                {entry.displayName}
+              </span>
               {showNewBadge ? (
                 <SparklesIcon className="size-3 shrink-0 text-update-foreground" aria-hidden />
               ) : null}
@@ -175,6 +220,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
                   aria-hidden
                 />
               ) : null}
+              {countBadge(entry.instanceId, entry.models.length)}
             </Toolbar.Button>
           );
           return (
@@ -187,7 +233,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
                 <TooltipTrigger
                   render={isDisabled ? <span className="relative block">{button}</span> : button}
                 />
-                <TooltipPopup side="bottom" align="center">
+                <TooltipPopup side={column ? "right" : "bottom"} align="center">
                   {tooltip}
                 </TooltipPopup>
               </Tooltip>

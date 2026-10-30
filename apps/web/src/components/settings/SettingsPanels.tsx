@@ -2480,7 +2480,7 @@ export function GeneralSettingsPanel() {
               }
             />
 
-            <p className="text-sm text-muted-foreground">
+            <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
               Inactivity never resolves work. Snooze hides a thread temporarily while work remains
               active; completion, errors and approval requests can wake it early.
             </p>

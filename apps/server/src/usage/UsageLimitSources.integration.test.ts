@@ -106,7 +106,7 @@ describe("UsageLimitSources composed loopback integration", () => {
         expect(rows.map((s) => s.id)).toEqual([sourceId, "missing", "invalid"]);
         expect(rows[0]).toMatchObject({
           label: "Owned fake hub",
-          accounts: [{ id: "codex.json" }, { id: "claude.json" }],
+          accounts: [{ id: "codex.json" }],
         });
         expect(rows[1]).toMatchObject({
           label: new URL(f.hub.config.url).host,
@@ -131,7 +131,7 @@ describe("UsageLimitSources composed loopback integration", () => {
         expect(yield* initial).toEqual([]);
         const added = yield* observe(f.service, (rows) => rows[0]?.id === sourceId);
         yield* f.settings.updateSettings({ usageLimitSources: { [sourceId]: f.hub.config } });
-        expect((yield* added)[0]?.accounts).toHaveLength(2);
+        expect((yield* added)[0]?.accounts).toHaveLength(1);
         const removed = yield* observe(f.service, (rows) => rows.length === 0);
         yield* f.settings.updateSettings({ usageLimitSources: { [sourceId]: null } });
         expect(yield* removed).toEqual([]);

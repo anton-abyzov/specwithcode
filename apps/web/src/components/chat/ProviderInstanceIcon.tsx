@@ -3,7 +3,7 @@ import { type CSSProperties, memo } from "react";
 import { providerInstanceInitials } from "@specweave-studio/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@specweave-studio/contracts";
-import { ProviderLogo, providerBrandFor } from "../ProviderLogo";
+import { ProviderLogo, providerBrandFor, providerBrandForName } from "../ProviderLogo";
 
 import { cn } from "~/lib/utils";
 import {
@@ -52,17 +52,19 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   statusDotClassName?: string;
   indicatorBackground?: string;
 }) {
-  const brand = providerBrandFor({
-    driverKind: props.driverKind,
-    acpRegistryAgentId: props.acpRegistryAgentId,
-    acpRegistryIconUrl: props.acpRegistryIconUrl,
-  });
+  const isAcpRegistry = props.driverKind === "acpRegistry";
+  const brand =
+    providerBrandFor({
+      driverKind: props.driverKind,
+      acpRegistryAgentId: props.acpRegistryAgentId,
+      acpRegistryIconUrl: props.acpRegistryIconUrl,
+    }) ??
+    (isAcpRegistry ? providerBrandForName(props.acpRegistryAgentId, props.displayName) : null);
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
     : undefined;
   const badgeContent = props.badgeContent ?? "initials";
-  const isAcpRegistry = props.driverKind === "acpRegistry";
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,
@@ -80,7 +82,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     >
       {brand ? (
         <ProviderLogo brand={brand} className={cn("size-5", props.iconClassName)} />
-      ) : isAcpRegistry ? (
+      ) : isAcpRegistry && acpRegistryIconUrl !== null ? (
         <AcpRegistryAgentIcon
           {...(props.acpRegistryAgentId ? { agentId: props.acpRegistryAgentId } : {})}
           // The search-tile radius would crop most of the glyph at these

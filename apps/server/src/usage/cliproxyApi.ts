@@ -14,8 +14,6 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
-import { claudeResetCreditsToContract } from "../provider/claudeResetCredits.ts";
-import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits } from "../provider/providerUsageLimits.ts";
 
 const AuthFile = Schema.Struct({
@@ -56,31 +54,6 @@ const CodexUsage = Schema.Struct({
     }),
   ),
 });
-const ClaudeWindow = Schema.Struct({
-  utilization: Schema.Number,
-  resets_at: Schema.NullOr(Schema.String),
-});
-const ClaudeUsage = Schema.Struct({
-  cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
-  five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
-  seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
-  limits: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        kind: Schema.String,
-        percent: Schema.optional(Schema.NullOr(Schema.Number)),
-        resets_at: Schema.optional(Schema.NullOr(Schema.String)),
-        scope: Schema.optional(
-          Schema.NullOr(
-            Schema.Struct({
-              model: Schema.optional(Schema.NullOr(Schema.Struct({ display_name: Schema.String }))),
-            }),
-          ),
-        ),
-      }),
-    ),
-  ),
-});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -96,26 +69,7 @@ const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
-const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
-const ClaudeProfile = Schema.Struct({
-  organization: Schema.Struct({ uuid: Schema.String.check(Schema.isPattern(/^[0-9a-f-]{1,64}$/)) }),
-});
-const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
-const decodeClaudeClaim = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      result: Schema.Literals([
-        "reset",
-        "already_used",
-        "not_limited",
-        "cooldown",
-        "ineligible",
-        "unavailable",
-      ]),
-    }),
-  ),
-);
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 const decodeConsumeResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -125,8 +79,6 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
   ),
 );
 
-const CLAUDE_BASE = "https://api.anthropic.com";
-const CLAUDE_GRANT_ID = /^[a-z0-9_-]{1,40}$/;
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 
@@ -219,22 +171,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
-    const header =
-      account.provider === "codex"
-        ? {
-            Authorization: "Bearer $TOKEN$",
-            "Content-Type": "application/json",
-            "OpenAI-Beta": "codex-1",
-            Originator: "Codex Desktop",
-            ...(account.id_token?.chatgpt_account_id
-              ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
-              : {}),
-          }
-        : {
-            Authorization: "Bearer $TOKEN$",
-            "anthropic-beta": "oauth-2025-04-20",
-            ...(data === undefined ? {} : { "Content-Type": "application/json" }),
-          };
+    const header = {
+      Authorization: "Bearer $TOKEN$",
+      "Content-Type": "application/json",
+      "OpenAI-Beta": "codex-1",
+      Originator: "Codex Desktop",
+      ...(account.id_token?.chatgpt_account_id
+        ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
+        : {}),
+    };
     const raw = yield* management(config, "api-call", {
       auth_index: account.auth_index,
       method: data === undefined ? "GET" : "POST",
@@ -275,52 +220,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = {
       id: account.id,
-      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
+      driver: ProviderDriverKind.make("codex"),
       ...(account.email ? { email: account.email } : {}),
     };
     const read = Effect.gen(function* () {
-      if (account.provider === "claude") {
-        // The same query the CLI sends, which adds its banked resets (`cedar_ember`).
-        const body = yield* apiCall(
-          config,
-          account,
-          `${CLAUDE_BASE}/api/oauth/usage?cedar_ember=1&skip_spend=1`,
-        );
-        const usage = yield* decodeClaudeUsage(body);
-        const resetCredits = claudeResetCreditsToContract(
-          usage.cedar_ember,
-          DateTime.toEpochMillis(yield* DateTime.now),
-        );
-        const model_scoped = (usage.limits ?? []).flatMap((limit) =>
-          limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
-            ? [
-                {
-                  display_name: limit.scope.model.display_name,
-                  utilization: limit.percent,
-                  resets_at: limit.resets_at ?? null,
-                },
-              ]
-            : [],
-        );
-        return {
-          ...base,
-          plan: "Claude Subscription",
-          usageLimits: {
-            ...claudeUsageResponseToLimits({
-              checkedAt,
-              response: {
-                rate_limits_available: true,
-                rate_limits: {
-                  five_hour: usage.five_hour ?? null,
-                  seven_day: usage.seven_day ?? null,
-                  model_scoped,
-                },
-              },
-            }).limits,
-            ...(resetCredits ? { resetCredits } : {}),
-          },
-        };
-      }
       const body = yield* apiCall(config, account, `${CODEX_BASE}/usage`);
       const usage = yield* decodeCodexUsage(body);
       const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
@@ -400,7 +303,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return yield* Effect.forEach(
       accounts.filter(
         (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
+          // Claude sign-ins stay inside Claude Code: Anthropic does not let other
+          // apps use or relay Claude.ai tokens, so hub Claude accounts are skipped.
+          !account.disabled && account.provider === "codex",
       ),
       (account) => readAccount(config, account),
       { concurrency: 4 },
@@ -429,58 +334,6 @@ export const makeCliproxyApi = Effect.gen(function* () {
     } as const;
   });
 
-  // Claims a Claude banked reset the way the CLI does: against the account's
-  // organization, with a request id that stays the same for this account and
-  // grant so a retry, from here or another environment, is the same claim.
-  const consumeClaude = Effect.fn("CliproxyApi.consumeClaude")(function* (
-    config: UsageLimitSourceConfig,
-    account: typeof AuthFile.Type,
-    grantId: string,
-  ) {
-    if (!CLAUDE_GRANT_ID.test(grantId)) {
-      return yield* new UsageLimitSourceError({ detail: "Claude returned a malformed reset." });
-    }
-    const profile = yield* decodeClaudeProfile(
-      yield* apiCall(config, account, `${CLAUDE_BASE}/api/oauth/profile`),
-    );
-    const body = yield* apiCall(
-      config,
-      account,
-      `${CLAUDE_BASE}/api/organizations/${profile.organization.uuid}/reset_rate_limits`,
-      {
-        program: "cedar_ember",
-        grant_id: grantId,
-        request_id: yield* creditRedeemRequestId(account.id, grantId).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-        ),
-      },
-    );
-    const { result } = yield* decodeClaudeClaim(body);
-    if (result === "cooldown") {
-      return yield* new UsageLimitSourceError({
-        detail: "Claude resets are cooling down. Try again later.",
-      });
-    }
-    if (result === "unavailable") {
-      return yield* new UsageLimitSourceError({
-        detail:
-          "Claude could not confirm the reset. If you are still limited in a moment, try again.",
-      });
-    }
-    return yield* clearCooldown(
-      config,
-      account,
-      (
-        {
-          reset: "reset",
-          not_limited: "nothingToReset",
-          already_used: "alreadyRedeemed",
-          ineligible: "noCredit",
-        } as const
-      )[result],
-    );
-  });
-
   const consume = Effect.fn("CliproxyApi.consume")(function* (
     config: UsageLimitSourceConfig,
     accountId: string,
@@ -488,9 +341,6 @@ export const makeCliproxyApi = Effect.gen(function* () {
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
     const operation = Effect.gen(function* () {
       const account = (yield* authFiles(config)).find((account) => account.id === accountId);
-      if (account && !account.disabled && account.provider === "claude") {
-        return yield* consumeClaude(config, account, creditId);
-      }
       if (!account || account.disabled || account.provider !== "codex") {
         return yield* new UsageLimitSourceError({
           detail: "The hub account is missing or disabled.",

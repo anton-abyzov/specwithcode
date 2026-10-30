@@ -36,8 +36,7 @@ import {
 import * as ServerSettings from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
-import { claudeLoginIdentity, watchLoginChanges } from "../loginWatch.ts";
-import * as ClaudeResetCredits from "../claudeResetCredits.ts";
+import { claudeAccountConfigPath, claudeLoginIdentity, watchLoginChanges } from "../loginWatch.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkClaudeProviderStatus,
@@ -130,7 +129,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const path = yield* Path.Path;
       const { cwd, providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
-      const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const catalogState = createClaudeNativeCatalog(
@@ -169,21 +167,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       );
       const configDir = yield* resolveClaudeHomePath(effectiveConfig, processEnv);
       const skillsEnvironment = yield* makeClaudeEnvironment(effectiveConfig, processEnv);
-      const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
+      const accountConfigPath = yield* claudeAccountConfigPath(
         effectiveConfig.homePath.trim() || processEnv.CLAUDE_CONFIG_DIR?.trim()
           ? configDir
           : undefined,
       );
-      // The CLI names its Keychain item after the CLAUDE_CONFIG_DIR it runs
-      // with: the resolved home path Studio exports, or the inherited value.
-      const claudeLogin: ClaudeResetCredits.ClaudeLogin = {
-        configDir,
-        keychainConfigDir: effectiveConfig.homePath.trim()
-          ? configDir
-          : processEnv.CLAUDE_CONFIG_DIR?.trim()
-            ? processEnv.CLAUDE_CONFIG_DIR
-            : undefined,
-      };
       const withIdentity = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
@@ -277,12 +265,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                 cwd,
                 resolveClaudeModelCatalog(manifest),
                 scopedLimitNames,
-                (version) =>
-                  ClaudeResetCredits.readClaudeResetCredits(claudeLogin, version).pipe(
-                    Effect.provideService(HttpClient.HttpClient, httpClient),
-                    Effect.provideService(FileSystem.FileSystem, fileSystem),
-                    Effect.provideService(Path.Path, path),
-                  ),
+                // Banked resets need Claude's sign-in token, which only Claude
+                // Code may use; SpecWithCode reads limits from the SDK alone.
+                undefined,
                 catalogState.current(),
               ),
             ),
@@ -352,68 +337,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         );
       }
 
-      // Same rules as Codex: serialised on the config directory that holds the
-      // login, one request id kept until Claude answers (a cooldown or rate
-      // limit is an answer), then a re-probe.
-      const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
-        Effect.gen(function* () {
-          const current = yield* snapshot.getSnapshot;
-          const grantId = current.usageLimits?.resetCredits?.nextCreditId;
-          if (!grantId || !current.version) return "noCredit" as const;
-          const version = current.version;
-          return yield* resetCreditCoordinator.redeem(
-            configDir,
-            (requestId) =>
-              ClaudeResetCredits.consumeClaudeResetCredit({
-                login: claudeLogin,
-                accountConfigPath,
-                version,
-                grantId,
-                requestId,
-              }),
-            ClaudeResetCredits.isSettledClaudeResetCreditFailure,
-          );
-        }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError(
-            (cause) =>
-              new ProviderDriverError({
-                driver: DRIVER_KIND,
-                instanceId,
-                detail:
-                  cause._tag === "ClaudeResetCreditError"
-                    ? cause.message
-                    : "Claude could not redeem the reset.",
-                cause,
-              }),
-          ),
-          // Re-probe after any answer, but only a reset claims the limits
-          // changed, so only a reset reports an unconfirmed refresh.
-          Effect.tap((outcome) =>
-            Effect.gen(function* () {
-              const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              yield* Cache.invalidateAll(capabilitiesProbeCache);
-              const refreshed = yield* snapshot.refresh;
-              const after = refreshed.usageLimits?.checkedAt;
-              if (
-                outcome === "reset" &&
-                (after === undefined ||
-                  after === before ||
-                  refreshed.usageLimits?.unavailable?.reason === "probeFailed")
-              ) {
-                return yield* new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail:
-                    "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
-                });
-              }
-            }),
-          ),
-        );
-
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -446,7 +369,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         },
         orchestrationAdapter,
         textGeneration,
-        consumeResetCredit,
       } satisfies ProviderInstance;
     }),
 };

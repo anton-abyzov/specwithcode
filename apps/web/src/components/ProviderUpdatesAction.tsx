@@ -1,21 +1,29 @@
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@specweave-studio/contracts";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@specweave-studio/client-runtime/state/runtime";
 import { useMemo, useRef, useState } from "react";
 import { useEnvironments } from "~/state/environments";
 import { readEnvironmentScope } from "~/state/session";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
+  describeProviderUpdateResult,
+  providerUpdateCommandInput,
   providerUpdateSkipReason,
   runProviderUpdateBatch,
   type ProviderUpdatePlanRow,
+  type ProviderUpdateRowResult,
   type ProviderUpdateSelection,
 } from "./ProviderUpdatesAction.logic";
 import { Button } from "./ui/button";
-import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "./ui/dialog";
+import { Checkbox } from "./ui/checkbox";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 
 export function ProviderUpdatePlan({
   rows,
@@ -25,36 +33,41 @@ export function ProviderUpdatePlan({
 }: {
   rows: readonly ProviderUpdatePlanRow[];
   initialSelection: readonly string[];
-  run: (row: ProviderUpdatePlanRow) => Promise<string>;
+  run: (row: ProviderUpdatePlanRow, force: boolean) => Promise<ProviderUpdateRowResult>;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [selected, setSelected] = useState(() => new Set(initialSelection));
-  const [results, setResults] = useState<Record<string, string>>({});
+  const [results, setResults] = useState<Record<string, ProviderUpdateRowResult>>({});
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const cancelled = useRef(false);
   const eligible = rows.filter((row) => !row.reason);
   const chosen = eligible.filter((row) => selected.has(row.key));
-  const start = async () => {
-    if (pending.current || chosen.length === 0) return;
+  // `force` is only sent from a row's "Update anyway" after an in-use refusal.
+  const start = async (snapshot: readonly ProviderUpdatePlanRow[] = chosen, force = false) => {
+    if (pending.current || snapshot.length === 0) return;
     pending.current = true;
     cancelled.current = false;
     setBusy(true);
     onBusyChange?.(true);
-    const snapshot = chosen;
-    setResults(Object.fromEntries(snapshot.map((row) => [row.key, "Queued"])));
+    setResults((old) => ({
+      ...old,
+      ...Object.fromEntries(snapshot.map((row) => [row.key, { text: "Queued" }])),
+    }));
     try {
       await runProviderUpdateBatch(
         snapshot,
         async (row) => {
-          setResults((old) => ({ ...old, [row.key]: "Updating…" }));
+          setResults((old) => ({ ...old, [row.key]: { text: "Updating…" } }));
           try {
-            const outcome = await run(row);
+            const outcome = await run(row, force);
             setResults((old) => ({ ...old, [row.key]: outcome }));
           } catch (error) {
             setResults((old) => ({
               ...old,
-              [row.key]: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              [row.key]: {
+                text: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              },
             }));
           }
         },
@@ -65,7 +78,7 @@ export function ProviderUpdatePlan({
           Object.fromEntries(
             Object.entries(old).map(([key, value]) => [
               key,
-              value === "Queued" ? "Cancelled before starting" : value,
+              value.text === "Queued" ? { text: "Cancelled before starting" } : value,
             ]),
           ),
         );
@@ -76,65 +89,87 @@ export function ProviderUpdatePlan({
     }
   };
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Uses each configured CLI’s owning installer. Staged Codex installs preserve running
-        sessions. Other installers wait until their CLI is idle. No app or service restart.
-      </p>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={busy}
-        onClick={() => setSelected(new Set(eligible.map((row) => row.key)))}
-      >
-        Select eligible connected machines
-      </Button>
-      <div className="max-h-[50vh] space-y-2 overflow-y-auto">
-        {rows.map((row) => (
-          <label key={row.key} className="flex items-start gap-3 rounded-lg border p-3">
-            <input
-              type="checkbox"
-              aria-label={`${row.machineLabel}: ${PROVIDER_DISPLAY_NAMES[row.driver] ?? row.driver} (${row.instanceId})`}
-              checked={selected.has(row.key) && !row.reason}
-              disabled={busy || !!row.reason}
-              onChange={(event) =>
-                setSelected((old) => {
-                  const next = new Set(old);
-                  if (event.target.checked) next.add(row.key);
-                  else next.delete(row.key);
-                  return next;
-                })
-              }
-            />
-            <div className="min-w-0 flex-1 text-sm">
-              <div className="font-medium">
-                {row.machineLabel} · {PROVIDER_DISPLAY_NAMES[row.driver] ?? row.driver}
+    <>
+      <DialogPanel>
+        <p className="text-sm text-muted-foreground">
+          Uses each configured CLI’s owning installer. Staged Codex installs preserve running
+          sessions. Other installers wait until their CLI is idle; Update anyway installs now and
+          running sessions keep their version until they restart. No app or service restart.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => setSelected(new Set(eligible.map((row) => row.key)))}
+        >
+          Select eligible connected machines
+        </Button>
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <label
+              key={row.key}
+              data-provider-update-row=""
+              className="flex items-start gap-3 rounded-lg border bg-background/40 p-3 has-data-disabled:opacity-80"
+            >
+              <span className="flex h-5 shrink-0 items-center">
+                <Checkbox
+                  aria-label={`${row.machineLabel}: ${PROVIDER_DISPLAY_NAMES[row.driver] ?? row.driver} (${row.instanceId})`}
+                  checked={selected.has(row.key) && !row.reason}
+                  disabled={busy || !!row.reason}
+                  onCheckedChange={(checked) =>
+                    setSelected((old) => {
+                      const next = new Set(old);
+                      if (checked) next.add(row.key);
+                      else next.delete(row.key);
+                      return next;
+                    })
+                  }
+                />
+              </span>
+              <div className="min-w-0 flex-1 space-y-0.5 text-sm leading-5">
+                <div className="font-medium" data-row-title="">
+                  {row.machineLabel} · {PROVIDER_DISPLAY_NAMES[row.driver] ?? row.driver}
+                </div>
+                <div className="text-muted-foreground">
+                  {row.provider.version ?? "Unknown"} →{" "}
+                  {row.provider.versionAdvisory?.latestVersion ?? "Unknown"} · {row.instanceId}
+                </div>
+                <div className="break-words font-mono text-xs leading-4 text-muted-foreground">
+                  {row.provider.versionAdvisory?.updateCommand ?? "External installer"}
+                </div>
+                <div role="status" className="pt-1 text-xs">
+                  {results[row.key]?.text ?? row.reason ?? "Ready"}
+                </div>
+                {results[row.key]?.inUse && !busy && (
+                  <Button
+                    className="mt-2"
+                    size="xs"
+                    variant="outline"
+                    onClick={(event) => {
+                      // Inside the row's label: do not toggle its checkbox.
+                      event.preventDefault();
+                      void start([row], true);
+                    }}
+                  >
+                    Update anyway
+                  </Button>
+                )}
               </div>
-              <div className="text-muted-foreground">
-                {row.provider.version ?? "Unknown"} →{" "}
-                {row.provider.versionAdvisory?.latestVersion ?? "Unknown"} · {row.instanceId}
-              </div>
-              <div className="break-words text-xs text-muted-foreground">
-                {row.provider.versionAdvisory?.updateCommand ?? "External installer"}
-              </div>
-              <div role="status" className="mt-1 text-xs">
-                {results[row.key] ?? row.reason ?? "Ready"}
-              </div>
-            </div>
-          </label>
-        ))}
-        {rows.length === 0 && (
-          <p className="text-sm">
-            No matching provider snapshots. Connect the machine and refresh Providers.
-          </p>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Two updates at a time. Keep this page open until the batch finishes. Cancel stops queued
-        items; an installer already running finishes normally. Retry by selecting failed items
-        again.
-      </p>
-      <div className="flex justify-end gap-2">
+            </label>
+          ))}
+          {rows.length === 0 && (
+            <p className="text-sm">
+              No matching provider snapshots. Connect the machine and refresh Providers.
+            </p>
+          )}
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          Two updates at a time. Keep this page open until the batch finishes. Cancel stops queued
+          items; an installer already running finishes normally. Retry by selecting failed items
+          again.
+        </p>
+      </DialogPanel>
+      <DialogFooter>
         {busy && (
           <Button
             variant="outline"
@@ -145,11 +180,11 @@ export function ProviderUpdatePlan({
             Cancel queued
           </Button>
         )}
-        <Button disabled={busy || chosen.length === 0} onClick={() => void start()}>
+        <Button disabled={busy || chosen.length === 0} onClick={() => void start(chosen)}>
           {busy ? "Updating…" : `Update ${chosen.length} selected`}
         </Button>
-      </div>
-    </div>
+      </DialogFooter>
+    </>
   );
 }
 
@@ -213,50 +248,41 @@ export function ProviderUpdatesAction({
       )}
       <Dialog open={open} onOpenChange={changeOpen}>
         <DialogPopup className="max-w-2xl" showCloseButton={!busy}>
-          <DialogTitle>
-            {target
-              ? `Update ${PROVIDER_DISPLAY_NAMES[target.driver] ?? target.driver}`
-              : "Update CLIs across machines"}
-          </DialogTitle>
-          <DialogDescription>
-            Review machines and installer actions before updating.
-          </DialogDescription>
-          {environments
-            .filter((environment) => !environment.serverConfig?.providers?.length)
-            .map((environment) => (
-              <p className="text-xs text-muted-foreground" key={environment.environmentId}>
-                {environment.label}:{" "}
-                {environment.connection.phase === "connected"
-                  ? "No provider snapshot. Refresh Providers on this machine."
-                  : "Offline. Connect this machine to inspect its CLIs."}
-              </p>
-            ))}
+          <DialogHeader>
+            <DialogTitle>
+              {target
+                ? `Update ${PROVIDER_DISPLAY_NAMES[target.driver] ?? target.driver}`
+                : "Update CLIs across machines"}
+            </DialogTitle>
+            <DialogDescription>
+              Review machines and installer actions before updating.
+            </DialogDescription>
+            {environments
+              .filter((environment) => !environment.serverConfig?.providers?.length)
+              .map((environment) => (
+                <p className="text-muted-foreground text-xs" key={environment.environmentId}>
+                  {environment.label}:{" "}
+                  {environment.connection.phase === "connected"
+                    ? "No provider snapshot. Refresh Providers on this machine."
+                    : "Offline. Connect this machine to inspect its CLIs."}
+                </p>
+              ))}
+          </DialogHeader>
           {open && (
             <ProviderUpdatePlan
               rows={displayedRows}
               initialSelection={target ? [`${target.environmentId}:${target.instanceId}`] : []}
               onBusyChange={setBusy}
-              run={async (row) => {
+              run={async (row, force) => {
                 if (!readEnvironmentScope(row.environmentId, AuthProvidersManageScope))
                   throw new Error(
                     "Provider-management permission is unavailable. No update was started.",
                   );
                 const result = await updateProvider({
                   environmentId: row.environmentId,
-                  input: { provider: row.driver, instanceId: row.instanceId },
+                  input: providerUpdateCommandInput(row, { force }),
                 });
-                if (result._tag === "Failure") {
-                  if (isAtomCommandInterrupted(result))
-                    return "Interrupted. Refresh Providers to check the outcome.";
-                  throw squashAtomCommandFailure(result);
-                }
-                const provider = result.value.providers.find(
-                  (provider) => provider.instanceId === row.instanceId,
-                );
-                return provider?.updateState?.status === "succeeded"
-                  ? `Updated and verified: ${provider.version ?? "version unavailable"}`
-                  : (provider?.updateState?.message ??
-                      "Could not verify update. Refresh Providers.");
+                return describeProviderUpdateResult(result, row.instanceId);
               }}
             />
           )}

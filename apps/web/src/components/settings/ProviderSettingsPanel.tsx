@@ -18,7 +18,6 @@ import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
   type AcpRegistryUrlAuthAction,
-  PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
@@ -71,6 +70,8 @@ import {
   type ProviderSettingsUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
+import { providerUpdateCommandInput } from "../ProviderUpdatesAction.logic";
+import { toastProviderUpdateResult } from "../providerUpdateResultToast";
 import { Button } from "../ui/button";
 import {
   Empty,
@@ -90,7 +91,7 @@ import {
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { stackedThreadToast, toastManager } from "../ui/toast";
+import { toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
@@ -769,6 +770,7 @@ export function EnvironmentProviderSettings({
     async (
       candidate: Pick<ProviderSettingsUpdateCandidate, "driver" | "instanceId">,
       targetVersion?: string,
+      force = false,
     ) => {
       if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
       // Ref-based re-entry guard, mirroring refreshProviders: a state updater
@@ -781,25 +783,13 @@ export function EnvironmentProviderSettings({
 
       const result = await updateProvider({
         environmentId,
-        input: {
-          provider: candidate.driver,
-          instanceId: candidate.instanceId,
-          ...(targetVersion ? { targetVersion } : {}),
-        },
+        input: providerUpdateCommandInput(candidate, { targetVersion, force }),
       });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Could not update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
-            description:
-              error instanceof Error
-                ? error.message
-                : "The provider update command could not be started.",
-          }),
-        );
-      }
+      toastProviderUpdateResult({
+        target: candidate,
+        result,
+        updateAnyway: () => void runProviderUpdate(candidate, targetVersion, true),
+      });
       updatingInstanceIdsRef.current.delete(candidate.instanceId);
       setUpdatingProviderInstanceIds((previous) => {
         if (!previous.has(candidate.instanceId)) {

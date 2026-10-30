@@ -41,6 +41,19 @@ final class SessionController {
   var rowsTask: Task<Void, Never>?
   /// `latestRunCompletedAt` of the last visit sent, so each finished run is visited once.
   var visitedRun: Date??
+  /// The thread list's `updatedAt` this chat last subscribed again to catch up
+  /// with, so one stale reading resubscribes once.
+  var caughtUpTo: Date?
+  /// Waits out `staleThreadGrace` before deciding the chat trails the list.
+  var lagTask: Task<Void, Never>?
+  /// The stream stopped for a reason a resubscribe on the same socket cannot
+  /// fix (authorization, defect, interrupt); only a new socket retries it.
+  var heldUntilNewSocket = false
+  /// When the current subscription started, to throttle catch-ups on reopen.
+  var subscribedAt: ContinuousClock.Instant?
+  /// The coordinator thread the project named when last read, so the chat
+  /// follows a change of that name rather than any difference from it.
+  var namedCoordinator: String?
 
   init(target: ChatTarget, session: ChatSession, sync: ThreadSync = ThreadSync()) {
     self.target = target
@@ -69,6 +82,8 @@ final class SessionController {
     task = nil
     rowsTask?.cancel()
     rowsTask = nil
+    lagTask?.cancel()
+    lagTask = nil
   }
 }
 
@@ -80,6 +95,11 @@ extension LiveEngine {
     let controller: SessionController
     if let existing = controllers[target], existing.session === session {
       controller = existing
+      // Opening a chat again catches it up, in case its stream stalled; not
+      // while its subscription is still loading or has only just started.
+      if controller.isSynchronized, controller.subscribedAt.map({ ContinuousClock.now - $0 >= options.resyncInterval }) ?? true {
+        resync(controller)
+      }
     } else {
       controllers[target]?.cancel()
       let retained = retainedThreads.removeValue(forKey: target)
@@ -107,6 +127,18 @@ extension LiveEngine {
       let connection = entry.connection
       Task { await connection.networkChanged() }
     }
+    pump(controller)
+  }
+
+  /// Subscribes the chat again on its machine's socket, resuming from the last
+  /// sequence it applied. The server replays what was missed or sends a snapshot.
+  func resync(_ controller: SessionController) {
+    guard controllers[controller.target] === controller, let threadId = controller.threadId,
+          !isHeld(controller, threadId) else { return }
+    controller.task?.cancel()
+    controller.task = nil
+    controller.subscribedSocket = nil
+    controller.endedSocket = nil
     pump(controller)
   }
 
@@ -141,6 +173,8 @@ extension LiveEngine {
     controller.task?.cancel()
     controller.subscribedSocket = socket
     controller.endedSocket = nil
+    controller.heldUntilNewSocket = false
+    controller.subscribedAt = .now
     controller.task = Task { [weak self] in
       await self?.subscribeThread(controller, socket, threadId)
     }
@@ -150,6 +184,7 @@ extension LiveEngine {
     guard !controller.resolving, let projectId = controller.projectId, let project = entry.project(projectId) else { return }
     switch CoordinatorRouting.resolve(project) {
     case let .known(id):
+      controller.namedCoordinator = id
       bind(controller, to: id)
     case let .needsStart(fallback):
       guard entry.canOperate else {
@@ -180,6 +215,9 @@ extension LiveEngine {
       controller.threadId = threadId
       controller.projection = nil
       controller.isSynchronized = false
+      controller.caughtUpTo = nil
+      controller.lagTask?.cancel()
+      controller.lagTask = nil
     }
     controller.endedSocket = nil
     pump(controller)
@@ -188,11 +226,15 @@ extension LiveEngine {
   /// Streams one thread on this socket. A typed server failure subscribes
   /// again on the same socket with backoff, inside this task, so `pump` keeps
   /// treating the subscription as live; a new socket, `close` or `bind`
-  /// cancels the wait. Authorization failures, defects, interrupts, a missing
-  /// thread, a closed socket and a normal end stop here until a new socket.
+  /// cancels the wait. A stream that ends otherwise while the socket stays
+  /// open subscribes again the same way. Authorization failures, defects,
+  /// interrupts, a missing thread and a closed socket stop here until a new socket.
   func subscribeThread(_ controller: SessionController, _ socket: RpcSocket, _ threadId: String) async {
     let sync = controller.sync
     var failures = 0
+    /// Streams that ended without a typed failure; reset only once a stream
+    /// synchronizes, so a server that keeps ending it at once backs off.
+    var ends = 0
     retrying: while !Task.isCancelled {
       let after = await sync.begin(threadId: threadId)
       let input = SubscribeThreadInput(threadId: threadId, afterSequence: after, requestCompletionMarker: true, acceptBoundedSnapshot: true)
@@ -203,6 +245,9 @@ extension LiveEngine {
           failures = 0
           let update = await sync.apply(chunk.values)
           chunk.ack()
+          // A cancelled task (resync, bind) must not write over the new subscription.
+          if Task.isCancelled { return }
+          if update?.isSynchronized == true { ends = 0 }
           if let update, controller.threadId == threadId { threadUpdated(controller, update) }
         }
       } catch is CancellationError {
@@ -222,7 +267,10 @@ extension LiveEngine {
         if controller.projection == nil, controller.missingThread != threadId, controller.threadId == threadId {
           assign(controller.session, \.loadError, error.message)
         }
-        guard isRetryable(error, controller, threadId) else { break retrying }
+        guard isRetryable(error, controller, threadId) else {
+          controller.heldUntilNewSocket = true
+          break retrying
+        }
         guard !Task.isCancelled, controller.subscribedSocket === socket, controller.threadId == threadId else { return }
         controller.isSynchronized = false
         refreshMeta(controller)
@@ -234,9 +282,20 @@ extension LiveEngine {
         // Subscribe again on the same socket; `begin` resumes from the last sequence.
         continue retrying
       } catch {
-        // The socket closed; the next socket subscribes again.
+        // The socket closed, or the stream broke while it may still be open.
       }
-      break retrying
+      // A stream that ended on a socket that stays open would leave the chat
+      // frozen until the next socket, so subscribe again with backoff; a
+      // closed socket waits for the next one.
+      guard !Task.isCancelled, controller.subscribedSocket === socket, controller.threadId == threadId,
+            controllers[controller.target] === controller, !isGone(controller, threadId),
+            !(await socket.isClosed), !Task.isCancelled else { break retrying }
+      controller.isSynchronized = false
+      refreshMeta(controller)
+      ends += 1
+      try? await Task.sleep(for: resubscribeDelay(afterFailures: max(failures, ends)))
+      failures += 1
+      guard !Task.isCancelled, controller.subscribedSocket === socket, !(await socket.isClosed) else { break retrying }
     }
     guard !Task.isCancelled, controller.subscribedSocket === socket, controller.threadId == threadId else { return }
     controller.task = nil
@@ -253,9 +312,64 @@ extension LiveEngine {
     default: break
     }
     if controller.missingThread == threadId { return false }
-    // A thread the shell no longer lists is gone; do not loop on it.
-    if let entry = machines[controller.environmentId], entry.snapshot != nil, entry.thread(threadId) == nil { return false }
-    return true
+    return !isGone(controller, threadId)
+  }
+
+  /// A thread the shell no longer lists is gone; do not loop on it.
+  func isGone(_ controller: SessionController, _ threadId: String) -> Bool {
+    guard let entry = machines[controller.environmentId], entry.snapshot != nil else { return false }
+    return entry.thread(threadId) == nil
+  }
+
+  /// A project's chat follows the coordinator thread the project names now,
+  /// for example after the coordinator was handed to a fresh thread.
+  /// Only a change of the name counts: a send can bind to a new thread before
+  /// the project names it, and must not be pulled back to the old one.
+  func followCoordinator(_ controller: SessionController) {
+    guard controller.isCoordinator, !controller.resolving, let current = controller.threadId,
+          let projectId = controller.projectId, let entry = machines[controller.environmentId],
+          let project = entry.project(projectId), case let .known(id) = CoordinatorRouting.resolve(project),
+          id != controller.namedCoordinator else { return }
+    let previous = controller.namedCoordinator
+    controller.namedCoordinator = id
+    guard previous != nil, id != current else { return }
+    bind(controller, to: id)
+  }
+
+  /// A stop that only a new socket or the shell listing the thread may lift.
+  func isHeld(_ controller: SessionController, _ threadId: String) -> Bool {
+    if controller.missingThread == threadId { return true }
+    guard controller.heldUntilNewSocket, controller.task == nil, let socket = machines[controller.environmentId]?.socket else { return false }
+    return controller.endedSocket === socket
+  }
+
+  /// The thread list says the thread changed after what the open chat shows.
+  /// Events can trail the list briefly, so after `staleThreadGrace` a chat
+  /// still behind subscribes again, once per list value. This heals a stream
+  /// that stalled on an open socket, whatever stalled it.
+  func checkBehind(_ controller: SessionController) {
+    guard controller.lagTask == nil, isBehind(controller) else { return }
+    let grace = options.staleThreadGrace
+    controller.lagTask = Task { [weak self] in
+      try? await Task.sleep(for: grace)
+      guard !Task.isCancelled, let self else { return }
+      controller.lagTask = nil
+      guard self.controllers[controller.target] === controller, self.isBehind(controller),
+            let threadId = controller.threadId,
+            let listed = self.machines[controller.environmentId]?.thread(threadId)?.updatedAt else { return }
+      controller.caughtUpTo = listed
+      Self.log.notice("Chat trails the thread list; subscribing again")
+      self.resync(controller)
+    }
+  }
+
+  func isBehind(_ controller: SessionController) -> Bool {
+    guard let threadId = controller.threadId, let projection = controller.projection,
+          let entry = machines[controller.environmentId], entry.isOnline, entry.isSynchronized,
+          !isHeld(controller, threadId), let listed = entry.thread(threadId)?.updatedAt else { return false }
+    if let caughtUpTo = controller.caughtUpTo, listed <= caughtUpTo { return false }
+    // A visit moves the thread's own `updatedAt` but not the projection's.
+    return listed > max(projection.updatedAt, projection.thread.updatedAt)
   }
 
   func threadUpdated(_ controller: SessionController, _ update: ThreadSync.Update) {

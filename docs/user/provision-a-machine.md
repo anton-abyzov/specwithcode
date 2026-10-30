@@ -51,7 +51,8 @@ Pass `--with-tailscale` when you want the faster direct route for that too.
 
 Ubuntu 22.04, 24.04 and 26.04, Debian 12 (x64 or arm64, systemd), and macOS.
 On anything else, provisioning stops before changing anything and names the
-nearest supported release. Windows machines cannot run workers.
+nearest supported release. `provision` does not set up Windows; a Windows 10 or 11
+x64 PC joins as a worker through the desktop app instead ([Add a machine](./add-a-machine.md)).
 
 ## From a new machine
 

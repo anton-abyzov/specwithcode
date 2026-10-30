@@ -780,21 +780,25 @@ export function ProviderInstanceCard({
   const editorStatusNode =
     isAuthenticated && authEmail ? (
       <>
-        {needsAttention ? statusDotNode : null}
-        <span>Authenticated as</span>
-        <ProviderAuthEmail email={authEmail} />
-        {authLabel ? <span>· {authLabel}</span> : null}
-        {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+        {needsAttention && statusDotNode ? (
+          <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
         ) : null}
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          Authenticated as <ProviderAuthEmail email={authEmail} />
+          {authLabel ? ` · ${authLabel}` : null}
+          {inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+        </span>
       </>
     ) : (
       <>
-        {statusDotNode}
-        <span>{summary.headline}</span>
-        {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+        {/* The dot keeps its own column so a wrapped detail lines up under the headline. */}
+        {statusDotNode ? (
+          <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
         ) : null}
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          {summary.headline}
+          {inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+        </span>
       </>
     );
   const versionAdvisoryNode = versionAdvisory ? (
@@ -1048,7 +1052,7 @@ export function ProviderInstanceCard({
               <ProviderStatusDiagnostic detail={statusDiagnostic}>
                 <div
                   tabIndex={statusDiagnostic ? 0 : undefined}
-                  className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
+                  className="flex min-w-0 items-start gap-x-1.5"
                 >
                   {editorStatusNode}
                 </div>

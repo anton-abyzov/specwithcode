@@ -31,7 +31,7 @@ export function ProjectCheckoutMissing({
     environments,
   });
   return (
-    <Alert role="status" data-testid="project-checkout-missing">
+    <Alert role="status" controlAlignment="first-line" data-testid="project-checkout-missing">
       <InfoIcon aria-hidden />
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>

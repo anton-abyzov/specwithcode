@@ -33,6 +33,10 @@ public final class LiveEngine: AppEngine {
     public var fleetLinkInterval: Duration
     /// How often a live thread list is saved for when its machine is unreachable.
     public var shellSaveInterval: Duration
+    /// How long an open chat may trail the thread list before it subscribes again.
+    public var staleThreadGrace: Duration
+    /// Minimum time between two catch-ups of every live stream on foreground.
+    public var resyncInterval: Duration
 
     public init(
       clientLabel: @escaping @Sendable @MainActor () -> String = { "iPhone" },
@@ -46,7 +50,9 @@ public final class LiveEngine: AppEngine {
       resubscribeDelay: Duration = .milliseconds(250),
       resubscribeMaximum: Duration = .seconds(30),
       fleetLinkInterval: Duration = .seconds(600),
-      shellSaveInterval: Duration = .seconds(30)
+      shellSaveInterval: Duration = .seconds(30),
+      staleThreadGrace: Duration = .seconds(3),
+      resyncInterval: Duration = .seconds(10)
     ) {
       self.clientLabel = clientLabel
       self.publishInterval = publishInterval
@@ -60,6 +66,8 @@ public final class LiveEngine: AppEngine {
       self.resubscribeMaximum = resubscribeMaximum
       self.fleetLinkInterval = fleetLinkInterval
       self.shellSaveInterval = shellSaveInterval
+      self.staleThreadGrace = staleThreadGrace
+      self.resyncInterval = resyncInterval
     }
   }
 
@@ -83,6 +91,7 @@ public final class LiveEngine: AppEngine {
   var retainedOrder: [ChatTarget] = []
   static let retainedThreadLimit = 8
   var active = true
+  var lastResync: ContinuousClock.Instant?
   var started = false
   var loadingDeadlinePassed = false
   /// SpecWithCode Connect, when the build is configured for it.
@@ -178,6 +187,7 @@ public final class LiveEngine: AppEngine {
   }
 
   public func setActive(_ value: Bool) {
+    let wasActive = active
     active = value
     if !value { saveFleetCache() }
     if value { refreshConnectIfStale() }
@@ -186,6 +196,26 @@ public final class LiveEngine: AppEngine {
       // Tasks may run out of order; each applies the latest flag.
       Task { [weak self] in await connection.setActive(self?.active ?? value) }
     }
+    // Back in front with sockets that stayed open: they may have stalled
+    // unnoticed, so the lists and open chats catch up from where they were.
+    if value, wasActive { resyncLive() }
+  }
+
+  /// Subscribes the shells and open chats again on their live sockets,
+  /// resuming from the last sequence, at most once per `resyncInterval`.
+  func resyncLive() {
+    let now = ContinuousClock.now
+    if let last = lastResync, now - last < options.resyncInterval { return }
+    lastResync = now
+    for entry in machines.values {
+      guard let socket = entry.socket else { continue }
+      entry.shellTask?.cancel()
+      entry.shellTask = Task { [weak self] in
+        guard let self, !(await socket.isClosed) else { return }
+        await self.subscribeShell(entry, socket)
+      }
+    }
+    for controller in controllers.values { resync(controller) }
   }
 
   public func reconnect(machineId: String) {
@@ -302,6 +332,8 @@ public final class LiveEngine: AppEngine {
           failures = 0
           let update = await sync.apply(chunk.values)
           chunk.ack()
+          // A cancelled task (a foreground catch-up) must not write over the new subscription.
+          if Task.isCancelled { return }
           if let update { shellUpdated(entry, update) }
         }
       } catch is CancellationError {
@@ -437,7 +469,9 @@ public final class LiveEngine: AppEngine {
         pump(controller)
       } else {
         retryMissingCoordinator(controller)
+        followCoordinator(controller)
         refreshMeta(controller)
+        checkBehind(controller)
       }
       visitIfUnread(controller)
     }

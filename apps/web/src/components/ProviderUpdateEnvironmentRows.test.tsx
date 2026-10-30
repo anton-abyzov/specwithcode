@@ -175,6 +175,7 @@ function deferred<T>() {
 type RowElement = ReactElement<{
   readonly status: ProviderUpdateRowStatus;
   readonly onUpdate: () => void;
+  readonly onUpdateAnyway?: (() => void) | undefined;
 }>;
 
 function renderRow(): RowElement {
@@ -244,5 +245,98 @@ describe("ProviderUpdateEnvironmentRows", () => {
     await flushPromises();
 
     expect(renderRow().props.status.kind).toBe("success");
+  });
+
+  it("offers Update anyway after an in-use refusal and retries with force", async () => {
+    const refused: ServerProvider = {
+      ...provider(),
+      updateState: {
+        status: "failed",
+        startedAt: "2026-06-26T12:00:00.000Z",
+        finishedAt: "2026-06-26T12:00:01.000Z",
+        message: "codex is running (pid 7: codex app-server).",
+        output: null,
+        inUse: true,
+      },
+    };
+    testState.updateProvider
+      .mockResolvedValueOnce(AsyncResult.success({ providers: [refused] }))
+      .mockResolvedValueOnce(AsyncResult.success({ providers: [provider("succeeded")] }));
+
+    expect(renderRow().props.onUpdateAnyway).toBeUndefined();
+    renderRow().props.onUpdate();
+    await flushPromises();
+    const failed = renderRow();
+    expect(failed.props.status.kind).toBe("failed");
+    expect(failed.props.status.text).toContain("pid 7");
+    expect(testState.updateProvider.mock.calls[0]?.[0].input.force).toBeUndefined();
+
+    failed.props.onUpdateAnyway!();
+    await flushPromises();
+    expect(testState.updateProvider.mock.calls[1]?.[0].input).toMatchObject({ force: true });
+    expect(renderRow().props.status.kind).toBe("success");
+  });
+
+  it("Update anyway forces only the candidates refused as in use", async () => {
+    const failedState = (message: string, inUse?: true) => ({
+      status: "failed" as const,
+      startedAt: "2026-06-26T12:00:00.000Z",
+      finishedAt: "2026-06-26T12:00:01.000Z",
+      message,
+      output: null,
+      ...(inUse ? { inUse } : {}),
+    });
+    const codex = provider() as ProviderUpdateCandidate;
+    const claude = {
+      ...provider(),
+      instanceId: ProviderInstanceId.make("claude-wsl"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+    } as ProviderUpdateCandidate;
+    testState.groups = [
+      {
+        environmentId,
+        label: "WSL",
+        isPrimary: false,
+        isSettling: false,
+        candidates: [codex, claude],
+        providers: [codex, claude],
+      },
+    ];
+    testState.updateProvider.mockImplementation(
+      async ({ input }: { input: { instanceId: string; force?: boolean } }) =>
+        AsyncResult.success({
+          providers: [
+            input.instanceId === "codex-wsl"
+              ? input.force
+                ? { ...provider("succeeded") }
+                : { ...codex, updateState: failedState("codex is running (pid 7: codex).", true) }
+              : { ...claude, updateState: failedState("npm exited with code 1.") },
+          ],
+        }),
+    );
+
+    renderRow().props.onUpdate();
+    await flushPromises();
+    expect(testState.updateProvider).toHaveBeenCalledTimes(2);
+    for (const call of testState.updateProvider.mock.calls) {
+      expect(call[0].input.force).toBeUndefined();
+    }
+
+    const failed = renderRow();
+    expect(failed.props.status.kind).toBe("failed");
+    failed.props.onUpdateAnyway!();
+    await flushPromises();
+
+    expect(testState.updateProvider).toHaveBeenCalledTimes(3);
+    expect(testState.updateProvider.mock.calls[2]?.[0].input).toEqual({
+      provider: "codex",
+      instanceId: "codex-wsl",
+      force: true,
+    });
+    expect(
+      testState.updateProvider.mock.calls.filter(
+        (call) => call[0].input.instanceId === "claude-wsl" && call[0].input.force,
+      ),
+    ).toHaveLength(0);
   });
 });

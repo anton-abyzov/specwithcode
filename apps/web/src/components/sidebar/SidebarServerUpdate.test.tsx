@@ -175,22 +175,22 @@ afterEach(() => {
 });
 
 describe("SidebarServerUpdate", () => {
-  it("shows the only server's versions and explains Update on the text and the button", () => {
-    server("only");
+  it("names the only server's machine and explains Update on the text and the button", () => {
+    server("only", { label: "ministorm" });
     render();
 
     const [row] = rows();
     const description =
-      "SpecWithCode on the server runs 1.0.65; this app runs 1.0.66. " +
-      "Update installs 1.0.66 on the server and restarts it. " +
+      "SpecWithCode on ministorm runs 1.0.65; this app runs 1.0.66. " +
+      "Update installs 1.0.66 on ministorm and restarts its server. " +
       "Threads running there stop for the restart. " +
-      "Nothing else on the server changes: no settings, no other software.";
+      "Nothing else on ministorm changes: no settings, no other software.";
     const rowTooltips = tooltips(row!);
     const [label, update] = rowTooltips;
 
     expect(rows()).toHaveLength(1);
     expect(rowTooltips).toHaveLength(2);
-    expect(text(label!.trigger)).toBe("Server 1.0.65 → 1.0.66");
+    expect(text(label!.trigger)).toBe("ministorm 1.0.65 → 1.0.66");
     expect(label!.popup).toBe(description);
     expect(update!.trigger).toBe(updateButton(row!));
     expect(update!.popup).toBe(description);
@@ -199,7 +199,7 @@ describe("SidebarServerUpdate", () => {
   });
 
   it("reads the row's versions with 'to' and its description once, on Update", () => {
-    server("only");
+    server("only", { label: "ministorm" });
     render();
 
     const [row] = rows();
@@ -209,7 +209,7 @@ describe("SidebarServerUpdate", () => {
       (node) => typeof node.type === "string" && node.props["aria-description"] !== undefined,
     );
 
-    expect(label!.trigger.props["aria-label"]).toBe("Server 1.0.65 to 1.0.66");
+    expect(label!.trigger.props["aria-label"]).toBe("ministorm 1.0.65 to 1.0.66");
     expect(label!.trigger.props["aria-description"]).toBeUndefined();
     expect(described).toHaveLength(1);
     expect(described[0]).toBe(updateButton(row!));
@@ -351,7 +351,7 @@ describe("SidebarServerUpdate", () => {
   });
 
   it("leaves a failed row's Retry button without the explanation", () => {
-    server("only");
+    server("only", { label: "ministorm" });
     state.updates.set("only", {
       status: "failed",
       stage: "downloading",
@@ -366,7 +366,7 @@ describe("SidebarServerUpdate", () => {
 
     expect(retry.props["aria-description"]).toBeUndefined();
     expect(tooltips(row!).map(({ popup }) => popup)).toEqual([
-      "Could not update server: Download failed.",
+      "Could not update ministorm server: Download failed.",
     ]);
   });
 });

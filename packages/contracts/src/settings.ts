@@ -545,6 +545,16 @@ export const ClientSettingsSchema = Schema.Struct({
       model: TrimmedNonEmptyString,
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Model families starred as a whole ("opus"), across providers: Favorites lists every
+  // version of them, newest first. Family names come from the picker's model identity.
+  favoriteModelFamilies: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  // Per provider, the favorite family whose newest version new chats start on. Set when
+  // the user picks a family's newest version; open chats never move.
+  modelFollowLatest: Schema.Record(ProviderInstanceId, TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   providerModelPreferences: Schema.Record(
     ProviderInstanceId,
     Schema.Struct({
@@ -2499,6 +2509,8 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  favoriteModelFamilies: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  modelFollowLatest: Schema.optionalKey(Schema.Record(ProviderInstanceId, TrimmedNonEmptyString)),
   providerModelPreferences: Schema.optionalKey(
     Schema.Record(
       ProviderInstanceId,
