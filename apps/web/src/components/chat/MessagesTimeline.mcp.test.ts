@@ -18,7 +18,7 @@ describe("resolveTimelineToolPresentation", () => {
 
   it("pretty prints bare SpecWithCode MCP toolkit names", () => {
     expect(resolveTimelineToolPresentation("list_scheduled_tasks")).toEqual({
-      displayName: "List scheduled tasks",
+      displayName: "List routines",
       logo: "studio-code",
     });
   });

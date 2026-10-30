@@ -11511,6 +11511,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ],
         { turnItemTypes: ["subagent"], messageRoles: ["user"] },
       );
+      // getRecoveryThreadIds("subagent-results") leaves out children that the
+      // missing-task, final-result and disposed returns below always skip, so
+      // startup does not pay this parent read for them. Change both together.
       const task = parentProjection.subagents.find(
         (candidate) =>
           candidate.id === forkedFrom.nodeId &&

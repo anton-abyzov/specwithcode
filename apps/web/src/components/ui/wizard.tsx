@@ -16,12 +16,12 @@ export function WizardPopup({
   return (
     <DialogPopup
       {...props}
-      className={cn(
-        "overflow-x-hidden overflow-y-auto",
-        size === "wide" ? "max-w-3xl" : "max-w-xl",
-      )}
+      className={cn("overflow-hidden", size === "wide" ? "max-w-3xl" : "max-w-xl")}
     >
-      <div className="flex min-h-0 flex-col">{children}</div>
+      {/* The panel takes the scroll so the header and footer actions stay in view. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+        {children}
+      </div>
     </DialogPopup>
   );
 }
@@ -56,7 +56,7 @@ export function WizardFooter({
   readonly leading?: ReactNode;
 }) {
   return (
-    <DialogFooter variant="bare" className={leading ? "sm:justify-between" : undefined}>
+    <DialogFooter variant="bare" className={cn("shrink-0", leading && "sm:justify-between")}>
       {leading}
       {leading ? (
         <div className="flex flex-col-reverse gap-2 sm:flex-row">{children}</div>
@@ -150,7 +150,7 @@ export function WizardPanel({
     <div
       data-slot="dialog-panel"
       className={cn(
-        "min-w-0 space-y-4 bg-zinc-25/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
+        "min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto bg-zinc-25/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
         className,
       )}
     >

@@ -132,6 +132,7 @@ export function AddProviderInstanceDialog({
   >([]);
   const [isManualAcpConfiguration, setIsManualAcpConfiguration] = useState(false);
   const [isRegistryLoading, setIsRegistryLoading] = useState(false);
+  const [isMoreAgentsOpen, setIsMoreAgentsOpen] = useState(false);
   const [isPreparingRegistryAgent, setIsPreparingRegistryAgent] = useState(false);
   // Driver-specific config drafts keyed by driver so toggling between drivers
   // during the same dialog session does not lose in-progress input.
@@ -433,7 +434,7 @@ export function AddProviderInstanceDialog({
             >
               <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
                 <div id="add-instance-driver-label" className="text-sm font-medium text-foreground">
-                  Provider
+                  Built-in providers
                 </div>
                 <RadioGroup
                   disabled={isPreparingRegistryAgent}
@@ -460,7 +461,7 @@ export function AddProviderInstanceDialog({
                             iconClassName="size-4"
                           />
                           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                            {option.value === "grok" ? "Grok (existing CLI)" : option.label}
+                            {option.label}
                           </span>
                           <RadioPrimitive.Indicator
                             className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
@@ -478,15 +479,16 @@ export function AddProviderInstanceDialog({
                     },
                   )}
                 </RadioGroup>
+                {driver === "grok" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Grok runs the grok CLI already on {environmentLabel}. No CLI there? Add Grok
+                    Build below instead; it installs Grok as its own registry agent.
+                  </p>
+                ) : null}
               </div>
 
               {wizardStep === 0 ? (
-                <div className="space-y-4 pt-4">
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <div aria-hidden className="flex-1 border-t border-border/70" />
-                    <span>Or choose from ACP Registry</span>
-                    <div aria-hidden className="flex-1 border-t border-border/70" />
-                  </div>
+                <div className="mt-5 border-t border-border/70 pt-5">
                   {isAcpRegistry && isManualAcpConfiguration ? (
                     <div className="grid gap-4">
                       <div className="flex items-start justify-between gap-3">
@@ -545,6 +547,9 @@ export function AddProviderInstanceDialog({
                         onLocalConfiguration={handleLocalAcpConfiguration}
                         onLoadingChange={setIsRegistryLoading}
                         onPreparingChange={setIsPreparingRegistryAgent}
+                        showGrokInstaller={driver === "grok" || selectedAcp?.id === "grok-build"}
+                        moreAgentsOpen={isMoreAgentsOpen}
+                        onMoreAgentsOpenChange={setIsMoreAgentsOpen}
                       />
                       {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
                         <p className="mt-2 text-2xs text-destructive-foreground">

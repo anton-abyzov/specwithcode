@@ -1,7 +1,11 @@
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { autoUpdaterMock, nativeUpdaterMock } = vi.hoisted(() => ({
@@ -16,6 +20,7 @@ const { autoUpdaterMock, nativeUpdaterMock } = vi.hoisted(() => ({
     disableDifferentialDownload: false,
     fullChangelog: false,
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
+    downloadedUpdateHelper: null as { versionInfo: unknown } | null,
     downloadUpdate: vi.fn(() => Promise.resolve([])),
     on: vi.fn(),
     quitAndInstall: vi.fn(),
@@ -45,6 +50,7 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.fullChangelog = false;
     autoUpdaterMock.checkForUpdates.mockClear();
     autoUpdaterMock.checkForUpdates.mockImplementation(() => Promise.resolve(null));
+    autoUpdaterMock.downloadedUpdateHelper = null;
     autoUpdaterMock.downloadUpdate.mockClear();
     autoUpdaterMock.downloadUpdate.mockImplementation(() => Promise.resolve([]));
     autoUpdaterMock.on.mockClear();
@@ -114,6 +120,79 @@ describe("ElectronUpdater", () => {
       );
       assert.notInclude(error.message, cause.message);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("forgets the last download's release record before each download", () =>
+    Effect.gen(function* () {
+      autoUpdaterMock.downloadedUpdateHelper = { versionInfo: { version: "1.2.4" } };
+      let recordAtDownload: unknown = "unset";
+      autoUpdaterMock.downloadUpdate.mockImplementationOnce(() => {
+        recordAtDownload = autoUpdaterMock.downloadedUpdateHelper?.versionInfo;
+        return Promise.resolve([]);
+      });
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+
+      yield* updater.downloadUpdate;
+
+      assert.isNull(recordAtDownload);
+      // Before any download there is no helper, and nothing to forget.
+      autoUpdaterMock.downloadedUpdateHelper = null;
+      yield* updater.downloadUpdate;
+      assert.equal(autoUpdaterMock.downloadUpdate.mock.calls.length, 2);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  // electron-updater's own cache check, on the record the private github
+  // provider returns: a later check differs only in download_count.
+  it.effect("reuses a cached download by its sha512 once the record is forgotten", () =>
+    Effect.gen(function* () {
+      const { DownloadedUpdateHelper } = (yield* Effect.promise(
+        () => import("electron-updater/out/DownloadedUpdateHelper.js"),
+      )) as {
+        DownloadedUpdateHelper: new (cacheDir: string) => {
+          setDownloadedFile: (...args: ReadonlyArray<unknown>) => Promise<void>;
+          validateDownloadedPath: (...args: ReadonlyArray<unknown>) => Promise<string | null>;
+        };
+      };
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-updater-" });
+      yield* fileSystem.makeDirectory(`${cacheDir}/pending`, { recursive: true });
+      const zipName = "SpecWithCode-1.2.4-arm64.zip";
+      const zipPath = `${cacheDir}/pending/${zipName}`;
+      yield* fileSystem.writeFileString(zipPath, "the 1.2.4 bundle");
+      // sha512 of "the 1.2.4 bundle", as latest-mac.yml writes it.
+      const sha512 =
+        "SVmU4SNvtUh1PAck09hlTDGY6aqmsyzDC0vz06llemfgEEKn0atNXBA4vjrljEzUEnnRDP/KF741WRl9EInVXA==";
+      const fileInfo = {
+        url: new URL(`https://example.test/${zipName}`),
+        info: { url: zipName, sha512 },
+      };
+      const record = (downloadCount: number) => ({
+        version: "1.2.4",
+        files: [{ url: zipName, sha512 }],
+        assets: [{ name: zipName, download_count: downloadCount }],
+      });
+      const silent = { info: () => {}, warn: () => {} };
+      const helper = new DownloadedUpdateHelper(cacheDir);
+      const validate = Effect.promise(() =>
+        helper.validateDownloadedPath(zipPath, record(6), fileInfo, silent),
+      );
+      yield* Effect.promise(() =>
+        helper.setDownloadedFile(zipPath, null, record(5), fileInfo, zipName, true),
+      );
+
+      // The record the next check returns: the download raised its count.
+      assert.isNull(yield* validate);
+      ElectronUpdater.forgetDownloadRecord({ downloadedUpdateHelper: helper });
+      // electron-updater joins the cache path itself, with the platform's separator.
+      assert.equal(yield* validate, path.normalize(zipPath));
+
+      // A cached file that no longer hashes to the release's sha512 is refused.
+      ElectronUpdater.forgetDownloadRecord({ downloadedUpdateHelper: helper });
+      yield* fileSystem.writeFileString(zipPath, "tampered");
+      assert.isNull(yield* validate);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("sets full changelog mode", () =>

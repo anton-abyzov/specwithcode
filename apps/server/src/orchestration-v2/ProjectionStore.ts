@@ -4134,6 +4134,38 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           ORDER BY ordinal DESC LIMIT 1
                         ))
                   )
+                  -- finalizeAppOwnedSubagent returns for these without writing,
+                  -- after reading the parent's whole projection (~115 ms for a
+                  -- parent with hundreds of tasks). They matched on every boot
+                  -- and held the connection for most of recovery.
+                  -- No app-owned task row for this child in the parent.
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_subagents AS task
+                    WHERE task.subagent_id = json_extract(child.payload_json, '$.forkedFrom.nodeId')
+                      AND task.thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                      AND task.child_thread_id = child.thread_id
+                      AND task.origin = 'app_owned'
+                  )
+                  -- An earlier result is final: its run completed or is gone, or
+                  -- the parent disposed of the task's delivery.
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_context_transfers AS result
+                    LEFT JOIN orchestration_v2_projection_runs AS source
+                      ON source.thread_id = child.thread_id
+                      AND source.run_id = json_extract(result.payload_json, '$.sourcePoint.runId')
+                    WHERE result.source_thread_id = child.thread_id
+                      AND result.target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                      AND result.type = 'subagent_result'
+                      AND (source.run_id IS NULL
+                        OR source.status = 'completed'
+                        OR EXISTS (
+                          SELECT 1 FROM orchestration_v2_projection_subagents AS task
+                          WHERE task.subagent_id = json_extract(child.payload_json, '$.forkedFrom.nodeId')
+                            AND CASE WHEN json_valid(task.payload_json)
+                              THEN json_extract(task.payload_json, '$.completionDelivery.state') = 'disposed'
+                              ELSE 0 END
+                        ))
+                  )
                   ELSE 0 END
               `;
             case "update-interrupted":

@@ -153,8 +153,8 @@ function SettingsIndexSections() {
         ) : null}
       </SettingsSection>
 
-      <SettingsSection title="Automations">
-        <SettingsRow icon="clock" label="Scheduled tasks" target="SettingsScheduledTasks" />
+      <SettingsSection title="Routines">
+        <SettingsRow icon="clock" label="Manage routines" target="SettingsScheduledTasks" />
       </SettingsSection>
 
       <SettingsSection title="Projects & threads">

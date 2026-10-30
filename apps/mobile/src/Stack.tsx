@@ -313,7 +313,7 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: SettingsScheduledTasksRouteScreen,
       linking: "scheduled-tasks",
       options: {
-        title: "Scheduled Tasks",
+        title: "Routines",
         // Leave room to center UIKit's title beside the two trailing actions.
         headerTitleStyle: { fontSize: 16, fontWeight: "800" },
       },
@@ -321,11 +321,11 @@ const SettingsContentStack = createNativeStackNavigator({
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
       linking: "scheduled-tasks/new",
-      options: { title: "New scheduled task" },
+      options: { title: "New routine" },
     }),
     SettingsScheduledTaskEdit: createNativeStackScreen({
       screen: SettingsScheduledTaskEditRouteScreen,
-      options: { title: "Edit scheduled task" },
+      options: { title: "Edit routine" },
     }),
     SettingsScheduledTaskBranch: createNativeStackScreen({
       screen: ScheduledTaskBranchPickerRouteScreen,

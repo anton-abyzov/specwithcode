@@ -97,7 +97,7 @@ describe("request execution provenance", () => {
     const output = markup(
       message({ createdBy: "agent", scheduledTaskId: ScheduledTaskId.make("scheduled-1") }),
     );
-    expect(output).toContain("Sent by automation");
+    expect(output).toContain("Sent by routine");
     expect(output).toContain('data-task-id="scheduled-1"');
     expect(output).toContain("M1 · Claude Code · Opus Original");
   });

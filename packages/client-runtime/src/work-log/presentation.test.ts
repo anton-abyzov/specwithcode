@@ -330,7 +330,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["studio_thread_configure", "Setting thread model", "Set thread model"],
     ["studio_thread_fork", "Forking this thread", "Requested a fork of this thread"],
     ["studio_thread_send_attachments", "Sending attachments", "Sent attachments"],
-    ["run_scheduled_task_now", "Running a scheduled task", "Requested a run of a scheduled task"],
+    ["run_scheduled_task_now", "Running a routine", "Requested a run of a routine"],
   ])("labels %s through its lifecycle", (tool, running, completed) => {
     expect(resolveWorkEntryToolPresentation({ label: `Studio-code.${tool}` })?.displayName).toBe(
       running,

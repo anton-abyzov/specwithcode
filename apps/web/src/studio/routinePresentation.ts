@@ -5,21 +5,30 @@
  */
 import type { ScheduledTask } from "@specweave-studio/contracts";
 
-export type RoutineTone = "active" | "paused" | "manual" | "listening" | "running" | "failed";
+export type RoutineTone =
+  | "active"
+  | "paused"
+  | "finished"
+  | "manual"
+  | "listening"
+  | "running"
+  | "failed";
 
-/** The `.sws-dot` tone each state draws with; paused and manual stay grey. */
+/** The `.sws-dot` tone each state draws with; paused, finished and manual stay grey. */
 const DOT_TONE: Record<RoutineTone, string | undefined> = {
   active: "resolved",
   listening: "resolved",
   running: "working",
   failed: "failed",
   paused: undefined,
+  finished: undefined,
   manual: undefined,
 };
 
-type RoutineStateInput = Pick<ScheduledTask, "enabled" | "lastRunStatus"> & {
-  readonly schedule: Pick<ScheduledTask["schedule"], "type">;
-};
+type RoutineStateInput = Pick<ScheduledTask, "enabled" | "lastRunStatus"> &
+  Partial<Pick<ScheduledTask, "lastRunAt">> & {
+    readonly schedule: Pick<ScheduledTask["schedule"], "type">;
+  };
 
 export function routineState(task: RoutineStateInput): {
   readonly tone: RoutineTone;
@@ -30,18 +39,25 @@ export function routineState(task: RoutineStateInput): {
   const tone: RoutineTone =
     task.lastRunStatus === "running"
       ? "running"
-      : !manual && !task.enabled
-        ? "paused"
-        : task.lastRunStatus === "failed"
+      : // A one-time routine turns itself off once it has run: done, not paused. One whose run
+        // failed stays a failure: the server says to turn it back on to try again.
+        task.schedule.type === "once" && !task.enabled && task.lastRunAt
+        ? task.lastRunStatus === "failed"
           ? "failed"
-          : manual
-            ? "manual"
-            : task.schedule.type === "webhook"
-              ? "listening"
-              : "active";
+          : "finished"
+        : !manual && !task.enabled
+          ? "paused"
+          : task.lastRunStatus === "failed"
+            ? "failed"
+            : manual
+              ? "manual"
+              : task.schedule.type === "webhook"
+                ? "listening"
+                : "active";
   const label = {
     running: "Running",
     paused: "Paused",
+    finished: "Finished",
     failed: "Last run failed",
     manual: "On request",
     listening: "Listening",

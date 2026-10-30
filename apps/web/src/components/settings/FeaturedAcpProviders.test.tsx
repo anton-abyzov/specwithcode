@@ -180,4 +180,13 @@ describe("FeaturedAcpProviders", () => {
     (manage.props.onClick as () => void)();
     expect(onManage).not.toHaveBeenCalled();
   });
+
+  it("offers Grok Build only when the built-in Grok provider asks for it", () => {
+    const hidden = render({ showGrok: false });
+    expect(
+      visitElements(hidden, (element) => element.props["aria-label"] === "Add Grok Build"),
+    ).toBeNull();
+    byLabel(hidden, "Add GitHub Copilot");
+    byLabel(render(), "Add Grok Build");
+  });
 });

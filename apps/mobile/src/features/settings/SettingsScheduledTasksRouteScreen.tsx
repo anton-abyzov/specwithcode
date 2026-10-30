@@ -306,7 +306,7 @@ export function SettingsScheduledTasksRouteScreen() {
           withNativeGlassHeaderItem({
             type: "button",
             label: "",
-            accessibilityLabel: "New task",
+            accessibilityLabel: "New routine",
             icon: { type: "sfSymbol", name: "plus" } as const,
             disabled: visibleEnvironments.length === 0,
             onPress: newTask,
@@ -314,13 +314,13 @@ export function SettingsScheduledTasksRouteScreen() {
         ]}
       />
       <SettingsScreen
-        title="Scheduled Tasks"
+        title="Routines"
         trailing={
           <View className="flex-row items-center">
             <AndroidSettingsEnvironmentFilter />
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="New task"
+              accessibilityLabel="New routine"
               accessibilityState={{ disabled: visibleEnvironments.length === 0 }}
               disabled={visibleEnvironments.length === 0}
               onPress={newTask}
@@ -368,7 +368,7 @@ export function SettingsScheduledTasksRouteScreen() {
           ) : (
             <Text className="px-2 text-base text-foreground-muted">
               {availableTargets.length === 0
-                ? "Connect an environment to view and create scheduled tasks."
+                ? "Connect an environment to view and create routines."
                 : "No environments match these filters. Change the filter above."}
             </Text>
           )}
@@ -387,11 +387,11 @@ export function SettingsScheduledTaskNewRouteScreen() {
     initialized.current = true;
     resetEditor();
   }, [availableTargets.length, resetEditor]);
-  return <SettingsScheduledTaskEditorScreen title="New scheduled task" />;
+  return <SettingsScheduledTaskEditorScreen title="New routine" />;
 }
 
 export function SettingsScheduledTaskEditRouteScreen() {
-  return <SettingsScheduledTaskEditorScreen title="Edit scheduled task" />;
+  return <SettingsScheduledTaskEditorScreen title="Edit routine" />;
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
@@ -451,7 +451,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
   const preventRemove = !saved && (hasChanges || saving);
   usePreventRemove(preventRemove, ({ data }) => {
     if (saving) {
-      Alert.alert("Saving task", "Wait for the task to finish saving before leaving.");
+      Alert.alert("Saving routine", "Wait for the routine to finish saving before leaving.");
       return;
     }
     Alert.alert("Discard changes?", "Your unsaved changes will be lost.", [
@@ -550,8 +550,8 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to create a scheduled task."
-              : "No environments match the current filters. Change the filters to create a task."}
+              ? "Connect an environment to create a routine."
+              : "No environments match the current filters. Change the filters to create a routine."}
           </Text>
         )}
       </ScrollView>
@@ -655,7 +655,7 @@ function TaskForm({
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
       Alert.alert(
-        "Incomplete task",
+        "Incomplete routine",
         "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
       );
       return;
@@ -694,7 +694,7 @@ function TaskForm({
     setSaving(false);
     if (result._tag === "Failure") {
       submissionPending.current = false;
-      failure("Could not save task", result);
+      failure("Could not save routine", result);
       return;
     }
     onSaved();
@@ -708,7 +708,9 @@ function TaskForm({
       importantForAccessibility={saving ? "no-hide-descendants" : "auto"}
     >
       {taskMissing ? (
-        <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
+        <Text className="px-1 text-base text-danger-foreground">
+          This routine no longer exists.
+        </Text>
       ) : null}
 
       {environmentUnavailable ? (
@@ -744,7 +746,7 @@ function TaskForm({
           }}
         />
       </SettingsSection>
-      <SettingsSection title="Task">
+      <SettingsSection title="Routine">
         <FormField
           label="Name"
           disabled={saving}
@@ -1011,8 +1013,8 @@ function TaskForm({
               </Text>
             ) : draft.task?.schedule.type === "interval" && draft.task.schedule.everyMs < 60_000 ? (
               <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                This task previously ran more than once per minute. Saving requires an interval of
-                at least 1 minute.
+                This routine previously ran more than once per minute. Saving requires an interval
+                of at least 1 minute.
               </Text>
             ) : null}
           </>
@@ -1020,7 +1022,7 @@ function TaskForm({
         <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
           <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>
           <ThemedSwitch
-            accessibilityLabel="Task enabled"
+            accessibilityLabel="Routine enabled"
             value={draft.enabled}
             onValueChange={(enabled) => setDraft({ ...draft, enabled })}
           />
@@ -1043,7 +1045,7 @@ function TaskForm({
         className="min-h-12 items-center justify-center rounded-[14px] bg-primary px-4 disabled:opacity-50"
       >
         <Text className="text-base font-studio-medium text-primary-foreground">
-          {saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
+          {saving ? "Saving…" : draft.task ? "Save changes" : "Create routine"}
         </Text>
       </Pressable>
     </View>
@@ -1080,7 +1082,9 @@ function WebhookScheduleDetails({
         }
       </Text>
       {task === null || resolved === null ? (
-        <Text className="text-sm text-foreground-muted">Save the task to get its webhook URL.</Text>
+        <Text className="text-sm text-foreground-muted">
+          Save the routine to get its webhook URL.
+        </Text>
       ) : (
         <>
           <Pressable
@@ -1191,7 +1195,7 @@ function EnvironmentTasks({
         : action === "toggle"
           ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
           : await remove({ environmentId, input: { id: task.id } });
-    failure(`Could not ${action === "toggle" ? "update" : action} task`, result);
+    failure(`Could not ${action === "toggle" ? "update" : action} routine`, result);
   };
 
   return (
@@ -1210,10 +1214,10 @@ function EnvironmentTasks({
       {tasks.error ? (
         <Text className="p-4 text-base text-danger-foreground">{tasks.error}</Text>
       ) : !tasks.data ? (
-        <Text className="p-4 text-base text-foreground-muted">Loading tasks…</Text>
+        <Text className="p-4 text-base text-foreground-muted">Loading routines…</Text>
       ) : visibleTasks?.length === 0 ? (
         <Text className="p-4 text-base text-foreground-muted">
-          {projectIds === null ? "No scheduled tasks yet." : "No tasks in this project."}
+          {projectIds === null ? "No routines yet." : "No routines in this project."}
         </Text>
       ) : (
         visibleTasks?.map((task, index) => (
@@ -1272,7 +1276,7 @@ function EnvironmentTasks({
                 if (action === "edit") {
                   onEdit(task);
                 } else if (action === "delete") {
-                  Alert.alert("Delete task?", task.title, [
+                  Alert.alert("Delete routine?", task.title, [
                     { text: "Cancel", style: "cancel" },
                     {
                       text: "Delete",
