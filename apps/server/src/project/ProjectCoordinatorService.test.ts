@@ -959,7 +959,10 @@ it.effect.each(["missing", "disabled", "signed-out", "unknown", "no-tools"] as c
                 ...(scenario === "signed-out"
                   ? { auth: { status: "unauthenticated" as const } }
                   : {}),
-                ...(scenario === "unknown" ? { auth: { status: "unknown" as const } } : {}),
+                // An unknown sign-in before the status check passed.
+                ...(scenario === "unknown"
+                  ? { status: "warning" as const, auth: { status: "unknown" as const } }
+                  : {}),
                 models: [
                   {
                     slug: "sonnet",
@@ -991,6 +994,19 @@ it.effect.each(["missing", "disabled", "signed-out", "unknown", "no-tools"] as c
         expect(f.sends).toEqual([]);
       }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
     }),
+);
+
+it.effect("sends through a ready provider that never reports its sign-in", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const p = provider("claude", "claudeAgent");
+    f.setProviders([{ ...p, auth: { status: "unknown" as const } }]);
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      yield* service.send({ projectId: id, commandId, prompt: "Hello" });
+      expect(f.sends).toHaveLength(1);
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
+  }),
 );
 
 it.effect("checks an existing coordinator again when its provider is signed out", () =>

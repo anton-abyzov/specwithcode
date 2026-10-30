@@ -14,6 +14,7 @@ import {
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
+  withLastProbedSignOut,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
   saveAcpRegistryCredential,
@@ -177,6 +178,22 @@ describe("acpRegistrySnapshotReadiness", () => {
       );
     },
   );
+
+  it("keeps a probed sign-out on the next readiness placeholder", () => {
+    const placeholder = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-10-30T10:00:00.000Z",
+      inspection: { status: "ready", agentId: "test-agent", version: null, distribution: "binary" },
+    });
+    expect(placeholder.status).toBe("ready");
+    expect(placeholder.auth.status).toBe("unknown");
+    expect(withLastProbedSignOut(placeholder, "unauthenticated").auth.status).toBe(
+      "unauthenticated",
+    );
+    for (const probed of [null, "unknown", "authenticated"] as const)
+      expect(withLastProbedSignOut(placeholder, probed)).toBe(placeholder);
+  });
 
   it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({

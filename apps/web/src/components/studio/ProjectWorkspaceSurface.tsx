@@ -1787,6 +1787,7 @@ export function ProjectWorkspaceSurface({
                   openCoordinator={openCoordinator}
                   openThread={openThreadInPane}
                   send={routingSend}
+                  coordinatorBlocked={Boolean(workersOnly)}
                   suspendShortcuts={coordinatorDetailsOpen || machineHandoffOpen}
                   toolsSlot={threadToolsSlot}
                   peek={

@@ -66,7 +66,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
 });
-const render = (environmentId = "m1") =>
+const render = (environmentId = "m1", coordinatorBlocked = false) =>
   act(async () =>
     root.render(
       <ProjectWorkerPane
@@ -79,6 +79,7 @@ const render = (environmentId = "m1") =>
         send={state.send}
         suspendShortcuts={false}
         toolsSlot={null}
+        coordinatorBlocked={coordinatorBlocked}
       />,
     ),
   );
@@ -129,4 +130,14 @@ it("lets a worker on this machine take its reply and files itself, with no coord
   expect(state.reportError).not.toHaveBeenCalled();
   // The composer's own send runs instead, so the draft is not cleared here.
   expect(state.clear).not.toHaveBeenCalled();
+});
+
+it("answers a thread on another machine there when this copy's coordinator would refuse the relay", async () => {
+  // A workers-only copy is viewed; its coordinator moved to the thread's machine.
+  await render("m1", true);
+  await send();
+  expect(container.querySelector('[data-chat-environment="m1"]')).not.toBeNull();
+  expect(state.send).not.toHaveBeenCalled();
+  expect(state.reportError).not.toHaveBeenCalled();
+  expect(container.querySelector("[data-routed-replies]")).toBeNull();
 });
