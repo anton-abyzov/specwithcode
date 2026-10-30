@@ -559,6 +559,10 @@ export interface ProjectionStoreV2Shape {
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** The thread's held queued runs, in queue order. */
+  readonly getHeldQueuedRuns: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2Run>, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -5285,6 +5289,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getHeldQueuedRuns: ProjectionStoreV2Shape["getHeldQueuedRuns"] = (threadId) =>
+      sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${threadId} AND status = 'queued'
+          AND json_extract(payload_json, '$.queueHeld') IS 1
+        ORDER BY ordinal ASC
+      `.pipe(
+        Effect.flatMap(decodeRows(decodeRunPayload, threadId)),
+        Effect.mapError(controlReadError(threadId)),
+      );
+
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
         .withTransaction(
@@ -6055,7 +6070,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         : sql<ShellRunRow>`
             SELECT thread_id, run_id, ordinal
             FROM orchestration_v2_projection_runs
-            WHERE thread_id IN ${sql.in(threadIds)}
+            WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           `;
 
     const selectShellRunItemCounts = (threadIds?: ReadonlyArray<ThreadId>) =>
@@ -6070,7 +6085,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT thread_id, run_id, COUNT(*) AS item_count
             FROM orchestration_v2_projection_turn_items
             WHERE run_id IS NOT NULL
-              AND thread_id IN ${sql.in(threadIds)}
+              AND thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
             GROUP BY thread_id, run_id
           `;
 
@@ -6084,7 +6099,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         : sql<PayloadRow & { readonly thread_id: string }>`
             SELECT thread_id, payload_json
             FROM orchestration_v2_projection_provider_threads
-            WHERE thread_id IN ${sql.in(threadIds)}
+            WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           `;
 
     const selectShellPendingTurnItemRows = (threadIds?: ReadonlyArray<ThreadId>) =>
@@ -6114,7 +6129,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
               AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
-              AND i.thread_id IN ${sql.in(threadIds)}
+              AND i.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           `;
 
     const runMapsByThreadId = (input: {
@@ -6663,7 +6678,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_threads
             WHERE deleted_at IS NULL
               AND project_id = ${projectId}
-              AND thread_id IN ${sql.in(threadIds)}
+              AND thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           `.pipe(
             Effect.map((rows) =>
               rows.map((row) => ({
@@ -6774,6 +6789,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext,
       getRunMessage,
       canStartQueuedRun,
+      getHeldQueuedRuns,
       getPendingNativeUserInputs,
       hasUnpairedRunInterruptRequest,
       isNodeStored,
@@ -7324,6 +7340,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           const run = projection.runs.find((candidate) => candidate.id === runId);
           return projection.messages.find((message) => message.id === run?.userMessageId);
+        }),
+      getHeldQueuedRuns: (threadId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          return projection.runs
+            .filter((run) => run.status === "queued" && run.queueHeld === true)
+            .toSorted((left, right) => left.ordinal - right.ordinal);
         }),
       canStartQueuedRun: (threadId) =>
         Effect.gen(function* () {

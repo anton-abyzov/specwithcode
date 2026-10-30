@@ -2,6 +2,7 @@ import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   MessageId,
   type OrchestrationV2Run,
   type RunId,
@@ -27,6 +28,7 @@ import {
 } from "./RestartQueueHold.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
+  continuationFailedBeforePrompt,
   isRestartNoteSource,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
@@ -149,10 +151,12 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     // Pending effects from older versions may target settled background work,
     // including waiting runs that reconciliation subsequently cancelled.
     // A restart cancels a running turn; a service update interrupts it first.
+    // A continuation the provider failed before taking its prompt starts again.
     if (
       !source ||
-      (source.status !== "cancelled" && source.status !== "interrupted") ||
-      isRestartNoteSource(source, projection.providerTurns)
+      (((source.status !== "cancelled" && source.status !== "interrupted") ||
+        isRestartNoteSource(source, projection.providerTurns)) &&
+        !continuationFailedBeforePrompt(source, projection.providerTurns, projection.attempts))
     )
       return;
     // A user submission after reconciliation takes precedence over an automatic
@@ -188,6 +192,30 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       (source.status === "interrupted" && interrupts.length === 0)
     )
       return;
+    // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
+    const { lineage } = projection.thread;
+    if (lineage.relationshipToParent === "subagent" && lineage.parentThreadId !== null) {
+      const parentRecords = yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents"]);
+      // A settled task no longer owns later work in its thread.
+      const parentRunIds = parentRecords.subagents.flatMap((task) =>
+        task.childThreadId === input.threadId &&
+        task.result === null &&
+        isOrchestrationV2WorkActive(task.status) &&
+        task.runId !== null
+          ? [task.runId]
+          : [],
+      );
+      if (
+        parentRunIds.length > 0 &&
+        (yield* threads.getThreadRecords(lineage.parentThreadId, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+          turnItemRunIds: parentRunIds,
+        })).turnItems.some(
+          (item) => item.type === "run_interrupt_request" && item.cause !== "service_update",
+        )
+      )
+        return;
+    }
     const sourceMessage = sourceRecords.messages.find(
       (message) => message.id === source.userMessageId,
     );

@@ -12,6 +12,7 @@ import datetime
 import json
 import posixpath
 import re
+import time
 
 from installation_descriptor import owned_path
 import live_database
@@ -95,19 +96,56 @@ def assert_held(service, request, now=None):
 # the hold began (apps/server/src/serviceUpdate/ServiceUpdateHold.ts), so the gate's 5 s poll in
 # releases up to 1.0.46 cannot let a run start; 2 s covers a commit already under way.
 HELD_GATE_SETTLE_SECONDS = 2
+# The held service's answer to a gate (apps/server/src/serviceUpdate/UpdateInstallGate.ts
+# INSTALL_GATE_ACK_FILE): written once it has read this very gate and every command it admitted
+# before has ended, so no commit is under way. Releases before it write none, and the settle runs
+# out in full; GATE_ACK_POLL_SECONDS is how often the helper looks for one.
+INSTALL_GATE_ACK_FILE = 'install-gate-ack.json'
+GATE_ACK_POLL_SECONDS = 0.05
+
+def held_since(own, home, request, service_pid=None):
+    """When the service `userdata/server-runtime.json` names (`service_pid`, when given) began holding
+    itself for the forced `request` (assert_held; `request` None reads `updates/config.json`'s), or
+    None. Never raises."""
+    try:
+        runtime = json.loads(owned_path(own / 'userdata' / 'server-runtime.json', home).read_text())
+        assert isinstance(runtime, dict) and (service_pid is None or runtime.get('pid') == service_pid)
+        if request is None:
+            config = json.loads(owned_path(own / 'updates' / 'config.json', home).read_text())
+            assert isinstance(config, dict)
+            request = config.get('installRequestedAt')
+        return assert_held({'own': own, 'home': home, 'runtime': runtime}, request)
+    except Exception:
+        return None
 
 def gate_settle(own, home, service_pid, full):
     """('held', HELD_GATE_SETTLE_SECONDS) when assert_held passes for the request in
     `updates/config.json` and the service `service_pid` that `userdata/server-runtime.json`
     names, else ('full', full). Never raises."""
-    try:
-        runtime = json.loads(owned_path(own / 'userdata' / 'server-runtime.json', home).read_text())
-        config = json.loads(owned_path(own / 'updates' / 'config.json', home).read_text())
-        assert isinstance(runtime, dict) and isinstance(config, dict) and runtime.get('pid') == service_pid
-        assert_held({'own': own, 'home': home, 'runtime': runtime}, config.get('installRequestedAt'))
+    if held_since(own, home, None, service_pid) is not None:
         return 'held', HELD_GATE_SETTLE_SECONDS
-    except Exception:  # Any doubt keeps the full settle.
-        return 'full', full
+    return 'full', full  # Any doubt keeps the full settle.
+
+def gate_acknowledged(own, home, service_pid, gate):
+    """True when the service `service_pid` acknowledged this very `gate` (write_install_gate's value)."""
+    try:
+        ack = json.loads(owned_path(own / 'updates' / INSTALL_GATE_ACK_FILE, home).read_text())
+    except Exception:
+        return False
+    return (isinstance(ack, dict) and ack.get('schemaVersion') == 1 and ack.get('servicePid') == service_pid
+            and isinstance(gate, dict) and ack.get('gateAt') == gate.get('at') and ack.get('helperPid') == gate.get('helperPid'))
+
+def await_gate_ack(own, home, service_pid, gate, settle, clock=None, sleep=None):
+    """Waits until the held service acknowledges `gate`, or `settle` seconds pass; True when it did.
+    A service that acknowledges nothing (a release before the acknowledgement) waits the full settle."""
+    clock, sleep = clock or time.monotonic, sleep or time.sleep
+    ends = clock() + settle
+    while not gate_acknowledged(own, home, service_pid, gate):
+        left = ends - clock()
+        if left <= 0:
+            return False
+        sleep(min(GATE_ACK_POLL_SECONDS, left))
+    return True
 
 def restart_old_release(failure, state_backup, loaded, launcher_restored, bootstrap, discard):
     """After a failed stop, copy or start, before anything of the new release ran: load the old

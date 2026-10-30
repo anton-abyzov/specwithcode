@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { cliArchiveFileName } from "./build-cli-archive.ts";
 import {
   appUpdateConfigProblems,
+  assetSetProblems,
   feedManifestName,
   feedProblems,
   formatSums,
@@ -17,10 +18,12 @@ import {
   isStableVersion,
   isWindowsLinuxAssetName,
   attachState,
+  mergeWindowsFeeds,
   parseFeedManifest,
   planUpload,
   publicLeaks,
   requiredAssetNames,
+  STAGED_WIN_ARM64_FEED,
   WINDOWS_LINUX_SUMS,
   windowsCliArchiveName,
 } from "./release-windows-linux.ts";
@@ -52,6 +55,14 @@ const OWN_ASSETS = [
   WINDOWS_LINUX_SUMS,
 ];
 
+const ARM64_ASSETS = [
+  ...requiredAssetNames("win", VERSION, "arm64").filter((name) => name !== "latest.yml"),
+  ...requiredAssetNames("linux", VERSION, "arm64"),
+];
+
+// Every new upload carries both arches (planUpload); a release from before arm64 holds OWN_ASSETS.
+const UPLOAD_ASSETS = [...OWN_ASSETS, ...ARM64_ASSETS];
+
 const WIN_FEED = `version: ${VERSION}
 files:
   - url: SpecWithCode-${VERSION}-x64.exe
@@ -80,6 +91,51 @@ describe("asset names", () => {
   it("names electron-updater's latest-channel feeds per platform", () => {
     expect(feedManifestName("win")).toBe("latest.yml");
     expect(feedManifestName("linux")).toBe("latest-linux.yml");
+    expect(feedManifestName("win", "arm64")).toBe("latest.yml");
+    expect(feedManifestName("linux", "arm64")).toBe("latest-linux-arm64.yml");
+  });
+
+  it("names the arm64 builds the way electron-builder and build-cli-archive.ts do", () => {
+    expect(requiredAssetNames("win", VERSION, "arm64")).toEqual([
+      `SpecWithCode-${VERSION}-arm64.exe`,
+      `SpecWithCode-${VERSION}-arm64.exe.blockmap`,
+      "latest.yml",
+      `studio-${VERSION}-win32-arm64.zip`,
+    ]);
+    expect(windowsCliArchiveName(VERSION, "arm64")).toBe(
+      cliArchiveFileName(VERSION, "win", "arm64"),
+    );
+    expect(requiredAssetNames("linux", VERSION, "arm64")).toEqual([
+      `SpecWithCode-${VERSION}-arm64.AppImage`,
+      `SpecWithCode-${VERSION}-arm64.deb`,
+      "latest-linux-arm64.yml",
+    ]);
+    for (const name of ARM64_ASSETS) {
+      expect(isWindowsLinuxAssetName(name, VERSION), name).toBe(true);
+      expect(isReleaseShAssetName(name), name).toBe(false);
+    }
+    expect(isWindowsLinuxAssetName(STAGED_WIN_ARM64_FEED, VERSION)).toBe(false);
+  });
+
+  it("requires x64 and takes a platform's arm64 build whole or not at all", () => {
+    expect(assetSetProblems(OWN_ASSETS, VERSION)).toEqual([]);
+    expect(assetSetProblems([...OWN_ASSETS, ...ARM64_ASSETS], VERSION)).toEqual([]);
+    const linuxArm64Only = requiredAssetNames("linux", VERSION, "arm64");
+    expect(assetSetProblems([...OWN_ASSETS, ...linuxArm64Only], VERSION)).toEqual([]);
+    expect(assetSetProblems([...OWN_ASSETS, `SpecWithCode-${VERSION}-arm64.exe`], VERSION)).toEqual(
+      [
+        `SpecWithCode-${VERSION}-arm64.exe.blockmap is missing, though other win arm64 assets are there`,
+        `studio-${VERSION}-win32-arm64.zip is missing, though other win arm64 assets are there`,
+      ],
+    );
+    expect(assetSetProblems([...ARM64_ASSETS, "latest.yml"], VERSION)).toEqual([
+      `SpecWithCode-${VERSION}-x64.exe is missing`,
+      `SpecWithCode-${VERSION}-x64.exe.blockmap is missing`,
+      `studio-${VERSION}-win32-x64.zip is missing`,
+      `SpecWithCode-${VERSION}-x86_64.AppImage is missing`,
+      `SpecWithCode-${VERSION}-amd64.deb is missing`,
+      "latest-linux.yml is missing",
+    ]);
   });
 
   it("never claims a name release.sh publishes, the macOS feed above all", () => {
@@ -165,6 +221,48 @@ describe("update feeds", () => {
   });
 });
 
+describe("Windows feed merge", () => {
+  const ARM64_FEED = `version: ${VERSION}
+files:
+  - url: SpecWithCode-${VERSION}-arm64.exe
+    sha512: DDDD
+    size: 5
+path: SpecWithCode-${VERSION}-arm64.exe
+sha512: DDDD
+releaseDate: '2026-10-20T10:05:00.000Z'
+`;
+
+  it("lists both installers and keeps the x64 one as the default path", () => {
+    const merged = parseFeedManifest(mergeWindowsFeeds(WIN_FEED, ARM64_FEED));
+    expect(merged.version).toBe(VERSION);
+    expect(merged.path).toBe(`SpecWithCode-${VERSION}-x64.exe`);
+    expect(merged.files).toEqual([
+      { url: `SpecWithCode-${VERSION}-x64.exe`, sha512: "AAAA", size: 4 },
+      { url: `SpecWithCode-${VERSION}-arm64.exe`, sha512: "DDDD", size: 5 },
+    ]);
+    expect(mergeWindowsFeeds(WIN_FEED, ARM64_FEED)).toContain(
+      "releaseDate: '2026-10-20T10:00:00.000Z'",
+    );
+  });
+
+  // electron-updater's Provider.findFile takes the file whose name holds process.arch.
+  it("gives each arch an installer whose name holds that arch", () => {
+    const merged = parseFeedManifest(mergeWindowsFeeds(WIN_FEED, ARM64_FEED));
+    for (const arch of ["x64", "arm64"]) {
+      expect(merged.files.find((file) => file.url.includes(arch))?.url).toBe(
+        `SpecWithCode-${VERSION}-${arch}.exe`,
+      );
+    }
+  });
+
+  it("refuses feeds of different versions or swapped arches", () => {
+    expect(() => mergeWindowsFeeds(WIN_FEED, ARM64_FEED.replaceAll(VERSION, "1.0.62"))).toThrow(
+      /arm64 latest\.yml is for 1\.0\.62/,
+    );
+    expect(() => mergeWindowsFeeds(ARM64_FEED, WIN_FEED)).toThrow(/not a x64 installer/);
+  });
+});
+
 describe("app-update.yml", () => {
   it("accepts the public feed on the stable channel", () => {
     expect(
@@ -218,16 +316,16 @@ describe("planUpload", () => {
   it("uploads the full set to a release that has only release.sh's assets", () => {
     const plan = planUpload({
       version: VERSION,
-      localNames: OWN_ASSETS,
+      localNames: UPLOAD_ASSETS,
       existingNames: RELEASE_SH_ASSETS,
       replace: false,
     });
     expect(plan.problems).toEqual([]);
-    expect(plan.upload).toHaveLength(OWN_ASSETS.length);
+    expect(plan.upload).toHaveLength(UPLOAD_ASSETS.length);
   });
 
   it("refuses to overwrite its own assets unless asked to", () => {
-    const again = { version: VERSION, localNames: OWN_ASSETS, existingNames: ["latest.yml"] };
+    const again = { version: VERSION, localNames: UPLOAD_ASSETS, existingNames: ["latest.yml"] };
     expect(planUpload({ ...again, replace: false }).problems).toEqual([
       "latest.yml is already on the release; rerun with replace to overwrite this workflow's assets",
     ]);
@@ -237,7 +335,7 @@ describe("planUpload", () => {
   it("never uploads the macOS feed, even with replace", () => {
     const plan = planUpload({
       version: VERSION,
-      localNames: [...OWN_ASSETS, "latest-mac.yml"],
+      localNames: [...UPLOAD_ASSETS, "latest-mac.yml"],
       existingNames: [],
       replace: true,
     });
@@ -253,6 +351,28 @@ describe("planUpload", () => {
     });
     expect(plan.problems).toContain(`SpecWithCode-${VERSION}-x86_64.AppImage is missing`);
     expect(plan.problems).toContain(`${WINDOWS_LINUX_SUMS} is missing`);
+  });
+
+  // A published release from before arm64 stays complete (attachState), but a new upload never
+  // leaves arm64 out: a replace with a smaller set would orphan the arm64 assets already there.
+  it("requires both arches of both platforms in every upload", () => {
+    const plan = planUpload({
+      version: VERSION,
+      localNames: OWN_ASSETS,
+      existingNames: [],
+      replace: false,
+    });
+    expect(plan.problems.sort()).toEqual(
+      [...ARM64_ASSETS].sort().map((name) => `${name} is missing`),
+    );
+    expect(
+      planUpload({
+        version: VERSION,
+        localNames: [...OWN_ASSETS, ...ARM64_ASSETS],
+        existingNames: [],
+        replace: false,
+      }).problems,
+    ).toEqual([]);
   });
 });
 
@@ -592,11 +712,81 @@ describe("command line", () => {
     ).toThrow(/does not match its sha512/);
   });
 
+  it("collects a Windows arm64 build with its feed staged for merge-feeds", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "release-windows-linux-"));
+    const desktop = NodePath.join(root, "release");
+    NodeFS.mkdirSync(desktop);
+    const exe = `SpecWithCode-${VERSION}-arm64.exe`;
+    NodeFS.writeFileSync(NodePath.join(desktop, exe), "arm!");
+    NodeFS.writeFileSync(NodePath.join(desktop, `${exe}.blockmap`), "map");
+    NodeFS.writeFileSync(
+      NodePath.join(desktop, "latest.yml"),
+      `version: ${VERSION}\nfiles:\n  - url: ${exe}\n    sha512: ${sha512("arm!")}\n    size: 4\npath: ${exe}\n`,
+    );
+    NodeFS.writeFileSync(NodePath.join(desktop, `studio-${VERSION}-win32-arm64.zip`), "zip");
+    const out = NodePath.join(root, "out");
+    run([
+      "collect",
+      "--platform",
+      "win",
+      "--arch",
+      "arm64",
+      "--version",
+      VERSION,
+      "--from",
+      desktop,
+      "--out",
+      out,
+    ]);
+    expect(NodeFS.readdirSync(out).sort()).toEqual(
+      [exe, `${exe}.blockmap`, STAGED_WIN_ARM64_FEED, `studio-${VERSION}-win32-arm64.zip`].sort(),
+    );
+
+    // The x64 job's assets land beside it; merge-feeds leaves one latest.yml for both.
+    const x64 = windowsBuild();
+    run([
+      "collect",
+      "--platform",
+      "win",
+      "--version",
+      VERSION,
+      "--from",
+      x64.desktop,
+      "--from",
+      x64.cli,
+      "--out",
+      out,
+    ]);
+    run(["merge-feeds", "--dir", out]);
+    expect(NodeFS.existsSync(NodePath.join(out, STAGED_WIN_ARM64_FEED))).toBe(false);
+    const feed = parseFeedManifest(NodeFS.readFileSync(NodePath.join(out, "latest.yml"), "utf8"));
+    expect(feed.files.map((file) => file.url)).toEqual([`SpecWithCode-${VERSION}-x64.exe`, exe]);
+  });
+
+  it("refuses a Linux arm64 build collected as x64", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "release-windows-linux-"));
+    const desktop = NodePath.join(root, "release");
+    NodeFS.mkdirSync(desktop);
+    expect(() =>
+      run([
+        "collect",
+        "--platform",
+        "linux",
+        "--version",
+        VERSION,
+        "--from",
+        desktop,
+        "--out",
+        NodePath.join(root, "out"),
+      ]),
+    ).toThrow(/no latest-linux\.yml/);
+  });
+
   it("writes the checksum file and plans the upload against a release listing", () => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "release-windows-linux-"));
     const dir = NodePath.join(root, "assets");
     NodeFS.mkdirSync(dir);
-    for (const name of OWN_ASSETS.filter((name) => name !== WINDOWS_LINUX_SUMS))
+    for (const name of UPLOAD_ASSETS.filter((name) => name !== WINDOWS_LINUX_SUMS))
       NodeFS.writeFileSync(NodePath.join(dir, name), name);
     run(["sums", "--dir", dir]);
     const sums = NodeFS.readFileSync(NodePath.join(dir, WINDOWS_LINUX_SUMS), "utf8");
@@ -612,7 +802,7 @@ describe("command line", () => {
       "--existing",
       NodePath.join(root, "existing.json"),
     ]);
-    expect(upload.trim().split("\n")).toHaveLength(OWN_ASSETS.length);
+    expect(upload.trim().split("\n")).toHaveLength(UPLOAD_ASSETS.length);
   });
 });
 
@@ -629,7 +819,15 @@ describe("install.ps1", () => {
   });
 
   it("picks the newest release that already carries the Windows archive", () => {
-    expect(script).toContain('-contains "studio-$($_.tag_name.Substring(1))-win32-$arch.zip"');
+    expect(script).toContain('-contains "studio-$($_.tag_name.Substring(1))-win32-$wanted.zip"');
+    expect(script).toContain("$tag = & $findTag $arch");
+  });
+
+  it("falls back to the x64 archive on Windows on ARM when no release has arm64 yet", () => {
+    expect(script).toMatch(
+      /if \(-not \$tag -and \$arch -eq "arm64"\) \{\n\s+\$tag = & \$findTag "x64"/,
+    );
+    expect(script).toContain('$arch = "x64"');
   });
 });
 
@@ -639,23 +837,54 @@ describe("release-windows-linux.yml", () => {
     "utf8",
   );
 
-  it("runs only on GitHub-hosted runners", () => {
-    const runners = [...workflow.matchAll(/^\s+runs-on:\s*(\S+)/gm)].map((match) => match[1]);
-    expect(new Set(runners)).toEqual(new Set(["ubuntu-24.04", "windows-2025"]));
+  const job = (name: string, next: string) =>
+    workflow.slice(workflow.indexOf(`\n  ${name}:\n`), workflow.indexOf(`\n  ${next}:\n`));
+
+  it("runs only on GitHub-hosted runners, each arch on its own hardware", () => {
+    const fixed = [...workflow.matchAll(/^\s+runs-on:\s*([^$\s]\S*)$/gm)].map((match) => match[1]);
+    const matrix = [...workflow.matchAll(/^\s+runner:\s*(\S+)/gm)].map((match) => match[1]);
+    expect(new Set(fixed)).toEqual(new Set(["ubuntu-24.04"]));
+    expect(matrix).toEqual(["windows-2025", "windows-11-arm", "ubuntu-24.04", "ubuntu-24.04-arm"]);
+    expect(workflow.match(/runs-on: \$\{\{ matrix\.runner \}\}/g)).toHaveLength(2);
   });
 
-  it("defaults to a dry run and builds both installers", () => {
+  // A release without arm64 would move arm64 installs onto x64 for good, so every leg is required.
+  it("requires every arch, and one leg's failure does not cancel the others", () => {
+    for (const [name, next] of [
+      ["windows", "linux"],
+      ["linux", "publish"],
+    ] as const) {
+      const text = job(name, next);
+      expect(text).not.toContain("continue-on-error");
+      expect(text).toContain("fail-fast: false");
+    }
+    expect(workflow).toContain("needs: [plan, windows, linux]");
+  });
+
+  it("defaults to a dry run and builds both installers for each arch", () => {
     expect(workflow).toMatch(/dry_run:\n(?:\s+\w+:.*\n)*?\s+default: true/);
-    expect(workflow).toContain("--platform win --target nsis --arch x64");
-    expect(workflow).toContain("--platform linux --target AppImage --arch x64");
+    expect(workflow).toContain('--platform win --target nsis --arch "$ARCH"');
+    expect(workflow).toContain('--platform linux --target AppImage --arch "$ARCH"');
+    expect(workflow.match(/^\s+ARCH: \$\{\{ matrix\.arch \}\}$/gm)).toHaveLength(2);
+    expect(job("windows", "linux")).toContain("rust_target: aarch64-pc-windows-msvc");
+    expect(job("linux", "publish")).toContain("rust_target: aarch64-unknown-linux-gnu");
   });
 
   it("builds and smoke-tests the Windows and Linux CLI archives", () => {
     expect(workflow.match(/node apps\/server\/scripts\/cli\.ts build-exe/g)).toHaveLength(2);
-    expect(workflow).toContain("build-cli-archive.ts --platform win --arch x64");
-    expect(workflow).toContain("build-cli-archive.ts --platform linux --arch x64");
-    expect(workflow).toContain('--archive "release-cli/studio-$VERSION-win32-x64.zip"');
-    expect(workflow).toContain('--archive "release-cli/studio-$VERSION-linux-x64.tar.gz"');
+    expect(workflow).toContain('build-cli-archive.ts --platform win --arch "$ARCH"');
+    expect(workflow).toContain('build-cli-archive.ts --platform linux --arch "$ARCH"');
+    expect(workflow).toContain('--archive "release-cli/studio-$VERSION-win32-$ARCH.zip"');
+    expect(workflow).toContain('--archive "release-cli/studio-$VERSION-linux-$ARCH.tar.gz"');
+  });
+
+  it("merges the Windows feeds before writing the checksums", () => {
+    const publish = workflow.slice(workflow.indexOf("\n  publish:\n"));
+    const merge = publish.indexOf('node "$TOOL" merge-feeds --dir "$ASSETS"');
+    expect(merge).toBeGreaterThan(-1);
+    expect(merge).toBeLessThan(publish.indexOf('node "$TOOL" sums --dir "$ASSETS"'));
+    expect(workflow).toContain('collect --platform win --arch "$ARCH"');
+    expect(workflow).toContain('collect --platform linux --arch "$ARCH"');
   });
 
   // release.sh owns every studio-*.tar.gz name; install.sh installs its Node bundle.
@@ -664,7 +893,9 @@ describe("release-windows-linux.yml", () => {
     expect(isReleaseShAssetName(name)).toBe(true);
     expect(isWindowsLinuxAssetName(name, VERSION)).toBe(false);
     expect(requiredAssetNames("linux", VERSION)).not.toContain(name);
-    expect(workflow).toContain("name: cli-linux-x64-${{ needs.plan.outputs.version }}");
+    expect(workflow).toContain(
+      "name: cli-linux-${{ matrix.arch }}-${{ needs.plan.outputs.version }}",
+    );
   });
 
   // v1.0.94 waited 8,548 s on a workflow-wide group behind v1.0.93's hour-long publish wait.

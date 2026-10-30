@@ -138,10 +138,22 @@ if (-not $version) {
   $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "studio-install" }
   # The Windows archive is attached a while after the macOS release is published
   # (.github/workflows/release-windows-linux.yml), so take the newest release that has it.
-  $tag = ($releases | Where-Object {
-      -not $_.draft -and $_.tag_name -match $tagPattern -and
-      (@($_.assets | ForEach-Object { $_.name }) -contains "studio-$($_.tag_name.Substring(1))-win32-$arch.zip")
-    } | Select-Object -First 1).tag_name
+  $findTag = {
+    param($wanted)
+    ($releases | Where-Object {
+        -not $_.draft -and $_.tag_name -match $tagPattern -and
+        (@($_.assets | ForEach-Object { $_.name }) -contains "studio-$($_.tag_name.Substring(1))-win32-$wanted.zip")
+      } | Select-Object -First 1).tag_name
+  }
+  $tag = & $findTag $arch
+  # Releases before the arm64 build carry the x64 archive only; Windows on ARM runs it emulated.
+  if (-not $tag -and $arch -eq "arm64") {
+    $tag = & $findTag "x64"
+    if ($tag) {
+      Write-Warning "No $channel release has a Windows arm64 build yet; installing the x64 build, which Windows on ARM runs under emulation."
+      $arch = "x64"
+    }
+  }
   if (-not $tag) { Fail "could not find a $channel release; set STUDIO_VERSION" }
   $version = $tag.Substring(1)
 }

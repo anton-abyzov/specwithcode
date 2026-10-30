@@ -40,6 +40,7 @@ import {
   type UpdateRunRecord,
   writeRunApp,
 } from "../../updates/updateRun.ts";
+import { markRestartStep } from "../../updates/restartTrace.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
 
@@ -103,6 +104,12 @@ export interface ServiceUpdateRunsDeps {
   readonly appTarget?: Effect.Effect<string | null>;
   /** A fresh run id; random UUIDs outside tests. */
   readonly newRunId?: () => string;
+  /**
+   * On every look: the app release the live run installs after its service,
+   * or null, so the app stages that download as soon as its gate opens
+   * (DesktopUpdates.stageForRun).
+   */
+  readonly stageApp?: (version: string | null) => Effect.Effect<void>;
 }
 
 const nowMillis = Effect.map(DateTime.now, DateTime.toEpochMillis);
@@ -116,6 +123,8 @@ export function makeServiceUpdateRuns(deps: ServiceUpdateRunsDeps) {
   // One creation at a time in this process; O_EXCL covers any other writer.
   const creating = Semaphore.makeUnsafe(1);
   let lastKickMs: number | null = null;
+  // The run whose verified service this process already marked for the press trace.
+  let verifiedMarked: string | null = null;
   // Runs made by this process, and when it first looked: a `preparing` run
   // from before then lost its window with the process that made it.
   const madeHere = new Set<string>();
@@ -416,6 +425,10 @@ export function makeServiceUpdateRuns(deps: ServiceUpdateRunsDeps) {
       yield* deps.kick("update run lease lapsed");
     }
     const latest = readRun(files) ?? run;
+    if (latest.phase === "verified" && verifiedMarked !== latest.runId) {
+      verifiedMarked = latest.runId;
+      yield* markRestartStep("verified-observed", { detail: latest.runId });
+    }
     if (
       latest.phase === "verified" &&
       latest.appTargetVersion !== null &&
@@ -423,7 +436,11 @@ export function makeServiceUpdateRuns(deps: ServiceUpdateRunsDeps) {
     ) {
       yield* deps.followUp.advance(latest);
     }
-    return !runIsTerminal(readRun(files) ?? latest, readRunApp(files));
+    const live = !runIsTerminal(readRun(files) ?? latest, readRunApp(files));
+    if (deps.stageApp !== undefined) {
+      yield* deps.stageApp(live ? latest.appTargetVersion : null);
+    }
+    return live;
   }).pipe(
     Effect.catchCause((cause) =>
       logWarning("update run check failed", { cause: String(cause) }).pipe(Effect.as(false)),

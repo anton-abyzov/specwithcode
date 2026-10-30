@@ -18,6 +18,8 @@ import { ModelRowAvailability } from "./ModelUsage";
 import type { AvailabilityText } from "../../studio/modelAvailability";
 import type { ServerProviderModel } from "@specweave-studio/contracts";
 import { describeModelFacts } from "./HarnessDescription";
+import { EffortGlyph } from "./EffortGlyph";
+import { effortWord } from "./ModelPickerEffortStrip";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -40,6 +42,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
   isSelected: boolean;
   showSelection?: boolean;
   showProvider: boolean;
+  /** A group header above names the provider, so the row keeps only its usage. */
+  providerInHeader?: boolean;
+  /** The effort this model runs at: the chosen one for the picked row, else its default. */
+  effort?: { readonly id: string; readonly label: string } | null;
   preferShortName?: boolean;
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
@@ -74,7 +80,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 truncate text-xs font-medium leading-snug">
+          <div className="min-w-0 truncate text-sm leading-snug">
             {props.useTriggerLabel
               ? getTriggerDisplayModelLabel(props.model)
               : getDisplayModelName(
@@ -111,8 +117,21 @@ export const ModelListRow = memo(function ModelListRow(props: {
             </Badge>
           ) : null}
         </div>
-        {props.showProvider && (
-          <div className="mt-1 flex items-start gap-1.5">
+        {props.showProvider && props.providerInHeader ? (
+          <>
+            {/* The group header shows the provider; screen readers hear it on the row. */}
+            <span className="sr-only">{providerLabel}</span>
+            {props.availability ? (
+              <div className="mt-0.5 flex min-w-0 text-xs leading-snug">
+                <ModelRowAvailability text={props.availability} />
+                {props.warningReason ? (
+                  <span className="sr-only">{props.availability.long}</span>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        ) : props.showProvider ? (
+          <div className="mt-0.5 flex items-start gap-1.5">
             <ProviderInstanceIcon
               driverKind={props.driverKind}
               displayName={props.providerDisplayName}
@@ -143,10 +162,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
               </>
             ) : null}
           </div>
-        )}
+        ) : null}
         {props.runtimeModel ? (
           <p
-            className="mt-1 truncate text-2xs leading-snug text-muted-foreground"
+            className="mt-0.5 truncate text-2xs leading-snug text-muted-foreground"
             title={describeModelFacts(props.runtimeModel)}
           >
             {describeModelFacts(props.runtimeModel)}
@@ -155,8 +174,20 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        {props.effort ? (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 text-xs text-muted-foreground",
+              props.isSelected && "text-foreground",
+            )}
+            data-model-row-effort={props.effort.id}
+          >
+            {effortWord(props.effort)}
+            <EffortGlyph value={props.effort.id} className="size-3.5" />
+          </span>
+        ) : null}
         {props.showSelection && props.isSelected ? (
-          <CheckIcon className="size-3.5" aria-hidden="true" />
+          <CheckIcon className="size-3.5 text-primary" aria-hidden="true" />
         ) : null}
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
         <Tooltip>

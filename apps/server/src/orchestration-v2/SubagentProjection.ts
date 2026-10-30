@@ -98,6 +98,14 @@ export function makeSubagentChildThread(input: {
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    // Pins, ordering and settle overrides are the person's choices for the
+    // parent thread; a child starts unpinned and settles on its own.
+    pinnedAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    autoSettleDisabledAt: null,
+    // The child picks its own model, so no preswitch origin carries over.
+    limitPreswitchFrom: null,
     lastVisitedAt: null,
     deletedAt: null,
   };

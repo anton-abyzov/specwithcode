@@ -174,6 +174,19 @@ class Timings(object):
         self.last = moment
 
 
+# A check this recent that found the very release an install request is bound to answers a check
+# request pending beside it: the pass installs what the person was shown without asking GitHub
+# again (beforeInstall took 1.1-1.7 s with a discovery on M4, 1.0.119-1.0.126).
+FRESH_CHECK = datetime.timedelta(minutes=10)
+
+
+def fresh_check(agent, meta, wanted):
+    ua = _ua(agent)
+    checked, now = ua.parse_time(agent.state.get('checkedAt')), ua.utcnow()
+    return (meta is not None and wanted is not None and wanted == meta.get('version') and checked is not None
+            and now - FRESH_CHECK <= checked <= now + datetime.timedelta(minutes=1))
+
+
 def lap(agent, phase, install_request=False):
     """Ends `phase` of this pass and mirrors the timings into its run. The first lap of an install
     request also records how long that request waited for this pass. Never raises."""

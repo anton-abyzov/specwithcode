@@ -1200,13 +1200,7 @@ class Agent(object):
                                               last.get('previousSourceCommit'))
 
     def cleanup_versions(self, installed):
-        for parent in (self.updates / 'downloads', self.updates / 'helpers'):
-            if not parent.is_dir() or parent.is_symlink():
-                continue
-            for child in parent.iterdir():
-                ranked = version_tuple(child.name)
-                if (ranked is not None and ranked <= installed) or child.name.startswith('.stage-'):
-                    remove_path(child, self.home)
+        cache.cleanup_versions(self, installed)
 
     def rotate_log(self):
         for name in SERVICE_LOGS:
@@ -1259,6 +1253,8 @@ class Agent(object):
         wanted = (update_request.bound(config) or {}).get('version') if install_request else None
         newer = meta is not None and wanted is not None and \
             (version_tuple(wanted) or ()) > (version_tuple(meta['version']) or ())
+        if check_request and install_request and runs.fresh_check(self, meta, wanted):  # It answers the check request.
+            state['handledCheckRequestAt'], check_request = config['checkRequestedAt'], False
         due = (check_request or newer or (config['checkAutomatically'] and self.check_is_due())
                or (install_request and meta is None) or (state.get('availableVersion') and meta is None))
         fresh = False
@@ -1307,6 +1303,7 @@ class Agent(object):
                     state['handledInstallRequestAt'] = config['installRequestedAt']
                 return self.finish('error', error.message)
             state['downloadedVersion'] = version
+            cache.prestage(self, verified)  # The apply then skips unpacking it (release_stage.py).
             self.set_status('downloaded', None)
         state['downloadedVersion'] = version
         if not (config['installAutomatically'] or install_request):

@@ -5,6 +5,8 @@ import {
   APP_DID_NOT_APPLY,
   APP_INSTALL_APPLY_MS,
   APP_INSTALL_MAX_ATTEMPTS,
+  APP_INSTALL_QUICK_RETRY_MS,
+  APP_INSTALL_RETRY_BUDGET_MS,
   APP_INSTALL_RETRY_MS,
   beforeInstall,
   decideFollowUp,
@@ -188,6 +190,88 @@ describe("install answers", () => {
     expect(afterInstall(app(), { accepted: true, failed: true, message: null }, NOW)).toMatchObject(
       { appPhase: "failed", message: APP_DID_NOT_APPLY },
     );
+  });
+});
+
+describe("quick retries", () => {
+  const busy = {
+    accepted: false,
+    failed: false,
+    message: "The app updater is busy.",
+    reason: "busy",
+  };
+  const behind = {
+    accepted: false,
+    failed: false,
+    message: "The app update waits for the service on this Mac.",
+    reason: "service-behind",
+  };
+  const input = (own: RunAppRecord, nowMs: number) => ({
+    run: run(),
+    app: own,
+    appVersion: "1.0.69",
+    nowMs,
+    installing: false,
+  });
+
+  it("asks a busy or behind refusal again after 1, 2, then every 5 seconds", () => {
+    let own = app();
+    let at = NOW;
+    const waits: number[] = [];
+    for (const answer of [behind, busy, behind, busy, behind]) {
+      own = afterInstall(own, answer, at);
+      expect(own.appPhase).toBe("installing");
+      const delay = own.retryDelayMs!;
+      waits.push(delay);
+      // Not before the wait, and due right at its end.
+      expect(decideFollowUp(input(own, at + delay - 1))).toEqual({ type: "none" });
+      expect(decideFollowUp(input(own, at + delay))).toMatchObject({
+        type: "write",
+        install: true,
+      });
+      at += delay;
+    }
+    expect(waits).toEqual([1_000, 2_000, 5_000, 5_000, 5_000]);
+    expect(APP_INSTALL_QUICK_RETRY_MS).toEqual([1_000, 2_000, 5_000]);
+  });
+
+  it("keeps the regular interval for other refusals, and starts quick again after one", () => {
+    const missing = { accepted: false, failed: false, message: "Not downloaded.", reason: null };
+    const slow = afterInstall(app(), missing, NOW);
+    expect(slow.retryDelayMs).toBe(APP_INSTALL_RETRY_MS);
+    expect(afterInstall(slow, behind, NOW).retryDelayMs).toBe(1_000);
+    // An answer that names no reason (an older main) waits the regular interval.
+    const { reason: _reason, ...unnamed } = busy;
+    expect(afterInstall(app(), unnamed, NOW).retryDelayMs).toBe(APP_INSTALL_RETRY_MS);
+  });
+
+  it("gives up within the same budget as ten refusals 30 seconds apart", () => {
+    expect(APP_INSTALL_RETRY_BUDGET_MS).toBe((APP_INSTALL_MAX_ATTEMPTS - 1) * APP_INSTALL_RETRY_MS);
+    let own = app();
+    let waited = 0;
+    let attempts = 0;
+    while (own.appPhase === "installing") {
+      own = afterInstall(own, behind, NOW + waited);
+      attempts += 1;
+      if (own.appPhase === "installing") waited = own.retryWaitMs!;
+    }
+    expect(own).toMatchObject({ appPhase: "failed", message: behind.message });
+    // 1 + 2 + 5 * 53 = 268 seconds of waits, then the next 5 would pass 270.
+    expect(waited).toBe(268_000);
+    expect(waited).toBeLessThanOrEqual(APP_INSTALL_RETRY_BUDGET_MS);
+    expect(attempts).toBe(56);
+  });
+
+  it("Restart now after a failure starts a fresh budget", () => {
+    const spent = app({ appPhase: "failed", retryDelayMs: 5_000, retryWaitMs: 263_000 });
+    const next = retryFollowUp(run(), spent, NOW)!;
+    expect(next.retryDelayMs).toBeUndefined();
+    expect(next.retryWaitMs).toBeUndefined();
+    expect(afterInstall(next, behind, NOW)).toMatchObject({
+      appPhase: "installing",
+      retryDelayMs: 1_000,
+      retryWaitMs: 1_000,
+    });
   });
 });
 

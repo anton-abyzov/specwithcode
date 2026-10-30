@@ -117,6 +117,7 @@ export function npmPlatformPackageManifest(
       "specweave-studio.exe",
       "client",
       "resource-monitor",
+      "lib",
       "node_modules",
     ],
     preferUnplugged: true,

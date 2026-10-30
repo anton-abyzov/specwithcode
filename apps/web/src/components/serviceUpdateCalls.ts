@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 
 import { requestChoiceDialog } from "../confirmDialog";
 import { ensureLocalApi } from "../localApi";
+import { markRestartStep } from "./restartTrace";
 import {
   APP_RESTART_UNKNOWN,
   describeAppRestartWarning,
@@ -146,6 +147,7 @@ export async function confirmAppRestartForUpdate(
     readonly renderDetails?: (blockers: ReadonlyArray<ServiceUpdateBlocker>) => ReactNode;
   } = {},
 ): Promise<AppRestartChoice> {
+  const lookAt = Date.now();
   const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
   // Only copies run: there is no work to list under the summary.
   const listed =
@@ -154,6 +156,10 @@ export async function confirmAppRestartForUpdate(
     checked === null
       ? APP_RESTART_UNKNOWN
       : describeAppRestartWarning(checked, { version: options.version ?? null, listed });
+  markRestartStep("quick-look", {
+    startedAt: lookAt,
+    detail: question === null ? "nothing runs" : "asks before the restart",
+  });
   if (question === null) return "now";
   // Waiting is the default: the safe choice is the one Enter picks.
   const choice = requestChoiceDialog(question, {
@@ -195,10 +201,15 @@ export async function isServiceWorkRunning(): Promise<boolean | null> {
  */
 export async function drainWorkForAppRestart(): Promise<boolean> {
   // A short hold: should the service outlive the restart, it lets work start again soon.
+  const prepareAt = Date.now();
   const prepared = await callPrepare(
     { stopWork: true, hold: true, reason: "app-restart" },
     STOP_WORK_TIMEOUT_MS,
   );
+  markRestartStep("prepare", {
+    startedAt: prepareAt,
+    detail: prepared === null ? "no answer" : "drained for the app restart",
+  });
   return prepared !== null;
 }
 

@@ -1,7 +1,13 @@
 import type { DesktopUpdateState } from "@specweave-studio/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ensureLatestAppUpdate, installWhenUpdaterFree } from "./latestAppUpdate";
+import {
+  BUSY_RETRY_MS,
+  ensureLatestAppUpdate,
+  FRESH_FEED_CHECK_MS,
+  feedCheckedRecently,
+  installWhenUpdaterFree,
+} from "./latestAppUpdate";
 
 const base = {
   enabled: true,
@@ -116,7 +122,119 @@ describe("ensureLatestAppUpdate", () => {
   });
 });
 
+describe("a press after a recent feed check", () => {
+  const NOW = Date.parse("2026-10-30T12:00:00.000Z");
+  const checked = (agoMs: number, state: DesktopUpdateState = downloaded("1.0.31")) => ({
+    ...state,
+    checkedAt: new Date(NOW - agoMs).toISOString(),
+    feedCheckedAt: new Date(NOW - agoMs).toISOString(),
+  });
+
+  it("uses the desktop's answer from under a minute ago instead of asking the feed again", async () => {
+    vi.useFakeTimers({ now: NOW });
+    try {
+      const bridge = {
+        checkForUpdate: vi.fn(async () => ({ checked: true, state: downloaded("1.0.32") })),
+        downloadUpdate: vi.fn(),
+        getUpdateState: vi.fn(async () => checked(20_000)),
+      };
+      await expect(ensureLatestAppUpdate(bridge)).resolves.toMatchObject({
+        kind: "ready",
+        version: "1.0.31",
+      });
+      expect(bridge.checkForUpdate).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks the feed when a check just failed with a download on disk", async () => {
+    // What reduceDesktopUpdateStateOnCheckFailure leaves (updateMachine.ts):
+    // status back to "downloaded" and a new checkedAt, which reads like
+    // "nothing newer"; only feedCheckedAt still dates the last feed answer.
+    const afterFailedCheck: DesktopUpdateState = {
+      ...checked(5 * FRESH_FEED_CHECK_MS),
+      checkedAt: new Date(NOW - 1_000).toISOString(),
+    };
+    expect(feedCheckedRecently(afterFailedCheck, NOW)).toBe(false);
+    vi.useFakeTimers({ now: NOW });
+    try {
+      const bridge = {
+        checkForUpdate: vi.fn(async () => ({ checked: true, state: downloaded("1.0.32") })),
+        downloadUpdate: vi.fn(),
+        getUpdateState: vi.fn(async () => afterFailedCheck),
+      };
+      await expect(ensureLatestAppUpdate(bridge)).resolves.toMatchObject({
+        kind: "ready",
+        version: "1.0.32",
+      });
+      expect(bridge.checkForUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks the feed when the last check is a minute old, or failed, or still running", async () => {
+    expect(feedCheckedRecently(checked(FRESH_FEED_CHECK_MS - 1), NOW)).toBe(true);
+    expect(feedCheckedRecently(checked(FRESH_FEED_CHECK_MS), NOW)).toBe(false);
+    expect(
+      feedCheckedRecently(checked(1_000, { ...downloaded("1.0.31"), status: "checking" }), NOW),
+    ).toBe(false);
+    expect(
+      feedCheckedRecently(checked(1_000, { ...downloaded("1.0.31"), status: "error" }), NOW),
+    ).toBe(false);
+    expect(feedCheckedRecently(downloaded("1.0.31"), NOW)).toBe(false);
+    expect(feedCheckedRecently(null, NOW)).toBe(false);
+    // An older desktop that does not report feedCheckedAt is always asked.
+    const { feedCheckedAt: _omitted, ...olderDesktop } = checked(1_000);
+    expect(feedCheckedRecently(olderDesktop, NOW)).toBe(false);
+    vi.useFakeTimers({ now: NOW });
+    try {
+      const bridge = {
+        checkForUpdate: vi.fn(async () => ({ checked: true, state: downloaded("1.0.32") })),
+        downloadUpdate: vi.fn(),
+        getUpdateState: vi.fn(async () => checked(FRESH_FEED_CHECK_MS + 5_000)),
+      };
+      await expect(ensureLatestAppUpdate(bridge)).resolves.toMatchObject({
+        kind: "ready",
+        version: "1.0.32",
+      });
+      expect(bridge.checkForUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("installWhenUpdaterFree", () => {
+  it("asks a busy updater again a quarter second later", async () => {
+    vi.useFakeTimers();
+    try {
+      expect(BUSY_RETRY_MS).toBe(250);
+      const busy = {
+        accepted: false,
+        completed: false,
+        reason: "busy" as const,
+        state: downloaded("1.0.33"),
+      };
+      const installUpdate = vi
+        .fn()
+        .mockResolvedValueOnce(busy)
+        .mockResolvedValueOnce({ accepted: true, completed: false, state: downloaded("1.0.33") });
+      const done = installWhenUpdaterFree(
+        { installUpdate, getUpdateState: vi.fn(async () => downloaded("1.0.33")) },
+        "1.0.33",
+      );
+      await vi.advanceTimersByTimeAsync(BUSY_RETRY_MS - 1);
+      expect(installUpdate).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await done).accepted).toBe(true);
+      expect(installUpdate).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits while the updater finishes another step, then installs", async () => {
     vi.useFakeTimers();
     try {

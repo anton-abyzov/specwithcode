@@ -225,20 +225,26 @@ describe("adjacentModelPickerProvider", () => {
     selectableUnavailableInstanceIds: undefined,
   };
 
-  it("wraps through favorites and ready instances, skipping unavailable providers", () => {
+  it("wraps through All, favorites and ready instances, skipping unavailable providers", () => {
     expect(
       adjacentModelPickerProvider({ ...input, selectedInstanceId: codex.instanceId, direction: 1 }),
     ).toBe(claude.instanceId);
     expect(
-      adjacentModelPickerProvider({ ...input, selectedInstanceId: "favorites", direction: -1 }),
+      adjacentModelPickerProvider({ ...input, selectedInstanceId: "all", direction: -1 }),
     ).toBe(claude.instanceId);
+    expect(adjacentModelPickerProvider({ ...input, selectedInstanceId: "all", direction: 1 })).toBe(
+      "favorites",
+    );
+    expect(
+      adjacentModelPickerProvider({ ...input, selectedInstanceId: "favorites", direction: 1 }),
+    ).toBe(codex.instanceId);
     expect(
       adjacentModelPickerProvider({
         ...input,
         selectedInstanceId: claude.instanceId,
         direction: 1,
       }),
-    ).toBe("favorites");
+    ).toBe("all");
   });
 
   it("keeps thread locks and the selected unavailable catalog", () => {
@@ -249,7 +255,7 @@ describe("adjacentModelPickerProvider", () => {
         selectedInstanceId: codex.instanceId,
         direction: 1,
       }),
-    ).toBe("favorites");
+    ).toBe("all");
     expect(
       adjacentModelPickerProvider({
         ...input,
@@ -275,7 +281,7 @@ describe("adjacentModelPickerProvider", () => {
         selectedInstanceId: unavailable.instanceId,
         direction: 1,
       }),
-    ).toBe("favorites");
+    ).toBe("all");
     expect(
       adjacentModelPickerProvider({
         ...input,

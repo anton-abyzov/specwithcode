@@ -96,6 +96,40 @@ export const DesktopUpdateInstallOptionsSchema = Schema.Struct({
 });
 export type DesktopUpdateInstallOptions = typeof DesktopUpdateInstallOptionsSchema.Type;
 
+/**
+ * The steps of one "Restart to update" press, timed from the press. The
+ * window marks its own steps; main marks what it does for the same press.
+ */
+export const RESTART_TRACE_PHASES = [
+  "press",
+  "feed-check",
+  "quick-look",
+  "begin",
+  "prepare",
+  "install-request",
+  "verified-observed",
+  "app-install",
+  "staged",
+  "quit-and-install",
+] as const;
+export type RestartTracePhase = (typeof RESTART_TRACE_PHASES)[number];
+
+/** One timed step of a press, written to desktop.trace.ndjson by main. */
+export const DesktopRestartTraceMarkSchema = Schema.Struct({
+  /** Made at the press; every mark of that press carries it. */
+  runId: Schema.String.check(Schema.isMaxLength(64)),
+  /** The press, in epoch milliseconds. */
+  t0: Schema.Number,
+  phase: Schema.Literals(RESTART_TRACE_PHASES),
+  /** When the step ended, in epoch milliseconds. */
+  at: Schema.Number,
+  /** How long the step itself took, when it was timed. */
+  ms: Schema.optionalKey(Schema.Number),
+  /** A short outcome, such as "skipped" or "busy". */
+  detail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+});
+export type DesktopRestartTraceMark = typeof DesktopRestartTraceMarkSchema.Type;
+
 export interface DesktopUpdateCheckResult {
   checked: boolean;
   state: DesktopUpdateState;

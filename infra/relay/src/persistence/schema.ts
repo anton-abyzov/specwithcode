@@ -226,11 +226,7 @@ export const relayDeliveryAttempts = sqliteTable(
     transportError: text("transport_error"),
   },
   (table) => [
-    index("idx_relay_delivery_attempts_environment").on(
-      table.environmentId,
-      table.threadId,
-      table.createdAt,
-    ),
+    index("idx_relay_delivery_attempts_created").on(table.createdAt),
     uniqueIndex("idx_relay_delivery_attempts_source_job").on(table.sourceJobId),
   ],
 );

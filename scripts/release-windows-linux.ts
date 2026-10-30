@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - Runs from the workflow's own commit without the release tag's node_modules, so only Node built-ins.
 /**
- * Release helpers for .github/workflows/release-windows-linux.yml, which adds the Windows x64
- * and Linux x64 desktop installers, their electron-updater feeds and the Windows CLI zip to a
- * release that scripts/release/release.sh already published.
+ * Release helpers for .github/workflows/release-windows-linux.yml, which adds the Windows and
+ * Linux desktop installers (x64, plus arm64 when its build succeeded), their electron-updater
+ * feeds and the Windows CLI zips to a release that scripts/release/release.sh already published.
  *
  * Only Node built-ins: the workflow runs this file from its own commit while it builds an older
  * release tag, so it must not depend on that tag's node_modules.
  *
- *   node release-windows-linux.ts collect --platform win|linux --version X.Y.Z --from DIR... --out DIR
+ *   node release-windows-linux.ts collect --platform win|linux [--arch x64|arm64] --version X.Y.Z --from DIR... --out DIR
+ *   node release-windows-linux.ts merge-feeds --dir DIR
  *   node release-windows-linux.ts check-feed --repo OWNER/REPO FILE...
  *   node release-windows-linux.ts sums --dir DIR
  *   node release-windows-linux.ts check-public --rules FILE --dir DIR
@@ -22,6 +23,11 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 export type Platform = "win" | "linux";
+/**
+ * Every upload carries both arches. Releases attached before arm64 hold x64 alone, so a published
+ * release counts as complete with x64 and, per platform, all of its arm64 assets or none.
+ */
+export type Arch = "x64" | "arm64";
 
 /** The public repository whose Latest release every desktop install polls (app-update.yml). */
 export const FEED_REPOSITORY = "anton-abyzov/specwithcode";
@@ -35,33 +41,75 @@ export function isStableVersion(version: string): boolean {
   return /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version);
 }
 
-/** electron-updater's channel file for the latest channel: latest.yml on Windows, latest-linux.yml on x64 Linux. */
-export function feedManifestName(platform: Platform): string {
-  return platform === "win" ? "latest.yml" : "latest-linux.yml";
+/**
+ * electron-updater's channel file for the latest channel: latest.yml on Windows (one file for both
+ * arches; the updater takes the entry whose name holds process.arch), latest-linux.yml on x64
+ * Linux and latest-linux-arm64.yml on arm64 Linux.
+ */
+export function feedManifestName(platform: Platform, arch: Arch = "x64"): string {
+  if (platform === "win") return "latest.yml";
+  return arch === "arm64" ? "latest-linux-arm64.yml" : "latest-linux.yml";
 }
 
-export function windowsCliArchiveName(version: string): string {
-  return `studio-${version}-win32-x64.zip`;
+/**
+ * Where the Windows arm64 job leaves its latest.yml. The x64 job writes latest.yml itself, and
+ * merge-feeds folds this one into it before the checksums, so it is never uploaded.
+ */
+export const STAGED_WIN_ARM64_FEED = "latest-win-arm64.staged.yml";
+
+export function windowsCliArchiveName(version: string, arch: Arch = "x64"): string {
+  return `studio-${version}-win32-${arch}.zip`;
 }
 
 /**
  * What each build must produce. electron-builder names files `SpecWithCode-${version}-${arch}`
- * (scripts/build-desktop-artifact.ts), with x64 written as x86_64 for AppImage and amd64 for deb.
+ * (scripts/build-desktop-artifact.ts), with x64 written as x86_64 for AppImage and amd64 for deb;
+ * arm64 keeps its name in both.
  */
-export function requiredAssetNames(platform: Platform, version: string): string[] {
+export function requiredAssetNames(
+  platform: Platform,
+  version: string,
+  arch: Arch = "x64",
+): string[] {
   if (platform === "win") {
     return [
-      `SpecWithCode-${version}-x64.exe`,
-      `SpecWithCode-${version}-x64.exe.blockmap`,
+      `SpecWithCode-${version}-${arch}.exe`,
+      `SpecWithCode-${version}-${arch}.exe.blockmap`,
       feedManifestName("win"),
-      windowsCliArchiveName(version),
+      windowsCliArchiveName(version, arch),
     ];
   }
   return [
-    `SpecWithCode-${version}-x86_64.AppImage`,
-    `SpecWithCode-${version}-amd64.deb`,
-    feedManifestName("linux"),
+    `SpecWithCode-${version}-${arch === "arm64" ? "arm64" : "x86_64"}.AppImage`,
+    `SpecWithCode-${version}-${arch === "arm64" ? "arm64" : "amd64"}.deb`,
+    feedManifestName("linux", arch),
   ];
+}
+
+/**
+ * Problems with the set of names a release (or an upload) holds: every x64 asset is required, and
+ * a platform's arm64 build is all there or not there at all. latest.yml is shared by both Windows
+ * arches, so it never counts as a sign of arm64.
+ */
+export function assetSetProblems(names: ReadonlyArray<string>, version: string): string[] {
+  const have = new Set(names);
+  const problems: string[] = [];
+  for (const platform of ["win", "linux"] as const) {
+    for (const name of requiredAssetNames(platform, version)) {
+      if (!have.has(name)) problems.push(`${name} is missing`);
+    }
+    const arm64 = requiredAssetNames(platform, version, "arm64").filter(
+      (name) => name !== feedManifestName("win"),
+    );
+    const present = arm64.filter((name) => have.has(name));
+    if (present.length > 0) {
+      for (const name of arm64) {
+        if (!have.has(name))
+          problems.push(`${name} is missing, though other ${platform} arm64 assets are there`);
+      }
+    }
+  }
+  return problems;
 }
 
 function escapeRegExp(value: string): string {
@@ -72,12 +120,12 @@ function escapeRegExp(value: string): string {
 export function isWindowsLinuxAssetName(name: string, version: string): boolean {
   const v = escapeRegExp(version);
   return [
-    new RegExp(`^SpecWithCode-${v}-x64\\.exe(?:\\.blockmap)?$`),
-    new RegExp(`^SpecWithCode-${v}-x86_64\\.AppImage(?:\\.blockmap)?$`),
-    new RegExp(`^SpecWithCode-${v}-amd64\\.deb$`),
-    new RegExp(`^studio-${v}-win32-x64\\.zip$`),
+    new RegExp(`^SpecWithCode-${v}-(?:x64|arm64)\\.exe(?:\\.blockmap)?$`),
+    new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64)\\.AppImage(?:\\.blockmap)?$`),
+    new RegExp(`^SpecWithCode-${v}-(?:amd64|arm64)\\.deb$`),
+    new RegExp(`^studio-${v}-win32-(?:x64|arm64)\\.zip$`),
     /^latest\.yml$/,
-    /^latest-linux\.yml$/,
+    /^latest-linux(?:-arm64)?\.yml$/,
     new RegExp(`^${escapeRegExp(WINDOWS_LINUX_SUMS)}$`),
   ].some((pattern) => pattern.test(name));
 }
@@ -177,12 +225,13 @@ export interface LocalFile {
 /** Problems that would make electron-updater refuse or mis-install this feed; empty when it is sound. */
 export function feedProblems(input: {
   readonly platform: Platform;
+  readonly arch?: Arch;
   readonly version: string;
   readonly manifest: FeedManifest;
   readonly files: ReadonlyMap<string, LocalFile>;
 }): string[] {
   const problems: string[] = [];
-  const name = feedManifestName(input.platform);
+  const name = feedManifestName(input.platform, input.arch);
   if (input.manifest.version !== input.version) {
     problems.push(`${name} is for ${input.manifest.version}, not ${input.version}`);
   }
@@ -207,6 +256,39 @@ export function feedProblems(input: {
     }
   }
   return problems;
+}
+
+/**
+ * latest.yml for both Windows arches: the x64 feed with the arm64 build's file entries added.
+ * electron-updater (Provider.findFile) installs the entry whose name holds process.arch, so x64
+ * installs keep the -x64.exe and arm64 installs take the -arm64.exe. The top-level path and sha512
+ * stay the x64 installer's, for any updater that reads only those.
+ */
+export function mergeWindowsFeeds(x64Text: string, arm64Text: string): string {
+  const x64 = parseFeedManifest(x64Text);
+  const arm64 = parseFeedManifest(arm64Text);
+  if (arm64.version !== x64.version)
+    throw new Error(`the arm64 latest.yml is for ${arm64.version}, the x64 one for ${x64.version}`);
+  for (const [label, manifest, arch] of [
+    ["x64", x64, "x64"],
+    ["arm64", arm64, "arm64"],
+  ] as const) {
+    for (const file of manifest.files) {
+      if (!file.url.endsWith(`-${arch}.exe`))
+        throw new Error(`the ${label} latest.yml lists ${file.url}, not a ${arch} installer`);
+    }
+  }
+  const lines = x64Text.replace(/\r\n/g, "\n").split("\n");
+  const start = lines.findIndex((line) => /^files:\s*$/.test(line));
+  if (start === -1) throw new Error("the x64 latest.yml has no files list");
+  let end = start + 1;
+  while (end < lines.length && /^\s/.test(lines[end]!)) end += 1;
+  const added = arm64.files.flatMap((file) => [
+    `  - url: ${file.url}`,
+    `    sha512: ${file.sha512}`,
+    ...(file.size === null ? [] : [`    size: ${file.size}`]),
+  ]);
+  return [...lines.slice(0, end), ...added, ...lines.slice(end)].join("\n");
 }
 
 /** Problems with a packaged resources/app-update.yml: it must poll FEED_REPOSITORY's stable releases. */
@@ -286,9 +368,12 @@ export function planUpload(input: {
       );
     }
   }
+  problems.push(...assetSetProblems(input.localNames, input.version));
+  // A new attach always carries arm64: a feed without it moves arm64 installs onto x64 for good.
   for (const platform of ["win", "linux"] as const) {
-    for (const name of requiredAssetNames(platform, input.version)) {
-      if (!input.localNames.includes(name)) problems.push(`${name} is missing`);
+    for (const name of requiredAssetNames(platform, input.version, "arm64")) {
+      if (!input.localNames.includes(name) && !problems.some((p) => p.startsWith(`${name} `)))
+        problems.push(`${name} is missing`);
     }
   }
   if (!input.localNames.includes(WINDOWS_LINUX_SUMS))
@@ -352,13 +437,8 @@ export function attachState(input: {
   );
   if (ours.length === 0) return { state: "absent", problems: [] };
   const byName = new Map(ours.map((asset) => [asset.name, asset]));
-  const required = [
-    ...requiredAssetNames("win", input.version),
-    ...requiredAssetNames("linux", input.version),
-    WINDOWS_LINUX_SUMS,
-  ];
-  const problems: string[] = [];
-  for (const name of required) if (!byName.has(name)) problems.push(`${name} is missing`);
+  const problems = assetSetProblems([...byName.keys()], input.version);
+  if (!byName.has(WINDOWS_LINUX_SUMS)) problems.push(`${WINDOWS_LINUX_SUMS} is missing`);
   for (const asset of ours) {
     if (asset.state !== "uploaded") problems.push(`${asset.name} is ${asset.state}, not uploaded`);
   }
@@ -387,8 +467,11 @@ export function attachState(input: {
         problems.push(`${WINDOWS_LINUX_SUMS} lists ${name}, which the release lacks`);
     }
   }
-  for (const platform of ["win", "linux"] as const) {
-    const name = feedManifestName(platform);
+  for (const name of [
+    feedManifestName("win"),
+    feedManifestName("linux"),
+    feedManifestName("linux", "arm64"),
+  ]) {
     const text = input.texts.get(name);
     if (!byName.has(name)) continue;
     if (text === undefined) {
@@ -508,6 +591,8 @@ function collect(args: ReturnType<typeof parseArgs>): void {
   const platform = args.one("platform");
   if (platform !== "win" && platform !== "linux")
     throw new Error("--platform must be win or linux");
+  const arch = args.values.get("arch")?.[0] ?? "x64";
+  if (arch !== "x64" && arch !== "arm64") throw new Error("--arch must be x64 or arm64");
   const version = args.one("version");
   if (!isStableVersion(version)) throw new Error(`${version} is not an X.Y.Z version`);
   const sources = args.values.get("from") ?? [];
@@ -515,7 +600,7 @@ function collect(args: ReturnType<typeof parseArgs>): void {
   const locate = (name: string): string | undefined =>
     sources.map((dir) => NodePath.join(dir, name)).find((path) => NodeFS.existsSync(path));
 
-  const manifestName = feedManifestName(platform);
+  const manifestName = feedManifestName(platform, arch);
   const manifestPath = locate(manifestName);
   if (manifestPath === undefined) fail([`the build wrote no ${manifestName}`]);
   const manifest = parseFeedManifest(NodeFS.readFileSync(manifestPath, "utf8"));
@@ -529,12 +614,12 @@ function collect(args: ReturnType<typeof parseArgs>): void {
       });
     }
   }
-  const problems = feedProblems({ platform, version, manifest, files: local });
+  const problems = feedProblems({ platform, arch, version, manifest, files: local });
   const names = new Set([manifestName, ...manifest.files.map((file) => file.url)]);
   for (const file of manifest.files) {
     if (locate(`${file.url}.blockmap`) !== undefined) names.add(`${file.url}.blockmap`);
   }
-  for (const name of requiredAssetNames(platform, version)) {
+  for (const name of requiredAssetNames(platform, version, arch)) {
     if (locate(name) === undefined) problems.push(`the build did not produce ${name}`);
     names.add(name);
   }
@@ -545,10 +630,34 @@ function collect(args: ReturnType<typeof parseArgs>): void {
   }
   if (problems.length > 0) fail(problems);
   NodeFS.mkdirSync(out, { recursive: true });
+  // Both Windows builds write latest.yml; the arm64 one waits under its own name for merge-feeds.
+  const outName = (name: string) =>
+    platform === "win" && arch === "arm64" && name === manifestName ? STAGED_WIN_ARM64_FEED : name;
   for (const name of [...names].sort()) {
-    NodeFS.copyFileSync(locate(name)!, NodePath.join(out, name));
-    console.log(`${name}  ${NodeFS.statSync(NodePath.join(out, name)).size} bytes`);
+    NodeFS.copyFileSync(locate(name)!, NodePath.join(out, outName(name)));
+    console.log(
+      `${outName(name)}  ${NodeFS.statSync(NodePath.join(out, outName(name))).size} bytes`,
+    );
   }
+}
+
+/** Folds the Windows arm64 build's staged feed into latest.yml; nothing to do without one. */
+function mergeFeeds(args: ReturnType<typeof parseArgs>): void {
+  const dir = args.one("dir");
+  const staged = NodePath.join(dir, STAGED_WIN_ARM64_FEED);
+  const feed = NodePath.join(dir, feedManifestName("win"));
+  if (!NodeFS.existsSync(staged)) {
+    console.log("No Windows arm64 build in this run; latest.yml lists x64 only.");
+    return;
+  }
+  if (!NodeFS.existsSync(feed))
+    fail(["the Windows arm64 feed is here but the x64 latest.yml is not"]);
+  NodeFS.writeFileSync(
+    feed,
+    mergeWindowsFeeds(NodeFS.readFileSync(feed, "utf8"), NodeFS.readFileSync(staged, "utf8")),
+  );
+  NodeFS.rmSync(staged);
+  console.log("latest.yml lists the Windows x64 and arm64 installers.");
 }
 
 function main(argv: ReadonlyArray<string>): void {
@@ -557,6 +666,8 @@ function main(argv: ReadonlyArray<string>): void {
   switch (command) {
     case "collect":
       return collect(args);
+    case "merge-feeds":
+      return mergeFeeds(args);
     case "check-feed": {
       const repository = args.values.get("repo")?.[0] ?? FEED_REPOSITORY;
       if (args.positional.length === 0) throw new Error("name at least one app-update.yml");

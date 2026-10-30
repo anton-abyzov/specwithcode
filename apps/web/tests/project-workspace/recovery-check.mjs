@@ -48,7 +48,7 @@ try {
         assert(await picker.isVisible());
         await picker.click();
         const menu = page.locator("[data-model-picker-content]");
-        await page.getByPlaceholder("Search models...").waitFor();
+        await page.getByPlaceholder("Search models or providers").waitFor();
         assert.equal(await page.getByRole("option").first().getAttribute("aria-disabled"), "true");
         await page.screenshot({
           path: path.join(output, `${viewport.width}-${scenario}-picker.png`),

@@ -118,7 +118,7 @@ tunnel and are left alone. Allocations with no recorded tunnel ID, or a
 different tunnel ID, are skipped because a provision may own them. A tunnel with
 no allocation row at all is counted as `skippedOrphan` and never deleted: there
 is no row to lock, so a relink that adopts it by name could race the delete.
-Clear those by hand. Each sweep is bounded: at most ten list requests, 100 deletions, a
+Clear those by hand. Each sweep is bounded: at most ten list requests, 200 deletions, a
 two-minute deadline, and an early stop on a Cloudflare rate limit. Each sweep
 starts one budget further along the candidate list, so a block of deletes that
 keep failing cannot starve the tunnels listed after them. See the

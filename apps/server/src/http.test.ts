@@ -14,6 +14,8 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
+import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
+import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@specweave-studio/contracts";
@@ -54,6 +56,65 @@ describe("untraced requests", () => {
 
       yield* client.get("/api/environment");
       expect(spanNames).toContain("http.server GET");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(
+        Tracer.Tracer,
+        Tracer.make({
+          span: (options) => {
+            if (options.kind === "server") spanNames.push(options.name);
+            return new Tracer.NativeSpan(options);
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps signed asset and upload URLs out of HTTP server spans", () => {
+    const spanNames: Array<string> = [];
+    return Effect.gen(function* () {
+      const layerRoutes = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const router = yield* HttpRouter.HttpRouter;
+          yield* router.add("GET", `${ASSET_ROUTE_PREFIX}/*`, HttpServerResponse.empty());
+          yield* router.add(
+            "POST",
+            `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
+            HttpServerResponse.empty(),
+          );
+          yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
+        }),
+      );
+      const services = yield* Layer.build(
+        withUntracedRequests(HttpRouter.serve(layerRoutes, { disableListenLog: true })).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        ),
+      );
+      const client = Context.get(services, HttpClient.HttpClient);
+
+      // Each URL is a bearer credential: url.full and url.path would carry it.
+      for (const request of [
+        HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
+        HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png?v=1`),
+        HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature`),
+        HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature?v=1`),
+        HttpClientRequest.head(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
+      ]) {
+        expect((yield* client.execute(request)).status).toBe(204);
+      }
+      expect(spanNames).toEqual([]);
+
+      expect((yield* client.execute(HttpClientRequest.get("/api/environment"))).status).toBe(204);
+      expect(spanNames).toEqual(["http.server GET"]);
+
+      // Only the exact prefixes are untraced.
+      for (const path of [
+        `${ASSET_ROUTE_PREFIX}-other/file`,
+        `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}-other/token`,
+      ]) {
+        expect((yield* client.execute(HttpClientRequest.get(path))).status).toBe(404);
+      }
+      expect(spanNames).toEqual(["http.server GET", "http.server GET", "http.server GET"]);
     }).pipe(
       Effect.scoped,
       Effect.provideService(
@@ -316,7 +377,9 @@ describe("video asset byte ranges", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "studio-guarded-current-stat-" });
+      const directory = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-guarded-current-stat-",
+      });
       const filePath = path.join(directory, "clip.mp4");
       for (const [contents, range, method, expected, status, contentRange] of [
         ["1234", undefined, "GET", "1234", 200, null],
@@ -359,7 +422,9 @@ describe("video asset byte ranges", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "studio-guarded-offset-limit-" });
+        const directory = yield* fs.makeTempDirectoryScoped({
+          prefix: "studio-guarded-offset-limit-",
+        });
         const filePath = path.join(directory, "clip.mp4");
         yield* fs.writeFileString(filePath, "0123456789");
         const canonicalPath = yield* fs.realPath(filePath);

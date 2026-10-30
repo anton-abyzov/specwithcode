@@ -801,6 +801,48 @@ describe("AcpRegistryAdapterV2", () => {
     assert.equal(specweaveToolForAcpAgent("toString"), "");
   });
 
+  // Cancelling a Copilot prompt kills its background agents.
+  it.effect("never steers Copilot by cancelling its prompt", () =>
+    Effect.gen(function* () {
+      const steering = Effect.fn("steering")(function* (config: Record<string, unknown>) {
+        const instanceId = ProviderInstanceId.make("acp-registry-steering");
+        const adapter = makeAcpRegistryAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment: {},
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          fileSystem: yield* FileSystem.FileSystem,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          resolver: { resolve: () => Effect.die("no session is opened") },
+          serverConfig: yield* ServerConfig.ServerConfig,
+        });
+        const { turns } = yield* adapter.getCapabilities();
+        return {
+          supportsInterrupt: turns.supportsInterrupt,
+          supportsActiveSteering: turns.supportsActiveSteering,
+          supportsSteeringByInterruptRestart: turns.supportsSteeringByInterruptRestart,
+        };
+      });
+      const copilot = {
+        supportsInterrupt: true,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: false,
+      };
+
+      assert.deepEqual(yield* steering({ agentId: "github-copilot-cli" }), copilot);
+      assert.deepEqual(
+        yield* steering({ source: "local", commandPath: "C:\\tools\\copilot.cmd" }),
+        copilot,
+      );
+      assert.deepEqual(yield* steering({ agentId: "gemini" }), {
+        ...copilot,
+        supportsSteeringByInterruptRestart: true,
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   describe("session setup failures", () => {
     const instanceId = ProviderInstanceId.make("acpRegistry_copilot");
     const openWith = (resolve: AcpRegistryAdapterV2Options["resolver"]["resolve"]) =>

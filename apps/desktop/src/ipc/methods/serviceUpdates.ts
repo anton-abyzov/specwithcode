@@ -400,6 +400,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     controller: controllerFor(environment).pipe(withLocalService),
     followUp,
     appTarget: updates.appTargetForRun,
+    stageApp: updates.stageForRun,
     publish: publish.pipe(withLocalService),
     kick: (reason) =>
       startAgent(reason, true).pipe(withLocalService, Effect.forkDetach, Effect.asVoid),

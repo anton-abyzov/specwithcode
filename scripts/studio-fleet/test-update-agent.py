@@ -665,7 +665,9 @@ class PassBehaviour(AgentCase):
         fetched = {request[1] for request in self.fake.blob_requests()[before:]}
         self.assertEqual(fetched, {'/blob/%d' % asset['id'] for asset in assets
                                   if asset['name'] in replacements})
-        self.assertEqual(self.calls(), [])
+        staged = [call['argv'] for call in self.calls()]  # Each download is staged ahead; nothing else ran.
+        self.assertEqual([argv[2] for argv in staged], ['--stage-release'] * 2)
+        self.assertEqual(staged[-1][staged[-1].index('--sha256') + 1], sha(replacement))
 
     def test_asset_binding_does_not_bypass_checksum_verification(self):
         info = self.fake.add_release()
@@ -681,7 +683,8 @@ class PassBehaviour(AgentCase):
         self.assertEqual(len(self.fake.blob_requests()), before)
         self.assertFalse(runtime.exists())
         self.assertFalse(list(directory.glob('.*.asset.json')))
-        self.assertEqual(self.calls(), [])
+        # The one helper run staged the first, good download; none ran for the changed bytes.
+        self.assertEqual([call['argv'][2] for call in self.calls()], ['--stage-release'])
 
     def test_symlinked_or_directory_cache_entries_do_not_block_a_pass(self):
         info = self.fake.add_release()

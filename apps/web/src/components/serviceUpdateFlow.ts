@@ -9,6 +9,7 @@ import { requestConfirmDialog } from "../confirmDialog";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
+import { markRestartStep } from "./restartTrace";
 import {
   AGENT_SETTLED,
   AGENT_UNSETTLED_ON_VERSION,
@@ -479,8 +480,9 @@ async function run(start: ServiceUpdateProgress): Promise<void> {
   // A retry times its install afresh, on a service not restarted for it yet.
   const { installingSince: _previousInstall, serviceRestarted: _restarted, ...fresh } = start;
   setState({ progress: fresh, waitedLong: false });
+  // The person waits on it, so the service bounds this drain tighter.
   const prepared = await callPrepare(
-    { stopWork: true, hold: true, reason: "install" },
+    { stopWork: true, hold: true, reason: "install", interactive: true },
     STOP_WORK_TIMEOUT_MS,
   );
   // Ended while the work stopped (a renewal's Cancel): its hold serves nothing.
@@ -898,9 +900,14 @@ export async function startServiceUpdateNow(
   }
   setState({ starting: true });
   try {
+    const lookAt = Date.now();
     const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
     // A service that cannot say what runs may still be running something.
     const question = checked === null ? STOP_UNKNOWN : describeServiceUpdateStop(checked);
+    markRestartStep("quick-look", {
+      startedAt: lookAt,
+      detail: question === null ? "nothing runs" : "asks to stop work",
+    });
     if (question !== null) {
       // No themed host mounted (undefined) means proceed: the click was the request.
       const confirmed =

@@ -805,13 +805,15 @@ class AgentReap(agent_tests.AgentCase):
         self.assertEqual(record.parent, self.updates / 'receipts')
         self.assertEqual(json.loads(record.read_text())['result'], 'reaped')
         # The drain had REAP_AFTER (two minutes) before everything was stopped: the early reap, of
-        # what started before the hold, cleared nothing here.
+        # what started before the hold, cleared nothing here. Refused at 0, 1, 3 and 5 seconds
+        # (HELD_RETRY_SECONDS), then every RETRY_SECONDS up to 125.
+        self.assertEqual(update_agent_reap.HELD_RETRY_SECONDS, (1, 2, 2))
         before = [call for call in self.calls()[:self.calls().index(reaps[0])] if '--snapshot' in call['argv']]
-        self.assertEqual(len(before), 13)
+        self.assertEqual(len(before), 16)
         stale = [self.calls().index(call) for call in self.stale_calls()]
         self.assertEqual(len(stale), update_agent_reap.STALE_REAP_LIMIT)
         self.assertEqual([len([call for call in self.calls()[start:end] if '--snapshot' in call['argv']])
-                          for start, end in zip([0] + stale, stale)], [3, 2])  # At 20 and 40 seconds.
+                          for start, end in zip([0] + stale, stale)], [6, 2])  # At 25 and 45 seconds.
         self.assertIn(update_agent_reap.REAPING, seen)
         self.assertEqual(len(self.apply_calls()), 1)
 
@@ -828,9 +830,9 @@ class AgentReap(agent_tests.AgentCase):
         self.assertEqual(argv[:3], ['--identity', 'm4', '--reap'])
         self.assertEqual(argv[4:], ['--stale', '--request', '2026-10-12T20:00:00+00:00'])
         self.assertEqual(json.loads(pathlib.Path(argv[3]).read_text())['result'], 'reaped')
-        # Refused at 0, 10 and 20 seconds (REAP_STALE_AFTER), not for two minutes.
+        # Refused at 0, 1, 3, 5, 15 and 25 seconds, the first past REAP_STALE_AFTER, not for two minutes.
         before = [call for call in self.calls()[:self.calls().index(stale[0])] if '--snapshot' in call['argv']]
-        self.assertEqual(len(before), 3)
+        self.assertEqual(len(before), 6)
         self.assertIn(update_agent_reap.REAPING, seen)
         self.assertEqual(len(self.apply_calls()), 1)
 

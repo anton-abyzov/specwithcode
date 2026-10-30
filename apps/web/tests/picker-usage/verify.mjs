@@ -89,6 +89,9 @@ try {
   const warned = () => page.locator("[data-model-usage-warning=true]").count();
   const pickerText = () => page.locator("[data-model-picker-content]").innerText();
   const selection = () => page.getByTestId("selection").first().textContent();
+  // A pick closes the picker; the popup leaves the DOM after its short exit fade.
+  const closed = () =>
+    page.locator("[data-model-picker-content]").waitFor({ state: "detached", timeout: 2_000 });
 
   const EXPECT_WARNED = { account: 3, model: 1, warning: 3, denied: 3 };
   const CASES = [
@@ -113,6 +116,13 @@ try {
           path: join(output, `${scenario}-favorites-${width}-${theme}.png`),
         });
         const favoritesBlocked = await warned();
+        // Grouped rows keep the provider in their accessible name.
+        const groupedNames = await page
+          .getByRole("option")
+          .evaluateAll((rows) => rows.map((row) => row.textContent ?? ""));
+        assert.ok(groupedNames.length > 0, "favorites lists rows");
+        for (const name of groupedNames)
+          assert.match(name, /Claude|Codex|Copilot|Grok|Gemini|Cursor|OpenCode/, name);
         await rail("Claude").first().click();
         await page.locator("[data-model-picker-usage-band]").waitFor();
         await settle();
@@ -150,7 +160,7 @@ try {
         if (scenario === "running") {
           assert.match(
             text,
-            /Running on Claude Opus 5\.5 \(Claude\)\. Your pick applies from the next message\./,
+            /This turn stays on Claude Opus 5\.5 \(Claude\)\. Your pick, GPT-6\.1-Sol \(Codex\), starts with your next message\./,
           );
         }
         // Copilot's Claude is another account: never blocked by native Claude's limit.
@@ -179,7 +189,7 @@ try {
           assert.notEqual(await row.getAttribute("aria-disabled"), "true");
           await row.click();
           assert.equal(await selection(), "claudeAgent:claude-fable-5-1");
-          assert.equal(await page.locator("[data-model-picker-content]").count(), 0);
+          await closed();
         }
         checks.push(
           `${scenario} ${width}px ${theme}: ${claudeBlocked} Claude rows warned (${favoritesBlocked} in favorites), Copilot open, no overflow`,
@@ -198,7 +208,11 @@ try {
         );
         if (width >= 520) assert.match(await trigger.innerText(), new RegExp(usageLabel));
         assert.doesNotMatch((await trigger.textContent()) ?? "", /\bUnknown\b/);
-        assert.match((await trigger.getAttribute("aria-label")) ?? "", detail);
+        // Since 1054 the name stays short and the reason is the trigger's description.
+        assert.match((await trigger.getAttribute("aria-label")) ?? "", new RegExp(usageLabel, "i"));
+        const describedBy = await trigger.getAttribute("aria-describedby");
+        assert.ok(describedBy, "trigger describes its usage state");
+        assert.match((await page.locator(`[id="${describedBy}"]`).textContent()) ?? "", detail);
         assert.equal(await trigger.locator('[data-provider-logo="grok"]').count(), 1);
         await rail("Grok").click();
         assert.equal(await rail("Grok").locator('[data-provider-logo="grok"]').count(), 1);
@@ -243,7 +257,7 @@ try {
       assert.deepEqual(labels.slice(0, 5), ["⌘1", "⌘2", "⌘3", "⌘4", "⌘5"]);
       await page.keyboard.press("Meta+4");
       assert.equal(await selection(), "claudeAgent:claude-fable-5-1");
-      assert.equal(await page.locator("[data-model-picker-content]").count(), 0);
+      await closed();
       await open("account", theme, width);
       const warningRow = page
         .locator("[data-model-usage-warning=true]")

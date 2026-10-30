@@ -321,6 +321,7 @@ import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  useProviderEffortControl,
 } from "./composerProviderState";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
 import { ComposerSkillsPopover } from "./ComposerSkillsPopover";
@@ -3266,6 +3267,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerOwned: true,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
+  // The model picker sets the same effort from its strip, beside the model it belongs to.
+  const providerEffortControl = useProviderEffortControl(providerTraitsPickerInput);
   const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
     null,
   );
@@ -5787,6 +5790,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
+        {...(providerEffortControl && !multipleModelSelections
+          ? { effort: providerEffortControl }
+          : {})}
         {...(composerModelChip
           ? {
               triggerParts: {

@@ -4,12 +4,33 @@ import type {
   DesktopUpdateState,
 } from "@specweave-studio/contracts";
 
+import { markRestartStep } from "../restartTrace";
+
 type UpdateBridge = Pick<DesktopBridge, "checkForUpdate" | "downloadUpdate" | "getUpdateState">;
 type InstallBridge = Pick<DesktopBridge, "installUpdate" | "getUpdateState">;
 
 /** How long a restart waits for a newer release to finish downloading. */
 export const LATEST_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const POLL_MS = 500;
+/**
+ * A check the desktop made this recently (its own poll, a focus, Settings)
+ * already saw what the feed offers, so the press does not ask it again.
+ */
+export const FRESH_FEED_CHECK_MS = 60_000;
+
+/**
+ * The feed answered the desktop under FRESH_FEED_CHECK_MS ago and nothing is in
+ * flight. Keyed off `feedCheckedAt`, not `checkedAt`: a failed check stamps
+ * `checkedAt` too and, with a download on disk, looks like "nothing newer".
+ */
+export function feedCheckedRecently(state: DesktopUpdateState | null, nowMs: number): boolean {
+  if (state === null || state.feedCheckedAt == null) return false;
+  if (state.status === "checking" || state.status === "error") return false;
+  const checkedAt = Date.parse(state.feedCheckedAt);
+  return (
+    Number.isFinite(checkedAt) && nowMs - checkedAt >= 0 && nowMs - checkedAt < FRESH_FEED_CHECK_MS
+  );
+}
 
 export type LatestUpdateProgress =
   | { readonly phase: "checking" }
@@ -30,7 +51,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * download that waited (1.0.29) is replaced by the newest one (1.0.30 or
  * later) instead of installing it and updating again. Updates are full app
  * bundles, so versions in between are skipped. When the check cannot run
- * (offline, or the updater is busy) the existing download is used.
+ * (offline, or the updater is busy) the existing download is used, and a
+ * check the desktop made under a minute ago stands for this one.
  */
 export async function ensureLatestAppUpdate(
   bridge: UpdateBridge,
@@ -38,11 +60,21 @@ export async function ensureLatestAppUpdate(
   timeoutMs = LATEST_DOWNLOAD_TIMEOUT_MS,
 ): Promise<LatestUpdateResult> {
   onProgress({ phase: "checking" });
-  let state = await bridge
-    .checkForUpdate()
-    .then((result) => result.state)
-    .catch(() => null);
+  const startedAt = Date.now();
+  // Checked a moment ago: that answer stands, and the press saves a feed round trip.
+  const known = await bridge.getUpdateState().catch(() => null);
+  const fresh = feedCheckedRecently(known, startedAt);
+  let state = fresh
+    ? known
+    : await bridge
+        .checkForUpdate()
+        .then((result) => result.state)
+        .catch(() => null);
   state ??= await bridge.getUpdateState();
+  markRestartStep("feed-check", {
+    startedAt,
+    detail: fresh ? "skipped: checked recently" : "checked",
+  });
 
   if (state.status === "available" && state.availableVersion !== null) {
     onProgress({ phase: "downloading", version: state.availableVersion, percent: null });
@@ -81,7 +113,8 @@ export async function ensureLatestAppUpdate(
 
 /** How long a restart waits for the updater to finish another step. */
 export const UPDATER_BUSY_WAIT_MS = 2 * 60_000;
-const BUSY_RETRY_MS = 1_000;
+// A busy updater lets go within moments (a check or a download finishing).
+export const BUSY_RETRY_MS = 250;
 
 /**
  * Installs the downloaded update, waiting while the updater finishes another
@@ -101,9 +134,20 @@ export async function installWhenUpdaterFree(
   const options = expectedVersion
     ? { expectedVersion, ...(serviceLacksRelease ? { serviceLacksRelease: true } : {}) }
     : undefined;
+  const startedAt = Date.now();
   for (;;) {
     const result = await bridge.installUpdate(options);
-    if (result.accepted || result.reason !== "busy" || Date.now() >= deadline) return result;
+    if (result.accepted || result.reason !== "busy" || Date.now() >= deadline) {
+      markRestartStep("install-request", {
+        startedAt,
+        detail: result.accepted
+          ? result.failed
+            ? "app install failed"
+            : "app install accepted"
+          : `app install refused: ${result.reason ?? "unknown"}`,
+      });
+      return result;
+    }
     const state = await bridge.getUpdateState().catch(() => result.state);
     onProgress({
       phase: "waiting",

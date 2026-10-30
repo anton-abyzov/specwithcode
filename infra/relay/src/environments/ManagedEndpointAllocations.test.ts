@@ -295,6 +295,33 @@ describe("ManagedEndpointAllocations", () => {
     },
   );
 
+  it.effect("teardown claims leave updatedAt to provisioning writes", () => {
+    // The tunnel limit reads updatedAt as the in-flight window; a claim that bumps it makes a
+    // revoked machine's teardown hold one of the user's slots again.
+    const writes: Array<Record<string, unknown>> = [];
+    const fakeDb = {
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          writes.push(values);
+          return {
+            where: () => ({ returning: () => Effect.succeed([{ generation: 2 }]) }),
+          };
+        },
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const key = { userId: "user-1", environmentId: "environment-1", generation: 1 };
+      yield* allocations.claimDeprovision(key);
+      yield* allocations.claimRelease({ ...key, tunnelId: "tunnel-1" });
+      yield* allocations.claimRelease({ ...key, tunnelId: "tunnel-1", markReleased: true });
+
+      expect(writes.map((values) => "updatedAt" in values)).toEqual([false, false, true]);
+      expect(writes[2]?.["updatedAt"]).toBe(writes[2]?.["tunnelReleasedAt"]);
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
   it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
     const fakeDb = {
       update: (table: unknown) => {
@@ -578,6 +605,27 @@ describe("ManagedEndpointAllocations capacity", () => {
       yield* reserve("user-1", "env-2", capacity);
       const error = yield* Effect.flip(reserve("user-1", "env-3", capacity));
       expect(error).toMatchObject({ reason: "account_limit", activeTunnels: 2 });
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("keeps a revoked machine's slot free while its teardown is claimed", () =>
+    Effect.gen(function* () {
+      const capacity = { maxTunnels: 2 };
+      yield* linked("user-1", "env-1", capacity);
+      const revoked = yield* reserve("user-1", "env-revoked", capacity);
+      yield* link("user-1", "env-revoked", { revoked: true });
+      yield* age("user-1", "env-revoked");
+
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const claimed = yield* allocations.claimDeprovision({
+        userId: "user-1",
+        environmentId: "env-revoked",
+        generation: revoked.generation,
+      });
+      expect(claimed).not.toBeNull();
+
+      // The teardown claim does not put env-revoked back in the in-flight window.
+      yield* reserve("user-1", "env-2", capacity);
     }).pipe(Effect.provide(layer())),
   );
 

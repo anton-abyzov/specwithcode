@@ -17,6 +17,8 @@ import stat
 import sys
 
 RECORD_LIMIT = 4096
+# `update.py --stage-release` (release_stage.stage_ahead): its liveness bound and checks.
+PRESTAGE_TIMEOUT = 660
 
 
 def _module(agent):
@@ -111,3 +113,31 @@ def install_beside(ua, home):
         ua.atomic_write(path, data, home, 0o600)
         return True
     return False
+
+
+def cleanup_versions(agent, installed):
+    """Drop the downloads and helpers of releases at or below `installed`, and staging folders."""
+    ua = _module(agent)
+    for parent in (agent.updates / 'downloads', agent.updates / 'helpers'):
+        if not parent.is_dir() or parent.is_symlink():
+            continue
+        for child in parent.iterdir():
+            ranked = ua.version_tuple(child.name)
+            if (ranked is not None and ranked <= installed) or child.name.startswith('.stage-'):
+                ua.remove_path(child, agent.home)
+
+
+def prestage(agent, verified):
+    """Has the verified helper publish the runtime just downloaded (`update.py --stage-release`), so
+    the apply skips unpacking it (release_stage.py; 5.6-7.0 s of every install on M4). Best effort,
+    never raises: a helper without the flag (a release before it) or one that fails leaves the
+    apply to stage it as before. Returns the helper's outcome, or None when it did not run."""
+    ua = _module(agent)
+    try:
+        helper_dir = agent.verify_helpers(verified)
+        runtime = ua.owned(agent.release_dir(verified['version']) / verified['runtime']['asset'], agent.home)
+        return ua.run_helper_process(agent.helper_command(helper_dir, [
+            '--identity', agent.identity, '--stage-release', '--archive', runtime, '--sha256', verified['runtime']['sha256']]),
+            str(helper_dir), agent.helper_env(), PRESTAGE_TIMEOUT, home=agent.home)
+    except Exception:
+        return None

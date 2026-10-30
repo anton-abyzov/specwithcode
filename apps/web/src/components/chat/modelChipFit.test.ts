@@ -39,4 +39,10 @@ describe("modelChipShows", () => {
     expect(shown("usage-ring")).toEqual(["full", "model", "short"]);
     expect(shown("model")).toEqual(["full", "model", "short", "name"]);
   });
+
+  it("gives up the provider mark before the model name is cut short", () => {
+    const shown = MODEL_CHIP_FITS.filter((fit) => modelChipShows(fit, "mark"));
+    // `name` names the model alone; `icon` brings the mark back in its place.
+    expect(shown).toEqual(["full", "model", "short", "icon"]);
+  });
 });

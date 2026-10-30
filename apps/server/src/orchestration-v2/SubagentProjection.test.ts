@@ -15,6 +15,8 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import {
   makeSubagentChildThread,
@@ -24,7 +26,10 @@ import {
   subagentThreadTitle,
 } from "./SubagentProjection.ts";
 
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { emptyProjection } from "./ProjectionStore.ts";
+import { isAutoSettlementCandidate } from "./ThreadSettlementService.ts";
 
 const parentThreadId = ThreadId.make("thread:subagent-snoozed-parent");
 const childThreadId = ThreadId.make("thread:subagent-awake-child");
@@ -114,6 +119,69 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
     nodeId: parentNodeId,
   });
 });
+
+it.effect.each([
+  ["sql", ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))],
+] as const)(
+  "%s: a pinned parent's subagent child is born unpinned and settles once idle",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThread: OrchestrationV2AppThread = {
+        ...makeParentThread(),
+        snoozedUntil: null,
+        snoozedAt: null,
+        pinnedAt: parentCreatedAt,
+        pinOrderKey: "a0",
+        activeOrderKey: "a1",
+        autoSettleDisabledAt: parentCreatedAt,
+      };
+      const childThread = makeSubagentChildThread({
+        parentThread,
+        childThreadId,
+        parentNodeId: NodeId.make("node:subagent-parent"),
+        activeProviderThreadId: null,
+        providerInstanceId: childProviderInstanceId,
+        modelSelection: childModelSelection,
+        title: "Child",
+        now: childCreatedAt,
+        createdBy: "agent",
+        creationSource: "provider",
+      });
+
+      assert.isNull(childThread.pinnedAt);
+      assert.isNull(childThread.pinOrderKey);
+      assert.isNull(childThread.activeOrderKey);
+      assert.isNull(childThread.autoSettleDisabledAt);
+      assert.isNull(childThread.limitPreswitchFrom);
+
+      for (const thread of [parentThread, childThread]) {
+        yield* store.apply({
+          id: EventId.make(`event:${thread.id}`),
+          type: "thread.created",
+          threadId: thread.id,
+          occurredAt: thread.createdAt,
+          payload: thread,
+        });
+      }
+      const savedParent = yield* store.getThread(parentThreadId);
+      assert.deepEqual(savedParent.pinnedAt, parentCreatedAt);
+      assert.equal(savedParent.pinOrderKey, "a0");
+      const candidates = yield* store.getSettlementCandidates();
+      assert.deepEqual(
+        candidates.map((candidate) => candidate.id),
+        [childThreadId],
+      );
+      // Settlement here waits for a merged pull request; the child only has
+      // to be a candidate, which the parent's pin would otherwise block.
+      assert.isTrue(
+        isAutoSettlementCandidate(
+          candidates[0]!,
+          DateTime.toEpochMillis(DateTime.add(childCreatedAt, { days: 4 })),
+        ),
+      );
+    }).pipe(Effect.provide(testLayer)),
+);
 
 it("never carries the parent's delivery evidence into a subagent child", () => {
   const parentThread: OrchestrationV2AppThread = {

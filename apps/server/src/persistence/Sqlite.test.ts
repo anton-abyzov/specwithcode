@@ -42,6 +42,66 @@ const spawnWriteLockHolder = (dbPath: string, holdMs: number) =>
       }),
   );
 
+// Linux names an open, already-deleted file "<path> (deleted)" in /proc/self/fd.
+// SQLite names its temp files "etilqs_*" and, without TMPDIR, puts them in
+// /var/tmp while os.tmpdir() is /tmp, so match the name, not the directory.
+const openDeletedTempFiles = () =>
+  NodeFS.readdirSync("/proc/self/fd").flatMap((fd) => {
+    try {
+      const target = NodeFS.readlinkSync(`/proc/self/fd/${fd}`);
+      return target.includes("/etilqs_") && target.endsWith(" (deleted)") ? [target] : [];
+    } catch {
+      return [];
+    }
+  });
+
+it.effect.skipIf(NodeOS.platform() !== "linux")(
+  "keeps a write transaction's statement journal off the temp directory",
+  () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-sqlite-temp-"));
+    const persistence = SqlitePersistence.layerFromPath(
+      NodePath.join(tempDir, "state.sqlite"),
+    ).pipe(Layer.provide(NodeServices.layer));
+
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE journal_probe(id INTEGER PRIMARY KEY, payload TEXT NOT NULL)`;
+      for (let id = 0; id < 64; id++) {
+        yield* sql`INSERT INTO journal_probe VALUES (${id}, ${"x".repeat(4096)})`;
+      }
+      const before = new Set(openDeletedTempFiles());
+      const opened = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          // A multi-row update can fail halfway, so SQLite journals every page
+          // it changes, here well past the 64 KiB it holds in memory by default.
+          yield* sql`UPDATE journal_probe SET payload = payload || 'y'`;
+          return openDeletedTempFiles().filter((target) => !before.has(target));
+        }),
+      );
+      assert.deepEqual(opened, []);
+    }).pipe(
+      Effect.provide(persistence),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  },
+);
+
+it.effect("sets temp_store = MEMORY in the shared persistence setup", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-sqlite-temp-store-"));
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly temp_store: number }>`PRAGMA temp_store;`;
+    assert.equal(rows[0]?.temp_store, 2);
+  }).pipe(
+    Effect.provide(
+      SqlitePersistence.layerFromPath(NodePath.join(tempDir, "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
 it.effect("names its files to the live database guard only while the connection is open", () => {
   const tempDir = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-sqlite-guard-")),

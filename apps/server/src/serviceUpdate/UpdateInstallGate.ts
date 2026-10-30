@@ -64,6 +64,37 @@ export function parseInstallGate(text: string): InstallGateMarker {
 }
 
 /**
+ * File name under `<baseDir>/updates`; `update_service.py` INSTALL_GATE_ACK_FILE. A held service
+ * writes it once it has read a gate the helper wrote and every command it admitted before has
+ * ended, so no commit of one is under way: the helper's last row checks then need not wait out a
+ * fixed settle. The helper removes it with the gate.
+ */
+export const INSTALL_GATE_ACK_FILE = "install-gate-ack.json";
+
+/**
+ * The acknowledgement of the gate with this text, by the service `servicePid` at `at`, or null
+ * for a gate without its helper's `at` and pid: the helper then waits out the settle.
+ */
+export function installGateAck(text: string, servicePid: number, at: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.at !== "string" || parseInstallGate(text).helperPid === null) return null;
+  return JSON.stringify({
+    schemaVersion: 1,
+    servicePid,
+    helperPid: record.helperPid,
+    gateAt: record.at,
+    at,
+  });
+}
+
+/**
  * Whether the helper a gate names still runs. The helper always runs as the service's own user,
  * so a pid this process may not signal (EPERM) belongs to someone else: a root daemon that took
  * the pid after a reboot. Unlike `isProcessAlive`, that counts as exited.

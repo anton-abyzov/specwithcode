@@ -6,7 +6,10 @@ import type {
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
 } from "@specweave-studio/contracts";
-import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import {
+  latestRootProviderFailure,
+  runRanAfter,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
 type Attempt = Pick<OrchestrationV2RunAttempt, "id" | "runId">;
@@ -117,6 +120,66 @@ type ProviderTurnState = Pick<
   OrchestrationV2ProviderTurn,
   "runAttemptId" | "providerThreadId" | "status"
 >;
+
+/** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */
+export function continuationFailedBeforePrompt(
+  run: Pick<OrchestrationV2Run, "id" | "status" | "activeAttemptId" | "restartContinuationOfRunId">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>,
+  attempts: ReadonlyArray<Attempt> = [],
+): boolean {
+  if (run.status !== "failed" || run.restartContinuationOfRunId === undefined) return false;
+  // A retried run's earlier attempt may have taken the prompt.
+  const attemptIds = new Set<string | null>([
+    run.activeAttemptId,
+    ...attempts.flatMap((attempt) => (attempt.runId === run.id ? [attempt.id] : [])),
+  ]);
+  return !providerTurns.some(
+    (turn) => turn.runAttemptId !== null && attemptIds.has(turn.runAttemptId),
+  );
+}
+
+const CONTINUATION_START_RETRY_DELAYS_MS = [60_000, 180_000];
+
+/**
+ * Backoff before restarting a continuation that failed to start (under load a
+ * resumed provider can time out before taking the prompt), or undefined to let
+ * it fail.
+ */
+export function continuationStartRetryDelayMs(
+  run: OrchestrationV2Run,
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>;
+    readonly attempts?: ReadonlyArray<Attempt>;
+    readonly turnItems: Parameters<typeof latestRootProviderFailure>[1];
+  },
+): number | undefined {
+  if (!continuationFailedBeforePrompt(run, projection.providerTurns, projection.attempts))
+    return undefined;
+  // These fail the same way however often they start.
+  const failureClass = latestRootProviderFailure(run, projection.turnItems)?.class;
+  if (
+    failureClass === "usage_limit" ||
+    failureClass === "permission_error" ||
+    failureClass === "validation_error"
+  )
+    return undefined;
+  let failedStarts = 0;
+  const visited = new Set<string>();
+  for (
+    let current: OrchestrationV2Run | undefined = run;
+    current !== undefined &&
+    !visited.has(current.id) &&
+    continuationFailedBeforePrompt(current, projection.providerTurns, projection.attempts);
+    current = projection.runs.find(
+      (candidate) => candidate.id === current?.restartContinuationOfRunId,
+    )
+  ) {
+    visited.add(current.id);
+    failedStarts += 1;
+  }
+  return CONTINUATION_START_RETRY_DELAYS_MS[failedStarts - 1];
+}
 
 /**
  * A run whose turn had settled before the restart cancelled its background

@@ -32,7 +32,7 @@ import { COORDINATOR_RECOMMENDED_TRAITS, modelLabel } from "../../../studio/shel
 import { fallbackModelState, modelStateText, type ModelState } from "../../chat/ModelStateTag";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator";
-import { TraitsPicker } from "../../chat/TraitsPicker";
+import { TraitsPicker, useTraitsEffortControl } from "../../chat/TraitsPicker";
 import { ModelBadge } from "./ModelBadge";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
@@ -274,6 +274,25 @@ export function CoordinatorModelPicker(props: {
     props.onChange(createModelSelection(id, model));
   };
 
+  // The picker's effort strip edits the saved model's effort, as the control beside it does.
+  const effort = useTraitsEffortControl(
+    value && active && !running
+      ? {
+          provider: active.driverKind,
+          instanceId: value.instanceId,
+          models: active.models,
+          model: value.model,
+          prompt: "",
+          onPromptChange: () => {},
+          modelOptions: value.options ?? [],
+          allowPromptInjectedEffort: false,
+          planModeEnabled: settings.planModeEnabled,
+          onModelOptionsChange: (traits) =>
+            props.onChange(createModelSelection(value.instanceId, value.model, traits)),
+        }
+      : null,
+  );
+
   const content = () => {
     if (!shown) {
       // Providers have not arrived from the host or are still being checked: nothing is
@@ -418,6 +437,7 @@ export function CoordinatorModelPicker(props: {
           disabled={props.saving}
           getModelDisabledReason={getModelDisabledReason}
           usage={usage}
+          {...(effort ? { effort } : {})}
           secondaryView={{
             label: "Limits by account",
             render: ({ back, close }) => (

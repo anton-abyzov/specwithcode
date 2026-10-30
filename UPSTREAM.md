@@ -22,3 +22,15 @@ Increment `1129` selectively ports these T3 Code changes onto the independent im
 - Local file wrapping, markdown frontmatter and full chat tables: `48a292364a`, `f81c4cd79f`, and `eb751fa073`.
 
 These selected ports do not change the inherited baseline pin or grant a new license over original material. Required notices remain intact.
+
+## Selected ports, October 30, 2026
+
+Increment `1146` selectively ports T3 Code changes through nightly `v0.1.6-nightly.20261030.3904` onto the independent implementation. Each was adapted by hand to this tree's names and layout; the full triage, with the commits not taken and why, is in the increment's `reports/triage.md`.
+
+- Connect and pairing: managed cloudflared 2026.10.4 with checksums, case-insensitive pairing codes that survive a scope rejection, pairing links that cannot add routes to a saved environment, `--base-url` validation (`bdf84df8ca`), dead-route probe backoff (`65b0ab8c91`), the permissions check after a reconnect (`4092c4ac56`), and history loads on their own concurrency key.
+- Relay: delivery-attempt retention (a D1 index swap), idle-tunnel cleanup and the tunnel limit for abandoned reprovisions.
+- Security: clone-error URL redaction (`1cc9d413a5`), signed URLs kept out of HTTP traces (`4afdabab44`), compound credential keys redacted in provider errors, and the resolved OpenCode server password (`d796063f78`).
+- Orchestration: restart continuations that retry failed starts and respect a parent's stop (`36dac688a1`), held queues released after a completed run (`8ab098a4a8`), mark unread without reviving a dismissed wake (`cb5fac907a`), plus Copilot follow-up queueing, Cursor subagent results, approval command display and subagent pin inheritance. Local repairs: a parent's service-update interrupt does not block a child's continuation, and every attempt of a retried run counts when deciding whether the provider took the prompt.
+- Server: lighter run preparation (`22c37a8da4`), Bitbucket discovery timeout (`3898c32986`), active turn-item partial indexes (`624e70ecdd`, migration `068` here), checkout leases, and Linux CLI packaging (libatomic, patchelf).
+
+The model picker was redesigned locally rather than ported. Electron 44.10.0, the pairing deep link (`dde3fdb5a6`), smaller checkpoint payloads (`7f39a860d9`), service protect, the SQLite read pool and sidebar shell performance are not applied. These selected ports do not change the inherited baseline pin or grant a new license over original material. Required notices remain intact.

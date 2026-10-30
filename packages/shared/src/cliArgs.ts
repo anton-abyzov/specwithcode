@@ -98,9 +98,14 @@ export function parseCliArgs(
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
 
+    // A bare `--` ends option parsing; everything after it is an operand.
+    if (token === "--") {
+      positionals.push(...tokens.slice(i + 1));
+      break;
+    }
+
     if (token.startsWith("--")) {
       const rest = token.slice(2);
-      if (!rest) continue;
 
       // Handle --key=value syntax
       const eqIndex = rest.indexOf("=");

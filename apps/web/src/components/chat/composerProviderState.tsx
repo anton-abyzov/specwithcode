@@ -19,7 +19,13 @@ import type { ReactNode } from "react";
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import type { ComposerControlSize } from "./ComposerControl";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import type { ModelPickerEffort } from "./ModelPickerEffortStrip";
+import {
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+  useTraitsEffortControl,
+} from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -229,4 +235,46 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
   return renderTraitsControl(TraitsPicker, input);
+}
+
+/**
+ * The effort strip the model picker shows for the composer's model, from the same input
+ * as the effort control beside it. Null when that control would not render.
+ */
+export function useProviderEffortControl(input: TraitsRenderInput): ModelPickerEffort | null {
+  const { threadRef, draftId, model, models, provider, modelOptions, planModeEnabled } = input;
+  const { selections } = resolveComposerOptionSelections(
+    models,
+    model,
+    provider,
+    modelOptions,
+    planModeEnabled,
+  );
+  const enabled =
+    (threadRef !== undefined || draftId !== undefined) &&
+    shouldRenderTraitsControls({
+      provider,
+      models,
+      model,
+      modelOptions: selections,
+      prompt: input.prompt,
+      planModeEnabled,
+    });
+  return useTraitsEffortControl(
+    enabled
+      ? {
+          provider,
+          ...(input.instanceId ? { instanceId: input.instanceId } : {}),
+          models,
+          ...(threadRef ? { threadRef } : {}),
+          ...(draftId ? { draftId } : {}),
+          model,
+          modelOptions: selections,
+          reportedModelSelection: input.reportedModelSelection,
+          prompt: input.prompt,
+          onPromptChange: input.onPromptChange,
+          planModeEnabled,
+        }
+      : null,
+  );
 }

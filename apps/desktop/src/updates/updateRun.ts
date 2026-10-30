@@ -110,6 +110,10 @@ export interface RunAppRecord {
   readonly updatedAt: string;
   readonly finishedAt: string | null;
   readonly reportedAt: string | null;
+  /** After a refusal: how long the next attempt waits from `updatedAt`. */
+  readonly retryDelayMs?: number;
+  /** After a refusal: the waits between attempts so far, against the refusal budget. */
+  readonly retryWaitMs?: number;
 }
 
 /** What `update.py` writes to install-progress.json while it applies a release (0985). */
@@ -251,6 +255,12 @@ export function parseRunApp(text: string | null): RunAppRecord | null {
     updatedAt: raw.updatedAt as string,
     finishedAt: stringOrNull(raw.finishedAt),
     reportedAt: stringOrNull(raw.reportedAt),
+    ...(typeof raw.retryDelayMs === "number" && raw.retryDelayMs >= 0
+      ? { retryDelayMs: raw.retryDelayMs }
+      : {}),
+    ...(typeof raw.retryWaitMs === "number" && raw.retryWaitMs >= 0
+      ? { retryWaitMs: raw.retryWaitMs }
+      : {}),
   };
 }
 

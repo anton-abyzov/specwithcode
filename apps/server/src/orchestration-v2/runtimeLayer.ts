@@ -88,6 +88,7 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServiceUpdateCleanup from "../serviceUpdate/ServiceUpdateCleanup.ts";
+import * as ServiceUpdateDescendants from "../serviceUpdate/ServiceUpdateDescendants.ts";
 import * as ServiceUpdatePreparation from "../serviceUpdate/ServiceUpdatePreparation.ts";
 import * as ServiceUpdateReopenQuestions from "../serviceUpdate/ServiceUpdateReopenQuestions.ts";
 
@@ -583,6 +584,7 @@ export const layerProduction = Layer.mergeAll(
       Layer.mergeAll(
         layerThreadManagementProvided,
         layerProviderSessionManagerProvided,
+        ServiceUpdateDescendants.layer,
         ServiceUpdateCleanup.layer.pipe(
           Layer.provide(
             Layer.mergeAll(

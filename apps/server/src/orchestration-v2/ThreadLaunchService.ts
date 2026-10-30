@@ -1153,12 +1153,15 @@ const make = Effect.gen(function* () {
     // From here the run is preparing again; anything that stops preparation
     // from being scheduled must fail it, or it would wait in preparing forever.
     const scheduled = yield* Effect.gen(function* () {
-      const projection = yield* threads.getThreadProjection(input.threadId);
-      const run = projection.runs.find((candidate) => candidate.id === input.runId);
+      // Only this run and its message, not the whole thread history.
+      const { thread, runs } = yield* threads.getThreadRecords(input.threadId, ["runs"], {
+        runIds: [input.runId],
+      });
+      const run = runs.find((candidate) => candidate.id === input.runId);
       const workspacePreparation = run?.workspacePreparation;
       if (run?.status !== "preparing" || workspacePreparation === undefined) return;
       if (!(yield* reservePreparation(input.commandId))) return;
-      yield* scheduleRetriedPreparation(input, projection, run, workspacePreparation).pipe(
+      yield* scheduleRetriedPreparation(input, thread, run, workspacePreparation).pipe(
         Effect.onError(() => releasePreparation(input.commandId)),
       );
     }).pipe(Effect.exit);
@@ -1168,50 +1171,55 @@ const make = Effect.gen(function* () {
     return dispatched;
   });
 
-  const scheduleRetriedPreparation = (
-    input: ThreadLaunchRetryInput,
-    projection: OrchestrationV2ThreadProjection,
-    run: OrchestrationV2ThreadProjection["runs"][number],
-    workspacePreparation: ThreadLaunchWorkspaceStrategy,
-  ) => {
-    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-    // A worktree the failed attempt already created is reused, not created again.
-    const reuse =
-      workspacePreparation.type === "worktree" &&
-      projection.thread.worktreePath !== null &&
-      projection.thread.branch !== null
-        ? {
-            strategy: {
-              type: "existing_worktree" as const,
-              worktreePath: projection.thread.worktreePath,
-              branch: projection.thread.branch,
-              ...(workspacePreparation.repository === undefined
-                ? {}
-                : { repository: workspacePreparation.repository }),
-            },
-            reusedWorktree: { baseRef: workspacePreparation.baseRef },
-          }
-        : null;
-    return schedulePreparation(
-      {
-        commandId: input.commandId,
-        projectId: projection.thread.projectId,
-        workspaceStrategy: reuse?.strategy ?? workspacePreparation,
-        ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
-        ...(message === undefined
-          ? {}
-          : {
-              initialMessage: {
-                text: message.text,
-                attachments: message.attachments,
-                ...(message.context ? { context: message.context } : {}),
+  const scheduleRetriedPreparation = Effect.fn("ThreadLaunchService.scheduleRetriedPreparation")(
+    function* (
+      input: ThreadLaunchRetryInput,
+      thread: OrchestrationV2ThreadProjection["thread"],
+      run: OrchestrationV2ThreadProjection["runs"][number],
+      workspacePreparation: ThreadLaunchWorkspaceStrategy,
+    ) {
+      const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+        messageIds: [run.userMessageId],
+      });
+      const message = messages.find((candidate) => candidate.id === run.userMessageId);
+      // A worktree the failed attempt already created is reused, not created again.
+      const reuse =
+        workspacePreparation.type === "worktree" &&
+        thread.worktreePath !== null &&
+        thread.branch !== null
+          ? {
+              strategy: {
+                type: "existing_worktree" as const,
+                worktreePath: thread.worktreePath,
+                branch: thread.branch,
+                ...(workspacePreparation.repository === undefined
+                  ? {}
+                  : { repository: workspacePreparation.repository }),
               },
-            }),
-      },
-      input.threadId,
-      run.id,
-    );
-  };
+              reusedWorktree: { baseRef: workspacePreparation.baseRef },
+            }
+          : null;
+      return yield* schedulePreparation(
+        {
+          commandId: input.commandId,
+          projectId: thread.projectId,
+          workspaceStrategy: reuse?.strategy ?? workspacePreparation,
+          ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
+          ...(message === undefined
+            ? {}
+            : {
+                initialMessage: {
+                  text: message.text,
+                  attachments: message.attachments,
+                  ...(message.context ? { context: message.context } : {}),
+                },
+              }),
+        },
+        input.threadId,
+        run.id,
+      );
+    },
+  );
 
   return ThreadLaunchService.of({
     launch,

@@ -5,6 +5,7 @@ import type {
   StudioServiceUpdateRunResult,
 } from "@specweave-studio/contracts";
 
+import { markRestartStep } from "./restartTrace";
 import {
   CallTimeout,
   callPrepare,
@@ -66,16 +67,31 @@ export async function startServiceUpdateRun(input: {
   if (!bridge?.serviceUpdateRun || !bridge.installServiceUpdate || input.targetVersion === null) {
     return "legacy";
   }
+  const beginAt = Date.now();
   const begun = await askRun({
     type: "begin",
     targetVersion: input.targetVersion,
     appTargetVersion: input.appTargetVersion,
   });
+  markRestartStep("begin", {
+    startedAt: beginAt,
+    detail: begun?.run ? `${begun.created ? "created" : "following"} ${begun.run.runId}` : "legacy",
+  });
   if (begun === null || !begun.supported || begun.run === null) return "legacy";
   if (!begun.created) return "following";
   const run = begun.run;
   // Stop and hold the work, as before runs; the agent then installs on a quiet service.
-  await callPrepare({ stopWork: true, hold: true, reason: "install" }, STOP_WORK_TIMEOUT_MS);
+  // The person waits on it, so the service bounds this drain tighter.
+  const prepareAt = Date.now();
+  const prepared = await callPrepare(
+    { stopWork: true, hold: true, reason: "install", interactive: true },
+    STOP_WORK_TIMEOUT_MS,
+  );
+  markRestartStep("prepare", {
+    startedAt: prepareAt,
+    detail: prepared === null ? "no answer" : "drained",
+  });
+  const requestAt = Date.now();
   try {
     await withTimeout(
       bridge.installServiceUpdate({
@@ -86,7 +102,12 @@ export async function startServiceUpdateRun(input: {
       }),
       INSTALL_REQUEST_MS,
     );
+    markRestartStep("install-request", { startedAt: requestAt, detail: "service request written" });
   } catch (error) {
+    markRestartStep("install-request", {
+      startedAt: requestAt,
+      detail: error instanceof CallTimeout ? "service request timed out" : "service request failed",
+    });
     // A slow desktop still writes the request; the run follows what it does.
     if (error instanceof CallTimeout) return "started";
     // The update failed, nobody cancelled it: the run ends as failed, with why.

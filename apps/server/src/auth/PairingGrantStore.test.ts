@@ -1,6 +1,7 @@
 import { AuthAdministrativeScopes, AuthStandardClientScopes } from "@specweave-studio/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -77,11 +78,12 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
-  it.effect("issues one-time bootstrap tokens that can only be consumed once", () =>
+  it.effect("accepts lowercase one-time tokens exactly once", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const issued = yield* bootstrapCredentials.issueOneTimeToken({ label: "Alice iPhone" });
-      const first = yield* bootstrapCredentials.consume(issued.credential);
+      expect(issued.credential.toLowerCase()).not.toBe(issued.credential);
+      const first = yield* bootstrapCredentials.consume(issued.credential.toLowerCase());
       const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
 
       expect(first.method).toBe("one-time-token");
@@ -91,6 +93,47 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(issued.label).toBe("Alice iPhone");
       expect(second._tag).toBe("UnknownBootstrapCredentialError");
       expect(second.message).toContain("Unknown bootstrap credential");
+    }).pipe(
+      Effect.provide(layerPairingGrantStore()),
+      // Every byte maps to "A", so the issued code has letters to lowercase.
+      Effect.provideServiceEffect(
+        Crypto.Crypto,
+        Effect.map(Crypto.Crypto, (crypto) => ({
+          ...crypto,
+          randomBytes: (size: number) => Effect.succeed(new Uint8Array(size).fill(8)),
+        })),
+      ),
+    ),
+  );
+
+  it.effect("matches a seeded desktop bootstrap credential exactly", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const exact = yield* bootstrapCredentials.consume("abcdefghjkmn");
+      const otherCase = yield* Effect.flip(bootstrapCredentials.consume("ABCDEFGHJKMN"));
+
+      expect(exact.method).toBe("desktop-bootstrap");
+      expect(otherCase._tag).toBe("UnknownBootstrapCredentialError");
+    }).pipe(Effect.provide(layerPairingGrantStore({ desktopBootstrapToken: "abcdefghjkmn" }))),
+  );
+
+  it.effect("keeps a one-time token when it lacks a required scope", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken({
+        scopes: ["orchestration:read"],
+      });
+      const rejected = yield* Effect.flip(
+        bootstrapCredentials.consume(issued.credential, {
+          requiredScopes: ["orchestration:read", "orchestration:operate"],
+        }),
+      );
+      const retry = yield* bootstrapCredentials.consume(issued.credential, {
+        requiredScopes: ["orchestration:read"],
+      });
+
+      expect(rejected._tag).toBe("BootstrapCredentialScopeNotGrantedError");
+      expect(retry.scopes).toEqual(["orchestration:read"]);
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 

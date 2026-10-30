@@ -423,6 +423,7 @@ describe("installServiceUpdates", () => {
           applyPreferences: Effect.void,
           registerLocalServiceProbe: () => Effect.void,
           refreshActivation: Effect.void,
+          stageForRun: () => Effect.void,
           get: Effect.succeed(appState(null)),
         } as unknown as DesktopUpdates.DesktopUpdates["Service"]),
         Layer.succeed(DesktopLocalService.DesktopLocalService, {

@@ -73,6 +73,11 @@ const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
       '{ "name": "@ff-labs/fff-node", "version": "0.9.4" }\n',
     );
     yield* fs.writeFileString(path.join(contentDir, "client/index.html"), "<html></html>\n");
+    if (key.startsWith("linux-")) {
+      // The Linux archive carries the libatomic its executable's RUNPATH points at.
+      yield* fs.makeDirectory(path.join(contentDir, "lib"));
+      yield* fs.writeFileString(path.join(contentDir, "lib/libatomic.so.1"), "stub\n");
+    }
     yield* fs.writeFileString(
       path.join(contentDir, "specweave-studio"),
       `#!/bin/sh\necho "stub ${key} $*"\necho "name=\${STUDIO_CLI_NAME-unset}" >&2\nexit 7\n`,
@@ -141,6 +146,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         "specweave-studio.exe",
         "client",
         "resource-monitor",
+        "lib",
         "node_modules",
       ]);
       assert.equal(linuxManifest.preferUnplugged, true);
@@ -154,6 +160,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.deepStrictEqual(linuxManifest.bundleDependencies, ["@ff-labs/fff-node", "node-pty"]);
       // Archive contents sit at the package root, not under the archive stem.
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "client/index.html")));
+      assert.isTrue(yield* fs.exists(path.join(linuxDir, "lib/libatomic.so.1")));
       // A root README, or npm would display a bundled dependency's.
       assert.include(
         yield* fs.readFileString(path.join(linuxDir, "README.md")),

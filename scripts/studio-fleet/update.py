@@ -64,8 +64,11 @@ from update_migration import (_column_definition, accepted_widenings, narrowed_r
                               assert_migration_protected_schema)
 from update_compare import (rows_carried_forward, same_guarded_rows, database_allowance, assert_capture_carried, without_auth, same_auth,
                             auth_since, guarded_row_counts, settings_preserved)
-from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REFUSAL, _utc, assert_held,
-                            restart_old_release, native_work_counts, _name, descendant_names, gate_settle)
+from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REFUSAL, _utc, assert_held, held_since,
+                            restart_old_release, native_work_counts, _name, descendant_names, gate_settle, await_gate_ack,
+                            INSTALL_GATE_ACK_FILE)
+from release_stage import scratch_directory
+import release_stage
 from state_backup import (_clonefile, clone_file, BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_space, backup_space_needed, backup_state,
                           clone_state, discard_unused_backup, write_private as _write_private)
 from service_handles import (LSOF_ATTEMPTS, LSOF_TIMEOUT_SECONDS, DATABASE_FILES, DETACHED_DATABASE, LOCKS_LOST, listeners,
@@ -78,27 +81,6 @@ import update_request
 from installation_descriptor import InstallationDescriptor, cli_paths, current_owner, installation_lock, owned_path, validate_identity, web_session_policy
 def digest(value):
     return hashlib.sha256(value).hexdigest()
-
-@contextlib.contextmanager
-def scratch_directory(prefix, parent):
-    """tempfile.TemporaryDirectory whose cleanup never fails an update. Finder can write .DS_Store
-    into a folder while it is removed (ENOTEMPTY failed a 1.0.112 install after the release was
-    published); prune_update_leftovers removes whatever is left on the next verified update."""
-    path = tempfile.mkdtemp(prefix=prefix, dir=str(parent))
-    try:
-        yield path
-    finally:
-        for attempt in range(3):
-            try:
-                shutil.rmtree(path)
-                break
-            except FileNotFoundError:
-                break
-            except OSError as error:
-                if attempt == 2:
-                    print(f'Left {path} for the next prune: {error}', file=sys.stderr)
-                else:
-                    time.sleep(0.2)
 
 def safe_path(path, home):
     return owned_path(path, home)
@@ -573,13 +555,15 @@ def write_install_gate(own, home):
     path.parent.mkdir(mode=0o700, exist_ok=True)
     value = {'helperPid': os.getpid(), 'at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
     atomic(path, (json.dumps(value) + '\n').encode(), 0o600)
+    return value
 
 def clear_install_gate(own, home):
     """Never raises: a gate left behind ends when this helper exits."""
-    try:
-        install_gate_path(own, home).unlink()
-    except (AssertionError, OSError):
-        pass
+    for name in (INSTALL_GATE_FILE, INSTALL_GATE_ACK_FILE):  # The service's acknowledgement goes with it.
+        try:
+            safe_path(own / 'updates' / name, home).unlink()
+        except (AssertionError, OSError):
+            pass
 
 # The database snapshot marker (apps/server/src/persistence/StorageMaintenance.ts). The service
 # deletes superseded events every few hours; an earlier event deleted between a snapshot and the
@@ -631,6 +615,19 @@ def mark_database_snapshot(identity, settle=True, own=None, home=None):
     if settle and not live:
         time.sleep(SNAPSHOT_MARKER_SETTLE_SECONDS)
     return (path, previous)
+
+def snapshot_settles(identity, request):
+    """False for a held snapshot (`request`) once its hold is older than the marker's settle: the
+    service's compaction has refused since the hold began (StorageMaintenance `update-hold`), so no
+    delete it started can still be under way. Any doubt settles."""
+    if not request:
+        return True
+    try:
+        owner = InstallationDescriptor(identity, require_policy=False)
+        began = held_since(owner.own, owner.home, request)
+    except Exception:
+        return True
+    return began is None or (datetime.datetime.now(datetime.timezone.utc) - began).total_seconds() < SNAPSHOT_MARKER_SETTLE_SECONDS
 
 def release_database_snapshot(written):
     """Undoes a mark_database_snapshot whose snapshot failed. Never raises.
@@ -840,31 +837,24 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     cli_prefix = migrate_runtime_path(old_tokens[:node_index + 2], home, pathlib.Path(receipt['node']))
     new_release = safe_path(studio_paths.releases_root(home) / archive_sha[:20], home)
     assert digest(archive.read_bytes()) == archive_sha
-    incoming = safe_path(studio_paths.incoming_root(home), home)
-    incoming.mkdir(parents=True, exist_ok=True)
-    # Reuse the integrity installer only in a new private staging home, never a live home.
-    with scratch_directory('owned-update-stage-', incoming) as temporary:
-        stage_home = pathlib.Path(temporary)
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', 0)); stage_port = probe.getsockname()[1]
-        try:  # Staging past the pre-restart budget can only end in TOO_SLOW_TO_RESTART.
-            value = run(['/usr/bin/python3', str(pathlib.Path(__file__).with_name('install.py')), '--archive', str(archive), '--sha256', archive_sha,
-                         '--node', receipt['node'], '--identity', 'stage', '--port', str(stage_port)],
-                        timeout=min(STAGE_TIMEOUT_SECONDS, budget_left()),
-                        env={'HOME': str(stage_home), 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8'}, text=True)
-        except subprocess.TimeoutExpired:
-            raise AssertionError(TOO_SLOW_TO_RESTART) from None
-        staged = json.loads(value)
-        staged_release = pathlib.Path(staged['release'])
-        # The version gate reads only manifests: publish_release verifies every staged byte next,
-        # and the old release was verified with the running service by the snapshot above.
-        upgrade = release_manifest(staged_release)['version']
+    # The version gate reads only manifests: every byte of the new release is verified before it is
+    # used, and the old release was verified with the running service by the snapshot above.
+    def version_gate(upgrade):
         validate_upgrade(release_manifest(pathlib.Path(old_release))['version'], upgrade)
         budget_left()
-        # A published release is inert: no pointer names it until the check below passes, and
-        # a retry reuses it (publish_release), so the prestate is checked once, before pointers.
-        manifest = publish_release(staged_release, new_release)
-        assert manifest['version'] == upgrade, 'The staged release changed while it was published'
+    staged_ahead = release_stage.staged(own, home, archive_sha, new_release)  # By the agent, after its download.
+    if staged_ahead:
+        manifest = release_verified(new_release)
+        version_gate(manifest['version'])
+    else:
+        incoming = safe_path(studio_paths.incoming_root(home), home)
+        incoming.mkdir(parents=True, exist_ok=True)
+        try:  # Staging past the pre-restart budget can only end in TOO_SLOW_TO_RESTART.
+            manifest = release_stage.stage_release(archive, archive_sha, receipt['node'], new_release, incoming, run=run,
+                                                   timeout=lambda: min(STAGE_TIMEOUT_SECONDS, budget_left()),
+                                                   check=version_gate, publish=publish_release)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(TOO_SLOW_TO_RESTART) from None
     progress_file.set(version=manifest['version'])
     def replaced(value):
         lines = value.decode().splitlines()
@@ -945,7 +935,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'readyBySecondsFromStart': READY_BY_SECONDS_FROM_START,
                 'expectedNewHashes': {name: digest(value) for name, value in new_bytes.items()},
                 'prunedStateBackups': pruned_state_backups, 'agentTimings': install_progress.agent_timings(),
-                'diskIoPolicy': install_progress.disk_io_policy()}
+                'diskIoPolicy': install_progress.disk_io_policy(), 'releaseStagedAhead': staged_ahead}
     if prune_error:
         progress['stateBackupPruneError'] = prune_error
     progress['readDeltaMisses'] = delta_misses  # The same list: later receipts carry later misses.
@@ -985,9 +975,12 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # now), so the rows compared below stay as they are through the backup and restart.
         # Kept until the finally below: the new release (or the old one a rollback starts
         # again) stays idle for the readiness and rollback snapshots.
-        write_install_gate(own, home)
+        gate = write_install_gate(own, home)
         progress['gateSettle'], settle = gate_settle(own, home, before['servicePid'], INSTALL_GATE_SETTLE_SECONDS)
-        time.sleep(settle)
+        if progress['gateSettle'] == 'held':  # A service that acknowledges the gate ends the settle early.
+            progress['gateAcknowledged'] = await_gate_ack(own, home, before['servicePid'], gate, settle)
+        else:
+            time.sleep(settle)
         lap('gateSettle')
         passed = [before_mark]  # Taken right before the last read (full or read_delta) that matched `before`.
         reused_prestate = [prestate_read]
@@ -1085,6 +1078,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # unloaded; serviceStopped follows once the stop is confirmed (or the failure path finds
         # the job unloaded), so a bootout that left the old service running is not a restart.
         service_stopped = progress['stopAttempted'] = True
+        # When the restart really began (restartStartedAt is the heartbeat window's start, earlier).
+        progress['serviceRestartBeganAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         output.write_text(json.dumps(progress, indent=2) + '\n')
         if page_mode: page_mode.held()
         stop_service(domain, before['serviceLabel'], before['servicePid'], port)
@@ -1199,7 +1194,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             # Names only: which protected tables gained which empty columns.
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
-        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings', 'diskIoPolicy', 'readDeltaMisses')
+        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings', 'diskIoPolicy', 'readDeltaMisses',
+                                                      'serviceRestartBeganAt', 'releaseStagedAhead', 'gateAcknowledged')
                        if key in progress})
         if after_carried is not None:
             # Counts only: how many log rows the services appended after the prestate.
@@ -1209,25 +1205,13 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             # Which existing sessions reconnected during the restart (no ids or credentials).
             result['authHeartbeatSessions'] = heartbeat.get('sessions') or [
                 {'kind': 'existing-web-session', 'rows': heartbeat['changedRows']}]
-        # Old unpacked releases are ~340 MB each; keep the new and rollback ones.
-        try:
-            result['prunedReleases'] = prune_releases(home, [new_release, old_release])
-        except Exception as error:  # Pruning never fails a verified update.
-            result['prunedReleases'] = []
-            result['pruneError'] = type(error).__name__
-        # Stage folders a killed helper left, older bundles, finished updates' receipts and owned-updates folders,
-        # and, after a week, held receipts, refusal records, orphaned owned-updates and install/verification entries.
-        result['prunedLeftovers'] = prune_update_leftovers(home, own, manifest['version'], keep=[output, backup])
-        # The new release's update agent replaces an older one, as the desktop installs its own: a Mac
-        # whose desktop app is old or never opened kept its first agent otherwise. Never fails the update.
-        result['updateAgent'] = update_request.refresh_agent(home, identity, new_release)
-        # Older state copies go once this helper exits; the prune adds them to prunedStateBackups.
-        result['stateBackupPrune'] = state_backup_prune.spawn(identity, home, output, pathlib.Path(__file__).resolve())
-        finish('cleanup')
+        # Verified: the receipt, the progress and the gate say so before the cleanup below, which
+        # changes none of it and never fails the update.
+        result['verifiedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         result['timings'] = timings
         output.write_text(json.dumps(result, indent=2) + '\n')
         progress_file.finish('verified', timings)
-        print(json.dumps({'identity': identity, 'result': 'updated', 'archiveSha256': archive_sha, 'servicePid': after['servicePid'], 'report': str(output)}))
+        clear_install_gate(own, home)
     except BaseException as error:
         lap('untilFailure')  # The phase that failed, up to the failure.
         after_proof.abandon(held, kept)  # The reader, the reference image and the kept lines, whichever exist.
@@ -1373,6 +1357,29 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     finally:
         if page_mode: after_proof.abandon(held, kept)
         clear_install_gate(own, home)
+    # Only a verified update gets here; its new release is named by the pointers from now on.
+    try:
+        # Old unpacked releases are ~340 MB each; keep the new and rollback ones.
+        try:
+            result['prunedReleases'] = prune_releases(home, [new_release, old_release])
+        except Exception as error:  # Pruning never fails a verified update.
+            result['prunedReleases'] = []
+            result['pruneError'] = type(error).__name__
+        # Stage folders a killed helper left, older bundles, finished updates' receipts and owned-updates folders,
+        # and, after a week, held receipts, refusal records, orphaned owned-updates and install/verification entries.
+        result['prunedLeftovers'] = prune_update_leftovers(home, own, manifest['version'], keep=[output, backup])
+        # The new release's update agent replaces an older one, as the desktop installs its own: a Mac
+        # whose desktop app is old or never opened kept its first agent otherwise. Never fails the update.
+        result['updateAgent'] = update_request.refresh_agent(home, identity, new_release)
+        # Older state copies go once this helper exits; the prune adds them to prunedStateBackups.
+        result['stateBackupPrune'] = state_backup_prune.spawn(identity, home, output, pathlib.Path(__file__).resolve())
+        release_stage.forget(own, home, archive_sha)  # Installed: the pointers name it now.
+    except Exception as error:  # The update stands verified whatever its cleanup meets.
+        result['cleanupError'] = type(error).__name__
+    finish('cleanup')
+    result['timings'] = timings
+    output.write_text(json.dumps(result, indent=2) + '\n')
+    print(json.dumps({'identity': identity, 'result': 'updated', 'archiveSha256': archive_sha, 'servicePid': after['servicePid'], 'report': str(output)}))
 
 # Refusals the next snapshot may not repeat: processes or the database moved while being read,
 # or a process listed by ps exited before the kernel read of it.
@@ -1430,6 +1437,7 @@ def main():
     parser.add_argument('--request', help='With --reap or --snapshot: the forced install request (installRequestedAt) it serves')
     parser.add_argument('--prune-state-backups', type=pathlib.Path, help="After a verified update: prune older state copies; this is its receipt")
     parser.add_argument('--stale', action='store_true', help='With --reap: only what started before the hold began')
+    parser.add_argument('--stage-release', action='store_true', help='With --archive and --sha256: publish the release ahead of its apply')
     parser.add_argument('--prestate', type=pathlib.Path)
     parser.add_argument('--archive', type=pathlib.Path)
     parser.add_argument('--sha256')
@@ -1443,6 +1451,11 @@ def main():
         state_backup_prune.announce_ready()  # Every module is loaded: the helper that started this may exit.
         state_backup_prune.background_disk_io()
         state_backup_prune.after_install(args.identity, current_owner()['home'], args.prune_state_backups)
+    elif args.stage_release:
+        assert args.archive and args.sha256 and not args.snapshot and not args.prestate and not args.output
+        owner = InstallationDescriptor(args.identity, require_policy=False)
+        print(json.dumps(release_stage.stage_ahead(owner.own, owner.home, args.archive.resolve(strict=True), args.sha256,
+                                                   run=run, publish=publish_release)))
     elif args.reap:
         assert not args.snapshot and not args.prestate and args.request and not os.path.lexists(str(args.reap))
         record = {}
@@ -1460,7 +1473,7 @@ def main():
         assert not args.snapshot.exists()
         marker = None
         try:
-            marker = mark_database_snapshot(args.identity)
+            marker = mark_database_snapshot(args.identity, settle=snapshot_settles(args.identity, args.request))
             value = snapshot(args.identity, args.request)
         except Exception as error:
             release_database_snapshot(marker)

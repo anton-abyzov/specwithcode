@@ -6,6 +6,7 @@ import {
 import {
   AcpRegistrySettings,
   defaultInstanceIdForDriver,
+  GITHUB_COPILOT_AGENT_ID,
   ProviderDriverKind,
   ProviderSetupError,
 } from "@specweave-studio/contracts";
@@ -314,10 +315,23 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  // Local installs launch the `copilot` binary directly with no registry id.
+  const isCopilot =
+    registryAgentId === GITHUB_COPILOT_AGENT_ID ||
+    (options.settings.source === "local" &&
+      /^copilot(?:\.(?:exe|cmd|bat))?$/iu.test(
+        options.settings.commandPath.split(/[\\/]/u).pop() ?? "",
+      ));
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     specweaveTool: specweaveToolForAcpAgent(registryAgentId),
-    capabilities: AcpProviderCapabilitiesV2,
+    // Cancelling a Copilot prompt also kills the background agents it started.
+    capabilities: isCopilot
+      ? {
+          ...AcpProviderCapabilitiesV2,
+          turns: { ...AcpProviderCapabilitiesV2.turns, supportsSteeringByInterruptRestart: false },
+        }
+      : AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     // Per-agent exceptions (Mistral Vibe, Devin): see the note above
     // registerMistralVibeAcpExtensions before adding any more.

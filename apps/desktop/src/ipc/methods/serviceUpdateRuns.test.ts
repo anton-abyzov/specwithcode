@@ -53,6 +53,8 @@ function setup(
     readonly installedVersion?: string;
     /** config.json cannot be written: the change is refused. */
     readonly unwritable?: boolean;
+    /** Records what each look asks the app to stage. */
+    readonly stageApp?: (version: string | null) => Effect.Effect<void>;
   } = {},
 ) {
   const files = options.files ?? memoryRunFiles();
@@ -86,6 +88,7 @@ function setup(
     writeConfig: (change) => Effect.sync(() => writeConfig(change)),
     ...(options.followUp ? { followUp: options.followUp } : {}),
     ...(options.appTarget ? { appTarget: options.appTarget } : {}),
+    ...(options.stageApp ? { stageApp: options.stageApp } : {}),
     newRunId: () => `run-${(next += 1)}`,
   });
   /** The install request of a run, as serviceUpdates writes it: run.json, then config.json. */
@@ -318,6 +321,26 @@ describe("the run loop", () => {
       expect(yield* runs.tick).toBe(true); // The app has not installed yet.
       expect(advanced).toEqual(["run-1"]);
       expect(files.read(RUN_FILE)).not.toBeNull();
+    }),
+  );
+
+  it.effect("asks the app to stage the run's release on every look, and to stop once it ends", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(T0);
+      const staged: Array<string | null> = [];
+      const { runs, files } = setup({
+        stageApp: (version) => Effect.sync(() => void staged.push(version)),
+      });
+      yield* runs.handle(begin);
+      // Preparing and installing: the app stages 1.0.70 as soon as its gate opens.
+      expect(yield* runs.tick).toBe(true);
+      claimed(files, { phase: "installing" });
+      expect(yield* runs.tick).toBe(true);
+      expect(staged).toEqual(["1.0.70", "1.0.70"]);
+      // Cancelled: nothing is staged for it any more.
+      claimed(files, { phase: "cancelled", owner: null, endedAt: isoAt(T0) });
+      expect(yield* runs.tick).toBe(false);
+      expect(staged.at(-1)).toBeNull();
     }),
   );
 

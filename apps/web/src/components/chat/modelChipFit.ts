@@ -11,9 +11,10 @@ import { createContext, useLayoutEffect, useState } from "react";
  * - `model`: the provider's name goes (its mark stays), the state shortens to a word
  *   and a spent limit's detail goes; the ring and the number stay
  * - `short`: the state is its glyph alone and the usage number goes (its ring stays)
- * - `name`: the usage ring goes, so a narrow toolbar still names the model; a long or
- *   custom name may end in an ellipsis here, once its first characters fit
- * - `icon`: the model name goes too; the mark and the state glyph stay, and the usage
+ * - `name`: the usage ring and the provider mark go, so a narrow toolbar still names the
+ *   model; the mark gives way before the name is cut short, and a long or custom name
+ *   may end in an ellipsis here only once its first characters fit
+ * - `icon`: the model name goes too; the mark comes back with the state glyph, and the usage
  *   ring wraps the mark (`ModelUsageMarkRing`) so it takes no room of its own
  *
  * The fit follows the room the chip really has, measured from its parts, never the
@@ -26,6 +27,7 @@ export type ModelChipFitWidths = Readonly<Record<ModelChipFit, number>>;
 
 /** The parts a fit may leave out; everything else always shows. */
 export type ModelChipPart =
+  | "mark"
   | "provider"
   | "model"
   | "state-full"
@@ -35,11 +37,19 @@ export type ModelChipPart =
   | "usage-detail";
 
 const PARTS_BY_FIT: Readonly<Record<ModelChipFit, ReadonlySet<ModelChipPart>>> = {
-  full: new Set(["provider", "model", "state-full", "usage-ring", "usage-value", "usage-detail"]),
-  model: new Set(["model", "state-short", "usage-ring", "usage-value"]),
-  short: new Set(["model", "usage-ring"]),
+  full: new Set([
+    "mark",
+    "provider",
+    "model",
+    "state-full",
+    "usage-ring",
+    "usage-value",
+    "usage-detail",
+  ]),
+  model: new Set(["mark", "model", "state-short", "usage-ring", "usage-value"]),
+  short: new Set(["mark", "model", "usage-ring"]),
   name: new Set(["model"]),
-  icon: new Set([]),
+  icon: new Set(["mark"]),
 };
 
 export function modelChipShows(fit: ModelChipFit, part: ModelChipPart): boolean {

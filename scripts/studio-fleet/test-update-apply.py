@@ -1111,7 +1111,7 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
     self.execute()
    value=json.loads(self.output.read_text());self.assertEqual(value['phase'],'verified')
    self.assertEqual(bool(self.reused),watermark)
-   for key in ('timings','backup','stateBackup','restartStartedAt','readDeltaMisses'):value.pop(key)  # Paths in each run's own home, and times; misses differ by design.
+   for key in ('timings','backup','stateBackup','restartStartedAt','serviceRestartBeganAt','verifiedAt','readDeltaMisses'):value.pop(key)  # Paths in each run's own home, and times; misses differ by design.
    value['after'].pop('observedAt')
    # Each run has its own temporary home, which the pointer files name: their hashes differ.
    value['after'].pop('fileHashes')

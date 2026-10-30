@@ -128,4 +128,11 @@ describe("scoreModelPickerSearch", () => {
       ),
     ).not.toBeNull();
   });
+
+  it("finds every model of a provider by its display name alone", () => {
+    const base = { driverKind: "claudeAgent", providerDisplayName: "Claude Code" };
+    expect(scoreModelPickerSearch({ ...base, name: "Opus 5.5" }, "claude")).not.toBeNull();
+    expect(scoreModelPickerSearch({ ...base, name: "Sonnet 5" }, "claude code")).not.toBeNull();
+    expect(scoreModelPickerSearch({ ...base, name: "Sonnet 5" }, "codex")).toBeNull();
+  });
 });

@@ -26,7 +26,26 @@ vi.mock("@legendapp/list/react", () => ({
     </div>
   ),
 }));
-vi.mock("./ModelPickerSidebar", () => ({ ModelPickerSidebar: () => null }));
+vi.mock("./ModelPickerProviderChips", () => ({
+  ModelPickerProviderChips: ({
+    selected,
+    onSelect,
+  }: {
+    selected: string;
+    onSelect: (view: string) => void;
+  }) => (
+    <div data-model-picker-chips data-selected-view={selected}>
+      <button type="button" data-view="all" onClick={() => onSelect("all")}>
+        All chip
+      </button>
+    </div>
+  ),
+}));
+vi.mock("./ProviderGroupHeader", () => ({
+  ProviderGroupHeader: ({ entry }: { entry: { instanceId: string } }) => (
+    <div data-model-picker-group={entry.instanceId} />
+  ),
+}));
 vi.mock("./ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
 vi.mock("../ui/combobox", () => ({
   Combobox: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -42,15 +61,21 @@ vi.mock("./ModelListRow", () => ({
     model,
     disabledReason,
     warningReason,
+    effort,
+    providerInHeader,
   }: {
     model: { name: string };
     disabledReason?: string | null;
     warningReason?: string | null;
+    effort?: { id: string } | null;
+    providerInHeader?: boolean;
   }) => (
     <div
       data-model-row
       data-disabled-reason={disabledReason ?? undefined}
       data-warning-reason={warningReason ?? undefined}
+      data-effort={effort?.id}
+      data-provider-in-header={providerInHeader ? "" : undefined}
     >
       {model.name}
     </div>
@@ -536,4 +561,145 @@ it("explains the fallback above search without stealing initial focus", async ()
   // One way back: nothing else in the picker offers it.
   expect(container.textContent).not.toMatch(/Switch back|Back to /);
   expect(document.activeElement).toBe(container.querySelector("input"));
+});
+
+describe("Weave grouped list", () => {
+  const codexId = ProviderInstanceId.make("codex");
+  const codex = deriveProviderInstanceEntries([
+    {
+      instanceId: codexId,
+      driver: ProviderDriverKind.make("codex"),
+      displayName: "Codex",
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-12T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ])[0]!;
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "default", name: "Provider default" },
+        { slug: "old", name: "Old Copilot", isLegacy: true },
+      ],
+    ],
+    [codexId, [{ slug: "gpt", name: "GPT Codex" }]],
+  ]);
+  const rows = () =>
+    [...container.querySelectorAll("[data-model-row]")].map((row) => row.textContent);
+  const groups = () =>
+    [...container.querySelectorAll("[data-model-picker-group]")].map((node) =>
+      node.getAttribute("data-model-picker-group"),
+    );
+  const keyDown = (init: KeyboardEventInit) =>
+    act(async () => {
+      container
+        .querySelector("input")!
+        .dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+    });
+
+  it("shows every provider under its own header in All, with each legacy section in place", async () => {
+    await mount({ instanceEntries: [ready, codex], modelOptionsByInstance: options });
+    // One provider: no headers, the row keeps its provider line.
+    expect(groups()).toEqual([]);
+    expect(rows()).toEqual(["Provider default"]);
+    await act(async () => button("All chip")!.click());
+    expect(
+      container.querySelector("[data-model-picker-chips]")?.getAttribute("data-selected-view"),
+    ).toBe("all");
+    expect(groups()).toEqual([instanceId, codexId]);
+    expect(rows()).toEqual(["Provider default", "GPT Codex"]);
+    expect(container.textContent).toContain("Legacy models");
+    expect(container.querySelector("[data-provider-in-header]")).not.toBeNull();
+  });
+
+  it("steps through the provider chips with Cmd+Up and Cmd+Down", async () => {
+    await mount({ instanceEntries: [ready, codex], modelOptionsByInstance: options });
+    const view = () =>
+      container.querySelector("[data-model-picker-chips]")?.getAttribute("data-selected-view");
+    expect(view()).toBe(instanceId);
+    await keyDown({ key: "ArrowDown", metaKey: true });
+    expect(view()).toBe(codexId);
+    await keyDown({ key: "ArrowUp", metaKey: true });
+    await keyDown({ key: "ArrowUp", metaKey: true });
+    await keyDown({ key: "ArrowUp", metaKey: true });
+    expect(view()).toBe("all");
+  });
+
+  it("sets the picked model's effort from the strip and with Left and Right", async () => {
+    const select = vi.fn();
+    const toggle = vi.fn();
+    await mount({
+      effort: {
+        options: [
+          { id: "low", label: "low" },
+          { id: "medium", label: "medium" },
+          { id: "max", label: "Max" },
+        ],
+        value: "medium",
+        locked: null,
+        select,
+        fast: { on: false, toggle },
+      },
+    });
+    const strip = container.querySelector("[data-model-picker-effort]")!;
+    expect(
+      [...strip.querySelectorAll('[role="radio"]')].map((node) => [
+        node.textContent,
+        node.getAttribute("aria-checked"),
+      ]),
+    ).toEqual([
+      ["Low", "false"],
+      ["Medium", "true"],
+      ["Max", "false"],
+    ]);
+    // The picked row shows the chosen effort.
+    expect(container.querySelector("[data-model-row]")?.getAttribute("data-effort")).toBe("medium");
+    await keyDown({ key: "ArrowRight" });
+    expect(select).toHaveBeenLastCalledWith("max");
+    await keyDown({ key: "ArrowLeft" });
+    expect(select).toHaveBeenLastCalledWith("low");
+    await act(async () =>
+      strip.querySelector<HTMLButtonElement>('[data-effort-option="low"]')!.click(),
+    );
+    expect(select).toHaveBeenLastCalledWith("low");
+    await act(async () =>
+      strip.querySelector<HTMLButtonElement>("[data-model-picker-fast]")!.click(),
+    );
+    expect(toggle).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the effort strip out of a multi-selection", async () => {
+    await mount({
+      selectedModels: [{ instanceId, model: "default" }],
+      onToggleModel: vi.fn(),
+      effort: {
+        options: [{ id: "low", label: "Low" }],
+        value: "low",
+        locked: null,
+        select: vi.fn(),
+        fast: null,
+      },
+    });
+    expect(container.querySelector("[data-model-picker-effort]")).toBeNull();
+  });
+
+  it("brings focus back to the search with Cmd+K", async () => {
+    await mount();
+    const chip = button("All chip")!;
+    chip.focus();
+    expect(document.activeElement).toBe(chip);
+    await act(async () => {
+      chip.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(document.activeElement).toBe(container.querySelector("input"));
+  });
 });
