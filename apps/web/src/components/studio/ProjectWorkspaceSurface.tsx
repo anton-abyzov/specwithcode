@@ -63,7 +63,7 @@ import {
   useThreadShellsForProjectRefs,
 } from "../../state/entities";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useEnvironmentScopeAccess } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -231,6 +231,11 @@ export function ProjectWorkspaceSurface({
   const machineName = useMachineNickname(project.environmentId, environment?.label);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canOperate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
+  // "Read-only" only once the host has answered; before that the grant is still loading.
+  const operateAccess = useEnvironmentScopeAccess(
+    project.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const headerProject = useMemo(
     () => ({ environmentId: project.environmentId, projectId: project.id }),
     [project.environmentId, project.id],
@@ -452,6 +457,7 @@ export function ProjectWorkspaceSurface({
     environment?.connection,
     {
       ...hostAdmission,
+      accessPending: operateAccess === "unknown",
       ...(environment?.label || machineName !== project.environmentId
         ? { machineLabel: machineName }
         : {}),
@@ -1926,6 +1932,13 @@ export function ProjectWorkspaceSurface({
             onSaved={query.refresh}
             onOpenThread={openThread}
             canOperate={canOperate && connected}
+            accessNotice={
+              !connected
+                ? "This machine is not connected. Changes can be made once it reconnects."
+                : operateAccess === "unknown"
+                  ? "Checking this connection's access…"
+                  : undefined
+            }
             onDeleted={() => {
               closeSettings();
               void navigate({ to: "/" });

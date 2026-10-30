@@ -19,6 +19,7 @@ const AUDIT = ThreadId.make(
   "thread:delegated-task:command%3Amcp%3Ad25698a7-ed07-4574-a0b9-f1d8a6122b58%3Adelegate-task%3Aeasychamp-full-handoff-audit-20261022",
 );
 const GONE = ThreadId.make("thread:gone");
+const LOCAL_SESSION_NAMED = ThreadId.make("session_0123456789abcdef");
 const callerId = ThreadId.make("caller");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const shell = (id: ThreadId, deletedAt: string | null = null) =>
@@ -50,7 +51,7 @@ const explain = (threadId: string, options: { readonly granted?: boolean } = {})
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) =>
             Effect.succeed(
-              id === callerId || id === AUDIT
+              id === callerId || id === AUDIT || id === LOCAL_SESSION_NAMED
                 ? shell(id)
                 : id === GONE
                   ? shell(id, "2026-10-23T00:00:00.000Z")
@@ -89,5 +90,30 @@ it.effect("keeps the original answer for an exact ID whose thread was deleted", 
   Effect.gen(function* () {
     const answer = yield* explain(GONE);
     expect(answer.message).toBe(`Thread ${GONE} was not found.`);
+  }),
+);
+
+it.effect("says a Claude projects session ID cannot be reached from here", () =>
+  Effect.gen(function* () {
+    for (const id of [
+      "session_01RhCFc1su6eFVEQXBrw2Rjb",
+      "cmsg_01A8jUDyJrsZdj1zng6pD3rHF1otS4iEnR9oY7Y69BrkZP",
+    ]) {
+      const answer = yield* explain(id);
+      expect(answer.code).toBe("thread_not_found");
+      expect(answer.message).toContain("not a SpecWithCode thread");
+      expect(answer.message).toContain("Do not open a browser");
+      expect(answer.message).not.toContain("studio_thread_search");
+      expect((yield* explain(id, { granted: true })).message).toContain(
+        "not a SpecWithCode thread",
+      );
+    }
+  }),
+);
+
+it.effect("keeps the original answer when a thread with that ID exists here", () =>
+  Effect.gen(function* () {
+    const answer = yield* explain(LOCAL_SESSION_NAMED);
+    expect(answer.message).toBe(`Thread ${LOCAL_SESSION_NAMED} was not found.`);
   }),
 );

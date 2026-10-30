@@ -207,6 +207,8 @@ export type HostAdmissionContext = {
   readonly graceElapsed: boolean;
   /** The viewed machine's name, for the text that refuses a send to it. */
   readonly machineLabel?: string;
+  /** The host has not confirmed this connection's grant yet. */
+  readonly accessPending?: boolean;
 };
 
 const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElapsed: true };
@@ -297,7 +299,11 @@ export function projectAdmissionReason(
     if (connection?.phase === "offline") return "This device is offline.";
     return remoteUnreachableAdmission(context.machineLabel);
   }
-  if (!canOperate) return "This connection has read-only access.";
+  if (!canOperate) {
+    return context.accessPending
+      ? "Checking this connection's access…"
+      : "This connection has read-only access.";
+  }
   if (!settings) return "Project settings are still loading.";
   if (settings.archived) return "Unarchive the project to start new work.";
   if (settings.paused) return "Resume the project to start new work.";

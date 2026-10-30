@@ -499,6 +499,17 @@ describe("Project admission and retry", () => {
   it("requires a connected authorized active project", () => {
     const settings = { paused: false, archived: false };
     expect(projectAdmissionReason(settings, true, true)).toBeNull();
+    expect(projectAdmissionReason(settings, true, false)).toBe(
+      "This connection has read-only access.",
+    );
+    // Before the host answers, a missing grant is not reported as read-only.
+    expect(
+      projectAdmissionReason(settings, true, false, null, {
+        isThisDevice: true,
+        graceElapsed: true,
+        accessPending: true,
+      }),
+    ).toBe("Checking this connection's access…");
     expect(projectAdmissionReason(settings, false, true)).toMatch(/unreachable/);
     expect(
       projectAdmissionReason(settings, false, true, null, {

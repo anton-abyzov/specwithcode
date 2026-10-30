@@ -4,7 +4,7 @@
 #
 #   bash scripts/studio-verify/pr-gate.sh [--base origin/main] [--out DIR] [--jobs N]
 #                                          [--server-shards N] [--keep-going] [--only J]...
-#                                          [--skip J]...
+#                                          [--skip J]... [--no-server]
 #   bash scripts/studio-verify/pr-gate.sh --list
 #
 # Stage 1, at most --jobs at a time (default 3):
@@ -33,6 +33,8 @@
 # --skip J   leave stage-1 job J out because something else runs it (checks.yml runs the
 #            typecheck gate in its own job: the server's tsc peaks near 11 GB, more than a
 #            16 GB runner has beside two test suites). Repeatable; named in the output.
+# --no-server  run stage 1 alone and pass on it: checks.yml runs the server suite as shard jobs
+#            of its own beside this one (test-sharded.mjs --run, then --merge), not after it.
 #
 # Environment: PR_GATE_TIMEOUT (seconds per stage-1 job, default 1200), VITEST_MAX_WORKERS
 # (vitest workers per package suite, default 4). Ctrl-C or a TERM stops every job and shard.
@@ -105,6 +107,7 @@ OUT=""
 JOBS=3
 SHARDS=2
 KEEP_GOING=0
+NO_SERVER=0
 LIST=0
 ONLY=""
 SKIP=""
@@ -115,6 +118,7 @@ while [ $# -gt 0 ]; do
     --jobs) [ $# -ge 2 ] || die "--jobs needs a number"; JOBS="$2"; shift 2;;
     --server-shards) [ $# -ge 2 ] || die "--server-shards needs a number"; SHARDS="$2"; shift 2;;
     --keep-going) KEEP_GOING=1; shift;;
+    --no-server) NO_SERVER=1; shift;;
     --list) LIST=1; shift;;
     --only) [ $# -ge 2 ] || die "--only needs a job"; ONLY="$ONLY ${2%/}"; shift 2;;
     --skip) [ $# -ge 2 ] || die "--skip needs a job"; SKIP="$SKIP ${2%/}"; shift 2;;
@@ -262,6 +266,9 @@ done < "$JOBLIST"
 server_code="not-run"
 if [ -n "$ONLY" ]; then
   echo "Stage 2: not run; --only runs stage-1 jobs alone"
+elif [ "$NO_SERVER" -eq 1 ]; then
+  server_code=0
+  echo "Stage 2: not run here (--no-server); the server suite runs in jobs of its own"
 elif [ "$stage1_failed" -eq 0 ] || [ "$KEEP_GOING" -eq 1 ]; then
   echo "Stage 2: server suite, files changed since $(git -C "$ROOT" rev-parse --short "$MERGE_BASE"), $SHARDS shards"
   # In the background so a Ctrl-C or TERM reaches the trap at once; test-sharded.mjs stops

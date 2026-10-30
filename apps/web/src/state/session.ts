@@ -55,8 +55,9 @@ export function environmentScopeAccess(
 ): EnvironmentScopeAccess {
   if (connection?.blockedReason === "authentication") return "signed-out";
   if (connection && connection.phase !== "connected") return "unknown";
+  // A failed re-check keeps the last grant the host confirmed.
   const session = Option.getOrNull(AsyncResult.value(result));
-  if (result._tag === "Failure" || session === null) return "unknown";
+  if (session === null) return "unknown";
   if (!session.authenticated) return "signed-out";
   return sessionGrantsScope(session, scope) ? "granted" : "denied";
 }
@@ -100,12 +101,17 @@ export function providerManageBlockedText(access: EnvironmentScopeAccess): strin
   }
 }
 
+/**
+ * A failed re-check (a slow host, a dropped relay hop) keeps the last grant the
+ * host confirmed, so one timeout does not turn every view read-only. The host
+ * still enforces every scope on each request.
+ */
 function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
   const session = Option.getOrNull(AsyncResult.value(result));
-  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
+  return session !== null && sessionGrantsScope(session, scope);
 }
 
 /** Whether new browsers can sign in to this environment with a token or an approved code. */
@@ -170,6 +176,10 @@ export function awaitEnvironmentScope(
         }).pipe(
           Effect.timeoutOption(6_000),
           Effect.catchCause(() => Effect.succeed(Option.none<AuthSessionState>())),
+          // A failed re-check falls back to the last grant the host confirmed.
+          Effect.map((fresh) =>
+            Option.orElse(fresh, () => AsyncResult.value(appAtomRegistry.get(atom))),
+          ),
         );
         return Option.isSome(session) && sessionGrantsScope(session.value, scope);
       }),

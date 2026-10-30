@@ -2,6 +2,7 @@ import type { AuthSessionState, EnvironmentId, ServerConfig } from "@specweave-s
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
@@ -39,6 +40,20 @@ function initialConfigOption<E>(
 // Bounded so a wedged environment cannot pin the permissions check (and with it
 // the settings UI) in a loading state for long.
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
+
+// A slow or dropped check retries before it is reported. A rejected credential
+// is an answer, not a hiccup, so it fails at once.
+const SESSION_STATE_RETRY = {
+  schedule: Schedule.exponential("1 second"),
+  times: 4,
+  while: (error: { readonly _tag: string }) =>
+    error._tag !== "EnvironmentAuthInvalidError" &&
+    error._tag !== "RemoteEnvironmentAuthFetchError",
+} as const;
+
+// A mounted view never re-reads the grant on its own (stale-while-revalidate
+// only revalidates on mount), so a failed check schedules its own re-check.
+const SESSION_STATE_RECHECK_MS = 30_000;
 
 /**
  * Read the granted scopes of this client's session on one environment via its
@@ -149,7 +164,17 @@ function makeEnvironmentSessionAtoms<R, E>(
             prepared,
             signer,
             remoteAuthorization,
-          }).pipe(Effect.provideService(HttpClient.HttpClient, client.value));
+          }).pipe(
+            Effect.retry(SESSION_STATE_RETRY),
+            Effect.provideService(HttpClient.HttpClient, client.value),
+            // refreshSelf is a no-op once the atom is disposed or recomputed.
+            Effect.tapError(() =>
+              Effect.sleep(SESSION_STATE_RECHECK_MS).pipe(
+                Effect.andThen(Effect.sync(() => get.refreshSelf())),
+                Effect.forkDetach,
+              ),
+            ),
+          );
         });
       })
       .pipe(

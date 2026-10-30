@@ -8,7 +8,7 @@
 #   bash scripts/release/release.sh --self-test
 #
 # Stages, in order (docs/studio/releasing.md has the runbook):
-#   preflight trees prev bump candidate stage1 [server starts here, in the background]
+#   preflight trees prev bump candidate [server starts here, in the background] stage1
 #   build bundle sign helpers plan drafts server-wait
 #   quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux
 #
@@ -533,12 +533,19 @@ server_alive() {  # server_alive PID: a live --internal-server of this version
 }
 
 stop_stale_server() {
-  local pid sha
+  local pid sha waited=0
   [ -f "$STAGE/server.pid" ] || return 0
   read -r pid sha _ < "$STAGE/server.pid"
   if [ "$sha" != "$SHA" ] && server_alive "$pid"; then
     say "Stopping the server suite for the old candidate (process group $pid)"
     x stop-server -- kill -TERM -- "-$pid"
+    # Gone before the candidate stage checks out, cleans and reinstalls the test tree: the
+    # runner keeps its group until its shards have closed (15s at most).
+    while [ "$MODE" = real ] && kill -0 -- "-$pid" 2> /dev/null; do
+      [ $waited -lt 30 ] || die "the old server suite (process group $pid) did not stop within 30s; stop it, then --resume"
+      sleep 1
+      waited=$((waited + 1))
+    done
   fi
   return 0
 }
@@ -549,7 +556,7 @@ start_server() {
   local pid="" sha="" retry="" waited=0
   if is_done server "$SHA"; then return 0; fi
   if [ "$MODE" = dry ]; then
-    say "> server (background, alongside build..drafts)"
+    say "> server (background, alongside stage1..drafts)"
     stage_server
     return 0
   fi
@@ -953,13 +960,29 @@ stage_drafts() {
   fi
   x public-notes -- python3 -B "$TOOLS" public-notes --in "$STAGE/notes.md" --out "$STAGE/notes-public.md" --rules "$PUBLIC_RULES"
   replace_draft "$PRIVATE_REPO" "$SHA" "$STAGE/notes.md" private
-  upload_assets "$PRIVATE_REPO" private
+  # The private upload runs beside the mirror check and the public draft: one after the other,
+  # the two uploads of the same ~400 MB were most of the stage's 95 to 167s.
+  local private_upload=0 private_rc=0
+  if [ "$MODE" = real ]; then
+    upload_assets "$PRIVATE_REPO" private &
+    private_upload=$!
+    # A failed public step (this stage runs in run_stage's subshell) or a signal ends the upload
+    # too, rather than leave it holding the log pipe or racing a --resume's fresh draft.
+    trap 'kill "$private_upload" 2> /dev/null || true' EXIT INT TERM
+  else
+    upload_assets "$PRIVATE_REPO" private
+  fi
   # Check the public snapshot now (commit only, no tag or push), then put the clone back.
   reset_public
   x mirror-check -C "$BUILD" -- node scripts/public-mirror/publish.mjs --public "$PUBLIC_CLONE" --ref "$SHA"
   reset_public
   replace_draft "$PUBLIC_REPO" main "$STAGE/notes-public.md" public
   upload_assets "$PUBLIC_REPO" public
+  if [ "$private_upload" -ne 0 ]; then
+    wait "$private_upload" || private_rc=$?
+    trap - EXIT INT TERM
+    [ "$private_rc" -eq 0 ] || die "drafts: the upload to $PRIVATE_REPO failed (exit $private_rc); --resume uploads again"
+  fi
 }
 
 stage_quit_desktop() {
@@ -1381,8 +1404,14 @@ main() {
   run_stage bump once
   resolve_candidate
   run_stage candidate sha
+  # On this Mac, beside stage 1, not after it: started after stage 1 the suite (about 600s)
+  # outlasted build..drafts (about 500s) and server-wait held 105 to 343s on 1.0.119..1.0.123. A
+  # stage-1 failure stops the release before build and leaves the suite running for --resume of
+  # the same candidate (stop_stale_server ends it for a new one). A hosted runner (--ci, 3 cores)
+  # has no room for both, so there it still starts after stage 1.
+  if [ "$CI_MODE" -eq 0 ]; then start_server; fi
   run_stage stage1 sha
-  start_server
+  if [ "$CI_MODE" -eq 1 ]; then start_server; fi
   run_stage build sha
   for stage in bundle sign helpers plan drafts; do
     stop_if_server_failed

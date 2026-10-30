@@ -28,7 +28,6 @@ const capacityAtom = Atom.family((environmentId: EnvironmentId) =>
       );
       if (
         !connected ||
-        session._tag === "Failure" ||
         grant === null ||
         !sessionGrantsScope(grant, AuthOrchestrationReadScope) ||
         prepared === null

@@ -228,7 +228,7 @@ check 'argument errors write nothing' test -z "$(find "$ARGS_HOME" -mindepth 1 -
 DRY_HOME="$WORK/dry-home"
 mkdir -p "$DRY_HOME"
 STUB_ENV=(HOME="$DRY_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV=)
-EXPECTED_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
+EXPECTED_ORDER="preflight trees prev bump candidate server stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
 dry_ok() {
   run 0 9.9.9 --dry-run || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_ORDER" ] || return 1
@@ -306,6 +306,7 @@ check 'resume kept the server result (no second server run)' \
 
 stub_set RELEASE_STUB_SHA="$SHA_B" "RELEASE_STUB_FAIL=stage1:test:packages/shared"
 BEFORE="$(lines)"
+BEFORE_FIX="$BEFORE"
 candidate_fail_ok() {
   run 1 1.2.0 --resume || return 1
   has 'New candidate bbbbbbbbbbbb' && has 'stage 1 failed: packages_shared' || return 1
@@ -321,7 +322,8 @@ candidate_ok() {
   has 'rerunning last attempt'"'"'s failures first: packages_shared' || return 1
   [ "$(stages_after "$BEFORE")" = "stage1 build bundle sign helpers plan drafts " ] || return 1
   wait_for_server "$SHA_B" || return 1
-  awk -F '\t' -v from="$BEFORE" 'NR > from && $1 == "server"' "$STUB_LOG" | grep -q -- "--changed $SHA_A" &&
+  # The suite starts beside stage 1, so the failed attempt above already ran it for this candidate.
+  awk -F '\t' -v from="$BEFORE_FIX" 'NR > from && $1 == "server"' "$STUB_LOG" | grep -q -- "--changed $SHA_A" &&
     [ ! -f "$STAGE/stage1/failed.txt" ] && [ "$(cat "$STAGE/markers/sign")" = "$SHA_B" ]
 }
 check 'after the fix: failures first, signed build again, server on --changed <green>' candidate_ok
@@ -986,7 +988,7 @@ check 'server-wait names only the flakes of the server run it waited for' server
 use_machine "$F" 1.5.12
 server_no_retry_restart_ok() {
   local fake rc=0 before
-  run 0 1.5.12 --stop-after stage1 || return 1
+  run 0 1.5.12 --stop-after candidate || return 1
   bash -c 'sleep 60; :' --internal-server 1.5.12 &
   fake=$!
   printf '%s %s\n' "$fake" "$SHA_A" > "$STAGE/server.pid"
@@ -1014,7 +1016,7 @@ stub_set RELEASE_STUB_FAIL= RELEASE_STUB_OUTPUT=
 use_machine "$F" 1.5.15
 server_restart_waits_ok() {
   local fake rc=0
-  run 0 1.5.15 --stop-after stage1 || return 1
+  run 0 1.5.15 --stop-after candidate || return 1
   set -m
   bash -c 'n=0; until grep -q stop-server "$2" 2> /dev/null || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
     (sleep 2; printf "old suite: shards closed\n" >> "$3") &' --internal-server 1.5.15 "$STUB_LOG" "$STAGE/logs/server.log" &

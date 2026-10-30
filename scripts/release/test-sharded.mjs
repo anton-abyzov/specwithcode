@@ -3,6 +3,8 @@
 // recorded file times, and exits non-zero when any shard fails.
 //
 //   node scripts/release/test-sharded.mjs --shards 3 --out DIR [--changed SHA] [-- FILTER...]
+//   node scripts/release/test-sharded.mjs --shards 6 --run 1,2 --out DIR [--changed SHA]
+//   node scripts/release/test-sharded.mjs --merge DIR...
 //   pnpm run test:server:sharded -- --shards 3 --out DIR [-- FILTER...]
 //
 // Each shard runs `vp test run --shard i/N` in apps/server with its own TMPDIR, CI=1,
@@ -16,6 +18,10 @@
 // --changed SHA   run only the files vitest's module graph ties to changes since SHA; a change
 //                 to a package.json or vite config makes vitest run everything
 // --timeout-minutes N   stop a shard that runs longer (default 60)
+// --run I,J       run only these of the --shards (up to 12), for a suite split across CI jobs;
+//                 shards.json is then partial, and only --merge of every job's DIR judges the
+//                 no-file and changed-test-file checks
+// --merge DIR...  read each DIR/shards.json (one per job), print the combined table and verdict
 // -- FILTER...    extra vitest arguments, for example test file filters
 //
 // A shard that gets no files passes; a full run (no --changed) in which no shard ran a test
@@ -38,6 +44,7 @@ export function parseArgs(argv) {
     timeoutMinutes: 60,
     filters: [],
   };
+  let run;
   // pnpm run passes the `--` of `pnpm run test:server:sharded -- <options>` through; a
   // leading one is that, not the start of the vitest filters.
   for (let i = argv[0] === "--" ? 1 : 0; i < argv.length; i += 1) {
@@ -55,12 +62,31 @@ export function parseArgs(argv) {
     else if (arg === "--out") options.out = value();
     else if (arg === "--changed") options.changed = value();
     else if (arg === "--timeout-minutes") options.timeoutMinutes = Number(value());
+    else if (arg === "--run") run = value();
+    else if (arg === "--merge") {
+      options.merge = argv.slice(i + 1);
+      break;
+    }
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`Unknown option ${arg}`);
   }
   if (options.help) return options;
-  if (!Number.isInteger(options.shards) || options.shards < 1 || options.shards > 6)
-    throw new Error("--shards must be an integer from 1 to 6");
+  if (options.merge !== undefined) {
+    if (options.merge.length === 0) throw new Error("--merge needs at least one DIR");
+    return { merge: options.merge };
+  }
+  const most = run === undefined ? 6 : 12;
+  if (!Number.isInteger(options.shards) || options.shards < 1 || options.shards > most)
+    throw new Error(`--shards must be an integer from 1 to ${most}`);
+  if (run !== undefined) {
+    const picked = run.split(",").map(Number);
+    if (
+      picked.some((index) => !Number.isInteger(index) || index < 1 || index > options.shards) ||
+      new Set(picked).size !== picked.length
+    )
+      throw new Error(`--run takes distinct shard numbers from 1 to ${options.shards}, such as 1,2`);
+    options.run = picked;
+  }
   if (!(options.timeoutMinutes > 0)) throw new Error("--timeout-minutes must be positive");
   if (!options.out) throw new Error("--out DIR is required");
   if (options.changed !== undefined && !/^[\w./~^@{}-]+$/.test(options.changed))
@@ -96,16 +122,59 @@ export function readShardReport(file, serverRoot = server) {
 }
 
 /** Pass or fail for the whole run, and why. */
-export function verdict(shards, { changed, changedTestFiles = [] }) {
+export function verdict(shards, { changed, changedTestFiles = [], partial = false }) {
   const failed = shards.filter((shard) => shard.exitCode !== 0 || shard.timedOut);
   if (failed.length > 0)
     return { ok: false, reason: `shard ${failed.map((shard) => shard.index).join(", ")} failed` };
+  // Another job ran the other shards: only --merge sees whether any shard ran a file.
+  if (partial) return { ok: true, reason: "passed (partial; --merge judges the whole run)" };
   const files = shards.reduce((sum, shard) => sum + shard.files, 0);
   if (files === 0 && changed === undefined)
     return { ok: false, reason: "no shard ran a test file" };
   if (files === 0 && changedTestFiles.length > 0)
     return { ok: false, reason: "no shard ran a changed server test file" };
   return { ok: true, reason: files === 0 ? "no test file is affected by the changes" : "passed" };
+}
+
+/** One verdict for a suite split across jobs: every job's shards.json, each from --run. */
+export function mergeSummaries(summaries) {
+  const shards = summaries
+    .flatMap((summary) => summary.shards ?? [])
+    .toSorted((a, b) => a.index - b.index);
+  const total = summaries[0]?.total ?? shards.length;
+  const missing = Array.from({ length: total }, (_, i) => i + 1).filter(
+    (index) => !shards.some((shard) => shard.index === index),
+  );
+  const changed = summaries[0]?.changed ?? undefined;
+  const changedTestFiles = summaries[0]?.changedTestFiles ?? [];
+  const result =
+    missing.length > 0
+      ? { ok: false, reason: `no result for shard ${missing.join(", ")}` }
+      : verdict(shards, { changed: changed ?? undefined, changedTestFiles });
+  return {
+    shards,
+    total,
+    changed: changed ?? null,
+    changedTestFiles,
+    ok: result.ok,
+    reason: result.reason,
+    failedFiles: shards.flatMap((shard) => shard.failedFiles ?? []),
+  };
+}
+
+function printTable(shards) {
+  console.log("SHARD  EXIT  SECONDS  FILES  TESTS  FAILED");
+  for (const shard of shards)
+    console.log(
+      [
+        String(shard.index).padEnd(5),
+        String(shard.timedOut ? "T/O" : shard.exitCode).padEnd(4),
+        String(shard.seconds).padStart(7),
+        String(shard.files).padStart(5),
+        String(shard.tests).padStart(6),
+        String(shard.failedTests).padStart(7),
+      ].join("  "),
+    );
 }
 
 // Each shard leads a process group of its own, so stopping it also stops the vitest workers it
@@ -227,6 +296,19 @@ async function main() {
     );
     return;
   }
+  if (options.merge !== undefined) {
+    const summaries = options.merge.map((dir) => {
+      const file = NodePath.join(dir, "shards.json");
+      if (!NodeFS.existsSync(file)) throw new Error(`${file} is missing; did that job run?`);
+      return JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    });
+    const merged = mergeSummaries(summaries);
+    printTable(merged.shards);
+    for (const file of merged.failedFiles) console.log(`failed: ${file}`);
+    console.log(`Server shards: ${merged.reason}`);
+    if (!merged.ok) process.exitCode = 1;
+    return;
+  }
   if (!NodeFS.existsSync(NodePath.join(root, "node_modules/vite-plus/bin/vp")))
     throw new Error("Install dependencies first: node_modules/vite-plus is missing");
   const out = NodePath.resolve(options.out);
@@ -244,14 +326,14 @@ async function main() {
     });
 
   const began = Date.now();
+  const indices = options.run ?? Array.from({ length: options.shards }, (_, i) => i + 1);
   console.log(
     `Running the server suite as ${options.shards} shards` +
+      (options.run ? ` (this job: ${options.run.join(", ")})` : "") +
       (options.changed ? ` (changed since ${options.changed})` : "") +
       `; logs in ${out}`,
   );
-  const shards = await Promise.all(
-    Array.from({ length: options.shards }, (_, i) => runShard(i + 1, options, out)),
-  );
+  const shards = await Promise.all(indices.map((index) => runShard(index, options, out)));
   const changedTestFiles =
     options.changed === undefined
       ? []
@@ -262,9 +344,12 @@ async function main() {
         )
           .split("\n")
           .filter((file) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(file));
-  const result = verdict(shards, { ...options, changedTestFiles });
+  const partial = options.run !== undefined;
+  const result = verdict(shards, { ...options, changedTestFiles, partial });
   const summary = {
     shards,
+    total: options.shards,
+    partial,
     changed: options.changed ?? null,
     changedTestFiles,
     filters: options.filters,
@@ -275,18 +360,7 @@ async function main() {
   };
   NodeFS.writeFileSync(NodePath.join(out, "shards.json"), `${JSON.stringify(summary, null, 2)}\n`);
 
-  console.log("SHARD  EXIT  SECONDS  FILES  TESTS  FAILED");
-  for (const shard of shards)
-    console.log(
-      [
-        String(shard.index).padEnd(5),
-        String(shard.timedOut ? "T/O" : shard.exitCode).padEnd(4),
-        String(shard.seconds).padStart(7),
-        String(shard.files).padStart(5),
-        String(shard.tests).padStart(6),
-        String(shard.failedTests).padStart(7),
-      ].join("  "),
-    );
+  printTable(shards);
   for (const file of summary.failedFiles) console.log(`failed: ${file}`);
   for (const failure of shards.flatMap((shard) => shard.failures))
     console.log(`  ${failure.file} > ${failure.test}: ${failure.message}`);

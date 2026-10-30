@@ -3,7 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseArgs, readShardReport, verdict } from "./test-sharded.mjs";
+import { mergeSummaries, parseArgs, readShardReport, verdict } from "./test-sharded.mjs";
 
 describe("test-sharded options", () => {
   it("reads shards, output, changed base and trailing vitest filters", () => {
@@ -121,5 +121,43 @@ describe("test-sharded reports", () => {
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("test-sharded split across jobs", () => {
+  const shard = (index, exitCode, files) => ({ index, exitCode, files, timedOut: false, failedFiles: [] });
+
+  it("runs a subset of up to 12 shards and rejects bad subsets", () => {
+    expect(parseArgs(["--shards", "6", "--run", "3,4", "--out", "o"])).toMatchObject({
+      shards: 6,
+      run: [3, 4],
+    });
+    expect(() => parseArgs(["--shards", "12", "--run", "1", "--out", "o"])).not.toThrow();
+    expect(() => parseArgs(["--shards", "13", "--run", "1", "--out", "o"])).toThrow("--shards");
+    expect(() => parseArgs(["--shards", "6", "--run", "7", "--out", "o"])).toThrow("--run");
+    expect(() => parseArgs(["--shards", "6", "--run", "2,2", "--out", "o"])).toThrow("--run");
+    expect(() => parseArgs(["--merge"])).toThrow("--merge");
+    expect(parseArgs(["--merge", "a", "b"])).toEqual({ merge: ["a", "b"] });
+  });
+
+  it("passes a partial run with no files, and leaves the file checks to --merge", () => {
+    expect(verdict([shard(3, 0, 0)], { partial: true }).ok).toBe(true);
+    expect(verdict([shard(3, 1, 2)], { partial: true }).ok).toBe(false);
+  });
+
+  it("merges every job's shards into one verdict", () => {
+    const job = (shards, extra = {}) => ({ total: 4, changed: "abc", changedTestFiles: [], shards, ...extra });
+    expect(mergeSummaries([job([shard(1, 0, 2), shard(2, 0, 1)]), job([shard(3, 0, 0), shard(4, 0, 4)])]))
+      .toMatchObject({ ok: true, total: 4 });
+    expect(mergeSummaries([job([shard(1, 0, 2), shard(2, 0, 1)])])).toMatchObject({
+      ok: false,
+      reason: "no result for shard 3, 4",
+    });
+    expect(mergeSummaries([job([shard(1, 0, 2), shard(2, 1, 1)]), job([shard(3, 0, 0), shard(4, 0, 4)])]).ok)
+      .toBe(false);
+    const changedTest = { changedTestFiles: ["apps/server/src/a.test.ts"] };
+    expect(
+      mergeSummaries([job([shard(1, 0, 0), shard(2, 0, 0)], changedTest), job([shard(3, 0, 0), shard(4, 0, 0)], changedTest)]),
+    ).toMatchObject({ ok: false, reason: "no shard ran a changed server test file" });
   });
 });
