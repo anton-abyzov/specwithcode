@@ -58,13 +58,19 @@ export function canonical(value: unknown): string {
 export function machineHandoffDigest(value: Omit<MachineHandoffBundle, "digest">): string {
   return sha256([canonical(value)], "hex");
 }
-/** A preview saved before bundles carried the mode still matches the same source. */
+/**
+ * A preview saved before bundles carried the mode still matches the same source.
+ * Worker summaries follow live shell rows (activity times, titles) and travel
+ * as the preview saved them, so only what moves in full is compared.
+ */
 export function comparableContext(
   retained: MachineHandoffContext,
   saved: MachineHandoffContext,
 ): MachineHandoffContext {
-  if (saved.runtimeMode !== undefined) return retained;
-  const { runtimeMode: _runtimeMode, ...rest } = retained;
+  const current =
+    retained.retention && saved.retention ? { ...retained, retention: saved.retention } : retained;
+  if (saved.runtimeMode !== undefined) return current;
+  const { runtimeMode: _runtimeMode, ...rest } = current;
   return rest;
 }
 const isMachineHandoffBundle = Schema.is(MachineHandoffBundle);

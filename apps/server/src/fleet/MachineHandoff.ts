@@ -61,7 +61,6 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import * as ServerSettings from "../serverSettings.ts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -106,6 +105,17 @@ import { makeCopyRegistration } from "./folderCopyRegistration.ts";
 import { discoverCopyScopes, resolveCopyScope } from "./folderCopyScope.ts";
 import { checkMachineReadiness } from "./MachineReadiness.ts";
 import { newSourceRecord } from "./machineHandoffBundle.ts";
+import {
+  type ContextThread,
+  contextThread,
+  fitCoordinatorContext,
+  fullContext,
+  newUnmergedWorkers,
+  recordsBusy,
+  withUnmergedWorkers,
+  workerSummaries,
+} from "./coordinatorContext.ts";
+import { makeUnmergedWorkers } from "./unmergedWorkers.ts";
 import * as ProvisionRpc from "../provision/rpc.ts";
 import * as GitHubSignInRpc from "../sourceControl/gitHubSignInRpc.ts";
 import {
@@ -133,6 +143,8 @@ import {
 const SourceRecord = Schema.Struct({
   ...MachineHandoffPrepareResult.fields,
   previewDigest: Schema.optional(MachineHandoffBundle.fields.digest),
+  /** Every worker with unmerged code at the review, beyond the ones the bundle lists. */
+  reviewedUnmerged: Schema.optional(Schema.Array(ThreadId)),
 });
 const PreparedLaunch = Schema.Struct({
   projectId: ProjectId,
@@ -152,7 +164,6 @@ const DestinationRecord = Schema.Struct({
   metadata: Schema.optional(MachineHandoffPreviewMetadata),
   launch: Schema.optional(PreparedLaunch),
 });
-const terminal = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
 const isHandoffError = Schema.is(MachineHandoffError);
 const isHandoffContext = Schema.is(MachineHandoffContext);
 const decodeSourceRecord = Schema.decodeUnknownEffect(SourceRecord);
@@ -295,6 +306,7 @@ const make = Effect.gen(function* () {
       return found.value;
     });
   const idle = makeProjectIdleCheck(sql, fs, path);
+  const unmergedWorkers = makeUnmergedWorkers(projections, git);
   const context = (id: ProjectId, selected: ThreadId, current: Project) =>
     guarded(
       Effect.gen(function* () {
@@ -308,11 +320,16 @@ const make = Effect.gen(function* () {
         const candidates = [...snapshot.threads, ...snapshot.archivedThreads].filter(
           (t) => t.projectId === id && t.deletedAt === null,
         );
-        // Retain the coordinator plus the selected worker. A coordinator handoff retains all its workers.
+        // Retain the coordinator plus the selected worker. A coordinator handoff retains all its
+        // workers while they fit; past that, its newest history and a summary of each worker.
+        const whole = selected === coordinatorId;
         const chosen = candidates.filter(
-          (t) => selected === coordinatorId || t.id === selected || t.id === coordinatorId,
+          (t) => whole || t.id === selected || t.id === coordinatorId,
         );
-        if (chosen.length > 100 || metadata.memory.totalBytes > MACHINE_HANDOFF_MEMORY_MAX_BYTES)
+        if (
+          (!whole && chosen.length > 100) ||
+          metadata.memory.totalBytes > MACHINE_HANDOFF_MEMORY_MAX_BYTES
+        )
           return yield* new MachineHandoffError({ code: "too_large" });
         const notes = yield* Effect.forEach(metadata.memory.files, (file) =>
           workspace
@@ -320,81 +337,66 @@ const make = Effect.gen(function* () {
             .pipe(Effect.map((note) => ({ name: note.name, content: note.content }))),
         );
         const originEnvironmentId = yield* environment.getEnvironmentId;
-        const loaded = yield* Effect.forEach(chosen, (thread) =>
-          projections
-            .getThreadRecords(thread.id, ["messages", "runs"], {
-              messageRoles: ["user", "assistant"],
-            })
-            .pipe(Effect.map((records) => ({ thread, records }))),
-        );
+        const where = { environmentId: originEnvironmentId, projectId: id, coordinatorId };
         // Name every thread still working, not only the first one found.
-        const working = loaded.filter(
-          ({ records }) =>
-            records.runs.some((run) => !terminal.has(run.status)) ||
-            records.messages.some((message) => message.streaming),
-        );
-        if (working.length > 0)
-          return yield* busyHandoffError(
-            working.map(({ thread }) => ({
-              threadId: thread.id,
-              title: thread.title,
-              projectId: id,
-              projectTitle: current.title,
-              reason: "running" as const,
-            })),
-          );
-        const threads = loaded.map(({ thread, records }) => ({
-          environmentId: originEnvironmentId,
-          projectId: id,
-          ...(thread.modelSelection ? { modelSelection: thread.modelSelection } : {}),
-          threadId: thread.id,
-          title: thread.title,
-          branch: thread.branch ?? null,
-          worktreePath: thread.worktreePath ?? null,
-          kind: thread.id === coordinatorId ? ("coordinator" as const) : ("worker" as const),
-          messages: records.messages
-            .filter((m) => m.role !== "system")
-            .map((m) => ({
-              ...(() => {
-                const run = records.runs.find((r) => r.userMessageId === m.id || r.id === m.runId);
-                return run?.modelSelection
-                  ? { runId: run.id, modelSelection: run.modelSelection }
-                  : {};
-              })(),
-              id: m.id,
-              role: m.role as "user" | "assistant",
-              text: m.text,
-              createdAt: DateTime.formatIso(m.createdAt),
-            })),
-        }));
+        const readAll = (list: ReadonlyArray<(typeof candidates)[number]>) =>
+          Effect.gen(function* () {
+            const loaded = yield* Effect.forEach(list, (thread) =>
+              projections
+                .getThreadRecords(thread.id, ["messages", "runs"], {
+                  messageRoles: ["user", "assistant"],
+                })
+                .pipe(Effect.map((records) => ({ thread, records }))),
+            );
+            const working = loaded.filter(({ records }) => recordsBusy(records));
+            if (working.length > 0)
+              return yield* busyHandoffError(
+                working.map(({ thread }) => ({
+                  threadId: thread.id,
+                  title: thread.title,
+                  projectId: id,
+                  projectTitle: current.title,
+                  reason: "running" as const,
+                })),
+              );
+            return loaded.map(({ thread, records }) =>
+              contextThread({ ...where, thread, records }),
+            );
+          });
+        const read = (thread: (typeof candidates)[number]) =>
+          readAll([thread]).pipe(Effect.map((list) => list[0]!));
         // Earlier segments are retained on this host; a second handoff never drops them.
         const priorOperation = metadata.settings.coordinatorBinding?.operationId;
         const inherited = priorOperation ? yield* store.read(`context-${priorOperation}`) : null;
         const earlier = inherited && Schema.is(MachineHandoffBundle)(inherited) ? inherited : null;
-        const segments = new Map<string, MachineHandoffContext["threads"][number]>();
-        for (const thread of earlier?.context.threads ?? [])
-          segments.set(
-            stringifyJson([thread.environmentId ?? earlier?.sourceEnvironmentId, thread.threadId]),
-            thread,
-          );
-        for (const thread of threads)
-          segments.set(stringifyJson([thread.environmentId, thread.threadId]), thread);
         // The destination continues with the access the coordinator ran with here;
         // the project's saved mode stands in before the coordinator exists.
         const runtimeMode =
           candidates.find((t) => t.id === coordinatorId)?.runtimeMode ??
           resolveProjectSettings(yield* serverSettings.getSettings, id, current).settings
             .defaultRuntimeMode;
-        const result = {
-          goal: metadata.settings.goal,
-          instructions: metadata.settings.instructions,
-          runtimeMode,
-          notes,
-          threads: [...segments.values()],
-        };
-        if (!contextWithinLimits(result) || !isHandoffContext(result))
-          return yield* new MachineHandoffError({ code: "too_large" });
-        return result;
+        const { goal, instructions } = metadata.settings;
+        const base = { goal, instructions, runtimeMode, notes };
+        let threads: ReadonlyArray<ContextThread> = [];
+        // An earlier summary keeps summarizing, so what stayed behind stays named.
+        if (chosen.length <= 100 && !(whole && earlier?.context.retention)) {
+          threads = yield* readAll(chosen);
+          const result = fullContext(base, earlier, threads);
+          if (contextWithinLimits(result) && isHandoffContext(result)) return result;
+        }
+        if (!whole) return yield* new MachineHandoffError({ code: "too_large" });
+        const coordinator =
+          threads.find((t) => t.threadId === coordinatorId) ??
+          (yield* read(candidates.find((t) => t.id === coordinatorId) ?? source));
+        const workers = candidates.filter((t) => t.id !== coordinatorId);
+        const fitted = fitCoordinatorContext({
+          base,
+          coordinator,
+          workers: workerSummaries(workers, originEnvironmentId),
+          earlier,
+        });
+        if (!fitted) return yield* new MachineHandoffError({ code: "too_large" });
+        return fitted;
       }),
       "storage_failed",
     );
@@ -819,10 +821,26 @@ const make = Effect.gen(function* () {
             (yield* gitGuarded(
               git.inspect({ operationId: input.operationId, workspaceRoot: current.workspaceRoot }),
             ));
-          const retained =
-            binding?.state === "transferring" && saved
-              ? saved.bundle.context
-              : yield* context(input.projectId, selected, current);
+          const resumed = binding?.state === "transferring" && saved ? saved : null;
+          const read = resumed
+            ? resumed.bundle.context
+            : yield* context(input.projectId, selected, current);
+          // A summarized Git handoff leaves its workers here: it names whose code the commits lack.
+          const unmerged =
+            !folderCopy && !resumed && read.retention
+              ? yield* guarded(
+                  unmergedWorkers({
+                    projectId: input.projectId,
+                    coordinatorId: selected,
+                    workspaceRoot: current.workspaceRoot,
+                    manifest,
+                  }),
+                  "worker_checkpoint",
+                )
+              : null;
+          const retained = unmerged
+            ? withUnmergedWorkers(read, unmerged, sourceEnvironmentId)
+            : read;
           const worktreePaths = [
             ...new Set(
               retained.threads.flatMap((thread) =>
@@ -852,21 +870,25 @@ const make = Effect.gen(function* () {
             saved &&
             (canonical(manifest) !== canonical(saved.bundle.manifest) ||
               canonical(comparableContext(retained, saved.bundle.context)) !==
-                canonical(saved.bundle.context))
+                canonical(saved.bundle.context) ||
+              (unmerged && newUnmergedWorkers(saved, unmerged)))
           )
             return yield* new MachineHandoffError({ code: "source_changed" });
           if (!saved) {
-            saved = yield* newSourceRecord({
-              current,
-              sourceEnvironmentId,
-              projectId: input.projectId,
-              operationId: input.operationId,
-              selected,
-              destination: destination!,
-              binding,
-              manifest,
-              retained,
-            });
+            saved = {
+              ...(unmerged ? { reviewedUnmerged: unmerged.map((t) => t.id) } : {}),
+              ...(yield* newSourceRecord({
+                current,
+                sourceEnvironmentId,
+                projectId: input.projectId,
+                operationId: input.operationId,
+                selected,
+                destination: destination!,
+                binding,
+                manifest,
+                retained,
+              })),
+            };
             yield* store.write(`source-${input.operationId}`, saved);
           }
           if (!input.publish) return saved;
@@ -876,6 +898,9 @@ const make = Effect.gen(function* () {
             !saved.bundle.destination
           )
             return yield* new MachineHandoffError({ code: "invalid" });
+          // A summary reaches only a destination that reads it; an older client never confirmed one.
+          if (saved.bundle.context.retention && input.contextRetention !== 1 && !resumed)
+            return yield* new MachineHandoffError({ code: "too_large" });
           const releasedBinding: ProjectCoordinatorBinding = {
             ...saved.bundle.coordinatorBinding,
             state: "transferring",
@@ -1436,7 +1461,7 @@ const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrument
     return {
       [WS_METHODS.machineHandoffCopyScopes]: handoff.copyScopes,
       [WS_METHODS.machineHandoffCopyCapabilities]: () =>
-        Effect.succeed({ scopeVersion: 1 as const }),
+        Effect.succeed({ scopeVersion: 1 as const, contextRetention: 1 as const }),
       [WS_METHODS.machineHandoffCopyOffer]: (input) => unlessUpdating(handoff.copyOffer(input)),
       [WS_METHODS.machineHandoffCopySourceStatus]: handoff.copySourceStatus,
       [WS_METHODS.machineHandoffCopySourceCancel]: handoff.copySourceCancel,

@@ -199,6 +199,55 @@ binding becomes read-only so that assignment does not continue in two places.
 Provider credentials and running processes stay on their original machines.
 Moving individual running threads is the separate thread-handoff workflow.
 
+### What a coordinator handoff carries
+
+A coordinator handoff carries the project goal, instructions and memory notes,
+and the conversation up to 2 MB. When every chat of the project fits, the
+coordinator and each worker chat move with their full message history, as
+before.
+
+A larger project, such as an umbrella with more than 100 chats, carries less:
+
+- **The coordinator's newest history.** Messages are kept from the newest back
+  until the 2 MB limit, at most 2,000 per chat. Older messages stay on the
+  source machine. If the newest message is too large by itself, it is shortened
+  and its full text stays on the source.
+- **A summary of the worker chats.** Their transcripts stay on the source. Up to
+  200 of the most recent workers are listed, active ones first. Each entry gives
+  the title, branch, status, last activity and the start of the last message.
+  The others are counted.
+- **A count of what stayed.** The context file the new coordinator reads says
+  how many older messages and worker chats stayed behind, so it can tell you
+  where to look. Open the project on the source machine to read a worker's
+  full history.
+
+The review says so before anything moves, for example _the latest 412 of
+9,830 coordinator messages and a summary of 200 of 1,628 worker chats_. When
+the move is done, the copy screen names what stayed on the source.
+
+After an earlier summarized handoff, some older messages and worker chats are
+on the machine they were written on, which can be the destination. The review
+and the copy screen then say they stay on the machines they were written on,
+and each machine's chats are counted once.
+
+A worker's branch or worktree exists on the destination only if the copy or
+the published commits include it. Over Git, the review lists each worker whose
+branch or worktree has commits or changes the push does not include; that work
+stays only on the source until you merge it. A worktree that cannot be checked,
+such as one past the first 100 still on disk or one too large to scan, is listed
+too. The move does not wait for them, but a worker
+that gains such commits after the review stops the move as a changed source. Workers still have to be idle before the
+coordinator moves: running work on the source holds the move until it
+finishes.
+
+Only an up-to-date destination can read this summary. When the destination
+runs an older SpecWithCode, a large project's move stops with _Update the
+other machine to move the coordinator of a project this large_. Nothing moves
+and the coordinator stays on the source. A small project still moves to an
+older destination. Update both machines and the app you drive the move from.
+An older app cannot confirm that the destination reads the summary, so the
+source refuses its move before anything moves.
+
 ## What is copied
 
 | Class                    | Default | Notes                                                                     |

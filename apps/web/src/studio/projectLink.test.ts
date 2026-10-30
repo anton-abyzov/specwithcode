@@ -312,6 +312,39 @@ describe("linkCopyAsWorkers", () => {
     expect(calls).toEqual(["prepare@m4", "accept@m3", "commit@m4:0"]);
   });
 
+  it("links a copy of a repository that has no origin by its checked-out commit", async () => {
+    const local = (head: string) => ({
+      root: "repository" as const,
+      repositories: [{ path: "", originKey: null, worktrees: 0, head }],
+      skippedLinks: 0,
+      truncated: false,
+    });
+    const head = "a".repeat(40);
+    const calls: string[] = [];
+    const outcome = await linkCopyAsWorkers(
+      commands(
+        {
+          m4: preview("m4", "source", { fingerprint: local(head) }),
+          m3: preview("m3", "copy", { fingerprint: local(head) }),
+        },
+        calls,
+      ) as never,
+      input,
+    );
+    expect(outcome).toEqual({ status: "linked" });
+    const different = await linkCopyAsWorkers(
+      commands(
+        {
+          m4: preview("m4", "source", { fingerprint: local(head) }),
+          m3: preview("m3", "copy", { fingerprint: local("b".repeat(40)) }),
+        },
+        [],
+      ) as never,
+      input,
+    );
+    expect(different.status === "review" && different.reason).toMatch(/does not match/);
+  });
+
   it("leaves notes that differ, a refusal or another repository to the link review", async () => {
     const note = (content: string) => ({ name: "plan.md", content, revision: 1 });
     for (const [joining, reason] of [

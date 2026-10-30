@@ -1,5 +1,6 @@
 import { ArrowRightIcon, CheckIcon, ChevronDownIcon, LaptopIcon } from "lucide-react";
 import { useState, type ComponentProps, type ReactNode } from "react";
+import type { MachineHandoffRetention } from "@specweave-studio/contracts";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { cn } from "../../lib/utils";
 import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
@@ -18,6 +19,7 @@ import {
   type MoveIntent,
 } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
+import { retentionReviewText, unmergedWorkerLine, unmergedWorkersText } from "./handoffRetention";
 import {
   Dialog,
   DialogDescription,
@@ -51,6 +53,8 @@ export interface HandoffSourceChanges {
 export interface HandoffPreview {
   readonly repositories: ReadonlyArray<{ readonly relativePath: string; readonly head: string }>;
   readonly messageCount: number;
+  /** A large project's summary of what stays here; null when every transcript moves. */
+  readonly retention?: MachineHandoffRetention | null;
 }
 
 export function MachineHandoffButton({ className, ...props }: ComponentProps<typeof Button>) {
@@ -513,6 +517,9 @@ function GitReview({
   readonly busy: boolean;
 }) {
   const repositories = preview.repositories.length;
+  const unmerged = preview.retention ? unmergedWorkersText(preview.retention, sourceLabel) : null;
+  const listed = preview.retention?.unmergedWorkers ?? [];
+  const unlisted = (preview.retention?.unmergedWorkerCount ?? 0) - listed.length;
   return (
     <div className="space-y-3 text-sm" data-slot="handoff-git-review">
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 font-medium">
@@ -523,10 +530,33 @@ function GitReview({
         <span className="min-w-0 wrap-anywhere">{targetLabel}</span>
       </div>
       <p className="text-muted-foreground">
-        {repositories} {repositories === 1 ? "repository" : "repositories"}, {preview.messageCount}{" "}
-        {preview.messageCount === 1 ? "message" : "messages"}. Committed work only. Uncommitted
-        files, sign-ins and running processes stay here.
+        {preview.retention ? (
+          `${retentionReviewText(repositories, preview.retention)} `
+        ) : (
+          <>
+            {repositories} {repositories === 1 ? "repository" : "repositories"},{" "}
+            {preview.messageCount} {preview.messageCount === 1 ? "message" : "messages"}.{" "}
+          </>
+        )}
+        Committed work only. Uncommitted files, sign-ins and running processes stay here.
       </p>
+      {unmerged && (
+        <div
+          role="status"
+          className="space-y-2 rounded-lg border border-warning/40 p-3 text-xs"
+          data-slot="handoff-unmerged-workers"
+        >
+          <p className="text-warning-foreground">{unmerged}</p>
+          <ul className="max-h-32 space-y-1 overflow-y-auto text-muted-foreground">
+            {listed.map((worker) => (
+              <li key={worker.threadId} className="min-w-0 wrap-anywhere">
+                {unmergedWorkerLine(worker)}
+              </li>
+            ))}
+            {unlisted > 0 && <li>and {unlisted.toLocaleString("en-US")} more</li>}
+          </ul>
+        </div>
+      )}
       <Collapsible data-slot="handoff-commits">
         <CollapsibleTrigger className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
           Details

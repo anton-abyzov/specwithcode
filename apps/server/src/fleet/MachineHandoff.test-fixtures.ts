@@ -90,6 +90,12 @@ const makeHarness = (
     workspaceRoot?: string;
     /** This machine's private addresses; omitted leaves the service without any. */
     endpoints?: ReadonlyArray<ServerDirectEndpoint>;
+    /** Worker chats of the source project, active and archived. */
+    workers?: number;
+    archivedWorkers?: number;
+    /** Coordinator messages of `messageBytes` text each, oldest first; omitted keeps one `text`. */
+    coordinatorMessages?: number;
+    messageBytes?: number;
   } = {},
 ) => {
   const state = {
@@ -118,6 +124,16 @@ const makeHarness = (
     memoryReadFailure: false,
     /** Memory writes store other content than asked, as a broken disk would. */
     corruptMemoryWrites: false,
+    /** Every chat whose transcript was read, in order. */
+    recordReads: [] as string[],
+    /** How many worker entries each checkpoint verification received. */
+    checkpointWorkers: [] as number[],
+    /** Days the coordinator's messages are dated later, as after a handoff that started it. */
+    coordinatorLaterDays: 0,
+    /** Worker branches whose commits the handoff's heads do not include. */
+    unmergedBranches: [] as string[],
+    /** How many worker entries each checkpoint report received. */
+    reportedWorkers: [] as number[],
   };
   /** Project memory by project: the source starts with one durable note. */
   const memory = new Map<string, Map<string, string>>([
@@ -142,6 +158,38 @@ const makeHarness = (
       ? {}
       : { runtimeMode: options.coordinatorRuntimeMode }),
   };
+  const at = (minute: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, 1) + minute * 60_000);
+  const worker = (index: number, archived: boolean) => ({
+    ...shell,
+    id: ThreadId.make(`worker-${archived ? "archived-" : ""}${index}`),
+    title: `Worker ${index}`,
+    branch: `inc/worker-${index}`,
+    worktreePath: null,
+    status: "completed",
+    createdAt: at(index),
+    updatedAt: at(index),
+    archivedAt: archived ? at(index) : null,
+    latestVisibleMessage: {
+      id: MessageId.make(`worker-${index}-last`),
+      role: "assistant",
+      text: `Finished step ${index}. ${"detail ".repeat(60)}`,
+      updatedAt: at(index),
+    },
+  });
+  const workers = Array.from({ length: options.workers ?? 0 }, (_, i) => worker(i, false));
+  const archivedWorkers = Array.from({ length: options.archivedWorkers ?? 0 }, (_, i) =>
+    worker(i, true),
+  );
+  const coordinatorMessages =
+    options.coordinatorMessages === undefined
+      ? null
+      : Array.from({ length: options.coordinatorMessages }, (_, i) => ({
+          id: `message${i + 1}`,
+          role: i % 2 === 0 ? "user" : "assistant",
+          text: `m${i + 1} ${"x".repeat(options.messageBytes ?? 1024)}`,
+          streaming: false,
+          createdAt: at(i),
+        }));
   const fsLayer = MachineHandoffStore.layer.pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "studio-handoff-test-" })),
     Layer.provideMerge(NodeServices.layer),
@@ -298,32 +346,46 @@ const makeHarness = (
                     p.workspaceSettings?.coordinatorThreadId ??
                     ThreadId.make(`project-coordinator:${p.id}`),
                 }))
-                .find((t) => t.id === id) ?? null),
+                .find((t) => t.id === id) ??
+                [...workers, ...archivedWorkers].find((t) => t.id === id) ??
+                null),
         ),
       getShellSnapshot: () =>
         Effect.succeed({
-          threads: [...projects.values()].map((p) => ({
-            ...shell,
-            projectId: p.id,
-            id:
-              p.workspaceSettings?.coordinatorThreadId ??
-              ThreadId.make(`project-coordinator:${p.id}`),
-          })),
-          archivedThreads: [],
-        }),
-      getThreadRecords: () =>
-        Effect.sync(() => ({
-          runs: [{ status: "completed" }],
-          messages: [
-            {
-              id: "message1",
-              role: "user",
-              text: state.text,
-              streaming: state.streaming,
-              createdAt: DateTime.makeUnsafe("2026-10-13T00:00:00Z"),
-            },
+          threads: [
+            ...[...projects.values()].map((p) => ({
+              ...shell,
+              projectId: p.id,
+              id:
+                p.workspaceSettings?.coordinatorThreadId ??
+                ThreadId.make(`project-coordinator:${p.id}`),
+            })),
+            ...workers,
           ],
-        })),
+          archivedThreads: archivedWorkers,
+        }),
+      getThreadRecords: (thread: ThreadId) =>
+        Effect.sync(() => {
+          state.recordReads.push(thread);
+          return {
+            runs: [{ status: "completed" }],
+            messages:
+              coordinatorMessages && thread.startsWith("project-coordinator:")
+                ? coordinatorMessages.map((m) => ({
+                    ...m,
+                    createdAt: DateTime.add(m.createdAt, { days: state.coordinatorLaterDays }),
+                  }))
+                : [
+                    {
+                      id: "message1",
+                      role: "user",
+                      text: state.text,
+                      streaming: state.streaming,
+                      createdAt: DateTime.makeUnsafe("2026-10-13T00:00:00Z"),
+                    },
+                  ],
+          };
+        }),
     } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
     Layer.succeed(ProjectCoordinatorService.ProjectCoordinatorService, {
       start: () => Effect.die("must use send"),
@@ -345,10 +407,20 @@ const makeHarness = (
         }),
     }),
     Layer.succeed(HandoffGit.HandoffGit, {
-      verifyWorkerCheckpoints: () =>
-        state.workerCheckpointFailure
-          ? Effect.fail(new HandoffGitError({ stage: "inspect", reason: "source-changed" }))
-          : Effect.void,
+      verifyWorkerCheckpoints: (input) =>
+        Effect.suspend(() => {
+          state.checkpointWorkers.push(input.workers.length);
+          return state.workerCheckpointFailure
+            ? Effect.fail(new HandoffGitError({ stage: "inspect", reason: "source-changed" }))
+            : Effect.void;
+        }),
+      reportWorkerCheckpoints: (input) =>
+        Effect.sync(() => {
+          state.reportedWorkers.push(input.workers.length);
+          return input.workers.filter(
+            (worker) => worker.branch !== null && state.unmergedBranches.includes(worker.branch),
+          );
+        }),
       inspect: (input) =>
         Effect.sync(() => ({
           ...manifest,

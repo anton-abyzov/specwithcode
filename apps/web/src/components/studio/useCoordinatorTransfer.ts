@@ -10,6 +10,7 @@ import {
 } from "@specweave-studio/contracts";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
+import { acceptsRetention, retentionOf, RETENTION_UPDATE_MESSAGE } from "./handoffRetention";
 
 function unwrap<A, E>(result: AtomCommandResult<A, E>): A {
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -47,6 +48,7 @@ export function useCoordinatorTransfer({
 }) {
   const prepare = useAtomCommand(machineHandoff.prepare, { reportFailure: false });
   const receive = useAtomCommand(machineHandoff.receive, { reportFailure: false });
+  const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
   /** Set once the source published this operation's bundle; a later failure keeps recovery. */
   const contextPublished = useRef(false);
 
@@ -130,6 +132,12 @@ export function useCoordinatorTransfer({
         throw new Error(
           "Update or check the other machine before moving the coordinator into this copied folder.",
         );
+      // A summarized coordinator handoff needs a destination that reads the summary.
+      if (retentionOf(bundle)) {
+        const supported = await capabilities({ environmentId, input: {} }).catch(() => null);
+        if (supported?._tag !== "Success" || !acceptsRetention(supported.value))
+          throw new Error(RETENTION_UPDATE_MESSAGE);
+      }
     } catch (cause) {
       throw new DestinationContextPreviewError(cause);
     }
@@ -141,6 +149,8 @@ export function useCoordinatorTransfer({
           destination: bundle.destination ?? base.destination,
           publish: true,
           expectedDigest: bundle.digest,
+          // Checked above: the destination reads the summary.
+          ...(retentionOf(bundle) ? { contextRetention: 1 as const } : {}),
         },
       }),
     ).bundle;
@@ -148,7 +158,10 @@ export function useCoordinatorTransfer({
     return published;
   };
 
-  /** Fences the source, starts the coordinator on the destination and acknowledges it. */
+  /**
+   * Fences the source, starts the coordinator on the destination and acknowledges it. Returns
+   * what a large project's handoff left on the source, or null when every transcript moved.
+   */
   const continueThere = async (
     operationId: string,
     environmentId: EnvironmentId,
@@ -194,6 +207,7 @@ export function useCoordinatorTransfer({
         }),
       );
     }
+    return retentionOf(bundle);
   };
 
   return { contextPublished, continueThere };

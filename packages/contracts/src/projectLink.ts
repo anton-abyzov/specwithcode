@@ -33,6 +33,11 @@ export const RepositoryFingerprintEntry = Schema.Struct({
   originKey: Schema.NullOr(bounded(512)),
   /** Linked worktrees of this repository found in the folder; never counted as repositories. */
   worktrees: NonNegativeInt,
+  /**
+   * The commit a repository without a usable origin has checked out. A copy of a
+   * local-only repository is recognised by it, since it has no origin to compare.
+   */
+  head: Schema.optional(Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/))),
 });
 export type RepositoryFingerprintEntry = typeof RepositoryFingerprintEntry.Type;
 
@@ -61,7 +66,10 @@ export const ProjectFingerprintResult = Schema.Struct({
 export type ProjectFingerprintResult = typeof ProjectFingerprintResult.Type;
 
 export interface FingerprintComparison {
-  /** Both have a root repository with one origin, or both are plain folders sharing one. */
+  /**
+   * Both have a root repository with one origin (or, without one, the same checked-out
+   * commit), or both are plain folders sharing one.
+   */
   readonly rootMatches: boolean;
   /** 0 to 1: how much of the two folders' repositories agree; ranks candidates. */
   readonly score: number;
@@ -96,7 +104,12 @@ export function compareFingerprints(
   const thereRoot = rootEntry(there);
   const rootMatches =
     hereRoot !== undefined || thereRoot !== undefined
-      ? hereRoot?.originKey != null && hereRoot.originKey === thereRoot?.originKey
+      ? hereRoot?.originKey != null
+        ? hereRoot.originKey === thereRoot?.originKey
+        : hereRoot !== undefined &&
+          thereRoot?.originKey === null &&
+          hereRoot.head !== undefined &&
+          hereRoot.head === thereRoot.head
       : samePath.length > 0;
   const union = new Set([...hereKeys.keys(), ...thereKeys.keys()]).size;
   const overlap = union === 0 ? (rootMatches ? 1 : 0) : shared.length / union;

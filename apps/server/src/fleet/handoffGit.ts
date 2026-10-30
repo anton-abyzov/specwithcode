@@ -22,6 +22,10 @@ import {
 } from "./handoffGitTypes.ts";
 
 type Stage = HandoffGitError["stage"];
+type CheckpointWorker = {
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+};
 type ManifestInput = {
   readonly workspaceRoot: string;
   readonly manifest: HandoffGitManifest;
@@ -44,6 +48,14 @@ export class HandoffGit extends Context.Service<
         }>;
       },
     ) => Effect.Effect<void, HandoffGitError>;
+    /**
+     * The workers verifyWorkerCheckpoints would refuse, for a handoff that leaves
+     * them on the source: any number of them, without refusing any. Past
+     * MAX_REPORTED_WORKTREES surviving worktrees, the rest are reported unchecked.
+     */
+    readonly reportWorkerCheckpoints: (
+      input: ManifestInput & { readonly workers: ReadonlyArray<CheckpointWorker> },
+    ) => Effect.Effect<ReadonlyArray<CheckpointWorker>, HandoffGitError>;
     readonly publish: (
       input: ManifestInput & { readonly publish: true },
     ) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
@@ -64,6 +76,9 @@ const EXCLUDED = new Set([".git", "node_modules"]);
 const MAX_DIRECTORIES = 20_000;
 const MAX_ENTRIES = 200_000;
 const MAX_DEPTH = 24;
+/** A report walks at most this many surviving worker worktrees, a few at a time. */
+export const MAX_REPORTED_WORKTREES = 100;
+const WORKTREE_CONCURRENCY = 8;
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -365,6 +380,47 @@ const make = Effect.gen(function* () {
   });
   const preflight: HandoffGit["Service"]["preflight"] = (input) => preflightAt(input, "preflight");
 
+  /** A worker's checkout, if it still exists, holds only commits the source workspace includes. */
+  const checkWorktree = Effect.fn("HandoffGit.checkWorktree")(function* (
+    input: ManifestInput,
+    workspaceRoot: string,
+    branch: string | null,
+  ) {
+    const stage = "inspect" as const;
+    if (!path.isAbsolute(workspaceRoot) || path.normalize(workspaceRoot) !== workspaceRoot)
+      return yield* blocked(stage, "worker-checkpoint");
+    if ((yield* fs.readLink(workspaceRoot).pipe(Effect.option))._tag === "Some")
+      return yield* blocked(stage, "worker-checkpoint");
+    if (!(yield* io(fs.exists(workspaceRoot), stage))) {
+      if (branch === null) return yield* blocked(stage, "worker-checkpoint");
+      return;
+    }
+    for (const relativePath of yield* discover(workspaceRoot, stage)) {
+      const worker = yield* resolveRepository(workspaceRoot, relativePath, stage);
+      yield* clean(worker, stage);
+      const workerIdentity = yield* identity(worker, stage);
+      const repository = input.manifest.repositories.find((row) => row.identity === workerIdentity);
+      if (!repository) return yield* blocked(stage, "worker-checkpoint");
+      const source = yield* resolveRepository(input.workspaceRoot, repository.relativePath, stage);
+      if (
+        (yield* identity(source, stage)) !== repository.identity ||
+        (yield* text(source, ["rev-parse", "HEAD"], stage)) !== repository.head
+      )
+        return yield* blocked(stage, "worker-checkpoint");
+      const workerHead = yield* text(worker, ["rev-parse", "HEAD"], stage);
+      if (
+        !HANDOFF_HEAD.test(workerHead) ||
+        (yield* git(
+          source,
+          ["merge-base", "--is-ancestor", workerHead, repository.head],
+          stage,
+          true,
+        )).code !== 0
+      )
+        return yield* blocked(stage, "worker-checkpoint");
+    }
+  });
+
   const verifyWorkerCheckpoints: HandoffGit["Service"]["verifyWorkerCheckpoints"] = (input) =>
     Effect.gen(function* () {
       const stage = "inspect" as const;
@@ -421,46 +477,74 @@ const make = Effect.gen(function* () {
               return yield* blocked(stage, "worker-checkpoint");
           }
         }
-        if (workspaceRoot === null) continue;
-        if (!path.isAbsolute(workspaceRoot) || path.normalize(workspaceRoot) !== workspaceRoot)
+        if (workspaceRoot !== null) yield* checkWorktree(input, workspaceRoot, branch);
+      }
+    }).pipe(
+      Effect.mapError(
+        (cause) => new HandoffGitError({ stage: "inspect", reason: "worker-checkpoint", cause }),
+      ),
+    );
+
+  const reportWorkerCheckpoints: HandoffGit["Service"]["reportWorkerCheckpoints"] = (input) =>
+    Effect.gen(function* () {
+      const stage = "inspect" as const;
+      yield* checkManifest(input.manifest, stage);
+      // Each source repository is checked once, and one listing names every local branch its
+      // handed-off head does not include, so a branch costs no Git call of its own. A worktree
+      // still on disk needs its own walk and checks: the first MAX_REPORTED_WORKTREES of them run
+      // a few at a time, and the rest are reported unchecked, as one that fails its check is.
+      const unmerged = new Set<string>();
+      for (const repository of input.manifest.repositories) {
+        const source = yield* resolveRepository(
+          input.workspaceRoot,
+          repository.relativePath,
+          stage,
+        );
+        if (
+          (yield* identity(source, stage)) !== repository.identity ||
+          (yield* text(source, ["rev-parse", "HEAD"], stage)) !== repository.head
+        )
           return yield* blocked(stage, "worker-checkpoint");
-        if ((yield* fs.readLink(workspaceRoot).pipe(Effect.option))._tag === "Some")
-          return yield* blocked(stage, "worker-checkpoint");
-        if (!(yield* io(fs.exists(workspaceRoot), stage))) {
-          if (branch === null) return yield* blocked(stage, "worker-checkpoint");
-          continue;
-        }
-        for (const relativePath of yield* discover(workspaceRoot, stage)) {
-          const worker = yield* resolveRepository(workspaceRoot, relativePath, stage);
-          yield* clean(worker, stage);
-          const workerIdentity = yield* identity(worker, stage);
-          const repository = input.manifest.repositories.find(
-            (row) => row.identity === workerIdentity,
-          );
-          if (!repository) return yield* blocked(stage, "worker-checkpoint");
-          const source = yield* resolveRepository(
-            input.workspaceRoot,
-            repository.relativePath,
-            stage,
-          );
-          if (
-            (yield* identity(source, stage)) !== repository.identity ||
-            (yield* text(source, ["rev-parse", "HEAD"], stage)) !== repository.head
-          )
-            return yield* blocked(stage, "worker-checkpoint");
-          const workerHead = yield* text(worker, ["rev-parse", "HEAD"], stage);
-          if (
-            !HANDOFF_HEAD.test(workerHead) ||
-            (yield* git(
-              source,
-              ["merge-base", "--is-ancestor", workerHead, repository.head],
-              stage,
-              true,
-            )).code !== 0
-          )
-            return yield* blocked(stage, "worker-checkpoint");
+        const listed = yield* text(
+          source,
+          ["for-each-ref", `--no-merged=${repository.head}`, "--format=%(refname)", "refs/heads/"],
+          stage,
+        );
+        for (const ref of listed.split("\n")) if (ref) unmerged.add(ref);
+      }
+      const workers = [
+        ...new Map(input.workers.map((worker) => [stringifyJson(worker), worker])).values(),
+      ];
+      const reported = new Set<CheckpointWorker>();
+      const worktrees: Array<{ worker: CheckpointWorker; worktreePath: string }> = [];
+      let walks = 0;
+      for (const worker of workers) {
+        const { branch, worktreePath } = worker;
+        // A name no ref can have is compared, never passed to Git.
+        if (
+          branch !== null &&
+          (!branch ||
+            branch.startsWith("-") ||
+            branch.startsWith("refs/") ||
+            unmerged.has(`refs/heads/${branch}`))
+        )
+          reported.add(worker);
+        else if (worktreePath !== null) {
+          // A removed checkout costs one lookup; only one still on disk counts toward the limit.
+          const present = yield* fs.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
+          if (present && walks++ >= MAX_REPORTED_WORKTREES) reported.add(worker);
+          else worktrees.push({ worker, worktreePath });
         }
       }
+      yield* Effect.forEach(
+        worktrees,
+        ({ worker, worktreePath }) =>
+          checkWorktree(input, worktreePath, worker.branch).pipe(
+            Effect.catchTags({ HandoffGitError: () => Effect.sync(() => reported.add(worker)) }),
+          ),
+        { concurrency: WORKTREE_CONCURRENCY, discard: true },
+      );
+      return workers.filter((worker) => reported.has(worker));
     }).pipe(
       Effect.mapError(
         (cause) => new HandoffGitError({ stage: "inspect", reason: "worker-checkpoint", cause }),
@@ -737,7 +821,14 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  return HandoffGit.of({ inspect, preflight, verifyWorkerCheckpoints, publish, materialize });
+  return HandoffGit.of({
+    inspect,
+    preflight,
+    verifyWorkerCheckpoints,
+    reportWorkerCheckpoints,
+    publish,
+    materialize,
+  });
 });
 
 export const layer = Layer.effect(HandoffGit, make);

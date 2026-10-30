@@ -165,6 +165,90 @@ describe("machine handoff dialog", () => {
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
+  it("says what a large project's Git review leaves on this machine", async () => {
+    const retention = {
+      note: "Worker chats did not move.",
+      coordinatorMessages: 412,
+      omittedMessages: 9418,
+      truncatedMessages: 0,
+      totalThreads: 1628,
+      workers: Array.from({ length: 200 }, (_, i) => ({
+        threadId: `worker-${i}`,
+        title: `Worker ${i}`,
+        branch: null,
+        worktreePath: null,
+        status: "completed",
+        archived: false,
+        lastActivityAt: "2026-10-30T00:00:00.000Z",
+      })),
+      omittedThreads: 1428,
+    } as unknown as NonNullable<NonNullable<HandoffProps["preview"]>["retention"]>;
+    await handoff({ phase: "review", preview: { ...preview, messageCount: 412, retention } });
+    expect(document.querySelector('[data-slot="handoff-git-review"]')!.textContent).toContain(
+      "2 repositories, the latest 412 of 9,830 coordinator messages and a summary of 200 of 1,628 worker chats. Older messages and worker transcripts stay here. Committed work only.",
+    );
+    const elsewhere = {
+      ...retention,
+      machines: [
+        { environmentId: "m4", totalThreads: 0, omittedThreads: 0, omittedMessages: 0 },
+        { environmentId: "m3", totalThreads: 1628, omittedThreads: 1428, omittedMessages: 9418 },
+      ],
+    } as unknown as typeof retention;
+    await handoff({
+      phase: "review",
+      preview: { ...preview, messageCount: 412, retention: elsewhere },
+    });
+    expect(document.querySelector('[data-slot="handoff-git-review"]')!.textContent).toContain(
+      "Older messages and worker transcripts stay on the machines they were written on. Committed work only.",
+    );
+  });
+  it("names the workers whose code a large project's Git review leaves only here", async () => {
+    const retention = {
+      note: "Worker chats did not move.",
+      coordinatorMessages: 412,
+      omittedMessages: 9418,
+      truncatedMessages: 0,
+      totalThreads: 1628,
+      workers: [],
+      omittedThreads: 1628,
+      unmergedWorkers: [
+        {
+          environmentId: "m4",
+          threadId: "worker-1",
+          title: "Fix login",
+          branch: "inc/0042-login",
+          worktreePath: "/work/0042",
+        },
+        {
+          environmentId: "m4",
+          threadId: "worker-2",
+          title: "Draft notes",
+          branch: null,
+          worktreePath: "/work/notes",
+        },
+      ],
+      unmergedWorkerCount: 5,
+    } as unknown as NonNullable<NonNullable<HandoffProps["preview"]>["retention"]>;
+    await handoff({ phase: "review", preview: { ...preview, messageCount: 412, retention } });
+    const warning = document.querySelector('[data-slot="handoff-unmerged-workers"]')!;
+    expect(warning.textContent).toContain(
+      "5 worker chats have a branch or worktree with commits or changes these do not include, or one that could not be checked.",
+    );
+    expect([...warning.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "Fix login · inc/0042-login",
+      "Draft notes · /work/notes",
+      "and 3 more",
+    ]);
+    await handoff({
+      phase: "review",
+      preview: {
+        ...preview,
+        messageCount: 412,
+        retention: { ...retention, unmergedWorkers: [], unmergedWorkerCount: 0 },
+      },
+    });
+    expect(document.querySelector('[data-slot="handoff-unmerged-workers"]')).toBeNull();
+  });
   it("hides the choices in the Git review and requires push consent before moving", async () => {
     await handoff({ phase: "review", preview });
     expect(document.querySelector('[data-slot="machine-option"]')).toBeNull();

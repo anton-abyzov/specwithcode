@@ -3,6 +3,7 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type {
   EnvironmentId,
   FolderCopyStatus,
+  MachineHandoffRetention,
   MachineHandoffSourceChanges,
   ProjectId,
   ThreadId,
@@ -66,6 +67,8 @@ export function useCoordinatorMove({
   const [sourceReview, setSourceReview] = useState<MachineHandoffSourceChanges | null>(null);
   // What the finished move left only on the source.
   const [leftOnSource, setLeftOnSource] = useState<LeftOnSource | null>(null);
+  // What a large project's move left on the source: the done screen names it.
+  const [movedRetention, setMovedRetention] = useState<MachineHandoffRetention | null>(null);
   // The person kept the coordinator on the source; the copied files stay.
   const [keptHere, setKeptHere] = useState(false);
   // The list the person moved without, so the done screen can say which paths were chosen.
@@ -122,7 +125,7 @@ export function useCoordinatorMove({
     const accepted =
       pointer?.operationId === operationId ? pointer.acceptedSourceChanges?.digest : undefined;
     try {
-      await continueThere(
+      const retention = await continueThere(
         operationId,
         environmentId,
         projectId,
@@ -133,6 +136,7 @@ export function useCoordinatorMove({
           ),
         accepted,
       );
+      setMovedRetention(retention);
     } catch (cause) {
       const refused = transferRefusal(cause, contextPublished.current, targetLabel, sourceLabel);
       if (refused.copyAgain !== null) setCopyAgain(refused.copyAgain);
@@ -217,6 +221,7 @@ export function useCoordinatorMove({
     setTransferNotice(null);
     setTransferBusy(null);
     setContextTransferred(false);
+    setMovedRetention(null);
     setMovedAnyway(false);
     setSourceReview(null);
     setLeftOnSource(null);
@@ -228,6 +233,7 @@ export function useCoordinatorMove({
     transferNotice,
     transferBusy,
     contextTransferred,
+    movedRetention,
     movedAnyway,
     transferRecovery,
     setTransferRecovery,
