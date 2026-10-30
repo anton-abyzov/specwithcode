@@ -659,7 +659,8 @@ const make = Effect.gen(function* () {
         const root = NodePath.join(directory, version);
         yield* plugin("codex", key, root, NodePath.join(root, ".codex-plugin", "plugin.json"));
       }
-      // Account plugins load whatever config.toml says, so they are listed from the cache.
+      // Account plugins load whatever config.toml says, so they are listed from the cache,
+      // servers and app connectors included: a machine may have no plugin tables at all.
       const accountKeys = yield* accountPlugins;
       if (accountKeys.length > MAX_ENTRIES) truncated = true;
       const account = new Set(accountKeys.slice(0, MAX_ENTRIES));
@@ -668,11 +669,8 @@ const make = Effect.gen(function* () {
         const directory = codexPluginDirectory(paths.codexHome, key);
         const version = directory === null ? undefined : yield* newestVersion(directory);
         if (directory === null || version === undefined) continue;
-        const manifest = yield* bounded(
-          NodePath.join(directory, version, ".codex-plugin", "plugin.json"),
-        );
-        worse("codex", manifest.status);
-        labels.set(`codex:${key}`, pluginLabel(key, manifest.data));
+        const root = NodePath.join(directory, version);
+        yield* plugin("codex", key, root, NodePath.join(root, ".codex-plugin", "plugin.json"));
       }
       const tables = object(codex.plugins);
       const codexKeys = [

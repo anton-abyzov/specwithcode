@@ -16,7 +16,8 @@
 # Macs out and merges. Linux workers in the fleet inventory ("os": "linux") follow in fleet-linux,
 # best effort: a worker that is busy, unreachable or fails is a warning, never a failed release
 # (retry: scripts/studio-fleet/linux_rollout.py --version X.Y.Z). The Windows and Linux desktop
-# apps are built later by .github/workflows/release-windows-linux.yml, nightly or on dispatch.
+# apps are built by .github/workflows/release-windows-linux.yml, which publish-public dispatches
+# once per release (daily 07:23 UTC catch-up for any release still without them).
 # publish-public comes before the fleet stages: the hosts' update agents read the public feed
 # (update_agent.DEFAULT_REPOSITORY), so a release only on the private one is invisible to them.
 # The desktop app is swapped right after M4 installs: a new app opened against an older M4
@@ -1106,6 +1107,23 @@ stage_publish_public() {
   fi
   publish "$PUBLIC_REPO" "$STAGE/notes-public.md" public
   prune_after_publish
+  dispatch_windows_linux
+}
+
+# One Windows and Linux build per release, started as soon as the public release exists. The
+# workflow's on-publish trigger stays off (RELEASE_WINDOWS_LINUX_ON_PUBLISH), and its daily catch-up
+# only runs at 07:23 UTC, so without this every release waited for a hand dispatch. A dispatched
+# run does not check whether the version already has its apps: a second one builds again and then
+# stops at plan-upload without replacing anything. Best effort: a failed dispatch only warns.
+# RELEASE_WINDOWS_LINUX_DISPATCH=0 turns it off.
+dispatch_windows_linux() {
+  if [ "${RELEASE_WINDOWS_LINUX_DISPATCH:-1}" = 0 ]; then
+    say "windows-linux: not dispatched (RELEASE_WINDOWS_LINUX_DISPATCH=0)"
+    return 0
+  fi
+  x dispatch-windows-linux -- gh workflow run release-windows-linux.yml -R "$PRIVATE_REPO" \
+    -f version="$VERSION" -f dry_run=false ||
+    say "warning: could not dispatch release-windows-linux.yml for $VERSION; run: gh workflow run release-windows-linux.yml -R $PRIVATE_REPO -f version=$VERSION -f dry_run=false"
 }
 
 # The pid of the ShipIt that Squirrel.Mac runs from this app's own bundle, when one runs. Matched

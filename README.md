@@ -31,6 +31,10 @@ Settings > Skills manages versions and agent visibility. Claude plugin skills us
 
 SpecWithCode is not a cloud service: work runs on the machine you choose and stops when it sleeps.
 
+## Built with SpecWithCode
+
+SpecWithCode · free, early access. It is built with itself: a coordinator in the app keeps each project's brief, and worker threads on Claude Code, Codex and other agents write the changes and open the pull requests in our development repository, which this source repository mirrors in snapshots. From 15 to 29 October 2026, 367 of those pull requests were opened by 167 worker threads and merged (100 threads on Claude Code, 65 on Codex, the rest on Gemini CLI and Copilot), counted from the app's own thread records. The work runs across a Mac and a Linux worker joined over SpecWithCode Connect; the [handoff end-to-end test](https://spec-weave.com/code/#built-with-itself) shows a coordinator on the Mac starting a worker on the Linux machine.
+
 **Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside SpecWithCode-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
 
 The model picker distinguishes the coding harness from the model and its billing source. See the [harness integration guide](docs/providers/harnesses.md) for OpenCode, Pi, native adapters and verification limits.
