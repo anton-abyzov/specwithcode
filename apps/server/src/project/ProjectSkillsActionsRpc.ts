@@ -139,11 +139,16 @@ export const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.midd
         afterWrite: ({ projectId, cwd, instanceIds }) =>
           Effect.gen(function* () {
             yield* skills.invalidate({ projectId, cwd });
-            // Each agent scans the folder again on its own; the next read waits for it.
-            for (const instanceId of new Set(instanceIds))
-              yield* registry
-                .refreshWorkspaceSnapshot({ instanceId, cwd, fresh: true })
-                .pipe(Effect.ignore, Effect.forkDetach);
+            // Each agent scans the folder again on its own. A read made meanwhile caches
+            // the old answer, so forget it again once every agent has scanned.
+            yield* Effect.forEach(
+              new Set(instanceIds),
+              (instanceId) =>
+                registry
+                  .refreshWorkspaceSnapshot({ instanceId, cwd, fresh: true })
+                  .pipe(Effect.ignore),
+              { concurrency: "unbounded", discard: true },
+            ).pipe(Effect.andThen(skills.invalidate({ projectId, cwd })), Effect.forkDetach);
           }),
       };
 

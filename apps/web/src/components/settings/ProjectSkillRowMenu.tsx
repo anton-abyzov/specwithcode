@@ -8,6 +8,7 @@ import {
   HistoryIcon,
   SendIcon,
   TagIcon,
+  Trash2Icon,
 } from "lucide-react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -80,6 +81,14 @@ export function ProjectSkillRowMenu({
         >
           <SendIcon />
           Push to machines…
+        </MenuItem>
+        <MenuItem
+          variant="destructive"
+          disabled={!versioned || !row.lock}
+          onClick={() => onOpen(row.name, "version")}
+        >
+          <Trash2Icon />
+          Remove…
         </MenuItem>
         <MenuSeparator />
         <MenuItem

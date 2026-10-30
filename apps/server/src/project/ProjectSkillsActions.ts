@@ -81,6 +81,13 @@ export const vskillArgs = {
   ],
   pin: (name: string, version: string) => ["pin", name, version],
   unpin: (name: string) => ["unpin", name],
+  /** `--force` answers vskill's confirmation prompt; the row came from the lock, so it is there. */
+  remove: (name: string, user: boolean) => [
+    "remove",
+    name,
+    "--force",
+    user ? "--global" : "--local",
+  ],
 } as const;
 
 const VersionsOutput = Schema.fromJsonString(
@@ -496,6 +503,74 @@ export const makeProjectSkillsActions = Effect.fn("ProjectSkillsActions.make")(f
       );
     });
 
+  /** `vskill remove` for a skill in a vskill lock: its folders in every agent, then the lock entry. */
+  const removeAction = (ctx: SkillsActionContext, input: ProjectSkillsActionInput) =>
+    Effect.gen(function* () {
+      const target = yield* lockTargetOf(ctx);
+      yield* guardLock(ctx, target, false);
+      const vskill = yield* findVskill(ctx.projectId);
+      const user = target.scope === "user";
+      const shaOf = (text: string | null) => (text === null ? "absent" : sha256([text], "hex"));
+      const argv = vskillArgs.remove(target.name, user);
+      const summary = `Remove ${target.name} from every agent's ${user ? "user" : "project"} skill folders and from ${target.lockPath}.`;
+      if (input.preview) {
+        const lockText = yield* readLock(target.lockPath);
+        return {
+          preview: {
+            argv: ["vskill", ...argv],
+            files: [target.lockPath],
+            summary,
+            liveness: "next-session",
+            warnings: ["Removing deletes the skill's folders. Reinstall it with vskill to undo."],
+            expected: { lockSha: shaOf(lockText) },
+          },
+        } satisfies ProjectSkillsActionResult;
+      }
+      return yield* serialized(
+        ctx.cwd,
+        Effect.gen(function* () {
+          const lockText = yield* readLock(target.lockPath);
+          if (input.expected?.lockSha !== undefined && input.expected.lockSha !== shaOf(lockText))
+            return yield* actionError(ctx.projectId, "stale");
+          // With no lock entry here, vskill would walk up to another project's lock and remove from it.
+          if (lockText === null || lockEntryOf(lockText, target.name) === null)
+            return yield* actionError(
+              ctx.projectId,
+              "stale",
+              `${target.lockPath} no longer lists ${target.name}. Rescan to see where it is installed now.`,
+            );
+          const result = yield* run({
+            command: vskill,
+            args: argv,
+            cwd: runCwd(target),
+            timeout: PIN_TIMEOUT,
+            env: vskillEnv,
+          });
+          if (result.timedOut || result.exitCode !== 0)
+            return yield* cliFailure(ctx.projectId, result, "vskill remove");
+          const afterText = yield* readLock(target.lockPath);
+          if (afterText !== null && lockEntryOf(afterText, target.name) !== null)
+            return yield* actionError(
+              ctx.projectId,
+              "cli_failed",
+              `vskill finished, but ${target.lockPath} still lists ${target.name}.`,
+            );
+          yield* deps.afterWrite({
+            projectId: ctx.projectId,
+            cwd: ctx.cwd,
+            instanceIds: ctx.row.providers.map((presence) => presence.instanceId),
+          });
+          return {
+            applied: true,
+            summary,
+            liveness: "next-session",
+            installedVersion: null,
+            pinnedVersion: null,
+          } satisfies ProjectSkillsActionResult;
+        }),
+      );
+    });
+
   const action = (input: ProjectSkillsActionInput) =>
     Effect.gen(function* () {
       const ctx = yield* deps.resolveRow(input);
@@ -506,6 +581,8 @@ export const makeProjectSkillsActions = Effect.fn("ProjectSkillsActions.make")(f
         case "unpin":
         case "update-latest":
           return yield* versionAction(ctx, input, requested);
+        case "remove":
+          return yield* removeAction(ctx, input);
         case "toggle-skill":
           return yield* toggles.toggleSkill(ctx, input, requested, serialized);
         case "toggle-plugin":

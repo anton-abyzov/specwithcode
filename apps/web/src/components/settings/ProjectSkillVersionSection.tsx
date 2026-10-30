@@ -139,6 +139,19 @@ export function ProjectSkillVersionSection() {
             </Button>
           </SkillControlReason>
         ) : null}
+        {row.lock ? (
+          <SkillControlReason reason={permission}>
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              type="button"
+              disabled={busy || !canOperate}
+              onClick={() => controls.propose({ kind: "remove" })}
+            >
+              Remove
+            </Button>
+          </SkillControlReason>
+        ) : null}
       </div>
     </section>
   );

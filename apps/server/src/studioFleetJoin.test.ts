@@ -331,6 +331,29 @@ describe("adding machines to the fleet file", () => {
       expect(await readFleetConfig(baseDir)).toBeNull();
     });
 
+    it("says when the line names a different main machine, and writes no machine", async () => {
+      const baseDir = await home();
+      const f = machine([tailnet], () =>
+        Response.json(
+          {
+            _tag: "EnvironmentHttpBadRequestError",
+            message:
+              "This invitation was made for a different main machine. Make a new line for this one.",
+          },
+          { status: 400 },
+        ),
+      );
+      await expect(
+        addFleetMachine({
+          baseDir,
+          code: v2(),
+          link: f,
+          localEnvironmentId: "environment-primary",
+        }),
+      ).rejects.toMatchObject({ kind: "wrong-coordinator" });
+      expect(await readFleetConfig(baseDir)).toBeNull();
+    });
+
     it("refuses a returned token not bound to this machine's key", async () => {
       const baseDir = await home();
       const f = machine([tailnet], () =>

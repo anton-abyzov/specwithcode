@@ -525,6 +525,10 @@ if ! studio_runtime_ready; then
   # (bin.mjs and node_modules at the archive root) run by the host's Node.js.
   if ! grep -q " \\*\\{0,1\\}$STUDIO_ARCHIVE$" "$STUDIO_STAGING/SHA256SUMS"; then
     STUDIO_BUNDLES="$(grep -o "studio-$STUDIO_ARCHIVE_VERSION-$STUDIO_PLATFORM-$STUDIO_ARCH-[0-9a-f]*\\.tar\\.gz$" "$STUDIO_STAGING/SHA256SUMS" || true)"
+    # release.sh names the macOS bundle without a platform: studio-<v>-<commit>.tar.gz.
+    if [ -z "$STUDIO_BUNDLES" ] && [ "$STUDIO_PLATFORM-$STUDIO_ARCH" = "darwin-arm64" ]; then
+      STUDIO_BUNDLES="$(grep -o "studio-$STUDIO_ARCHIVE_VERSION-[0-9a-f]\\{7,40\\}\\.tar\\.gz$" "$STUDIO_STAGING/SHA256SUMS" || true)"
+    fi
     if [ -z "$STUDIO_BUNDLES" ] || [ "$(printf '%s\\n' "$STUDIO_BUNDLES" | wc -l | tr -d ' ')" != "1" ]; then
       printf 'Release %s has no single %s-%s archive.\\n' "$STUDIO_ARCHIVE_VERSION" "$STUDIO_PLATFORM" "$STUDIO_ARCH" >&2; exit 1
     fi

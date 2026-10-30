@@ -829,20 +829,25 @@ export function StudioFleetRoster({
         >
           <span className="min-w-0 sm:flex-1">
             <span className="block text-sm">Add a machine</span>
-            <span className="block text-xs text-muted-foreground">
-              On that machine, choose Invite this machine under Settings &gt; Connections (or run{" "}
+            <ol className="mt-1 list-decimal space-y-0.5 ps-4 text-xs text-muted-foreground">
+              <li>
+                On the other machine, sign in to SpecWithCode Connect (Sign in to SpecWithCode
+                Connect at the bottom of its Settings sidebar). Any Connect account works; this
+                machine does not need to be signed in.
+              </li>
+              <li>
+                There, choose Invite this machine under Settings &gt; Connections and paste this
+                machine’s environment ID:{" "}
+                <code className="font-mono break-all select-all">{environmentId}</code>
+              </li>
+              <li>Paste the line it makes here within an hour. It works once.</li>
+            </ol>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              Without its window, run{" "}
               <code className="font-mono">
-                {"specwithcode fleet invite --coordinator '<main-machine-environment-id>'"}
-              </code>
-              ) and paste the line.
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              {
-                "Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine to approve it to manage access on the other machine."
-              }
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              For a Linux server you rent (a VPS), set it up with the{" "}
+                {`specwithcode fleet invite --coordinator '${environmentId}'`}
+              </code>{" "}
+              on that machine instead. For a Linux server you rent (a VPS), start with the{" "}
               <a
                 className="underline underline-offset-2"
                 href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
@@ -851,11 +856,7 @@ export function StudioFleetRoster({
               >
                 Linux worker guide
               </a>
-              , then run{" "}
-              <code className="font-mono">
-                {"specwithcode fleet invite --coordinator '<main-machine-environment-id>'"}
-              </code>{" "}
-              there and paste the line here.
+              .
             </span>
           </span>
           <div className="flex min-w-0 gap-2 sm:w-96 sm:shrink-0">
@@ -893,8 +894,8 @@ export function StudioFleetRoster({
             <span className="min-w-0">
               <span className="block text-sm">Add this machine to another one</span>
               <span className="block text-xs text-muted-foreground">
-                Make a line to paste on your main machine. It works over Tailscale or SpecWithCode
-                Connect.
+                Sign in to SpecWithCode Connect here first, then make a line to paste on your main
+                machine.
               </span>
             </span>
             <Button

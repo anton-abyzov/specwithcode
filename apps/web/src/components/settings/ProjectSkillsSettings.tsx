@@ -19,7 +19,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -53,6 +53,7 @@ import {
   projectSkillSourceLinks,
   projectSkillStatusBadge,
   projectSkillVersions,
+  pickSkillsMember,
   type ProjectSkillFacetOption,
 } from "./ProjectSkillsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -70,17 +71,19 @@ export function ProjectSkillsSettings() {
   const { search: value, scope } = useSettingsScope();
   const groups = useSettingsProjectGroups();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { presentationById } = useEnvironments();
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const machine = value.machine ? EnvironmentId.make(value.machine) : null;
   const group = projectScope
     ? (groups.find((candidate) => candidate.projectKey === value.project) ?? null)
     : null;
-  const member =
-    group?.memberProjects.find(
-      (candidate) =>
-        (machine === null || candidate.environmentId === machine) &&
-        (value.checkout === undefined || candidate.physicalProjectKey === value.checkout),
-    ) ?? null;
+  const member = pickSkillsMember(group?.memberProjects ?? [], {
+    machine,
+    checkout: value.checkout,
+    primaryEnvironmentId,
+    isConnected: (environmentId) =>
+      presentationById.get(EnvironmentId.make(environmentId))?.connection.phase === "connected",
+  });
 
   if (!projectScope) {
     // The machine view rides on any project of that machine; it scans the home folder, not the project.
@@ -620,6 +623,11 @@ export function ProjectSkillsView({
   userLevel?: boolean;
 }) {
   const [rescan, setRescan] = useState(false);
+  const environment = useEnvironment(environmentId);
+  const machineOffline =
+    environment !== null &&
+    environment.connection.phase !== "connected" &&
+    environment.connection.phase !== "available";
   const query = useEnvironmentQuery(
     projectWorkspace.skills({
       environmentId,
@@ -836,7 +844,9 @@ export function ProjectSkillsView({
       </div>
       {query.error && !snapshot ? (
         <p role="alert" className="px-3 py-4 text-sm text-destructive-foreground sm:px-4">
-          Could not read this project's skills: {query.error}
+          {machineOffline
+            ? `${environment.label} is not connected, so its skills cannot be read now. Pick another machine above, or open SpecWithCode on ${environment.label}.`
+            : `Could not read this project's skills${environment ? ` on ${environment.label}` : ""}: ${query.error}`}
         </p>
       ) : !snapshot ? (
         <p

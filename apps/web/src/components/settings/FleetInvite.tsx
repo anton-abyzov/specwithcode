@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { EnvironmentId } from "@specweave-studio/contracts";
 import type {
@@ -13,7 +14,9 @@ import {
   revokeStudioFleetInvitation,
   signInStudioFleetTailscale,
 } from "../../studio/fleet";
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { ensureLocalApi } from "../../localApi";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -489,7 +492,7 @@ export function useTailscaleReadiness(
         if (cancelled) return;
         setStatus(next);
         setFailed(false);
-        if (next.state === "running" && next.magicDns) return;
+        if ((next.state === "running" && next.magicDns) || next.connect?.linked) return;
       } catch (failure) {
         if (cancelled) return;
         if (countsAsTailscaleCheckFailure(failure)) setFailed(true);
@@ -635,6 +638,76 @@ export function TailscaleReadinessNotice({
 }
 
 /**
+ * SpecWithCode Connect comes first: the line carries this machine's Connect
+ * address, which the main machine reaches from anywhere. Nothing once Connect
+ * is linked, or while a Tailscale fallback someone set up already works. A
+ * build without Connect keeps the Tailscale guidance, its only way.
+ */
+export function ConnectReadinessNotice({
+  readiness,
+  canManage,
+  onCopyCommand,
+}: {
+  readonly readiness: Pick<
+    TailscaleReadiness,
+    "status" | "failed" | "ready" | "signingIn" | "loginUrl" | "problem" | "signIn" | "openUrl"
+  >;
+  readonly canManage: boolean;
+  readonly onCopyCommand: (command: string) => void;
+}) {
+  if (!hasCloudPublicConfig())
+    return (
+      <TailscaleReadinessNotice
+        readiness={readiness}
+        canManage={canManage}
+        onCopyCommand={onCopyCommand}
+      />
+    );
+  const { status, failed, ready } = readiness;
+  if (status?.connect?.linked || ready) return null;
+  if (status === null)
+    return failed ? null : (
+      <p role="status" className="text-xs text-muted-foreground">
+        Checking SpecWithCode Connect…
+      </p>
+    );
+  return (
+    <Alert variant="warning" role="status" aria-label="Link SpecWithCode Connect first">
+      <AlertTitle>Link SpecWithCode Connect first</AlertTitle>
+      <AlertDescription>
+        <span className="block">
+          The line carries this machine’s SpecWithCode Connect address, so your main machine can
+          reach it from anywhere. This updates on its own once Connect is linked here. Your main
+          machine does not need to be signed in.
+        </span>
+        <ConnectNextStep canManage={canManage} />
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/** Sign in first; once signed in, the link itself is turned on in Settings. */
+function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  const { openAuthPrompt } = useStudioConnectAuthPrompt();
+  if (!isLoaded) return null;
+  if (isSignedIn)
+    return (
+      <span className="mt-2 block">
+        You are signed in. Turn on SpecWithCode Connect for this machine under Settings &gt;
+        Connections &gt; SpecWithCode Connect.
+      </span>
+    );
+  return (
+    <span className="mt-2 flex flex-wrap items-center gap-2">
+      <Button size="xs" variant="outline" disabled={!canManage} onClick={openAuthPrompt}>
+        {canManage ? "Sign in to SpecWithCode Connect" : "Manage access required"}
+      </Button>
+    </span>
+  );
+}
+
+/**
  * Settings > Connections: make this machine's invitation in a dialog. Closing
  * it forgets the line, so it is never shown twice.
  */
@@ -668,13 +741,13 @@ export function FleetInviteDialog({
         <DialogHeader>
           <DialogTitle>Invite this machine to another one</DialogTitle>
           <DialogDescription>
-            Your main machine can then start work here. It reaches this machine over Tailscale (its
-            private name, never the public internet) or SpecWithCode Connect, whichever works here.
+            Your main machine can then start work here. It reaches this machine over SpecWithCode
+            Connect, so sign in to Connect on this machine first.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {controller.invitation ? null : (
-            <TailscaleReadinessNotice
+            <ConnectReadinessNotice
               readiness={readiness}
               canManage={canManage}
               onCopyCommand={(command) => copyToClipboard(command, undefined)}
@@ -720,7 +793,7 @@ export function FleetInviteArea({
   return (
     <>
       {canManage && !open ? (
-        <TailscaleReadinessNotice
+        <ConnectReadinessNotice
           readiness={readiness}
           canManage={canManage}
           onCopyCommand={(command) => copyToClipboard(command, undefined)}

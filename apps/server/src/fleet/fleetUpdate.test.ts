@@ -21,6 +21,7 @@ import { makeFleetAddressBook, makeFleetLink } from "./fleetTransport.ts";
 import {
   agentOffers,
   compareReleaseVersions,
+  defaultReleasePublished,
   type FleetUpdateAsk,
   fleetUpdateAllowed,
   type FleetUpdateWorkerDeps,
@@ -935,5 +936,54 @@ describe("the primary asking a fleet machine to update", () => {
         action: { kind: "request", version: "1.0.110", hold: true },
       }),
     ).rejects.toMatchObject({ reason: "unsupported" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The release check for an older boot-service machine: both checksum files
+// ---------------------------------------------------------------------------
+
+describe("defaultReleasePublished", () => {
+  const sum = "a".repeat(64);
+  const fetcherFor = (files: Readonly<Record<string, string>>, seen: string[] = []) =>
+    (async (input: string | URL | Request) => {
+      const url = String(input);
+      seen.push(url.slice(url.lastIndexOf("/") + 1));
+      const body = files[url.slice(url.lastIndexOf("/") + 1)];
+      return body === undefined
+        ? new Response("Not Found", { status: 404 })
+        : new Response(body, { status: 200 });
+    }) as typeof fetch;
+
+  it("finds a Windows zip in SHA256SUMS-windows-linux", async () => {
+    const seen: string[] = [];
+    const fetcher = fetcherFor(
+      {
+        SHA256SUMS: `${sum}  studio-1.0.132-linux-x64-ca452067cd93.tar.gz\n`,
+        "SHA256SUMS-windows-linux": `${sum}  studio-1.0.132-win32-x64.zip\n`,
+      },
+      seen,
+    );
+    expect(await defaultReleasePublished(fetcher, "1.0.132", "win32-x64")).toBe(true);
+    expect(seen).toEqual(["SHA256SUMS", "SHA256SUMS-windows-linux"]);
+  });
+
+  it("reads only SHA256SUMS when it settles the answer", async () => {
+    const seen: string[] = [];
+    const fetcher = fetcherFor(
+      { SHA256SUMS: `${sum}  studio-1.0.132-linux-x64-ca452067cd93.tar.gz\n` },
+      seen,
+    );
+    expect(await defaultReleasePublished(fetcher, "1.0.132", "linux-x64")).toBe(true);
+    expect(seen).toEqual(["SHA256SUMS"]);
+  });
+
+  it("treats a missing SHA256SUMS-windows-linux as empty and an unlisted zip as unpublished", async () => {
+    const fetcher = fetcherFor({ SHA256SUMS: `${sum}  studio-1.0.90-win32-x64.zip\n` });
+    expect(await defaultReleasePublished(fetcher, "1.0.90", "win32-x64")).toBe(true);
+    expect(await defaultReleasePublished(fetcher, "1.0.90", "win32-arm64")).toBe(true);
+    expect(
+      await defaultReleasePublished(fetcherFor({ SHA256SUMS: "" }), "1.0.90", "win32-x64"),
+    ).toBe(false);
   });
 });

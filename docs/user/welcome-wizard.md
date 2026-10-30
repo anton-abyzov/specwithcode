@@ -21,6 +21,10 @@ You can add more computers before continuing:
   link. If you use Tailscale, you can instead start it with `specwithcode serve` and run
   `specwithcode pair --tailscale`.
 
+This connects computers so you can open and set them up from here. To let a
+coordinator on your main machine start work on another computer, also add it
+as a worker: see [Add a machine](./add-a-machine.md).
+
 Saved computers and computers discovered through SpecWithCode Connect are selected by
 default. Uncheck any you do not want to set up; this does not disconnect them.
 Continue when your selected computers are connected. Setup checks

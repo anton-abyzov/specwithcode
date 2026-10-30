@@ -13,7 +13,8 @@ launch SpecWithCode and configure providers afterwards.
 ## Desktop app
 
 Public desktop installers support macOS 13 or later on Apple silicon, Windows 10 and 11
-on x64, and Linux x64 with glibc. Choose your platform below. There is no Intel Mac desktop build.
+on x64 and arm64, and Linux on x64 and arm64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or
+later). Choose your platform below. There is no Intel Mac desktop build.
 The desktop app starts the local service for you.
 
 ### macOS
@@ -26,27 +27,35 @@ There is no Intel Mac build.
 
 ### Windows
 
-Download `SpecWithCode-<version>-x64.exe` from the
-[verified Windows/Linux release](https://github.com/anton-abyzov/specwithcode/releases/tag/v1.0.94) and run it. It
+Download `SpecWithCode-<version>-x64.exe` (or `-arm64.exe` for Windows on Arm) from the
+[latest release](https://github.com/anton-abyzov/specwithcode/releases/latest) and run it. It
 installs for your user only, so it needs no administrator, into
 `%LOCALAPPDATA%\Programs\studio`, and adds Start menu and desktop shortcuts. It runs on
 64-bit Windows 10 and 11. For a silent install, run it with `/S`.
 
-The installer is not code-signed yet, so Microsoft Defender SmartScreen shows **Windows protected
-your PC** the first time. Choose **More info**, then **Run anyway**. Releases list each file's
-SHA-256 in `SHA256SUMS-windows-linux`; check a download with
-`Get-FileHash .\SpecWithCode-<version>-x64.exe` before you run it.
+Signed releases carry an Azure Trusted Signing signature: the installer's **Properties** >
+**Digital Signatures** tab names the publisher, and later updates must carry the same one. An
+unsigned release makes Microsoft Defender SmartScreen show **Windows protected your PC** the first
+time; choose **More info**, then **Run anyway**. Releases list each file's SHA-256 in
+`SHA256SUMS-windows-linux`; check a download with `Get-FileHash .\SpecWithCode-<version>-x64.exe`
+before you run it.
 
 ### Linux
 
-Download one of these from the [verified Windows/Linux release](https://github.com/anton-abyzov/specwithcode/releases/tag/v1.0.94)
-(x64, glibc):
+Download one of these from the [latest release](https://github.com/anton-abyzov/specwithcode/releases/latest)
+(x64 or arm64, glibc 2.35 or newer):
 
-- `SpecWithCode-<version>-amd64.deb` for Debian and Ubuntu:
+- `SpecWithCode-<version>-amd64.deb` (or `-arm64.deb`) for Debian and Ubuntu:
   `sudo apt install ./SpecWithCode-<version>-amd64.deb`. The app goes to `/opt/SpecWithCode`
   with a menu entry; the package is named `studio`, so remove it with `sudo apt remove studio`.
-- `SpecWithCode-<version>-x86_64.AppImage` for other distributions: `chmod +x` it and run it.
-  AppImages need FUSE 2 (`libfuse2`, or `libfuse2t64` on Ubuntu 24.04).
+- `SpecWithCode-<version>-x86_64.AppImage` (or `-arm64.AppImage`) for other distributions:
+  `chmod +x` it and run it. AppImages need FUSE 2 (`libfuse2`, or `libfuse2t64` on Ubuntu 24.04).
+
+The glibc 2.35 floor applies to releases built after 1.0.132. Releases up to and including 1.0.132
+were built on Ubuntu 24.04 and need glibc 2.39 (Ubuntu 24.04, Debian 13 or later). Even on newer
+releases, two parts that come prebuilt from third-party packages need glibc 2.39 and do not load on
+Ubuntu 22.04 or Debian 12: the accessibility tree behind snap-shots, and, on arm64, the Cursor
+provider's sandbox. Ubuntu 24.04 and Debian 13 have neither limit.
 
 ### What differs on Windows and Linux
 

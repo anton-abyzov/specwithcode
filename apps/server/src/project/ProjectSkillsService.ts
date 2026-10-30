@@ -36,6 +36,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import { readClaudeSkillSwitches } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { nativeSkillHarnessOf } from "./nativeSkillSwitches.ts";
 import { applyNativeSkillSwitches, type NativeSkillControl } from "./projectSkillsNativeOverlay.ts";
@@ -142,6 +143,25 @@ export class ProjectSkillsService extends Context.Service<
     }) => Effect.Effect<void>;
   }
 >()("specweave-studio/project/ProjectSkillsService") {}
+
+/**
+ * Claude's on-disk `skillOverrides` over its reported skills. A switch written a
+ * moment ago shows at once, before Claude's own rescan of the folder lands.
+ * Plugin skills ignore `skillOverrides`, as Claude Code does.
+ */
+export function withClaudeSkillSwitches(
+  source: ProviderSkillSource,
+  switches: ReadonlyMap<string, boolean>,
+): ProviderSkillSource {
+  return {
+    ...source,
+    skills: source.skills.map((skill) =>
+      skill.scope === "user" || skill.scope === "project"
+        ? { ...skill, enabled: switches.get(skill.name) ?? true }
+        : skill,
+    ),
+  };
+}
 
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -349,10 +369,28 @@ export const make = Effect.gen(function* () {
               environment: instance.skillsControl.environment,
             });
         }
+      const claudeSwitched = yield* Effect.forEach(
+        scanned,
+        ({ source }) =>
+          Effect.gen(function* () {
+            const provider = eligible.find((p) => p.instanceId === source.instanceId);
+            if (provider?.driver !== "claudeAgent" || Option.isNone(instances)) return source;
+            const control = (yield* instances.value.getInstance(source.instanceId))?.skillsControl;
+            if (control?.homePath === undefined) return source;
+            return withClaudeSkillSwitches(
+              source,
+              yield* readClaudeSkillSwitches(control.homePath, cwd, control.environment),
+            );
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
       const sources = yield* applyNativeSkillSwitches({
         cwd,
         home,
-        sources: scanned.map((entry) => entry.source),
+        sources: claudeSwitched,
         controls,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),

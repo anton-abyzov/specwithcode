@@ -147,7 +147,7 @@ if (args[0] === 'outdated') {
   process.stdout.write(readFileSync(join(dir, 'outdated.json')));
   process.exit(1);
 }
-if (['install', 'pin', 'unpin'].includes(args[0])) {
+if (['install', 'pin', 'unpin', 'remove'].includes(args[0])) {
   if (existsSync(join(dir, 'fail'))) { process.stderr.write('registry said no'); process.exit(3); }
   if (existsSync(join(dir, 'next.lock'))) copyFileSync(join(dir, 'next.lock'), join(process.cwd(), 'vskill.lock'));
 }
@@ -506,6 +506,29 @@ describe("ProjectSkillsActions with a stand-in vskill", () => {
       const log = yield* argvLog(fx);
       expect(log).toContain(`${fx.project}|pin sw-do 1.0.0`);
       expect(log).toContain(`${fx.project}|unpin sw-do`);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("removes a skill with vskill and checks the lock no longer lists it", () =>
+    Effect.gen(function* () {
+      const fx = yield* fixture({ lock: { version: "1.0.0" } });
+      const preview = yield* fx.service.action({ ...action({ kind: "remove" }), preview: true });
+      expect(preview).toMatchObject({
+        preview: { argv: ["vskill", "remove", "sw-do", "--force", "--local"] },
+      });
+      // vskill exits 0 but the lock still lists the skill.
+      yield* write(join(fx.bin, "next.lock"), lockText({ version: "1.0.0" }));
+      const kept = yield* fx.service.action(action({ kind: "remove" })).pipe(Effect.flip);
+      expect(kept.reason).toBe("cli_failed");
+      expect(kept.detail).toContain("still lists sw-do");
+
+      yield* write(
+        join(fx.bin, "next.lock"),
+        `${JSON.stringify({ version: 1, updatedAt: "2026-10-01T00:00:00.000Z", skills: {} })}\n`,
+      );
+      const removed = yield* fx.service.action(action({ kind: "remove" }));
+      expect(removed).toMatchObject({ applied: true, installedVersion: null });
+      expect(yield* argvLog(fx)).toContain(`${fx.project}|remove sw-do --force --local`);
     }).pipe(Effect.provide(live)),
   );
 

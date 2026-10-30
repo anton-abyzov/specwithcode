@@ -1175,7 +1175,7 @@ it.layer(NodeServices.layer)("boot service install from the npm package", (it) =
               Layer.succeed(HostProcessArchitecture, "arm64"),
               Layer.succeed(HostProcessUserId, 501),
               Layer.succeed(HostProcessExecutablePath, process.execPath),
-              // 1.0.43 fetched updates.studio.invalid here, and no darwin archive is published.
+              // 1.0.43 fetched updates.studio.invalid here; this install must not download a release.
               Layer.succeed(
                 HttpClient.HttpClient,
                 HttpClient.make((request) => {

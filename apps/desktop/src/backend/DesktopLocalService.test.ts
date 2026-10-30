@@ -658,6 +658,76 @@ describe("DesktopLocalService.discover", () => {
     }),
   );
 
+  /** A Linux boot service (systemd) set up without the fleet installer: no receipt. */
+  const makeHomeWithBootService = (
+    origin: string,
+    pid: number,
+    environmentId: string = DESCRIPTOR.environmentId,
+  ) => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-local-service-"));
+    const studioHome = NodePath.join(home, ".specwithcode", "ministorm");
+    NodeFS.mkdirSync(NodePath.join(studioHome, "userdata"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(studioHome, "userdata", "environment-id"),
+      `${environmentId}\n`,
+    );
+    writeJson(NodePath.join(studioHome, "userdata", "server-runtime.json"), {
+      version: 1,
+      pid,
+      port: Number(new URL(origin).port),
+      origin,
+      startedAt: "2026-10-30T11:34:01.094Z",
+      serviceManaged: true,
+    });
+    return { home, studioHome };
+  };
+
+  it.effect("attaches to a running boot service that has no installation receipt", () =>
+    withDescriptorServer((origin) => {
+      const { home, studioHome } = makeHomeWithBootService(origin, process.ppid);
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovery = yield* service.discover();
+        assert.equal(discovery._tag, "running");
+        if (discovery._tag !== "running") return;
+        assert.equal(discovery.service.baseDir, studioHome);
+        assert.isTrue(discovery.service.runtime.serviceManaged);
+        // Not an installed service: the app never blocks on one that is down.
+        assert.deepEqual(yield* service.installedServices, []);
+      }).pipe(
+        Effect.provide(layerFor(home, {}, undefined, undefined, "linux")),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("never attaches to a copied home whose runtime names another server", () =>
+    withDescriptorServer((origin) => {
+      const { home } = makeHomeWithBootService(origin, process.ppid, "copied-from-another-machine");
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        assert.equal((yield* service.discover())._tag, "none");
+      }).pipe(
+        Effect.provide(layerFor(home, {}, undefined, undefined, "linux")),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
+  it.effect("skips a stopped boot service without a receipt instead of waiting on it", () =>
+    withDescriptorServer((origin) => {
+      // A pid no process has.
+      const { home } = makeHomeWithBootService(origin, 2 ** 22 + 7);
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        assert.equal((yield* service.discover())._tag, "none");
+      }).pipe(
+        Effect.provide(layerFor(home, {}, undefined, undefined, "linux")),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
   // The helper has stopped the old service and not yet started the new one.
   // The marker is dated `ageMs` before the test clock's now.
   const stopForInstall = (studioHome: string, ageMs: number, marker: object = {}) =>

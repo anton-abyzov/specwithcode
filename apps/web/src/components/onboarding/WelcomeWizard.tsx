@@ -106,7 +106,7 @@ import { formatRelativeTime } from "../../timestampFormat";
  * re-runnable by clearing the flag.
  *
  * On a first run with a server here it first asks what this machine is for.
- * "Join my existing machines" makes the invitation line for a main machine
+ * "Connect to an existing one" makes the invitation line for a main machine
  * elsewhere and then opens to that status, skipping agents and projects; the
  * main-machine choice continues with the steps above, unchanged.
  */

@@ -107,8 +107,14 @@ vi.mock("../../onboarding/useProjectScans", () => ({
 }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: vi.fn() }));
 vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
-vi.mock("../clerk/useStudioConnectAuthPrompt", () => ({ useStudioConnectAuthPrompt: vi.fn() }));
-vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
+const cloud = vi.hoisted(() => ({ configured: false, signedIn: false }));
+vi.mock("../clerk/useStudioConnectAuthPrompt", () => ({
+  useStudioConnectAuthPrompt: () => ({ authPrompt: null, openAuthPrompt: vi.fn() }),
+}));
+vi.mock("@clerk/react", () => ({
+  useAuth: () => ({ isLoaded: true, isSignedIn: cloud.signedIn }),
+}));
+vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => cloud.configured }));
 vi.mock("../ThreadTerminalDrawer", () => ({ TerminalViewport: () => null }));
 vi.mock("../settings/ChatGptWelcomeCoordinator", () => ({ ChatGptWelcomeCoordinator: () => null }));
 vi.mock("../settings/CodexSetupSection", () => ({
@@ -220,7 +226,7 @@ it("sets this machine up as the main one with the regular setup, unchanged", asy
     root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={vi.fn()} />),
   );
   expect(heading()).toBe("How will you use this machine?");
-  await choose("Set this machine up as my main machine");
+  await choose("Start as a main machine");
   expect(machineRole.onChange).toHaveBeenCalledExactlyOnceWith("main");
   expect(heading()).toBe("Connect your computers");
   expect(mocks.invite).not.toHaveBeenCalled();
@@ -233,9 +239,9 @@ it("joins existing machines: makes the line once, then opens to this machine's s
   await act(async () =>
     root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={onDone} />),
   );
-  await choose("Join my existing machines");
-  expect(heading()).toBe("Add this machine to your main machine");
-  expect(document.body.textContent).toContain("Either is enough.");
+  await choose("Connect to an existing one");
+  expect(heading()).toBe("Connect this machine to your main machine");
+  expect(document.body.textContent).toContain("Sign in to SpecWithCode Connect on this machine.");
   expect(document.body.textContent).not.toContain("Tailscale on both");
   expect(machineRole.onChange).not.toHaveBeenCalled();
   expect(makeLine()?.disabled).toBe(true);
@@ -271,7 +277,7 @@ it("says in plain words when Tailscale is missing and keeps the choice open", as
   await act(async () =>
     root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={vi.fn()} />),
   );
-  await choose("Join my existing machines");
+  await choose("Connect to an existing one");
   await approveMainMachine();
   await click("Make the line");
   const alert = document.querySelector('[role="alert"]');
@@ -302,13 +308,13 @@ it("never offers the choice to someone who already finished first run", async ()
     ),
   );
   expect(heading()).toBe("Connect your computers");
-  expect(document.body.textContent).not.toContain("Join my existing machines");
+  expect(document.body.textContent).not.toContain("Connect to an existing one");
 });
 
 it("never offers the choice without a server on this machine", async () => {
   await act(async () => root.render(<WelcomeWizard localAvailable={false} onDone={vi.fn()} />));
   expect(heading()).toBe("Connect your computers");
-  expect(document.body.textContent).not.toContain("Join my existing machines");
+  expect(document.body.textContent).not.toContain("Connect to an existing one");
 });
 
 it("offers to install Tailscale when it is missing and enables the line once it is there", async () => {
@@ -324,7 +330,7 @@ it("offers to install Tailscale when it is missing and enables the line once it 
     await act(async () =>
       root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
     );
-    await choose("Join my existing machines");
+    await choose("Connect to an existing one");
     await approveMainMachine();
     expect(document.body.textContent).toContain("Tailscale is not installed");
     const make = makeLine;
@@ -361,7 +367,7 @@ it("signs in to Tailscale from the app and opens the sign-in page", async () => 
   await act(async () =>
     root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
   );
-  await choose("Join my existing machines");
+  await choose("Connect to an existing one");
   expect(document.body.textContent).toContain("Tailscale is not signed in");
   expect(document.querySelector('input[aria-label^="Command that installs"]')).toBeNull();
   await click("Sign in to Tailscale");
@@ -391,9 +397,76 @@ it("explains when signing in needs the person's own administrator step", async (
   await act(async () =>
     root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
   );
-  await choose("Join my existing machines");
+  await choose("Connect to an existing one");
   expect(document.body.textContent).toContain("Tailscale is turned off");
   await click("Sign in to Tailscale");
   expect(document.querySelector('[role="alert"]')?.textContent).toContain("sudo tailscale up");
   expect(mocks.openExternal).not.toHaveBeenCalled();
+});
+
+it("asks for SpecWithCode Connect first and enables the line once Connect is linked", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  cloud.configured = true;
+  try {
+    mocks.tailscale.mockResolvedValue({
+      state: "not_installed",
+      backendState: null,
+      magicDns: false,
+      platform: "linux",
+      homebrew: false,
+      connect: { linked: false, origin: null },
+    });
+    await act(async () =>
+      root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
+    );
+    await choose("Connect to an existing one");
+    await approveMainMachine();
+    expect(document.body.textContent).toContain("Link SpecWithCode Connect first");
+    expect(document.body.textContent).toContain("Sign in to SpecWithCode Connect");
+    expect(document.body.textContent).not.toContain("Tailscale is not installed");
+    expect(document.body.textContent).not.toContain("Install Tailscale");
+    expect(makeLine()?.disabled).toBe(true);
+    // Signing in and publishing happen in Connect; the app looks again until it is linked.
+    mocks.tailscale.mockResolvedValue({
+      state: "not_installed",
+      backendState: null,
+      magicDns: false,
+      platform: "linux",
+      homebrew: false,
+      connect: { linked: true, origin: "https://prod-0123456789abcdef.spec-weave.com" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3_000));
+    expect(document.body.textContent).not.toContain("Link SpecWithCode Connect first");
+    expect(makeLine()?.disabled).toBe(false);
+    expect(mocks.signIn).not.toHaveBeenCalled();
+    expect(mocks.invite).not.toHaveBeenCalled();
+  } finally {
+    cloud.configured = false;
+    vi.useRealTimers();
+  }
+});
+
+it("tells a signed-in person to turn on Connect for this machine in Settings", async () => {
+  cloud.configured = true;
+  cloud.signedIn = true;
+  try {
+    mocks.tailscale.mockResolvedValue({
+      state: "not_installed",
+      backendState: null,
+      magicDns: false,
+      platform: "linux",
+      homebrew: false,
+      connect: { linked: false, origin: null },
+    });
+    await act(async () =>
+      root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
+    );
+    await choose("Connect to an existing one");
+    expect(document.body.textContent).toContain(
+      "Turn on SpecWithCode Connect for this machine under Settings > Connections > SpecWithCode Connect.",
+    );
+  } finally {
+    cloud.configured = false;
+    cloud.signedIn = false;
+  }
 });

@@ -1,7 +1,5 @@
 # Add a machine
 
-Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
-
 Let coordinators on your main machine start work on your other computers: a
 second Mac, a Linux box or a VPS.
 
@@ -17,19 +15,27 @@ direct fallback. Either way it does not matter which network
 each machine is on, and one machine moving to another network does not cut the
 others off.
 
-Joining always takes the same three steps:
+Joining always takes the same four steps:
 
-1. On the machine you are adding (the **worker**), make an invitation line. It
-   starts with `swc-machine-`.
-2. On your **main machine**, paste that line under **Settings → Connections →
-   Your private machines → Add a machine** and choose **Add machine**.
-3. On the worker's card there, choose **Allow workers**.
+1. On the machine you are adding (the **worker**), open **Settings → Connections**,
+   choose **Sign in to SpecWithCode Connect** and turn on **Enable SpecWithCode
+   Connect**. On a server without the desktop app, run `specwithcode connect`.
+   Only the worker needs Connect: the main machine does not have to be signed
+   in to Connect or to the same account. The worker accepts the line only from
+   the main machine whose environment ID you enter when you make it.
+2. On the worker, make an invitation line for your main machine's environment
+   ID. It starts with `swc-machine-`. **Add a machine** on the main machine
+   shows that ID in its steps.
+3. On your **main machine**, paste that line under **Settings → Connections →
+   Your private machines → Add a machine** within an hour and choose **Add
+   machine**.
+4. On the worker's card there, choose **Allow workers**.
 
 Prefer to watch first? The
 [1.5-minute video tutorial](https://www.youtube.com/watch?v=GFfnjNYcWrU) shows
 the npm path end to end on 1.0.47.
 
-Only step 1 differs, depending on how SpecWithCode is installed on the worker.
+Only step 2 differs, depending on how SpecWithCode is installed on the worker.
 Pick the row that matches it:
 
 | On the worker you have                                                      | Make the line with                                                                                   |
@@ -39,6 +45,8 @@ Pick the row that matches it:
 | No desktop app, and Node.js 22.16 or later                                  | [The npm package](#with-npm)                                                                         |
 | Nothing yet on a Mac or Linux machine, once a release carries the installer | [The one-line installer](#with-the-one-line-installer)                                               |
 | A Linux server or VPS set up by hand                                        | [Linux worker](./linux-worker.md), then `fleet invite --coordinator '<main-machine-environment-id>'` |
+
+In the commands below, replace `<main-machine-environment-id>` with the environment ID shown under **Settings → Connections** on your main machine. It approves that machine, and only that one, to manage this worker.
 
 The app's version is under **Settings → About**. Installing SpecWithCode in the
 first place is covered in [Install SpecWithCode](./install.md).
@@ -88,8 +96,9 @@ or a shared document.
 ### In the app (1.0.44 and later)
 
 **On a new install**, the first screen asks **How will you use this Mac?**
-(**this machine** on Linux). Choose **Join my existing machines**. This skips
-setting up agents and projects on the worker.
+(**this machine** on Linux). Choose **Connect to an existing one**. This skips
+setting up agents and projects on the worker. **Start as a main machine** sets
+up agents and projects here instead.
 
 **On a Mac that is already set up**, open **Settings → Connections → Your
 private machines**. Next to **Add this machine to another one**, choose **Invite
@@ -97,28 +106,26 @@ this machine**.
 
 Then:
 
-1. The app checks Tailscale on this machine. If SpecWithCode Connect is linked
-   here and Tailscale is not, it says **Tailscale is off here, so the line uses
-   SpecWithCode Connect.** and you can go on to step 2. Otherwise it shows what
-   is still missing. It looks again every few seconds, so the message clears on
-   its own once you fix it:
-   - **Tailscale is not installed:** choose **Install Tailscale** to open
-     Tailscale's download page. On a Mac with Homebrew it also shows
-     `brew install --cask tailscale` to copy into Terminal. The app never
-     installs anything itself.
-   - **Tailscale is not signed in** or **Tailscale is turned off:** choose
-     **Sign in to Tailscale**. On a Mac this opens the Tailscale app and the
-     sign-in page in your browser. Sign in with the account your main machine
-     uses. If the page does not open, choose **Open the sign-in page again**.
-     Where Tailscale needs administrator rights to sign in (usually Linux), the
-     app says so: run `sudo tailscale up` in a terminal yourself.
-   - **MagicDNS is off:** turn it on in the Tailscale admin console under **DNS**.
-2. Optionally type a name under **Name on the main machine (optional)**. Left
+1. The app checks that SpecWithCode Connect is linked on this machine. If it is
+   not, it shows **Link SpecWithCode Connect first**:
+   - Not signed in: choose **Sign in to SpecWithCode Connect**.
+   - Signed in: turn on Connect for this machine under **Settings →
+     Connections → SpecWithCode Connect**.
+
+   It looks again every few seconds, so the message clears on its own once
+   Connect is linked. A machine where Tailscale is already set up can make the
+   line without Connect. A build without SpecWithCode Connect shows the
+   Tailscale steps instead (see [Optional: Tailscale on both
+   machines](#optional-tailscale-on-both-machines)).
+
+2. Paste your main machine's environment ID under **Main machine environment
+   ID**. **Add a machine** on the main machine shows it, and so does **Settings
+   → Connections** there. Then, optionally, type a name under **Name on the
+   main machine (optional)**. Left
    empty, the machine's own name is used.
-3. Choose **Make the line**. The app publishes itself on the machine's
-   Tailscale name when Tailscale is ready, adds its SpecWithCode Connect address
-   when Connect is linked, and shows the line with the addresses it carries. A
-   line with a Connect address works once, within an hour.
+3. Choose **Make the line**. The line carries this machine's SpecWithCode
+   Connect address (and its Tailscale name, where Tailscale is set up). A line
+   with a Connect address works once, within an hour.
 4. Choose **Copy**, and paste it on your main machine
    ([below](#add-it-on-the-main-machine)).
 5. In the first-run flow, choose **I pasted it**; in Settings, choose **Done**.
@@ -247,18 +254,29 @@ To install the tools a worker needs (git, `gh`, Node.js 22, Claude Code, Codex)
 at pinned versions, use [Provision a machine](./provision-a-machine.md) next:
 `specwithcode provision` on the worker, or **Provision** on its row here.
 
+## With Connect only
+
+Everything coordinators need works over SpecWithCode Connect alone. Two
+conveniences still need the optional Tailscale route, and each has a Connect
+alternative:
+
+| Without Tailscale                                                                          | Do this instead                                                                                         |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| **Connect automatically** / **Connect machine** does not pair your browser with the worker | Open the worker from your devices through its own Connect link. Work you send to it still goes through. |
+| **Use this Mac's GitHub sign-in** is not offered (it never goes through Connect)           | Choose **Sign in with a code instead** on the worker's readiness check.                                 |
+
 ## Add it on the main machine
 
-1. Open **Settings → Connections → Your private machines**.
+1. Open **Settings → Connections → Your private machines**. The **Add a
+   machine** steps show this machine's environment ID, the one the worker's line
+   must be made for.
 2. Paste the line into the **Add a machine** field and choose **Add machine**.
    The main machine first checks that the address answers as that machine, then
-   saves it.
+   saves it. A line made for a different main machine stops working and says
+   so: make a new line on the worker with this machine's environment ID.
 3. With **Connect automatically** on, your browser pairs with the worker within a
-   minute. Otherwise choose **Connect machine** on its card. Opening the worker
-   this way still needs its Tailscale address; a worker the main machine reaches
-   only through SpecWithCode Connect waits until Tailscale answers. Work you send
-   to it still goes through, and you can open it from your devices through its
-   own Connect link.
+   minute. Otherwise choose **Connect machine** on its card. With Connect only,
+   this browser pairing waits; see [With Connect only](#with-connect-only).
 4. Choose **Allow workers** on its card to let coordinators start work there.
 
 From a terminal on the main machine you can run the `fleet add` command the
@@ -280,9 +298,9 @@ two from **Settings > Project > Machines** so the coordinator finds that copy
 machine, whether this app can see it, its worker grants and its shared projects.
 
 **Give the worker GitHub.** The machine's readiness check shows its GitHub
-sign-in. With none, **Use this Mac's GitHub sign-in** copies the main machine's
-sign-in to the worker over Tailscale (never through Connect); **Sign in with a
-code instead** signs the worker's `gh` in with a one-time code. A worker that
+sign-in. With none, **Sign in with a code instead** signs the worker's `gh` in
+with a one-time code. **Use this Mac's GitHub sign-in** copies the main machine's
+sign-in instead, but only over Tailscale ([With Connect only](#with-connect-only)). A worker that
 already has a login keeps it. See [GitHub](./source-control.md#github).
 
 **Keep SpecWithCode running on the worker.** Coordinators can only start work

@@ -628,10 +628,10 @@ describe("inviting this machine from its own roster", () => {
     expect(label(action)).toBe("Manage access required");
     expect(action.props.disabled).toBe(true);
   });
-  it("says the line works over Tailscale or SpecWithCode Connect", () => {
+  it("asks for SpecWithCode Connect before making the line", () => {
     const tree = label(render({ canManageWorkers: true, onInvite: vi.fn() }));
-    expect(tree).toContain("It works over Tailscale or SpecWithCode");
-    expect(tree).not.toContain("Both need Tailscale");
+    expect(tree).toContain("Sign in to SpecWithCode Connect here first");
+    expect(tree).not.toContain("Tailscale");
   });
   it("says which address reached a machine, and when a bearer-only line needs renewing", () => {
     const viaConnect: StudioFleetSnapshot = {
@@ -661,19 +661,17 @@ describe("inviting this machine from its own roster", () => {
     expect(bound).not.toContain("Invite this machine again");
     expect(label(render())).toContain("Reachable");
   });
-  it("names the in-app invitation before the command in the Add a machine hint", () => {
+  it("puts SpecWithCode Connect first in the Add a machine steps, with this machine's id", () => {
     const hint = label(
       render({ onAddMachine: vi.fn(), onInvitationChange: vi.fn(), canManageWorkers: true }),
     );
+    expect(hint).toContain("sign in to SpecWithCode Connect");
+    expect(hint).toContain("this machine does not need to be signed in");
     expect(hint).toContain("choose Invite this machine under Settings > Connections");
-    expect(hint).toContain(
-      "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
-    );
-    expect(hint).toContain("Settings > Connections on your main machine");
-    expect(hint).toContain("Replace <main-machine-environment-id>");
-    expect(hint.indexOf("Invite this machine")).toBeLessThan(
-      hint.indexOf("specwithcode fleet invite"),
-    );
+    expect(hint).toContain(`specwithcode fleet invite --coordinator '${m4}'`);
+    expect(hint).not.toContain("<main-machine-environment-id>");
+    expect(hint).not.toContain("Tailscale");
+    expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Invite this machine"));
   });
   it("hands the dialog to the roster with this machine's name and permission", () => {
     hooks.reset();

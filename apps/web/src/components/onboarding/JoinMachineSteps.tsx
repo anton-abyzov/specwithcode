@@ -3,8 +3,8 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
+  ConnectReadinessNotice,
   FleetInvitePanel,
-  TailscaleReadinessNotice,
   useFleetInvite,
   useTailscaleReadiness,
 } from "../settings/FleetInvite";
@@ -39,14 +39,14 @@ export function MachineRoleStep({
           variant="outline"
           size="sm-multiline"
           className="min-h-16 w-full justify-start text-left"
-          onClick={onJoin}
+          onClick={onMain}
         >
-          <NetworkIcon className="size-4 shrink-0 text-muted-foreground" />
+          <LaptopIcon className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium">Join my existing machines</span>
+            <span className="block text-sm font-medium">Start as a main machine</span>
             <span className="block text-xs font-normal text-muted-foreground">
-              This {machineNoun} only does work for a main machine elsewhere. It works over
-              SpecWithCode Connect; Tailscale is optional.
+              Set up agents and projects on this {machineNoun}. You can add other machines to it
+              later.
             </span>
           </span>
           <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -55,15 +55,14 @@ export function MachineRoleStep({
           variant="outline"
           size="sm-multiline"
           className="min-h-16 w-full justify-start text-left"
-          onClick={onMain}
+          onClick={onJoin}
         >
-          <LaptopIcon className="size-4 shrink-0 text-muted-foreground" />
+          <NetworkIcon className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium">
-              Set this {machineNoun} up as my main machine
-            </span>
+            <span className="block text-sm font-medium">Connect to an existing one</span>
             <span className="block text-xs font-normal text-muted-foreground">
-              Set up agents and projects here. You can add other machines to it later.
+              This {machineNoun} does work for your main machine elsewhere. You sign in to
+              SpecWithCode Connect here, then paste one line on the main machine.
             </span>
           </span>
           <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -98,16 +97,22 @@ export function JoinMachineStep({
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        Add this {machineNoun} to your main machine
+        Connect this {machineNoun} to your main machine
       </h1>
-      <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        The app makes one line for your main machine. It carries this {machineNoun}&apos;s
-        SpecWithCode Connect address when Connect is linked, and its private Tailscale name when
-        Tailscale is signed in here. Either is enough.
-      </p>
+      <ol className="mt-2.5 list-decimal space-y-1 ps-5 text-sm leading-relaxed text-muted-foreground">
+        <li>Sign in to SpecWithCode Connect on this {machineNoun}.</li>
+        <li>
+          Paste your main machine&apos;s environment ID (Settings &gt; Connections there) and make
+          the line.
+        </li>
+        <li>
+          Paste the line on the main machine under Settings &gt; Connections &gt; Add a machine
+          within an hour.
+        </li>
+      </ol>
       <div className="mt-5 space-y-3">
         {controller.invitation ? null : (
-          <TailscaleReadinessNotice
+          <ConnectReadinessNotice
             readiness={readiness}
             canManage={allowed}
             onCopyCommand={(command) => copyToClipboard(command, undefined)}

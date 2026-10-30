@@ -527,7 +527,7 @@ const main = async () => {
     // First-run wizard: choose this machine as the main one, then skip the
     // agent and project-import steps.
     const wizardButtons = [
-      /up as my main machine/u,
+      /^Start as a main machine|up as my main machine/u,
       /^Do not import projects$/u,
       /^Skip/u,
       /^Continue$/u,

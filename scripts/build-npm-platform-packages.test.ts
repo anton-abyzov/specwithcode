@@ -168,7 +168,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       );
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "node_modules/node-pty")));
       // POSIX execute bits: NTFS has none, so stat never reports them on
-      // Windows. The release packs these tarballs on Linux (release.yml).
+      // Windows. The release packs these tarballs on Linux (scripts/release/release.sh).
       if (process.platform !== "win32") {
         assert.equal(
           Number((yield* fs.stat(path.join(linuxDir, "specweave-studio"))).mode) & 0o111,
@@ -232,7 +232,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         listing.stdout,
       );
       // POSIX execute bits: packed on Windows the tarball takes NTFS modes,
-      // which have none. The release packs these tarballs on Linux (release.yml).
+      // which have none. The release packs these tarballs on Linux (scripts/release/release.sh).
       if (process.platform !== "win32") {
         assert.isTrue(
           lines.some((line) => /^-rwxr-xr-x .* package\/specweave-studio$/.test(line)),

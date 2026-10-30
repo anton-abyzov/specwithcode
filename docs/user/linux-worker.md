@@ -1,7 +1,5 @@
 # Linux worker
 
-Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
-
 Add a Linux machine, such as a small VPS, to your private fleet so coordinators on
 your main computer can start workers there. It runs the same SpecWithCode server as a desktop
 worker; only the install differs. Cloud compute stays yours: you rent the VPS and
@@ -180,6 +178,8 @@ key in that variable. Do not run `claude login` or `codex login` with a
 subscription on a VPS.
 
 ## Pair it with your main computer
+
+Replace `<main-machine-environment-id>` below with the environment ID shown under **Settings → Connections** on your main machine; it approves that machine to manage this one.
 
 On the Linux host, run:
 

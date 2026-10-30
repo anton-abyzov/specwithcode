@@ -39,9 +39,10 @@ A release ships in three waves, so macOS is never held back by the slower platfo
    until updated by hand once (docs/user/linux-worker.md). The release is already done and the stage
    never fails it. Retry with `python3 -B scripts/studio-fleet/linux_rollout.py --version <v>` once
    the worker is idle; `--dry-run` prints the SSH commands.
-3. **Windows and Linux desktop apps** (Release Windows and Linux, below): built nightly at 07:00
-   UTC for the newest release that lacks them, or on demand with a manual dispatch. Until then
-   Windows and Linux desktop installs stay on their version (their update check finds no feed).
+3. **Windows and Linux desktop apps** (Release Windows and Linux, below): one real run is
+   dispatched per release once it is published, and a daily catch-up run at 07:23 UTC builds them
+   for the newest release if it still lacks them. Until they are attached, Windows and Linux
+   desktop installs stay on their version (their update check finds no feed).
 
 A Linux worker entry in `hosts.json` (kept outside the repository):
 
@@ -330,23 +331,109 @@ DMG.
 
 Windows and Linux come from **Release Windows and Linux**
 (`.github/workflows/release-windows-linux.yml`), not from `release.sh`. Given a version, it builds
-the commit tagged `v<version>` on GitHub's `windows-2025` and `ubuntu-24.04`: the unsigned NSIS
-installer with its blockmap and `latest.yml`, the AppImage and `.deb` with `latest-linux.yml`, and
-`studio-<version>-win32-x64.zip`, the CLI archive `scripts/install.ps1` installs. It checks that
-each package's `app-update.yml` polls `anton-abyzov/specwithcode` and that every file the feeds
-name matches its hash, then adds the files and `SHA256SUMS-windows-linux` to both releases once
-they are published. It never uploads or replaces a name `release.sh` uses and checks afterwards
-that `latest-mac.yml` and `SHA256SUMS` are unchanged. A manual dispatch is a dry run (assets kept
-as a workflow artifact) unless `dry_run` is off. Every night at 07:00 UTC it runs by itself for the
-newest published `X.Y.Z` release when neither copy of that release has its assets yet and the
-public one is published; otherwise it stops in the plan job within seconds. Versions released in
-between are skipped, since the feeds only need the newest. A nightly run never replaces an asset:
-a release holding only some of them gets a warning to dispatch it with `replace`. Running on every
-published release is opt-in (repository variable `RELEASE_WINDOWS_LINUX_ON_PUBLISH` set to `true`)
-and off, because each run holds a Windows and a Linux runner for about an hour,
-and building several releases a day consumes capacity needed by pull request CI. Until it has run, Windows
-and Linux desktop installs find no `latest.yml` or `latest-linux.yml` on the new Latest release,
-report a failed update check and stay on their version.
+the commit tagged `v<version>` on GitHub-hosted runners of each architecture: `windows-2025` and
+`windows-11-arm` for the NSIS installers (`SpecWithCode-<version>-x64.exe` and `-arm64.exe`, their
+blockmaps and one `latest.yml` for both), `ubuntu-22.04` and `ubuntu-22.04-arm` for the AppImage
+and `.deb` with `latest-linux.yml` and `latest-linux-arm64.yml`, and the CLI archives
+`studio-<version>-win32-{x64,arm64}.zip` that `scripts/install.ps1` installs. It checks that each
+package's `app-update.yml` polls `anton-abyzov/specwithcode` and that every file the feeds name
+matches its hash, then adds the files and `SHA256SUMS-windows-linux` to both releases once they are
+published. It never uploads or replaces a name `release.sh` uses and checks afterwards that
+`latest-mac.yml` and `SHA256SUMS` are unchanged.
+
+How it runs:
+
+- **Once per release, dispatched.** After a release is published, the release tooling dispatches a
+  real run (`gh workflow run release-windows-linux.yml -f version=<version> -f dry_run=false`).
+  A manual dispatch is a dry run (assets kept as the workflow artifact
+  `windows-linux-release-<version>`) unless `dry_run` is off; `replace` overwrites this workflow's
+  own assets from an earlier run.
+- **Daily catch-up.** At 07:23 UTC it checks the newest published `X.Y.Z` release. When both
+  copies already hold a complete attach it stops in the plan job within seconds; when neither holds
+  any of it (the dispatch failed or never happened) it builds and attaches them; anything in
+  between fails with the `replace` dispatch that repairs it. Versions released in between are
+  skipped, since the feeds only need the newest. The repository variable
+  `RELEASE_WINDOWS_LINUX_CATCH_UP` set to `false` turns it off.
+- **On publish** (repository variable `RELEASE_WINDOWS_LINUX_ON_PUBLISH` set to `true`) is off:
+  the dispatch above already covers every release.
+
+Until it has run, Windows and Linux desktop installs find no `latest.yml` or `latest-linux.yml` on
+the new Latest release, report a failed update check and stay on their version. The slowest leg
+sets the attach time (v1.0.132: Windows x64 12.6 min, Windows arm64 15.2, Linux x64 6.4, Linux
+arm64 5.3). The Rust helpers come from `native-cache.yml`, which builds them for all four targets
+on every change to `native/`, so no release waits for Rust or the Spectre-mitigated MSVC libraries.
+
+### Linux glibc floor
+
+The Linux legs build on Ubuntu 22.04 (glibc 2.35), the oldest system
+[install](../user/install.md) supports: a native binary linked against a newer glibc does not load
+on an older one. v1.0.132 was built on 24.04 and shipped `studio-kde-snap-shot` needing
+`GLIBC_2.39`, which refuses to start on Ubuntu 22.04 (arm64) or only warns (x64). The Linux cache
+keys carry the floor (`...-glibc2.35-...`), so a helper built on a newer runner is never restored
+into a release, and the **Check the glibc floor** step fails a build when anything this repository
+compiles needs more than 2.35. Two prebuilt binaries that npm packages ship are over it and only
+warn: `@crowecawcaw/xa11y` (2.39; the snap-shot accessibility tree) and, on arm64, the Cursor SDK's
+`cursorsandbox` (2.39). They do not load on Ubuntu 22.04 or Debian 12.
+
+### Windows code signing
+
+Windows builds are signed with Azure Trusted Signing (Microsoft now also calls it Azure Artifact
+Signing) when the repository has all seven secrets below, and built unsigned, with a notice, when
+it has none. Some but not all of them fail the plan job, so a setup mistake never ships an unsigned
+release by accident.
+
+| Secret                                           | Value                                                                      |
+| ------------------------------------------------ | -------------------------------------------------------------------------- |
+| `AZURE_TENANT_ID`                                | Directory (tenant) ID of the app registration                              |
+| `AZURE_CLIENT_ID`                                | Application (client) ID of the app registration                            |
+| `AZURE_CLIENT_SECRET`                            | A client secret of that app registration                                   |
+| `AZURE_TRUSTED_SIGNING_ENDPOINT`                 | The account's region endpoint, such as `https://eus.codesigning.azure.net` |
+| `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`             | The Trusted Signing account name                                           |
+| `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME` | The Public Trust certificate profile name                                  |
+| `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`           | The certificate's subject CN, exactly as the validated identity shows it   |
+
+What gets signed: electron-builder signs `SpecWithCode.exe`, every other `.exe` it packs (the
+resource monitor and the bundled helpers), the uninstaller and the installer, and only then writes
+the blockmap and the `sha512` in `latest.yml`, so the feed describes the signed bytes.
+`build-cli-archive.ts` signs `specweave-studio.exe` and the workflow signs the CLI zip's
+`studio-resource-monitor.exe`. The **Check the Windows signatures** step then requires a valid
+signature from the publisher name on the installer, the app, its resource monitor, and the CLI
+zip's `specweave-studio.exe` and `studio-resource-monitor.exe`. The CLI zip's third-party `.exe`
+files (node-pty's `OpenConsole.exe`, `@cursor/sdk`'s `cursorsandbox.exe` and `rg.exe`) ship as
+their packages publish them, unsigned or signed by their vendor, and are not checked.
+
+The publisher name is also written into the app's `app-update.yml`, and electron-updater refuses
+an update whose installer is not signed by that name. Once a signed release is out, keep signing
+on and keep the publisher name: an unsigned or differently signed later release does not install
+over it. Installs from unsigned releases accept the first signed update.
+
+Setup, once (about $10 a month for the Basic plan):
+
+1. In the Azure portal, register the resource provider `Microsoft.CodeSigning` on the subscription,
+   then create a **Trusted Signing account** (Basic SKU) in a region near the runners, such as East
+   US. Its overview page shows the account name and the endpoint URI.
+2. Give your own user the **Trusted Signing Identity Verifier** role on the account (newer portals
+   say Artifact Signing), then open
+   **Identity validation** and validate a **Public** identity: an individual (government ID
+   through Microsoft's verification partner) or an organization (legal and tax details). Approval
+   takes from hours to a few business days. The validated name becomes the certificate's subject
+   CN; that exact text is `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`.
+3. Under **Certificate profiles**, create a **Public Trust** profile on that validated identity.
+   Its name is `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`.
+4. In Microsoft Entra ID, create an **App registration** (single tenant, no redirect URI) for
+   GitHub Actions and add a client secret under **Certificates & secrets**. Note the tenant ID,
+   the client ID and the secret value (shown once).
+5. On the Trusted Signing account (or only the certificate profile), **Access control (IAM)** >
+   **Add role assignment**: **Trusted Signing Certificate Profile Signer** (or **Artifact Signing
+   Certificate Profile Signer**) to that app registration.
+6. Add the seven repository secrets to `anton-abyzov/specwithcode` (Settings > Secrets and
+   variables > Actions), for example `gh secret set AZURE_TENANT_ID -R anton-abyzov/specwithcode`.
+7. Dispatch a dry run (`gh workflow run release-windows-linux.yml -f version=<latest version>`)
+   and check that the plan says "signed with Azure Trusted Signing" and that **Check the Windows
+   signatures** passes on both Windows legs. The next release ships signed.
+
+Renew the client secret before it expires (the portal shows the date); an expired one fails the
+signing step, and the release attach waits until it is replaced.
 
 Release DMGs are built with `--signed`: Developer ID Application, team `NMCB2JZ7QG`, hardened
 runtime, notarized and stapled. The environment is in

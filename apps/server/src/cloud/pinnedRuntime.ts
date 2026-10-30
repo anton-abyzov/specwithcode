@@ -12,10 +12,13 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   CLI_RELEASE_CHECKSUMS_FILE,
+  CLI_RELEASE_WINDOWS_LINUX_CHECKSUMS_FILE,
   chooseCliArchive,
   cliArchivePlatformKey,
   cliArchiveTarCommand,
+  cliChecksumsHaveOwnArchive,
   cliReleaseDownloadBaseUrl,
+  mergeChecksums,
   parseChecksums,
 } from "@specweave-studio/shared/cliRelease";
 
@@ -179,8 +182,7 @@ interface PinnedRuntimeInstallInput {
   /**
    * An installed Node bundle of exactly `version` on this machine, such as
    * the `specwithcode` npm package the CLI runs from. When set, the runtime is
-   * pinned by copying it instead of downloading a release archive, which may
-   * not exist for this platform (no darwin archive is published).
+   * pinned by copying it instead of downloading a release archive.
    */
   readonly localBundleDir?: string | undefined;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
@@ -234,8 +236,33 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
 });
 
 /**
+ * SHA256SUMS-windows-linux, which lists the Windows zips. Releases from before
+ * release-windows-linux.yml have none, which reads as an empty list.
+ */
+const fetchWindowsLinuxChecksums = Effect.fn("cloud.pinned_runtime.fetch_windows_linux_checksums")(
+  function* (httpClient: HttpClient.HttpClient, url: string) {
+    const step = "downloading the specweave-studio Windows and Linux release checksums";
+    return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
+      Effect.flatMap((response) =>
+        response.status === 404
+          ? Effect.succeed<ReadonlyMap<string, string>>(new Map())
+          : HttpClientResponse.filterStatusOk(response).pipe(
+              Effect.flatMap((ok) => ok.text),
+              Effect.map(parseChecksums),
+            ),
+      ),
+      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })),
+      Effect.timeoutOrElse({
+        duration: PINNED_RUNTIME_INSTALL_TIMEOUT,
+        orElse: () => Effect.fail(new PinnedRuntimeInstallError({ step: `${step} (timed out)` })),
+      }),
+    );
+  },
+);
+
+/**
  * Downloads the release archive for this platform, verifies it against the
- * release's checksum file, and unpacks it so the executable sits directly in
+ * release's checksum files, and unpacks it so the executable sits directly in
  * the staging directory. Only `tar` is required on the host; every supported
  * OS ships one that reads gzip and zip.
  */
@@ -254,7 +281,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   const baseUrl = cliReleaseDownloadBaseUrl(input.version, input.releaseBaseUrl);
 
   input.onProgress?.({ stage: "download", received: 0, total: undefined });
-  const checksums = parseChecksums(
+  const primary = parseChecksums(
     new TextDecoder().decode(
       yield* fetchReleaseAsset(
         httpClient,
@@ -263,6 +290,17 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
       ),
     ),
   );
+  // The Windows zips are listed in SHA256SUMS-windows-linux, attached after
+  // SHA256SUMS. An archive in neither file is never downloaded.
+  const checksums = cliChecksumsHaveOwnArchive(primary, input.version, platformKey)
+    ? primary
+    : mergeChecksums(
+        primary,
+        yield* fetchWindowsLinuxChecksums(
+          httpClient,
+          `${baseUrl}/${CLI_RELEASE_WINDOWS_LINUX_CHECKSUMS_FILE}`,
+        ),
+      );
   const choice = chooseCliArchive(checksums, input.version, platformKey);
   if (choice === undefined) {
     return yield* new PinnedRuntimeInstallError({

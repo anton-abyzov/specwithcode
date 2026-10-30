@@ -488,7 +488,7 @@ const main = async () => {
   const finishWizard = async () => {
     const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
     const wizardButtons = [
-      /up as my main machine/u,
+      /^Start as a main machine|up as my main machine/u,
       /^Do not import projects$/u,
       /^Skip/u,
       /^Continue$/u,
