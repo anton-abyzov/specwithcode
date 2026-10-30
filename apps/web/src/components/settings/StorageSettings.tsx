@@ -1,3 +1,4 @@
+import { ActiveThreadCapSetting } from "./ActiveThreadCapSetting";
 import { InactiveThreadArchiveSetting } from "./InactiveThreadArchiveSetting";
 import {
   resolveWorktreeLocationMode,
@@ -305,11 +306,10 @@ export function StorageSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      {!isProjectScope && (
-        <SettingsSection id="storage-archive" title="Chat history">
-          <InactiveThreadArchiveSetting />
-        </SettingsSection>
-      )}
+      <SettingsSection id="storage-archive" title="Chat history">
+        {!isProjectScope && <InactiveThreadArchiveSetting />}
+        <ActiveThreadCapSetting />
+      </SettingsSection>
       <SettingsSection id="storage-worktrees" title="Worktrees">
         <WorktreesDirectoryRow />
         {isProjectScope && (

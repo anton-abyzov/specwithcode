@@ -17,6 +17,8 @@ import {
   UsageDay,
   type UsageSummaryInput,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -37,10 +39,15 @@ const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unkno
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  timestamp = "2026-08-01T10:00:00Z",
+): string {
   return `${JSON.stringify({
     type: "assistant",
-    timestamp: "2026-08-01T10:00:00Z",
+    timestamp,
     requestId: `req_${id}`,
     sessionId: "session-1",
     message: {
@@ -1125,20 +1132,27 @@ describe("UsageService", () => {
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
+      // Saved usage is kept for 90 days, so the write stays recent whatever today is.
+      const dayMs = 24 * 60 * 60 * 1000;
+      const nowMs = yield* Clock.currentTimeMillis;
+      const writtenMs = (Math.floor(nowMs / dayMs) - 10) * dayMs + 10 * 60 * 60 * 1000;
+      const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+      const day = (offset: number) => UsageDay.make(iso(writtenMs + offset * dayMs).slice(0, 10));
       yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
-        const lastWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
-        await NodeFSP.utimes(transcript, lastWrite, lastWrite);
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5", iso(writtenMs)));
+        await NodeFSP.utimes(transcript, writtenMs / 1000, writtenMs / 1000);
       });
       const service = yield* UsageService.make.pipe(
         Effect.provide(layerService({ prefix: "usage-service-saved-window-test", home, settings })),
       );
-      const first = yield* service.readSummary(WINDOW);
+      const window = { timeZone: "UTC", sinceDay: day(-1), untilDay: day(1) };
+      const first = yield* service.readSummary(window);
+      assert.strictEqual(first.buckets.length, 1);
       yield* Effect.promise(() =>
         NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
       );
 
-      const reached = yield* service.readSummary(WINDOW);
+      const reached = yield* service.readSummary(window);
       assert.deepStrictEqual(reached.buckets, first.buckets);
       assert.strictEqual(reached.sources[0]?.status, "ok");
 
@@ -1146,8 +1160,8 @@ describe("UsageService", () => {
       // that still reads it, so it adds nothing to a window after its last write.
       const later = yield* service.readSummary({
         timeZone: "UTC",
-        sinceDay: UsageDay.make("2026-08-10"),
-        untilDay: UsageDay.make("2026-08-12"),
+        sinceDay: day(7),
+        untilDay: day(9),
       });
       assert.deepStrictEqual(later.buckets, []);
       assert.strictEqual(later.sources[0]?.status, "missing");

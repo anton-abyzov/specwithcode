@@ -54,7 +54,8 @@ PROJECT_SCOPED_KEYS = frozenset((
     'providerLimitWaitUnderMinutes', 'providerLimitRedeemResets', 'autoApproveSubscriptionChange',
     'providerLimitSpendCredits',
     'providerLimitUseApiCredits', 'providerLimitMachineTargets', 'providerLimitTargetOrder',
-    'providerLimitUnknownUsageEligible', 'taskRouting', 'modelLanes', 'learnedModelPreferences'))
+    'providerLimitUnknownUsageEligible', 'taskRouting', 'modelLanes', 'learnedModelPreferences',
+    'keepActiveThreadsPerProject'))
 OVERRIDES = 'projectSettingsOverrides'
 SIMPLIFIED_MARKER = '/projectSettingsSimplified'
 # packages/shared/src/serverSettings.ts deriveLegacyProjectOverrides: legacy map -> override key.

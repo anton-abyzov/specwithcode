@@ -1,9 +1,13 @@
 import {
   ArchiveInactiveThreadsAfterDays,
+  DEFAULT_KEEP_ACTIVE_THREADS_PER_PROJECT,
+  KeepActiveThreadsPerProject,
   WorktreeLocationMode,
 } from "./workspaceLifecycleSettings.ts";
 export {
   ArchiveInactiveThreadsAfterDays,
+  DEFAULT_KEEP_ACTIVE_THREADS_PER_PROJECT,
+  KeepActiveThreadsPerProject,
   WorktreeLocationMode,
   resolveWorktreeLocationMode,
 } from "./workspaceLifecycleSettings.ts";
@@ -1513,6 +1517,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "taskRouting",
   "modelLanes",
   "learnedModelPreferences",
+  "keepActiveThreadsPerProject",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1570,6 +1575,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   taskRouting: Schema.optionalKey(TaskRoutingSettings),
   modelLanes: Schema.optionalKey(ModelLanes),
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
+  keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1607,6 +1613,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "sidebarAutoSettleAfterDays",
   "providerLimitFallbackModelSelection",
   "providerLimitSwitchAtPercent",
+  "keepActiveThreadsPerProject",
 ]);
 
 export const StorageCleanupSettings = Schema.Struct({
@@ -1648,6 +1655,9 @@ export const ServerSettings = Schema.Struct({
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
   archiveInactiveThreadsAfterDays: ArchiveInactiveThreadsAfterDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(30)),
+  ),
+  keepActiveThreadsPerProject: KeepActiveThreadsPerProject.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_KEEP_ACTIVE_THREADS_PER_PROJECT)),
   ),
   /**
    * Custom locations used before the current one. Server-maintained so
@@ -2233,6 +2243,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
   archiveInactiveThreadsAfterDays: Schema.optionalKey(ArchiveInactiveThreadsAfterDays),
+  keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
   // Server settings
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),

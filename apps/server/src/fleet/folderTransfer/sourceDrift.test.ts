@@ -83,7 +83,7 @@ async function committed(
 const hashed = () =>
   vi
     .mocked(Manifest.hashFile)
-    .mock.calls.map(([absolute]) => Path.relative(folder, absolute))
+    .mock.calls.map(([absolute]) => Path.relative(folder, absolute).replaceAll("\\", "/"))
     .filter((path) => !path.startsWith(".."));
 
 it("reports nothing and reads no file when nothing changed", async () => {

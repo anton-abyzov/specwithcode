@@ -666,6 +666,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     // Same canonical layer object as the orchestration runtime; memoization shares its clock.
     Layer.provide(Scheduler.layer),
     Layer.provide(ProjectionStoreV2.layer),
+    Layer.provide(ProjectStore.layer),
     Layer.provide(ThreadManagementService.layer),
   ),
   layerThreadSettlementWorker,

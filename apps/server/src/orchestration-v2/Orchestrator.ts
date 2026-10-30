@@ -12837,7 +12837,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadDispatch.withLock(
         commandThreadId(command),
         command.type === "thread.archive" && command.inactive !== undefined
-          ? inactiveArchiveGuard.protect(command, dispatchWithReceiptEffect(command)).pipe(
+          ? // A thread another machine runs, holds or may continue is never swept here.
+            handoffGate.check(command.threadId).pipe(
+              Effect.flatMap((refusal) =>
+                refusal === null
+                  ? inactiveArchiveGuard.protect(command, dispatchWithReceiptEffect(command))
+                  : Effect.fail(
+                      new InactiveThreadArchiveGuard.InactiveArchiveError({ cause: refusal }),
+                    ),
+              ),
               Effect.mapError(
                 (cause) =>
                   new OrchestratorDispatchError({

@@ -3073,7 +3073,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     /** Server lifecycle sweep: conditionally archive without stopping or cleaning resources. */
-    inactive: Schema.optional(Schema.Struct({ expectedUpdatedAt: Schema.DateTimeUtc })),
+    inactive: Schema.optional(
+      Schema.Struct({
+        expectedUpdatedAt: Schema.DateTimeUtc,
+        /** Absent is the inactivity rule; overflow is the project's live-thread cap. */
+        reason: Schema.optional(Schema.Literal("overflow")),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unarchive"),
