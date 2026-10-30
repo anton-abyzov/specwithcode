@@ -144,9 +144,12 @@ interface World {
   parents: Record<string, Record<string, unknown>>;
   readonly notes: Array<{ commandId: string; message: string; runId: string }>;
   readonly cards: Array<{
+    commandId: string;
     requestId: string;
     runId: string;
     nodeId: string;
+    requestNodeId: string;
+    turnItemId: string;
     questions: unknown;
     reopenedFromAskedAt?: string | null | undefined;
   }>;
@@ -205,9 +208,12 @@ const reopenerFor = (world: World, recordPath: string) =>
               Effect.sync(() => {
                 if (command.type === "user_input_request.record")
                   world.cards.push({
+                    commandId: command.commandId,
                     requestId: command.requestId,
                     runId: command.runId,
                     nodeId: command.nodeId,
+                    requestNodeId: command.requestNodeId,
+                    turnItemId: command.turnItemId,
                     questions: command.questions,
                     reopenedFromAskedAt: command.reopenedFromAskedAt,
                   });
@@ -426,6 +432,52 @@ it.effect("asks with a card when the continuing agent ends without asking again"
         ["update-reopen:q1"],
       );
       assert.include(world.notes[0]!.message, "It is asked again below.");
+    }),
+  ),
+);
+
+it.effect("puts the card back on a later update, past an earlier update's continuation", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const world = newWorld({ continues: true });
+      // Update 1's continuation of r1 ended without asking, so q1 came back as a card;
+      // the agent then asked something else, which the person answered.
+      world.projection = {
+        ...world.projection,
+        runs: [
+          run("r1", 1, "interrupted"),
+          run("r2", 2, "completed", { restartContinuationOfRunId: "r1", requestedAt: at }),
+        ],
+        runtimeRequests: [
+          { id: RuntimeRequestId.make("q1"), status: "cancelled", kind: "user_input" },
+          {
+            id: RuntimeRequestId.make("update-reopen:q1"),
+            status: "cancelled",
+            kind: "user_input",
+            createdAt: later,
+          },
+          {
+            id: RuntimeRequestId.make("q2"),
+            status: "resolved",
+            kind: "user_input",
+            createdAt: later,
+          },
+        ],
+      };
+      // Update 2 closes the card, in the process the update replaced.
+      const closing = yield* reopenerFor(world, recordPath);
+      yield* closing.store.record([
+        closed("update-reopen:q1", { closedAt: "2026-10-21T11:00:00.000Z" }),
+      ]);
+      const { reopener } = yield* reopenerFor(world, recordPath);
+      // No continuation runs for r1 this time: update 1's one never asks this close.
+      const outcomes = yield* reopener.reopenPending;
+      assert.deepEqual(outcomes[0]?.outcome, { type: "reopened", by: "card" });
+      assert.deepEqual(
+        world.cards.map((card) => card.requestId),
+        ["update-reopen:q1"],
+      );
+      assert.lengthOf(world.notes, 0);
     }),
   ),
 );
@@ -955,10 +1007,139 @@ it.effect("puts a reopened card back after another update without another note",
       yield* store.record([closed("update-reopen:q1", { askedAt: "2026-10-29T05:28:00Z" })]);
       const outcomes = yield* reopener.reopenPending;
       expect(outcomes[0]?.outcome).toEqual({ type: "reopened", by: "card" });
-      expect(world.cards.map((card) => card.requestId)).toEqual(["update-reopen:update-reopen:q1"]);
+      // The card a later update closed comes back under its own id, not a longer one.
+      expect(world.cards.map((card) => card.requestId)).toEqual(["update-reopen:q1"]);
       // The card keeps the original ask, not the time an older release recorded.
       expect(world.cards[0]?.reopenedFromAskedAt).toBe("2026-10-28T05:17:00.000Z");
       expect(world.notes).toHaveLength(0);
+    }),
+  ),
+);
+
+it("gives a reopened card one prefix however many updates closed it", () => {
+  const card = ClosedQuestions.reopenCardRequestId;
+  expect(card({ kind: "user_input", requestId: "q1" })).toBe("update-reopen:q1");
+  expect(card({ kind: "user_input", requestId: "update-reopen:q1" })).toBe("update-reopen:q1");
+  // Ids an older release stacked, one prefix per update, come back with one.
+  const live = "ask-user:thread%3Aabc:13fa8681";
+  expect(card({ kind: "user_input", requestId: `${"update-reopen:".repeat(49)}${live}` })).toBe(
+    `update-reopen:${live}`,
+  );
+  // An approval's card keeps the approval prefix, also when an older release wrapped it.
+  expect(card({ kind: "command", requestId: "a1" })).toBe("update-reopen-approval:a1");
+  expect(card({ kind: "user_input", requestId: "update-reopen-approval:a1" })).toBe(
+    "update-reopen-approval:a1",
+  );
+  expect(
+    card({
+      kind: "user_input",
+      requestId: "update-reopen:update-reopen-approval:update-reopen-approval:a1",
+    }),
+  ).toBe("update-reopen-approval:a1");
+  expect(ClosedQuestions.reopenFamilyRequestId("update-reopen:update-reopen-approval:a1")).toBe(
+    "a1",
+  );
+  expect(ClosedQuestions.isReopenCardRequestId("update-reopen:q1")).toBe(true);
+  expect(ClosedQuestions.isReopenCardRequestId("q1")).toBe(false);
+});
+
+it.effect("keeps one card id through several consecutive updates", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const world = newWorld();
+      const { store, reopener } = yield* reopenerFor(world, recordPath);
+      const projectionRequests = () =>
+        world.projection.runtimeRequests as Array<{ id: RuntimeRequestId; status: string }>;
+      // Each update closes the card the last one put back; the next reopens it.
+      let closedId = "q1";
+      for (let update = 1; update <= 5; update += 1) {
+        const closedAt = `2026-10-2${update}T10:00:00.000Z`;
+        yield* store.record([closed(closedId, { closedAt })]);
+        const outcomes = yield* reopener.reopenPending;
+        expect(outcomes.map((entry) => [entry.requestId, entry.outcome])).toEqual([
+          [closedId, { type: "reopened", by: "card" }],
+        ]);
+        const card = world.cards.at(-1)!;
+        expect(card.requestId).toBe("update-reopen:q1");
+        expect(card.requestNodeId).toBe("node:update-reopen:q1");
+        expect(card.turnItemId).toBe("turn-item:update-reopen:q1");
+        // Each close writes under its own command id, so the record command is not replayed.
+        expect(card.commandId).toBe(
+          update === 1
+            ? "service-update:reopen:q1:card"
+            : `service-update:reopen:update-reopen:q1:${closedAt}:card`,
+        );
+        // The card is put back, then the next update closes it again.
+        closedId = card.requestId;
+        world.projection = {
+          ...world.projection,
+          runtimeRequests: [
+            ...projectionRequests().filter((request) => request.id !== closedId),
+            { id: RuntimeRequestId.make(closedId), status: "cancelled" },
+          ],
+        };
+      }
+      expect(new Set(world.cards.map((card) => card.commandId)).size).toBe(5);
+      // Only the first close is noted; later updates only put the card back.
+      expect(world.notes).toHaveLength(1);
+    }),
+  ),
+);
+
+it.effect("puts a card an older release stacked back under one prefix", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const stacked = `${"update-reopen:".repeat(49)}q1`;
+      const world = newWorld();
+      world.projection = {
+        ...world.projection,
+        runtimeRequests: [
+          { id: RuntimeRequestId.make("q1"), status: "cancelled" },
+          { id: RuntimeRequestId.make("update-reopen:q1"), status: "cancelled" },
+          { id: RuntimeRequestId.make(stacked), status: "cancelled" },
+        ],
+      };
+      const { store, reopener } = yield* reopenerFor(world, recordPath);
+      yield* store.record([closed(stacked)]);
+      const outcomes = yield* reopener.reopenPending;
+      expect(outcomes[0]?.outcome).toEqual({ type: "reopened", by: "card" });
+      expect(
+        world.cards.map((card) => [card.requestId, card.requestNodeId, card.turnItemId]),
+      ).toEqual([["update-reopen:q1", "node:update-reopen:q1", "turn-item:update-reopen:q1"]]);
+      expect(world.cards[0]!.commandId.length).toBeLessThan(120);
+    }),
+  ),
+);
+
+it.effect("puts a card back after a later close when its last reopen was never marked", () =>
+  withRecord((recordPath) =>
+    Effect.gen(function* () {
+      const world = newWorld();
+      world.projection = {
+        ...world.projection,
+        runtimeRequests: [
+          { id: RuntimeRequestId.make("q1"), status: "cancelled" },
+          { id: RuntimeRequestId.make("update-reopen:q1"), status: "cancelled" },
+        ],
+      };
+      const { store, reopener } = yield* reopenerFor(world, recordPath);
+      const second = "2026-10-22T10:00:00.000Z";
+      const third = "2026-10-23T10:00:00.000Z";
+      // Update 2 closes the card; it is put back, but the mark is never written.
+      yield* store.record([closed("update-reopen:q1", { closedAt: second })]);
+      const [unmarked] = yield* store.pending;
+      expect(yield* reopener.reopenOne(unmarked!)).toEqual({ type: "reopened", by: "card" });
+      // Update 3 closes the put-back card again before the next pass.
+      yield* store.record([closed("update-reopen:q1", { closedAt: third })]);
+      expect((yield* store.pending).map((entry) => entry.closedAt)).toEqual([third]);
+      const outcomes = yield* reopener.reopenPending;
+      expect(outcomes[0]?.outcome).toEqual({ type: "reopened", by: "card" });
+      // The third close writes under its own command id, so it is not a replay of the second.
+      expect(world.cards.map((card) => card.commandId)).toEqual([
+        `service-update:reopen:update-reopen:q1:${second}:card`,
+        `service-update:reopen:update-reopen:q1:${third}:card`,
+      ]);
+      expect(yield* store.pending).toHaveLength(0);
     }),
   ),
 );

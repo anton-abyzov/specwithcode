@@ -50,6 +50,7 @@ const makeHarness = (
   let scope = SCOPE_GMAIL_CALENDAR;
   let unauthorizedOnce = false;
   let listed: ReadonlyArray<unknown> = [];
+  const posts: Array<{ operation: string; url: string; body: unknown }> = [];
   const nextAccess = () => Redacted.make(`access-${++accessCounter}`);
 
   const api = GoogleApi.GoogleApi.of({
@@ -94,9 +95,16 @@ const makeHarness = (
         if (url.endsWith("/users/me/messages/m1")) {
           return {
             id: "m1",
+            threadId: "t1",
             snippet: "Hi",
             labelIds: ["UNREAD"],
-            payload: { headers: [{ name: "Subject", value: "Dinner" }] },
+            payload: {
+              headers: [
+                { name: "Subject", value: "Dinner" },
+                { name: "From", value: "Ann <ann@example.com>" },
+                { name: "Message-ID", value: "<m1@example.com>" },
+              ],
+            },
           };
         }
         if (url.includes("/calendars/primary/events")) {
@@ -109,6 +117,13 @@ const makeHarness = (
           };
         }
         return {};
+      }),
+    postJson: ({ operation, url, body, accessToken }) =>
+      Effect.gen(function* () {
+        calls.push({ operation, url, query: undefined, token: Redacted.value(accessToken) });
+        posts.push({ operation, url, body });
+        if (apiFailure) return yield* apiFailure;
+        return { id: "d1", message: { id: "dm1", threadId: "t1" } };
       }),
     getText: () => Effect.succeed(""),
   });
@@ -149,6 +164,7 @@ const makeHarness = (
     layer,
     secrets,
     calls,
+    posts,
     revoked,
     tokenClients,
     failRefresh: (error: GoogleApi.GoogleApiError | null) => {
@@ -159,6 +175,9 @@ const makeHarness = (
     },
     grantAllScopes: () => {
       scope = `${SCOPE_GMAIL_CALENDAR} https://www.googleapis.com/auth/drive.readonly`;
+    },
+    grantDrafts: () => {
+      scope = `${SCOPE_GMAIL_CALENDAR} https://www.googleapis.com/auth/gmail.compose`;
     },
     unauthorizeNextCall: () => {
       unauthorizedOnce = true;
@@ -310,7 +329,7 @@ it.effect(
         assert.isNotNull(checked.checkedAt);
         assert.deepStrictEqual(
           checked.serviceChecks.map((check) => check.status),
-          ["ok", "ok", "ok"],
+          ["ok", "ok", "ok", "not_authorized"],
         );
         assert.deepStrictEqual(
           harness.calls.map(({ url, query }) => ({ url, query })),
@@ -357,7 +376,7 @@ it.effect("probes only this project's allowed and consented services", () =>
       assert.deepStrictEqual(result.services, ["calendar"]);
       assert.deepStrictEqual(
         result.serviceChecks.map((check) => check.status),
-        ["not_authorized", "ok", "scope_missing"],
+        ["not_authorized", "ok", "scope_missing", "not_authorized"],
       );
       assert.strictEqual(harness.calls.length, 1);
       assert.include(harness.calls[0]!.url, "/calendars/primary/events");
@@ -474,6 +493,65 @@ it.effect("lets agents read only what their project was given", () =>
         failureDetail(yield* Effect.exit(google.calendarEvents(PROJECT, { timeMin: "tomorrow" }))),
         "is not a date and time",
       );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("saves a threaded reply draft only with Gmail drafts on, and never sends", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+      harness.grantDrafts();
+      const signIn = yield* google.startSignIn({ services: ["gmail", "gmailDrafts"] });
+      const authorize = new URL(signIn.signIn!.authorizationUrl);
+      assert.include(authorize.searchParams.get("scope")!, "auth/gmail.compose");
+      yield* google.completeSignIn({
+        callbackUrl: `?code=good-code&state=${authorize.searchParams.get("state")}`,
+      });
+      assert.deepStrictEqual((yield* google.status).services, ["gmail", "calendar", "gmailDrafts"]);
+
+      // Reading mail is not enough: drafts need their own switch.
+      yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail"] });
+      assert.include(
+        failureDetail(
+          yield* Effect.exit(google.gmailCreateDraft(PROJECT, { messageId: "m1", body: "Yes" })),
+        ),
+        "Gmail drafts is not turned on for this project",
+      );
+      assert.strictEqual(harness.posts.length, 0);
+
+      yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail", "gmailDrafts"] });
+      assert.include(
+        failureDetail(
+          yield* Effect.exit(google.gmailCreateDraft(PROJECT, { messageId: "m1", body: "  " })),
+        ),
+        "needs a reply text",
+      );
+      const draft = yield* google.gmailCreateDraft(PROJECT, {
+        messageId: "m1",
+        body: "Thursday works.\nAnton",
+      });
+      assert.deepStrictEqual(draft, {
+        draftId: "d1",
+        threadId: "t1",
+        to: "Ann <ann@example.com>",
+        subject: "Re: Dinner",
+        link: "https://mail.google.com/mail/#drafts?compose=dm1",
+        sent: false,
+      });
+      assert.strictEqual(harness.posts.length, 1);
+      const post = harness.posts[0]!;
+      assert.strictEqual(post.url, "https://gmail.googleapis.com/gmail/v1/users/me/drafts");
+      const message = (post.body as { message: { raw: string; threadId: string } }).message;
+      assert.strictEqual(message.threadId, "t1");
+      const raw = Buffer.from(message.raw, "base64url").toString("utf8");
+      assert.include(raw, "To: Ann <ann@example.com>\r\n");
+      assert.include(raw, "In-Reply-To: <m1@example.com>\r\n");
+      assert.include(raw, "References: <m1@example.com>\r\n");
+      // Nothing anywhere asks Gmail to send.
+      assert.isTrue(harness.calls.every((call) => !call.url.includes("/send")));
     }).pipe(Effect.provide(harness.layer));
   }),
 );

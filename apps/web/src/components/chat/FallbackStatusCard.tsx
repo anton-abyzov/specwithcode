@@ -27,7 +27,7 @@ export function FallbackStatusCard({ header }: { readonly header: ModelStateHead
     <div
       role="status"
       // A short window scrolls the status, so the model list below keeps its rows.
-      className="max-h-[min(15rem,35dvh)] shrink-0 overflow-y-auto border-b border-warning/30 bg-warning/9 px-2.5 py-2 text-xs leading-snug"
+      className="max-h-[min(15rem,35dvh)] min-h-16 shrink overflow-y-auto border-b border-warning/30 bg-warning/9 px-2.5 py-2 text-xs leading-snug"
       data-fallback-status="true"
     >
       <p className="flex items-center gap-1.5 font-medium text-foreground">

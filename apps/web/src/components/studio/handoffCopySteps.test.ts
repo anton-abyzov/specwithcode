@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { transferRefusal } from "./handoffCopySteps";
+import { busyThreadsOf, transferRefusal } from "./handoffCopySteps";
 import { DestinationContextPreviewError } from "./useCoordinatorTransfer";
 
 const changes = {
@@ -63,5 +63,83 @@ describe("transferRefusal", () => {
     expect(
       transferRefusal(new DestinationContextPreviewError(new Error("No.")), false, "M3", "M4"),
     ).toMatchObject({ recovery: false, copyAgain: null });
+  });
+
+  it("carries the threads a busy source named", () => {
+    const busy = {
+      total: 2,
+      threads: [
+        { threadId: "a", title: "A", projectId: "p", reason: "waiting_for_answer" },
+        { threadId: "b", title: "B", projectId: "p", reason: "pending_approval" },
+      ],
+    };
+    const refused = transferRefusal(
+      Object.assign(new Error("busy"), { code: "busy", busy }),
+      false,
+      "M3",
+      "M4",
+    );
+    expect(refused).toMatchObject({
+      recovery: false,
+      copyAgain: null,
+      busy: { on: "source", busy },
+    });
+    expect(refused.notice).toBe(
+      "2 threads are still working or waiting for you on M4, so the coordinator stayed there. Answer or close each question, or stop the work, then try again. A move waits for them because it would drop a question still waiting for you.",
+    );
+  });
+});
+
+describe("a busy destination after the source published", () => {
+  it("names the destination's threads and keeps the recovery pointer", () => {
+    const busy = {
+      total: 3,
+      threads: [{ threadId: "q", title: "Q", projectId: "p", reason: "waiting_for_sign_in" }],
+    };
+    const refused = transferRefusal(
+      Object.assign(new Error("busy"), { code: "busy", busy }),
+      true,
+      "ministorm",
+      "M4",
+    );
+    expect(refused).toMatchObject({
+      recovery: true,
+      copyAgain: false,
+      busy: { on: "destination", busy },
+    });
+    expect(refused.notice).toBe(
+      "3 threads are still working or waiting for you on ministorm, so the coordinator hasn't started there yet. Answer or close each question, or stop the work, then try again. A move waits for them because it would drop a question still waiting for you.",
+    );
+  });
+  it("keeps the generic notice when the destination named no threads", () => {
+    const refused = transferRefusal(
+      Object.assign(new Error("Finish active work."), { code: "busy" }),
+      true,
+      "ministorm",
+      "M4",
+    );
+    expect(refused).toMatchObject({ recovery: true, copyAgain: false });
+    expect(refused).not.toHaveProperty("busy");
+    expect(refused.notice).toBe("Moving the coordinator didn't finish: Finish active work.");
+  });
+});
+
+describe("busyThreadsOf", () => {
+  const thread = { threadId: "a", title: "A", projectId: "p", reason: "running" };
+  it("reads only well-formed rows and never counts fewer than it lists", () => {
+    expect(busyThreadsOf({ busy: { total: 0, threads: [thread, { threadId: 1 }] } })).toEqual({
+      total: 1,
+      threads: [thread],
+    });
+  });
+  it("ignores a refusal from an older machine or an unknown reason", () => {
+    for (const cause of [
+      null,
+      "busy",
+      { busy: null },
+      { busy: { total: 1 } },
+      { busy: { total: 1, threads: [{ ...thread, reason: "later_reason" }] } },
+    ])
+      expect(busyThreadsOf(cause)).toBeNull();
   });
 });

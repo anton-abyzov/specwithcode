@@ -132,6 +132,10 @@ describe("buildStarterSuggestions", () => {
       "routine",
     ]);
     expect(ids({ kind: "personal", uncommittedFiles: 9 })).not.toContain("changes");
+    expect(
+      buildStarterSuggestions(signals({ kind: "personal" })).find((entry) => entry.id === "routine")
+        ?.prompt,
+    ).toMatch(/^Turn on my proactive briefing: .*Nothing is sent for me\.$/);
   });
 
   it("asks for a named thread wherever the task is work, and shortens a long goal", () => {

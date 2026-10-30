@@ -417,6 +417,17 @@ describe("grouped notices", () => {
     // Copying started: Done and Failed never repeat it.
     expect(lines(null)).toEqual([]);
   });
+
+  it("names threads waiting for the person on a move only, and never on Done", () => {
+    const waiting =
+      '2 threads here are waiting for you: "A", "B". They don\'t stop on their own: answer or close what each one asks before the coordinator moves.';
+    const lines = (activeWork: "copy-only" | "copy-and-move" | null) =>
+      groupCopyNotices({ warnings: [waiting], rootLabel: "Project root", activeWork }).lines;
+    expect(lines("copy-and-move")).toEqual([waiting]);
+    // A copy of files leaves the questions where they are.
+    expect(lines("copy-only")).toEqual([]);
+    expect(lines(null)).toEqual([]);
+  });
 });
 
 describe("steps and what happens next", () => {

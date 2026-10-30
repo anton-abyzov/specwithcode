@@ -1,6 +1,7 @@
 import type {
   FolderCopySourceStatus,
   FolderCopyStatus,
+  MachineHandoffBusyThreads,
   MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
 import { formatBytes } from "../../studio/folderCopy";
@@ -170,6 +171,51 @@ const changesOf = (cause: unknown): MachineHandoffSourceChanges | null => {
     : null;
 };
 
+const BUSY_REASONS = new Set([
+  "running",
+  "waiting_for_answer",
+  "waiting_for_sign_in",
+  "pending_approval",
+  "provider_session",
+  "pending_effect",
+]);
+
+/** The threads a newer machine named in its busy refusal; null from an older one. */
+export const busyThreadsOf = (cause: unknown): MachineHandoffBusyThreads | null => {
+  const busy =
+    typeof cause === "object" && cause !== null ? (cause as { busy?: unknown }).busy : undefined;
+  if (typeof busy !== "object" || busy === null) return null;
+  const { total, threads } = busy as { total?: unknown; threads?: unknown };
+  if (typeof total !== "number" || !Array.isArray(threads)) return null;
+  const named = threads.filter(
+    (thread): thread is MachineHandoffBusyThreads["threads"][number] =>
+      typeof thread === "object" &&
+      thread !== null &&
+      typeof thread.threadId === "string" &&
+      typeof thread.title === "string" &&
+      typeof thread.projectId === "string" &&
+      BUSY_REASONS.has(thread.reason),
+  );
+  return named.length > 0 ? { total: Math.max(total, named.length), threads: named } : null;
+};
+
+/** The named threads of a busy refusal, or null for any other error or an older machine. */
+export const refusedBusyOf = (cause: unknown): MachineHandoffBusyThreads | null =>
+  codeOf(cause) === "busy" ? busyThreadsOf(cause) : null;
+
+/** Which machine's threads hold the move, and which ones. */
+export interface TransferBusy {
+  readonly on: "source" | "destination";
+  readonly busy: MachineHandoffBusyThreads;
+}
+
+/** The sentence that goes with a named list: what to do about the threads below. */
+export const BUSY_NEXT_STEP =
+  "Answer or close each question, or stop the work, then try again. A move waits for them because it would drop a question still waiting for you.";
+
+const threadsText = (value: number) =>
+  value === 1 ? "A thread is" : `${value.toLocaleString()} threads are`;
+
 const paths = (value: number) => `${value.toLocaleString()} ${value === 1 ? "path" : "paths"}`;
 
 /**
@@ -188,8 +234,18 @@ export function transferRefusal(
   readonly recovery: boolean;
   readonly copyAgain: boolean | null;
   readonly changes?: MachineHandoffSourceChanges;
+  /** The threads that keep a machine busy, when it named them. */
+  readonly busy?: TransferBusy;
 } {
-  if (cause instanceof DestinationContextPreviewError)
+  if (cause instanceof DestinationContextPreviewError) {
+    const busy = codeOf(cause.cause) === "busy" ? busyThreadsOf(cause.cause) : null;
+    if (busy)
+      return {
+        notice: `${threadsText(busy.total)} still working or waiting for you on ${targetLabel}, so the coordinator stayed on ${sourceLabel}. ${BUSY_NEXT_STEP}`,
+        recovery: false,
+        copyAgain: null,
+        busy: { on: "destination", busy },
+      };
     // No publish was attempted. Starting fresh still asks the source to release the
     // operation, so a fence from an older session cannot be lost.
     return {
@@ -197,12 +253,35 @@ export function transferRefusal(
       recovery: false,
       copyAgain: null,
     };
-  if (codeOf(cause) === "busy" && !published)
-    return {
-      notice: `Work is still running on ${sourceLabel}, so the coordinator stayed there. Move it once that work is idle.`,
-      recovery: false,
-      copyAgain: null,
-    };
+  }
+  if (codeOf(cause) === "busy" && !published) {
+    const busy = busyThreadsOf(cause);
+    // Older sources name no threads: the plain notice stays.
+    return busy
+      ? {
+          notice: `${threadsText(busy.total)} still working or waiting for you on ${sourceLabel}, so the coordinator stayed there. ${BUSY_NEXT_STEP}`,
+          recovery: false,
+          copyAgain: null,
+          busy: { on: "source", busy },
+        }
+      : {
+          notice: `Work is still running on ${sourceLabel}, so the coordinator stayed there. Move it once that work is idle.`,
+          recovery: false,
+          copyAgain: null,
+        };
+  }
+  if (codeOf(cause) === "busy" && published) {
+    // Once published, the source answers from its saved bundle without an idle check: a
+    // busy refusal now comes from starting on the destination. The fence stays held.
+    const busy = busyThreadsOf(cause);
+    if (busy)
+      return {
+        notice: `${threadsText(busy.total)} still working or waiting for you on ${targetLabel}, so the coordinator hasn't started there yet. ${BUSY_NEXT_STEP}`,
+        recovery: true,
+        copyAgain: false,
+        busy: { on: "destination", busy },
+      };
+  }
   if (codeOf(cause) === "source_changed" && !published) {
     const changes = changesOf(cause);
     // Older sources send no list: Copy again stays the only answer.

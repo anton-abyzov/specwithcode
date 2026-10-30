@@ -166,6 +166,7 @@ const fallbackRoleKey = (instanceId: string, model: string) =>
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const MODEL_LIST_ESTIMATED_ITEM_SIZE = 52;
+const MODEL_LIST_MIN_VISIBLE_ROWS = 4;
 
 function ModelListSeparator() {
   return <div className="h-0.5" />;
@@ -1029,12 +1030,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
           // The usage band takes room from the list, not from the models; a fallback
-          // status takes more, so the picker grows rather than hiding the list.
+          // status takes more, so the picker grows rather than hiding the list. It
+          // never outgrows the room beside the trigger, so the list scrolls, not the popup.
           props.stateHeader
-            ? "max-h-[min(38rem,80dvh)]"
+            ? "max-h-[min(44rem,85dvh,var(--available-height,100dvh))]"
             : usage
-              ? "max-h-[min(27rem,70dvh)]"
-              : "max-h-86.5",
+              ? "max-h-[min(34rem,80dvh,var(--available-height,100dvh))]"
+              : "max-h-[min(21.625rem,var(--available-height,100dvh))]",
         )}
         // Hold the height from when the search started; results scroll instead of resizing.
         style={isSearching ? { height: searchHeight } : undefined}
@@ -1105,7 +1107,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         >
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
+              // Scrolls as a whole only when the room beside the trigger is shorter
+              // than the bands plus the list's four-row minimum.
+              "flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain bg-muted/40",
               showSidebar && "border-l border-border/70",
             )}
           >
@@ -1203,9 +1207,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               className="relative min-h-0 overflow-hidden pr-px"
               style={{
                 height: modelListHeight,
-                // At least two rows stay in view however much the bands above take.
-                ...(props.stateHeader && filteredItemKeys.length > 0
-                  ? { minHeight: `min(${modelListContentSize}px + var(--spacing) * 5, 7rem)` }
+                // At least four rows stay in view however much the bands above take;
+                // the fallback status scrolls inside its own band instead.
+                ...(filteredItemKeys.length > 0
+                  ? {
+                      minHeight: `min(${modelListContentSize}px + var(--spacing) * 5, ${
+                        MODEL_LIST_MIN_VISIBLE_ROWS * MODEL_LIST_ESTIMATED_ITEM_SIZE
+                      }px + var(--spacing) * 5)`,
+                    }
                   : {}),
               }}
             >

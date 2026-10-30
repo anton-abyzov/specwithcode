@@ -4,6 +4,7 @@ import {
   AuthSettingsWriteScope,
   GOOGLE_CLIENT_ID_PATTERN,
   GOOGLE_CLIENT_SECRET_PATTERN,
+  GOOGLE_READ_SERVICES,
   GOOGLE_SERVICES,
 } from "@specweave-studio/contracts";
 import {
@@ -40,6 +41,7 @@ const SERVICE_LABELS: Record<GoogleService, string> = {
   gmail: "Gmail",
   calendar: "Calendar",
   drive: "Drive",
+  gmailDrafts: "Gmail drafts",
 };
 
 const listServices = (services: ReadonlyArray<GoogleService>) =>
@@ -92,7 +94,17 @@ export function GoogleAccountSettingsPanel() {
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [replacingClient, setReplacingClient] = useState(false);
-  const [wanted, setWanted] = useState<ReadonlySet<GoogleService>>(() => new Set(GOOGLE_SERVICES));
+  // Only the boxes the person changed; the rest follow what Google already granted,
+  // so reconnecting to add Gmail drafts keeps every service already approved.
+  const [choices, setChoices] = useState<ReadonlyMap<GoogleService, boolean>>(() => new Map());
+  const granted = status?.connected ? status.services : [];
+  const wanted = new Set(
+    GOOGLE_SERVICES.filter(
+      (service) =>
+        choices.get(service) ??
+        (granted.includes(service) || GOOGLE_READ_SERVICES.includes(service)),
+    ),
+  );
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -238,8 +250,13 @@ export function GoogleAccountSettingsPanel() {
       bulkServiceChanges(status.projects, ids, service, on),
     );
   };
+  // One click grants reading only; Gmail drafts writes, so it stays a per-project choice.
+  const grantedReads =
+    status === null
+      ? []
+      : status.services.filter((service) => GOOGLE_READ_SERVICES.includes(service));
   const enableAllPending =
-    status === null ? [] : enableAllChanges(status.projects, activeIds, status.services);
+    status === null ? [] : enableAllChanges(status.projects, activeIds, grantedReads);
 
   const renderProjectRow = (project: (typeof projects)[number]) => {
     if (status === null) return null;
@@ -424,7 +441,9 @@ export function GoogleAccountSettingsPanel() {
               <div className="flex flex-col gap-1">
                 <span className="font-medium text-sm">Connect your Google account</span>
                 <span className="text-muted-foreground text-xs">
-                  Pick what SpecWithCode may read. Google asks you to confirm in your browser.
+                  Pick what SpecWithCode may read. Gmail drafts lets your assistant save reply
+                  drafts for you to send; nothing is ever sent. Google asks you to confirm in your
+                  browser.
                 </span>
               </div>
             )}
@@ -437,12 +456,7 @@ export function GoogleAccountSettingsPanel() {
                     disabled={!canWrite || busy}
                     aria-label={`Ask Google for ${SERVICE_LABELS[service]}`}
                     onCheckedChange={(checked) =>
-                      setWanted((current) => {
-                        const next = new Set(current);
-                        if (checked === true) next.add(service);
-                        else next.delete(service);
-                        return next;
-                      })
+                      setChoices((current) => new Map(current).set(service, checked === true))
                     }
                   />
                   {SERVICE_LABELS[service]}
@@ -542,8 +556,8 @@ export function GoogleAccountSettingsPanel() {
               >
                 <span>
                   Connected. Let all {projects.length} active{" "}
-                  {projects.length === 1 ? "project" : "projects"} read{" "}
-                  {listServices(status.services)}?
+                  {projects.length === 1 ? "project" : "projects"} read {listServices(grantedReads)}
+                  ?
                 </span>
                 <div className="flex gap-2">
                   <Button

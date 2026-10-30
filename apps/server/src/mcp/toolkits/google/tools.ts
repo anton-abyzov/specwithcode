@@ -50,6 +50,21 @@ export const GoogleToolkit = Toolkit.make(
   })
     .annotate(Tool.Readonly, true)
     .annotate(Tool.Destructive, false),
+  Tool.make("studio_google_gmail_create_draft", {
+    ...shared,
+    description: `Save a plain-text reply to one Gmail message as a draft in the user's Gmail, threaded under it, for the user to review and send themselves. Needs Gmail drafts turned on for this project (studio_google_status lists gmailDrafts). It never sends: SpecWithCode has no way to send mail. Write only what the user would plausibly say; never accept, decline or commit to anything the user has not decided, and say what you need from them instead. Returns the draft's link. ${UNTRUSTED}`,
+    parameters: Schema.Struct({
+      messageId: Schema.String.annotate({
+        description: "The message to reply to, from studio_google_gmail_search.",
+      }),
+      body: Schema.String.check(Schema.isMaxLength(10_000)).annotate({
+        description: "The reply text, plain text, without the quoted original.",
+      }),
+    }),
+    success: Schema.Unknown,
+  })
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false),
   Tool.make("studio_google_calendar_events", {
     ...shared,
     description: `List events on the user's primary Google Calendar between timeMin and timeMax (ISO 8601; default now to seven days ahead), with times, place, meeting link, attendees and the user's response. ${UNTRUSTED}`,

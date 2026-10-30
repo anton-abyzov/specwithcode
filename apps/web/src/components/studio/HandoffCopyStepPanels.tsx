@@ -26,7 +26,7 @@ import type { useCopyScope } from "./HandoffCopyScope";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopySetup, type CopyMachine } from "./HandoffCopySetup";
 import { HandoffCopyDone, HandoffCopyFailed, HandoffCopyUndone } from "./HandoffCopyDone";
-import { sourceProgressText, type CopyStage } from "./handoffCopySteps";
+import { sourceProgressText, type CopyStage, type TransferBusy } from "./handoffCopySteps";
 import { replacesNothing } from "./handoffCopyAuto";
 import type { CopyNotices } from "./handoffCopyNotices";
 import { CopyNextStep, CopyNoticesBlock, CopyWorkingHint } from "./HandoffCopyGuide";
@@ -87,6 +87,7 @@ export function HandoffCopyStepPanels({
   undoPreview,
   contextTransferred,
   transferNotice,
+  transferBusy = null,
   movingAnyway,
   copyAgain,
   sourceReview,
@@ -149,6 +150,7 @@ export function HandoffCopyStepPanels({
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly contextTransferred: boolean;
   readonly transferNotice: string | null;
+  readonly transferBusy?: TransferBusy | null;
   readonly movingAnyway: boolean;
   readonly copyAgain: boolean;
   /** The source's list of paths that changed after copying, while the person decides. */
@@ -342,6 +344,7 @@ export function HandoffCopyStepPanels({
           targetLabel={targetLabel}
           sourceLabel={sourceLabel}
           transferNotice={transferNotice}
+          transferBusy={transferBusy}
           movingAnyway={movingAnyway}
           copyAgain={copyAgain}
           sourceReview={sourceReview}

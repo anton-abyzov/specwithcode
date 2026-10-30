@@ -89,6 +89,7 @@ export function MachineHandoffDialog({
   preview,
   phase,
   error,
+  errorDetails,
   consent,
   onConsent,
   onReview,
@@ -144,6 +145,8 @@ export function MachineHandoffDialog({
   readonly preview: HandoffPreview | null;
   readonly phase: "choose" | "checking" | "review" | "transferring" | "complete";
   readonly error: string | null;
+  /** Shown under the error: the threads a busy machine named, each opening that thread. */
+  readonly errorDetails?: ReactNode;
   readonly consent: boolean;
   readonly onConsent: (value: boolean) => void;
   readonly onReview: () => void;
@@ -259,6 +262,7 @@ export function MachineHandoffDialog({
                 })}
               </p>
             )}
+            {!copying && error && errorDetails}
             {!copying && error && onRestart && (
               <Button variant="outline" onClick={onRestart}>
                 Review the updated source

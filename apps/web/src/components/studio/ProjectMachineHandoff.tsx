@@ -22,6 +22,7 @@ import {
   type MachineHandoffPrepareResult,
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
+  type MachineHandoffBusyThreads,
   type EnvironmentId,
   type ProjectId,
   ThreadId,
@@ -77,6 +78,8 @@ import {
   useMachinesSettling,
 } from "../../studio/handoffMachineList";
 import { MoveDialogHold } from "../../studio/moveDialogHold";
+import { HandoffBusyThreads } from "./HandoffBusyThreads";
+import { refusedBusyOf } from "./handoffCopySteps";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   return {
@@ -157,7 +160,16 @@ export function ProjectMachineHandoff({
   const [phase, setPhase] = useState<
     "choose" | "checking" | "review" | "transferring" | "complete"
   >("choose");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorText] = useState<string | null>(null);
+  /** The threads a busy machine named with its refusal, and which machine they are on. */
+  const [busyRefusal, setBusyRefusal] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly busy: MachineHandoffBusyThreads;
+  } | null>(null);
+  const setError = (value: string | null) => {
+    setErrorText(value);
+    setBusyRefusal(null);
+  };
   const [canRestart, setCanRestart] = useState(false);
   // A safe copy of the folder is the default; Git-only handoff stays available.
   const [method, setMethod] = useState<HandoffFolderMethod>("copy");
@@ -290,10 +302,14 @@ export function ProjectMachineHandoff({
           : {}),
       }
     : undefined;
-  const showError = (cause: unknown) =>
+  /** `at` is the machine the failed call went to: a busy refusal's threads open there. */
+  const showError = (cause: unknown, at?: EnvironmentId) => {
     setError(
       cause instanceof Error ? cause.message : "The handoff could not finish. Try it again.",
     );
+    const busy = at ? refusedBusyOf(cause) : null;
+    if (busy && at) setBusyRefusal({ environmentId: at, busy });
+  };
   const reviewed =
     snapshot?.publication === "unpublished" &&
     phase === "review" &&
@@ -452,6 +468,7 @@ export function ProjectMachineHandoff({
     setError(null);
     setCanRestart(false);
     setPhase("checking");
+    let at: EnvironmentId = project.environmentId;
     try {
       const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
       if (pending?.publishing && pending.targetKey !== selected)
@@ -523,6 +540,7 @@ export function ProjectMachineHandoff({
         throw new Error(
           "An earlier handoff went to a different folder. Finish that handoff first.",
         );
+      at = target.environmentId;
       const checked = await receive({
         environmentId: target.environmentId,
         input: previewInput(target.id, prepared.value.bundle),
@@ -536,7 +554,7 @@ export function ProjectMachineHandoff({
         await complete(checked.value, prepared.value.bundle);
       } else setPhase("review");
     } catch (cause) {
-      showError(cause);
+      showError(cause, at);
       setPhase("choose");
     } finally {
       running.current = false;
@@ -549,6 +567,7 @@ export function ProjectMachineHandoff({
     setError(null);
     setCanRestart(false);
     setPhase("transferring");
+    let at: EnvironmentId = target.environmentId;
     try {
       const operationId = snapshot.bundle.manifest.operationId;
       // Recheck after the person reviewed the preview; access or local work may have changed.
@@ -570,6 +589,7 @@ export function ProjectMachineHandoff({
         JSON.stringify({ operationId, targetKey: selected, publishing: true }),
       );
       markUnpublished(null);
+      at = project.environmentId;
       const published = await prepare({
         environmentId: project.environmentId,
         input: {
@@ -594,6 +614,7 @@ export function ProjectMachineHandoff({
         throw failure;
       }
       setSnapshot(published.value);
+      at = target.environmentId;
       const started = await receive({
         environmentId: target.environmentId,
         input: {
@@ -610,7 +631,7 @@ export function ProjectMachineHandoff({
         );
       await complete(started.value, published.value.bundle);
     } catch (cause) {
-      showError(cause);
+      showError(cause, at);
       setPhase("review");
     } finally {
       running.current = false;
@@ -835,6 +856,22 @@ export function ProjectMachineHandoff({
         }
         phase={phase}
         error={error}
+        errorDetails={
+          busyRefusal ? (
+            <HandoffBusyThreads
+              busy={busyRefusal.busy}
+              environmentId={busyRefusal.environmentId}
+              machineLabel={
+                environments.find((item) => item.environmentId === busyRefusal.environmentId)
+                  ?.label ??
+                (busyRefusal.environmentId === project.environmentId
+                  ? "This machine"
+                  : "the other machine")
+              }
+              projectTitle={project.title}
+            />
+          ) : undefined
+        }
         consent={consent}
         onConsent={setConsent}
         onReview={() => void review()}

@@ -444,6 +444,30 @@ it("preserves maximum instructions and goal while bounding memory and link inven
   assert.include(text, "copied verbatim");
   assert.include(text, "truncated");
 });
+it("teaches the personal assistant to turn on one proactive briefing that drafts and never sends", () => {
+  const text = Workspace.projectContextText({
+    projectId: "p",
+    threadId: "c",
+    settings: {
+      ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+      kind: "personal",
+      coordinatorThreadId: ThreadId.make("c"),
+    },
+    files: [],
+    index: "",
+  });
+  assert.include(text, "titled 'Proactive briefing'");
+  assert.include(text, "prompt '/proactive-briefing'");
+  assert.include(text, "never a second");
+  const project = Workspace.projectContextText({
+    projectId: "p",
+    threadId: "c",
+    settings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, coordinatorThreadId: ThreadId.make("c") },
+    files: [],
+    index: "",
+  });
+  assert.notInclude(project, "Proactive briefing");
+});
 it("asks workers for short reports and the coordinator to relay only their outcome", () => {
   const settings = {
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -545,8 +569,9 @@ it("keeps the worker and personal coordinator roles within their budgets", () =>
     }).split("\nGoal:\n")[0]!;
   // About 210 tokens on every worker turn (October 26, 2026).
   assert.isAtMost(role("w", "code").length, 900);
-  // About 1,780 tokens for a personal project's coordinator (October 26, 2026).
-  assert.isAtMost(role("c", "personal").length, 7_200);
+  // About 1,870 tokens for a personal project's coordinator, with the proactive
+  // briefing line (October 29, 2026).
+  assert.isAtMost(role("c", "personal").length, 7_500);
 });
 it("tells a coordinator how to run workers on another machine and where this project's go", () => {
   const settings = {

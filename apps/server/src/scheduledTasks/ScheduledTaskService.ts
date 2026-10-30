@@ -81,6 +81,7 @@ import {
   withLiveOwnThread,
 } from "./ScheduledTaskOwnThread.ts";
 import { routineBriefHeader } from "@specweave-studio/shared/routineBrief";
+import { expandRoutinePrompt } from "@specweave-studio/shared/routineTemplates";
 
 import {
   decodeRow,
@@ -749,7 +750,7 @@ export const layer = Layer.effect(
         // Dispatch from the fresh row so prompt/model/binding edits made
         // after the poll read are honoured. A webhook prompt was rendered
         // from the row when the request arrived.
-        let prompt = webhook?.prompt ?? active.prompt;
+        let prompt = expandRoutinePrompt(webhook?.prompt ?? active.prompt);
         if (active.brief) {
           const { year, month, day } = DateTime.toParts(startedAt);
           prompt =

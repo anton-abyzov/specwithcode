@@ -55,12 +55,37 @@ try {
   assert.deepEqual(
     (await templates.locator("strong").allInnerTexts()).map((title) => title.trim()),
     [
+      "Proactive briefing",
       "Monthly tax prep",
       "Monthly profit and loss",
       "Research brief",
       "Email triage and draft replies",
     ],
   );
+
+  // The proactive briefing starts on its daily cadence; it is saved only on Save.
+  await templates.filter({ hasText: "Proactive briefing" }).click();
+  const briefing = pane.getByRole("form", { name: "New routine: Proactive briefing" });
+  await briefing.waitFor();
+  assert(await briefing.getByLabel("Every day").isChecked());
+  assert.equal(await briefing.getByLabel("Time", { exact: true }).inputValue(), "08:00");
+  assert.equal(await briefing.getByRole("combobox", { name: "Day" }).count(), 0);
+  assert.match(await briefing.getByLabel("What it does").inputValue(), /Nothing was sent\./);
+  assert(await briefing.getByText(/uses your plan's limits/).isVisible());
+  await shot(page, "routines-briefing-form");
+  await briefing.getByLabel("Time", { exact: true }).fill("07:30");
+  await briefing.getByRole("button", { name: "Save routine" }).click();
+  await briefing.waitFor({ state: "hidden" });
+  calls = await page.evaluate(() => window.__projectCalls);
+  const briefingSaves = calls.filter((call) => call.command === "routineSave");
+  assert.equal(briefingSaves.length, 1);
+  assert.deepEqual(briefingSaves[0].args.input.schedule, {
+    type: "fixed_time",
+    timeOfDay: "07:30",
+  });
+  assert.equal(briefingSaves[0].args.input.title, "Proactive briefing");
+  assert.equal(briefingSaves[0].args.input.ownThread, true);
+  assert.equal(briefingSaves[0].args.input.brief.prepareOnly, true);
   await templates.filter({ hasText: "Email triage and draft replies" }).click();
   const form = pane.getByRole("form", { name: "New routine: Email triage and draft replies" });
   await form.waitFor();
@@ -68,7 +93,7 @@ try {
   assert(await form.getByLabel(/Prepare and draft only/).isChecked());
   assert.match(await form.getByLabel("What it does").inputValue(), /do not send, archive/);
   calls = await page.evaluate(() => window.__projectCalls);
-  assert.equal(calls.filter((call) => call.command === "routineSave").length, 0);
+  assert.equal(calls.filter((call) => call.command === "routineSave").length, 1);
   await shot(page, "routines-template-form");
   await form.getByRole("button", { name: "Cancel" }).click();
 
@@ -79,8 +104,8 @@ try {
   await taxForm.waitFor({ state: "hidden" });
   calls = await page.evaluate(() => window.__projectCalls);
   const saves = calls.filter((call) => call.command === "routineSave");
-  assert.equal(saves.length, 1);
-  const saved = saves[0].args.input;
+  assert.equal(saves.length, 2);
+  const saved = saves[1].args.input;
   assert.deepEqual(saved.schedule, { type: "manual" });
   assert.equal(saved.ownThread, true);
   assert.equal(saved.threadId, null);
@@ -129,7 +154,8 @@ try {
           "inputs and result shown on the card; only this project's routines",
           "no Pause for a routine run by hand",
           "Run now sends one request for that routine",
-          "four templates; a template opens a form and saves nothing until Save",
+          "five templates, proactive briefing first; a template opens a form and saves nothing until Save",
+          "proactive briefing: Every day at 08:00 preselected, saved as a fixed_time schedule at the chosen time",
           "template defaults: When you ask, prepare and draft only, own thread",
           "saved routine payload: manual schedule, ownThread, brief",
           "monthly choice uses the template's suggested day",

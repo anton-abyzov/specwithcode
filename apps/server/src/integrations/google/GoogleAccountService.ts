@@ -59,8 +59,11 @@ import {
   DRIVE_FILE_FIELDS,
   DRIVE_TEXT_LIMIT,
   driveQuery,
+  buildGmailReplyDraft,
   emailFromIdToken,
   EMPTY_GOOGLE_ACCOUNT_STATE,
+  GMAIL_DRAFT_BODY_LIMIT,
+  gmailDraftLink,
   GOOGLE_CALLBACK_PATH,
   GoogleAccountState,
   isReadableDriveType,
@@ -89,6 +92,7 @@ const SERVICE_LABEL: Record<GoogleService, string> = {
   gmail: "Gmail",
   calendar: "Google Calendar",
   drive: "Google Drive",
+  gmailDrafts: "Gmail drafts",
 };
 
 const StoredClient = Schema.Struct({ clientId: Schema.String, clientSecret: Schema.String });
@@ -107,6 +111,11 @@ export interface CalendarEventsInput {
   readonly timeMax?: string | undefined;
   readonly query?: string | undefined;
   readonly maxResults?: number | undefined;
+}
+export interface GmailCreateDraftInput {
+  /** The message being answered, by the id studio_google_gmail_search returned. */
+  readonly messageId: string;
+  readonly body: string;
 }
 export interface DriveSearchInput {
   readonly text?: string | undefined;
@@ -151,6 +160,24 @@ export class GoogleAccountService extends Context.Service<
       projectId: ProjectId,
       messageId: string,
     ) => Effect.Effect<unknown, GoogleAccountError>;
+    /**
+     * Saves a reply draft in the person's Gmail, threaded under the message.
+     * It is never sent: the person reviews and sends it from Gmail.
+     */
+    readonly gmailCreateDraft: (
+      projectId: ProjectId,
+      input: GmailCreateDraftInput,
+    ) => Effect.Effect<
+      {
+        readonly draftId: string;
+        readonly threadId: string | null;
+        readonly to: string;
+        readonly subject: string;
+        readonly link: string | null;
+        readonly sent: false;
+      },
+      GoogleAccountError
+    >;
     readonly calendarEvents: (
       projectId: ProjectId,
       input: CalendarEventsInput,
@@ -698,6 +725,54 @@ const make = Effect.gen(function* () {
       return readGmailMessage(message as GmailMessage);
     });
 
+  const gmailCreateDraft = (projectId: ProjectId, input: GmailCreateDraftInput) =>
+    Effect.gen(function* () {
+      yield* requireService(projectId, "gmail");
+      yield* requireService(projectId, "gmailDrafts");
+      if (!GOOGLE_ID.test(input.messageId)) return yield* fail("That is not a Gmail message id.");
+      const body = input.body.trim();
+      if (body === "") return yield* fail("A draft needs a reply text.");
+      if (body.length > GMAIL_DRAFT_BODY_LIMIT) {
+        return yield* fail(`A draft reply is at most ${GMAIL_DRAFT_BODY_LIMIT} characters.`);
+      }
+      const original = (yield* withToken((token) =>
+        api.getJson({
+          operation: "Gmail message",
+          url: `${api.endpoints.gmail}/users/me/messages/${input.messageId}`,
+          query: {
+            format: "metadata",
+            metadataHeaders: ["From", "To", "Reply-To", "Subject", "Message-ID", "References"],
+          },
+          accessToken: token,
+        }),
+      )) as GmailMessage;
+      const state = yield* Ref.get(stateRef);
+      const reply = buildGmailReplyDraft({ message: original, body, selfEmail: state.email });
+      if (reply === null) return yield* fail("That message names nobody to reply to.");
+      const saved = (yield* withToken((token) =>
+        api.postJson({
+          operation: "Gmail draft",
+          url: `${api.endpoints.gmail}/users/me/drafts`,
+          body: {
+            message: {
+              raw: reply.raw,
+              ...(original.threadId ? { threadId: original.threadId } : {}),
+            },
+          },
+          accessToken: token,
+        }),
+      )) as { id?: string; message?: { id?: string; threadId?: string } };
+      if (typeof saved.id !== "string") return yield* fail("Gmail did not confirm the draft.");
+      return {
+        draftId: saved.id,
+        threadId: saved.message?.threadId ?? original.threadId ?? null,
+        to: reply.to,
+        subject: reply.subject,
+        link: saved.message?.id ? gmailDraftLink(saved.message.id) : null,
+        sent: false as const,
+      };
+    });
+
   const validTime = (value: string | undefined, fallback: number) =>
     value === undefined
       ? Effect.succeed(isoAt(fallback))
@@ -902,6 +977,7 @@ const make = Effect.gen(function* () {
     projectAccess,
     gmailSearch,
     gmailRead,
+    gmailCreateDraft,
     calendarEvents,
     driveSearch,
     driveRead,

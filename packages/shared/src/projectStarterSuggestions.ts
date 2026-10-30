@@ -315,6 +315,17 @@ const ROUTINE: ProjectStarterSuggestion = {
     "Help me set up a routine for this project. Suggest two or three recurring checks that would be useful here, such as a daily review of open work, and ask me which one to schedule before creating anything.",
 };
 
+/** A personal assistant's routine starter: the proactive briefing, asked for in the user's words. */
+const BRIEFING: ProjectStarterSuggestion = {
+  id: "routine",
+  topic: "routine",
+  origin: "common",
+  title: "Brief me each morning",
+  detail: "Each morning: mail that needs your reply, with drafts ready, and your day.",
+  prompt:
+    "Turn on my proactive briefing: every morning at 08:00, tell me what needs my reply or attention and draft the replies for me to send myself. Nothing is sent for me.",
+};
+
 function commonSuggestions(signals: ProjectStarterSignals): ProjectStarterSuggestion[] {
   if (signals.kind === "personal")
     return [
@@ -340,7 +351,7 @@ function commonSuggestions(signals: ProjectStarterSignals): ProjectStarterSugges
                 "Ask me five short questions about how I like to work and what I use this assistant for, then save my answers as project memory with a short MEMORY.md index. Store no secrets.",
             } as const,
           ]),
-      ROUTINE,
+      BRIEFING,
     ];
   const first: ProjectStarterSuggestion = signals.hasWorkspace
     ? {

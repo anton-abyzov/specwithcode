@@ -854,6 +854,68 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
+  itOnLinuxHost("keeps launching a prepared binary after the registry moves on", () => {
+    const agent = makeAgent({
+      binary: {
+        "linux-x86_64": { archive: archiveUrl, cmd: "./bin/example-agent", args: ["acp"] },
+      },
+    });
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-retained-",
+      });
+      for (const version of ["1.2.1", "1.2.2"]) {
+        const binDir = `${cacheDir}/tools/example-agent/${version}/linux-x86_64/bin`;
+        yield* fileSystem.makeDirectory(binDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${binDir}/example-agent`,
+          `#!/bin/sh\necho ${version}\n`,
+        );
+        yield* fileSystem.chmod(`${binDir}/example-agent`, 0o755);
+      }
+      // A later prerelease without the executable must not win.
+      yield* fileSystem.makeDirectory(`${cacheDir}/tools/example-agent/1.2.3-rc/linux-x86_64`, {
+        recursive: true,
+      });
+      // A pulled newer release must not outrank the registry version.
+      const newerBin = `${cacheDir}/tools/example-agent/1.3.0/linux-x86_64/bin`;
+      yield* fileSystem.makeDirectory(newerBin, { recursive: true });
+      yield* fileSystem.writeFileString(`${newerBin}/example-agent`, "#!/bin/sh\necho 1.3.0\n");
+      yield* fileSystem.chmod(`${newerBin}/example-agent`, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      yield* resolver.search({ query: "example" });
+
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        distribution: "binary",
+        version: "1.2.2",
+        availableVersion: "1.2.3",
+      });
+      const resolved = yield* resolver.resolve(settings(), "/workspace");
+      expect(resolved.spawn.command).toContain(
+        "/tools/example-agent/1.2.2/linux-x86_64/bin/example-agent",
+      );
+      expect(resolved.spawn.args).toEqual(["acp"]);
+      expect(requests).not.toContain(archiveUrl);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests.push(request.url);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+          );
+        }),
+      ),
+    );
+  });
+
   itOnLinuxHost("installs a tar archive containing a root directory entry", () => {
     const downloadUrl = "https://registry.test/agent.tar.gz";
     const agent = makeAgent({

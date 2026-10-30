@@ -12,7 +12,7 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { copiedProjectFolder } from "../../studio/folderCopy";
 import { unwrap, type PendingCopy } from "./handoffFolderCopyPending";
 import { copyProblem } from "./handoffCopyNotices";
-import { transferRefusal, type CopyStage } from "./handoffCopySteps";
+import { transferRefusal, type CopyStage, type TransferBusy } from "./handoffCopySteps";
 import { changeKey, type LeftOnSource } from "./HandoffSourceChanges";
 import { useCoordinatorTransfer } from "./useCoordinatorTransfer";
 
@@ -56,6 +56,8 @@ export function useCoordinatorMove({
   const copyDrift = useAtomCommand(machineHandoff.copyDrift, { reportFailure: false });
   const release = useAtomCommand(machineHandoff.copyRelease, { reportFailure: false });
   const [transferNotice, setTransferNotice] = useState<string | null>(null);
+  // The threads a busy machine named: the done screen links each one.
+  const [transferBusy, setTransferBusy] = useState<TransferBusy | null>(null);
   const [contextTransferred, setContextTransferred] = useState(false);
   // Move anyway transferred context: the pointer is gone, the wording stays.
   const [movedAnyway, setMovedAnyway] = useState(false);
@@ -107,11 +109,13 @@ export function useCoordinatorMove({
     if (!anyway && applied && copyProblem(applied, sourceLabel) !== null) {
       setCopyAgain(true);
       setTransferNotice("Copy again before handing off the coordinator.");
+      setTransferBusy(null);
       setStage("done");
       return;
     }
     setStage("moving");
     setTransferRecovery(true);
+    setTransferBusy(null);
     const attempt = ++generation.current;
     setLeftOnSource(null);
     const pointer = latestPending.current;
@@ -148,6 +152,7 @@ export function useCoordinatorMove({
           remember(keepAnyway ? { ...rest, moveAnyway: true } : rest);
       }
       setTransferNotice(refused.notice);
+      setTransferBusy(refused.busy ?? null);
       setStage("done");
       return;
     }
@@ -198,6 +203,7 @@ export function useCoordinatorMove({
     setKeptHere(true);
     setCopyAgain(false);
     setTransferNotice(null);
+    setTransferBusy(null);
     setTransferRecovery(false);
     remember(null);
   };
@@ -209,6 +215,7 @@ export function useCoordinatorMove({
     contextPublished.current = false;
     acceptedList.current = null;
     setTransferNotice(null);
+    setTransferBusy(null);
     setContextTransferred(false);
     setMovedAnyway(false);
     setSourceReview(null);
@@ -219,6 +226,7 @@ export function useCoordinatorMove({
   return {
     contextPublished,
     transferNotice,
+    transferBusy,
     contextTransferred,
     movedAnyway,
     transferRecovery,

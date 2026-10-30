@@ -1,4 +1,4 @@
-import { userInputRuntimeRequest } from "./userInputRuntimeRequest.ts";
+import { reopensClosedCard, userInputRuntimeRequest } from "./userInputRuntimeRequest.ts";
 import * as InactiveThreadArchiveGuard from "./InactiveThreadArchiveGuard.ts";
 import {
   hasCurrentLifecycleAcceptance,
@@ -8177,7 +8177,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   /**
    * Records a question an agent asked through `ask_user`: its own node, a
    * message-mode runtime request and the card's turn item. A retry with the
-   * same ids leaves an existing card, answered or not, as it is.
+   * same ids leaves an existing card, answered or not, as it is, except a
+   * card an update reopened and a later update closed: that one is put back.
    */
   const dispatchUserInputRequestRecord = Effect.fn(
     "orchestrationV2.dispatch.userInputRequestRecord",
@@ -8207,7 +8208,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
       });
     }
-    if (projection.runtimeRequests.some((request) => request.id === command.requestId)) return;
+    const existing = projection.runtimeRequests.find((request) => request.id === command.requestId);
+    if (existing !== undefined && !reopensClosedCard(command, existing)) return;
     const now = yield* DateTime.now;
     const providerTurnId = providerTurnForRun(projection, run)?.id ?? null;
     const node: OrchestrationV2ExecutionNode = {

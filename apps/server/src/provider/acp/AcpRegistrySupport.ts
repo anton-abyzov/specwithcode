@@ -38,6 +38,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { sha256 } from "@noble/hashes/sha2";
+import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -1496,6 +1497,47 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     };
   };
 
+  // A registry version bump must not strand a binary agent that is already
+  // prepared, as it does not for package agents. Use the newest earlier version
+  // folder whose executable for this platform is still in place.
+  const findRetainedBinary = Effect.fn("AcpRegistryCatalog.findRetainedBinary")(function* (
+    agent: AcpRegistryAgent,
+    target: typeof AcpRegistryBinaryTarget.Type,
+  ) {
+    const versions = yield* fileSystem
+      .readDirectory(path.join(installsDirectory, agent.id))
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const candidates = versions
+      .flatMap((entry) => {
+        try {
+          const version = decodeURIComponent(entry);
+          // Only folders this catalog wrote, and only earlier versions: a pulled
+          // newer release must not outrank the registry's current one.
+          return encodeURIComponent(version) === entry &&
+            compareSemverVersions(version, agent.version) < 0
+            ? [version]
+            : [];
+        } catch {
+          return [];
+        }
+      })
+      .toSorted((left, right) => compareSemverVersions(right, left));
+    for (const version of candidates) {
+      const paths = binaryPaths({ ...agent, version }, target);
+      if (paths === undefined) continue;
+      const exists = yield* fileSystem
+        .exists(paths.executablePath)
+        .pipe(Effect.orElseSucceed(() => false));
+      if (!exists) continue;
+      const valid = yield* assertExecutableInRoot(paths.installRoot, paths.executablePath).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (valid) return Option.some({ version, executablePath: paths.executablePath });
+    }
+    return Option.none<{ readonly version: string; readonly executablePath: string }>();
+  });
+
   const installBinary = Effect.fn("AcpRegistryCatalog.installBinary")(function* (
     agent: AcpRegistryAgent,
     target: typeof AcpRegistryBinaryTarget.Type,
@@ -1952,6 +1994,18 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               .exists(paths.executablePath)
               .pipe(Effect.orElseSucceed(() => false));
             if (!exists) {
+              const retained = yield* findRetainedBinary(agent, distribution.binaryTarget!);
+              if (Option.isSome(retained)) {
+                return {
+                  status: "ready",
+                  agentId,
+                  agentName: agent.name,
+                  version: retained.value.version,
+                  availableVersion: agent.version,
+                  distribution: "binary",
+                  ...(documentationUrl ? { documentationUrl } : {}),
+                } as const;
+              }
               return {
                 status: "unprepared",
                 agentId,
@@ -2144,9 +2198,29 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       } else {
         const target = distribution.binaryTarget!;
         command = yield* installSemaphore.withPermits(1)(
-          installBinary(agent, target).pipe(
-            Effect.tap(() => consumePreparedBinaryReservation(agent.id)),
-          ),
+          Effect.gen(function* () {
+            const current = binaryPaths(agent, target);
+            const currentExists =
+              current !== undefined &&
+              (yield* fileSystem
+                .exists(current.executablePath)
+                .pipe(Effect.orElseSucceed(() => false)));
+            if (!currentExists) {
+              const retained = yield* findRetainedBinary(agent, target);
+              if (Option.isSome(retained)) {
+                yield* Effect.logWarning(
+                  "launching the prepared ACP Registry agent version; the registry version is not prepared",
+                  {
+                    agentId: agent.id,
+                    preparedVersion: retained.value.version,
+                    registryVersion: agent.version,
+                  },
+                );
+                return retained.value.executablePath;
+              }
+            }
+            return yield* installBinary(agent, target);
+          }).pipe(Effect.tap(() => consumePreparedBinaryReservation(agent.id))),
         );
         args = distribution.args;
       }

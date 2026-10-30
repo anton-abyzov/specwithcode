@@ -55,6 +55,7 @@ import {
   type MachineReadiness,
   type MachineReadinessInput,
 } from "@specweave-studio/contracts";
+import { busyHandoffError } from "./handoffBusyThreads.ts";
 import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as ServerSettings from "../serverSettings.ts";
@@ -119,7 +120,7 @@ import {
 import { SourceTransfers } from "./folderTransfer/sourceService.ts";
 import { registerHandoff } from "./folderTransfer/folderWork.ts";
 import {
-  ACTIVE_COPY_WARNING,
+  busyCopyWarnings,
   abandonCopiedContext,
   makeFolderCopyContextCheck,
   makeFolderCopyDrift,
@@ -319,44 +320,53 @@ const make = Effect.gen(function* () {
             .pipe(Effect.map((note) => ({ name: note.name, content: note.content }))),
         );
         const originEnvironmentId = yield* environment.getEnvironmentId;
-        const threads = yield* Effect.forEach(chosen, (thread) =>
-          Effect.gen(function* () {
-            const records = yield* projections.getThreadRecords(thread.id, ["messages", "runs"], {
+        const loaded = yield* Effect.forEach(chosen, (thread) =>
+          projections
+            .getThreadRecords(thread.id, ["messages", "runs"], {
               messageRoles: ["user", "assistant"],
-            });
-            if (
-              records.runs.some((run) => !terminal.has(run.status)) ||
-              records.messages.some((message) => message.streaming)
-            )
-              return yield* new MachineHandoffError({ code: "busy" });
-            return {
-              environmentId: originEnvironmentId,
-              projectId: id,
-              ...(thread.modelSelection ? { modelSelection: thread.modelSelection } : {}),
+            })
+            .pipe(Effect.map((records) => ({ thread, records }))),
+        );
+        // Name every thread still working, not only the first one found.
+        const working = loaded.filter(
+          ({ records }) =>
+            records.runs.some((run) => !terminal.has(run.status)) ||
+            records.messages.some((message) => message.streaming),
+        );
+        if (working.length > 0)
+          return yield* busyHandoffError(
+            working.map(({ thread }) => ({
               threadId: thread.id,
               title: thread.title,
-              branch: thread.branch ?? null,
-              worktreePath: thread.worktreePath ?? null,
-              kind: thread.id === coordinatorId ? ("coordinator" as const) : ("worker" as const),
-              messages: records.messages
-                .filter((m) => m.role !== "system")
-                .map((m) => ({
-                  ...(() => {
-                    const run = records.runs.find(
-                      (r) => r.userMessageId === m.id || r.id === m.runId,
-                    );
-                    return run?.modelSelection
-                      ? { runId: run.id, modelSelection: run.modelSelection }
-                      : {};
-                  })(),
-                  id: m.id,
-                  role: m.role as "user" | "assistant",
-                  text: m.text,
-                  createdAt: DateTime.formatIso(m.createdAt),
-                })),
-            };
-          }),
-        );
+              projectId: id,
+              projectTitle: current.title,
+              reason: "running" as const,
+            })),
+          );
+        const threads = loaded.map(({ thread, records }) => ({
+          environmentId: originEnvironmentId,
+          projectId: id,
+          ...(thread.modelSelection ? { modelSelection: thread.modelSelection } : {}),
+          threadId: thread.id,
+          title: thread.title,
+          branch: thread.branch ?? null,
+          worktreePath: thread.worktreePath ?? null,
+          kind: thread.id === coordinatorId ? ("coordinator" as const) : ("worker" as const),
+          messages: records.messages
+            .filter((m) => m.role !== "system")
+            .map((m) => ({
+              ...(() => {
+                const run = records.runs.find((r) => r.userMessageId === m.id || r.id === m.runId);
+                return run?.modelSelection
+                  ? { runId: run.id, modelSelection: run.modelSelection }
+                  : {};
+              })(),
+              id: m.id,
+              role: m.role as "user" | "assistant",
+              text: m.text,
+              createdAt: DateTime.formatIso(m.createdAt),
+            })),
+        }));
         // Earlier segments are retained on this host; a second handoff never drops them.
         const priorOperation = metadata.settings.coordinatorBinding?.operationId;
         const inherited = priorOperation ? yield* store.read(`context-${priorOperation}`) : null;
@@ -519,7 +529,7 @@ const make = Effect.gen(function* () {
           Effect.as([] as ReadonlyArray<string>),
           Effect.catch((cause) =>
             cause.code === "busy"
-              ? Effect.succeed([ACTIVE_COPY_WARNING])
+              ? Effect.succeed(busyCopyWarnings(cause))
               : Effect.fail(asCopyError(cause)),
           ),
         );

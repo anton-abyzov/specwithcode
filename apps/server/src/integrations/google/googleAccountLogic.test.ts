@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   buildAuthorizationUrl,
+  buildGmailReplyDraft,
   driveQuery,
   emailFromIdToken,
   EMPTY_GOOGLE_ACCOUNT_STATE,
@@ -161,5 +162,62 @@ describe("shapes for agents", () => {
     expect(driveQuery({ modifiedAfter: "2026-10-09T00:00:00.000Z" })).toBe(
       "trashed = false and modifiedTime > '2026-10-09T00:00:00.000Z'",
     );
+  });
+});
+
+describe("reply drafts", () => {
+  const decode = (raw: string) => Buffer.from(raw, "base64url").toString("utf8");
+  const message = (headers: Record<string, string>) => ({
+    id: "m1",
+    threadId: "t1",
+    payload: { headers: Object.entries(headers).map(([name, value]) => ({ name, value })) },
+  });
+
+  it("answers Reply-To, threads under the original and keeps one Re:", () => {
+    const draft = buildGmailReplyDraft({
+      message: message({
+        From: "Ann <ann@example.com>",
+        "Reply-To": "team@example.com",
+        Subject: "RE: Plans",
+        "Message-ID": "<m1@x>",
+        References: "<m0@x>",
+      }),
+      body: "Sounds good.",
+      selfEmail: "me@example.com",
+    })!;
+    expect(draft.to).toBe("team@example.com");
+    expect(draft.subject).toBe("RE: Plans");
+    const raw = decode(draft.raw);
+    expect(raw).toContain("In-Reply-To: <m1@x>\r\n");
+    expect(raw).toContain("References: <m0@x> <m1@x>\r\n");
+    expect(raw).toContain(Buffer.from("Sounds good.").toString("base64"));
+  });
+
+  it("replies to the recipients of the person's own message", () => {
+    const draft = buildGmailReplyDraft({
+      message: message({ From: "Me <ME@example.com>", To: "bob@example.com", Subject: "Hi" }),
+      body: "Following up.",
+      selfEmail: "me@example.com",
+    })!;
+    expect(draft.to).toBe("bob@example.com");
+    expect(draft.subject).toBe("Re: Hi");
+  });
+
+  it("cannot be made to add headers, and encodes a non-ASCII subject", () => {
+    const draft = buildGmailReplyDraft({
+      message: message({
+        From: "eve@example.com\r\nBcc: everyone@example.com",
+        Subject: "Привет\nBcc: x@example.com",
+      }),
+      body: "Hi",
+      selfEmail: null,
+    })!;
+    const raw = decode(draft.raw);
+    expect(raw).not.toMatch(/^Bcc:/mu);
+    expect(raw).toContain("Subject: =?UTF-8?B?");
+  });
+
+  it("refuses a message that names nobody to reply to", () => {
+    expect(buildGmailReplyDraft({ message: message({}), body: "Hi", selfEmail: null })).toBeNull();
   });
 });
