@@ -10,6 +10,13 @@ export const ArchiveInactiveThreadsAfterDays = Schema.NullOr(
 );
 export type ArchiveInactiveThreadsAfterDays = typeof ArchiveInactiveThreadsAfterDays.Type;
 
+/** Live threads a project keeps before the oldest finished ones are archived; null is no limit. */
+export const KeepActiveThreadsPerProject = Schema.NullOr(
+  Schema.Int.check(Schema.isBetween({ minimum: 20, maximum: 5000 })),
+);
+export type KeepActiveThreadsPerProject = typeof KeepActiveThreadsPerProject.Type;
+export const DEFAULT_KEEP_ACTIVE_THREADS_PER_PROJECT = 200;
+
 export function resolveWorktreeLocationMode(settings: {
   readonly worktreeLocationMode?: WorktreeLocationMode | undefined;
   readonly worktreesDirectory: string;

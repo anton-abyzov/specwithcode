@@ -28,6 +28,7 @@ import * as Config from "../config.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Terminals from "../terminal/Manager.ts";
 import { putDraft } from "../composerDrafts/draftFiles.ts";
+import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as Guard from "./InactiveThreadArchiveGuard.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as Projections from "./ProjectionStore.ts";
@@ -81,7 +82,15 @@ const layerTest = Layer.mergeAll(
 );
 const selection = { instanceId: ProviderInstanceId.make("codex"), model: "test" };
 
-const seed = (id: string, worktreePath = "/fixture/dirty-unpushed") =>
+const seed = (
+  id: string,
+  worktreePath = "/fixture/dirty-unpushed",
+  creation: { readonly createdBy: "user" | "agent"; readonly creationSource: "web" | "mcp" } = {
+    createdBy: "user",
+    creationSource: "web",
+  },
+  withRun = true,
+) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* Projections.ProjectionStoreV2;
@@ -98,9 +107,9 @@ const seed = (id: string, worktreePath = "/fixture/dirty-unpushed") =>
       interactionMode: "default",
       branch: "retained",
       worktreePath,
-      createdBy: "user",
-      creationSource: "web",
+      ...creation,
     });
+    if (!withRun) return threadId;
     yield* projections.apply({
       id: EventId.make(`run:${id}`),
       type: "run.created",
@@ -130,6 +139,7 @@ const archive = (
   threadId: ThreadId,
   commandId: string,
   expectedUpdatedAt = DateTime.makeUnsafe(0),
+  reason?: "overflow",
 ) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -137,9 +147,22 @@ const archive = (
       type: "thread.archive",
       commandId: CommandId.make(commandId),
       threadId,
-      inactive: { expectedUpdatedAt },
+      inactive: reason === undefined ? { expectedUpdatedAt } : { expectedUpdatedAt, reason },
     });
   });
+const overflow = (threadId: ThreadId) =>
+  archive(threadId, `overflow:${threadId}`, DateTime.makeUnsafe(0), "overflow").pipe(Effect.exit);
+const refused = (threadId: ThreadId, reason: string) =>
+  Effect.gen(function* () {
+    const exit = yield* overflow(threadId);
+    assert.equal(exit._tag, "Failure");
+    assert.include(String(exit), reason);
+  });
+const seedWorkers = (count: number) =>
+  Effect.forEach(
+    Array.from({ length: count }, (_, index) => `worker-${index}`),
+    (id) => seed(id, undefined, { createdBy: "agent", creationSource: "mcp" }),
+  );
 
 it.effect(
   "conditionally archives after 30 days without effects, record changes or checkout mutation",
@@ -428,4 +451,255 @@ it.effect("rejects archive after an earlier terminal admission publishes its liv
     assert.equal((yield* Fiber.join(archiveFiber))._tag, "Failure");
     assert.isFalse(archived);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "caps agent and child threads down to the limit, keeping history that Unarchive restores",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0);
+      const projections = yield* Projections.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const preferences = yield* Settings.ServerSettingsService;
+      yield* preferences.updateSettings({ keepActiveThreadsPerProject: 20 });
+      const [child, agent, kept] = yield* seedWorkers(22);
+      // A coordinator-delegated child, the bulk of an overflowing project.
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.lineage.parentThreadId', ${`project-coordinator:${projectId}`}, '$.lineage.relationshipToParent', 'subagent')
+        WHERE thread_id = ${child!}`;
+      assert.isNotNull((yield* projections.getThreadShell(child!))!.lineage.parentThreadId);
+      const before = yield* projections.getThreadProjection(child!);
+      yield* TestClock.adjust(Guard.OVERFLOW_IDLE_MS);
+      for (const id of [child!, agent!]) {
+        const result = yield* overflow(id);
+        assert.equal(result._tag, "Success");
+        if (result._tag === "Success")
+          assert.deepEqual(
+            result.value.storedEvents.map((event) => event.event.type),
+            ["thread.archived"],
+          );
+      }
+      // Twenty live threads remain: the project is at its cap.
+      yield* refused(kept!, "Project is within its limit");
+      assert.isNull((yield* projections.getThread(kept!)).archivedAt);
+      const after = yield* projections.getThreadProjection(child!);
+      assert.isNotNull(after.thread.archivedAt);
+      for (const key of ["runs", "messages", "turnItems", "checkpoints"] as const)
+        assert.deepEqual(after[key], before[key]);
+      const effects =
+        yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE command_id LIKE 'overflow:%'`;
+      assert.deepEqual(effects, []);
+      yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("unarchive:child"),
+        threadId: child!,
+      });
+      assert.isNull((yield* projections.getThread(child!)).archivedAt);
+      assert.deepEqual((yield* projections.getThreadProjection(child!)).runs, before.runs);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "the cap refuses fresh threads, the coordinator, routine targets, drafts, No limit and a race to the cap",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0);
+      const projections = yield* Projections.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const preferences = yield* Settings.ServerSettingsService;
+      const cfg = yield* Config.ServerConfig;
+      yield* preferences.updateSettings({ keepActiveThreadsPerProject: 20 });
+      const coordinator = yield* seed(`project-coordinator:${projectId}`, undefined, {
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const [fresh, routine, other, drafted, raced, user] = yield* seedWorkers(21);
+      yield* refused(fresh!, "Thread is active or protected");
+      yield* TestClock.adjust(Guard.OVERFLOW_IDLE_MS);
+      yield* refused(coordinator, "Project is protected");
+      yield* sql`INSERT INTO scheduled_tasks (task_id,title,prompt,enabled,schedule_json,project_id,thread_id,workspace_strategy_json,model_selection_json,runtime_mode,interaction_mode,created_by,creation_source,created_at,updated_at,last_run_status,run_count)
+      VALUES ('routine','Keep','Keep',0,'{}',${projectId},${routine!},'{}','{}','full-access','default','user','web','1970-01-01','1970-01-01','never',0)`;
+      yield* refused(routine!, "Routine or terminal is protected");
+      // A routine elsewhere in the project does not pin every other worker.
+      assert.equal((yield* overflow(other!))._tag, "Success");
+      yield* Effect.promise(() =>
+        putDraft(
+          cfg.composerDraftsDir,
+          { key: `thread:${drafted}`, prompt: "Unsent", attachments: [], editedAt: 1 },
+          1,
+        ),
+      );
+      yield* refused(drafted!, "Saved draft is protected");
+      yield* preferences.updateSettings({ keepActiveThreadsPerProject: null });
+      yield* refused(raced!, "Project has no thread limit");
+      yield* preferences.updateSettings({ keepActiveThreadsPerProject: 20 });
+      // Selected at 21 live; the owner archives another chat before the guard checks.
+      yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("owner-archive"),
+        threadId: user!,
+      });
+      yield* refused(raced!, "Project is within its limit");
+      for (const id of [fresh!, coordinator, routine!, drafted!, raced!])
+        assert.isNull((yield* projections.getThread(id)).archivedAt);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+const nativeSubagent = (id: string, parent: string, status: "completed" | "running") =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = yield* seed(
+      id,
+      undefined,
+      { createdBy: "agent", creationSource: "mcp" },
+      false,
+    );
+    yield* sql`UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.creationSource', 'provider', '$.lineage.parentThreadId', ${parent}, '$.lineage.relationshipToParent', 'subagent')
+      WHERE thread_id = ${threadId}`;
+    // The provider-native receipt lives on the parent, as the provider reported it.
+    yield* sql`INSERT INTO orchestration_v2_projection_subagents (subagent_id,thread_id,run_id,parent_node_id,provider,provider_thread_id,child_thread_id,origin,status,started_at,completed_at,updated_at,payload_json)
+      VALUES (${`subagent:${id}`},${parent},NULL,'node','codex',NULL,${threadId},'provider_native',${status},'1970-01-01T00:00:00.000Z',${status === "completed" ? "1970-01-01T00:00:00.000Z" : null},'1970-01-01T00:00:00.000Z','{}')`;
+    return threadId;
+  });
+
+it.effect("the cap archives a finished provider-native subagent that never had a run", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const projections = yield* Projections.ProjectionStoreV2;
+    const preferences = yield* Settings.ServerSettingsService;
+    yield* preferences.updateSettings({ keepActiveThreadsPerProject: 20 });
+    yield* seedWorkers(20);
+    // A finished worker with no session left: nothing can send to its subagents.
+    const parent = yield* seed("native-parent", undefined, {
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const finished = yield* nativeSubagent("native-finished", parent, "completed");
+    const working = yield* nativeSubagent("native-working", parent, "running");
+    const shell = (yield* projections.getThreadShell(finished))!;
+    assert.isNull(shell.latestRunId);
+    assert.equal(shell.nativeSubagentStatus, "completed");
+    yield* refused(finished, "Thread is active or protected");
+    yield* TestClock.adjust(Guard.OVERFLOW_IDLE_MS);
+    yield* refused(working, "Thread is active or protected");
+    const result = yield* overflow(finished);
+    assert.equal(result._tag, "Success");
+    assert.isNotNull((yield* projections.getThread(finished)).archivedAt);
+    assert.isNull((yield* projections.getThread(working)).archivedAt);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "the cap keeps a finished native subagent its running parent, live session or coordinator can resume",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0);
+      const projections = yield* Projections.ProjectionStoreV2;
+      const preferences = yield* Settings.ServerSettingsService;
+      yield* preferences.updateSettings({ keepActiveThreadsPerProject: 20 });
+      yield* seedWorkers(20);
+      const agent = { createdBy: "agent", creationSource: "mcp" } as const;
+      const now = DateTime.makeUnsafe(0);
+      // The parent's turn is still running when its subagent finishes.
+      const running = yield* seed("running-parent", undefined, agent);
+      yield* projections.apply({
+        id: EventId.make("run:running-parent:2"),
+        type: "run.created",
+        threadId: running,
+        occurredAt: now,
+        payload: {
+          id: RunId.make("run:running-parent:2"),
+          threadId: running,
+          ordinal: 2,
+          providerInstanceId: selection.instanceId,
+          modelSelection: selection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:running-parent:2"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      // Between turns, but its provider session can still send to the subagent.
+      const live = yield* seed("live-parent", undefined, agent);
+      yield* projections.apply({
+        id: EventId.make("live-parent-session"),
+        type: "provider-session.attached",
+        threadId: live,
+        occurredAt: now,
+        payload: {
+          id: ProviderSessionId.make("live-parent-session"),
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: selection.instanceId,
+          status: "ready",
+          cwd: "/fixture/dirty-unpushed",
+          model: "test",
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      const children = [
+        yield* nativeSubagent("child-of-running", running, "completed"),
+        yield* nativeSubagent("child-of-live", live, "completed"),
+        // Delete-all keeps the coordinator's own subagents; the cap does too.
+        yield* nativeSubagent(
+          "child-of-coordinator",
+          `project-coordinator:${projectId}`,
+          "completed",
+        ),
+        yield* nativeSubagent("child-of-missing", "missing-parent", "completed"),
+      ];
+      // A subagent of a kept subagent stays with it.
+      const nested = yield* nativeSubagent("grandchild", children[2]!, "completed");
+      yield* TestClock.adjust(Guard.OVERFLOW_IDLE_MS);
+      assert.isNotNull((yield* projections.getThreadShell(running))!.activeRunId);
+      for (const id of [...children, nested]) {
+        yield* refused(id, "Thread is active or protected");
+        assert.isNull((yield* projections.getThread(id)).archivedAt);
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
+
+const handedOff = Layer.succeed(HandoffTurnGate.HandoffTurnGate, {
+  check: (threadId) =>
+    Effect.succeed(
+      threadId === ThreadId.make("worker-0")
+        ? "Another machine (B) runs this thread now; this copy is read-only."
+        : null,
+    ),
+});
+const layerHandedOff = Layer.mergeAll(
+  Harness.layerWithRegistry({ name: "inactive-archive-handoff" }, Registry.layerFromAdapters([]), {
+    databaseLayer: database,
+    runEffectWorker: false,
+  }).pipe(Layer.provide(Layer.mergeAll(guard, handedOff))),
+  stores,
+  database,
+  config,
+  settings,
+  guard,
+  terminalLayer,
+  NodeServices.layer,
+);
+
+it.effect("the cap never archives a thread another machine runs or may continue", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const projections = yield* Projections.ProjectionStoreV2;
+    const preferences = yield* Settings.ServerSettingsService;
+    yield* preferences.updateSettings({ keepActiveThreadsPerProject: 20 });
+    const [leased, local] = yield* seedWorkers(22);
+    yield* TestClock.adjust(Guard.OVERFLOW_IDLE_MS);
+    yield* refused(leased!, "Another machine (B) runs this thread now");
+    assert.isNull((yield* projections.getThread(leased!)).archivedAt);
+    assert.equal((yield* overflow(local!))._tag, "Success");
+  }).pipe(Effect.provide(layerHandedOff)),
 );

@@ -1304,4 +1304,22 @@ describe("workspace lifecycle settings", () => {
   it("rejects unknown placement modes", () => {
     expect(() => decodeServerSettingsPatch({ worktreeLocationMode: "sibling" })).toThrow();
   });
+  it("keeps 200 active threads per project by default, with No limit and project overrides", () => {
+    expect(decodeServerSettings({}).keepActiveThreadsPerProject).toBe(200);
+    const input = {
+      keepActiveThreadsPerProject: null,
+      projectSettingsOverrides: { project: { keepActiveThreadsPerProject: 20 } },
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch({ keepActiveThreadsPerProject: 5000 })).toEqual({
+      keepActiveThreadsPerProject: 5000,
+    });
+  });
+  it.each([0, 19, 20.5, 5001, "200"])(
+    "rejects invalid active thread cap %s",
+    (keepActiveThreadsPerProject) => {
+      expect(() => decodeServerSettings({ keepActiveThreadsPerProject })).toThrow();
+      expect(() => decodeServerSettingsPatch({ keepActiveThreadsPerProject })).toThrow();
+    },
+  );
 });

@@ -1,5 +1,7 @@
 import {
   isProjectCoordinatorThreadId,
+  projectExecutionIsFenced,
+  isProviderNativeSubagentThread,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@specweave-studio/contracts";
@@ -21,6 +23,8 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
 export const DAY_MS = 86_400_000;
+/** Overflow candidates must have been idle this long, so a just-finished worker stays in view. */
+export const OVERFLOW_IDLE_MS = 3_600_000;
 type ArchiveCommand = Extract<OrchestrationV2ServerCommand, { type: "thread.archive" }>;
 
 export class InactiveArchiveError extends Schema.TaggedError<InactiveArchiveError>()(
@@ -28,20 +32,49 @@ export class InactiveArchiveError extends Schema.TaggedError<InactiveArchiveErro
   { cause: Schema.Defect() },
 ) {}
 
-/** Unknown/missing protection data is never consent to archive. */
-export function isInactiveArchiveCandidate(
+/** A cap outside the setting's range is no limit; it never archives more. */
+export function isValidActiveThreadCap(cap: number | null): cap is number {
+  return cap !== null && Number.isInteger(cap) && cap >= 20 && cap <= 5000;
+}
+
+/**
+ * A provider-native subagent never gets app runs: its parent's native record says when it
+ * finished. Only a completed record counts, like a completed latest run for other threads.
+ */
+function isFinishedRunlessSubagent(thread: OrchestrationV2ThreadShell): boolean {
+  return (
+    isProviderNativeSubagentThread(thread) &&
+    thread.latestRunId === null &&
+    thread.activeRunId === null &&
+    thread.activityRunStatus == null &&
+    thread.nativeSubagentStatus === "completed" &&
+    thread.nativeSubagentCompletedAt != null
+  );
+}
+
+/**
+ * Protections every sweep archive keeps. Unknown/missing protection data is never consent to
+ * archive. `allowAgent` admits agent-created and child threads, which only the cap sweeps.
+ */
+export function isSweepArchiveProtected(
   thread: OrchestrationV2ThreadShell,
-  now: number,
-  days: number | null,
+  { allowAgent }: { readonly allowAgent: boolean },
 ): boolean {
-  if (days === null || !Number.isInteger(days) || days < 1 || days > 3650) return false;
   if (
+    !allowAgent &&
+    (thread.createdBy !== "user" ||
+      !["web", "mobile"].includes(thread.creationSource) ||
+      thread.lineage.parentThreadId !== null)
+  )
+    return true;
+  // Only the cap reaches provider-native subagents, which finish without a run.
+  const runless = allowAgent && isFinishedRunlessSubagent(thread);
+  return (
     thread.historyOrigin !== undefined ||
-    thread.createdBy !== "user" ||
-    !["web", "mobile"].includes(thread.creationSource) ||
-    thread.status !== "completed" ||
-    thread.latestRunId === null ||
-    thread.latestRunCompletedAt == null ||
+    (!runless &&
+      (thread.status !== "completed" ||
+        thread.latestRunId === null ||
+        thread.latestRunCompletedAt == null)) ||
     thread.activeRunId !== null ||
     thread.pendingRuntimeRequest !== null ||
     thread.archivedAt !== null ||
@@ -52,20 +85,24 @@ export function isInactiveArchiveCandidate(
     thread.pendingBackgroundTasks.length > 0 ||
     thread.hasActionableProposedPlan !== false ||
     thread.reportedBlocker != null ||
+    // A report that ends on a dependency ("Waiting for CI") shows the thread as waiting.
+    thread.reportedWait != null ||
     thread.snoozedUntil != null ||
     thread.limitRecovery != null ||
     thread.titleRegeneration != null ||
     thread.movedTo != null ||
-    thread.lineage.parentThreadId !== null ||
     thread.goal != null ||
     thread.activeWork != null ||
     thread.ownerMachineId !== undefined ||
     thread.executionMachineId !== undefined ||
     thread.executionState !== undefined ||
     (thread.planProgress != null && thread.planProgress.completed < thread.planProgress.total) ||
-    thread.pullRequests?.some((link) => link.watch != null)
-  )
-    return false;
+    thread.pullRequests?.some((link) => link.watch != null) === true
+  );
+}
+
+/** The newest activity on the thread, or null when any timestamp is unusable. */
+function latestActivityAt(thread: OrchestrationV2ThreadShell): number | null {
   const activity = [
     thread.createdAt,
     thread.updatedAt,
@@ -77,14 +114,32 @@ export function isInactiveArchiveCandidate(
     thread.settledAt,
     thread.unsettledAt,
     thread.lastVisitedAt,
+    thread.nativeSubagentCompletedAt,
   ]
     .filter((at) => at != null)
     .map((at) => DateTime.toEpochMillis(at));
-  return (
-    activity.length > 0 &&
-    activity.every(Number.isFinite) &&
-    Math.max(...activity) <= now - days * DAY_MS
-  );
+  return activity.length > 0 && activity.every(Number.isFinite) ? Math.max(...activity) : null;
+}
+
+export function isInactiveArchiveCandidate(
+  thread: OrchestrationV2ThreadShell,
+  now: number,
+  days: number | null,
+): boolean {
+  if (days === null || !Number.isInteger(days) || days < 1 || days > 3650) return false;
+  if (isSweepArchiveProtected(thread, { allowAgent: false })) return false;
+  const latest = latestActivityAt(thread);
+  return latest !== null && latest <= now - days * DAY_MS;
+}
+
+/** Agent-created and child threads qualify; the coordinator and routines are checked by the guard. */
+export function isOverflowArchiveCandidate(
+  thread: OrchestrationV2ThreadShell,
+  now: number,
+): boolean {
+  if (isSweepArchiveProtected(thread, { allowAgent: true })) return false;
+  const latest = latestActivityAt(thread);
+  return latest !== null && latest <= now - OVERFLOW_IDLE_MS;
 }
 
 /** The guard runs under the orchestrator's thread lock; default construction refuses automation. */
@@ -132,6 +187,43 @@ const make = Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
   const refuse = (cause: string) => Effect.fail(new InactiveArchiveError({ cause }));
+  // A completed native subagent resumes in the same child thread when its parent sends to it
+  // again, and its turn and session live on the parent. Keep it while any thread up its native
+  // chain is the coordinator (delete-all keeps those too), unknown, or still working.
+  const parentMayResume = (
+    thread: OrchestrationV2ThreadShell,
+    coordinatorOf: Parameters<typeof isProjectCoordinatorThreadId>[1],
+  ) =>
+    Effect.gen(function* () {
+      const seen = new Set<string>([thread.id]);
+      let child = thread;
+      while (isProviderNativeSubagentThread(child)) {
+        const parentId = child.lineage.parentThreadId;
+        if (
+          parentId === null ||
+          seen.has(parentId) ||
+          isProjectCoordinatorThreadId(parentId, coordinatorOf)
+        )
+          return true;
+        seen.add(parentId);
+        const parent = yield* projections.getThreadShell(parentId);
+        if (parent === null) return true;
+        if (parent.archivedAt === null) {
+          if (parent.activeRunId !== null || parent.activityRunStatus != null) return true;
+          const { providerSessions } = yield* projections.getThreadRecords(parent.id, [
+            "providerSessions",
+          ]);
+          if (
+            providerSessions.some(
+              (session) => session.status !== "stopped" && session.status !== "error",
+            )
+          )
+            return true;
+        }
+        child = parent;
+      }
+      return false;
+    });
   const check = (command: ArchiveCommand) =>
     Effect.gen(function* () {
       const thread = yield* projections.getThreadShell(command.threadId);
@@ -143,15 +235,21 @@ const make = Effect.gen(function* () {
       )
         return yield* refuse("Thread changed before inactive archive");
       const project = yield* projects.get(thread.projectId);
+      if (Option.isNone(project)) return yield* refuse("Project is protected");
+      const coordinatorOf = {
+        id: project.value.projectId,
+        workspaceSettings: project.value.workspaceSettings ?? undefined,
+      };
       if (
-        Option.isNone(project) ||
         isPersonalAssistantProject(project.value) ||
-        isProjectCoordinatorThreadId(thread.id, {
-          id: project.value.projectId,
-          workspaceSettings: project.value.workspaceSettings ?? undefined,
-        }) ||
+        isProjectCoordinatorThreadId(thread.id, coordinatorOf) ||
         project.value.workspaceSettings?.paused ||
-        project.value.workspaceSettings?.archived
+        project.value.workspaceSettings?.archived ||
+        projectExecutionIsFenced(
+          project.value.workspaceSettings,
+          project.value.projectId,
+          thread.id,
+        )
       )
         return yield* refuse("Project is protected");
       const preferences = resolveProjectSettings(
@@ -159,17 +257,31 @@ const make = Effect.gen(function* () {
         thread.projectId,
         project.value,
       ).settings;
+      const now = yield* Clock.currentTimeMillis;
+      const overflow = command.inactive.reason === "overflow";
       if (
-        !isInactiveArchiveCandidate(
-          thread,
-          yield* Clock.currentTimeMillis,
-          preferences.archiveInactiveThreadsAfterDays,
-        )
+        overflow
+          ? !isOverflowArchiveCandidate(thread, now)
+          : !isInactiveArchiveCandidate(thread, now, preferences.archiveInactiveThreadsAfterDays)
       )
         return yield* refuse("Thread is active or protected");
+      if (overflow) {
+        if (yield* parentMayResume(thread, coordinatorOf))
+          return yield* refuse("Thread is active or protected");
+        const cap = preferences.keepActiveThreadsPerProject;
+        if (!isValidActiveThreadCap(cap)) return yield* refuse("Project has no thread limit");
+        // Re-count inside the transaction: the sweep's count may be stale by now.
+        const [count] = yield* sql<{ readonly live: number }>`
+          SELECT COUNT(*) AS live FROM orchestration_v2_projection_threads
+          WHERE project_id = ${thread.projectId} AND archived_at IS NULL AND deleted_at IS NULL
+        `;
+        if (!(Number(count?.live) > cap)) return yield* refuse("Project is within its limit");
+      }
       // Any routine in this project may target its chat or own a continuation. Retain disabled routines too.
-      const schedules =
-        yield* sql`SELECT task_id FROM scheduled_tasks WHERE project_id = ${thread.projectId} LIMIT 1`;
+      // The cap only refuses the chat a routine targets, or one routine would pin every worker.
+      const schedules = overflow
+        ? yield* sql`SELECT task_id FROM scheduled_tasks WHERE thread_id = ${thread.id} LIMIT 1`
+        : yield* sql`SELECT task_id FROM scheduled_tasks WHERE project_id = ${thread.projectId} LIMIT 1`;
       if (schedules.length > 0 || !terminalSnapshotKnown || openTerminals.has(thread.id))
         return yield* refuse("Routine or terminal is protected");
       const records = yield* projections.getThreadRecords(
@@ -188,7 +300,9 @@ const make = Effect.gen(function* () {
       const latest = records.runs.find((run) => run.id === thread.latestRunId);
       if (
         records.turnItems.length > 0 ||
-        latest?.status !== "completed" ||
+        (overflow && isFinishedRunlessSubagent(thread)
+          ? records.runs.length > 0
+          : latest?.status !== "completed") ||
         records.runs.some(
           (run) =>
             ["preparing", "queued", "starting", "running", "waiting"].includes(run.status) ||
