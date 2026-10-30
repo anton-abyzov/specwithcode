@@ -98,8 +98,9 @@ configured as trusted. Revoke a device later under **Settings → Connections**.
 A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or
 SpecWithCode Connect. To add one, choose **Add route** in the machine's route list, or
 next to it in the SpecWithCode Connect list. Pairing the same machine again over another
-address also adds a route instead of a second machine. A new route is placed by
-speed, in that order, and you can reorder routes at any time.
+address also adds a route instead of a second machine. A new route is placed with
+SpecWithCode Connect first and direct routes (LAN, then Tailscale) behind it as
+fallbacks, and you can reorder routes at any time.
 
 While connected through SpecWithCode Connect or a paired address, SpecWithCode also learns the
 machine's current LAN and Tailscale addresses and adds them as routes, so

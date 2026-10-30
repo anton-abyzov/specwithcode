@@ -31,7 +31,7 @@ import { WORKER_CLIENT_LABEL_PREFIX } from "./workGrantPolicy.ts";
  * would go; it is parsed, never fetched.
  *
  * Every step runs against one address of the machine, the first that answers
- * as it (tailnet first, then SpecWithCode Connect), and the grant is bound to
+ * as it (Connect first, then the tailnet), and the grant is bound to
  * that address's `/mcp`. When the machine supports DPoP and this machine holds
  * a fleet proof key, the grant is bound to that key, so it works over either
  * address. Over Connect a key-bound grant is required: a bearer grant is never

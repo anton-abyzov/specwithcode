@@ -11,9 +11,9 @@ your iPhone), you do not need this page or Tailscale. Turn on
 instead.
 
 SpecWithCode Connect is enough for a main machine to start work on another one.
-Tailscale is optional: when both machines have it, the main machine tries the
-worker's private Tailscale name first, which is often faster on the same
-network, and falls back to Connect. Either way it does not matter which network
+Tailscale is optional: the main machine reaches the worker over Connect
+first, and a private Tailscale name, when both machines have it, stays as a
+direct fallback. Either way it does not matter which network
 each machine is on, and one machine moving to another network does not cut the
 others off.
 

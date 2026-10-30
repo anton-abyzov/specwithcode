@@ -65,7 +65,30 @@ describe("automatic private machine connection", () => {
     ).toEqual(["m1", "m3"]);
   });
 
-  it("waits for the tailnet before pairing a machine reached only through SpecWithCode Connect", () => {
+  it("waits for the tailnet before pairing a machine that has only a SpecWithCode Connect address", () => {
+    const connectOnly: StudioFleetSnapshot = {
+      ...snapshot,
+      machines: snapshot.machines.map((entry) =>
+        entry.id === "m1"
+          ? { ...entry, url: "https://prod-0123456789abcdef.spec-weave.com" }
+          : entry,
+      ),
+    };
+    const input = {
+      snapshot: connectOnly,
+      currentEnvironmentId: m4,
+      savedEnvironmentIds: none,
+      skippedEnvironmentIds: none,
+    };
+    expect(ids(fleetMachinesToAutoConnect({ ...input, attemptedEnvironmentIds: none }))).toEqual([
+      "m3",
+    ]);
+    expect(ids(fleetMachinesAwaitingReach(input))).toEqual(["m1"]);
+  });
+
+  it("pairs a machine the server last reached over Connect when it also has a tailnet address", () => {
+    // The server prefers Connect, so `transport: "connect"` is the normal
+    // case for a dual-address machine; its ts.net address still pairs here.
     const viaConnect: StudioFleetSnapshot = {
       ...snapshot,
       machines: snapshot.machines.map((entry) =>
@@ -79,9 +102,10 @@ describe("automatic private machine connection", () => {
       skippedEnvironmentIds: none,
     };
     expect(ids(fleetMachinesToAutoConnect({ ...input, attemptedEnvironmentIds: none }))).toEqual([
+      "m1",
       "m3",
     ]);
-    expect(ids(fleetMachinesAwaitingReach(input))).toEqual(["m1"]);
+    expect(ids(fleetMachinesAwaitingReach(input))).toEqual([]);
   });
 
   it("leaves saved, removed, already tried, offline and unconfigured machines alone", () => {

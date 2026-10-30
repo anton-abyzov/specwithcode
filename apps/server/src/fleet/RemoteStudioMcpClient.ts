@@ -209,7 +209,7 @@ const make = Effect.gen(function* () {
 
   /**
    * The address the grant may use that answers as the machine (identity
-   * checked, tailnet first). A bearer grant is never taken to a Connect
+   * checked, Connect first). A bearer grant is never taken to a Connect
    * address. With `stale`, what is remembered for that address is dropped first, so the
    * identity is read again and the tailnet gets its turn back.
    */
@@ -317,7 +317,7 @@ const make = Effect.gen(function* () {
       ) {
         if (now - existing.identityCheckedAt <= Duration.toMillis(IDENTITY_TTL))
           return { session: existing, credential };
-        // Every few minutes: identity again, and the tailnet first again.
+        // Every few minutes: identity again, and Connect first again.
         const address = yield* reach(credential, existing.origin).pipe(
           Effect.tapError(() => forget(machineId)),
         );

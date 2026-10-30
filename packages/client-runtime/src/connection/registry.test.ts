@@ -1900,7 +1900,7 @@ describe("EnvironmentRegistry routes", () => {
   const lanRegistration = (target = LAN_TARGET, profile = LAN_PROFILE) =>
     new BearerConnectionRegistration({ target, profile, credential: BEARER_CREDENTIAL });
 
-  it.effect("adds a paired LAN route ahead of Studio Connect instead of replacing it", () =>
+  it.effect("adds a paired LAN route behind Studio Connect instead of replacing it", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([RELAY_TARGET]);
       yield* Effect.gen(function* () {
@@ -1908,12 +1908,12 @@ describe("EnvironmentRegistry routes", () => {
         yield* registry.register(lanRegistration());
 
         expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
-          LAN_TARGET,
           RELAY_TARGET,
+          LAN_TARGET,
         ]);
         const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId);
-        expect(entry?.target).toEqual(LAN_TARGET);
-        expect(entry?.alternateRoutes?.map((route) => route.target)).toEqual([RELAY_TARGET]);
+        expect(entry?.target).toEqual(RELAY_TARGET);
+        expect(entry?.alternateRoutes?.map((route) => route.target)).toEqual([LAN_TARGET]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -1939,8 +1939,8 @@ describe("EnvironmentRegistry routes", () => {
         );
 
         expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
-          repaired,
           RELAY_TARGET,
+          repaired,
         ]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),

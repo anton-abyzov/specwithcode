@@ -146,6 +146,20 @@ export function fleetMachineSaved(
   }
 }
 
+/**
+ * Whether the fleet entry carries a Tailscale address. The entry's `url` is
+ * the tailnet address whenever one exists (a SpecWithCode Connect address
+ * then rides in `connectUrl`); without Tailscale, `url` is the Connect
+ * address itself. Which transport answered last says nothing about this.
+ */
+export function fleetMachineHasTailnetAddress(machine: Pick<StudioFleetMachine, "url">): boolean {
+  try {
+    return new URL(machine.url).hostname.toLowerCase().endsWith(".ts.net");
+  } catch {
+    return false;
+  }
+}
+
 /** Fleet machines this browser should pair with now, in the server's order. */
 export function fleetMachinesToAutoConnect(input: {
   readonly snapshot: StudioFleetSnapshot | null;
@@ -159,9 +173,11 @@ export function fleetMachinesToAutoConnect(input: {
   return (input.snapshot?.machines ?? []).filter(
     (machine) =>
       machine.status === "reachable" &&
-      // Browser pairing needs the tailnet: the server refuses to hand this
-      // browser a code for a SpecWithCode Connect address.
-      machine.transport !== "connect" &&
+      // Browser pairing needs a configured tailnet address: the server
+      // refuses to hand this browser a code for a SpecWithCode Connect
+      // address. A machine that has one pairs even when the server last
+      // reached it over Connect (its preferred route).
+      fleetMachineHasTailnetAddress(machine) &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
       !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&
@@ -180,7 +196,7 @@ export function fleetMachinesAwaitingReach(input: {
 }): ReadonlyArray<StudioFleetMachine> {
   return (input.snapshot?.machines ?? []).filter(
     (machine) =>
-      (machine.status === "unreachable" || machine.transport === "connect") &&
+      (machine.status === "unreachable" || !fleetMachineHasTailnetAddress(machine)) &&
       machine.pairingConfigured &&
       machine.environmentId !== input.currentEnvironmentId &&
       !fleetMachineSaved(machine, input.savedEnvironmentIds, input.savedRouteOrigins) &&
