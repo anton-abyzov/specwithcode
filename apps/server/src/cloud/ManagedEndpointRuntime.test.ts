@@ -907,21 +907,209 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
-  it.effect("reports a missing relay client executable without spawning", () =>
+  const layerRelayClientMissing = (input: {
+    readonly installs: Array<string>;
+    readonly install: () => Effect.Effect<
+      RelayClient.AvailableRelayClient,
+      RelayClient.RelayClientInstallError
+    >;
+  }) => {
+    let installed: RelayClient.AvailableRelayClient | null = null;
+    return Layer.succeed(
+      RelayClient.RelayClient,
+      RelayClient.RelayClient.of({
+        resolve: Effect.sync(
+          (): RelayClient.RelayClientStatus =>
+            installed ?? { status: "missing", version: RelayClient.CLOUDFLARED_VERSION },
+        ),
+        install: Effect.die("unused"),
+        installWithProgress: (report) =>
+          Effect.gen(function* () {
+            input.installs.push(RelayClient.CLOUDFLARED_VERSION);
+            yield* report({ type: "progress", stage: "downloading" });
+            installed = yield* input.install();
+            return installed;
+          }),
+      }),
+    );
+  };
+
+  const managedRelayClient: RelayClient.AvailableRelayClient = {
+    status: "available",
+    executablePath: `/base/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/darwin-arm64/cloudflared`,
+    source: "managed",
+    version: RelayClient.CLOUDFLARED_VERSION,
+  };
+
+  it.effect("installs a missing relay client and then starts the connector", () =>
     Effect.gen(function* () {
-      const spawn = vi.fn();
-      const spawner = ChildProcessSpawner.make(spawn);
+      const installs: Array<string> = [];
+      const commands: Array<string> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          commands.push(ChildProcess.isStandardCommand(command) ? command.command : "piped");
+          return makeHandle({ pid: 1200, onKill: () => {} });
+        }),
+      );
       const runtime = yield* buildCloudManagedEndpointRuntime(
         spawner,
+        layerRelayClientMissing({ installs, install: () => Effect.succeed(managedRelayClient) }),
+      );
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      };
+
+      expect(yield* runtime.applyConfig(config)).toEqual({
+        status: "running",
+        providerKind: "cloudflare_tunnel",
+        pid: 1200,
+        tunnelId: "tunnel-1",
+      });
+      expect(installs).toEqual([RelayClient.CLOUDFLARED_VERSION]);
+      expect(commands).toEqual([managedRelayClient.executablePath]);
+
+      // Once installed, the same config keeps running without another install.
+      expect((yield* runtime.applyConfig(config)).status).toBe("running");
+      expect(installs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reports a failed relay client install and backs off before retrying", () =>
+    Effect.gen(function* () {
+      const installs: Array<string> = [];
+      const spawn = vi.fn(() => Effect.succeed(makeHandle({ pid: 1300, onKill: () => {} })));
+      let reachable = false;
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(spawn),
+        layerRelayClientMissing({
+          installs,
+          install: () =>
+            reachable
+              ? Effect.succeed(managedRelayClient)
+              : Effect.fail(
+                  new RelayClient.RelayClientInstallError({
+                    reason: "download_failed",
+                    message: "Could not download the relay client.",
+                  }),
+                ),
+        }),
+      );
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+      };
+      const notInstalled = {
+        status: "failed",
+        providerKind: "cloudflare_tunnel",
+        failure: "not-installed",
+        reason: "The relay client is not installed.",
+      };
+
+      expect(yield* runtime.applyConfig(config)).toEqual(notInstalled);
+      expect(installs).toHaveLength(1);
+      expect(spawn).not.toHaveBeenCalled();
+      // The failure stays retryable, so the link keeps asking.
+      expect(ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(notInstalled)).toBe(
+        true,
+      );
+
+      // Startup retries inside the backoff window do not download again.
+      reachable = true;
+      yield* TestClock.adjust(Duration.seconds(30));
+      expect(yield* runtime.applyConfig(config)).toEqual(notInstalled);
+      yield* TestClock.adjust(Duration.millis(4 * 60_000 + 29_999));
+      expect(yield* runtime.applyConfig(config)).toEqual(notInstalled);
+      expect(installs).toHaveLength(1);
+
+      // Once the window passes, the next retry installs and starts the connector.
+      yield* TestClock.adjust(Duration.millis(1));
+      expect(yield* runtime.applyConfig(config)).toMatchObject({
+        status: "running",
+        pid: 1300,
+      });
+      expect(installs).toHaveLength(2);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("doubles the relay client install backoff after each consecutive failure", () =>
+    Effect.gen(function* () {
+      const installs: Array<string> = [];
+      let reason: RelayClient.RelayClientInstallError["reason"] = "download_failed";
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(() => Effect.succeed(makeHandle({ pid: 1400, onKill: () => {} }))),
+        layerRelayClientMissing({
+          installs,
+          install: () =>
+            Effect.fail(
+              new RelayClient.RelayClientInstallError({ reason, message: "Install failed." }),
+            ),
+        }),
+      );
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+      };
+      const minute = 60_000;
+
+      yield* runtime.applyConfig(config);
+      expect(installs).toHaveLength(1);
+
+      // Second attempt after 5 minutes; the next one waits 10.
+      yield* TestClock.adjust(Duration.minutes(5));
+      yield* runtime.applyConfig(config);
+      expect(installs).toHaveLength(2);
+      yield* TestClock.adjust(Duration.millis(10 * minute - 1));
+      yield* runtime.applyConfig(config);
+      expect(installs).toHaveLength(2);
+
+      // A failure a retry will not fix soon waits at least the longer floor.
+      reason = "invalid_checksum";
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* runtime.applyConfig(config);
+      expect(installs).toHaveLength(3);
+      yield* TestClock.adjust(Duration.millis(60 * minute - 1));
+      yield* runtime.applyConfig(config);
+      expect(installs).toHaveLength(3);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* runtime.applyConfig(config);
+      expect(installs).toHaveLength(4);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it("caps the relay client install backoff and floors persistent failures", () => {
+    const minute = 60_000;
+    const delay = ManagedEndpointRuntime.relayClientInstallRetryDelayMillis;
+    expect(delay(1, "download_failed")).toBe(5 * minute);
+    expect(delay(2, "timeout")).toBe(10 * minute);
+    expect(delay(3, "install_locked")).toBe(20 * minute);
+    expect(delay(1, "invalid_checksum")).toBe(60 * minute);
+    expect(delay(1, "validation_failed")).toBe(60 * minute);
+    expect(delay(1, "override_missing")).toBe(60 * minute);
+    expect(delay(5, "validation_failed")).toBe(80 * minute);
+    expect(delay(8, "write_failed")).toBe(6 * 60 * minute);
+    expect(delay(40, "download_failed")).toBe(6 * 60 * minute);
+  });
+
+  it.effect("reports an unsupported platform without installing or spawning", () =>
+    Effect.gen(function* () {
+      const spawn = vi.fn();
+      const installWithProgress = vi.fn(() => Effect.die("unused"));
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(spawn),
         Layer.succeed(
           RelayClient.RelayClient,
           RelayClient.RelayClient.of({
             resolve: Effect.succeed({
-              status: "missing",
+              status: "unsupported",
+              platform: "linux",
+              arch: "arm",
               version: RelayClient.CLOUDFLARED_VERSION,
             }),
             install: Effect.die("unused"),
-            installWithProgress: () => Effect.die("unused"),
+            installWithProgress,
           }),
         ),
       );
@@ -934,9 +1122,10 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(status).toEqual({
         status: "failed",
         providerKind: "cloudflare_tunnel",
-        failure: "not-installed",
-        reason: "The relay client is not installed.",
+        failure: "unsupported-platform",
+        reason: "Relay client is unsupported on linux-arm.",
       });
+      expect(installWithProgress).not.toHaveBeenCalled();
       expect(spawn).not.toHaveBeenCalled();
     }),
   );

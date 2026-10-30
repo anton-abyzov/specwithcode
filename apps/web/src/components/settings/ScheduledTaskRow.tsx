@@ -1,7 +1,14 @@
 /** One routine in Settings > Routines: state, when it runs next, where it lands, its actions. */
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
-import { InboxIcon, MoreHorizontalIcon, PencilIcon, PlayIcon, Trash2Icon } from "lucide-react";
+import {
+  InboxIcon,
+  MoreHorizontalIcon,
+  PauseIcon,
+  PencilIcon,
+  PlayIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 import {
   AuthOrchestrationOperateScope,
@@ -15,6 +22,7 @@ import {
 } from "@specweave-studio/client-runtime/state/runtime";
 import { routineCadenceLabel } from "@specweave-studio/shared/routineBrief";
 
+import { requestConfirmDialog } from "../../confirmDialog";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -53,19 +61,38 @@ const STATE_BADGE: Record<RoutineTone, "success" | "error" | "info" | "outline">
   running: "info",
   failed: "error",
   paused: "outline",
+  finished: "outline",
   manual: "outline",
 };
+
+/** Asks before a delete; deleting a routine cannot be undone. */
+export async function confirmRoutineDelete(message: string): Promise<boolean> {
+  return (
+    (await requestConfirmDialog(message, { variant: "destructive", confirmLabel: "Delete" })) ??
+    // No themed dialog host is mounted; fall back to the native prompt rather than deleting unasked.
+    window.confirm(message.replace("\n", " "))
+  );
+}
 
 export function ScheduledTaskRow({
   environmentId,
   task,
   projectLabel = null,
+  machineLabel = null,
+  providerLabel = null,
+  compact = false,
   onEdit,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask;
   /** The routine's project, named when the list spans several projects. */
   readonly projectLabel?: string | null;
+  /** The machine it runs on, named when the list is not grouped by machine. */
+  readonly machineLabel?: string | null;
+  /** The provider it is pinned to or starts on, named when not grouped by provider. */
+  readonly providerLabel?: string | null;
+  /** One line for paused and finished routines: no prompt, no last error. */
+  readonly compact?: boolean;
   readonly onEdit: () => void;
 }) {
   const canOperate = useAtomValue(
@@ -85,6 +112,14 @@ export function ScheduledTaskRow({
   });
   const act = async (action: "toggle" | "run" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (
+      action === "delete" &&
+      !(await confirmRoutineDelete(
+        `Delete the routine "${task.title}"?\nIt stops running and cannot be restored.`,
+      ))
+    ) {
+      return;
+    }
     setBusy(true);
     const result =
       action === "toggle"
@@ -111,6 +146,8 @@ export function ScheduledTaskRow({
     next ? `Next ${routineRunTimeLabel(next)} (${relativeLabel(next)})` : null,
     task.lastRunAt && !next ? `Last ran ${routineRunTimeLabel(task.lastRunAt)}` : null,
     projectLabel,
+    machineLabel,
+    providerLabel ? (task.modelPinned ? `Pinned to ${providerLabel}` : providerLabel) : null,
     task.threadId ? (
       <Link
         key="thread"
@@ -128,6 +165,7 @@ export function ScheduledTaskRow({
   return (
     <SettingsRow
       data-routine-row={task.id}
+      data-routine-compact={compact ? "" : undefined}
       title={
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           {canOperate ? (
@@ -158,14 +196,16 @@ export function ScheduledTaskRow({
         </span>
       }
       status={
-        <span className="grid gap-0.5">
-          <span className="line-clamp-1 [overflow-wrap:anywhere]">{task.prompt}</span>
-          {task.lastRunError ? (
-            <span className="text-destructive-foreground [overflow-wrap:anywhere]">
-              {task.lastRunError}
-            </span>
-          ) : null}
-        </span>
+        compact ? undefined : (
+          <span className="grid gap-0.5">
+            <span className="line-clamp-1 [overflow-wrap:anywhere]">{task.prompt}</span>
+            {task.lastRunError ? (
+              <span className="text-destructive-foreground [overflow-wrap:anywhere]">
+                {task.lastRunError}
+              </span>
+            ) : null}
+          </span>
+        )
       }
       control={
         <div className="flex items-center gap-1.5">
@@ -205,6 +245,12 @@ export function ScheduledTaskRow({
                 <PencilIcon />
                 Edit
               </MenuItem>
+              {task.schedule.type === "manual" ? null : (
+                <MenuItem onClick={() => void act("toggle")}>
+                  {task.enabled ? <PauseIcon /> : <PlayIcon />}
+                  {task.enabled ? "Pause" : "Resume"}
+                </MenuItem>
+              )}
               {isWebhook ? (
                 <MenuItem onClick={() => setDeliveriesOpen(true)}>
                   <InboxIcon />
@@ -268,7 +314,7 @@ function WebhookDeliveriesDialog({
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Deliveries · {task.title}</DialogTitle>
-          <DialogDescription>Recent requests to this task's webhook URL.</DialogDescription>
+          <DialogDescription>Recent requests to this routine's webhook URL.</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {error ? <p className="text-sm text-destructive-foreground">{error}</p> : null}

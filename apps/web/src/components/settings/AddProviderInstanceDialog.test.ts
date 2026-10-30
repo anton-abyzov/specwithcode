@@ -4,6 +4,7 @@ import {
   deriveAvailableInstanceId,
   getProviderIdentityDraft,
   isConfiguredAcpRegistryAgent,
+  partitionAcpRegistryResults,
   resolveAcpRegistryWizardNavigation,
   resolveWizardNavigation,
   updateProviderIdentityDraft,
@@ -112,6 +113,30 @@ describe("ACP Registry wizard", () => {
     expect(getProviderIdentityDraft(drafts, "acpRegistry")).toMatchObject({
       label: "Gemini CLI",
       instanceIdOverride: "acpRegistry_gemini_cli",
+    });
+  });
+});
+
+describe("partitionAcpRegistryResults", () => {
+  const agents = ["amp-acp", "codex-acp", "claude-acp", "gemini", "opencode", "opencode-v2"].map(
+    (id) => ({ id }),
+  );
+
+  it("never lists a registry agent that repeats a built-in provider", () => {
+    const { listed, builtInMatches } = partitionAcpRegistryResults(agents, ["gemini"]);
+    expect(listed.map((agent) => agent.id)).toEqual(["amp-acp"]);
+    expect(builtInMatches).toEqual(["Codex", "Claude", "OpenCode"]);
+  });
+
+  it("lists featured agents again once they are not hidden", () => {
+    const { listed } = partitionAcpRegistryResults(agents, []);
+    expect(listed.map((agent) => agent.id)).toEqual(["amp-acp", "gemini"]);
+  });
+
+  it("treats Grok Build as the installer for the built-in Grok provider", () => {
+    expect(partitionAcpRegistryResults([{ id: "grok-build" }], [])).toEqual({
+      listed: [],
+      builtInMatches: ["Grok"],
     });
   });
 });

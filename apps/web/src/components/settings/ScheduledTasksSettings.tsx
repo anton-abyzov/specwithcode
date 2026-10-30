@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Clock3Icon, CopyIcon, PlusIcon } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -36,16 +36,11 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@specweave-studio/client-runtime/webhook-address";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import {
-  useEnvironment,
-  useEnvironmentHttpBaseUrl,
-  type EnvironmentPresentation,
-} from "../../state/environments";
+import { useEnvironment, useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import {
   ineligibleProjectLabel,
   ineligibleSelectedMember,
-  isArchivedMember,
   projectPickerMembers,
 } from "../../studio/projectListVisibility";
 import { useEnvironmentQuery } from "../../state/query";
@@ -98,10 +93,8 @@ import {
   SettingsRow,
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  useRelativeTimeTick,
 } from "./settingsLayout";
-import { ArchivedDisclosure } from "./ArchivedDisclosure";
-import { ScheduledTaskRow } from "./ScheduledTaskRow";
+import { RoutineList } from "./RoutineList";
 import { routineCadenceLabel } from "@specweave-studio/shared/routineBrief";
 
 /** JS day-of-week (0 = Sunday) rendered Monday-first, matching how people read a week. */
@@ -256,26 +249,16 @@ export function ScheduledTasksSettings(target: {
                 <Clock3Icon />
               </EmptyMedia>
               <EmptyTitle>No environments available</EmptyTitle>
-              <EmptyDescription>Connect an environment to manage scheduled tasks.</EmptyDescription>
+              <EmptyDescription>Connect an environment to manage routines.</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
-          <div className="space-y-8">
-            {environments.map((entry) => (
-              <ScheduledTaskEnvironmentSection
-                key={`${entry.environmentId}:${target.taskId ?? ""}`}
-                environment={entry}
-                showEnvironmentHeading={environments.length > 1}
-                taskId={
-                  (target.environmentId ?? defaultEnvironment?.environmentId) ===
-                  entry.environmentId
-                    ? target.taskId
-                    : undefined
-                }
-                onEdit={openForEdit}
-              />
-            ))}
-          </div>
+          <RoutineList
+            environments={environments}
+            linkedEnvironmentId={target.environmentId ?? defaultEnvironment?.environmentId}
+            taskId={target.taskId}
+            onEdit={openForEdit}
+          />
         )}
       </SettingsSection>
       {activeEditor ? (
@@ -302,126 +285,6 @@ export function ScheduledTasksSettings(target: {
   );
 }
 
-function ScheduledTaskEnvironmentSection({
-  environment,
-  showEnvironmentHeading,
-  taskId,
-  onEdit,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly showEnvironmentHeading: boolean;
-  readonly taskId?: ScheduledTaskId | undefined;
-  readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
-}) {
-  const { scope } = useSettingsScope();
-  const connected =
-    environment.connection.phase === "connected" && environment.serverConfig !== null;
-  const tasksQuery = useEnvironmentQuery(
-    connected
-      ? serverEnvironment.scheduledTasksLive({
-          environmentId: environment.environmentId,
-          input: {},
-        })
-      : null,
-  );
-  const tasks = tasksQuery.data?.tasks.filter((task) =>
-    matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
-  );
-  const linkedTask = tasks?.find((task) => task.id === taskId);
-  const projects = useProjects();
-  const archivedProjectIds = new Set(
-    projects
-      .filter(
-        (project) =>
-          project.environmentId === environment.environmentId && isArchivedMember(project),
-      )
-      .map((project) => project.id),
-  );
-  // A linked task stays in the main list so the deep link still lands on a visible row.
-  const isArchivedTask = (task: ScheduledTask) =>
-    task.projectId != null && archivedProjectIds.has(task.projectId) && task.id !== taskId;
-  const activeTasks = tasks?.filter((task) => !isArchivedTask(task)) ?? [];
-  const archivedTasks = tasks?.filter(isArchivedTask) ?? [];
-  // A list across projects names each routine's project; a project's own list does not.
-  const projectTitles =
-    scope.kind === "project" || scope.kind === "checkout"
-      ? null
-      : new Map(
-          projects
-            .filter((project) => project.environmentId === environment.environmentId)
-            .map((project) => [project.id, project.title] as const),
-        );
-  const renderTask = (task: ScheduledTask) => (
-    <ScheduledTaskRow
-      key={task.id}
-      environmentId={environment.environmentId}
-      task={task}
-      projectLabel={projectTitles?.get(task.projectId) ?? null}
-      onEdit={() => onEdit(environment.environmentId, task)}
-    />
-  );
-  const openedLink = useRef(false);
-  useEffect(() => {
-    if (!openedLink.current && linkedTask) {
-      openedLink.current = true;
-      onEdit(environment.environmentId, linkedTask);
-    }
-  }, [environment.environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
-  return (
-    <SettingsSection
-      title={environment.label}
-      hideTitle={!showEnvironmentHeading}
-      icon={
-        <EnvironmentMachineIcon
-          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-          className="size-3.5"
-        />
-      }
-    >
-      {!connected ? (
-        <SettingsRow
-          title="Environment disconnected"
-          description={`Reconnect ${environment.label} to view its scheduled tasks.`}
-        />
-      ) : tasksQuery.error ? (
-        <SettingsRow title="Could not load scheduled tasks" description={tasksQuery.error} />
-      ) : !tasks ? (
-        <SettingsRow title="Loading scheduled tasks…" role="status" />
-      ) : (
-        <>
-          {taskId && !linkedTask ? (
-            <SettingsRow
-              title="Task unavailable"
-              description="This task no longer exists or is outside the selected project scope."
-              role="status"
-            />
-          ) : null}
-          {tasks.length === 0 ? (
-            <SettingsRow
-              title="No scheduled tasks"
-              description="No tasks match this environment and project selection."
-            />
-          ) : (
-            <>
-              {activeTasks.map(renderTask)}
-              {activeTasks.length === 0 ? (
-                <SettingsRow
-                  title="No scheduled tasks for active projects"
-                  description="Every task here belongs to an archived project."
-                />
-              ) : null}
-              <ArchivedDisclosure count={archivedTasks.length}>
-                {archivedTasks.map(renderTask)}
-              </ArchivedDisclosure>
-            </>
-          )}
-        </>
-      )}
-    </SettingsSection>
-  );
-}
-
 function WebhookEndpointField({
   environmentId,
   task,
@@ -435,7 +298,7 @@ function WebhookEndpointField({
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "webhook URL" });
   const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
-    label: "scheduled task rotate webhook token",
+    label: "routine rotate webhook token",
   });
   const [rotating, setRotating] = useState(false);
   const endpoint = task?.webhook;
@@ -569,7 +432,7 @@ function ScheduledTaskEditorDialog({
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
-    label: "scheduled task upsert",
+    label: "routine upsert",
   });
   const instanceEntries = useMemo(
     () =>
@@ -637,7 +500,7 @@ function ScheduledTaskEditorDialog({
     const selection = activeSelection;
     if (selection === null && !draft.modelPinned) {
       reportFailure(
-        "No provider can run this task",
+        "No provider can run this routine",
         "Install or sign in to a provider in Settings > Providers, then save again.",
       );
       return;
@@ -656,7 +519,7 @@ function ScheduledTaskEditorDialog({
       selection === null
     ) {
       reportFailure(
-        "Scheduled task is incomplete",
+        "Routine is incomplete",
         draft.modelPinned
           ? "Add a title, prompt, project, and model."
           : "Add a title, prompt, and project.",
@@ -738,7 +601,7 @@ function ScheduledTaskEditorDialog({
     if (result._tag === "Failure") {
       submissionPending.current = false;
       if (!isAtomCommandInterrupted(result)) {
-        reportFailure("Could not save scheduled task", squashAtomCommandFailure(result));
+        reportFailure("Could not save routine", squashAtomCommandFailure(result));
       }
       return;
     }
@@ -818,7 +681,7 @@ function ScheduledTaskEditorDialog({
             ) : null}
             {editingTaskMissing ? (
               <p className="text-xs text-destructive-foreground" role="status">
-                This scheduled task no longer exists.
+                This routine no longer exists.
               </p>
             ) : null}
             <Field label="Name" htmlFor="scheduled-task-title">
@@ -981,8 +844,8 @@ function ScheduledTaskEditorDialog({
               {task?.schedule.type === "interval" &&
               task.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS ? (
                 <p className="text-sm text-muted-foreground" role="status">
-                  This task uses a legacy interval below one minute. Saving updates it to at least
-                  one minute.
+                  This routine uses a legacy interval below one minute. Saving updates it to at
+                  least one minute.
                 </p>
               ) : null}
               <div className="flex items-center justify-between gap-2">
@@ -1245,7 +1108,7 @@ function ScheduledTaskEditorDialog({
                   id="scheduled-task-enabled-description"
                   className="text-sm text-muted-foreground"
                 >
-                  Disabled tasks stay saved but do not run.
+                  Paused routines stay saved but do not run.
                 </p>
               </div>
               <Switch

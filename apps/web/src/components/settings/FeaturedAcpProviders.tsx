@@ -9,6 +9,7 @@ import {
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic";
 
@@ -23,6 +24,11 @@ interface FeaturedAcpProvidersProps {
   readonly preparingId: string | null;
   readonly onPrepare: (agent: AcpRegistrySearchAgent) => void;
   readonly onManage?: (instanceId: ProviderInstanceId) => void;
+  /**
+   * Show the Grok Build installer card. The add dialog offers it only while
+   * the built-in Grok provider is selected, so Grok is not listed twice.
+   */
+  readonly showGrok?: boolean;
 }
 
 type CatalogQuery = Pick<
@@ -67,6 +73,7 @@ export function FeaturedAcpProviderCards({
   preparingId,
   onPrepare,
   onManage,
+  showGrok = true,
   copilot,
   grok,
   gemini,
@@ -75,7 +82,7 @@ export function FeaturedAcpProviderCards({
   readonly grok: CatalogQuery;
   readonly gemini: CatalogQuery;
 }) {
-  const providers: ReadonlyArray<FeaturedProvider> = [
+  const allProviders: ReadonlyArray<FeaturedProvider> = [
     {
       id: "github-copilot-cli",
       label: "GitHub Copilot",
@@ -85,7 +92,7 @@ export function FeaturedAcpProviderCards({
     {
       id: "grok-build",
       label: "Grok Build",
-      description: "Install here, or choose Grok above for an existing CLI.",
+      description: "No grok CLI on this machine? Install Grok as a registry agent instead.",
       catalog: grok,
     },
     {
@@ -95,13 +102,17 @@ export function FeaturedAcpProviderCards({
       catalog: gemini,
     },
   ];
+  const providers = showGrok
+    ? allProviders
+    : allProviders.filter((provider) => provider.id !== "grok-build");
   return (
     <section className="grid gap-2" aria-label="Featured ACP providers">
-      <p className="text-xs text-muted-foreground">
-        Add an agent, complete its sign-in, then choose its models in chat. Usage reporting alone
-        does not connect an agent.
-      </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <div
+        className={cn(
+          "grid grid-cols-1 gap-2",
+          providers.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2",
+        )}
+      >
         {providers.map(({ id, label, description, catalog }) => {
           // Search is fuzzy; only the exact registry identity is trusted.
           const agent = catalog.data?.agents.find((candidate) => candidate.id === id);
@@ -187,8 +198,8 @@ export function FeaturedAcpProviderCards({
         })}
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        Installs come from the official ACP Registry on the selected machine. These agents can work
-        in the project folder; projects with additional approved folders currently require Codex,
+        Add an agent, complete its sign-in, then choose its models in chat. Registry agents work in
+        the project folder; projects with additional approved folders currently require Codex,
         Claude or Muse Code.
       </p>
     </section>

@@ -39,6 +39,40 @@ export function updateProviderIdentityDraft(
   };
 }
 
+/**
+ * ACP Registry agents that repeat a built-in provider shown in the dialog's
+ * provider grid, keyed by registry ID with the built-in label. The registry
+ * list hides them so each provider is offered once.
+ */
+export const BUILT_IN_ACP_REGISTRY_AGENTS: Readonly<Record<string, string>> = {
+  "codex-acp": "Codex",
+  "claude-acp": "Claude",
+  cursor: "Cursor",
+  "grok-build": "Grok",
+  opencode: "OpenCode",
+  "opencode-v2": "OpenCode",
+  "antigravity-acp": "Antigravity",
+  "pi-acp": "Pi",
+};
+
+/** Split registry results into agents to list and built-in providers they repeat. */
+export function partitionAcpRegistryResults<T extends { readonly id: string }>(
+  agents: ReadonlyArray<T>,
+  hiddenIds: ReadonlyArray<string>,
+): { readonly listed: ReadonlyArray<T>; readonly builtInMatches: ReadonlyArray<string> } {
+  const listed: T[] = [];
+  const builtInMatches: string[] = [];
+  for (const agent of agents) {
+    const builtIn = BUILT_IN_ACP_REGISTRY_AGENTS[agent.id];
+    if (builtIn !== undefined) {
+      if (!builtInMatches.includes(builtIn)) builtInMatches.push(builtIn);
+    } else if (!hiddenIds.includes(agent.id)) {
+      listed.push(agent);
+    }
+  }
+  return { listed, builtInMatches };
+}
+
 export function deriveAvailableInstanceId(
   derive: (label: string) => string,
   label: string,

@@ -70,6 +70,10 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
           (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
           VALUES (${`event-${threadId}`}, 'thread', ${threadId}, 0, 'thread.created', '2026-08-01', 'user', '{}', '{}')`;
       }
+      // The parent's app-owned task for that child, still waiting on its result.
+      yield* sql`INSERT INTO orchestration_v2_projection_subagents
+        (subagent_id, thread_id, run_id, parent_node_id, provider, child_thread_id, origin, status, updated_at, payload_json)
+        VALUES ('node-1', 'subagent-parent', 'run-subagent-parent', 'node-root', 'codex', 'subagent-child', 'app_owned', 'running', '2026-08-05', '{}')`;
       // A provider session shared by two threads names its latest writer.
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions
         (provider_session_id, thread_id, provider, status, updated_at, payload_json)

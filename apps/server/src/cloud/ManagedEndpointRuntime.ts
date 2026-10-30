@@ -79,6 +79,35 @@ const TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY = 4;
 // Ask for recovery after this long, and again at this interval while it stays
 // unconnected; the relay hands back the same tunnel when it is still live.
 const CONNECTOR_REGISTRATION_TIMEOUT = Duration.minutes(3);
+// An app update can pin a relay client version this machine never installed.
+// The runtime installs it on demand, but a failed install must not download
+// again on every startup retry: after a failure it reports "not-installed"
+// without trying again for a delay that doubles with each consecutive failure
+// up to the cap, and resets once an install succeeds. A failure that a retry
+// is unlikely to fix soon (a checksum a proxy rewrites, a binary that will not
+// run, a missing override) waits at least the longer floor, so a full download
+// does not repeat every few minutes.
+const RELAY_CLIENT_INSTALL_RETRY_BASE = Duration.minutes(5);
+const RELAY_CLIENT_INSTALL_RETRY_PERSISTENT_FLOOR = Duration.hours(1);
+const RELAY_CLIENT_INSTALL_RETRY_MAX = Duration.hours(6);
+const RELAY_CLIENT_INSTALL_TIMEOUT = Duration.minutes(5);
+const PERSISTENT_RELAY_CLIENT_INSTALL_FAILURES: ReadonlySet<
+  RelayClient.RelayClientInstallError["reason"]
+> = new Set(["invalid_checksum", "validation_failed", "override_missing", "unsupported_platform"]);
+
+export function relayClientInstallRetryDelayMillis(
+  consecutiveFailures: number,
+  reason: RelayClient.RelayClientInstallError["reason"] | "timeout",
+): number {
+  const baseMillis = Duration.toMillis(RELAY_CLIENT_INSTALL_RETRY_BASE);
+  const maxMillis = Duration.toMillis(RELAY_CLIENT_INSTALL_RETRY_MAX);
+  const exponentialMillis = baseMillis * 2 ** Math.max(0, consecutiveFailures - 1);
+  const floorMillis =
+    reason !== "timeout" && PERSISTENT_RELAY_CLIENT_INSTALL_FAILURES.has(reason)
+      ? Duration.toMillis(RELAY_CLIENT_INSTALL_RETRY_PERSISTENT_FLOOR)
+      : baseMillis;
+  return Math.min(maxMillis, Math.max(floorMillis, exponentialMillis));
+}
 
 export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
@@ -151,6 +180,10 @@ export const make = Effect.gen(function* () {
   const reconcileSemaphore = yield* Semaphore.make(1);
   const restartDelayRef = yield* Ref.make(0);
   const linkStateSemaphore = yield* Semaphore.make(1);
+  const installBackoffRef = yield* Ref.make<{
+    readonly consecutiveFailures: number;
+    readonly retryAtMillis: number;
+  } | null>(null);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
 
   const stopActive = Effect.gen(function* () {
@@ -307,6 +340,62 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  const installRelayClient = Effect.fn("CloudManagedEndpointRuntime.installRelayClient")(function* (
+    missing: Extract<RelayClient.RelayClientStatus, { readonly status: "missing" }>,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const backoff = yield* Ref.get(installBackoffRef);
+    if (backoff !== null && now < backoff.retryAtMillis) {
+      yield* Effect.logDebug("Relay client install is backing off after a failure", {
+        version: missing.version,
+        consecutiveFailures: backoff.consecutiveFailures,
+        retryInMillis: backoff.retryAtMillis - now,
+      });
+      return missing;
+    }
+    yield* Effect.annotateCurrentSpan({ "relay_client.version": missing.version });
+    yield* Effect.logInfo("Relay client is not installed; installing it", {
+      version: missing.version,
+    });
+    const installed = yield* relayClient
+      .installWithProgress((event) =>
+        event.type === "progress"
+          ? Effect.logDebug("Relay client install progress", {
+              version: missing.version,
+              stage: event.stage,
+            })
+          : Effect.void,
+      )
+      .pipe(Effect.timeout(RELAY_CLIENT_INSTALL_TIMEOUT), Effect.result);
+    if (Result.isFailure(installed)) {
+      const failure = installed.failure;
+      const reason = failure._tag === "RelayClientInstallError" ? failure.reason : "timeout";
+      const consecutiveFailures = (backoff?.consecutiveFailures ?? 0) + 1;
+      const retryInMillis = relayClientInstallRetryDelayMillis(consecutiveFailures, reason);
+      yield* Ref.set(installBackoffRef, {
+        consecutiveFailures,
+        retryAtMillis: (yield* Clock.currentTimeMillis) + retryInMillis,
+      });
+      yield* Effect.logWarning("Could not install the relay client; will retry later", {
+        version: missing.version,
+        consecutiveFailures,
+        retryInMillis,
+        reason,
+        ...(failure._tag === "RelayClientInstallError"
+          ? { message: failure.message, cause: failure.cause }
+          : {}),
+      });
+      return missing;
+    }
+    yield* Ref.set(installBackoffRef, null);
+    yield* Effect.logInfo("Relay client installed", {
+      version: installed.success.version,
+      source: installed.success.source,
+      executablePath: installed.success.executablePath,
+    });
+    return installed.success;
+  });
+
   reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
     if (!config || config.providerKind !== "cloudflare_tunnel") {
       yield* stopActive;
@@ -332,7 +421,9 @@ export const make = Effect.gen(function* () {
 
     yield* stopActive;
 
-    const executable = yield* relayClient.resolve;
+    const resolved = yield* relayClient.resolve;
+    const executable =
+      resolved.status === "missing" ? yield* installRelayClient(resolved) : resolved;
     if (executable.status !== "available") {
       return {
         status: "failed",

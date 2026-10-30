@@ -27,6 +27,14 @@ describe("routineState", () => {
   it("keeps a paused routine paused even after a failed run", () => {
     expect(routineState(task({ enabled: false, lastRunStatus: "failed" })).tone).toBe("paused");
   });
+  it("calls a one-time routine that already ran finished, not paused", () => {
+    const once = { type: "once" } as const;
+    const ran = "2026-10-29T09:00:00.000Z";
+    expect(routineState(task({ schedule: once, enabled: false, lastRunAt: ran })).label).toBe(
+      "Finished",
+    );
+    expect(routineState(task({ schedule: once, enabled: false })).tone).toBe("paused");
+  });
   it("never calls a routine run by hand paused", () => {
     expect(routineState(task({ enabled: false, schedule: { type: "manual" } })).tone).toBe(
       "manual",

@@ -401,4 +401,19 @@ describe("AcpRegistrySearchStep", () => {
     expect(featured?.props.environmentId).toBe(environmentId);
     expect(state.prepare).not.toHaveBeenCalled();
   });
+
+  it("hides built-in providers from registry results and points to the grid", () => {
+    state.result = {
+      agents: [
+        { ...gemini, id: "codex-acp", name: "Codex" },
+        { ...gemini, id: "cursor", name: "Cursor" },
+      ],
+    };
+    const tree = renderSearch();
+    expect(
+      visitElements(tree, (element) => element.props["aria-label"] === "Add Codex"),
+    ).toBeNull();
+    expect(JSON.stringify(tree)).toContain("Built-in providers");
+    expect(JSON.stringify(tree)).toContain("Codex, Cursor");
+  });
 });

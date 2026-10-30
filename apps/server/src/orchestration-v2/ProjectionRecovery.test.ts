@@ -7,6 +7,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -224,6 +225,84 @@ it.effect("selects unfinished recovery work without reading settled thread histo
   }).pipe(Effect.provide(layerTest)),
 );
 
+const createAppOwnedTask = Effect.fn(function* (
+  parent: ThreadId,
+  child: ThreadId,
+  name: string,
+  overrides: Partial<OrchestrationV2Subagent> = {},
+) {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const id = NodeId.make(`node:${name}`);
+  yield* projections.apply({
+    id: EventId.make(`event:${parent}:task:${name}`),
+    type: "subagent.updated",
+    threadId: parent,
+    nodeId: id,
+    driver,
+    providerInstanceId,
+    occurredAt: now,
+    payload: {
+      id,
+      threadId: parent,
+      runId: null,
+      parentNodeId: NodeId.make(`node:${parent}:root`),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver,
+      providerInstanceId,
+      providerThreadId: null,
+      childThreadId: child,
+      nativeTaskRef: null,
+      prompt: name,
+      title: null,
+      model: null,
+      status: "running",
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      ...overrides,
+    },
+  });
+});
+
+const createSubagentResult = Effect.fn(function* (
+  parent: ThreadId,
+  child: ThreadId,
+  sourceRunId: RunId | undefined,
+) {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const id = ContextTransferId.make(`transfer:recovery:${child}:${sourceRunId ?? "legacy"}`);
+  yield* projections.apply({
+    id: EventId.make(`event:recovery:${id}`),
+    type: "context-transfer.created",
+    threadId: parent,
+    occurredAt: now,
+    payload: {
+      id,
+      type: "subagent_result",
+      sourceThreadId: child,
+      targetThreadId: parent,
+      sourcePoint:
+        sourceRunId === undefined ? { threadId: child } : { threadId: child, runId: sourceRunId },
+      basePoint: null,
+      sourceProviderInstanceId: providerInstanceId,
+      targetProviderInstanceId: providerInstanceId,
+      targetRunId: null,
+      status: "pending",
+      resolution: null,
+      createdBy: "system",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      consumedAt: null,
+    },
+  });
+  return id;
+});
+
 it.effect("recovers terminal subagent results until their cross-thread transfer exists", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -239,61 +318,88 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
         deletedAt: name === "deleted" ? now : null,
       });
       yield* createRun(child, name === "running" ? "running" : "completed");
+      yield* createAppOwnedTask(parent, child, name);
       children.push(child);
     }
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
       new Set(children.slice(0, 2)),
     );
-    const completed = children[0]!;
-    const transferId = ContextTransferId.make("transfer:recovery:subagent-result");
-    yield* projections.apply({
-      id: EventId.make("event:recovery:subagent-result"),
-      type: "context-transfer.created",
-      threadId: parent,
-      occurredAt: now,
-      payload: {
-        id: transferId,
-        type: "subagent_result",
-        sourceThreadId: completed,
-        targetThreadId: parent,
-        sourcePoint: { threadId: completed },
-        basePoint: null,
-        sourceProviderInstanceId: providerInstanceId,
-        targetProviderInstanceId: providerInstanceId,
-        targetRunId: null,
-        status: "pending",
-        resolution: null,
-        createdBy: "system",
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        consumedAt: null,
-      },
-    });
+    const terminal = children[0]!;
+    const transferId = yield* createSubagentResult(parent, terminal, undefined);
     const archivedChild = children[1];
     assert.isDefined(archivedChild);
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [archivedChild]);
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
-    // Legacy transfers without a source run stay final. Concrete prior results
-    // must not hide a newer continuation that finished before the service booted.
-    yield* sql`
-      UPDATE orchestration_v2_projection_context_transfers
-      SET payload_json = json_set(payload_json, '$.sourcePoint.runId', ${`run:${completed}:1`})
-      WHERE context_transfer_id = ${transferId}
-    `;
-    yield* createRun(completed, "completed", { ordinal: 2 });
-    assert.deepEqual(
-      new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
-      new Set([completed, archivedChild]),
-    );
     yield* sql`
       UPDATE orchestration_v2_projection_context_transfers SET payload_json = '{}'
       WHERE context_transfer_id = ${transferId}
     `;
     assert.deepEqual(
       new Set(yield* projections.getUnreadableThreadIds()),
-      new Set([parent, completed]),
+      new Set([parent, terminal]),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// Settling a candidate reads the parent's whole projection. A child the
+// recovery would leave alone must not be a candidate, or every boot pays that
+// read again for each finished task.
+it.effect("skips subagent results that recovery would leave as they are", () =>
+  Effect.gen(function* () {
+    const parent = yield* createThread("final-parent");
+    const child = Effect.fn(function* (
+      name: string,
+      task: boolean | Partial<OrchestrationV2Subagent>,
+    ) {
+      const threadId = yield* createThread(`final-${name}`, {
+        lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+        forkedFrom: { type: "node", nodeId: NodeId.make(`node:final-${name}`) },
+      });
+      if (task !== false)
+        yield* createAppOwnedTask(parent, threadId, `final-${name}`, task === true ? {} : task);
+      return threadId;
+    });
+
+    // A limit failure reached the parent before fallback finished the work.
+    const continued = yield* child("continued", true);
+    const failedRun = yield* createRun(continued, "failed");
+    yield* createRun(continued, "completed", { ordinal: 2 });
+    yield* createSubagentResult(parent, continued, failedRun);
+
+    const untracked = yield* child("untracked", false);
+    yield* createRun(untracked, "completed");
+
+    const providerNative = yield* child("native", { origin: "provider_native" });
+    yield* createRun(providerNative, "completed");
+
+    // An earlier completed result is final, whatever ran after it.
+    const delivered = yield* child("delivered", true);
+    const deliveredRun = yield* createRun(delivered, "completed");
+    yield* createRun(delivered, "completed", { ordinal: 2 });
+    yield* createSubagentResult(parent, delivered, deliveredRun);
+
+    const vanished = yield* child("vanished", true);
+    yield* createRun(vanished, "completed", { ordinal: 2 });
+    yield* createSubagentResult(parent, vanished, RunId.make(`run:${vanished}:1`));
+
+    const disposed = yield* child("disposed", {
+      completionDelivery: { state: "disposed", observedByRunId: null },
+    });
+    const disposedRun = yield* createRun(disposed, "failed");
+    yield* createRun(disposed, "completed", { ordinal: 2 });
+    yield* createSubagentResult(parent, disposed, disposedRun);
+
+    // Disposed without any result yet: recovery still delivers the first one.
+    const disposedFirst = yield* child("disposed-first", {
+      completionDelivery: { state: "disposed", observedByRunId: null },
+    });
+    yield* createRun(disposedFirst, "completed");
+
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
+      new Set([continued, disposedFirst]),
     );
   }).pipe(Effect.provide(layerTest)),
 );

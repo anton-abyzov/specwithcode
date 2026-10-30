@@ -89,7 +89,7 @@ describe("summarizeStudioToolCalls", () => {
         completed({ taskId: "schedule-1" }, { lastRunStatus: "running" }),
         completed({ taskId: "schedule-1" }, { lastRunStatus: "skipped" }),
       ]).label,
-    ).toBe("Requested 2 scheduled task runs");
+    ).toBe("Requested 2 routine runs");
     expect(
       summarizeStudioToolCalls("thread-fork", [
         completed({}, { targetThreadId: "fork", sequence: 3 }),
@@ -292,6 +292,6 @@ describe("summarizeStudioToolCalls", () => {
           { scheduledTaskId: "schedule-1", deleted: false },
         ),
       ]).label,
-    ).toBe("Requested deletion of 1 scheduled task");
+    ).toBe("Requested deletion of 1 routine");
   });
 });

@@ -93,6 +93,24 @@ interface DownloadedUpdateInfo {
   readonly version?: unknown;
 }
 
+/**
+ * electron-updater reuses a download this process made only when the whole
+ * release record from the latest check deep-equals the one it downloaded,
+ * and otherwise fetches the file again without looking at its cache. With a
+ * token the github provider's record carries every asset's download_count,
+ * which that very download raises, so each later download (the restage once
+ * the service caught up, the install's own staging) fetched the full bundle
+ * again: 6 s on M4 after the service was verified. Dropping the record sends
+ * electron-updater to its cache check instead, which accepts the cached file
+ * only when its sha512 matches the release's.
+ */
+export function forgetDownloadRecord(updater: unknown): void {
+  const helper = (updater as { downloadedUpdateHelper?: unknown }).downloadedUpdateHelper;
+  if (typeof helper === "object" && helper !== null && "versionInfo" in helper) {
+    (helper as { versionInfo: unknown }).versionInfo = null;
+  }
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
@@ -174,6 +192,7 @@ const makeService = (trackStaging: () => void, installReady: () => boolean) =>
     downloadUpdate: Effect.suspend(() => {
       // Every handover to Squirrel follows a download, so tracking starts here.
       trackStaging();
+      forgetDownloadRecord(autoUpdater);
       const channel = autoUpdater.channel;
       return Effect.tryPromise({
         try: () => autoUpdater.downloadUpdate(),

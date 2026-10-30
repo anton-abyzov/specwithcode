@@ -128,17 +128,11 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     ["Cancel", "Canceling", "Requested cancellation of", "delegated task"],
     "task-cancel",
   ),
-  schedule_task: tool(
-    ["Schedule", "Scheduling", "Scheduled", "a recurring task"],
-    "schedule-create",
-  ),
-  list_scheduled_tasks: tool(["List", "Listing", "Listed", "scheduled tasks"], "schedule-list"),
-  update_scheduled_task: tool(
-    ["Update", "Updating", "Updated", "a scheduled task"],
-    "schedule-update",
-  ),
+  schedule_task: tool(["Create", "Creating", "Created", "a routine"], "schedule-create"),
+  list_scheduled_tasks: tool(["List", "Listing", "Listed", "routines"], "schedule-list"),
+  update_scheduled_task: tool(["Update", "Updating", "Updated", "a routine"], "schedule-update"),
   delete_scheduled_task: tool(
-    ["Delete", "Deleting", "Requested deletion of", "a scheduled task"],
+    ["Delete", "Deleting", "Requested deletion of", "a routine"],
     "schedule-delete",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
@@ -319,7 +313,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   ),
   device_close: tool(["Close", "Closing", "Closed", "a device"], "device", "device"),
   run_scheduled_task_now: tool(
-    ["Run", "Running", "Requested a run of", "a scheduled task"],
+    ["Run", "Running", "Requested a run of", "a routine"],
     "schedule-run",
   ),
   studio_queue_list: tool(["List", "Listing", "Listed", "queued messages"], "queue-list"),

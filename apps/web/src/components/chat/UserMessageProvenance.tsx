@@ -128,10 +128,10 @@ export function UserMessageProvenance(props: UserMessageProvenanceProps) {
           taskId={presentation.scheduledTaskId}
           className="rounded-sm hover:text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
         >
-          Sent by automation
+          Sent by routine
         </ScheduledTaskLink>
       ) : (
-        "Sent by automation"
+        "Sent by routine"
       )}
     </p>
   ) : message.createdBy === "agent" ? (

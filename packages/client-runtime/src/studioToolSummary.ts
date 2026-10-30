@@ -214,19 +214,19 @@ export function summarizeStudioToolCalls(
       break;
     case "schedule-create":
       label = phrase(
-        "Scheduled",
-        "schedule",
-        quantity(countEntities(entityIds("scheduledTaskId")), "task"),
+        "Created",
+        "create",
+        quantity(countEntities(entityIds("scheduledTaskId")), "routine"),
       );
       break;
     case "schedule-list":
-      label = phrase("Listed", "list", `scheduled tasks ${times}`);
+      label = phrase("Listed", "list", `routines ${times}`);
       break;
     case "schedule-update":
       label = phrase(
         "Updated",
         "update",
-        quantity(countEntities(entityIds("scheduledTaskId")), "scheduled task"),
+        quantity(countEntities(entityIds("scheduledTaskId")), "routine"),
       );
       break;
     case "schedule-delete":
@@ -234,11 +234,11 @@ export function summarizeStudioToolCalls(
       label = phrase(
         "Requested deletion of",
         "delete",
-        quantity(countEntities(entityIds("scheduledTaskId")), "scheduled task"),
+        quantity(countEntities(entityIds("scheduledTaskId")), "routine"),
       );
       break;
     case "schedule-run":
-      label = phrase("Requested", "request", quantity(selected.length, "scheduled task run"));
+      label = phrase("Requested", "request", quantity(selected.length, "routine run"));
       break;
     case "thread-configuration":
       label = phrase("Checked", "check", `thread configuration ${times}`);
