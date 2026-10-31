@@ -58,19 +58,22 @@ const FOLDED_CONTROL_ICONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/thread details/i, "square-menu"],
   [/terminal/i, "panel-bottom"],
   [/right panel/i, "panel-right"],
-  [/maximize|restore/i, "maximize"],
+  [/maximize|restore|expand panel/i, "maximize"],
 ];
 
 /**
- * The chat's panel toggles, as action-menu items, while the narrow header
- * hides their slot. Each item clicks the hidden toggle, so its state and
+ * The chat's panel toggles, or the Expand button itself, as action-menu items
+ * while the narrow header hides them. Each item clicks the hidden toggle, so its state and
  * shortcut handling stay in the chat that owns it.
  */
 export function foldedHeaderControls(slot: HTMLElement | null): ThreadMenuOverflowItem[] {
   if (!slot || slot.childElementCount === 0 || getComputedStyle(slot).display !== "none") {
     return [];
   }
-  return [...slot.querySelectorAll<HTMLButtonElement>("button[aria-label]")].map((button) => {
+  const buttons = slot.matches("button[aria-label]")
+    ? [slot as HTMLButtonElement]
+    : [...slot.querySelectorAll<HTMLButtonElement>("button[aria-label]")];
+  return buttons.map((button) => {
     const ariaLabel = button.getAttribute("aria-label") ?? "";
     const pressed = button.getAttribute("aria-pressed");
     // "Toggle terminal drawer" reads as "Show terminal drawer" or "Hide …" in a menu.
@@ -133,6 +136,7 @@ export function ProjectThreadHeader(props: {
     setRenaming(null);
   };
   const toolsSlot = useRef<HTMLSpanElement | null>(null);
+  const expandSlot = useRef<HTMLButtonElement | null>(null);
   const { toolsSlotRef } = props;
   const setToolsSlot = useCallback(
     (node: HTMLSpanElement | null) => {
@@ -310,10 +314,10 @@ export function ProjectThreadHeader(props: {
           onClick={() => {
             const rect = menuButton.current?.getBoundingClientRect();
             if (rect) {
-              openMenu(
-                { x: rect.left, y: rect.bottom + 4 },
-                foldedHeaderControls(toolsSlot.current),
-              );
+              openMenu({ x: rect.left, y: rect.bottom + 4 }, [
+                ...foldedHeaderControls(toolsSlot.current),
+                ...foldedHeaderControls(expandSlot.current),
+              ]);
             }
           }}
         >
@@ -322,8 +326,9 @@ export function ProjectThreadHeader(props: {
       </Tip>
       <Tip label={props.expanded ? "Restore panel" : "Expand panel"}>
         <button
+          ref={expandSlot}
           type="button"
-          className="sws-icon-button"
+          className="sws-icon-button sws-thread-expand"
           aria-label={props.expanded ? "Restore panel" : "Expand panel"}
           aria-pressed={props.expanded}
           onClick={props.onToggleExpanded}

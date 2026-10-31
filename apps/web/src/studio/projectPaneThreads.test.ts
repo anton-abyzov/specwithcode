@@ -72,6 +72,34 @@ describe("projectPaneThread", () => {
       environmentId: "laptop",
     });
   });
+  it("opens a worker the coordinator started on another machine beside the coordinator", () => {
+    const remote = shell("linux-proof", { environmentId: "ministorm", projectId: "their-copy" });
+    const withRemote = {
+      ...scope,
+      remoteThreads: [{ environmentId: "ministorm", threadId: "linux-proof" }],
+    };
+    expect(projectPaneThread([remote], withRemote, "linux-proof", "ministorm")).toEqual({
+      kind: "pane",
+      thread: remote,
+    });
+    expect(projectPaneThread([remote], scope, "linux-proof", "ministorm").kind).toBe("elsewhere");
+    expect(
+      projectPaneThread(
+        [{ ...remote, deletedAt: "2026-10-31T00:00:00.000Z" }],
+        withRemote,
+        "linux-proof",
+        "ministorm",
+      ),
+    ).toEqual({ kind: "deleted" });
+  });
+  it("waits for the remote workers before sending another machine's thread full page", () => {
+    const remote = shell("linux-proof", { environmentId: "ministorm", projectId: "their-copy" });
+    const pending = { ...scope, remoteThreadsPending: true };
+    expect(projectPaneThread([remote], pending, "linux-proof", "ministorm")).toEqual({
+      kind: "unknown",
+    });
+    expect(paneSelectionCorrection({ kind: "unknown" }, false)).toEqual({ kind: "none" });
+  });
   it("sends a link with no machine to the one machine that has the thread", () => {
     const threads = [shell("remote", { environmentId: "laptop" })];
     expect(projectPaneThread(threads, scope, "remote")).toEqual({

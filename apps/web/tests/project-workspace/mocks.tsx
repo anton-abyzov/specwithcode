@@ -1535,3 +1535,10 @@ export function updateAttentionThread(id: string, changes: Record<string, unknow
   shells = shells.map((thread) => (thread.id === id ? { ...thread, ...changes } : thread));
   shellListeners.forEach((notify) => notify());
 }
+// Connect discovery: this fixture reaches no relay.
+export const useRelayEnvironmentDiscovery = () => ({
+  environments: new Map(),
+  refreshing: false,
+  offline: false,
+  error: { _tag: "None" },
+});

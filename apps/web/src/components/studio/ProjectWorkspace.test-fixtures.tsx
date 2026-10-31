@@ -646,7 +646,10 @@ vi.mock("../../studio/useProjectFolderHealth", async (importOriginal) => {
       state.realFolderHealth ? actual.useProjectFolderHealth(project) : state.folderHealth,
   };
 });
-vi.mock("./RemoteWorkerCards", () => ({ RemoteWorkerCards: () => null }));
+vi.mock("./RemoteWorkerCards", () => ({
+  RemoteWorkerCards: () => null,
+  RemoteWorkerCardList: () => null,
+}));
 vi.mock("../../studio/useProjectAttention", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../studio/useProjectAttention")>();
   const { aggregateProjectAttention } =
@@ -681,7 +684,13 @@ vi.mock("../../studio/useProjectAttention", async (importOriginal) => {
   };
 });
 vi.mock("../../studio/fleet", () => ({
-  useProjectRemoteWorkers: () => ({ workers: [], available: false, refresh: () => {} }),
+  REMOTE_WORKERS_REFRESH_MS: 10_000,
+  useProjectRemoteWorkers: () => ({
+    workers: [],
+    loaded: true,
+    available: false,
+    refresh: () => {},
+  }),
   useStudioFleet: () => ({ snapshot: null, loading: false, failed: false, refresh: () => {} }),
 }));
 vi.mock("./shell/LibraryPane", () => ({ LibraryPane: () => <p>Library pane</p> }));

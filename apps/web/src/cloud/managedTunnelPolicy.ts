@@ -9,5 +9,5 @@ export function useManagedTunnelPolicyLabel(): string | null {
     ? null
     : policy.kind === "unlimited"
       ? "Connect machines: Unlimited"
-      : `Connect machines: Up to ${policy.maxTunnels}`;
+      : `Connect machines: Up to ${policy.maxTunnels.toLocaleString("en-US")}`;
 }

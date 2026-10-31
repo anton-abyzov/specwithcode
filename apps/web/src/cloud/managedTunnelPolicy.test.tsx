@@ -34,6 +34,14 @@ describe("Connect account policy presentation", () => {
       );
     });
     expect(root.toJSON()).toMatchObject({ children: ["Connect machines: Up to 3"] });
+    await act(async () => {
+      root.update(
+        <ManagedTunnelPolicyContext value={{ kind: "limited", maxTunnels: 1_000_000 }}>
+          <PolicyLabel />
+        </ManagedTunnelPolicyContext>,
+      );
+    });
+    expect(root.toJSON()).toMatchObject({ children: ["Connect machines: Up to 1,000,000"] });
     await act(async () => root.unmount());
   });
 });

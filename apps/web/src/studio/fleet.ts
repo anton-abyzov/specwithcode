@@ -20,6 +20,7 @@ import { environmentSession, readEnvironmentScope, readPreparedConnection } from
 import type {
   StudioFleetAddResult,
   StudioFleetInviteProblem,
+  StudioFleetRemoteWorkersResult,
   StudioFleetRemoveResult,
   StudioFleetInviteResult,
   StudioFleetSnapshot,
@@ -143,6 +144,21 @@ export function fleetRunsWorkers(snapshot: StudioFleetSnapshot | null): boolean 
   return snapshot?.machines.some((machine) => machine.workers !== undefined) ?? false;
 }
 
+/**
+ * Whether the project's remote worker list is known: the server answered with
+ * one, or its fleet runs no workers, or a read failed. The request's own null
+ * answer only means its connection or fleet snapshot is not ready yet.
+ */
+export function remoteWorkersLoaded(
+  workers: AsyncResult.AsyncResult<StudioFleetRemoteWorkersResult | null, unknown>,
+  fleet: AsyncResult.AsyncResult<StudioFleetSnapshot | null, unknown>,
+): boolean {
+  if (workers._tag === "Failure" || fleet._tag === "Failure") return true;
+  if (Option.getOrNull(AsyncResult.value(workers)) !== null) return true;
+  const snapshot = Option.getOrNull(AsyncResult.value(fleet));
+  return snapshot !== null && !fleetRunsWorkers(snapshot);
+}
+
 /** Workers this project's coordinator started on other machines, as this server last saw them. */
 export function useProjectRemoteWorkers(environmentId: EnvironmentId, projectId: ProjectId) {
   const atom = remoteWorkersAtom(JSON.stringify({ environmentId, projectId }));
@@ -150,6 +166,8 @@ export function useProjectRemoteWorkers(environmentId: EnvironmentId, projectId:
   const fleet = useAtomValue(fleetAtom(environmentId));
   return {
     workers: Option.getOrNull(AsyncResult.value(result))?.workers ?? [],
+    /** The first answer is in, so an empty list means none rather than not yet known. */
+    loaded: remoteWorkersLoaded(result, fleet),
     /** Whether there is anything to poll for. */
     available: fleetRunsWorkers(Option.getOrNull(AsyncResult.value(fleet))),
     refresh: () => appAtomRegistry.refresh(atom),

@@ -1255,6 +1255,10 @@ const make = Effect.gen(function* () {
           lastStatus: row.lastStatus,
           reachable,
           updatedAt: row.updatedAt as StudioFleetRemoteWorker["updatedAt"],
+          // An adopted worker started in the replaced coordinator's conversation, not this one.
+          ...(row.adoptedFrom
+            ? {}
+            : { launchedAt: row.launchStartedAt as StudioFleetRemoteWorker["updatedAt"] }),
         })),
       );
     });

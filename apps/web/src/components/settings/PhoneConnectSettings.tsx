@@ -7,6 +7,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentScope } from "~/state/session";
+import { isMacPlatform } from "~/lib/utils";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { Button } from "../ui/button";
 import {
@@ -40,7 +41,7 @@ export function isPhoneConnectShown(): boolean {
 }
 
 /**
- * The one-click way to reach this Mac from the iPhone: sign in, and the Mac
+ * The one-click way to reach this computer from the iPhone: sign in, and it
  * links itself to SpecWithCode Connect with its own tunnel. Direct pairing
  * (Tailscale or the same network) stays below as a folded advanced option.
  */
@@ -98,6 +99,8 @@ function ConfiguredPhoneConnectSettings() {
 
   if (step === "hidden") return null;
 
+  // Linux and Windows desktops run this card too: name the machine they are on.
+  const computer = isMacPlatform(navigator.platform) ? "Mac" : "computer";
   const row = (() => {
     switch (step) {
       case "loading":
@@ -120,7 +123,7 @@ function ConfiguredPhoneConnectSettings() {
       case "sign-in":
         return (
           <SettingsRow
-            title="Sign in to reach this Mac from your iPhone"
+            title={`Sign in to reach this ${computer} from your iPhone`}
             description="Use the same account on the iPhone app. No Tailscale, VPN or open ports."
             control={
               <Button
@@ -139,14 +142,14 @@ function ConfiguredPhoneConnectSettings() {
         return (
           <SettingsRow
             title="This window cannot turn on SpecWithCode Connect"
-            description="Open SpecWithCode on this Mac itself, or pair this connection with Manage relay permission."
+            description={`Open SpecWithCode on this ${computer} itself, or pair this connection with Manage relay permission.`}
           />
         );
       case "turn-on":
         return (
           <SettingsRow
-            title="Make this Mac reachable from your iPhone"
-            description="This Mac gets a private address through SpecWithCode Connect that only your account can use."
+            title={`Make this ${computer} reachable from your iPhone`}
+            description={`This ${computer} gets a private address through SpecWithCode Connect that only your account can use.`}
             status={operationError ?? linkState.error}
             control={
               <Button size="sm" disabled={busy} onClick={() => void turnOn()}>
@@ -158,8 +161,8 @@ function ConfiguredPhoneConnectSettings() {
       case "ready":
         return (
           <SettingsRow
-            title="This Mac is ready for your iPhone"
-            description="Open SpecWithCode on the iPhone and sign in with the same account. This Mac appears in its list."
+            title={`This ${computer} is ready for your iPhone`}
+            description={`Open SpecWithCode on the iPhone and sign in with the same account. This ${computer} appears in its list.`}
             status={operationError ?? linkState.error}
           />
         );

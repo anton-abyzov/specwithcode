@@ -1052,8 +1052,21 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-size: 13.5px;
 }
 .sws-topbar {
+  container: sws-topbar / inline-size;
   gap: 8px;
   border-bottom: 0;
+}
+/* The coordinator column narrows when a thread panel opens beside it, whatever the
+   window width: its labels fold by the column, not the viewport. */
+@container sws-topbar (max-width: 620px) {
+  .sws-top-actions [data-timeline-detail-label] {
+    display: none;
+  }
+}
+@container sws-topbar (max-width: 480px) {
+  .sws-top-actions .sws-overview-toggle > span:not(.sws-count) {
+    display: none;
+  }
 }
 .sws-project-id {
   flex: 0 1 auto;
@@ -2864,6 +2877,25 @@ html.dark[data-theme-id]:not([data-theme-id=""])
     display: none;
   }
   .sws-thread-resolve-label {
+    display: none;
+  }
+}
+/* The replies menu keeps only its icon before anything else gives way; its name and
+   tooltip still say what it shows. On Linux and Windows the native window buttons take
+   the right end of this row, so the container is already that much narrower. */
+@container (max-width: 640px) {
+  .sws-thread-head [data-timeline-detail-label] {
+    display: none;
+  }
+}
+/* Narrowest: the title may shrink to its ellipsis and Expand moves into the action
+   menu, so the replies menu, Resolve, the action menu and Close stay clear of the
+   window buttons. */
+@container (max-width: 360px) {
+  .sws-thread-head-text {
+    min-width: 0;
+  }
+  .sws-thread-expand {
     display: none;
   }
 }

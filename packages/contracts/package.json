@@ -1,6 +1,6 @@
 {
   "name": "@specweave-studio/contracts",
-  "version": "1.0.141",
+  "version": "1.0.142",
   "private": true,
   "files": [
     "dist"

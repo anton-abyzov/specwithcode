@@ -299,6 +299,18 @@ describe("an open thread's header", () => {
       expect.objectContaining({ label: "Hide terminal drawer" }),
     ]);
   });
+  it("offers Expand in the action menu while the narrow header hides it", async () => {
+    await render();
+    const expand = button("Expand panel");
+    await act(async () => button("Thread actions").click());
+    expect(state.openMenu).toHaveBeenLastCalledWith(expect.any(Object), []);
+    expand.style.display = "none";
+    await act(async () => button("Thread actions").click());
+    const items = state.openMenu.mock.lastCall![1] as ReturnType<typeof foldedHeaderControls>;
+    expect(items).toMatchObject([{ label: "Expand panel", icon: "maximize", disabled: false }]);
+    items[0]!.onSelect();
+    expect(handlers.onToggleExpanded).toHaveBeenCalled();
+  });
   it("drags the window from the title row in the desktop app", async () => {
     state.isElectron = true;
     await render();
