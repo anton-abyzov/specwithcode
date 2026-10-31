@@ -165,6 +165,14 @@ export const layer = Api.make(
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    const clerkJwtKey = Option.getOrUndefined(
+      yield* Config.String("CLERK_JWT_KEY").pipe(
+        Config.option,
+        Config.map(
+          Option.flatMap((value) => (value.trim() ? Option.some(value.trim()) : Option.none())),
+        ),
+      ),
+    );
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
@@ -216,6 +224,7 @@ export const layer = Api.make(
         clerkSecretKey,
         clerkPublishableKey,
         clerkJwtAudience,
+        ...(clerkJwtKey ? { clerkJwtKey } : {}),
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain,

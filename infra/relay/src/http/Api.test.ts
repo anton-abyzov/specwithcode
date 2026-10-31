@@ -54,6 +54,7 @@ import {
   traceRelayHttpRequestWith,
   unlinkEnvironmentRecord,
   verifyRelayClientBearerToken,
+  clearClerkOAuthVerificationCache,
   verifyEnvironmentTunnelRecoveryProof,
   withoutCapturedParentSpan,
 } from "./Api.ts";
@@ -338,6 +339,115 @@ describe("relay client authentication", () => {
         }),
       ),
     ),
+  );
+});
+
+describe("relay client authentication without Clerk round trips", () => {
+  const resetClerk = Effect.sync(() => {
+    vi.mocked(verifyToken).mockReset();
+    vi.mocked(createClerkClient).mockReset();
+    clearClerkOAuthVerificationCache();
+  });
+  const pinnedSettings = {
+    ...relaySettings,
+    clerkJwtKey: "-----BEGIN PUBLIC KEY-----\nkey\n-----END PUBLIC KEY-----",
+  };
+
+  it.effect("verifies session JWTs with the pinned Clerk key", () =>
+    Effect.gen(function* () {
+      vi.mocked(verifyToken).mockResolvedValue({
+        sub: "user_session",
+        aud: relaySettings.clerkJwtAudience,
+      } as never);
+
+      expect(yield* verifyRelayClientBearerToken(pinnedSettings, "a.b.c")).toEqual({
+        sub: "user_session",
+        mode: "clerk_session_bearer",
+      });
+      expect(verifyToken).toHaveBeenCalledTimes(1);
+      expect(verifyToken).toHaveBeenCalledWith("a.b.c", {
+        jwtKey: pinnedSettings.clerkJwtKey,
+        audience: relaySettings.clerkJwtAudience,
+      });
+    }).pipe(Effect.ensuring(resetClerk)),
+  );
+
+  it.effect("keeps expired tokens rejected without a remote check", () =>
+    Effect.gen(function* () {
+      vi.mocked(verifyToken).mockRejectedValue(
+        Object.assign(new Error("expired"), { reason: "token-expired" }),
+      );
+      vi.mocked(createClerkClient).mockReturnValue({
+        authenticateRequest: vi
+          .fn()
+          .mockResolvedValue({ isAuthenticated: false, toAuth: () => ({}) }),
+      } as never);
+      const result = yield* Effect.result(verifyRelayClientBearerToken(pinnedSettings, "a.b.c"));
+      expect(result._tag).toBe("Failure");
+      expect(verifyToken).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.ensuring(resetClerk)),
+  );
+
+  it.effect("falls back to remote JWKS when the pinned key no longer signs", () =>
+    Effect.gen(function* () {
+      vi.mocked(verifyToken)
+        .mockRejectedValueOnce(
+          Object.assign(new Error("bad signature"), { reason: "token-invalid-signature" }),
+        )
+        .mockResolvedValueOnce({
+          sub: "user_rotated",
+          aud: relaySettings.clerkJwtAudience,
+        } as never);
+
+      expect(yield* verifyRelayClientBearerToken(pinnedSettings, "a.b.c")).toEqual({
+        sub: "user_rotated",
+        mode: "clerk_session_bearer",
+      });
+      expect(verifyToken).toHaveBeenLastCalledWith("a.b.c", {
+        secretKey: "clerk-secret-key",
+        audience: relaySettings.clerkJwtAudience,
+      });
+    }).pipe(Effect.ensuring(resetClerk)),
+  );
+
+  it.effect("sends opaque OAuth tokens straight to OAuth verification and caches the result", () =>
+    Effect.gen(function* () {
+      const authenticateRequest = vi.fn().mockResolvedValue({
+        isAuthenticated: true,
+        toAuth: () => ({ userId: "user_cli" }),
+      });
+      vi.mocked(createClerkClient).mockReturnValue({ authenticateRequest } as never);
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        expect(yield* verifyRelayClientBearerToken(relaySettings, "oat_cli_token")).toEqual({
+          sub: "user_cli",
+          mode: "clerk_oauth_bearer",
+        });
+      }
+      expect(verifyToken).not.toHaveBeenCalled();
+      expect(authenticateRequest).toHaveBeenCalledTimes(1);
+
+      yield* verifyRelayClientBearerToken(relaySettings, "oat_other_token");
+      expect(authenticateRequest).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.ensuring(resetClerk)),
+  );
+
+  it.effect("does not cache rejected OAuth tokens", () =>
+    Effect.gen(function* () {
+      const authenticateRequest = vi.fn().mockResolvedValue({
+        isAuthenticated: false,
+        toAuth: () => ({ userId: null }),
+      });
+      vi.mocked(createClerkClient).mockReturnValue({ authenticateRequest } as never);
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const result = yield* Effect.result(
+          verifyRelayClientBearerToken(relaySettings, "oat_revoked"),
+        );
+        expect(result._tag).toBe("Failure");
+      }
+      expect(authenticateRequest).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.ensuring(resetClerk)),
   );
 });
 

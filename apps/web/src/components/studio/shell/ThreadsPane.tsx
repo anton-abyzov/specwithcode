@@ -22,7 +22,7 @@ import {
   SlidersVerticalIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
@@ -33,6 +33,11 @@ import {
   type ProjectThreadGroup,
 } from "../../../studio/projectWorkspaceModel";
 import { threadLocation } from "../../../studio/threadLocation";
+import {
+  machineColumnCh,
+  machineColumnLabel,
+  machineFilterOptions,
+} from "../../../studio/threadMachineFilter";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { withRunningSubagents } from "../../../studio/threadSubagents";
 import { useEnvironments } from "../../../state/environments";
@@ -84,6 +89,9 @@ const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
 const SortSchema = Schema.Literals(THREAD_SORTS);
 const FOLDED_STORAGE_KEY = "studio:project-threads-folded:v1";
 const FoldedSchema = Schema.Array(Schema.String);
+// The machine each project's list is narrowed to, by `environmentId:projectId`.
+const MACHINE_FILTER_STORAGE_KEY = "studio:project-threads-machine:v1";
+const MachineFilterSchema = Schema.Record(Schema.String, Schema.String);
 const EMPTY_GROUP_COPY: Partial<Record<ProjectThreadGroup, string>> = {
   "Waiting on you": "No decisions or replies requested.",
   Waiting: "No dependency waits.",
@@ -111,6 +119,10 @@ export function ThreadsPane({
   ...props
 }: {
   environmentId: EnvironmentId;
+  /** The project whose list this is; its machine filter is remembered under it. */
+  projectId: string;
+  /** Every host has answered, so a machine missing from the list is really gone. */
+  threadsLoaded?: boolean;
   threads: readonly EnvironmentThreadShell[];
   /** Working subagents per `environmentId:threadId`; they roll up into their thread's row. */
   runningSubagents?: ReadonlyMap<string, number>;
@@ -199,6 +211,65 @@ export function ThreadsPane({
         labels.get(environmentId) ?? fallbackLabel ?? name(environmentId),
     };
   }, [environments, props.machineLabels, nickname]);
+  const locate = (thread: EnvironmentThreadShell) =>
+    threadLocation({
+      summary: thread.source,
+      servingEnvironmentId: thread.environmentId,
+      name: machineNames.name,
+      fullName: machineNames.fullName,
+      unreachable,
+    });
+  // Once threads run on several machines, the list can be narrowed to one of them.
+  const machineOptions = useMemo(
+    () =>
+      machineFilterOptions(allThreads, (thread) => {
+        const location = threadLocation({
+          summary: thread.source,
+          servingEnvironmentId: thread.environmentId,
+          name: machineNames.name,
+          fullName: machineNames.fullName,
+          unreachable,
+        });
+        return {
+          machineId: location.executionMachineId,
+          label: location.label.split(" → ").at(-1)!,
+        };
+      }),
+    [allThreads, machineNames, unreachable],
+  );
+  const filterKey = `${props.environmentId}:${props.projectId}`;
+  const [machineFilters, setMachineFilters] = useLocalStorage<
+    Readonly<Record<string, string>>,
+    Readonly<Record<string, string>>
+  >(MACHINE_FILTER_STORAGE_KEY, {}, MachineFilterSchema);
+  const storedFilter = machineFilters[filterKey] ?? null;
+  const machineFilter = machineOptions.some((option) => option.machineId === storedFilter)
+    ? storedFilter
+    : null;
+  const setMachineFilter = (machineId: string | null) =>
+    setMachineFilters((current) => {
+      const { [filterKey]: _dropped, ...rest } = current;
+      return machineId === null ? rest : { ...rest, [filterKey]: machineId };
+    });
+  // Once every host has answered, a machine with no thread left lets the filter go for
+  // good, so a thread that comes back there later is not hidden unasked.
+  const staleFilter = storedFilter !== null && machineFilter === null && props.threadsLoaded;
+  useEffect(() => {
+    if (!staleFilter) return;
+    setMachineFilters((current) => {
+      const { [filterKey]: _dropped, ...rest } = current;
+      return rest;
+    });
+  }, [staleFilter, filterKey]);
+  const machineFilterLabel =
+    machineOptions.find((option) => option.machineId === machineFilter)?.label ?? null;
+  // Sized by what the rows show, so "→ Minis" fits as well as "M4".
+  const machineCh = machineColumnCh(
+    allThreads.flatMap((thread) => {
+      const location = locate(thread);
+      return multiMachine || location.moved ? [machineColumnLabel(location)] : [];
+    }),
+  );
   const {
     progress: incrementProgress,
     unplanned,
@@ -239,7 +310,7 @@ export function ThreadsPane({
       unreachable,
       props.attention,
     );
-    return showUnplannedOnly
+    const unplannedShown = showUnplannedOnly
       ? built.map((entry) => ({
           ...entry,
           threads: entry.threads.filter(
@@ -248,7 +319,23 @@ export function ThreadsPane({
           ),
         }))
       : built;
+    return machineFilter === null
+      ? unplannedShown
+      : unplannedShown.map((entry) => ({
+          ...entry,
+          threads: entry.threads.filter(
+            (thread) =>
+              threadLocation({
+                summary: thread.source,
+                servingEnvironmentId: thread.environmentId,
+                name: machineNames.name,
+                unreachable,
+              }).executionMachineId === machineFilter,
+          ),
+        }));
   }, [
+    machineFilter,
+    machineNames,
     allThreads,
     query,
     sortBy,
@@ -262,7 +349,7 @@ export function ThreadsPane({
   const matches = groups.reduce((sum, group) => sum + group.threads.length, 0);
   const searching = query.trim() !== "";
   // Searching or filtering shows every match: empty groups go, folded ones open.
-  const narrowed = searching || showUnplannedOnly;
+  const narrowed = searching || showUnplannedOnly || machineFilter !== null;
   const offerStarters =
     allThreads.length === 0 && props.starters != null && !props.remoteWorkerCount;
   // The coordinator is not a row here, so a question it asks is offered in the header.
@@ -372,6 +459,44 @@ export function ThreadsPane({
                     ))}
                   </MenuRadioGroup>
                 </MenuGroup>
+                {machineOptions.length > 1 ? (
+                  <>
+                    <MenuSeparator />
+                    <MenuGroup>
+                      <MenuGroupLabel>Machine</MenuGroupLabel>
+                      <MenuRadioGroup
+                        value={machineFilter ?? ""}
+                        onValueChange={(value) => setMachineFilter(value === "" ? null : value)}
+                      >
+                        {[
+                          { machineId: "", label: "All machines", count: null },
+                          ...machineOptions,
+                        ].map((option) => (
+                          <MenuRadioItem
+                            key={option.machineId}
+                            value={option.machineId}
+                            data-machine-filter={option.machineId || "all"}
+                            aria-label={
+                              option.count === null
+                                ? option.label
+                                : `${option.label}, ${option.count} open ${option.count === 1 ? "thread" : "threads"}`
+                            }
+                          >
+                            <span className="flex items-center justify-between gap-6">
+                              <span>
+                                {option.label}
+                                {option.count === null ? null : (
+                                  <span className="text-muted-foreground"> {option.count}</span>
+                                )}
+                              </span>
+                              <MenuRadioItemIndicator />
+                            </span>
+                          </MenuRadioItem>
+                        ))}
+                      </MenuRadioGroup>
+                    </MenuGroup>
+                  </>
+                ) : null}
                 <MenuSeparator />
                 <MenuGroup>
                   <MenuCheckboxItem
@@ -390,6 +515,7 @@ export function ThreadsPane({
       />
       <div
         className="sws-threads-body"
+        style={{ "--sws-machine-col": `${machineCh}ch` } as React.CSSProperties}
         id="sws-pane-threads"
         role="tabpanel"
         aria-labelledby="sws-pane-tab-threads"
@@ -423,6 +549,21 @@ export function ThreadsPane({
               <span className="sws-dot" data-tone="waiting" aria-hidden />
               Coordinator · {attentionActionWord(coordinatorAsk.reason)}
             </button>
+          ) : null}
+          {machineFilterLabel ? (
+            <span className="sws-unplanned-notice" data-machine-filter-pill>
+              <button
+                type="button"
+                className="sws-unplanned-filter"
+                aria-pressed
+                aria-label={`Showing threads on ${machineFilterLabel}. Show all machines`}
+                onClick={() => setMachineFilter(null)}
+              >
+                <LaptopIcon aria-hidden />
+                On {machineFilterLabel}
+                <span className="sws-unplanned-clear">Show all</span>
+              </button>
+            </span>
           ) : null}
           {unplannedCount > 0 && !offerStarters ? (
             <UnplannedThreadsFilter
@@ -548,13 +689,7 @@ export function ThreadsPane({
                             subagentsWorking,
                           ));
                     const rowStatus = statusWord === group ? null : statusWord;
-                    const location = threadLocation({
-                      summary: thread.source,
-                      servingEnvironmentId: thread.environmentId,
-                      name: machineNames.name,
-                      fullName: machineNames.fullName,
-                      unreachable,
-                    });
+                    const location = locate(thread);
                     // A thread that runs away from home says so even in a one-machine project.
                     const machine = multiMachine || location.moved ? location : null;
                     const showDot = tone === "waiting" || tone === "working" || tone === "failed";
@@ -643,30 +778,6 @@ export function ThreadsPane({
                                       <span className="sr-only">, {pullRequest.label}</span>
                                     </span>
                                   ) : null}
-                                  {machine ? (
-                                    <Tooltip>
-                                      <TooltipTrigger
-                                        render={
-                                          <span
-                                            className="sws-thread-machine"
-                                            data-execution={machine.state}
-                                            data-moved={machine.moved || undefined}
-                                          />
-                                        }
-                                      >
-                                        {machine.state === "unknown" ? (
-                                          <WifiOffIcon aria-hidden />
-                                        ) : (
-                                          <LaptopIcon aria-hidden />
-                                        )}
-                                        <span className="sr-only">{machine.description}</span>
-                                        <span aria-hidden>{machine.label}</span>
-                                      </TooltipTrigger>
-                                      <TooltipPopup side="bottom">
-                                        {machine.description}
-                                      </TooltipPopup>
-                                    </Tooltip>
-                                  ) : null}
                                   <HandoffRowBadge
                                     environmentId={thread.environmentId}
                                     threadId={thread.id}
@@ -681,6 +792,34 @@ export function ThreadsPane({
                                 </span>
                               </span>
                             </span>
+                            {machine ? (
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <span
+                                      className="sws-thread-machine"
+                                      data-machine-id={machine.executionMachineId}
+                                      data-execution={machine.state}
+                                      data-moved={machine.moved || undefined}
+                                    />
+                                  }
+                                >
+                                  {machine.state === "unknown" ? (
+                                    <WifiOffIcon aria-hidden />
+                                  ) : (
+                                    <LaptopIcon aria-hidden />
+                                  )}
+                                  <span className="sr-only">{machine.description}</span>
+                                  <span className="sws-thread-machine-name" aria-hidden>
+                                    {machine.moved ? (
+                                      <span className="sws-thread-machine-arrow">→ </span>
+                                    ) : null}
+                                    {machine.label.split(" → ").at(-1)}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipPopup side="bottom">{machine.description}</TooltipPopup>
+                              </Tooltip>
+                            ) : null}
                             <span className="sr-only">
                               ,{" "}
                               {group === "Waiting"

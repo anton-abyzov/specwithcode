@@ -65,6 +65,10 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         reason: "endpoint-unavailable",
         detail: relayProtectedErrorMessage(error),
         traceId: error.traceId,
+        ...(error._tag === "RelayEnvironmentEndpointUnavailableError" &&
+        error.reason === "endpoint_request_failed"
+          ? { machineOffline: true }
+          : {}),
       });
     case "RelayEnvironmentLinkFailedError":
     case "RelayInternalError":

@@ -109,8 +109,8 @@ function textWidth(node: Text): number {
   return range.getBoundingClientRect().width;
 }
 
-/** Chips that already give way before the model unit: the machine name and a long error. */
-const YIELDS_TO_MODEL = ".sws-thread-machine, .sws-thread-error";
+/** Chips that already give way before the model unit: a long error. */
+const YIELDS_TO_MODEL = ".sws-thread-error";
 
 /**
  * The width a following item asks for. A wrapping group (the row's plan, PR and machine

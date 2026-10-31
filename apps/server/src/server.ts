@@ -1252,10 +1252,10 @@ const layerMakeServer = Layer.unwrap(
                     }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
-            // A host without a confirmed marker is on its first boot after the
-            // upgrade. Spread those registrations so an auto-update wave does
-            // not hit the relay all at once.
-            if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
+            // Spread registrations so an auto-update wave does not hit the
+            // relay all at once. A host with a confirmed marker already runs
+            // its tunnel, so the wait only delays origin reconciliation.
+            if (desiredCliLinkMode !== "publish_only") {
               const jitter = yield* Random.nextIntBetween(
                 0,
                 Duration.toMillis(MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER),
@@ -1281,14 +1281,24 @@ const layerMakeServer = Layer.unwrap(
                 .reconcileDesiredLinkIfStillDesired(localOrigin)
                 .pipe(
                   Effect.retry({
-                    while: CloudLink.shouldRetryCloudLink,
+                    while: (error) =>
+                      CloudLink.shouldRetryCloudLink(error) &&
+                      !CloudLink.isStoredLinkRuntimeNotStarted(error),
                     schedule: Schedule.exponential("1 second").pipe(
                       Schedule.modifyDelay(({ duration }) =>
                         Effect.succeed(Duration.min(duration, Duration.seconds(30))),
                       ),
+                      Schedule.jittered,
                       Schedule.upTo({ duration: "10 minutes" }),
                     ),
                   }),
+                  // The link is stored; the registration below starts its
+                  // tunnel once the relay client is ready.
+                  Effect.catchIf(CloudLink.isStoredLinkRuntimeNotStarted, () =>
+                    Effect.logInfo(
+                      "Studio Connect linked; tunnel registration starts its connector",
+                    ).pipe(Effect.as("managed" as const)),
+                  ),
                   Effect.tap((mode) =>
                     mode === null
                       ? Effect.void

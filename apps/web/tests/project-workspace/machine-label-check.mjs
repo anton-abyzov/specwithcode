@@ -34,7 +34,9 @@ try {
         const provider = article.querySelector(".sws-model-provider");
         return {
           id: article.getAttribute("data-thread-id"),
-          machine: machine?.querySelector("span[aria-hidden='true']")?.textContent ?? null,
+          machine:
+            machine?.querySelector(".sws-thread-machine-name, span[aria-hidden='true']")
+              ?.textContent ?? null,
           title: machine?.querySelector(".sr-only")?.textContent ?? null,
           execution: machine?.getAttribute("data-execution") ?? null,
           providerClipped: provider ? provider.scrollWidth > provider.clientWidth + 1 : null,
@@ -48,7 +50,7 @@ try {
     }
     // A thread names where it lives and where it runs once they differ.
     const moved = rows.find((row) => row.id === "moved-worker");
-    NodeAssert.match(moved?.machine ?? "", / → Minis$/u, "a moved thread names both machines");
+    NodeAssert.match(moved?.machine ?? "", /→ Minis$/u, "a moved thread names where it runs");
     NodeAssert.match(moved?.title ?? "", /^Lives on .+ · runs on Anton's Minis$/u);
     const unknown = rows.find((row) => row.id === "unknown-worker");
     NodeAssert.equal(unknown?.execution, "unknown");

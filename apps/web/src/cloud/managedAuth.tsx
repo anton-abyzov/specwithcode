@@ -39,13 +39,19 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     accountId: string;
     policy: RelayManagedTunnelPolicy | null;
   } | null>(null);
+  // Clerk replaces getToken as the session refreshes; the policy belongs to the
+  // account, so a new function must not refetch it.
+  const getTokenRef = useRef(getToken);
+  useEffect(() => {
+    getTokenRef.current = getToken;
+  }, [getToken]);
   useEffect(() => {
     let cancelled = false;
     setAccountPolicy(null);
     if (isLoaded && isSignedIn && userId) {
       void (async () => {
         try {
-          const clerkToken = await getToken(resolveRelayClerkTokenOptions());
+          const clerkToken = await getTokenRef.current(resolveRelayClerkTokenOptions());
           if (!clerkToken || cancelled) return;
           const policy = await runtime.runPromise(
             ManagedRelay.ManagedRelayClient.pipe(
@@ -61,7 +67,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     return () => {
       cancelled = true;
     };
-  }, [getToken, isLoaded, isSignedIn, userId]);
+  }, [isLoaded, isSignedIn, userId]);
   const removeRelayEnvironments = useAtomCommand(environmentCatalog.removeRelayEnvironments, {
     reportFailure: false,
     reportDefect: false,

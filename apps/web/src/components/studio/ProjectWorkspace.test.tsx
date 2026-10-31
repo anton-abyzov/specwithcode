@@ -90,6 +90,44 @@ describe("project coordinator surface", () => {
     // A project on one machine leaves the machine to the composer.
     expect(meta.querySelector(".sws-thread-machine")).toBeNull();
   });
+  it("narrows the threads to the machine chosen for this project, and Show all undoes it", async () => {
+    const onMinis = {
+      source: {
+        ownerMachineId: "host",
+        executionMachineId: "minis",
+        executionMachineLabel: "Anton's Minis",
+        executionState: "running",
+      },
+    } as never;
+    state.shells = [shell("coord"), shell("worker"), shell("linux", onMinis)];
+    localStorage.setItem(
+      "studio:project-threads-machine:v1",
+      JSON.stringify({ "host:project": "minis" }),
+    );
+    await render();
+    const rows = () =>
+      [...container.querySelectorAll(".sws-thread-row")].map((row) =>
+        row.getAttribute("data-thread-id"),
+      );
+    expect(rows()).toEqual(["linux"]);
+    const pill = container.querySelector<HTMLButtonElement>("[data-machine-filter-pill] button")!;
+    expect(pill.getAttribute("aria-label")).toBe("Showing threads on Minis. Show all machines");
+    await act(async () => pill.click());
+    expect(rows().toSorted()).toEqual(["linux", "worker"]);
+    expect(localStorage.getItem("studio:project-threads-machine:v1")).toBe("{}");
+  });
+  it("lets a machine filter go once every host answered and that machine has no thread", async () => {
+    state.shells = [shell("coord"), shell("worker")];
+    localStorage.setItem(
+      "studio:project-threads-machine:v1",
+      JSON.stringify({ "host:project": "gone", "host:other": "minis" }),
+    );
+    await render();
+    expect(container.querySelector("[data-machine-filter-pill]")).toBeNull();
+    expect(localStorage.getItem("studio:project-threads-machine:v1")).toBe(
+      JSON.stringify({ "host:other": "minis" }),
+    );
+  });
   it("names where a thread lives and runs once its execution moved", async () => {
     state.shells = [
       shell("coord"),
@@ -104,7 +142,9 @@ describe("project coordinator surface", () => {
     ];
     await render();
     const chip = container.querySelector("[data-thread-id='worker'] .sws-thread-machine")!;
-    expect(chip.querySelector("span[aria-hidden='true']")?.textContent).toBe("Test host → Minis");
+    // The column names where it runs; the tooltip and screen readers keep both machines.
+    expect(chip.querySelector(".sws-thread-machine-name")?.textContent).toBe("→ Minis");
+    expect(chip.closest(".sws-thread-meta")).toBeNull();
     expect(chip.querySelector(".sr-only")?.textContent).toBe(
       "Lives on Test host · runs on Anton's Minis",
     );

@@ -361,6 +361,34 @@ describe("retryDelayMs", () => {
   });
 });
 
+describe("retryMaxDelayMs", () => {
+  it("waits longer only when the relay reports the machine itself unreachable", () => {
+    const offline = new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      detail: "offline",
+      machineOffline: true,
+    });
+    const provisioning = new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      detail: "provisioning failed",
+    });
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, offline)).toBe(
+      EnvironmentSupervisor.OFFLINE_MACHINE_RETRY_MAX_DELAY_MS,
+    );
+    expect(
+      EnvironmentSupervisor.retryDelayMs(
+        40,
+        0,
+        EnvironmentSupervisor.OFFLINE_MACHINE_RETRY_MAX_DELAY_MS,
+      ),
+    ).toBe(300_000);
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, provisioning)).toBe(300_000);
+    expect(EnvironmentSupervisor.retryMaxDelayMs(true, offline)).toBe(
+      EnvironmentSupervisor.LOOPBACK_RETRY_MAX_DELAY_MS,
+    );
+  });
+});
+
 describe("EnvironmentSupervisor", () => {
   it.effect("exports each relay setup as a standalone linked trace that ends at readiness", () =>
     Effect.gen(function* () {
