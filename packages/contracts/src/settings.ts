@@ -1931,10 +1931,10 @@ export const ServerSettings = Schema.Struct({
    */
   machineNicknames: MachineNicknames.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
-   * Null means inherit: the repository's specweave-studio.json, then "local". The old
-   * default "local" was never persisted (defaults are stripped on write), so
-   * it now decodes as inherit, which resolves the same way because the old
-   * chain also let specweave-studio.json outrank the environment. Null stays off the wire
+   * Retired environment tier for the new-thread workspace, which is now each
+   * project's own choice (its override, then its specweave-studio.json, then
+   * "local"). The key still decodes so settings written by older versions
+   * keep loading, but resolution ignores the value. Null stays off the wire
    * so older clients, which require a literal here, keep decoding.
    */
   defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),

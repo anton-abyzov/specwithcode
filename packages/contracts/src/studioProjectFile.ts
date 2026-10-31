@@ -84,7 +84,7 @@ export const StudioProjectFile = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(
     ThreadEnvMode.annotate({
       description:
-        'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in SpecWithCode overrides this; when neither is set, the global default applies.',
+        'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in SpecWithCode overrides this; when neither is set, new threads start in the current checkout.',
     }),
   ),
   worktreeSubmodules: Schema.optionalKey(

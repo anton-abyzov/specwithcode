@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -108,7 +108,7 @@ function render() {
   act(() => {
     renderer = create(<ProjectDefaultsSettings category="project" />);
   });
-  return renderer!.root.findByProps({ "aria-label": "Workspace" }).findByType("select");
+  return renderer!;
 }
 function renderUseWorktrees() {
   act(() => {
@@ -132,33 +132,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("web workspace default presentation", () => {
-  it("shows automatic for inherited built-in local storage", () => {
+  it("offers no machine-wide workspace choice and points at Projects", () => {
     expect(state.target.settings.defaultThreadEnvMode).toBe("local");
-    expect(render().props.value).toBe("automatic");
-    expect(JSON.stringify(renderer!.toJSON())).toContain(
-      "the current checkout for a folder holding other repositories",
-    );
+    render();
+    const text = JSON.stringify(renderer!.toJSON());
+    expect(text).toContain("Set per project");
+    expect(text).toContain("Open Projects");
+    expect(text).not.toContain("Automatic (Git worktree)");
     // Environment defaults read no project folder.
     expect(state.checkedProject).toBeNull();
   });
-  it.each(["local", "worktree"] as const)("preserves explicit environment %s", (mode) => {
-    state.environment = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: mode };
-    state.target = resolveProjectSettings(state.environment, project, null, null);
-    expect(render().props.value).toBe(mode);
-  });
-  it("shows an explicit checkout file choice", () => {
-    state.target = resolveProjectSettings(state.environment, project, null, {
-      defaultThreadEnvMode: "local",
-    });
-    expect(render().props.value).toBe("local");
-  });
-  it("keeps mixed values distinct and stores automatic as null", () => {
-    state.mixed = true;
-    const picker = render();
-    expect(picker.props.value).toBe("mixed");
-    act(() => picker.props.onChange({ target: { value: "automatic" } }));
-    expect(state.update).toHaveBeenCalledExactlyOnceWith({ defaultThreadEnvMode: null });
-  });
+  it.each(["local", "worktree"] as const)(
+    "ignores a stored environment workspace value of %s",
+    (mode) => {
+      state.environment = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: mode };
+      state.target = resolveProjectSettings(state.environment, project, null, null);
+      expect(state.target.settings.defaultThreadEnvMode).toBe("local");
+      render();
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Set per project");
+    },
+  );
   it("puts every new-thread override on the Project page", () => {
     state.scope = "project";
     renderUseWorktrees();

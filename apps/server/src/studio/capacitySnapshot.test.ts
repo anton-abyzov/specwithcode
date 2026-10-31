@@ -10,6 +10,7 @@ import {
   claudeApiBillingAuthorized,
   nativeCapacityBinding,
   nativeQuotaDenied,
+  nativeSnapshotAuthorized,
   CAPACITY_MAX_AGE_MS,
 } from "./capacitySnapshot.ts";
 import { isDirectClaudeApiKeyProvider } from "@specweave-studio/shared/providerFallback";
@@ -44,6 +45,50 @@ describe("Claude API quota admission", () => {
       ).toBe(false);
     },
   );
+});
+describe("Claude subscription authorization", () => {
+  const claude = (type: string | undefined) => ({
+    ...provider("claudeAgent", "claudeAgent", now),
+    auth: { status: "authenticated" as const, ...(type === undefined ? {} : { type }) },
+  });
+  // Claude Code 2.1.302 reports the renamed 20x plan as "Claude Ultra" (2026-10-30).
+  it.each([
+    "Claude Ultra",
+    "ultra",
+    "claude_ultra_subscription",
+    "max",
+    "Claude Max",
+    "pro",
+    "team",
+    "claude.ai",
+    "Claude Mega",
+  ])("verifies a claude.ai login on the %s plan", (type) =>
+    expect(nativeSnapshotAuthorized(claude(type), now)).toBe(true),
+  );
+  it.each([
+    undefined,
+    "",
+    "subscription-auth-unverified",
+    "status-check-failed",
+    "apiKey",
+    "bedrock",
+    "free",
+    "Claude Free",
+  ])("does not treat %s as a verified subscription", (type) =>
+    expect(nativeSnapshotAuthorized(claude(type), now)).toBe(false),
+  );
+  it("still requires a fresh signed-in snapshot", () => {
+    const p = claude("Claude Ultra");
+    expect(nativeSnapshotAuthorized({ ...p, auth: { ...p.auth, status: "unknown" } }, now)).toBe(
+      false,
+    );
+    expect(
+      nativeSnapshotAuthorized(
+        { ...p, checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - CAPACITY_MAX_AGE_MS - 1)) },
+        now,
+      ),
+    ).toBe(false);
+  });
 });
 describe("capacity snapshot", () => {
   it("returns only safe bounded fields and never forwards source labels, identities, errors or receipts", () => {

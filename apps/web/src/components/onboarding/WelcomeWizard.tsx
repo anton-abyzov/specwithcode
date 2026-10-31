@@ -41,6 +41,8 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
+import { FirstRunUpdateNotice } from "./FirstRunUpdateNotice";
+import { firstStepControl } from "./wizardFocus";
 import { JoinedMachineStep, JoinMachineStep, MachineRoleStep } from "./JoinMachineSteps";
 import {
   groupOnboardingProjects,
@@ -93,6 +95,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Spinner } from "../ui/spinner";
 import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
 import { Dialog } from "../ui/dialog";
+import { DialogCloseButton } from "../ui/dialog-close-button";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
@@ -108,7 +111,10 @@ import { formatRelativeTime } from "../../timestampFormat";
  * On a first run with a server here it first asks what this machine is for.
  * "Connect to an existing one" makes the invitation line for a main machine
  * elsewhere and then opens to that status, skipping agents and projects; the
- * main-machine choice continues with the steps above, unchanged.
+ * main-machine choice continues with the steps above, unchanged. "Decide later"
+ * and the close button, on any step, leave setup for the app with nothing
+ * chosen: there the sidebar can update an old install first. Closing
+ * completes onboarding, so it does not come back on the next launch.
  */
 
 type WizardStep = "role" | "join" | "joined" | "connection" | "agents" | "import";
@@ -256,13 +262,30 @@ export function WelcomeWizard({
     [completeOnboarding, onDone],
   );
 
+  // Without a server here there is nothing to open yet, so pairing stays
+  // required; an import in flight finishes first.
+  const canClose = localAvailable && !isImporting;
+  const leaveSetup = () => {
+    void finish();
+  };
+
   return (
-    <Dialog open disablePointerDismissal onOpenChange={(_, event) => event.cancel()}>
+    <Dialog
+      open
+      disablePointerDismissal
+      onOpenChange={(open, event) => {
+        event.cancel();
+        // Only the close button: Escape also reaches the setup terminal.
+        if (!open && canClose && event.reason === "close-press") leaveSetup();
+      }}
+    >
       <WizardPopup
         size="wide"
         bottomStickOnMobile={false}
         showCloseButton={false}
-        initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
+        initialFocus={() =>
+          document.getElementById("onboarding-pairing-url") ?? firstStepControl() ?? true
+        }
       >
         <WizardHeader
           title="Set up SpecWithCode"
@@ -286,6 +309,7 @@ export function WelcomeWizard({
               }}
             />
           ) : null}
+          <FirstRunUpdateNotice />
         </WizardHeader>
 
         <WizardPanel holdHeight={isLoadingProjects}>
@@ -297,6 +321,7 @@ export function WelcomeWizard({
                 chooseRole("main");
                 setStep("connection");
               }}
+              onLater={leaveSetup}
             />
           ) : step === "join" ? (
             <JoinMachineStep
@@ -353,6 +378,8 @@ export function WelcomeWizard({
             />
           )}
         </WizardPanel>
+        {/* Last, as in every dialog: setup opens focused on its content. */}
+        {canClose ? <DialogCloseButton aria-label="Close setup" title="Close setup" /> : null}
       </WizardPopup>
       <ChatGptWelcomeCoordinator />
     </Dialog>

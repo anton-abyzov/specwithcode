@@ -44,6 +44,17 @@ export interface RemoteWorkerFollowerTimingsShape {
   /** Wakes delivered this recently are re-sent at boot, in case the database lost them. */
   readonly redeliverWithinMs: number;
   readonly maxFollowsPerMachine: number;
+  /**
+   * How long a failed run is held back before it is reported, in case the
+   * other machine's automatic fallback starts a newer run in the same thread.
+   */
+  readonly fallbackGraceMs: number;
+  /**
+   * Failed rows this recent are checked at boot for a fallback run reported
+   * before fallback runs were followed. Older ones stay as they are: a later
+   * run there is more likely someone's own message than a fallback.
+   */
+  readonly recheckFailedWithinMs: number;
 }
 
 export const RemoteWorkerFollowerTimings = Context.Reference<RemoteWorkerFollowerTimingsShape>(
@@ -59,6 +70,9 @@ export const RemoteWorkerFollowerTimings = Context.Reference<RemoteWorkerFollowe
       launchStaleMs: 2 * 60_000,
       redeliverWithinMs: 6 * 60 * 60_000,
       maxFollowsPerMachine: 16,
+      // The other machine's fallback sweep runs every 30s and is woken by the failure.
+      fallbackGraceMs: 90_000,
+      recheckFailedWithinMs: 2 * 24 * 60 * 60_000,
     }),
   },
 );
@@ -350,6 +364,39 @@ const make = Effect.gen(function* () {
     runId !== null &&
     row.followedRunId !== runId;
 
+  /**
+   * After `runId` failed: the newer run the other machine started in the
+   * same thread meanwhile, such as its automatic fallback after a usage
+   * limit, or undefined once none appears within the grace window.
+   */
+  const newerRun = (
+    row: RemoteWorkerStore.RemoteWorkerRecord,
+    runId: string | null,
+    graceMs = timings.fallbackGraceMs,
+  ) =>
+    Effect.gen(function* () {
+      if (row.remoteThreadId === null || runId === null) return undefined;
+      const deadline = (yield* now) + graceMs;
+      while (true) {
+        const semaphore = yield* permitFor(row.machineId);
+        // No runId: the thread's latest run, answered at once.
+        const latest = yield* semaphore
+          .withPermits(1)(
+            client.call({
+              machineId: row.machineId,
+              tool: "studio_thread_wait",
+              arguments: { threadId: row.remoteThreadId, timeoutMs: 1 },
+            }),
+          )
+          .pipe(Effect.result);
+        if (latest._tag === "Failure") return undefined;
+        const answer = isRecord(latest.success) ? latest.success : {};
+        if (typeof answer.runId === "string" && answer.runId !== runId) return answer.runId;
+        if ((yield* now) >= deadline) return undefined;
+        yield* Effect.sleep(Duration.millis(timings.backoffStartMs));
+      }
+    });
+
   const delivered = (row: RemoteWorkerStore.RemoteWorkerRecord, key: string) =>
     row.deliveredRunIds.includes(key)
       ? row.deliveredRunIds
@@ -508,6 +555,17 @@ const make = Effect.gen(function* () {
               yield* Effect.sleep(Duration.millis(timings.backoffStartMs));
             continue;
           }
+          // A failed run may be followed by the other machine's fallback run; report that one instead.
+          const next = status === "failed" ? yield* newerRun(row, runId) : undefined;
+          if (next !== undefined) {
+            // The caller may have marked the failed run finished itself meanwhile.
+            yield* update(rowId, (current) =>
+              movedOn(current, runId) || (current.state !== "following" && current.state !== "idle")
+                ? {}
+                : { state: "following", followedRunId: next },
+            );
+            continue;
+          }
           if (yield* deliver(row, runId, status)) continue;
           return;
         }
@@ -569,6 +627,27 @@ const make = Effect.gen(function* () {
 
   const follow: RemoteWorkerFollower["Service"]["follow"] = (rowId) =>
     exclusive(`follow:${rowId}`, followLoop(rowId));
+
+  /**
+   * A row reported failed before fallback runs were followed: picks up the
+   * run the other machine started after it, so its card shows how it ended.
+   */
+  const recheckFailed = (rowId: string) =>
+    exclusive(
+      `recheck:${rowId}`,
+      Effect.gen(function* () {
+        const row = yield* findRow(rowId);
+        if (!row || row.state !== "idle" || row.lastStatus !== "failed") return;
+        const next = yield* newerRun(row, row.followedRunId, 0);
+        if (next === undefined || row.deliveredRunIds.includes(next)) return;
+        const moved = yield* update(rowId, (current) =>
+          current.state === "idle" && current.lastStatus === "failed"
+            ? { state: "following", followedRunId: next }
+            : {},
+        );
+        if (moved?.state === "following") yield* follow(rowId);
+      }),
+    );
 
   const reconcile: RemoteWorkerFollower["Service"]["reconcile"] = (row) =>
     Effect.gen(function* () {
@@ -706,6 +785,12 @@ const make = Effect.gen(function* () {
         current - Date.parse(row.updatedAt) < timings.redeliverWithinMs
       )
         yield* redeliver(row);
+      if (
+        row.state === "idle" &&
+        row.lastStatus === "failed" &&
+        current - Date.parse(row.updatedAt) < timings.recheckFailedWithinMs
+      )
+        yield* recheckFailed(row.id);
     }
     yield* authSupervisor.pipe(
       Effect.repeat(Schedule.spaced(Duration.millis(timings.authPollMs))),

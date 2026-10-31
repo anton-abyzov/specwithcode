@@ -1044,7 +1044,15 @@ for (const { platform, installPath, editor, args } of [
     args: ["/workspace with spaces/file.ts:12:4"],
   },
 ] as const) {
-  it.effect.skipIf(windowsHost && platform !== "win32")(
+  // The linux branch also probes fixed system folders before the home-relative install, so a
+  // real launcher there (a JetBrains `idea` in /usr/local/bin on a developer Mac) wins over
+  // the fixture. Skip on such a host rather than read the machine's own install.
+  const shadowedOnHost =
+    platform === "linux" &&
+    ["/usr/local/bin", "/usr/bin", "/snap/bin"].some((dir) =>
+      NodeFS.existsSync(NodePath.join(dir, NodePath.basename(installPath))),
+    );
+  it.effect.skipIf((windowsHost && platform !== "win32") || shadowedOnHost)(
     `discovers and launches ${editor} outside PATH on ${platform}`,
     () =>
       Effect.gen(function* () {

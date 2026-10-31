@@ -72,6 +72,7 @@ import {
 import {
   decodeStatusHistory,
   emptyStatusHistory,
+  failingSince,
   recordStatusChecks,
   recordUnexpectedStop,
   type StatusHistory,
@@ -96,12 +97,28 @@ export class StatusMonitor extends Context.Service<
   }
 >()("specweave-studio/statusPage/StatusMonitor") {}
 
-const statuspageFeed = (id: FeedId, include: (name: string) => boolean) => (raw: string | null) =>
-  parseStatuspageSummary(raw, { serviceId: id, pageUrl: FEEDS[id].pageUrl, include });
+const statuspageFeed =
+  (
+    id: FeedId,
+    include: (name: string) => boolean,
+    titles: { readonly incidentTitle?: RegExp; readonly otherProducts?: RegExp } = {},
+  ) =>
+  (raw: string | null) =>
+    parseStatuspageSummary(raw, {
+      serviceId: id,
+      pageUrl: FEEDS[id].pageUrl,
+      include,
+      ...(titles.incidentTitle ? { incidentTitle: titles.incidentTitle } : {}),
+      ...(titles.otherProducts ? { otherProducts: titles.otherProducts } : {}),
+    });
 
 const FEED_PARSERS: Record<FeedId, (raw: string | null, now: number) => FeedReading> = {
   claude: statuspageFeed("claude", (name) => PROVIDERS.claude.components!.test(name)),
-  openai: statuspageFeed("openai", (name) => PROVIDERS.codex.components!.test(name)),
+  openai: statuspageFeed(
+    "openai",
+    (name) => PROVIDERS.codex.components!.test(name),
+    PROVIDERS.codex,
+  ),
   github: statuspageFeed(
     "github",
     (name) => GITHUB_COMPONENTS.test(name) || PROVIDERS.copilot.components!.test(name),
@@ -292,6 +309,7 @@ export const make = Effect.gen(function* () {
       }),
       now,
     );
+    const previous = yield* currentHistory;
     const inputs: StatusInputs = {
       now,
       serverVersion: packageJson.version,
@@ -306,9 +324,14 @@ export const make = Effect.gen(function* () {
       feeds,
       releaseFeedReachable: releaseFeed,
       healthWatch,
+      failingSince: Object.fromEntries(
+        Object.keys(previous.streaks).flatMap((serviceId) => {
+          const since = failingSince(previous, serviceId);
+          return since === null ? [] : [[serviceId, since]];
+        }),
+      ),
     };
     const services = buildStatusServices(inputs);
-    const previous = yield* currentHistory;
     const next = recordStatusChecks(
       previous,
       services.map((service) => ({
@@ -317,6 +340,7 @@ export const make = Effect.gen(function* () {
         level: service.level,
         note: service.level === "operational" ? null : service.detail,
         tracksIncidents: service.tracksIncidents,
+        ...(service.dormant ? { dormant: true } : {}),
       })),
       now,
     );

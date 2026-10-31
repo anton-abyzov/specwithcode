@@ -99,6 +99,7 @@ vi.mock("../ui/dialog", () => ({
   DialogTitle: "div",
   DialogHeader: "div",
 }));
+vi.mock("../ui/dialog-close-button", () => ({ DialogCloseButton: "button" }));
 vi.mock("../ui/wizard", () => ({
   WizardPanel: "div",
   WizardPopup: "div",

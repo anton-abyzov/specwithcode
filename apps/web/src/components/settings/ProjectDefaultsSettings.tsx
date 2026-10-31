@@ -18,7 +18,7 @@ import {
 } from "../../providerInstances";
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
+import { WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { ProviderLimitSettings } from "./ProviderLimitSettings";
 import { ModelLanesSettings } from "./ModelLanesSettings";
@@ -128,16 +128,10 @@ export function ProjectDefaultsSettings({
   const worktreesRecommendation = folderLayout
     ? worktreesSettingRecommendation(folderLayout)
     : null;
-  // File-backed submodule settings show the effective value. Workspace also
-  // exposes Automatic so an inherited Git-aware choice is never shown as an
-  // explicit current-checkout preference.
+  // File-backed submodule settings show the effective value.
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
-  const workspaceMode =
-    target?.sources.defaultThreadEnvMode === "environment"
-      ? representative?.serverConfig?.settings.defaultThreadEnvMode
-      : target?.settings.defaultThreadEnvMode;
 
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
@@ -262,9 +256,8 @@ export function ProjectDefaultsSettings({
         <>
           New threads in this project, including ones the coordinator starts, open in their own git
           worktree off the project's current branch. A folder holding other repositories, such as an
-          umbrella, keeps its threads in the folder. Off: they work in the project folder. Not set:
-          coordinator threads work in the project folder and chats you start follow this machine's
-          Workspace default.
+          umbrella, keeps its threads in the folder. Off or not set: new threads work in the project
+          folder. There is no machine-wide workspace default.
           {worktreesRecommendation ? (
             <span className="mt-1 block text-foreground" data-workspace-recommendation="">
               {worktreesRecommendation}
@@ -292,49 +285,22 @@ export function ProjectDefaultsSettings({
       }
     />
   );
+  // Where new threads start is each project's own choice, with no
+  // machine-wide default above it, so the environment page only points at
+  // the per-project switch.
   const environmentWorkspaceRow = (
     <SettingsRow
-      serverScoped
-      settingKeys={["defaultThreadEnvMode"]}
-      mixed={mixedWorkspace}
       id={searchableSetting("new-threads").id}
       title="Workspace"
-      description="Automatic uses a new worktree for a project that is one Git repository, and the current checkout for a folder holding other repositories (an umbrella or several services) or no repository. Explicit project and specweave-studio.json choices win; threads a coordinator starts get a worktree only when their project turns on Use worktrees. Worktree storage is configured separately in Storage."
-      resetAction={
-        settings.defaultThreadEnvMode !== null ? (
-          <SettingResetButton
-            label="default workspace"
-            onClick={() => updateSettings({ defaultThreadEnvMode: null })}
-          />
-        ) : null
-      }
+      description="Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage."
       control={
-        <Select
-          value={mixedWorkspace ? null : (workspaceMode ?? "automatic")}
-          onValueChange={(value) => {
-            if (value === "automatic" || value === "local" || value === "worktree")
-              updateSettings({ defaultThreadEnvMode: value === "automatic" ? null : value });
-          }}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void navigate({ to: "/settings/projects" })}
         >
-          <SelectTrigger size="sm" aria-label="Default workspace">
-            <SelectValue>
-              {(value: string | null) =>
-                value === "local" || value === "worktree"
-                  ? resolveEnvModeLabel(value)
-                  : unavailable
-                    ? "Unavailable"
-                    : value === "automatic"
-                      ? "Automatic (Git worktree)"
-                      : "Mixed"
-              }
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="automatic">Automatic (Git worktree)</SelectItem>
-            <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-            <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
-          </SelectPopup>
-        </Select>
+          Open Projects
+        </Button>
       }
     />
   );

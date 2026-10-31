@@ -4,12 +4,6 @@ import {
   projectWorkspaceIntentText,
 } from "../studio/projectCoordinatorDraft";
 import { projectWorkspaceSearch } from "../studio/projectPaneThreads";
-import { holdsSeparateClones } from "../lib/folderLayoutGuidance";
-import { readNewThreadWorkspaceDefault } from "../lib/newThreadWorkspaceDefault";
-import {
-  readProjectFolderCheck,
-  useProjectFolderCheckCommand,
-} from "../studio/useProjectFolderHealth";
 import { useAtomValue } from "@effect/atom-react";
 import {
   scopedProjectKey,
@@ -88,7 +82,6 @@ export function useNewThreadHandler() {
   const providerModelPreferences = useClientSettings(
     (settings) => settings.providerModelPreferences,
   );
-  const runFolderCheck = useProjectFolderCheckCommand();
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -215,31 +208,20 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
           destinationDraftId,
         });
-      // The shared resolver owns the priority order. The specweave-studio.json read is
-      // skipped entirely when a higher-priority source decides, and its
-      // query atom caches per project after the first call.
+      // The workspace is the project's own choice: its setting, then its
+      // specweave-studio.json, then the current checkout. There is no machine-wide
+      // workspace default and no Git-aware automatic. The file read is
+      // skipped entirely when the project setting decides, and its query
+      // atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-        const consultProjectFile =
-          project !== undefined && projectSettings.settings.defaultThreadEnvMode === null;
-        const projectFile = consultProjectFile
-          ? await readStudioProjectFile(project.environmentId, project.workspaceRoot)
-          : null;
-        return readNewThreadWorkspaceDefault({
-          configuredMode:
-            projectSettings.settings.defaultThreadEnvMode ??
-            projectFile?.defaultThreadEnvMode ??
-            null,
-          environmentId: projectRef.environmentId,
-          workspaceRoot: project?.workspaceRoot,
-          ...(project !== undefined
-            ? {
-                readHoldsSeparateClones: () =>
-                  readProjectFolderCheck(runFolderCheck, project).then((check) =>
-                    check?.layout ? holdsSeparateClones(check.layout) : undefined,
-                  ),
-              }
-            : {}),
-        });
+        const configured = projectSettings.settings.defaultThreadEnvMode;
+        if (configured !== null) return configured;
+        if (project === undefined) return "local";
+        const projectFile = await readStudioProjectFile(
+          project.environmentId,
+          project.workspaceRoot,
+        );
+        return projectFile?.defaultThreadEnvMode ?? "local";
       };
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
@@ -521,7 +503,6 @@ export function useNewThreadHandler() {
       projectGroupingSettings,
       router,
       legacySidebarEnabled,
-      runFolderCheck,
     ],
   );
 }

@@ -1,8 +1,7 @@
 /**
  * Once a project is added, says which workspace suits its folder: the current
  * checkout for an umbrella or several service clones, worktrees for one Git
- * repository. It reads the project's own folder check (the same cached one the
- * new-thread default reads) and changes no setting.
+ * repository. It reads the project's own folder check and changes no setting.
  *
  * @module workspaceGuidanceToast
  */

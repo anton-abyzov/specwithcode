@@ -6,8 +6,8 @@ import { readFolderLayout } from "../../../project/FolderLayout.ts";
  * Where a launch that names no workspace starts. The project's "Use worktrees"
  * switch (its own `defaultThreadEnvMode` of "worktree") gives every new thread
  * its own worktree off the project's checked-out branch, as the composer does.
- * Only the project's own choice counts: an environment-wide workspace setting
- * and the composer's Git-aware Automatic leave launched threads in the root.
+ * Only the project's own choice counts; there is no environment-wide
+ * workspace default above it.
  */
 export function launchWorkspaceDefault(input: {
   readonly resolved: Pick<ResolvedProjectSettings, "settings" | "sources">;

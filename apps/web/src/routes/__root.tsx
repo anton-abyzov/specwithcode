@@ -202,6 +202,8 @@ function RootRouteView() {
           <ThreadMoveDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
+          {/* Setup can start Restart to update, which asks before stopping running work. */}
+          <ConfirmDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />

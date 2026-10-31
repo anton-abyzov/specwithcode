@@ -55,6 +55,13 @@ STDOUT_TAIL_BYTES = 8 << 20
 DISK_WARN_BYTES = 5 * 10 ** 9  # Decimal GB, as the summaries print them.
 DISK_FAIL_BYTES = 10 ** 9
 USER_FACING_PREFIXES = ('ws.rpc.', 'RpcClient.')
+# Answers, not faults: the app probes for an optional specweave-studio.json, and file views
+# and listings ask about files or worktrees removed since. Judged per span and counted apart,
+# never reported as failures. A missing program (`spawn git ENOENT`) is not an answer.
+EXPECTED_ANSWER = re.compile(r"File not found: |ENOENT: no such file or directory, (?:realpath|open|stat|lstat|scandir)"
+                             r"|WorkspaceRootNotExistsError|Workspace root does not exist")
+# A server that started this recently is still booting, usually after an update restart.
+STARTUP_GRACE_SECONDS = 180
 LOG_LINE = re.compile(r'^\[(\d\d):(\d\d):(\d\d)\.(\d{3})\] (WARN|ERROR|FATAL) \(#\d+\): (.*)$')
 LOG_CLOCK = re.compile(r'^\[(\d\d):(\d\d):(\d\d)\.(\d{3})\] [A-Z]+ \(#\d+\):')
 ERROR_STATUS = re.compile(r'"code":\s*"2"')  # Cheap filter before parsing; OTLP status code 2 is ERROR.
@@ -124,7 +131,7 @@ def fetch_environment(host, port, timeout):
     return environment
 
 
-def check_server(base, timeout=5, fetch=fetch_environment):
+def check_server(base, timeout=5, fetch=fetch_environment, now=None):
     """(a) The server answers on its port and runs the release installation.json names."""
     installation = read_json(base / 'installation.json') or {}
     runtime = read_json(base / 'userdata' / 'server-runtime.json') or {}
@@ -140,6 +147,17 @@ def check_server(base, timeout=5, fetch=fetch_environment):
     try:
         environment = fetch(host, port, timeout)
     except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as error:
+        started = parse_iso(runtime.get('startedAt'))
+        # One grace per outage: a server crash-looping through launchd starts afresh every time,
+        # so a watch that already saw it starting reports it down.
+        previous = read_json(base / 'health' / 'latest.json') or {}
+        was_starting = any(entry.get('check') == 'server' and entry.get('starting')
+                           for entry in previous.get('checks') or [] if isinstance(entry, dict))
+        booting = started is not None and details['pidAlive'] and not was_starting and \
+            0 <= (now or utcnow()).timestamp() - started.timestamp() < STARTUP_GRACE_SECONDS
+        if booting:
+            return finding('server', OK, 'Server is starting on %s:%s (started %s ago)' % (
+                host, port, ago(now or utcnow(), started)), starting=True, **details)
         return finding('server', DOWN, 'Server does not answer on %s:%s (%s)' % (host, port, error), **details)
     running = {'version': environment.get('serverVersion'), 'sourceCommit': environment.get('serverSourceCommit')}
     details['running'] = running
@@ -295,7 +313,7 @@ def check_traces(base, now, minutes=TRACE_MINUTES):
                 key = (span.get('name') or '?', message)
                 entry = groups.setdefault(key, {'name': key[0], 'message': key[1], 'rootCause': root, 'count': 0,
                                                 'userFacing': key[0].startswith(USER_FACING_PREFIXES),
-                                                'lastAt': None})
+                                                'answers': 0, 'failures': 0, 'lastAt': None})
 
                 entry['count'] += 1
                 span_id = span.get('spanId')
@@ -304,22 +322,44 @@ def check_traces(base, now, minutes=TRACE_MINUTES):
                         children[span['parentSpanId']].append(span_id)
                     if root:
                         roots[span_id] = root
-                    if entry['userFacing']:
-                        spans[key].append(span_id)
+                if entry['userFacing']:
+                    spans[key].append((span_id, root))
                 at = datetime.datetime.fromtimestamp(ended / 1e9, datetime.timezone.utc).isoformat()
                 if entry['lastAt'] is None or at > entry['lastAt']:
                     entry['lastAt'] = at
+    uncaused = collections.defaultdict(int)  # user-facing group -> its spans with no cause of their own
     for key, entry in groups.items():
         # A user-facing failure often carries only a generic message ("The project operation failed");
-        # a failed span beneath it says why (ServiceUpdateInProgressError on 2026-10-16).
-        if entry['rootCause'] is None:
-            entry['rootCause'] = next((cause for span_id in spans[key]
-                                       for cause in [innermost_cause(span_id, children, roots)] if cause), None)
+        # a failed span beneath it says why (ServiceUpdateInProgressError on 2026-10-16). Each span is
+        # judged by its own cause, so one not-found answer never excuses a different failure.
+        first_failure = None
+        for span_id, root in spans[key]:
+            cause = root or (innermost_cause(span_id, children, roots) if span_id else None)
+            if EXPECTED_ANSWER.search(entry['message'] or '') or EXPECTED_ANSWER.search(cause or ''):
+                entry['answers'] += 1
+            elif cause is None and key[0].startswith('RpcClient.'):
+                uncaused[key] += 1
+            else:
+                entry['failures'] += 1
+                first_failure = first_failure or cause
+        if entry['rootCause'] is None or first_failure:
+            entry['rootCause'] = first_failure or entry['rootCause'] or next(
+                (cause for span_id, _ in spans[key] if span_id
+                 for cause in [innermost_cause(span_id, children, roots)] if cause), None)
+    # A client span records only the message it was sent; the server span of the same call says why.
+    # It is an answer when that method's server spans were all answers in this window.
+    for key, count in uncaused.items():
+        method = key[0][len('RpcClient.'):]
+        served = [entry for entry in groups.values() if entry['name'] == 'ws.rpc.' + method]
+        answered = served and all(entry['failures'] == 0 for entry in served) and \
+            any(entry['answers'] for entry in served)
+        groups[key]['answers' if answered else 'failures'] += count
     errors = sorted(groups.values(), key=lambda entry: (-entry['userFacing'], -entry['count']))
-    user_facing = [entry for entry in errors if entry['userFacing']]
-    failed_calls = sum(entry['count'] for entry in user_facing)
+    user_facing = [entry for entry in errors if entry['userFacing'] and entry['failures']]
+    answers = sum(entry['answers'] for entry in errors)
+    failed_calls = sum(entry['failures'] for entry in user_facing)
     details = {'minutes': minutes, 'filesRead': read, 'errorSpans': sum(entry['count'] for entry in errors),
-               'errors': errors}
+               'notFoundAnswers': answers, 'errors': errors}
     if not files:
         return finding('traces', OK, 'No server trace files', **details)
     if user_facing:
@@ -327,8 +367,9 @@ def check_traces(base, now, minutes=TRACE_MINUTES):
         return finding('traces', DEGRADED, '%d user-facing RPC failure%s in %d min, e.g. %s: %s' % (
             failed_calls, '' if failed_calls == 1 else 's', minutes, worst['name'],
             worst['rootCause'] or worst['message']), **details)
-    return finding('traces', OK, '%d error span%s in %d min, none user-facing' % (
-        details['errorSpans'], '' if details['errorSpans'] == 1 else 's', minutes), **details)
+    return finding('traces', OK, '%d error span%s in %d min, none user-facing%s' % (
+        details['errorSpans'], '' if details['errorSpans'] == 1 else 's', minutes,
+        ' (%d not-found answer%s)' % (answers, '' if answers == 1 else 's') if answers else ''), **details)
 
 
 def read_tail(path, size):
@@ -495,7 +536,7 @@ def check_log_flood(base, now, minutes=FLOOD_MINUTES, limit=FLOOD_COUNT):
 def report(base, now=None, trace_minutes=TRACE_MINUTES, timeout=5, fetch=fetch_environment):
     base = pathlib.Path(base)
     now = now or utcnow()
-    checks = [('server', lambda: check_server(base, timeout, fetch)), ('hold', lambda: check_hold(base, now)),
+    checks = [('server', lambda: check_server(base, timeout, fetch, now)), ('hold', lambda: check_hold(base, now)),
               ('updates', lambda: check_updates(base)), ('traces', lambda: check_traces(base, now, trace_minutes)),
               ('log', lambda: check_log_flood(base, now)), ('disk', lambda: check_disk(base))]
     findings = []

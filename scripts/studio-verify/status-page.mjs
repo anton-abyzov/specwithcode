@@ -67,7 +67,9 @@ try {
       "updates",
       "machine:m1",
       "machine:m3",
+      "machine:air",
       "tailscale",
+      "connect",
       "provider:claude",
       "provider:codex",
       "provider:copilot",
@@ -78,28 +80,43 @@ try {
 
     const m3 = page.locator('[data-service-id="machine:m3"]');
     assert.match(await m3.textContent(), /Major outage/);
-    // A failing service opens to show its components and what depends on it.
+    assert.match(await m3.textContent(), /Unreachable over its private connection/);
+    // Rows stay compact; opening one shows its components and what depends on it.
+    assert.doesNotMatch(await m3.textContent(), /Used by/);
+    await m3.locator("button[aria-expanded]").click();
     assert.match(await m3.textContent(), /Used by/);
     assert.match(await m3.textContent(), /Workers on M3/);
 
+    // A laptop shut 11 days ago is offline, not an outage, and not counted.
+    const air = page.locator('[data-service-id="machine:air"]');
+    assert.match(await air.textContent(), /Offline/);
+    assert.match(await air.textContent(), /Offline for 11 days; not counted/);
+    assert.doesNotMatch(await banner.textContent(), /Anna/);
+
     const claude = page.locator('[data-service-id="provider:claude"]');
     assert.match(await claude.textContent(), /Needs attention/);
+    await claude.locator("button[aria-expanded]").click();
     assert.match(await claude.textContent(), /Errors seen in this app/);
     assert.match(await claude.textContent(), /Claude API \(api\.anthropic\.com\)/);
 
     const gemini = page.locator('[data-service-id="provider:gemini"]');
     assert.match(await gemini.textContent(), /Operational/);
+    // OpenAI's component-less ChatGPT incident does not touch Codex.
+    const codex = page.locator('[data-service-id="provider:codex"]');
+    assert.match(await codex.textContent(), /Operational/);
 
     const incidents = page.getByTestId("status-incidents");
     assert.match(await incidents.textContent(), /Elevated errors on Claude API/);
     assert.match(await incidents.textContent(), /Unreachable over its private connection/);
-    assert.match(await incidents.textContent(), /Increased Codex task latency/);
-    assert.match(await incidents.textContent(), /Resolved/);
+    assert.doesNotMatch(await incidents.textContent(), /ChatGPT|Resolved/);
+
+    // Past incidents are grouped by day and collapsed until asked for.
+    const past = page.getByTestId("status-past-incidents");
+    assert.doesNotMatch(await past.textContent(), /Increased Codex task latency/);
+    await past.locator("button").first().click();
+    assert.match(await past.textContent(), /Increased Codex task latency/);
     // The overnight crash shows as a resolved incident and marks today's bar.
-    assert.match(
-      await incidents.textContent(),
-      /Local service stopped unexpectedly.*Resolved October 16, 2026 at 1:40/u,
-    );
+    assert.match(await past.textContent(), /Local service stopped unexpectedly.*Resolved 1:40/u);
     const localLevels = await page
       .locator('[data-service-id="local-service"]')
       .getByTestId("status-day-bars")
@@ -114,7 +131,9 @@ try {
       .locator("span")
       .evaluateAll((nodes) => nodes.map((node) => node.dataset.level));
     assert.equal(m3Levels.at(-1), "major_outage");
-    assert.equal(m3Levels.filter((level) => level === "major_outage").length, 3);
+    // Down from day 34: an outage for its first day, then offline and not counted.
+    assert.equal(m3Levels.filter((level) => level === "major_outage").length, 2);
+    assert.equal(m3Levels[56], "unknown");
     const githubLevels = await page
       .locator('[data-service-id="github"]')
       .getByTestId("status-day-bars")
@@ -125,7 +144,7 @@ try {
     await page.screenshot({ path: join(output, `status-page-${theme}.png`), fullPage: true });
 
     // Hovering a day shows its detail.
-    await m3.getByTestId("status-day-bars").locator("span").nth(56).hover();
+    await m3.getByTestId("status-day-bars").locator("span").nth(55).hover();
     const popover = page.getByTestId("status-day-popover");
     await popover.waitFor();
     assert.match(await popover.textContent(), /Major outage/);
@@ -145,7 +164,7 @@ try {
       const box = node.getBoundingClientRect();
       const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 4);
       node.style.pointerEvents = "";
-      const group = node.closest('[data-testid="status-group"]').getBoundingClientRect();
+      const group = node.closest('[data-testid="status-group"] > ul').getBoundingClientRect();
       // Only meaningful while the popover actually rises past the card's top.
       if (box.top >= group.top) throw new Error("popover no longer crosses the group's edge");
       return hit !== null && node.contains(hit);
@@ -159,15 +178,11 @@ try {
     await page.keyboard.press("End");
     assert.match(await page.getByTestId("status-day-popover").textContent(), /Related incidents/);
 
-    // Collapsing a group hides its services.
-    await page.locator('[data-group-id="dependencies"] > button').click();
-    assert.equal(await page.locator('[data-service-id="provider:claude"]').count(), 0);
     await page.close();
   }
 
-  // Narrow window: all 90 bars stay inside each card and the page never
-  // scrolls sideways.
-  const narrow = await browser.newPage({ viewport: { width: 340, height: 900 } });
+  // Phone width: the last 30 days, every bar inside its card, no sideways scroll.
+  const narrow = await browser.newPage({ viewport: { width: 375, height: 812 } });
   narrow.on("pageerror", (error) => errors.push(String(error)));
   await narrow.goto(`${origin}/?theme=light`);
   await narrow.getByTestId("status-banner").waitFor();
@@ -181,6 +196,8 @@ try {
     return { spill };
   });
   assert.deepEqual(overflow, { spill: 0 });
+  assert.equal(await narrow.getByTestId("status-day-bars").first().locator("span").count(), 30);
+  assert.match(await narrow.getByTestId("status-uptime-line").first().textContent(), /30 days ago/);
   // Reading today's bar must not scroll any container sideways, and its
   // popover must stay inside the window.
   await narrow.getByTestId("status-day-bars").last().locator("span").last().hover();
@@ -197,6 +214,15 @@ try {
   assert.deepEqual(reading, { scrolled: [], inside: true });
   await narrow.screenshot({ path: join(output, "status-page-narrow.png"), fullPage: true });
   await narrow.close();
+  const narrowDark = await browser.newPage({ viewport: { width: 375, height: 812 } });
+  narrowDark.on("pageerror", (error) => errors.push(String(error)));
+  await narrowDark.goto(`${origin}/?theme=dark`);
+  await narrowDark.getByTestId("status-banner").waitFor();
+  await narrowDark.screenshot({
+    path: join(output, "status-page-narrow-dark.png"),
+    fullPage: true,
+  });
+  await narrowDark.close();
 
   const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
   page.on("pageerror", (error) => errors.push(String(error)));

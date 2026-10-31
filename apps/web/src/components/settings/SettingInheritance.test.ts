@@ -71,8 +71,10 @@ describe("settingInheritanceLayers", () => {
       ["Project", "Inherits", false],
       ["Laptop", "Inherits", false],
       ["specweave-studio.json", "New worktree", true],
-      ["Default", "Automatic (worktree for one Git repository; otherwise current checkout)", false],
+      ["Default", "Current checkout", false],
     ]);
+    // A value left on the environment tier by an older version is not a
+    // layer in the chain: the file below it decides.
     const settings = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" as const };
     const fromEnvironment = settingInheritanceLayers(
       {
@@ -86,9 +88,9 @@ describe("settingInheritanceLayers", () => {
     );
     expect(fromEnvironment.map((layer) => [layer.value, layer.effective])).toEqual([
       ["Inherits", false],
-      ["Current checkout", true],
       ["Inherits", false],
-      ["Automatic (worktree for one Git repository; otherwise current checkout)", false],
+      ["New worktree", true],
+      ["Current checkout", false],
     ]);
   });
 });

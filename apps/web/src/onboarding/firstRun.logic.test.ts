@@ -40,6 +40,13 @@ describe("resolveFirstRunDecision", () => {
     });
   });
 
+  it("opens the app for a joined machine once the person closed setup", () => {
+    expect(resolveFirstRunDecision({ ...freshWorkspace, joined: true, completed: true })).toEqual({
+      decision: "app",
+      persistCompletion: false,
+    });
+  });
+
   it("never sends someone who already finished first run back to the choice", () => {
     expect(resolveFirstRunDecision({ ...freshWorkspace, completed: true })).toEqual({
       decision: "app",

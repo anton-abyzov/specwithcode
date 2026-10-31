@@ -1240,6 +1240,18 @@ describe("native session admission", () => {
       ).rejects.toMatchObject({ _tag: "ProviderSetupError", usageLimit: {} });
     });
   });
+  it("starts a signed-in Claude Ultra subscription instead of calling it unverified", async () => {
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    const base = provider("claudeAgent", "claudeAgent", now);
+    const native = [{ ...base, auth: { ...base.auth, type: "Claude Ultra" } }];
+    const raw = { ...rawSnapshot(now), accounts: [rawAccount("claude-1", now)] };
+    await expect(run(start("claudeAgent"), raw, native)).resolves.toBeUndefined();
+    // The same login under the old allow-list of plan names was refused as unverified.
+    const unverified = [{ ...base, auth: { ...base.auth, type: "subscription-auth-unverified" } }];
+    await expect(run(start("claudeAgent"), raw, unverified)).rejects.toThrow(
+      /authorization is unverified/,
+    );
+  });
   it("permits supported consumer auth with explicitly unknown quotas, without inventing ready capacity", async () => {
     const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
     const raw = {

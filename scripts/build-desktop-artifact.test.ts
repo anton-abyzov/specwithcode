@@ -58,6 +58,7 @@ import {
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
+  WINDOWS_NSIS_INCLUDE,
   resolveStableDmgAssetName,
   STAGE_PACKAGE_NAME,
   assertStagePackageKeepsKeychainIdentity,
@@ -280,6 +281,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("switches desktop packaging product names to nightly for nightly builds", () => {
+    // The Windows executable is named after this, so changing it renames
+    // SpecWithCode.exe on every install; installer.nsh only repairs the names it lists.
     assert.equal(resolveDesktopProductName("1.0.0"), "SpecWithCode");
     assert.equal(resolveDesktopProductName("1.0.1-nightly.20260413.42"), "SpecWithCode (Nightly)");
   });
@@ -808,7 +811,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...DESKTOP_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
-      assert.deepStrictEqual(win.nsis, { differentialPackage: true });
+      assert.deepStrictEqual(win.nsis, {
+        differentialPackage: true,
+        include: WINDOWS_NSIS_INCLUDE,
+      });
       // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@cursor/sdk-*",

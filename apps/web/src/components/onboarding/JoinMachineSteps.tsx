@@ -20,11 +20,14 @@ export function MachineRoleStep({
   machineNoun,
   onJoin,
   onMain,
+  onLater,
 }: {
   /** "Mac" on macOS, otherwise "machine". */
   readonly machineNoun: string;
   readonly onJoin: () => void;
   readonly onMain: () => void;
+  /** Opens the app with nothing chosen or set up, e.g. to update first. */
+  readonly onLater: () => void;
 }) {
   return (
     <>
@@ -67,6 +70,15 @@ export function MachineRoleStep({
           </span>
           <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
         </Button>
+      </div>
+      <div className="mt-4 flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
+        <Button variant="ghost" size="sm" onClick={onLater}>
+          Decide later
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Look around or update first. To join a main machine later, choose Invite this machine
+          under Settings &gt; Connections.
+        </p>
       </div>
     </>
   );

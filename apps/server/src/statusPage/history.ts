@@ -26,6 +26,13 @@ export interface StatusDayEntry {
 export interface StatusStreak {
   readonly level: StatusLevel;
   readonly count: number;
+  /** When the run of checks at this level (or, healthy, on the healthy side) began; absent in older files. */
+  readonly since?: number;
+  /**
+   * The failing run a short healthy run interrupted. A laptop opened for one
+   * check and shut again picks it back up instead of starting over.
+   */
+  readonly resume?: { readonly level: StatusLevel; readonly since: number };
 }
 
 export interface StatusHistory {
@@ -54,6 +61,11 @@ export interface StatusSample {
   readonly note: string | null;
   /** Opens and resolves local incidents from this service's checks. */
   readonly tracksIncidents: boolean;
+  /**
+   * Down so long it no longer counts (a machine offline for days): its open
+   * incident is closed and its streak, with the time it began, is kept.
+   */
+  readonly dormant?: boolean;
 }
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -132,7 +144,14 @@ export function decodeStatusHistory(raw: unknown): StatusHistory {
     for (const [serviceId, streak] of Object.entries(input.streaks)) {
       const value = streak as Partial<StatusStreak>;
       if (isStatusLevel(value?.level) && Number.isSafeInteger(value.count)) {
-        streaks[serviceId] = { level: value.level, count: value.count! };
+        streaks[serviceId] = {
+          level: value.level,
+          count: value.count!,
+          ...(Number.isSafeInteger(value.since) ? { since: value.since! } : {}),
+          ...(isStatusLevel(value.resume?.level) && Number.isSafeInteger(value.resume.since)
+            ? { resume: { level: value.resume.level, since: value.resume.since } }
+            : {}),
+        };
       }
     }
   }
@@ -169,18 +188,52 @@ export function recordStatusChecks(
         : entry.notes;
     today[sample.serviceId] = { counts, notes };
 
-    if (!sample.tracksIncidents || sample.level === "unknown") continue;
-    const previous = streaks[sample.serviceId];
-    const sameSide = previous !== undefined && healthy(previous.level) === healthy(sample.level);
-    const streak = { level: sample.level, count: sameSide ? previous.count + 1 : 1 };
-    streaks[sample.serviceId] = streak;
-
     const openIndex = incidents.findIndex(
       (incident) =>
         incident.origin === "local" &&
         incident.serviceId === sample.serviceId &&
         incident.resolvedAt === null,
     );
+    if (sample.dormant === true) {
+      if (openIndex >= 0) {
+        incidents[openIndex] = {
+          ...incidents[openIndex]!,
+          stage: "resolved",
+          updatedAt: at,
+          resolvedAt: at,
+        };
+      }
+      continue;
+    }
+    if (!sample.tracksIncidents || sample.level === "unknown") continue;
+    const previous = streaks[sample.serviceId];
+    const sameSide = previous !== undefined && healthy(previous.level) === healthy(sample.level);
+    const count = sameSide ? previous.count + 1 : 1;
+    let since: number = now;
+    let resume: StatusStreak["resume"];
+    if (healthy(sample.level)) {
+      if (sameSide) {
+        since = previous.since ?? now;
+        if (previous.resume && count < INCIDENT_CONFIRMATIONS) resume = previous.resume;
+      } else if (previous?.since !== undefined) {
+        resume = { level: previous.level, since: previous.since };
+      }
+    } else if (sameSide && previous.level === sample.level) {
+      // Streaks saved before `since` existed start at their open incident, if any.
+      since =
+        previous.since ??
+        (openIndex >= 0 ? Date.parse(incidents[openIndex]!.startedAt) : Number.NaN);
+    } else if (!sameSide && previous?.resume?.level === sample.level) {
+      since = previous.resume.since;
+    }
+    const streak: StatusStreak = {
+      level: sample.level,
+      count,
+      ...(Number.isFinite(since) ? { since } : {}),
+      ...(resume ? { resume } : {}),
+    };
+    streaks[sample.serviceId] = streak;
+
     if (healthy(sample.level)) {
       if (openIndex >= 0 && streak.count >= INCIDENT_CONFIRMATIONS) {
         incidents[openIndex] = {
@@ -282,6 +335,12 @@ export function recordUnexpectedStop(
     },
     stop.restartedAt,
   );
+}
+
+/** When a service's current run of failing checks began, or null while it is healthy. */
+export function failingSince(history: StatusHistory, serviceId: string): number | null {
+  const streak = history.streaks[serviceId];
+  return streak === undefined || healthy(streak.level) ? null : (streak.since ?? null);
 }
 
 export function pruneStatusHistory(history: StatusHistory, now: number): StatusHistory {

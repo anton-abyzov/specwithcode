@@ -201,6 +201,8 @@ export const setup = (
     launchStaleMs: 10,
     redeliverWithinMs: 60_000,
     maxFollowsPerMachine: 16,
+    fallbackGraceMs: 30,
+    recheckFailedWithinMs: 60_000,
     ...timingOverrides,
   });
   const layer = Layer.mergeAll(RemoteWorkers.layer, RemoteWorkerFollower.layerResume).pipe(

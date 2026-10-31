@@ -2865,6 +2865,16 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
+/**
+ * Points every product shortcut (desktop, Start menu, taskbar pin) at the
+ * installed executable on each install and update. electron-builder names the
+ * Windows executable after productName, so a rename, or switching between the
+ * nightly and stable channels, which share one install folder, would otherwise
+ * leave shortcuts on an executable the update deleted. Relative to
+ * buildResources.
+ */
+export const WINDOWS_NSIS_INCLUDE = "windows/installer.nsh";
+
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "SpecWithCode (Nightly)"
@@ -3102,7 +3112,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Keep blockmap-based differential downloads enabled while changing the
     // installed file topology. The optimization is in the payload shape, not
     // in trading update bandwidth for install speed.
-    buildConfig.nsis = { differentialPackage: true };
+    buildConfig.nsis = { differentialPackage: true, include: WINDOWS_NSIS_INCLUDE };
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",

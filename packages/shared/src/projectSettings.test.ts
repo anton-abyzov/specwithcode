@@ -164,7 +164,7 @@ describe("resolveProjectSettings", () => {
 });
 
 describe("resolveProjectSettings with a specweave-studio.json", () => {
-  it("walks project override, environment value, file, then built-in for file-backed keys", () => {
+  it("walks project override, file, then built-in for the per-project workspace key", () => {
     const file = { defaultThreadEnvMode: "worktree" as const };
     const fromOverride = resolveProjectSettings(
       {
@@ -178,14 +178,17 @@ describe("resolveProjectSettings with a specweave-studio.json", () => {
     expect(fromOverride.settings.defaultThreadEnvMode).toBe("local");
     expect(fromOverride.sources.defaultThreadEnvMode).toBe("project");
 
+    // The workspace choice is per project only: a value left on the
+    // environment tier by an older version no longer decides, so the file
+    // tier below it applies instead of being outranked by it.
     const fromEnvironment = resolveProjectSettings(
       { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" },
       projectId,
       null,
       file,
     );
-    expect(fromEnvironment.settings.defaultThreadEnvMode).toBe("local");
-    expect(fromEnvironment.sources.defaultThreadEnvMode).toBe("environment");
+    expect(fromEnvironment.settings.defaultThreadEnvMode).toBe("worktree");
+    expect(fromEnvironment.sources.defaultThreadEnvMode).toBe("specweave-studio.json");
 
     const fromFile = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, file);
     expect(fromFile.settings.defaultThreadEnvMode).toBe("worktree");
@@ -229,6 +232,29 @@ describe("resolveProjectSettings with a specweave-studio.json", () => {
       value: "recursive",
       source: "environment",
     });
+  });
+
+  it("ignores the environment workspace value without a project override", () => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "worktree" as const };
+    // No file tier consulted: the environment value resolves as unset.
+    expect(resolveProjectSettings(settings, projectId).settings.defaultThreadEnvMode).toBeNull();
+    // With the file tier consulted and no file, the built-in current
+    // checkout applies, never the environment's worktree choice.
+    const builtIn = resolveProjectSettings(settings, projectId, null, null);
+    expect(builtIn.settings.defaultThreadEnvMode).toBe("local");
+    expect(builtIn.sources.defaultThreadEnvMode).toBe("environment");
+    // A project override still decides on its own.
+    const overridden = resolveProjectSettings(
+      {
+        ...settings,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "worktree" } },
+      },
+      projectId,
+      null,
+      null,
+    );
+    expect(overridden.settings.defaultThreadEnvMode).toBe("worktree");
+    expect(overridden.sources.defaultThreadEnvMode).toBe("project");
   });
 
   it("leaves settings untouched when no file is passed", () => {

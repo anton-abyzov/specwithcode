@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   desktopUpdaterComponent,
+  groupPastIncidents,
   groupStatusServices,
   statusHeadline,
   withLocalComponents,
@@ -90,5 +91,33 @@ describe("status model", () => {
     });
     expect(merged.level).toBe("degraded");
     expect(withLocalComponents(snapshot, null)).toBe(snapshot);
+  });
+
+  it("groups resolved incidents by day and folds repeats of one title into a count", () => {
+    const incident = (id: string, title: string, startedAt: string, resolvedAt: string | null) => ({
+      id,
+      serviceId: "local-service",
+      title,
+      level: "degraded" as const,
+      stage: resolvedAt === null ? ("identified" as const) : ("resolved" as const),
+      origin: "local" as const,
+      startedAt,
+      updatedAt: resolvedAt ?? startedAt,
+      resolvedAt,
+      url: null,
+    });
+    const days = groupPastIncidents([
+      incident("a", "RPC failures", "2026-10-30T10:00:00", "2026-10-30T10:20:00"),
+      incident("b", "RPC failures", "2026-10-30T14:00:00", "2026-10-30T14:10:00"),
+      incident("c", "Slow database", "2026-10-30T15:00:00", "2026-10-30T15:30:00"),
+      incident("d", "RPC failures", "2026-10-29T09:00:00", "2026-10-29T09:15:00"),
+      incident("e", "Still open", "2026-10-30T16:00:00", null),
+    ]);
+    expect(days.map((day) => day.date)).toEqual(["2026-10-30", "2026-10-29"]);
+    expect(days[0]!.entries.map((entry) => [entry.title, entry.count])).toEqual([
+      ["Slow database", 1],
+      ["RPC failures", 2],
+    ]);
+    expect(days[0]!.entries[1]!.firstStartedAt).toBe("2026-10-30T10:00:00");
   });
 });

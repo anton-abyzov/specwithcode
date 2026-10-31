@@ -63,6 +63,10 @@ interface ProviderDefinition {
   readonly feed: FeedId;
   /** Statuspage components that matter to the app, by name. */
   readonly components?: RegExp;
+  /** Titles of component-less public incidents that concern this provider. */
+  readonly incidentTitle?: RegExp;
+  /** Titles that name only other products on the same status page. */
+  readonly otherProducts?: RegExp;
   readonly dependents: ReadonlyArray<string>;
 }
 
@@ -77,6 +81,9 @@ export const PROVIDERS: Record<ProviderKind, ProviderDefinition> = {
     name: "Codex",
     feed: "openai",
     components: /Codex|^Responses$|^Login$|^Chat Completions$/iu,
+    incidentTitle:
+      /\b(Codex|APIs?|Responses|Chat Completions|log ?in(to)?|sign[- ]?in|GPT[-\w.]*|o\d[\w-]*|models?)\b/iu,
+    otherProducts: /\b(ChatGPT|Sora|DALL[·-]?E|Atlas|Dots|Operator|Deep Research|GPTs)\b/iu,
     dependents: ["Codex threads", "ChatGPT sign-in", "Codex usage limits"],
   },
   copilot: {
@@ -162,7 +169,15 @@ export interface StatusInputs {
   readonly releaseFeedReachable: boolean | null;
   /** The external health watch's last report; absent or null when none is written. */
   readonly healthWatch?: HealthWatchReading | null;
+  /** When each failing service's run of failed checks began, by service id. */
+  readonly failingSince?: Readonly<Record<string, number>>;
 }
+
+/**
+ * A paired machine unreachable this long is offline, not in an outage: a
+ * laptop that is shut or away. It stops counting toward the overall status.
+ */
+export const MACHINE_DORMANT_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
  * `<baseDir>/health/latest.json`, written every few minutes by
@@ -226,6 +241,8 @@ export interface BuiltService {
   readonly components: ReadonlyArray<StatusComponent>;
   /** This host's own checks decide the level, so it opens local incidents. */
   readonly tracksIncidents: boolean;
+  /** Offline so long it no longer counts; its open incident is closed. */
+  readonly dormant?: boolean;
 }
 
 export const OBSERVED_WINDOW_MS = 60 * 60 * 1000;
@@ -488,14 +505,21 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
 
   for (const machine of input.fleet?.machines ?? []) {
     const label = machine.machineName ?? machine.label;
-    const level: StatusLevel =
-      machine.status === "reachable"
+    const offlineSince = input.failingSince?.[`machine:${machine.id}`] ?? null;
+    const dormant =
+      machine.status === "unreachable" &&
+      offlineSince !== null &&
+      input.now - offlineSince >= MACHINE_DORMANT_AFTER_MS;
+    const level: StatusLevel = dormant
+      ? "unknown"
+      : machine.status === "reachable"
         ? "operational"
         : machine.status === "identity-mismatch"
           ? "degraded"
           : "major_outage";
-    const detail =
-      machine.status === "reachable"
+    const detail = dormant
+      ? `Offline for ${formatDuration(input.now - offlineSince)}; not counted in the overall status. Remove it in Settings, Machines, if it is gone for good.`
+      : machine.status === "reachable"
         ? `Reachable at ${machine.url}`
         : machine.status === "identity-mismatch"
           ? "Answered as a different machine."
@@ -510,7 +534,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
       sourceUrl: null,
       dependents: [`Workers on ${label}`, `Handoffs to ${label}`],
       components: [
-        component("identity", "Identity check", level, detail),
+        component("identity", "Identity check", level, dormant ? "Offline." : detail),
         component(
           "pairing",
           "Pairing",
@@ -519,6 +543,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
         ),
       ],
       tracksIncidents: true,
+      ...(dormant ? { dormant } : {}),
     });
   }
 
