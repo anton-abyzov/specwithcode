@@ -6,6 +6,7 @@
 import type { StudioFleetRemoteWorker } from "@specweave-studio/contracts/studioFleet";
 
 import type { ThreadCardStatus } from "./projectThreadCards";
+import { epochMillis } from "./projectThreadMentions";
 
 const FINISHED: Record<string, ThreadCardStatus> = {
   completed: { tone: "done", label: "Done" },
@@ -65,4 +66,70 @@ export function visibleRemoteWorkers(
             thread.environmentId === worker.environmentId && thread.id === worker.remoteThreadId,
         )),
   );
+}
+
+/** A conversation message as far as placing a worker card goes. */
+export interface RemoteWorkerAnchorMessage {
+  readonly id: string;
+  readonly role: string;
+  /** An ISO string or a DateTime, as the conversation keeps it. */
+  readonly createdAt: unknown;
+}
+
+export interface RemoteWorkerPlacement {
+  /** Cards under the reply of the turn that started them, by that reply's id. */
+  readonly byMessage: ReadonlyMap<string, ReadonlyArray<StudioFleetRemoteWorker>>;
+  /** Still-active workers with no loaded turn to sit in: shown above the live activity. */
+  readonly live: ReadonlyArray<StudioFleetRemoteWorker>;
+}
+
+const ACTIVE_TONES = new Set<ThreadCardStatus["tone"]>(["working", "waiting"]);
+
+/**
+ * Where each card sits in a coordinator conversation: under the last reply of
+ * the turn that started the worker, so newer messages land after it instead of
+ * under a stack of old cards. A worker started before every loaded message, or
+ * reported by an older server without a start time, has no place: while it is
+ * active it shows above the live activity, and once settled only the thread
+ * list has it. Pass only the mounted messages: a turn above them is not on screen.
+ */
+export function placeRemoteWorkers(
+  workers: ReadonlyArray<StudioFleetRemoteWorker>,
+  messages: ReadonlyArray<RemoteWorkerAnchorMessage>,
+  /** The conversation's thread: a worker another thread started has no turn here. */
+  coordinatorThreadId: string,
+): RemoteWorkerPlacement {
+  const byMessage = new Map<string, StudioFleetRemoteWorker[]>();
+  const live: StudioFleetRemoteWorker[] = [];
+  const ordered = workers.toSorted((left, right) =>
+    (left.launchedAt ?? left.updatedAt).localeCompare(right.launchedAt ?? right.updatedAt),
+  );
+  for (const worker of ordered) {
+    const anchor =
+      worker.launchedAt && worker.callerThreadId === coordinatorThreadId
+        ? turnReplyAt(messages, worker.launchedAt)
+        : null;
+    if (anchor !== null) {
+      const list = byMessage.get(anchor);
+      if (list) list.push(worker);
+      else byMessage.set(anchor, [worker]);
+    } else if (ACTIVE_TONES.has(remoteWorkerCardStatus(worker).tone)) live.push(worker);
+  }
+  return { byMessage, live };
+}
+
+/** The last reply of the turn running at `at`, or null when that turn is not loaded or has none. */
+function turnReplyAt(
+  messages: ReadonlyArray<RemoteWorkerAnchorMessage>,
+  at: string,
+): string | null {
+  const atMs = Date.parse(at);
+  if (Number.isNaN(atMs)) return null;
+  const opened = messages.findLastIndex(
+    (message) => message.role === "user" && (epochMillis(message.createdAt) ?? Infinity) <= atMs,
+  );
+  if (opened === -1) return null;
+  const next = messages.findIndex((message, index) => index > opened && message.role === "user");
+  const turn = messages.slice(opened + 1, next === -1 ? undefined : next);
+  return turn.findLast((message) => message.role === "assistant")?.id ?? null;
 }

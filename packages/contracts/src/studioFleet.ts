@@ -310,6 +310,8 @@ export const StudioFleetRemoteWorker = Schema.Struct({
   lastStatus: Schema.NullOr(Schema.String),
   reachable: Schema.Boolean,
   updatedAt: IsoDateTime,
+  /** When the coordinator started it; older servers send none. */
+  launchedAt: Schema.optionalKey(IsoDateTime),
 });
 export type StudioFleetRemoteWorker = typeof StudioFleetRemoteWorker.Type;
 

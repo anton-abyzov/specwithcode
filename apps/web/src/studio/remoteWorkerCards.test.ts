@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import type { StudioFleetRemoteWorker } from "@specweave-studio/contracts/studioFleet";
 
-import { remoteWorkerCardStatus, visibleRemoteWorkers } from "./remoteWorkerCards";
+import {
+  placeRemoteWorkers,
+  remoteWorkerCardStatus,
+  visibleRemoteWorkers,
+} from "./remoteWorkerCards";
 
 const worker: StudioFleetRemoteWorker = {
   id: "rwt:1",
@@ -67,4 +71,72 @@ it("deduplicates only equivalent loaded aliases, retaining caller-side auth acti
   expect(
     visibleRemoteWorkers([worker], [{ environmentId: "another-host", id: worker.remoteThreadId! }]),
   ).toHaveLength(1);
+});
+
+describe("remote worker card placement", () => {
+  const messages = [
+    { id: "u1", role: "user", createdAt: "2026-10-30T00:30:00.000Z" },
+    { id: "a1", role: "assistant", createdAt: "2026-10-30T00:38:00.000Z" },
+    { id: "a1b", role: "assistant", createdAt: "2026-10-30T00:41:00.000Z" },
+    { id: "u2", role: "user", createdAt: "2026-10-31T02:38:00.000Z" },
+    { id: "a2", role: "assistant", createdAt: "2026-10-31T02:40:00.000Z" },
+  ];
+  const done = { ...worker, state: "idle" as const, lastStatus: "completed" };
+
+  it("places a finished worker under its launch turn's last reply, not at the end", () => {
+    const placed = placeRemoteWorkers(
+      [{ ...done, launchedAt: "2026-10-30T00:39:00.000Z", updatedAt: "2026-10-31T02:41:00.000Z" }],
+      messages,
+      "coordinator",
+    );
+    expect([...placed.byMessage.keys()]).toEqual(["a1b"]);
+    expect(placed.live).toEqual([]);
+  });
+
+  it("keeps launch order among workers of one turn", () => {
+    const placed = placeRemoteWorkers(
+      [
+        { ...done, id: "second", launchedAt: "2026-10-30T00:40:00.000Z" },
+        { ...done, id: "first", launchedAt: "2026-10-30T00:39:00.000Z" },
+      ],
+      messages,
+      "coordinator",
+    );
+    expect(placed.byMessage.get("a1b")?.map((w) => w.id)).toEqual(["first", "second"]);
+  });
+
+  it("shows a worker of a turn with no reply yet in the live strip", () => {
+    const placed = placeRemoteWorkers(
+      [{ ...worker, launchedAt: "2026-10-31T02:39:00.000Z" }],
+      messages.slice(0, 4),
+      "coordinator",
+    );
+    expect(placed.byMessage.size).toBe(0);
+    expect(placed.live.map((w) => w.id)).toEqual(["rwt:1"]);
+  });
+
+  it("never places a worker another thread started", () => {
+    const placed = placeRemoteWorkers(
+      [{ ...worker, launchedAt: "2026-10-30T00:39:00.000Z" }],
+      messages,
+      "another-coordinator",
+    );
+    expect(placed.byMessage.size).toBe(0);
+    expect(placed.live.map((w) => w.id)).toEqual(["rwt:1"]);
+  });
+
+  it("shows only active workers that have no loaded turn or start time", () => {
+    const placed = placeRemoteWorkers(
+      [
+        { ...worker, id: "active-old", launchedAt: "2026-10-29T00:00:00.000Z" },
+        { ...done, id: "done-old", launchedAt: "2026-10-29T00:00:00.000Z" },
+        { ...done, id: "done-old-server" },
+        { ...worker, id: "active-old-server" },
+      ],
+      messages,
+      "coordinator",
+    );
+    expect(placed.byMessage.size).toBe(0);
+    expect(placed.live.map((w) => w.id).toSorted()).toEqual(["active-old", "active-old-server"]);
+  });
 });

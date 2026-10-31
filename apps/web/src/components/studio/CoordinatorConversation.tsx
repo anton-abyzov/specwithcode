@@ -59,6 +59,7 @@ import { MessageCopyButton } from "../chat/MessageCopyButton";
 import { viewerIso } from "../../viewerDate";
 import type {
   ChatAttachment,
+  EnvironmentId,
   ScopedThreadRef,
   ThreadId,
   TimelineDetail,
@@ -84,7 +85,10 @@ import { useTimelineDetail } from "../../timelineDetail";
 import { prepareProjectMarkdown } from "../../studio/projectWorkspaceModel";
 import { type CoordinatorAttention } from "../../studio/projectCoordinatorThreads";
 import { ProjectThreadCard, ProjectThreadChip } from "./ProjectThreadCards";
-import { RemoteWorkerCards } from "./RemoteWorkerCards";
+import { RemoteWorkerCardList } from "./RemoteWorkerCards";
+import { REMOTE_WORKERS_REFRESH_MS, useProjectRemoteWorkers } from "../../studio/fleet";
+import { placeRemoteWorkers } from "../../studio/remoteWorkerCards";
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { forgetReadingPlaces, useConversationFollow } from "./useConversationFollow";
 import { JumpToLatestButton } from "../chat/JumpToLatestButton";
 import { linkedThreadIds, newThreadsByMessage } from "../../studio/projectThreadMentions";
@@ -211,7 +215,7 @@ export function CoordinatorConversation({
   workers: readonly EnvironmentThreadShell[];
   /** Every thread of the project's environment, live or deleted, that a link may name. */
   environmentThreads: readonly ThreadLinkTarget[];
-  onOpenThread: (id: ThreadId) => void;
+  onOpenThread: (id: ThreadId, environmentId?: EnvironmentId) => void;
   /** Source control can be changed on this host, and it is connected. */
   canChange: boolean;
   onCreatePullRequest: (thread: EnvironmentThreadShell) => void;
@@ -416,6 +420,14 @@ export function CoordinatorConversation({
         })),
     [prepared, view, hidden, newThreads, messagesById, linkWorkers, answeredQuestions],
   );
+  // Each worker started on another machine sits under the reply of the turn that
+  // started it, so later messages follow it rather than stacking under it.
+  const remote = useProjectRemoteWorkers(project.environmentId, project.id);
+  useLiveRefresh(remote.refresh, {
+    enabled: remote.available,
+    key: `remote-workers:${project.environmentId}:${project.id}`,
+    intervalMs: REMOTE_WORKERS_REFRESH_MS,
+  });
   // Only the latest messages mount; scrolling up or "Show earlier" mounts more.
   // A find in this conversation mounts them all, so every match can be found, and
   // they stay mounted once it closes: the match it went to stays where it is.
@@ -455,6 +467,16 @@ export function CoordinatorConversation({
   }, [placeKey, windowSize]);
   if (findQuery && windowSize < rows.length) setWindowSize(rows.length);
   const firstShown = findQuery ? 0 : Math.max(0, rows.length - windowSize);
+  // A card whose turn is not mounted waits for it; an active one shows at the end meanwhile.
+  const remotePlacement = useMemo(
+    () =>
+      placeRemoteWorkers(
+        remote.workers.filter((worker) => worker.state !== "disposed"),
+        rows.slice(firstShown).map((row) => row.message),
+        coordinatorId,
+      ),
+    [remote.workers, rows, firstShown, coordinatorId],
+  );
   // Where the reader was, measured from the end, while older messages are on their
   // way, and how many messages the window held when they were asked for.
   const keptPlace = useRef<{ fromEnd: number; windowSize: number } | null>(null);
@@ -599,9 +621,13 @@ export function CoordinatorConversation({
                 onOpenCoordinatorActivity={onOpenCoordinatorActivity}
               />
             )}
+            <RemoteWorkerCardList
+              workers={remotePlacement.byMessage.get(row.message.id) ?? []}
+              onOpenThread={onOpenThread}
+            />
           </Fragment>
         ))}
-        <RemoteWorkerCards environmentId={project.environmentId} projectId={project.id} />
+        <RemoteWorkerCardList workers={remotePlacement.live} onOpenThread={onOpenThread} />
         {view.liveActivity && working ? (
           <CoordinatorRunActivity
             live

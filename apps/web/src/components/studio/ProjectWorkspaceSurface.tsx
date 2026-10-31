@@ -275,15 +275,34 @@ export function ProjectWorkspaceSurface({
     mainCoordinatorId,
     true,
   );
-  const remoteWorkerCount = visibleRemoteWorkers(
-    useProjectRemoteWorkers(project.environmentId, project.id).workers,
-  ).length;
+  const { workers: remoteWorkers, loaded: remoteWorkersLoaded } = useProjectRemoteWorkers(
+    project.environmentId,
+    project.id,
+  );
+  const remoteWorkerCount = visibleRemoteWorkers(remoteWorkers).length;
+  const remoteThreadKey = remoteWorkers
+    .flatMap((worker) =>
+      worker.remoteThreadId === null ? [] : [`${worker.environmentId} ${worker.remoteThreadId}`],
+    )
+    .join("\n");
+  const remoteThreads = useMemo(
+    () =>
+      remoteThreadKey === ""
+        ? []
+        : remoteThreadKey.split("\n").map((key) => {
+            const [environmentId, threadId] = key.split(" ") as [string, string];
+            return { environmentId, threadId };
+          }),
+    [remoteThreadKey],
+  );
   const paneScope = useMemo(
     () => ({
       environmentId: project.environmentId,
       projectId: project.id,
       coordinatorThreadId: mainCoordinatorId,
       ...(project.workspaceSettings?.logicalProject ? { members: executionScopes } : {}),
+      ...(remoteThreads.length > 0 ? { remoteThreads } : {}),
+      ...(remoteWorkersLoaded ? {} : { remoteThreadsPending: true }),
     }),
     [
       project.environmentId,
@@ -291,6 +310,8 @@ export function ProjectWorkspaceSurface({
       project.workspaceSettings?.logicalProject,
       mainCoordinatorId,
       executionScopes,
+      remoteThreads,
+      remoteWorkersLoaded,
     ],
   );
   const { tab, setTab, focusName, settingsRow, openSettingsAt, closeSettings } =
@@ -392,7 +413,8 @@ export function ProjectWorkspaceSurface({
     setSelected,
     setOverviewOpen,
     lastOpened,
-    threadsLoaded,
+    // Another machine's thread in the URL waits for this project's remote workers.
+    threadsLoaded: threadsLoaded && remoteWorkersLoaded,
     onShowCoordinator: showCoordinator,
     onPeekSubagent: peekSubagent,
   });

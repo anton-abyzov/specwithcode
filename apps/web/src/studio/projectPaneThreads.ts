@@ -24,6 +24,10 @@ export interface ProjectPaneScope {
     projectId: string;
     coordinatorThreadId: string | null;
   }[];
+  /** Threads this project's coordinator started on other machines; they open beside it. */
+  readonly remoteThreads?: readonly { environmentId: string; threadId: string }[];
+  /** Those workers are still being read: another machine's thread waits for them. */
+  readonly remoteThreadsPending?: boolean;
 }
 
 /** Forks and subagents rarely nest deeply; the cap only stops a malformed cycle. */
@@ -107,7 +111,18 @@ export function projectPaneThread<T extends PaneShell>(
     if (thread && !isOrchestratorThreadId(threadId) && threadId !== binding.coordinatorThreadId)
       return { kind: "pane", thread };
   }
-  if (environmentId !== scope.environmentId) return { kind: "elsewhere", environmentId };
+  if (
+    scope.remoteThreads?.some(
+      (remote) => remote.environmentId === environmentId && remote.threadId === threadId,
+    )
+  ) {
+    const thread = threads.find(
+      (candidate) => candidate.environmentId === environmentId && candidate.id === threadId,
+    );
+    if (thread) return thread.deletedAt === null ? { kind: "pane", thread } : { kind: "deleted" };
+  }
+  if (environmentId !== scope.environmentId)
+    return scope.remoteThreadsPending ? { kind: "unknown" } : { kind: "elsewhere", environmentId };
   const role = projectCoordinatorRole(threadId, {
     projectId: scope.projectId,
     coordinatorThreadId: scope.coordinatorThreadId ?? null,

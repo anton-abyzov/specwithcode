@@ -8,6 +8,7 @@ const app = NodePath.resolve(fixture, "../..");
 const repo = NodePath.resolve(app, "../..");
 const mocks = NodePath.join(fixture, "mocks.tsx");
 const recoverySettings = NodePath.join(fixture, "recovery-settings.ts");
+const remoteWorkers = NodePath.join(fixture, "remote-workers-fixture.ts");
 const stubs = [
   "lib/archivedThreadsState",
   "assets/assetUrls",
@@ -66,6 +67,14 @@ const server = await createServer({
         )
           return recoverySettings;
         if (files.has(resolved)) return mocks;
+        // The coordinator's remote worker cards read this machine's fleet.
+        if (
+          resolved === NodePath.join(app, "src/studio/fleet") &&
+          /\/components\/studio\/(CoordinatorConversation|ProjectWorkspaceSurface|RemoteWorkerCards)\.tsx$/.test(
+            importer,
+          )
+        )
+          return remoteWorkers;
         if (resolved === NodePath.join(app, "src/components/ChatView")) return "\0fixture-thread";
         if (resolved === NodePath.join(app, "src/components/ChatMarkdown"))
           return "\0fixture-markdown";

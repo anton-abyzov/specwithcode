@@ -3,7 +3,7 @@
  * threads on this host, so each card names its machine and opens the thread
  * there when this browser is connected to that machine.
  */
-import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
 import type { StudioFleetRemoteWorker } from "@specweave-studio/contracts/studioFleet";
 import { ExternalLinkIcon, LaptopIcon } from "lucide-react";
 
@@ -29,13 +29,25 @@ export function RemoteWorkerCards({
     key: `remote-workers:${environmentId}:${projectId}`,
     intervalMs: REMOTE_WORKERS_REFRESH_MS,
   });
+  const visible = visibleRemoteWorkers(workers, representedThreads);
+  return <RemoteWorkerCardList workers={visible} />;
+}
+
+/** These workers' cards, each opening its thread when this browser reaches that machine. */
+export function RemoteWorkerCardList({
+  workers,
+  onOpenThread,
+}: {
+  workers: ReadonlyArray<StudioFleetRemoteWorker>;
+  /** Opens the thread beside the coordinator; without one it opens full page. */
+  onOpenThread?: (threadId: ThreadId, environmentId: EnvironmentId) => void;
+}) {
   const threads = useThreadShells();
   const { openThread } = useOpenThread();
-  const visible = visibleRemoteWorkers(workers, representedThreads);
-  if (visible.length === 0) return null;
+  if (workers.length === 0) return null;
   return (
     <ul className="sws-thread-cards" aria-label="Workers on other machines">
-      {visible.map((worker) => {
+      {workers.map((worker) => {
         const reachableHere =
           worker.remoteThreadId !== null &&
           threads.some(
@@ -49,10 +61,12 @@ export function RemoteWorkerCards({
               onOpen={
                 reachableHere
                   ? () =>
-                      void openThread({
-                        environmentId: worker.environmentId,
-                        threadId: worker.remoteThreadId!,
-                      })
+                      onOpenThread
+                        ? onOpenThread(worker.remoteThreadId!, worker.environmentId)
+                        : void openThread({
+                            environmentId: worker.environmentId,
+                            threadId: worker.remoteThreadId!,
+                          })
                   : null
               }
             />
