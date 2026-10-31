@@ -758,6 +758,8 @@ function pendingThreadTitleGenerationEffect(
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+/** Why a turn stopped when the user switched its provider or model mid-turn. */
+export const MODEL_SWITCH_STOP_MESSAGE = "Switched to another model";
 
 /** A reopened preparation item drops the output and exit code of the attempt it replaces. */
 function withoutPreparationResult(
@@ -4186,6 +4188,84 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? runtimeModeSessionsToDetach(command, providerContext?.providerSessions ?? [])
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
+    // A switch releases the session a turn is still running on. Record who
+    // stopped it first, so the turn ends as stopped when its stream breaks
+    // instead of as a provider error (October 31, 2026: Gemini to Claude).
+    // The server's own moves wait for an idle thread and record nothing; an
+    // agent's switch (MCP) is an agent's Stop, so it never reads as final.
+    if (
+      detachSessionIds.size > 0 &&
+      (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+      !isServerSelectionMove(command.commandId)
+    ) {
+      const switchCause = command.commandId.startsWith("mcp:") ? "agent" : "user";
+      const releasedProviderThreadIds = new Set(
+        (providerContext?.providerThreads ?? [])
+          .filter(
+            (providerThread) =>
+              providerThread.providerSessionId !== null &&
+              detachSessionIds.has(providerThread.providerSessionId),
+          )
+          .map((providerThread) => providerThread.id),
+      );
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"], { turnItemTypes: [] });
+      for (const run of runs) {
+        // A starting run has no stream to break yet; its start opens a new session.
+        if (
+          run.status !== "running" ||
+          run.rootNodeId === null ||
+          run.providerThreadId === null ||
+          !releasedProviderThreadIds.has(run.providerThreadId)
+        ) {
+          continue;
+        }
+        const pendingItems = (yield* Ref.get(events)).flatMap((event) =>
+          event.type === "turn-item.updated" ? [event.payload] : [],
+        );
+        // A Stop already recorded for this run keeps its own reason and cause.
+        const recorded =
+          pendingItems.some(
+            (item) => item.runId === run.id && item.type === "run_interrupt_request",
+          ) ||
+          (yield* readInterruptRequests(command, run.id).pipe(mapDispatchError(command))).some(
+            (item) => item.runId === run.id && item.type === "run_interrupt_request",
+          );
+        if (recorded) continue;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "turn-item.updated",
+          threadId: thread.id,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: idAllocator.derive.runSignalTurnItem({
+              runId: run.id,
+              signal: "interrupt-request",
+            }),
+            threadId: thread.id,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: run.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: pendingItems }),
+            status: "completed",
+            title: "Interrupt requested",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "run_interrupt_request",
+            message: MODEL_SWITCH_STOP_MESSAGE,
+            cause: switchCause,
+          },
+        });
+      }
+    }
     if (detachSessionIds.size > 0) {
       const liveSessions = (providerContext?.providerSessions ?? []).filter(
         (session) =>

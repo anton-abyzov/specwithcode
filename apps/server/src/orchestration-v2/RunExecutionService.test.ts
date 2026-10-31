@@ -3559,6 +3559,48 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
+// October 31, 2026: switching Gemini to Claude mid-turn released the Gemini
+// session, and its broken stream showed as a provider error.
+it.effect("records a stream that breaks after a Stop as stopped, not as a provider error", () =>
+  Effect.gen(function* () {
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "stream-error-after-model-switch",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      hasUnpairedRunInterruptRequest: () => Effect.succeed(true),
+      runInterruptRequest: () =>
+        Effect.succeed({ cause: "user", message: "Switched to another model" }),
+      events: () =>
+        Stream.fail(
+          new ProviderAdapterEventStreamError({
+            driver,
+            providerSessionId: ProviderSessionId.make("session:switched"),
+            cause: "Provider or model selection changed.",
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["run_interrupt_result"],
+    );
+    const result = written.find((item) => item.type === "run_interrupt_result");
+    assert.equal(result?.message, "Stopped by the user");
+  }),
+);
+
+it.effect("keeps a non-stream failure after a Stop as a provider failure", () =>
+  Effect.gen(function* () {
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "other-failure-after-stop",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      hasUnpairedRunInterruptRequest: () => Effect.succeed(true),
+      events: () => Stream.die("projection write failed"),
+    });
+    assert.include(observed, "run:failed");
+    assert.isFalse(written.some((item) => item.type === "run_interrupt_result"));
+  }),
+);
+
 // A service update's drain ends a busy session's stream rather than failing it:
 // the run is left for the drain to stop for the update, which the restart
 // continues. A failed run is never continued.
