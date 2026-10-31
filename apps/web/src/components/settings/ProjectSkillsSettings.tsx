@@ -283,7 +283,9 @@ function StatusBadge({ row }: { row: ProjectSkillRow }) {
 
 /**
  * The lock's version beside the versions the copies on disk report (the
- * plugin manifest for a plugin skill), with a hint when the lock is behind.
+ * plugin manifest for a plugin skill), with a hint when they disagree. Either
+ * side can be stale: a registry version published without bumping the file's
+ * `version:` leaves the lock ahead of the file.
  */
 function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | null }) {
   const versions = projectSkillVersions(row);
@@ -296,9 +298,7 @@ function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | 
   const hint = [
     versions.lock ? `Lock: ${versions.lock}` : "Not in a vskill lock",
     ...versions.files.map((file) => `${file.labels.join(", ")}: ${file.version}`),
-    ...(versions.lockOutOfDate
-      ? ["Lock out of date: the files on disk report another version."]
-      : []),
+    ...(versions.lockOutOfDate ? ["The lock and the files on disk name different versions."] : []),
   ].join("\n");
   return (
     <Hinted hint={hint} className="block">
@@ -306,7 +306,7 @@ function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | 
         {lockOnly ? versions.lock : files.join(" / ") || versions.lock}
       </span>
       {versions.lockOutOfDate ? (
-        <div className="text-xs text-warning-foreground">lock {versions.lock}, out of date</div>
+        <div className="text-xs text-warning-foreground">lock says {versions.lock}</div>
       ) : null}
       {pinned || update ? (
         <span className="mt-0.5 flex flex-wrap gap-1">
@@ -345,6 +345,8 @@ function SkillRow({
       data-status={row.status}
       className="cursor-pointer"
       onClick={(event) => {
+        // React bubbles clicks out of portals: a row menu item would reopen the sheet unfocused.
+        if (!event.currentTarget.contains(event.target as Node)) return;
         if ((event.target as HTMLElement).closest("a,button,[role=switch]")) return;
         onOpen(row.name);
       }}

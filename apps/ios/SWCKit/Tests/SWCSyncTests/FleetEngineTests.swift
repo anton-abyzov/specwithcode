@@ -131,6 +131,49 @@ final class SwitchedConnector: WebSocketConnector {
     #expect(try h.credentials.credential(for: try #require(minis.routes.first), of: Self.minis)?.token == "tok-minis")
   }
 
+  @Test func theMachineServingTheRosterIsHomeAndListsTheProjects() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.machines.count == 2 })
+    #expect(await untilAsync { await h.cache.home() == [env] })
+    // The linked machine's own projects stay out of the list, as on the desktop.
+    #expect(await until { !h.model.projects.isEmpty })
+    #expect(h.model.projects.allSatisfy { $0.ref.environmentId == env })
+    #expect(h.model.machines.contains { $0.id == Self.minis })
+
+    h.engine.removeMachine(id: Self.minis)
+    #expect(await untilAsync { await h.cache.home() == [env] })
+  }
+
+  @Test func anInstallFromBeforeHomeMachinesStartsFromTheMachinePairedByHand() async throws {
+    // Offline from the start, so no roster names a hub: the saved pairing does.
+    let h = try await harness(startOn: false)
+    #expect(await untilAsync { await h.cache.savedHome() == [env] })
+  }
+
+  @Test func onlyAHomeHubsRosterAddsHomeMachines() throws {
+    func roster(hub: String, machines: String = "") throws -> PhoneRoster {
+      try JSONDecoder().decode(PhoneRoster.self, from: Data(#"{"hub":{"environmentId":"\#(hub)","label":"x"},"machines":[\#(machines)]}"#.utf8))
+    }
+    // A worker answers a roster naming itself as hub; it never becomes home.
+    #expect(LiveEngine.homeFromRoster(try roster(hub: "m1"), home: ["m4"]).isEmpty)
+    #expect(LiveEngine.homeFromRoster(try roster(hub: "m1"), home: []) == ["m1"])
+    // The desktop pairs a hub's Tailscale machines by itself and lists them.
+    let machines = #"{"environmentId":"m3","label":"M3","routes":[{"kind":"fleet","httpBaseUrl":"https://m3.tail1.ts.net"}]},{"environmentId":"m1","label":"M1","routes":[{"kind":"lan","httpBaseUrl":"http://192.168.1.30:8319"}]},{"environmentId":"m2","label":"M2","routes":[{"kind":"fleet","httpBaseUrl":"https://m2.tail1.ts.net"}],"problem":"unreachable"}"#
+    #expect(LiveEngine.homeFromRoster(try roster(hub: "m4", machines: machines), home: ["m4"]) == ["m4", "m3"])
+  }
+
+  @Test func firstPairedByHandSkipsLearnedAndConnectOnlyMachines() throws {
+    let learned = try #require(MachineRoute(httpBase: "http://192.168.1.40:8319", learned: true))
+    let paired = try #require(MachineRoute(httpBase: "http://192.168.1.20:8319"))
+    let records = [
+      MachineRecord(environmentId: "learned", label: "L", routes: [learned]),
+      MachineRecord(environmentId: "connect", label: "C", routes: []),
+      MachineRecord(environmentId: "m4", label: "M4", routes: [paired]),
+    ]
+    #expect(LiveEngine.firstPairedByHand(records) == "m4")
+    #expect(LiveEngine.firstPairedByHand(Array(records.prefix(2))) == nil)
+  }
+
   @Test func machinesGoByTheNicknamesInTheirSettings() async throws {
     let nicknames = #""machineNicknames":{"env-1":{"name":"Office","updatedAt":"2026-10-20T21:00:00.000Z"},"env-2":{"name":"Minis","updatedAt":"2026-10-20T21:00:00.000Z"}},"#
     let h = try await harness(config: FakeMachine.config.replacingOccurrences(of: #""settings":{"#, with: #""settings":{\#(nicknames)"#))

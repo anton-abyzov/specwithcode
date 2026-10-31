@@ -85,15 +85,15 @@ export class FleetJoinError extends Error {
     super(
       {
         "invalid-code":
-          "This is not a machine invitation. Make a new line on that machine (Invite this machine in its Settings > Connections, or `fleet invite --coordinator '<main-machine-environment-id>'`) and copy the whole line. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+          "This is not a machine invitation. Make a new line on that machine (Join a main machine in its Settings > Connections, or `fleet invite --coordinator '<main-machine-environment-id>'`) and copy the whole line. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
         "address-in-use": "Another configured machine already uses this address.",
         "id-in-use": "Another configured machine already uses this name.",
         "unknown-machine": "No configured machine has that name.",
         write: "The private machine list could not be saved.",
         "invitation-used":
-          "This invitation was already used or has expired. On that machine choose Invite this machine again and add the new line here.",
+          "This invitation was already used or has expired. On that machine choose Join a main machine again and add the new line here.",
         "wrong-coordinator":
-          "This line was made for a different main machine, so it no longer works. On that machine choose Invite this machine again, paste this machine's environment ID (Settings > Connections) as the main machine environment ID, and add the new line here.",
+          "This line was made for a different main machine, so it no longer works. On that machine choose Join a main machine again, paste this machine's environment ID (Settings > Connections) as the main machine environment ID, and add the new line here.",
         "coordinator-unknown":
           "Start SpecWithCode on this machine first: adding this machine needs its environment ID.",
       }[kind],

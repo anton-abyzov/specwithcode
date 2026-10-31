@@ -13,8 +13,10 @@ import * as NodePath from "node:path";
 import {
   PROJECT_HUB_PATH,
   PROJECT_LIBRARY_FOLDERS,
+  PROJECT_LIBRARY_OUTPUT_LIMIT,
   type ProjectLibraryArtifact,
   type ProjectLibraryFolder,
+  type ProjectLibraryOutput,
   type ProjectLibrarySnapshot,
 } from "@specweave-studio/contracts";
 
@@ -174,6 +176,101 @@ async function statWithin(root: string, relative: string) {
   }
 }
 
+/** How deep the output scan reads below `.specweave/reports` and an increment's `reports`. */
+const OUTPUT_DEPTH = 3;
+/** Folders the scan may list, so a huge reports tree cannot stall the Library. */
+const OUTPUT_FOLDER_BUDGET = 3000;
+/** Files the scan may stat. */
+const OUTPUT_FILE_BUDGET = 4000;
+
+interface OutputFolder {
+  readonly relative: string;
+  readonly increment: string | null;
+  readonly mtimeMs: number;
+}
+
+async function lstatWithin(root: string, relative: string) {
+  return NodeFSP.lstat(NodePath.join(root, relative)).catch(() => null);
+}
+
+async function listEntries(root: string, relative: string): Promise<NodeFS.Dirent[]> {
+  return NodeFSP.readdir(NodePath.join(root, relative), { withFileTypes: true }).catch(() => []);
+}
+
+/**
+ * Every folder at or below `relative`, read with lstat so a symlinked folder
+ * is never followed out of the project. Hidden entries are skipped.
+ */
+async function collectFolders(
+  root: string,
+  relative: string,
+  increment: string | null,
+  depth: number,
+  into: OutputFolder[],
+): Promise<void> {
+  if (into.length >= OUTPUT_FOLDER_BUDGET) return;
+  const stat = await lstatWithin(root, relative);
+  if (!stat?.isDirectory()) return;
+  into.push({ relative, increment, mtimeMs: stat.mtimeMs });
+  if (depth <= 1) return;
+  for (const entry of await listEntries(root, relative)) {
+    if (entry.isDirectory() && !entry.name.startsWith(".")) {
+      await collectFolders(root, `${relative}/${entry.name}`, increment, depth - 1, into);
+    }
+  }
+}
+
+/**
+ * The newest files threads wrote into SpecWeave's shared output: the
+ * project's reports folder and every increment's `reports/` folder. Adding a
+ * file changes the mtime of the folder that holds it, so folders are read
+ * newest first and the file budget goes to recent work. Every folder within
+ * the budget is read: a file rewritten in place leaves its folder's mtime
+ * alone, so a folder's age says nothing about its newest file.
+ */
+export async function readProjectOutputs(root: string): Promise<ProjectLibraryOutput[]> {
+  const realRoot = await NodeFSP.realpath(root).catch(() => null);
+  if (realRoot === null) return [];
+  // A symlinked `.specweave` could point anywhere; the Library never reads through it.
+  if (!(await lstatWithin(realRoot, ".specweave"))?.isDirectory()) return [];
+  const folders: OutputFolder[] = [];
+  await collectFolders(realRoot, ".specweave/reports", null, OUTPUT_DEPTH, folders);
+  if ((await lstatWithin(realRoot, ".specweave/increments"))?.isDirectory()) {
+    for (const entry of await listEntries(realRoot, ".specweave/increments")) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      await collectFolders(
+        realRoot,
+        `.specweave/increments/${entry.name}/reports`,
+        entry.name,
+        OUTPUT_DEPTH,
+        folders,
+      );
+    }
+  }
+  const found: ProjectLibraryOutput[] = [];
+  let budget = OUTPUT_FILE_BUDGET;
+  for (const folder of folders.toSorted((left, right) => right.mtimeMs - left.mtimeMs)) {
+    if (budget <= 0) break;
+    for (const entry of await listEntries(realRoot, folder.relative)) {
+      if (budget <= 0) break;
+      if (!entry.isFile() || entry.name.startsWith(".")) continue;
+      budget -= 1;
+      const relative = `${folder.relative}/${entry.name}`;
+      const stat = await lstatWithin(realRoot, relative);
+      if (!stat?.isFile()) continue;
+      found.push({
+        path: relative,
+        byteLength: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+        increment: folder.increment,
+      });
+    }
+  }
+  return found
+    .toSorted((left, right) => right.modifiedAt.localeCompare(left.modifiedAt))
+    .slice(0, PROJECT_LIBRARY_OUTPUT_LIMIT);
+}
+
 export async function readProjectLibrary(workspaceRoot: string): Promise<ProjectLibrarySnapshot> {
   const root = NodePath.resolve(workspaceRoot);
   const specweave = (await statWithin(root, ".specweave/config.json"))?.isFile() ?? false;
@@ -228,6 +325,7 @@ export async function readProjectLibrary(workspaceRoot: string): Promise<Project
     hubProblem,
     artifacts,
     folders,
+    outputs: await readProjectOutputs(root),
   };
 }
 

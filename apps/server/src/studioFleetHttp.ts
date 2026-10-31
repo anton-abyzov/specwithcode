@@ -420,7 +420,7 @@ export const layer = HttpApiBuilder.group(
             if (!FLEET_INVITE_MAKER_SCOPES.every((scope) => principal.scopes.has(scope)))
               return yield* new EnvironmentHttpForbiddenError({
                 message:
-                  "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Invite this machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+                  "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Join a main machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
               });
             const descriptor = yield* serverEnvironment.getDescriptor;
             const state = yield* listening;

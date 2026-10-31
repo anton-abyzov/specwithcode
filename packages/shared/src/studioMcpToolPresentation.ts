@@ -413,6 +413,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     ["Add", "Adding", "Added", "a project to another machine"],
     "project-clone",
   ),
+  studio_project_link_accept: tool(
+    ["Link", "Linking", "Linked", "a project added from another machine"],
+    "project-clone",
+  ),
   studio_project_knowledge_search: tool(
     ["Search", "Searching", "Searched", "project knowledge"],
     "knowledge-search",

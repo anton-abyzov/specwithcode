@@ -135,6 +135,9 @@ import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
 import { LibraryPane } from "./shell/LibraryPane";
+import { LIBRARY_SECTIONS, type LibrarySection } from "../../studio/projectArtifacts";
+import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
+import { useProjectArtifacts } from "../../studio/useProjectArtifacts";
 import { ProjectDesignsButton, ProjectDesignsPane } from "./shell/ProjectDesignsPane";
 import { useProjectDesigns } from "../design/useProjectDesigns";
 import { useProjectPaneDeepLink } from "../../studio/useProjectPaneDeepLink";
@@ -172,6 +175,8 @@ import {
 const OVERVIEW_OPEN_STORAGE_KEY = "studio:project-overview-open:v1";
 const PANE_TAB_STORAGE_KEY = "studio:project-pane-tab:v1";
 const PaneTabSchema = Schema.Literals(PROJECT_PANE_TABS);
+const LIBRARY_SECTION_STORAGE_KEY = "studio:project-library-section:v1";
+const LibrarySectionSchema = Schema.Literals(LIBRARY_SECTIONS);
 // F6 walks these in order; each names the first thing worth landing on in its pane.
 const PANE_FOCUS_TARGETS = [
   "[data-app-sidebar] .sws-side-row",
@@ -1303,6 +1308,20 @@ export function ProjectWorkspaceSurface({
       : undefined,
   );
   const openPullRequests = openPullRequestCount(pullRequests);
+  const projectArtifacts = useProjectArtifacts({
+    environmentId: project.environmentId,
+    projectId: project.id,
+    workspaceRoot: project.workspaceRoot,
+    enabled: connected,
+    threads: shells,
+    designs: designs.designs,
+    pullRequests,
+  });
+  const [librarySection, setLibrarySection] = useLocalStorage<LibrarySection, LibrarySection>(
+    LIBRARY_SECTION_STORAGE_KEY,
+    "artifacts",
+    LibrarySectionSchema,
+  );
   const coordinatorIds = useMemo(() => {
     const ids = new Set<string>();
     if (paneScope.coordinatorThreadId) ids.add(paneScope.coordinatorThreadId);
@@ -1863,6 +1882,10 @@ export function ProjectWorkspaceSurface({
                   workspaceRoot={project.workspaceRoot}
                   canChange={canOperate && connected}
                   bar={paneBar}
+                  section={librarySection}
+                  onSectionChange={setLibrarySection}
+                  artifacts={projectArtifacts}
+                  onOpenThread={openThread}
                 />
               ) : paneTab === "prs" ? (
                 <PullRequestsPane
@@ -1930,6 +1953,22 @@ export function ProjectWorkspaceSurface({
                   }
                   remoteWorkerCount={remoteWorkerCount}
                   designsByThread={designs.byThreadId}
+                  shelf={
+                    <ProjectArtifactShelf
+                      environmentId={project.environmentId}
+                      workspaceRoot={
+                        projectArtifacts.library?.workspaceRoot ?? project.workspaceRoot
+                      }
+                      artifacts={projectArtifacts.artifacts}
+                      now={Date.now()}
+                      onPin={projectArtifacts.setPinned}
+                      onOpenThread={openThread}
+                      onViewAll={() => {
+                        setLibrarySection("artifacts");
+                        setPaneTab("library");
+                      }}
+                    />
+                  }
                   notice={
                     <>
                       <ProjectThreadAvailability scopes={executionScopes} />

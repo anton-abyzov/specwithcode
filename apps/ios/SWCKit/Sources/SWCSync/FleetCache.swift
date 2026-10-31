@@ -18,6 +18,10 @@ public actor FleetCache {
     var lastSeen: [String: Date] = [:]
     /// Labels the main machine's roster reported, for machines never connected.
     var labels: [String: String] = [:]
+    /// Machines whose projects the phone lists, as the desktop app lists its own
+    /// machine's: ones paired by hand and ones that served a fleet roster.
+    /// Optional so a file saved before it existed still decodes.
+    var home: Set<String>?
   }
 
   static let log = Logger(subsystem: "com.specwithcode.ios", category: "fleet")
@@ -65,6 +69,7 @@ public actor FleetCache {
     change {
       $0.lastSeen[environmentId] = nil
       $0.labels[environmentId] = nil
+      $0.home?.remove(environmentId)
     }
   }
 
@@ -98,6 +103,21 @@ public actor FleetCache {
 
   public func setLabels(_ labels: [String: String]) {
     change { $0.labels.merge(labels) { _, new in new } }
+  }
+
+  // MARK: Home machines
+
+  public func home() -> Set<String> { load().home ?? [] }
+
+  /// Nil until the phone first chose its home machines.
+  public func savedHome() -> Set<String>? { load().home }
+
+  public func setHome(_ home: Set<String>) {
+    change { $0.home = home }
+  }
+
+  public func addHome(_ environmentId: String) {
+    change { $0.home = ($0.home ?? []).union([environmentId]) }
   }
 
   private func write(_ data: Data, to url: URL) throws {

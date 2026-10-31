@@ -146,7 +146,7 @@ describe("modelAvailability", () => {
     const state = modelAvailability({ provider, model: "claude-opus-5-5", nowMs: now });
     expect(state).toMatchObject({ kind: "stale", resetSinceRead: true, leftPercent: null });
     expect(isAvailabilityBlocking(state)).toBe(false);
-    expect(text(provider, "claude-opus-5-5").short).toBe("Reset since last read");
+    expect(text(provider, "claude-opus-5-5").short).toBe("Limit reset since last read");
     // Another window's room is no proof either: the reset one could hold anything now.
     const mixed = claude([session(100, -5 * 60_000), weekly(54)]);
     expect(

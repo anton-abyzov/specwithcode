@@ -4,11 +4,11 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
-  stageCodexUpdate,
+  stageProviderUpdate,
   providerProcessesInUse,
   findProviderProcessesInUse,
   shortProcessLabel,
-  type StagedCodexUpdate,
+  type StagedProviderUpdate,
 } from "./stagedProviderUpdate.ts";
 const homes: string[] = [];
 afterEach(async () => {
@@ -30,7 +30,8 @@ async function fixture() {
   await fs.writeFile(auth, "unchanged-auth");
   const oldRelease = path.join(releasesDirectory, "old.js");
   await fs.writeFile(oldRelease, "running-session-files");
-  const input: StagedCodexUpdate = {
+  const input: StagedProviderUpdate = {
+    provider: "codex",
     releasesDirectory,
     wrapperPath,
     nodePath,
@@ -58,7 +59,7 @@ async function fixture() {
 describe("staged Codex installer", () => {
   it("verifies a side-by-side package before switching only the wrapper", async () => {
     const f = await fixture();
-    await stageCodexUpdate(f.input, "0.164.0", f.run);
+    await stageProviderUpdate(f.input, "0.164.0", f.run);
     expect(await fs.readFile(f.input.wrapperPath, "utf8")).toContain("codex-0.164.0-");
     expect(await fs.readFile(f.oldRelease, "utf8")).toBe("running-session-files");
     expect(await fs.readFile(f.auth, "utf8")).toBe("unchanged-auth");
@@ -69,7 +70,7 @@ describe("staged Codex installer", () => {
   it("preserves the wrapper when install fails", async () => {
     const f = await fixture();
     await expect(
-      stageCodexUpdate(f.input, "0.164.0", async () => {
+      stageProviderUpdate(f.input, "0.164.0", async () => {
         throw new Error("npm failed");
       }),
     ).rejects.toThrow("npm failed");
@@ -78,7 +79,7 @@ describe("staged Codex installer", () => {
   it("refuses a mismatched executable version", async () => {
     const f = await fixture();
     await expect(
-      stageCodexUpdate(f.input, "0.164.0", async (cmd, args) =>
+      stageProviderUpdate(f.input, "0.164.0", async (cmd, args) =>
         args[0] === f.input.npmCliPath ? f.run(cmd, args) : "codex-cli 0.163.0",
       ),
     ).rejects.toThrow("reported");
@@ -87,7 +88,7 @@ describe("staged Codex installer", () => {
   it("preserves a wrapper changed during install", async () => {
     const f = await fixture();
     await expect(
-      stageCodexUpdate(f.input, "0.164.0", async (cmd, args) => {
+      stageProviderUpdate(f.input, "0.164.0", async (cmd, args) => {
         const result = await f.run(cmd, args);
         if (args[0] === f.input.npmCliPath)
           await fs.writeFile(f.input.wrapperPath, "another-owner");
@@ -99,8 +100,85 @@ describe("staged Codex installer", () => {
   it("rejects unknown or prerelease versions before spawning", async () => {
     const f = await fixture();
     for (const version of ["", "latest", "0.164.0-beta.1"])
-      await expect(stageCodexUpdate(f.input, version, f.run)).rejects.toThrow("latest stable");
+      await expect(stageProviderUpdate(f.input, version, f.run)).rejects.toThrow("latest stable");
     expect(f.calls).toHaveLength(0);
+  });
+});
+
+describe("staged Claude installer", () => {
+  async function claudeFixture() {
+    const f = await fixture();
+    const input: StagedProviderUpdate = { ...f.input, provider: "claude" };
+    const calls: { command: string; args: string[] }[] = [];
+    const run = async (command: string, args: readonly string[]) => {
+      calls.push({ command, args: [...args] });
+      if (args[0] === input.npmCliPath) {
+        const stage = args[args.indexOf("--prefix") + 1]!;
+        for (const name of [
+          "@anthropic-ai/claude-code",
+          "@anthropic-ai/claude-code-darwin-arm64",
+        ]) {
+          await fs.mkdir(path.join(stage, "node_modules", name), { recursive: true });
+          await fs.writeFile(
+            path.join(stage, "node_modules", name, "package.json"),
+            JSON.stringify({ name, version: "2.1.316" }),
+          );
+        }
+        await fs.writeFile(
+          path.join(stage, "node_modules/@anthropic-ai/claude-code-darwin-arm64/claude"),
+          "native",
+        );
+        return "installed";
+      }
+      return "2.1.316 (Claude Code)\n";
+    };
+    return { ...f, input, run, calls };
+  }
+  it("switches the wrapper to the verified native binary of the staged release", async () => {
+    const f = await claudeFixture();
+    await stageProviderUpdate(f.input, "2.1.316", f.run);
+    const wrapper = await fs.readFile(f.input.wrapperPath, "utf8");
+    expect(wrapper).toMatch(
+      /^#!\/bin\/sh\nset -eu\nexec \S+[\\/]claude-2\.1\.316-\w+[\\/]node_modules[\\/]@anthropic-ai[\\/]claude-code-darwin-arm64[\\/]claude "\$@"\n$/,
+    );
+    expect(wrapper).not.toContain(f.input.nodePath);
+    expect(f.calls[0]!.args).toContain("@anthropic-ai/claude-code@2.1.316");
+    expect(f.calls[0]!.args).toContain("--ignore-scripts");
+    expect(f.calls[1]!.command).toMatch(/claude-code-darwin-arm64[\\/]claude$/);
+    expect(await fs.readFile(f.oldRelease, "utf8")).toBe("running-session-files");
+    expect(await fs.readFile(f.auth, "utf8")).toBe("unchanged-auth");
+  });
+  it("creates the releases folder on the first staged update", async () => {
+    const f = await claudeFixture();
+    await fs.rm(f.input.releasesDirectory, { recursive: true });
+    await stageProviderUpdate(f.input, "2.1.316", f.run);
+    expect(await fs.readFile(f.input.wrapperPath, "utf8")).toContain("claude-2.1.316-");
+  });
+  it("refuses a native package that does not match the requested version", async () => {
+    const f = await claudeFixture();
+    await expect(
+      stageProviderUpdate(f.input, "2.1.316", async (cmd, args) => {
+        const result = await f.run(cmd, args);
+        if (args[0] === f.input.npmCliPath) {
+          const stage = args[args.indexOf("--prefix") + 1]!;
+          await fs.writeFile(
+            path.join(stage, "node_modules/@anthropic-ai/claude-code-darwin-arm64/package.json"),
+            JSON.stringify({ name: "@anthropic-ai/claude-code-darwin-arm64", version: "2.1.315" }),
+          );
+        }
+        return result;
+      }),
+    ).rejects.toThrow("did not match");
+    expect(await fs.readFile(f.input.wrapperPath, "utf8")).toBe("original-wrapper");
+  });
+  it("refuses a mismatched executable version", async () => {
+    const f = await claudeFixture();
+    await expect(
+      stageProviderUpdate(f.input, "2.1.316", async (cmd, args) =>
+        args[0] === f.input.npmCliPath ? f.run(cmd, args) : "2.1.295 (Claude Code)",
+      ),
+    ).rejects.toThrow("reported");
+    expect(await fs.readFile(f.input.wrapperPath, "utf8")).toBe("original-wrapper");
   });
 });
 

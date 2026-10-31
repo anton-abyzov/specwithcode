@@ -327,7 +327,7 @@ To turn one off:
 After revoking, the main machine can no longer pair with that worker. To add it
 again, make a new line on the worker and add it on the main machine.
 
-## Who can run work on this Mac
+## Who can run work here
 
 Allowing workers is a grant the worker gives the main machine, and the worker
 enforces it. On the worker, open **Settings → Machines → Who can run work on
@@ -412,9 +412,9 @@ Messages may be worded slightly differently in older releases.
 | "This machine is unavailable. Check its private connection and retry."                          | The worker is off, asleep, signed out of Tailscale or not running SpecWithCode. Check each, and that its key has not expired in the Tailscale admin console.                                                                                                                                                |
 | "Manage access required"                                                                        | This session cannot manage the machine. Use the app on that machine itself.                                                                                                                                                                                                                                 |
 | "Refused: this launch would loop back to a machine it came from (M4 → M1 → M4)."                | Start the work on a machine not on that path, or on the machine itself.                                                                                                                                                                                                                                     |
-| "Refused: this launch came through …, 2 machine hops; this machine allows 1 for that sender."   | On the worker, set the sender to **My machine** in **Who can run work on this Mac** if it is yours, or start the work closer to where it began.                                                                                                                                                             |
-| "Project … on this machine is not linked to …"                                                  | Link the projects, or add the project under **Projects** in **Who can run work on this Mac** on the worker.                                                                                                                                                                                                 |
-| "This machine lets … use only these sign-ins: …"                                                | Pick one of the listed sign-ins, or add that sign-in under **Sign-ins** in **Who can run work on this Mac** on the worker.                                                                                                                                                                                  |
+| "Refused: this launch came through …, 2 machine hops; this machine allows 1 for that sender."   | On the worker, set the sender to **My machine** in **Who can run work here** if it is yours, or start the work closer to where it began.                                                                                                                                                             |
+| "Project … on this machine is not linked to …"                                                  | Link the projects, or add the project under **Projects** in **Who can run work here** on the worker.                                                                                                                                                                                                 |
+| "This machine lets … use only these sign-ins: …"                                                | Pick one of the listed sign-ins, or add that sign-in under **Sign-ins** in **Who can run work here** on the worker.                                                                                                                                                                                  |
 | "… runs an older SpecWithCode that does not check delegation loops, project scope or …"         | The worker runs the work without these limits. Update SpecWithCode on the worker.                                                                                                                                                                                                                           |
 
 ## Keep your provider accounts safe
@@ -452,7 +452,7 @@ a machine continues there.
 
 If a machine's address does change (a new Tailscale name, a renamed machine, or
 moving off an older setup that reached it through another machine), make a new
-line on it (**Invite this machine**, or `fleet invite --coordinator '<main-machine-environment-id>'`) and add the new line on
+line on it (**Join a main machine**, or `fleet invite --coordinator '<main-machine-environment-id>'`) and add the new line on
 the main machine. That updates the machine in place: it keeps its name, and
 workers you allowed there carry over the next time a coordinator uses them.
 Browsers add the new address on their own and keep the old one as a fallback.

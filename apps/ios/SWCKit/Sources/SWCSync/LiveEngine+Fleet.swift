@@ -11,6 +11,14 @@ extension LiveEngine {
   func loadFleetCache() async {
     guard let fleetCache else { return }
     fleetNames = await fleetCache.labels()
+    if let saved = await fleetCache.savedHome() {
+      fleetHome = saved
+    } else if let first = Self.firstPairedByHand(machineOrder.compactMap { machines[$0]?.record }) {
+      // An install from before home machines were kept: the first machine
+      // paired by hand is the one the person started from.
+      fleetHome = [first]
+      await fleetCache.setHome(fleetHome)
+    }
     for entry in machines.values {
       let cached = await fleetCache.cached(entry.environmentId)
       if entry.snapshot == nil { entry.cachedSnapshot = cached.snapshot }
@@ -91,7 +99,39 @@ extension LiveEngine {
       }
       if await redeem(machine, code: pairing.code) { linked = true }
     }
-    if linked { publishNow() }
+    if linked {
+      // Machines just linked are known now, so a Tailscale one becomes home at once.
+      for env in Self.homeFromRoster(roster, home: fleetHome) { await markHome(env) }
+      publishNow()
+    }
+  }
+
+  /// Lists the machine's projects, as the desktop app lists its own machine's.
+  func markHome(_ environmentId: String) async {
+    guard !fleetHome.contains(environmentId), machines[environmentId] != nil else { return }
+    fleetHome.insert(environmentId)
+    await fleetCache?.addHome(environmentId)
+    schedulePublish()
+  }
+
+  /// The first saved machine with a route the person paired, not one learned
+  /// or reached only through Connect.
+  static func firstPairedByHand(_ records: [MachineRecord]) -> String? {
+    records.first { record in record.routes.contains { !$0.learned && $0.issuer != ConnectAuthorizer.issuer } }?.environmentId
+  }
+
+  /// Machines a roster makes home. Every machine with a phone session answers
+  /// a roster naming itself as hub, workers included, so the hub counts only
+  /// while the phone has no home yet. A home hub's machines with a Tailscale
+  /// address count too: the desktop pairs those by itself and lists their
+  /// projects (`fleetMachineHasTailnetAddress` on the web).
+  static func homeFromRoster(_ roster: PhoneRoster, home: Set<String>) -> [String] {
+    let hub = roster.hub.environmentId
+    guard home.isEmpty || home.contains(hub) else { return [] }
+    let tailnet = roster.machines.filter { machine in
+      machine.problem == nil && machine.routes.contains { URL(string: $0.httpBaseUrl)?.host()?.lowercased().hasSuffix(".ts.net") == true }
+    }
+    return [hub] + tailnet.map(\.environmentId)
   }
 
   func needsLink(_ machine: PhoneRoster.Machine, hub: String, dismissed: Set<String>) -> Bool {
@@ -124,6 +164,7 @@ extension LiveEngine {
   }
 
   private func remember(_ roster: PhoneRoster, _ fleetCache: FleetCache) async {
+    for env in Self.homeFromRoster(roster, home: fleetHome) { await markHome(env) }
     var names = [roster.hub.environmentId: roster.hub.label]
     for machine in roster.machines { names[machine.environmentId] = machine.label }
     guard names.contains(where: { fleetNames[$0.key] != $0.value }) else { return }

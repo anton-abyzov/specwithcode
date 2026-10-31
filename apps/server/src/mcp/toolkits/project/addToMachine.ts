@@ -3,8 +3,10 @@ import {
   type OrchestratorMcpMachineRef,
   Project,
   type ProjectId,
+  ProjectLinkAcceptResult,
   type RepositoryIdentity,
   SourceControlCloneRepositoryResult,
+  ThreadId,
   type SourceControlCloneProtocol,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -12,6 +14,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import { randomUuidV4 } from "../../../orchestration-v2/RandomUuid.ts";
+import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
 import { SETUP_GIT_COMMAND } from "../../../provision/plan.ts";
@@ -32,6 +36,8 @@ export interface AddToMachineInput {
 // A clone of a large repository over a slow link takes minutes; registering it does not.
 const CLONE_TIMEOUT_MS = 10 * 60 * 1_000;
 const CREATE_TIMEOUT_MS = 60 * 1_000;
+// Accepting a link fingerprints the fresh clone there.
+const LINK_TIMEOUT_MS = 60 * 1_000;
 
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
@@ -175,7 +181,14 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
     .proxy({
       machine,
       tool: "studio_project_create",
-      arguments: { title, workspaceRoot: cloned.cwd },
+      arguments: {
+        title,
+        workspaceRoot: cloned.cwd,
+        // A check's project stays a check's project there; a folder guess is never saved.
+        ...(source?.project.workspaceSettings?.origin === "automated"
+          ? { origin: "automated" }
+          : {}),
+      },
       timeoutMs: CREATE_TIMEOUT_MS,
     })
     .pipe(
@@ -198,6 +211,10 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
         ),
       ),
     );
+  const link =
+    source === undefined
+      ? undefined
+      : yield* linkCopy({ sourceId: source.project.id, machine, copyId: created.id });
   const strategy =
     input.branch === undefined
       ? ""
@@ -209,6 +226,73 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
     workspaceRoot: created.workspaceRoot,
     remoteUrl: cloned.remoteUrl,
     ...(input.branch === undefined ? {} : { branch: input.branch }),
+    ...(link === undefined
+      ? {}
+      : link.linked
+        ? { linked: true }
+        : { linked: false, linkProblem: link.problem }),
     next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${created.id}"${strategy}}.`,
   };
+});
+
+type LinkOutcome = { readonly linked: true } | { readonly linked: false; readonly problem: string };
+
+/**
+ * Makes the copy on `machine` the same project as the one here, as the app's
+ * Link… does: prepare here, accept there, commit here. Without it the copy has
+ * its own identity and every machine lists it as a second project. A copy that
+ * cannot link stays registered; the answer says why and how to link it.
+ */
+const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
+  readonly sourceId: ProjectId;
+  readonly machine: OrchestratorMcpMachineRef;
+  readonly copyId: ProjectId;
+}) {
+  const unlinked = (reason: string): LinkOutcome => ({
+    linked: false,
+    problem: `${reason} It is listed as a separate project until you link it: open its menu in the sidebar and choose Link….`,
+  });
+  const link = Option.getOrUndefined(yield* Effect.serviceOption(ProjectLink.ProjectLink));
+  if (link === undefined) return unlinked("This machine could not link the copy.");
+  const remote = yield* RemoteWorkers.RemoteWorkers;
+  const operationId = yield* randomUuidV4;
+  const linked = Effect.gen(function* () {
+    const prepared = yield* link.prepare({
+      operationId,
+      projectId: input.sourceId,
+      joining: {
+        environmentId: input.machine.environmentId,
+        projectId: input.copyId,
+        coordinatorThreadId: ThreadId.make(`project-coordinator:${input.copyId}`),
+      },
+    });
+    const answer = yield* remote.proxy({
+      machine: input.machine,
+      tool: "studio_project_link_accept",
+      arguments: {
+        operationId,
+        projectId: input.copyId,
+        kept: prepared.kept,
+        logicalProject: prepared.logicalProject,
+        coordinatorBinding: prepared.coordinatorBinding,
+        keptFingerprint: prepared.fingerprint,
+      },
+      timeoutMs: LINK_TIMEOUT_MS,
+    });
+    const accepted = yield* Schema.decodeUnknownEffect(ProjectLinkAcceptResult)(answer);
+    yield* link.commit({
+      operationId,
+      projectId: input.sourceId,
+      joining: accepted.member,
+      notes: [],
+    });
+    return { linked: true } as LinkOutcome;
+  });
+  return yield* linked.pipe(
+    Effect.catch((error) =>
+      Effect.succeed(
+        unlinked(`The copy on ${input.machine.label} was not linked: ${error.message}`),
+      ),
+    ),
+  );
 });

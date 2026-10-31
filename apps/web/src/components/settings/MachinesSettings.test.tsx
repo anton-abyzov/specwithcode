@@ -248,7 +248,7 @@ describe("Settings > Machines", () => {
       accounts: [],
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    expect(html).toContain('aria-label="Who can run work on this Mac"');
+    expect(html).toContain('aria-label="Who can run work here"');
     expect(html).toContain("May run work here");
     expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
     expect(html.match(/May run work here/g)).toHaveLength(1);

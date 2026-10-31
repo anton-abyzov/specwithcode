@@ -351,16 +351,23 @@ export function meterParts(
       return { ring: { percent: 0, tone: "full", dashed: false }, value: "Limit", detail };
     }
     // A dashed ring and a word: the reading can't be vouched for, and says so.
+    // A limit that reset since the read is good news, not a state to act on: the
+    // chip shows no meter, and the tooltip and picker header say what happened.
     case "stale":
+      if (
+        state.resetSinceRead &&
+        !state.wasExhausted &&
+        (state.leftPercent === null || state.leftPercent >= 100)
+      ) {
+        return null;
+      }
       return {
         ring: { percent: null, tone: state.wasExhausted ? "warn" : "muted", dashed: true },
-        value: state.resetSinceRead
-          ? "Reset"
-          : state.wasExhausted
-            ? "Limit?"
-            : state.leftPercent === null || state.leftPercent >= 100
-              ? "Old"
-              : `~${state.leftPercent}%`,
+        value: state.wasExhausted
+          ? "Limit?"
+          : state.leftPercent === null || state.leftPercent >= 100
+            ? "Old"
+            : `~${state.leftPercent}%`,
         detail: null,
       };
     case "loading":

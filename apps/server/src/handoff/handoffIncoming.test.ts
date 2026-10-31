@@ -539,7 +539,7 @@ describe("takeover under the source's work grant", () => {
         {
           check: "grant",
           message:
-            "Minis: this machine lets M4 use only these sign-ins: claudeAgent. The user can allow codex in Settings > Connections > Who can run work on this Mac.",
+            "Minis: this machine lets M4 use only these sign-ins: claudeAgent. The user can allow codex in Settings > Machines > Who can run work here.",
         },
       ]);
       const refused = yield* takeOver(caller).pipe(Effect.flip);

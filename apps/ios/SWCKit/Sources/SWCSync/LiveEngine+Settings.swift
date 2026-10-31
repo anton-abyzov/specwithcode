@@ -22,6 +22,9 @@ extension LiveEngine {
     let env = result.record.environmentId
     let entry = await adopt(result)
     if let fleetCache { await fleetCache.undismiss(env) }
+    // A new machine paired by hand lists its projects; pairing a known one
+    // again ("Pair again" on a worker) keeps its place.
+    if expectedEnvironmentId == nil { await markHome(env) }
     publishNow()
 
     // Give the new connection a moment so the summary shows it online.
@@ -52,6 +55,7 @@ extension LiveEngine {
   public func removeMachine(id: String) {
     guard let entry = machines.removeValue(forKey: id) else { return }
     if let fleetCache { Task { await fleetCache.dismiss(id) } }
+    fleetHome.remove(id)
     machineOrder.removeAll { $0 == id }
     entry.cancel()
     entry.socket = nil

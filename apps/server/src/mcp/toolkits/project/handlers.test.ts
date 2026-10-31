@@ -262,7 +262,9 @@ it.effect("binds a launched thread to the increment it names, and refuses a bad 
     // "new" seeds nothing and asks the worker to plan first.
     yield* handle({ ...base, increment: "new" });
     expect(launched[1]?.increment).toBeUndefined();
-    expect(launched[1]?.initialMessage?.text).toContain('`specweave create-increment "Connect"`');
+    // Named for the work the task describes, never after the thread ("Connect").
+    expect(launched[1]?.initialMessage?.text).toContain('`specweave create-increment "<title>"`');
+    expect(launched[1]?.initialMessage?.text).not.toContain('create-increment "Connect"');
 
     // An increment only on the caller's branch resolves in its worktree for a new worktree.
     const callerTree = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-increment-tree-"));

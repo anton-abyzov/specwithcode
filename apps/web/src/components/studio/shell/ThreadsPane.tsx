@@ -137,6 +137,8 @@ export function ThreadsPane({
   onToggleResolved: (thread: EnvironmentThreadShell) => void;
   /** Anything the project has to say above the list, such as a failed archive load. */
   notice?: ReactNode;
+  /** The project's artifacts shelf, above the threads. */
+  shelf?: ReactNode;
   /** Workers this project runs on other machines; they are not threads here. */
   remoteWorkerCount?: number;
   /** The project's design each agent thread is bound to, by thread id. */
@@ -577,6 +579,7 @@ export function ThreadsPane({
             />
           ) : null}
         </header>
+        {props.shelf}
         {props.notice}
         <div id="sws-threads-find">
           {findShown ? (

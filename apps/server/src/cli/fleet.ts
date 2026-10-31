@@ -108,7 +108,7 @@ const resolveFleetBaseDir = (explicit: Option.Option<string>) =>
 
 /**
  * Makes the invitation in the running service, as Settings > Connections >
- * Invite this machine does (`POST /api/studio/fleet/invite`), with the
+ * Join a main machine does (`POST /api/studio/fleet/invite`), with the
  * credential the service published for this machine's CLI. The live database
  * is never opened here: the management session is issued by the service.
  */
@@ -400,7 +400,7 @@ export function fleetRemoveSummary(removed: FleetRemoveResult, cli: string): str
     lines.push(`Revoked this machine's worker access on ${removed.label}.`);
   else if (removed.workerAccess === "kept")
     lines.push(
-      `Worker access this machine may hold on ${removed.label} could not be revoked from here. On ${removed.label}, revoke it under Settings > Machines > Who can run work on this Mac.`,
+      `Worker access this machine may hold on ${removed.label} could not be revoked from here. On ${removed.label}, revoke it under Settings > Machines > Who can run work here.`,
     );
   if (removed.managementToken === "revoked")
     lines.push(`Revoked this machine's management token on ${removed.label}.`);

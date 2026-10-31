@@ -9,7 +9,9 @@
  * `fleet:skills` again. One result comes back per machine, in the order asked.
  *
  * The Studio link reuses a running Skill Studio when its runtime lock names a
- * live process, preferring one rooted at this folder, and otherwise starts
+ * live process, preferring one rooted at this folder (by the lock's root, or
+ * by the port vskill derives from the folder when the lock's command line was
+ * cut short), and otherwise starts
  * `vskill studio --root <folder>` detached and waits for its lock. The link
  * is Studio's own hash route, `#/skills/<source>/<plugin>/<skill>`.
  *
@@ -23,6 +25,9 @@ import type {
   ProjectSkillsStudioLinkInput,
 } from "@specweave-studio/contracts";
 import { ProjectSkillsActionError } from "@specweave-studio/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- vskill derives Studio's port from an MD5 of the root; Effect has no sync MD5.
+import * as NodeCrypto from "node:crypto";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -182,6 +187,7 @@ const StudioLock = Schema.fromJsonString(
     pid: Schema.Number,
     port: Schema.Number,
     cmdline: Schema.optionalKey(Schema.Unknown),
+    root: Schema.optionalKey(Schema.Unknown),
   }),
 );
 const decodeStudioLock = Schema.decodeUnknownOption(StudioLock);
@@ -204,11 +210,22 @@ export function studioRootOf(args: ReadonlyArray<string>): string | null {
   return null;
 }
 
+/** vskill cuts a lock's command line to 117 characters and adds `...` (vskill `truncateCmdline`). */
+const isCutCmdline = (cmdline: string) => cmdline.length >= 120 && cmdline.endsWith("...");
+
+/**
+ * The port `vskill studio --root <root>` binds when given none: 3077 plus the
+ * first two bytes of the root's MD5, modulo 101 (vskill `projectPort`).
+ */
+export function vskillStudioPort(root: string): number {
+  return 3077 + (NodeCrypto.createHash("md5").update(root).digest().readUInt16BE(0) % 101);
+}
+
 /** A `studio-<port>.lock` from `~/.vskill/runtime`, or null when it is not one. */
 export function parseStudioLock(text: string): StudioInstance | null {
   const lock = decodeStudioLock(text);
   if (Option.isNone(lock)) return null;
-  const { pid, port, cmdline } = lock.value;
+  const { pid, port, cmdline, root } = lock.value;
   if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port) || port <= 0 || port > 65535)
     return null;
   // An argv array keeps a root with spaces whole; a joined string is split on whitespace.
@@ -218,11 +235,20 @@ export function parseStudioLock(text: string): StudioInstance | null {
       : Array.isArray(cmdline)
         ? cmdline.filter((part): part is string => typeof part === "string")
         : [];
+  let argRoot = studioRootOf(args);
+  // A root at the end of a cut command line is only its first characters.
+  const last = args.at(-1);
+  if (
+    typeof cmdline === "string" &&
+    isCutCmdline(cmdline) &&
+    (last === argRoot || last === `--root=${argRoot}`)
+  )
+    argRoot = null;
   return {
     pid,
     port,
     cmdline: typeof cmdline === "string" ? cmdline : args.join(" "),
-    root: studioRootOf(args),
+    root: typeof root === "string" && root.length > 0 ? root : argRoot,
   };
 }
 
@@ -277,13 +303,24 @@ export const makeStudioLink = Effect.fn("projectSkills.makeStudioLink")(function
 
   /**
    * A Studio whose `--root` is `cwd` itself first (a root that merely starts
-   * with it, such as a sibling or a child folder, is another project); for the
-   * user's and plugin skills any live one does.
+   * with it, such as a sibling or a child folder, is another project). A lock
+   * whose root is unknown (vskill cuts long command lines) counts when it
+   * holds the port vskill gives `cwd`: a second `vskill studio --root <cwd>`
+   * would find that port taken and exit. For the user's and plugin skills any
+   * live one does.
    */
-  const pick = (instances: ReadonlyArray<StudioInstance>, cwd: string, anyRoot: boolean) =>
-    instances.find(
-      (instance) => instance.root !== null && path.resolve(instance.root) === path.resolve(cwd),
-    ) ?? (anyRoot ? instances[0] : undefined);
+  const pick = (instances: ReadonlyArray<StudioInstance>, cwd: string, anyRoot: boolean) => {
+    const here = path.resolve(cwd);
+    return (
+      instances.find(
+        (instance) => instance.root !== null && path.resolve(instance.root) === here,
+      ) ??
+      instances.find(
+        (instance) => instance.root === null && instance.port === vskillStudioPort(here),
+      ) ??
+      (anyRoot ? instances[0] : undefined)
+    );
+  };
 
   const link = (input: ProjectSkillsStudioLinkInput) =>
     Effect.gen(function* () {

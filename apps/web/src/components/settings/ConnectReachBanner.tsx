@@ -18,9 +18,23 @@ export function connectReachCopy(
   machines: ReadonlyArray<UnreachableMachine>,
   signedIn: boolean,
   discoveredIds: ReadonlySet<string> | ReadonlyMap<string, unknown>,
-): { readonly title: string; readonly description: string; readonly signIn: boolean } | null {
+): {
+  readonly title: string;
+  readonly description: string;
+  readonly signIn: boolean;
+} | null {
   if (machines.length === 0) return null;
   if (!signedIn) {
+    // Fleet work from this machine uses the keys each machine gave it, not this
+    // window's sign-in; the sign-in only adds this window's own route.
+    if (machines.every((machine) => machine.onConnect)) {
+      const names = listNames(machines.map((machine) => machine.label));
+      return {
+        title: `${names} ${machines.length === 1 ? "is" : "are"} on SpecWithCode Connect`,
+        description: `Sign in to SpecWithCode Connect here to open ${machines.length === 1 ? "it" : "them"} from this window. Work this machine sends there does not need this sign-in; it uses the key each machine gave it when it was added.`,
+        signIn: true,
+      };
+    }
     const names = listNames(machines.map((machine) => machine.label));
     return {
       title:

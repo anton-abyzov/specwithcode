@@ -391,8 +391,13 @@ export function limitResumeDisarm(
   if (run === null || failure?.class !== "usage_limit") return null;
   const resetAt = failure.resetAt ?? null;
   const recovery = thread.limitRecovery;
-  // A person's own snooze stays: it only hides the thread until the reset.
-  return recovery?.runId === run.id && recovery.resetAt === resetAt && recovery.autoResume === false
+  // A person's own snooze stays: it only hides the thread until the reset. A stop
+  // the rule armed off is still stamped as the person's, so turning the project's
+  // auto-continue on later does not re-arm a run they stopped.
+  return recovery?.runId === run.id &&
+    recovery.resetAt === resetAt &&
+    recovery.autoResume === false &&
+    !String(recovery.requestId ?? "").startsWith("limit-arm:")
     ? null
     : { runId: run.id, resetAt, autoResume: false };
 }

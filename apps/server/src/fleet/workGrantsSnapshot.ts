@@ -110,7 +110,7 @@ export const readGrantProjects = <E, R>(
   );
 
 /**
- * "Who can run work on this Mac": every coordinator machine with a grant
+ * "Who can run work here": every coordinator machine with a grant
  * here, what it may use, and the projects and sign-ins the user can choose
  * from. Read on the machine doing the work, which owns the grants.
  */

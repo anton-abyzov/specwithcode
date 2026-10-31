@@ -32,6 +32,14 @@ const AUTOMATED_FOLDER_WORDS = new Set([
   "fixtures",
 ]);
 
+/**
+ * A word only a recorded demo's own folder uses (`greet-app-demo`); a parent such
+ * as `~/Projects/demo/` may hold the person's work, so it counts on the last folder only.
+ */
+const DEMO_FOLDER_WORD = "demo";
+
+const wordsOf = (segment: string) => segment.toLowerCase().split(/[-_. ]+/);
+
 /** The app's own data folders; a project inside one was made by the app or an agent. */
 const APP_DATA_FOLDERS = [
   [".specwithcode"],
@@ -92,11 +100,9 @@ export function isAutomatedWorkspaceRoot(workspaceRoot: string): boolean {
     inAppData = true;
   }
   if (inAppData) return true;
+  if (wordsOf(segments.at(-1) ?? "").includes(DEMO_FOLDER_WORD)) return true;
   return segments.some((segment) =>
-    segment
-      .toLowerCase()
-      .split(/[-_. ]+/)
-      .some((word) => AUTOMATED_FOLDER_WORDS.has(word)),
+    wordsOf(segment).some((word) => AUTOMATED_FOLDER_WORDS.has(word)),
   );
 }
 

@@ -520,6 +520,6 @@ describe("private fleet boundary", () => {
         new Set([AuthAccessWriteScope, AuthOrchestrationReadScope]),
         outdated,
       ),
-    ).rejects.toThrow("Invite this machine");
+    ).rejects.toThrow("Join a main machine");
   });
 });

@@ -100,10 +100,13 @@ function existingBrief(increment: {
     : `${spec}: run \`${pickup}\` first.`;
 }
 
-function newBrief(title: string | undefined): string {
-  const name = title?.replace(/["`\\]/gu, "").trim() || "<title>";
-  return `Plan it first: \`specweave create-increment "${name}"\`, fill spec.md, then edit code.`;
-}
+/**
+ * The increment is named for the work, as the user or the task names it, not
+ * after the worker's thread: a planner titled "Plan 0003 languages" made
+ * `0003-plan-0003-languages` for the user's "Greet in three languages".
+ */
+export const NEW_INCREMENT_BRIEF =
+  'Plan it first: `specweave create-increment "<title>"` with the title the user or this task gives the work (not this thread\'s title), fill spec.md, then edit code.';
 
 export const NO_INCREMENT_BRIEF = 'If you change code, run `specweave small-fix "<why>"` first.';
 
@@ -184,15 +187,13 @@ export async function resolveLaunchIncrement(input: {
    */
   readonly fallbackWorktreePath?: string | null;
   readonly ref: string | undefined;
-  /** The new thread's title, named in the "new" brief. */
-  readonly title?: string | undefined;
   /** The launching thread; null for a caller outside a thread or on another machine. */
   readonly caller: Omit<ThreadIncrementSource, "link"> | null;
   readonly isCoordinator: boolean;
 }): Promise<LaunchIncrementResolution> {
   const ref = input.ref?.trim();
   if (ref === "none") return { ok: true, value: { brief: NO_INCREMENT_BRIEF } };
-  if (ref === "new") return { ok: true, value: { brief: newBrief(input.title) } };
+  if (ref === "new") return { ok: true, value: { brief: NEW_INCREMENT_BRIEF } };
   try {
     if (ref !== undefined && ref !== "") {
       let resolved = await resolveIncrementRef(input.workspaceRoot, input.worktreePath, ref);

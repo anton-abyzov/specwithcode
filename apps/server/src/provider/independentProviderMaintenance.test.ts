@@ -196,6 +196,7 @@ describe.skipIf(posixWrapperOnly)("staged fleet Codex ownership", () => {
   it("recognizes the actual release wrapper and its owning Node/npm toolchain", async () => {
     const value = stagedFixture();
     expect(await inspect(value)).toMatchObject({
+      provider: "codex",
       wrapperPath: value.wrapper,
       nodePath: value.node,
     });
@@ -210,5 +211,105 @@ describe.skipIf(posixWrapperOnly)("staged fleet Codex ownership", () => {
     NodeFS.unlinkSync(value.stagedEntrypoint);
     NodeFS.symlinkSync(value.entrypoint, value.stagedEntrypoint);
     expect(await inspect(value)).toBe("unverified");
+  });
+});
+
+// The fleet's Claude wrapper runs the native binary; the pinned Node/npm that
+// stages its update is the one the Codex wrapper beside it runs.
+describe.skipIf(posixWrapperOnly)("staged fleet Claude ownership", () => {
+  const write = (p: string, value: string) => {
+    NodeFS.mkdirSync(NodePath.dirname(p), { recursive: true });
+    NodeFS.writeFileSync(p, value);
+  };
+  function claudeFixture(layout: "prefix" | "release") {
+    const value = fixture("claudeAgent");
+    const releases = NodePath.join(value.home, ".local/share/specweave/provider-releases");
+    NodeFS.mkdirSync(releases, { recursive: true });
+    const npm = NodePath.resolve(NodePath.dirname(value.node), "../lib/node_modules/npm");
+    write(NodePath.join(npm, "package.json"), JSON.stringify({ name: "npm" }));
+    write(NodePath.join(npm, "bin/npm-cli.js"), "npm");
+    write(
+      NodePath.join(value.prefix, "bin/codex"),
+      `#!/bin/sh\nset -eu\nexec ${value.node} ${NodePath.join(releases, "r1/node_modules/@openai/codex/bin/codex.js")} "$@"\n`,
+    );
+    let entrypoint = value.entrypoint;
+    if (layout === "release") {
+      const release = NodePath.join(releases, "reviewed-release");
+      const version = "2.1.295";
+      write(
+        NodePath.join(release, "package.json"),
+        JSON.stringify({ dependencies: { "@anthropic-ai/claude-code": version } }),
+      );
+      for (const name of ["@anthropic-ai/claude-code", "@anthropic-ai/claude-code-darwin-arm64"])
+        write(
+          NodePath.join(release, "node_modules", name, "package.json"),
+          JSON.stringify({ name, version }),
+        );
+      entrypoint = NodePath.join(
+        release,
+        "node_modules/@anthropic-ai/claude-code-darwin-arm64/claude",
+      );
+      write(entrypoint, "native");
+      write(value.wrapper, `#!/bin/sh\nset -eu\nexec ${entrypoint} "$@"\n`);
+    }
+    return { ...value, releases, stagedEntrypoint: entrypoint };
+  }
+  it.each(["prefix", "release"] as const)(
+    "stages an update for the %s layout with the fleet's Node/npm",
+    async (layout) => {
+      const value = claudeFixture(layout);
+      expect(await inspect(value)).toMatchObject({
+        provider: "claude",
+        wrapperPath: value.wrapper,
+        releasesDirectory: value.releases,
+        nodePath: value.node,
+      });
+    },
+  );
+  it("stages the original prefix before any release folder exists", async () => {
+    const value = claudeFixture("prefix");
+    NodeFS.rmSync(value.releases, { recursive: true });
+    expect(await inspect(value)).toMatchObject({
+      provider: "claude",
+      releasesDirectory: value.releases,
+    });
+  });
+  it("stays manual without the pinned toolchain", async () => {
+    const value = claudeFixture("prefix");
+    NodeFS.unlinkSync(NodePath.join(value.prefix, "bin/codex"));
+    expect(await inspect(value)).toBe("verified");
+    expect(await inspect(claudeFixture("release"))).toMatchObject({ provider: "claude" });
+    const release = claudeFixture("release");
+    NodeFS.unlinkSync(NodePath.join(release.prefix, "bin/codex"));
+    expect(await inspect(release)).toBe("unverified");
+  });
+  it("refuses extra commands, redirected binaries and mismatched packages", async () => {
+    const extra = claudeFixture("release");
+    NodeFS.appendFileSync(extra.wrapper, "echo unexpected\n");
+    expect(await inspect(extra)).toBe("unverified");
+    const redirected = claudeFixture("release");
+    NodeFS.unlinkSync(redirected.stagedEntrypoint);
+    NodeFS.symlinkSync(redirected.entrypoint, redirected.stagedEntrypoint);
+    expect(await inspect(redirected)).toBe("unverified");
+    const mismatched = claudeFixture("release");
+    write(
+      NodePath.join(NodePath.dirname(mismatched.stagedEntrypoint), "package.json"),
+      JSON.stringify({ name: "@anthropic-ai/claude-code-darwin-arm64", version: "2.1.294" }),
+    );
+    expect(await inspect(mismatched)).toBe("unverified");
+  });
+  it("is not offered off Apple silicon", async () => {
+    const value = claudeFixture("release");
+    expect(
+      await Effect.runPromise(
+        independentProviderMaintenance({
+          provider: value.provider,
+          packageName: value.packageName,
+          context: value.context,
+          homeDirectory: value.home,
+          architecture: "x64",
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
+    ).toBe("unverified");
   });
 });

@@ -686,7 +686,7 @@ export function ConnectReadinessNotice({
   );
 }
 
-/** Sign in first; once signed in, the link itself is turned on in Settings. */
+/** Linking needs a Connect account in this window; once signed in, link in Settings. */
 function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
   const { isLoaded, isSignedIn } = useAuth();
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
@@ -694,8 +694,8 @@ function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
   if (isSignedIn)
     return (
       <span className="mt-2 block">
-        You are signed in. Turn on SpecWithCode Connect for this machine under Settings &gt;
-        Connections &gt; SpecWithCode Connect.
+        Signed in here. Now link this machine under Settings &gt; Connections &gt; SpecWithCode
+        Connect.
       </span>
     );
   return (
@@ -739,10 +739,11 @@ export function FleetInviteDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Invite this machine to another one</DialogTitle>
+          <DialogTitle>Join a main machine</DialogTitle>
           <DialogDescription>
-            Your main machine can then start work here. It reaches this machine over SpecWithCode
-            Connect, so sign in to Connect on this machine first.
+            Your main machine can then start work here. The line carries this machine’s SpecWithCode
+            Connect address, so link Connect here first. After that, the main machine’s own keys
+            reach this machine; no one needs to stay signed in.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -768,7 +769,7 @@ export function FleetInviteDialog({
 }
 
 /**
- * Beside Invite this machine: Tailscale's state here, with Install or Sign in
+ * Beside Join a main machine: Tailscale's state here, with Install or Sign in
  * when it is not ready, and the dialog the button opens. One check serves
  * both; it looks again sooner while the dialog is open.
  */
@@ -792,7 +793,8 @@ export function FleetInviteArea({
   const { copyToClipboard } = useCopyToClipboard<void>({ target: "command" });
   return (
     <>
-      {canManage && !open ? (
+      {/* Only a joining machine needs Connect linked; the dialog says so when it opens. */}
+      {canManage && !open && !hasCloudPublicConfig() ? (
         <ConnectReadinessNotice
           readiness={readiness}
           canManage={canManage}

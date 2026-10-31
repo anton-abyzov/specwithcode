@@ -328,7 +328,7 @@ export function remoteFailure(
       return failure(
         "machine_not_authorized",
         error.grant === "revoked"
-          ? `${label} revoked this machine's worker access. If it was revoked under "Who can run work on this Mac" there, allow this machine again on ${label} first; then allow workers again here in Settings > Connections.`
+          ? `${label} revoked this machine's worker access. If it was revoked under "Who can run work here" there, allow this machine again on ${label} first; then allow workers again here in Settings > Connections.`
           : error.grant === "expired"
             ? `Worker access on ${label} expired. The user can allow workers again in Settings > Connections.`
             : `Workers are not allowed on ${label}. The user allows them in Settings > Connections.`,

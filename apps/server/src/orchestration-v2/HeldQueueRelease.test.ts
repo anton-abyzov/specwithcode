@@ -259,3 +259,35 @@ it.effect("tells a sender whether its message joined a held queue or released on
     assert.equal(sent.releasedHeldRuns, 2);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("accepts a notice sent to an idle thread, and the same notice sent again", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const threadId = ThreadId.make("thread:idle-notice");
+    yield* createThread(threadId);
+    // A remote worker's report: it starts a turn at once and is shown as a notification.
+    const notice = {
+      projectId,
+      commandId: CommandId.make("command:idle-notice"),
+      threadId,
+      messageId: MessageId.make("message:idle-notice"),
+      text: "Remote worker finished: completed.",
+      notification: {
+        source: { kind: "background_task" as const },
+        outcome: "completed" as const,
+        summary: "Worker reported back.",
+      },
+      attachments: [],
+      mode: "queue" as const,
+      createdBy: "agent" as const,
+      creationSource: "server" as const,
+    };
+    const sent = yield* threads.sendToThread(notice);
+    assert.equal(sent.delivery, "started");
+    yield* completeActiveRun(threadId);
+    // Sent again after a restart: the orchestrator replays it instead of failing.
+    const again = yield* threads.sendToThread(notice);
+    assert.equal(again.message.id, sent.message.id);
+    assert.deepEqual(yield* runs(threadId), ["completed"]);
+  }).pipe(Effect.provide(layerTest)),
+);

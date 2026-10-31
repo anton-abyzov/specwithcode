@@ -27,8 +27,15 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
       XCTAssertFalse(button("Close menu").exists)
       let input = field("Message").frame
       XCTAssertGreaterThan(input.minX, search.frame.minX, "Expanded navigation must sit beside the composer")
-      tap(hittableButton(titled("Recipe app")))
+      // Sidebar rows are list cells; selecting one swaps the detail in place.
+      let recipe = app.cells.containing(titled("Recipe app")).firstMatch.exists
+        ? app.cells.containing(titled("Recipe app")).firstMatch
+        : app.descendants(matching: .any).matching(titled("Recipe app")).firstMatch
+      tap(recipe)
       waitForHittable(button(startingWith: "Recipe app, Coordinator"))
+      XCTAssertTrue(recipe.isSelected || app.descendants(matching: .any).matching(titled("Recipe app")).allElementsBoundByIndex.contains { $0.isSelected },
+                    "The selected chat's sidebar row is not highlighted")
+      XCTAssertFalse(button("Close menu").exists, "Expanded navigation must not present a modal drawer")
       waitForHittable(search)
       waitForHittable(field("Message"))
     } else {

@@ -753,6 +753,7 @@ import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFi
 import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { projectEnvironment } from "../state/projects";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { parseComposerAppCommand } from "../studio/composerAppCommands";
 import { useComposerAppCommands } from "../studio/useComposerAppCommands";
@@ -10438,6 +10439,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     },
   );
+  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const limitRecoveryBanner = useBannerItem(
     usageLimitRecoveryBannerItem,
     limitStopped && activeThreadShell?.latestRun
@@ -10553,6 +10555,23 @@ export default function ChatView(props: ChatViewProps) {
             });
             if (result._tag === "Failure") throw squashAtomCommandFailure(result);
           },
+          project: activeProject?.workspaceSettings
+            ? {
+                on: activeProject.workspaceSettings.autoResume,
+                global: settings.autoResumeLimitedThreads,
+                onChange: async (on: boolean) => {
+                  const workspace = activeProject.workspaceSettings!;
+                  const result = await updateProject({
+                    environmentId: activeProject.environmentId,
+                    input: {
+                      projectId: activeProject.id,
+                      workspaceSettings: { expectedRevision: workspace.revision, autoResume: on },
+                    },
+                  });
+                  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                },
+              }
+            : null,
         }
       : null,
   );

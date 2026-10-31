@@ -158,6 +158,44 @@ export function limitRecoveryCommand(
 }
 
 /**
+ * A stop the project rule armed with auto-continue off, and that the person
+ * has not touched since, follows the rule once it is turned on: turning on
+ * "Auto-continue this project's threads" picks up threads already waiting on
+ * a limit. A person's own choice on the thread (any other request id) stands.
+ */
+export function policyRearmCommand(
+  thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
+  autoResume: boolean,
+  nowMs: number,
+): OrchestrationV2ServerCommand | null {
+  const recovery = thread.limitRecovery;
+  if (
+    !autoResume ||
+    !isLimitRecoveryCandidate(thread) ||
+    !thread.latestRunId ||
+    recovery?.runId !== thread.latestRunId ||
+    recovery.resetAt !== (thread.usageLimitResetAt ?? null) ||
+    recovery.autoResume ||
+    !String(recovery.requestId ?? "").startsWith("limit-arm:")
+  )
+    return null;
+  const resetMs = Date.parse(recovery.resetAt ?? "");
+  if (!Number.isFinite(resetMs) || resetMs <= nowMs) return null;
+  return {
+    type: "thread.metadata.update",
+    commandId: CommandId.make(`limit-arm:${thread.id}:${thread.latestRunId}:${resetMs}:policy-on`),
+    threadId: thread.id,
+    limitRecoveryPolicyArm: true,
+    limitRecovery: {
+      runId: thread.latestRunId,
+      resetAt: recovery.resetAt,
+      autoResume: true,
+      snooze: recovery.snooze === true,
+    },
+  };
+}
+
+/**
  * The project would otherwise act on this stop by itself (switch, redeem,
  * spend), but its reset is within the wait, so the thread resumes there
  * instead: the wait arms the resume even where auto-resume is off.
@@ -456,8 +494,18 @@ export const makeSweep = Effect.gen(function* () {
           nowMs,
           preferences.snoozeLimitedThreads,
         );
-        if (arm?.type === "thread.metadata.update") {
-          if ((yield* Ref.get(refused)).has(arm.commandId)) return;
+        // A stop the rule left waiting with auto-continue off, now that the rule is on.
+        const rearm =
+          arm === null
+            ? policyRearmCommand(
+                thread,
+                autoResumeByDefault(project.value.workspaceSettings?.autoResume, preferences),
+                nowMs,
+              )
+            : null;
+        const armOrRearm = arm?.type === "thread.metadata.update" ? arm : rearm;
+        if (armOrRearm) {
+          if ((yield* Ref.get(refused)).has(armOrRearm.commandId)) return;
           yield* admission.withLock(
             shell.projectId,
             Effect.gen(function* () {
@@ -486,18 +534,24 @@ export const makeSweep = Effect.gen(function* () {
                     currentSettings,
                     shell.projectId,
                   ).settings;
-                  const freshArm = limitRecoveryCommand(
-                    current,
-                    autoResumeByDefault(
-                      currentProject.value.workspaceSettings?.autoResume,
-                      currentSettings,
-                    ) || waitRuleArmsResume(current, currentRule, armAt),
-                    armAt,
-                    currentSettings.snoozeLimitedThreads,
-                    false,
-                    null,
-                    yield* detourRefused(current, currentRule),
+                  const policyOn = autoResumeByDefault(
+                    currentProject.value.workspaceSettings?.autoResume,
+                    currentSettings,
                   );
+                  const onDetour = yield* detourRefused(current, currentRule);
+                  const freshArm = rearm
+                    ? onDetour
+                      ? null
+                      : policyRearmCommand(current, policyOn, armAt)
+                    : limitRecoveryCommand(
+                        current,
+                        policyOn || waitRuleArmsResume(current, currentRule, armAt),
+                        armAt,
+                        currentSettings.snoozeLimitedThreads,
+                        false,
+                        null,
+                        onDetour,
+                      );
                   if (freshArm?.type !== "thread.metadata.update") return;
                   // A thread moved off the stopped run's instance is refused
                   // an arm; it is armed once it is back there.

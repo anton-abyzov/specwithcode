@@ -13,6 +13,7 @@ import {
   type ProjectEntry,
   type ProjectId,
   type ProjectLibrarySnapshot,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
@@ -69,6 +70,13 @@ import {
   MenuTrigger,
 } from "../../ui/menu";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
+import { ProjectArtifactsLibrary } from "./ProjectArtifactsLibrary";
+import {
+  LIBRARY_SECTIONS,
+  type ArtifactTypeFilter,
+  type LibrarySection,
+} from "../../../studio/projectArtifacts";
+import type { ProjectArtifacts } from "../../../studio/useProjectArtifacts";
 import { Tip } from "./Tip";
 import { designFile, useProjectDesignActions } from "./useProjectDesignActions";
 import { CharacterCount } from "../../ui/character-count";
@@ -76,6 +84,8 @@ import { CharacterCount } from "../../ui/character-count";
 const VIEW_STORAGE_KEY = "studio:project-library-view:v1";
 const ViewSchema = Schema.Literals(["list", "grid"]);
 const ARTIFACTS_ROW = "artifacts:";
+
+const SECTION_LABELS: Record<LibrarySection, string> = { artifacts: "Artifacts", files: "Files" };
 const DESIGNS_ROW = "designs:";
 
 /** One line of the tree: an artifact, a folder or a file inside one. */
@@ -123,12 +133,22 @@ export function LibraryPane({
   workspaceRoot,
   canChange,
   bar,
+  section = "files",
+  onSectionChange,
+  artifacts,
+  onOpenThread,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   workspaceRoot: string;
   canChange: boolean;
   bar: ProjectPaneBarProps;
+  /** Artifacts lists what the project's threads produced; Files is the tree. */
+  section?: LibrarySection;
+  onSectionChange?: (section: LibrarySection) => void;
+  /** Without it the Library is the tree alone. */
+  artifacts?: ProjectArtifacts;
+  onOpenThread?: (threadId: ThreadId, environmentId: EnvironmentId) => void;
 }) {
   const library = useEnvironmentQuery(
     projectWorkspace.library({ environmentId, input: { projectId } }),
@@ -147,6 +167,7 @@ export function LibraryPane({
     ViewSchema,
   );
   const [type, setType] = useState<LibraryTypeFilter>("all");
+  const [artifactType, setArtifactType] = useState<ArtifactTypeFilter>("all");
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set([ARTIFACTS_ROW, DESIGNS_ROW]),
   );
@@ -356,6 +377,89 @@ export function LibraryPane({
     />
   ) : null;
 
+  const sectionSwitch = artifacts ? (
+    <div className="sws-library-sections" role="group" aria-label="Library">
+      {LIBRARY_SECTIONS.map((value) => (
+        <button
+          key={value}
+          type="button"
+          aria-pressed={section === value}
+          className="sws-library-section"
+          onClick={() => onSectionChange?.(value)}
+        >
+          {SECTION_LABELS[value]}
+          {value === "artifacts" && artifacts.artifacts.length > 0 ? (
+            <span className="sws-library-section-count">{artifacts.artifacts.length}</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
+  const findField =
+    findOpen || query !== "" ? (
+      <label className="sws-find">
+        <SearchIcon aria-hidden />
+        <input
+          ref={findRef}
+          type="search"
+          aria-label="Find in the Library"
+          placeholder="Find by name"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            setQuery("");
+            setFindOpen(false);
+          }}
+        />
+      </label>
+    ) : null;
+
+  if (section === "artifacts" && artifacts) {
+    return (
+      <>
+        <ProjectPaneBar {...bar} tools={tools} />
+        <div
+          className="sws-threads-body sws-library"
+          id="sws-pane-library"
+          role="tabpanel"
+          aria-labelledby="sws-pane-tab-library"
+        >
+          {findField}
+          {library.error ? (
+            <p className="project-notice" role="alert">
+              {library.error}{" "}
+              <button type="button" className="sws-link-button" onClick={refresh}>
+                Reload
+              </button>
+            </p>
+          ) : null}
+          {data?.hubProblem ? (
+            <p className="project-notice" role="status">
+              {data.hubProblem}
+            </p>
+          ) : null}
+          <ProjectArtifactsLibrary
+            environmentId={environmentId}
+            workspaceRoot={data?.workspaceRoot ?? workspaceRoot}
+            artifacts={artifacts.artifacts}
+            loaded={artifacts.loaded}
+            query={query}
+            type={artifactType}
+            onTypeChange={setArtifactType}
+            view={view}
+            onViewChange={setView}
+            onPin={artifacts.setPinned}
+            onOpenThread={onOpenThread}
+            sectionSwitch={sectionSwitch}
+          />
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <ProjectPaneBar {...bar} tools={tools} />
@@ -366,6 +470,7 @@ export function LibraryPane({
         aria-labelledby="sws-pane-tab-library"
       >
         <div className="sws-library-toolbar">
+          {sectionSwitch}
           <Menu>
             <MenuTrigger
               render={<button type="button" className="sws-library-filter" />}
@@ -447,25 +552,7 @@ export function LibraryPane({
             </button>
           </Tip>
         </div>
-        {findOpen || query !== "" ? (
-          <label className="sws-find">
-            <SearchIcon aria-hidden />
-            <input
-              ref={findRef}
-              type="search"
-              aria-label="Find in the Library"
-              placeholder="Find by name"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
-                event.stopPropagation();
-                setQuery("");
-                setFindOpen(false);
-              }}
-            />
-          </label>
-        ) : null}
+        {findField}
         {adding && data ? (
           <AddArtifactForm
             onCancel={() => setAdding(false)}

@@ -246,7 +246,7 @@ it("decides later: opens the app with nothing chosen or set up", async () => {
   await act(async () =>
     root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={onDone} />),
   );
-  expect(document.body.textContent).toContain("Invite this machine under Settings > Connections");
+  expect(document.body.textContent).toContain("Join a main machine under Settings > Connections");
   await click("Decide later");
   expect(mocks.complete).toHaveBeenCalledOnce();
   expect(onDone).toHaveBeenCalledExactlyOnceWith(undefined);
@@ -302,7 +302,9 @@ it("joins existing machines: makes the line once, then opens to this machine's s
   );
   await choose("Connect to an existing one");
   expect(heading()).toBe("Connect this machine to your main machine");
-  expect(document.body.textContent).toContain("Sign in to SpecWithCode Connect on this machine.");
+  expect(document.body.textContent).toContain(
+    "Sign in to SpecWithCode Connect and link this machine.",
+  );
   expect(document.body.textContent).not.toContain("Tailscale on both");
   expect(machineRole.onChange).not.toHaveBeenCalled();
   expect(makeLine()?.disabled).toBe(true);
@@ -524,7 +526,7 @@ it("tells a signed-in person to turn on Connect for this machine in Settings", a
     );
     await choose("Connect to an existing one");
     expect(document.body.textContent).toContain(
-      "Turn on SpecWithCode Connect for this machine under Settings > Connections > SpecWithCode Connect.",
+      "Now link this machine under Settings > Connections > SpecWithCode Connect.",
     );
   } finally {
     cloud.configured = false;

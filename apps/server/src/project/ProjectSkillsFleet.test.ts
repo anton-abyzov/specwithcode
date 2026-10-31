@@ -14,12 +14,13 @@ import * as NodeOS from "node:os";
 
 import type { FleetSkillAsk, FleetSkillOutcome } from "../fleet/fleetSkills.ts";
 import type { FleetLink } from "../fleet/fleetTransport.ts";
-import { join } from "../nodePath.ts";
+import { join, resolve } from "../nodePath.ts";
 import type { FleetTarget } from "../studioFleet.ts";
 import {
   type FleetPushDeps,
   fleetPushResultOf,
   makeStudioLink,
+  vskillStudioPort,
   parseStudioLock,
   pushSkillToFleet,
   studioSkillUrl,
@@ -267,6 +268,14 @@ describe("Skill Studio link", () => {
       parseStudioLock('{"pid":7,"port":3078,"cmdline":["vskill","studio","--root=/a b"]}')?.root,
     ).toBe("/a b");
     expect(parseStudioLock('{"pid":7,"port":3078,"cmdline":"vskill studio"}')?.root).toBeNull();
+    // vskill cuts the command line at 117 characters: a root cut with it is unknown.
+    const cut = `/usr/local/bin/node /usr/local/lib/node_modules/vskill/dist/bin/vskill.js studio --root /Users/someone/Projects/exper...`;
+    expect(cut.length).toBe(120);
+    expect(parseStudioLock(JSON.stringify({ pid: 7, port: 3086, cmdline: cut }))?.root).toBeNull();
+    expect(
+      parseStudioLock(JSON.stringify({ pid: 7, port: 3086, cmdline: cut, root: "/Users/x/p" }))
+        ?.root,
+    ).toBe("/Users/x/p");
     expect(parseStudioLock('{"pid":1,"port":70000}')).toBeNull();
     expect(parseStudioLock('{"pid":-1,"port":3077}')).toBeNull();
     expect(parseStudioLock("garbage")).toBeNull();
@@ -338,6 +347,56 @@ describe("Skill Studio link", () => {
       });
       expect(started).toEqual([cwd]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("derives Studio's port from the root the way vskill does", () => {
+    expect(vskillStudioPort("/Users/you/Projects/experiments/swc-demo-skills")).toBe(3086);
+    expect(vskillStudioPort("/work/project-a")).toBeGreaterThanOrEqual(3077);
+    expect(vskillStudioPort("/work/project-a")).toBeLessThanOrEqual(3177);
+  });
+
+  it.live(
+    "reuses a Studio whose cut command line hides its root when it holds this folder's port",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* tempDir("project-skills-studio-");
+        const runtime = join(home, ".vskill", "runtime");
+        const cwd = "/Users/someone/Projects/experiments/swc-demo-skills";
+        // Windows resolves a POSIX-style folder onto the current drive, as vskill would.
+        const port = vskillStudioPort(resolve(cwd));
+        const cut =
+          `/usr/local/bin/node /usr/local/lib/node_modules/vskill/dist/bin/vskill.js studio --root ${cwd}`
+            .slice(0, 117)
+            .concat("...");
+        // Another project's Studio with a cut command line is not reused for this one.
+        yield* write(
+          join(runtime, `studio-${port === 3177 ? 3077 : port + 1}.lock`),
+          JSON.stringify({ pid: 200, port: port === 3177 ? 3077 : port + 1, cmdline: cut }),
+        );
+        yield* write(
+          join(runtime, `studio-${port}.lock`),
+          JSON.stringify({ pid: 201, port, cmdline: cut }),
+        );
+        const started: Array<string> = [];
+        const studio = yield* makeStudioLink({
+          home,
+          resolveCwd: () => Effect.succeed(cwd),
+          isAlive: () => true,
+          startStudio: (root) => {
+            started.push(root);
+            return Effect.succeed(true);
+          },
+          waitMs: 30,
+          pollMs: 10,
+        });
+        for (let click = 0; click < 2; click++) {
+          expect(yield* studio.link(linkInput("project"))).toEqual({
+            url: `http://localhost:${port}/#/skills/project/sw/do`,
+            started: false,
+          });
+        }
+        expect(started).toEqual([]);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("refuses with studio_unavailable when Studio will not start or never reports", () =>

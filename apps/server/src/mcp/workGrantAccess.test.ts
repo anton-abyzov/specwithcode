@@ -480,7 +480,7 @@ describe("grant refusals point at Settings > Machines", () => {
         ),
       ];
       for (const message of messages) {
-        expect(message).toContain("Settings > Machines > Who can run work on this Mac");
+        expect(message).toContain("Settings > Machines > Who can run work here");
         expect(message).not.toContain(["Connections", "Who can run work"].join(" > "));
       }
     }),

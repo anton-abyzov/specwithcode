@@ -398,7 +398,7 @@ export function availabilityText(
       const ago = agoPhrase(availability.checkedAt, nowMs);
       if (availability.resetSinceRead) {
         return {
-          short: "Reset since last read",
+          short: "Limit reset since last read",
           label: "limit reset since the last read",
           long: `A ${provider} limit on ${account} has reset since usage was last read ${ago}; it will be read again before the next turn.`,
           tone: "muted",

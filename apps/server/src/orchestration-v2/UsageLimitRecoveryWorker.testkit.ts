@@ -92,6 +92,8 @@ export const claudeSweepHarness = (input: {
   const projectId = ProjectId.make("claude-limit-project");
   const state = {
     current: input.thread,
+    /** The project's auto-continue switch, which a test may turn on between sweeps. */
+    projectAutoResume: input.projectAutoResume ?? false,
     commands: [] as OrchestrationV2ServerCommand[],
     /** The persisted handoff state keeps the thread from starting a turn here. */
     handoffBlocked: false,
@@ -127,13 +129,13 @@ export const claudeSweepHarness = (input: {
     }),
     Layer.mock(ProjectStore.ProjectStoreV2)({
       get: () =>
-        Effect.succeed(
+        Effect.sync(() =>
           Option.some({
             projectId,
             deletedAt: null,
             workspaceSettings: {
               ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-              autoResume: input.projectAutoResume ?? false,
+              autoResume: state.projectAutoResume,
             },
           } as ProjectStore.ProjectRow),
         ),

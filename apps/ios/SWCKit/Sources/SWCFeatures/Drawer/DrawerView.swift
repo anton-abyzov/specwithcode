@@ -286,23 +286,7 @@ struct DrawerView: View {
     }
   }
 
-  /// Opens Aide, or the composer of the current project when there is no Aide.
-  private func newChat() {
-    let target: ChatTarget?
-    if let aide = model.aide, !aide.archived {
-      target = .aide(aide.ref)
-    } else if let current = router.landing(in: model), current.projectRef != nil {
-      target = current
-    } else {
-      target = model.projects.first(where: { !$0.archived && !$0.isAutomated }).map { .project($0.ref) }
-    }
-    guard let target else {
-      router.isDrawerOpen = false
-      return
-    }
-    router.pendingComposerFocus = target
-    router.open(target)
-  }
+  private func newChat() { router.startNewChat(in: model) }
 
   private func isSelected(_ target: ChatTarget) -> Bool {
     router.main.path.isEmpty && router.landing(in: model) == target

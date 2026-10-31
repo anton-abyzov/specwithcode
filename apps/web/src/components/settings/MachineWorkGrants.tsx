@@ -397,7 +397,7 @@ export function MachineWorkGrantsList({
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           {loading
             ? "Checking who can run work here…"
-            : "No other machine can start work here. A machine gets access when you choose Allow workers for this Mac on it."}
+            : "No other machine can start work here. A machine gets access when you add this one there and choose Allow workers on its card."}
         </p>
       )}
       {snapshot?.grants.length ? (
@@ -426,7 +426,7 @@ export function MachineWorkGrantsList({
 }
 
 /**
- * "Who can run work on this Mac" in Settings > Machines: every coordinator
+ * "Who can run work here" in Settings > Machines: every coordinator
  * machine with a worker grant on this server's machine, what it may use, and
  * Revoke. This machine owns and enforces these grants; the page reads them
  * once for this section and its machine rows.
@@ -479,7 +479,7 @@ export function MachineWorkGrants({
         );
       else if (next.action === "restore")
         setNotice(
-          `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, choose Allow workers for this Mac.`,
+          `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, choose Allow workers on this machine's card in Settings > Connections.`,
         );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not save this change.");

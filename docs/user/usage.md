@@ -126,7 +126,10 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 When a turn stops on a usage limit, the banner above the composer counts down to the reset and
 shows an **Auto-continue when the limit resets** checkbox. Tick it and the thread continues by itself
 at the reset, even if the app restarted in between; the choice is saved per thread, for workers and
-the coordinator alike. Claude threads get the reset from Claude's limit message (for example
+the coordinator alike. A second checkbox, **Auto-continue this project's threads when limits
+reset**, turns it on for the whole project (the same switch as in project settings): every thread
+there that stops on a limit continues at its reset, including threads already waiting, unless you
+turned a thread's own auto-continue off. Claude threads get the reset from Claude's limit message (for example
 "resets 5:20am (America/New_York)") when the CLI sends no reset event. Under the checkbox,
 **Hand off now** offers **Continue with Codex** (or whichever provider is the fallback) and
 **Continue on** another device of the project, for when waiting is not an option. Codex threads

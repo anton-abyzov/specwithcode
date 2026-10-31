@@ -345,6 +345,7 @@ interface RunCall {
 function worker(
   options: {
     readonly vskill?: string | null;
+    readonly npx?: string | null;
     readonly projects?: Record<string, string>;
     readonly installExit?: number | null;
     readonly installStderr?: string;
@@ -363,6 +364,7 @@ function worker(
     resolveVskill: Effect.succeed(
       options.vskill === undefined ? "/opt/homebrew/bin/vskill" : options.vskill,
     ),
+    resolveNpx: Effect.succeed(options.npx ?? null),
     home: "/Users/me",
     projectRoot: (id) =>
       Effect.as(
@@ -509,7 +511,7 @@ describe("a fleet machine taking its primary's skill install", () => {
     "refuses with vskill-missing, unknown-project and invalid-skill before running anything",
     () =>
       Effect.gen(function* () {
-        const missing = yield* worker({ vskill: null });
+        const missing = yield* worker({ vskill: null, npx: null });
         expect(yield* Effect.flip(missing.service.request(userAsk))).toMatchObject({
           reason: "vskill-missing",
         });
@@ -533,6 +535,36 @@ describe("a fleet machine taking its primary's skill install", () => {
         expect((yield* invalid.service.request(userAsk)).result).toBe("accepted");
         yield* settled(invalid.service);
       }),
+  );
+
+  it.live("runs the published vskill through npx on a machine with Node but no vskill", () =>
+    Effect.gen(function* () {
+      const { calls, service } = yield* worker({ vskill: null, npx: "/usr/local/bin/npx" });
+      yield* service.request(userAsk);
+      expect(yield* settled(service)).toMatchObject({
+        phase: "installed",
+        installedVersion: "1.2.3",
+      });
+      expect(calls).toEqual([
+        {
+          command: "/usr/local/bin/npx",
+          args: [
+            "--yes",
+            "vskill@latest",
+            "install",
+            "anton-abyzov/vskill/sw-do@1.2.3",
+            "-y",
+            "--global",
+          ],
+          cwd: "/Users/me",
+        },
+      ]);
+      // An installed vskill still wins over npx.
+      const both = yield* worker({ npx: "/usr/local/bin/npx" });
+      yield* both.service.request(userAsk);
+      yield* settled(both.service);
+      expect(both.calls[0]?.command).toBe("/opt/homebrew/bin/vskill");
+    }),
   );
 
   it.live("reports install-failed with vskill's own words when the install exits non-zero", () =>

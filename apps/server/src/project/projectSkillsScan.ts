@@ -147,6 +147,12 @@ export const readSkillFileFacts = Effect.fn("projectSkills.readSkillFileFacts")(
         if (content === undefined) {
           return [skillPath, { realPath, digest: null, pluginVersion }] as const;
         }
+        const modifiedAtMs = yield* fs.stat(realPath).pipe(
+          Effect.map((info) =>
+            Option.getOrNull(Option.map(info.mtime, (mtime) => mtime.getTime())),
+          ),
+          Effect.orElseSucceed(() => null),
+        );
         const frontmatter = readSkillFrontmatter(content);
         const fact: SkillFileFact = {
           realPath,
@@ -157,6 +163,7 @@ export const readSkillFileFacts = Effect.fn("projectSkills.readSkillFileFacts")(
           frontmatterName: frontmatter.name,
           fileVersion: frontmatter.version,
           pluginVersion,
+          modifiedAtMs,
         };
         return [skillPath, fact] as const;
       }),

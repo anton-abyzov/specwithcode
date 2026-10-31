@@ -12,6 +12,9 @@ describe("isAutomatedWorkspaceRoot", () => {
     "/Users/x/.local/share/specweave/fleet/handoff-proof-20261013/easychamp-handoff119/sw-easychamp",
     "/Users/x/Projects/research/studio-copilot/provider-proof-140/grok-fixture",
     "/private/tmp/claude-501/scratchpad/project",
+    // Sample apps an agent registered to record a demo (October 30, 2026).
+    "/Users/x/Projects/experiments/greet-app-demo",
+    "/Users/x/Projects/experiments/swc-demo-greet-fleet",
     "/tmp/proof",
     "C:\\Users\\x\\AppData\\Local\\Temp\\check",
   ])("treats %s as a check's folder", (root) => {
@@ -35,6 +38,9 @@ describe("isAutomatedWorkspaceRoot", () => {
     // Words only count as whole words.
     "/Users/x/Projects/scratchy-cat",
     "/Users/x/Projects/acceptances-ledger",
+    "/Users/x/Projects/demographics",
+    // Only the project's own folder counts for demo; a parent may hold real work.
+    "/Users/x/Projects/demo/invoices",
   ])("keeps %s as the person's own", (root) => {
     expect(isAutomatedWorkspaceRoot(root)).toBe(false);
   });

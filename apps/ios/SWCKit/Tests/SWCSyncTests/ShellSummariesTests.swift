@@ -222,6 +222,81 @@ import SWCWire
     #expect(Set(output.threadsByProject[row.ref]?.map(\.ref.threadId) ?? []) == ["t-main", "t-worktree", "t-m4"])
   }
 
+  @Test func otherMachinesOwnProjectsStayOutAsOnTheDesktop() throws {
+    // The October 31 drawer: greet-app on the M4, and three unlinked
+    // greet-app records on the M1 worker, each its own linked project.
+    func greet(_ id: String, _ root: String, title: String = "greet-app") throws -> ProjectShell {
+      var project = try TestData.project(id: id, title: title, root: root)
+      project.workspaceSettings?.logicalProject = LogicalProject(id: "logical:\(id)", title: title, coordinatorId: "coordinator:logical:\(id)", members: [])
+      return project
+    }
+    let m4 = machine("m4", threads: [try TestData.thread(id: "t-m4", projectId: "m4-greet")], projects: [
+      try greet("m4-greet", "/Users/anton/Projects/experiments/greet-app-demo"),
+      try greet("m4-fleet", "/Users/anton/Projects/experiments/swc-demo-greet-fleet", title: "greet-fleet"),
+    ])
+    let m1 = machine("m1", threads: [try TestData.thread(id: "t-m1", projectId: "m1-greet")], projects: [
+      try greet("m1-greet", "/Users/anton/Projects/experiments/greet-app-demo"),
+      try greet("m1-worker", "/Users/anton/.specwithcode/m1/scratch/greet-app-demo-worker-20261030"),
+      try greet("m1-copy", "/Users/anton/Projects/experiments/greet-app-demo-m1"),
+      try greet("m1-fleet", "/Users/anton/Projects/experiments/swc-demo-greet-fleet", title: "greet-fleet"),
+    ])
+    // Without a home machine every machine is listed, as before.
+    #expect(ShellSummaries.build([m4, m1]).projects.count == 6)
+
+    let output = ShellSummaries.build([m4, m1], home: ["m4"])
+    #expect(output.projects.map(\.title) == ["greet-app", "greet-fleet"])
+    #expect(output.projects.allSatisfy { $0.ref.environmentId == "m4" })
+    #expect(output.recentThreads.map(\.ref.threadId) == ["t-m4"])
+    #expect(output.threadsByProject.keys.allSatisfy { $0.environmentId == "m4" })
+  }
+
+  @Test func machinesALinkedProjectNamesAreListedLikeTheDesktopCatalog() throws {
+    let logical = LogicalProject(id: "logical:shared", title: "Shared", coordinatorId: "coordinator:shared", members: [
+      LogicalProjectMember(environmentId: "m4", projectId: "home", coordinatorThreadId: "project-coordinator:home"),
+      LogicalProjectMember(environmentId: "m1", projectId: "copy", coordinatorThreadId: "project-coordinator:copy"),
+    ])
+    var home = try TestData.project(id: "home", title: "Shared", root: "/work/shared")
+    home.workspaceSettings?.logicalProject = logical
+    var copy = try TestData.project(id: "copy", title: "Shared", root: "/work/shared")
+    copy.workspaceSettings?.logicalProject = logical
+    // The desktop loads the whole named machine, so its own projects show too.
+    let own = try TestData.project(id: "own", title: "M1 only", root: "/work/m1-only")
+    // A machine only the M1's projects name is reached through it.
+    var handed = try TestData.project(id: "handed", title: "Handed", root: "/work/handed")
+    handed.workspaceSettings?.coordinatorBinding = CoordinatorBinding(epoch: 1, state: .active, successor: LogicalProjectMember(environmentId: "m3", projectId: "next", coordinatorThreadId: "project-coordinator:next"))
+    let next = try TestData.project(id: "next", title: "Next", root: "/work/next")
+    let stray = try TestData.project(id: "stray", title: "Stray", root: "/work/stray")
+    let machines = [
+      machine("m4", threads: [], projects: [home]),
+      machine("m1", threads: [], projects: [copy, own, handed]),
+      machine("m3", threads: [], projects: [next]),
+      machine("m2", threads: [], projects: [stray]),
+    ]
+    #expect(ShellSummaries.listedMachines(machines, home: ["m4"]) == ["m4", "m1", "m3"])
+    let output = ShellSummaries.build(machines, home: ["m4"])
+    #expect(output.projects.map(\.title) == ["Handed", "M1 only", "Next", "Shared"])
+    #expect(output.projects.first { $0.title == "Shared" }?.members.count == 2)
+    // A home machine the phone no longer knows lists every machine.
+    #expect(ShellSummaries.listedMachines(machines, home: ["gone"]).count == 4)
+  }
+
+  @Test func aHandoffToAnUnlistedWorkerKeepsTheSourceCopyListed() throws {
+    var source = try TestData.thread(id: "source", projectId: "home")
+    source.movedTo = ThreadMoveLink(threadId: "copy", projectId: "worker-project", kind: "handoff", environmentId: "m1")
+    let m4 = machine("m4", threads: [source], projects: [try TestData.project(id: "home", title: "Home", root: "/work/home")])
+    let m1 = machine("m1", threads: [try TestData.thread(id: "copy", projectId: "worker-project")], projects: [try TestData.project(id: "worker-project", title: "Worker copy", root: "/work/worker")])
+    let output = ShellSummaries.build([m4, m1], home: ["m4"])
+    #expect(output.projects.map(\.title) == ["Home"])
+    #expect(output.recentThreads.map(\.ref.threadId) == ["source"])
+
+    // A move to another project happens only on a machine the desktop lists.
+    var moved = source
+    moved.movedTo?.kind = "project"
+    let listed = ShellSummaries.build([machine("m4", threads: [moved], projects: m4.snapshot?.projects ?? []), m1], home: ["m4"])
+    #expect(listed.projects.map(\.title) == ["Home", "Worker copy"])
+    #expect(listed.recentThreads.contains { $0.ref.threadId == "copy" })
+  }
+
   @Test func forkStaysApartFromTheRepositoryItForked() throws {
     // The server's shape: canonicalKey follows `upstream`, origin is the checkout's own remote.
     var fork = RepositoryIdentity(canonicalKey: "github.com/team/app")

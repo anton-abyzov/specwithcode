@@ -4,7 +4,7 @@ import type {
   StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
 
-/** Words for "Who can run work on this Mac", shared by its section and the machine rows. */
+/** Words for "Who can run work here", shared by its section and the machine rows. */
 
 export function formatTime(value: string): string {
   return new Date(value).toLocaleString(undefined, {

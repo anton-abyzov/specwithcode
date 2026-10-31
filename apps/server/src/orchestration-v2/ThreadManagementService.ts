@@ -639,11 +639,12 @@ const make = Effect.gen(function* () {
       // A queued message's user turn item is deliberately not emitted at
       // dispatch time — it materializes when the queued turn actually starts,
       // so it can map onto the provider turn. Every other dispatch mode still
-      // produces its turn item transactionally with the run.
+      // produces its turn item transactionally with the run, except that a
+      // message carrying a notification is projected as a notification item.
       if (
         message === undefined ||
         run === undefined ||
-        (turnItem === null && run.status !== "queued")
+        (turnItem === null && run.status !== "queued" && message.notification === undefined)
       ) {
         return yield* new ThreadManagementDurableRunProjectionError({
           threadId: input.threadId,
@@ -651,13 +652,21 @@ const make = Effect.gen(function* () {
         });
       }
       const delivery: ThreadManagementSendResult["delivery"] =
-        turnItem === null || turnItem.inputIntent === "queued_turn"
-          ? "queued"
-          : turnItem.inputIntent === "turn_start"
-            ? "started"
-            : input.mode === "restart"
-              ? "restarted"
-              : "steered";
+        turnItem === null
+          ? run.status === "queued"
+            ? "queued"
+            : dispatchMode.type === "steer_active"
+              ? "steered"
+              : dispatchMode.type === "restart_active"
+                ? "restarted"
+                : "started"
+          : turnItem.inputIntent === "queued_turn"
+            ? "queued"
+            : turnItem.inputIntent === "turn_start"
+              ? "started"
+              : input.mode === "restart"
+                ? "restarted"
+                : "steered";
       const heldBefore = new Set(
         target.runs.flatMap((candidate) =>
           candidate.status === "queued" && candidate.queueHeld === true ? [candidate.id] : [],

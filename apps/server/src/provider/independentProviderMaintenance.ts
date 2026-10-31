@@ -44,20 +44,51 @@ export const independentProviderMaintenance = Effect.fn("independentProviderMain
     )
       return null;
 
+    const releases = path.join(home, ".local/share/specweave/provider-releases");
+    const boundedJson = (target: string) =>
+      Effect.gen(function* () {
+        if (Number((yield* fs.stat(target)).size) > 16 * 1024) return null;
+        return yield* parseManifest(yield* fs.readFileString(target));
+      });
+    // Every target must be its own real path inside the home, so no symlink
+    // can move the update onto another owner's files.
+    const allReal = (targets: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        for (const target of targets) {
+          if (!target.startsWith(`${home}${path.sep}`) || (yield* fs.realPath(target)) !== target)
+            return false;
+        }
+        return true;
+      });
+    const readWrapper = (target: string) =>
+      Effect.gen(function* () {
+        const text = yield* fs.readFileString(target);
+        return text.length > 16 * 1024 ? null : text;
+      });
+    const CODEX_WRAPPER =
+      /^#!\/bin\/sh\nset -eu\nexec ([^\s"'`$\\;|&<>()]+) ([^\s"'`$\\;|&<>()]+) "\$@"\n$/;
+    // The pinned Node beside the npm it ships with stages new releases.
+    const toolchain = (node: string) =>
+      Effect.gen(function* () {
+        if (!path.isAbsolute(node) || path.basename(node) !== "node") return null;
+        const npmPath = path.resolve(path.dirname(node), "../lib/node_modules/npm/bin/npm-cli.js");
+        // A host still on the original prefix has no releases folder yet; the
+        // first staged update creates it under this real parent.
+        const hasReleases = yield* fs.exists(releases);
+        if (!(yield* allReal([node, npmPath, hasReleases ? releases : path.dirname(releases)])))
+          return null;
+        const npmPkg = yield* boundedJson(path.resolve(path.dirname(npmPath), "../package.json"));
+        return field(npmPkg, "name") === "npm" ? npmPath : null;
+      });
+
     if (name === "codex") {
       const staged = yield* Effect.gen(function* () {
         if (input.context.platform === "win32") return null;
-        const text = yield* fs.readFileString(wrapper);
-        if (text.length > 16 * 1024) return null;
-        const match =
-          /^#!\/bin\/sh\nset -eu\nexec ([^\s"'`$\\;|&<>()]+) ([^\s"'`$\\;|&<>()]+) "\$@"\n$/.exec(
-            text,
-          );
-        if (!match) return null;
+        const text = yield* readWrapper(wrapper);
+        const match = text === null ? null : CODEX_WRAPPER.exec(text);
+        if (!text || !match) return null;
         const [, node, entrypoint] = match;
-        if (!node || !entrypoint || !path.isAbsolute(node) || path.basename(node) !== "node")
-          return null;
-        const releases = path.join(home, ".local/share/specweave/provider-releases");
+        if (!node || !entrypoint) return null;
         const relative = path.relative(releases, entrypoint);
         if (
           !/^[^/]+\/node_modules\/@openai\/codex\/bin\/codex\.js$/.test(relative) ||
@@ -65,37 +96,98 @@ export const independentProviderMaintenance = Effect.fn("independentProviderMain
         )
           return null;
         const stage = path.join(releases, relative.split("/")[0]!);
-        const npm = path.join(path.dirname(node), "../lib/node_modules/npm/bin/npm-cli.js");
-        const npmPath = path.resolve(npm);
-        for (const target of [
-          wrapper,
-          node,
-          npmPath,
-          entrypoint,
-          path.join(stage, "package.json"),
-          path.join(stage, "node_modules/@openai/codex/package.json"),
-        ]) {
-          if (!target.startsWith(`${home}${path.sep}`) || (yield* fs.realPath(target)) !== target)
-            return null;
-        }
-        const boundedJson = (target: string) =>
-          Effect.gen(function* () {
-            if (Number((yield* fs.stat(target)).size) > 16 * 1024) return null;
-            return yield* parseManifest(yield* fs.readFileString(target));
-          });
+        const npmPath = yield* toolchain(node);
+        if (
+          !npmPath ||
+          !(yield* allReal([
+            wrapper,
+            entrypoint,
+            path.join(stage, "package.json"),
+            path.join(stage, "node_modules/@openai/codex/package.json"),
+          ]))
+        )
+          return null;
         const pkg = yield* boundedJson(path.join(stage, "node_modules/@openai/codex/package.json"));
         const owner = yield* boundedJson(path.join(stage, "package.json"));
-        const npmPkg = yield* boundedJson(path.resolve(path.dirname(npmPath), "../package.json"));
         const version = field(pkg, "version");
         if (
           field(pkg, "name") !== "@openai/codex" ||
           typeof version !== "string" ||
           !/^\d+\.\d+\.\d+$/.test(version) ||
-          field(field(owner, "dependencies"), "@openai/codex") !== version ||
-          field(npmPkg, "name") !== "npm"
+          field(field(owner, "dependencies"), "@openai/codex") !== version
         )
           return null;
         return {
+          provider: "codex" as const,
+          wrapperPath: wrapper,
+          expectedWrapper: text,
+          releasesDirectory: releases,
+          nodePath: node,
+          npmCliPath: npmPath,
+        };
+      }).pipe(Effect.orElseSucceed(() => null));
+      if (staged) return staged;
+    }
+
+    // Claude's wrapper runs the native binary, so the fleet's pinned Node and
+    // npm come from the Codex wrapper beside it. Both the original private
+    // prefix and a provisioned or staged release are accepted.
+    if (name === "claude") {
+      const staged = yield* Effect.gen(function* () {
+        const architecture = input.architecture ?? NodeOS.arch();
+        if (input.context.platform !== "darwin" || architecture !== "arm64") return null;
+        const text = yield* readWrapper(wrapper);
+        const match =
+          text === null
+            ? null
+            : /^#!\/bin\/sh\nset -eu\nexec ([^\s"'`$\\;|&<>()]+) "\$@"\n$/.exec(text);
+        const entrypoint = match?.[1];
+        if (!text || !entrypoint) return null;
+        const suffix = "node_modules/@anthropic-ai/claude-code-darwin-arm64/claude";
+        const relative = path.relative(releases, entrypoint);
+        const base =
+          entrypoint === path.join(prefix, suffix)
+            ? prefix
+            : new RegExp(`^[^/]+/${suffix}$`).test(relative) && !relative.startsWith("..")
+              ? path.join(releases, relative.split("/")[0]!)
+              : null;
+        if (!base) return null;
+        const codexText = yield* readWrapper(path.join(prefix, "bin", "codex"));
+        const node = codexText === null ? undefined : CODEX_WRAPPER.exec(codexText)?.[1];
+        const npmPath = node ? yield* toolchain(node) : null;
+        const packageJson = path.join(base, "node_modules/@anthropic-ai/claude-code/package.json");
+        const nativeJson = path.join(
+          base,
+          "node_modules/@anthropic-ai/claude-code-darwin-arm64/package.json",
+        );
+        if (
+          !node ||
+          !npmPath ||
+          !(yield* allReal([
+            wrapper,
+            entrypoint,
+            path.join(base, "package.json"),
+            packageJson,
+            nativeJson,
+          ])) ||
+          (yield* fs.stat(entrypoint)).type !== "File"
+        )
+          return null;
+        const pkg = yield* boundedJson(packageJson);
+        const native = yield* boundedJson(nativeJson);
+        const owner = yield* boundedJson(path.join(base, "package.json"));
+        const version = field(pkg, "version");
+        if (
+          field(pkg, "name") !== input.packageName ||
+          typeof version !== "string" ||
+          !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version) ||
+          field(native, "name") !== "@anthropic-ai/claude-code-darwin-arm64" ||
+          field(native, "version") !== version ||
+          field(field(owner, "dependencies"), input.packageName) !== version
+        )
+          return null;
+        return {
+          provider: "claude" as const,
           wrapperPath: wrapper,
           expectedWrapper: text,
           releasesDirectory: releases,

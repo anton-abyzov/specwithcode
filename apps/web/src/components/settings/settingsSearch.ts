@@ -1093,18 +1093,20 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "private-machines-invite",
-    title: "Invite this machine to another one",
+    title: "Join a main machine",
     to: "/settings/connections",
     searchTerms: [
       "fleet invite join main machine primary tailscale connect serve line swc-machine add this mac",
+      "invite this machine to another one make a join line",
     ],
   },
   {
     id: "machine-work-grants",
-    title: "Who can run work on this Mac",
+    title: "Who can run work here",
     to: "/settings/machines",
     searchTerms: [
       "worker grant revoke coordinator fleet remote work machine access projects sign-ins accounts delegation",
+      "who can run work on this mac machine allowed incoming",
     ],
   },
   {

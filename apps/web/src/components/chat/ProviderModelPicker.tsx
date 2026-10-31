@@ -35,6 +35,12 @@ import {
 import { ModelStateTag, ModelStateTip, modelStateText, type ModelState } from "./ModelStateTag";
 import { ModelChipFitContext, useOwnModelChipFit, type ModelChipFit } from "./modelChipFit";
 
+const PICKER_COLLISION_AVOIDANCE = {
+  side: "flip",
+  align: "shift",
+  fallbackAxisSide: "none",
+} as const;
+
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
    * The instance currently selected in the composer. Drives the trigger
@@ -511,6 +517,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
         align="start"
+        // Stay above or below the chip. The list is taller than either side before
+        // its max height applies, and a sideways fallback detaches it from the chip.
+        collisionAvoidance={PICKER_COLLISION_AVOIDANCE}
         className="before:hidden"
         padding="none"
       >

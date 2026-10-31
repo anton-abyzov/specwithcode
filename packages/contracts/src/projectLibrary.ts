@@ -41,6 +41,24 @@ export const ProjectLibraryFolder = Schema.Struct({
 });
 export type ProjectLibraryFolder = typeof ProjectLibraryFolder.Type;
 
+/**
+ * A file threads wrote into SpecWeave's shared output: `.specweave/reports/`
+ * and each increment's `reports/` folder. These are the project's artifacts
+ * nobody had to register: saved reports, screenshots, pages, evidence.
+ */
+export const ProjectLibraryOutput = Schema.Struct({
+  /** Project-relative, with `/` separators. */
+  path: Schema.String,
+  byteLength: NonNegativeInt,
+  modifiedAt: Schema.String,
+  /** The increment folder it sits in (`1145-hand-off-the-coordinator`), if any. */
+  increment: Schema.NullOr(Schema.String),
+});
+export type ProjectLibraryOutput = typeof ProjectLibraryOutput.Type;
+
+/** The newest output files a snapshot lists; older ones stay in their folders. */
+export const PROJECT_LIBRARY_OUTPUT_LIMIT = 120;
+
 export const ProjectLibrarySnapshot = Schema.Struct({
   workspaceRoot: Schema.String,
   /** The workspace has a `.specweave/config.json`, so artifacts can be added. */
@@ -56,6 +74,8 @@ export const ProjectLibrarySnapshot = Schema.Struct({
   hubProblem: Schema.NullOr(Schema.String),
   artifacts: Schema.Array(ProjectLibraryArtifact),
   folders: Schema.Array(ProjectLibraryFolder),
+  /** Newest first. Older servers omit it. */
+  outputs: Schema.optional(Schema.Array(ProjectLibraryOutput)),
 });
 export type ProjectLibrarySnapshot = typeof ProjectLibrarySnapshot.Type;
 

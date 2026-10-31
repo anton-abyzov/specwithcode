@@ -5,7 +5,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-export interface StagedCodexUpdate {
+export interface StagedProviderUpdate {
+  readonly provider: "codex" | "claude";
   readonly wrapperPath: string;
   readonly expectedWrapper: string;
   readonly releasesDirectory: string;
@@ -13,15 +14,21 @@ export interface StagedCodexUpdate {
   readonly npmCliPath: string;
 }
 
+const CLAUDE_NATIVE_PACKAGE = "@anthropic-ai/claude-code-darwin-arm64";
+
 /** No scripts, shell, global installs, auth homes, or old-release mutations. */
-export async function stageCodexUpdate(
-  input: StagedCodexUpdate,
+export async function stageProviderUpdate(
+  input: StagedProviderUpdate,
   version: string,
   run: (command: string, args: readonly string[]) => Promise<string> = async (command, args) =>
     (await exec(command, [...args], { timeout: 240_000, maxBuffer: 64 * 1024 })).stdout,
 ) {
+  const label = input.provider === "codex" ? "Codex" : "Claude";
+  const packageName = input.provider === "codex" ? "@openai/codex" : "@anthropic-ai/claude-code";
   if (!/^\d+\.\d+\.\d+$/.test(version))
-    throw new Error("Cannot verify the latest stable Codex version. Refresh Providers and retry.");
+    throw new Error(
+      `Cannot verify the latest stable ${label} version. Refresh Providers and retry.`,
+    );
   const assertUnchanged = async () => {
     for (const target of [
       input.wrapperPath,
@@ -35,9 +42,16 @@ export async function stageCodexUpdate(
     if ((await fs.readFile(input.wrapperPath, "utf8")) !== input.expectedWrapper)
       throw new Error("Provider wrapper changed. Refresh Providers and retry.");
   };
+  await fs.mkdir(input.releasesDirectory, { mode: 0o700 }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  });
   await assertUnchanged();
-  const stage = await fs.mkdtemp(path.join(input.releasesDirectory, `codex-${version}-`));
+  const stage = await fs.mkdtemp(
+    path.join(input.releasesDirectory, `${input.provider}-${version}-`),
+  );
   await fs.chmod(stage, 0o700);
+  // Claude's postinstall only copies the native binary over a stub; the
+  // wrapper runs the platform package's binary directly, so scripts stay off.
   await run(input.nodePath, [
     input.npmCliPath,
     "install",
@@ -46,29 +60,42 @@ export async function stageCodexUpdate(
     "--ignore-scripts",
     "--save-exact",
     "--registry=https://registry.npmjs.org",
-    `@openai/codex@${version}`,
+    `${packageName}@${version}`,
   ]);
-  const packageDirectory = path.join(stage, "node_modules/@openai/codex");
-  const manifest = JSON.parse(
-    await fs.readFile(path.join(packageDirectory, "package.json"), "utf8"),
+  const mismatch = new Error(
+    `The staged ${label} package did not match the requested version. Existing installation preserved.`,
   );
-  if (manifest.name !== "@openai/codex" || manifest.version !== version)
-    throw new Error(
-      "The staged Codex package did not match the requested version. Existing installation preserved.",
-    );
-  const entrypoint = path.join(packageDirectory, "bin/codex.js");
+  const readManifest = async (name: string) =>
+    JSON.parse(await fs.readFile(path.join(stage, "node_modules", name, "package.json"), "utf8"));
+  for (const name of input.provider === "codex"
+    ? [packageName]
+    : [packageName, CLAUDE_NATIVE_PACKAGE]) {
+    const manifest = await readManifest(name);
+    if (manifest.name !== name || manifest.version !== version) throw mismatch;
+  }
+  const entrypoint =
+    input.provider === "codex"
+      ? path.join(stage, "node_modules/@openai/codex/bin/codex.js")
+      : path.join(stage, "node_modules", CLAUDE_NATIVE_PACKAGE, "claude");
   if ((await fs.realpath(entrypoint)) !== entrypoint)
-    throw new Error("The staged Codex entrypoint is redirected. Existing installation preserved.");
-  const output = (await run(input.nodePath, [entrypoint, "--version"])).trim();
-  if (output !== `codex-cli ${version}`)
     throw new Error(
-      `The staged Codex executable reported ${JSON.stringify(output)}. Existing installation preserved.`,
+      `The staged ${label} entrypoint is redirected. Existing installation preserved.`,
+    );
+  const output = (
+    input.provider === "codex"
+      ? await run(input.nodePath, [entrypoint, "--version"])
+      : await run(entrypoint, ["--version"])
+  ).trim();
+  if (output !== (input.provider === "codex" ? `codex-cli ${version}` : `${version} (Claude Code)`))
+    throw new Error(
+      `The staged ${label} executable reported ${JSON.stringify(output)}. Existing installation preserved.`,
     );
   await assertUnchanged();
-  const next = `#!/bin/sh\nset -eu\nexec ${input.nodePath} ${entrypoint} "$@"\n`;
+  const command = input.provider === "codex" ? `${input.nodePath} ${entrypoint}` : entrypoint;
+  const next = `#!/bin/sh\nset -eu\nexec ${command} "$@"\n`;
   const temporary = path.join(
     path.dirname(input.wrapperPath),
-    `.codex-update-${path.basename(stage)}`,
+    `.${input.provider}-update-${path.basename(stage)}`,
   );
   await fs.writeFile(temporary, next, { mode: 0o700, flag: "wx" });
   try {
@@ -77,7 +104,7 @@ export async function stageCodexUpdate(
   } finally {
     await fs.unlink(temporary).catch(() => undefined);
   }
-  return `Verified Codex ${version}. New sessions use the update; existing release files were preserved.`;
+  return `Verified ${label} ${version}. New sessions use the update; existing release files were preserved.`;
 }
 
 /**

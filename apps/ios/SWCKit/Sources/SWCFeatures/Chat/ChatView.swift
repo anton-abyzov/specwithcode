@@ -23,6 +23,7 @@ private struct ChatScreen: View {
   @Environment(AppRouter.self) private var router
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
 
   @FocusState private var composerFocused: Bool
   @State private var position = ScrollPosition(edge: .bottom)
@@ -293,8 +294,9 @@ private struct ChatScreen: View {
   // MARK: Header
 
   private var header: some View {
-    ScreenHeader(alignment: target.threadRef == nil ? .center : .leading) {
-      if isPushed { BackButton() } else { MenuButton() }
+    // Beside the sidebar the title leads the detail column, as on iPad.
+    ScreenHeader(alignment: target.threadRef == nil && !sidebarVisible ? .center : .leading) {
+      if isPushed { BackButton() } else if !sidebarVisible { MenuButton() }
     } center: {
       titleCapsule
     } trailing: {

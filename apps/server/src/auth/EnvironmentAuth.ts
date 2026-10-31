@@ -565,7 +565,7 @@ export const make = Effect.gen(function* () {
                 new ServerAuthInvalidCredentialError({
                   diagnostic:
                     session.subject === FLEET_INVITATION_SUBJECT
-                      ? "This management token works only over Tailscale. Invite this machine again to use SpecWithCode Connect."
+                      ? "This management token works only over Tailscale. On that machine, choose Join a main machine again and add the new line here to use SpecWithCode Connect."
                       : "This credential works only over Tailscale.",
                 }),
               ),

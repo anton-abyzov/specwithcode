@@ -74,7 +74,7 @@ export interface ProviderMaintenanceCapabilities {
 export interface ProviderMaintenanceCommandAction {
   readonly idlePaths?: ReadonlyArray<string>;
   readonly idlePackageName?: string;
-  readonly stagedCodex?: import("./stagedProviderUpdate.ts").StagedCodexUpdate;
+  readonly staged?: import("./stagedProviderUpdate.ts").StagedProviderUpdate;
   readonly command: string;
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
@@ -428,18 +428,20 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       return {
         ...manual,
         manualUpdateReason:
-          "This pinned fleet wrapper could not be verified for safe staging. Restore its reviewed wrapper and owning Node/npm toolchain, or update it through the fleet provisioning workflow. Refresh Providers afterward.",
+          independent === "verified"
+            ? "SpecWithCode can stage an update only for a fleet wrapper it can trace to a release and the fleet's pinned Node/npm toolchain, and this one does not qualify. Update it through the fleet provisioning workflow, then refresh Providers."
+            : "This pinned fleet wrapper could not be verified for safe staging. Restore its reviewed wrapper and owning Node/npm toolchain, or update it through the fleet provisioning workflow. Refresh Providers afterward.",
       };
+    const label = independent.provider === "codex" ? "Codex" : "Claude";
     return {
       provider: definition.provider,
       packageName: definition.npmPackageName,
       update: {
-        command:
-          "Install Codex beside the current release with its owning npm, verify, then switch new sessions",
+        command: `Install ${label} beside the current release with its owning npm, verify, then switch new sessions`,
         executable: independent.nodePath,
         args: [],
-        lockKey: `staged-codex:${independent.wrapperPath}`,
-        stagedCodex: independent,
+        lockKey: `staged-${independent.provider}:${independent.wrapperPath}`,
+        staged: independent,
       },
     };
   }

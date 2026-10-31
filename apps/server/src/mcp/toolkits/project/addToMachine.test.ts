@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
+  type LogicalProjectMember,
+  ProjectLinkError,
   type OrchestrationV2ThreadShell,
   OrchestratorMcpFailure,
   ProjectId,
@@ -23,6 +25,7 @@ import { unscopedGrant, type WorkOrigin } from "../../../fleet/workGrantPolicy.t
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ProjectLink from "../../../project/ProjectLink.ts";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -73,6 +76,10 @@ const setup = (
       readonly code: OrchestratorMcpFailure["code"];
       readonly message: string;
     };
+    /** The other machine runs a version without studio_project_link_accept. */
+    readonly noLinkAccept?: boolean;
+    /** This machine's project was made by a check. */
+    readonly automated?: boolean;
   } = {},
 ) => {
   const caller = {
@@ -91,8 +98,29 @@ const setup = (
     title: "Widgets",
     workspaceRoot: "/Users/example/Projects/widgets",
     repositoryIdentity: forkIdentity,
-    workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, coordinatorThreadId: callerId },
+    workspaceSettings: {
+      ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+      coordinatorThreadId: callerId,
+      ...(options.automated ? { origin: "automated" } : {}),
+    },
   });
+  const kept: LogicalProjectMember = {
+    environmentId: EnvironmentId.make("env-m4"),
+    projectId,
+    coordinatorThreadId: ThreadId.make(`project-coordinator:${projectId}`),
+  };
+  const joined: LogicalProjectMember = {
+    environmentId: M1.environmentId,
+    projectId: ProjectId.make("remote-widgets"),
+    coordinatorThreadId: ThreadId.make("project-coordinator:remote-widgets"),
+  };
+  const logicalProject = {
+    id: "logical:widgets",
+    title: "Widgets",
+    coordinatorId: "coordinator:logical:widgets",
+    members: [kept],
+  };
+  const linkCalls: Array<{ readonly step: string; readonly input: unknown }> = [];
   const remote: RemoteWorkers.RemoteWorkersShape = {
     ...RemoteWorkers.RemoteWorkers.defaultValue(),
     enabled: true,
@@ -130,6 +158,27 @@ const setup = (
             }),
             machine: M1,
           });
+        if (input.tool === "studio_project_link_accept") {
+          if (options.noLinkAccept)
+            return Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: "M1: Tool studio_project_link_accept not found.",
+              }),
+            );
+          return Effect.succeed({
+            operationId: input.arguments.operationId,
+            member: joined,
+            logicalProject: { ...logicalProject, members: [kept, joined] },
+            coordinatorBinding: {
+              epoch: 0,
+              state: "transferred",
+              operationId: input.arguments.operationId,
+              successor: kept,
+            },
+            replayed: false,
+          });
+        }
         return Effect.die(`unexpected tool ${input.tool}`);
       }),
   };
@@ -166,6 +215,34 @@ const setup = (
       getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ProjectLink.ProjectLink)({
+      prepare: (input) => {
+        linkCalls.push({ step: "prepare", input });
+        return Effect.succeed({
+          operationId: input.operationId,
+          kept,
+          logicalProject,
+          coordinatorBinding: { epoch: 0, state: "active" as const },
+          fingerprint: {
+            root: "repository" as const,
+            repositories: [],
+            skippedLinks: 0,
+            truncated: false,
+          },
+          adopted: false,
+        });
+      },
+      accept: () => Effect.fail(new ProjectLinkError({ code: "invalid" })),
+      commit: (input) => {
+        linkCalls.push({ step: "commit", input });
+        return Effect.succeed({
+          operationId: input.operationId,
+          logicalProject: { ...logicalProject, members: [kept, input.joining] },
+          notesWritten: 0,
+          replayed: false,
+        });
+      },
+    }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
     NodeServices.layer,
@@ -173,7 +250,7 @@ const setup = (
       Layer.provide(NodeServices.layer),
     ),
   );
-  const add = (params: Record<string, unknown>) =>
+  const call = (tool: string, params: Record<string, unknown>) =>
     ProjectToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
@@ -182,12 +259,13 @@ const setup = (
       ),
       Effect.flatMap((toolkit) =>
         toolkit
-          .handle("studio_project_add_to_machine", params as never)
+          .handle(tool as "studio_project_add_to_machine", params as never)
           .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies)),
       ),
       Effect.map((results) => results.at(-1)?.result as unknown as Record<string, unknown>),
     );
-  return { add, calls };
+  const add = (params: Record<string, unknown>) => call("studio_project_add_to_machine", params);
+  return { add, call, calls, linkCalls, joined };
 };
 
 describe("studio_project_add_to_machine", () => {
@@ -207,6 +285,13 @@ describe("studio_project_add_to_machine", () => {
           tool: "studio_project_create",
           arguments: { title: "Widgets", workspaceRoot: "/home/example/Projects/widgets" },
         },
+        {
+          tool: "studio_project_link_accept",
+          arguments: expect.objectContaining({
+            projectId: "remote-widgets",
+            logicalProject: expect.objectContaining({ id: "logical:widgets" }),
+          }),
+        },
       ]);
       expect(result).toMatchObject({
         machine: M1,
@@ -215,9 +300,101 @@ describe("studio_project_add_to_machine", () => {
         workspaceRoot: "/home/example/Projects/widgets",
         remoteUrl: "git@github.com:example-fork/widgets.git",
         branch: "feature/login",
+        linked: true,
       });
       expect(String(result.next)).toContain('machineProjectId:"remote-widgets"');
       expect(String(result.next)).toContain('baseRef:"feature/login"');
+    });
+  });
+
+  it.effect("links the copy to the project here, so both machines list it once", () => {
+    const { add, calls, linkCalls, joined } = setup();
+    return Effect.gen(function* () {
+      yield* add({ machine: "M1", projectId });
+      const operationId = (calls[2]?.arguments as { operationId: string }).operationId;
+      expect(linkCalls).toEqual([
+        {
+          step: "prepare",
+          input: {
+            operationId,
+            projectId,
+            joining: {
+              environmentId: M1.environmentId,
+              projectId: "remote-widgets",
+              coordinatorThreadId: "project-coordinator:remote-widgets",
+            },
+          },
+        },
+        { step: "commit", input: { operationId, projectId, joining: joined, notes: [] } },
+      ]);
+    });
+  });
+
+  it.effect("keeps the copy and says how to link it when that machine cannot", () => {
+    const { add, linkCalls } = setup({ noLinkAccept: true });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(result).toMatchObject({ projectId: "remote-widgets", linked: false });
+      expect(String(result.linkProblem)).toContain("Tool studio_project_link_accept not found");
+      expect(String(result.linkProblem)).toContain("Link…");
+      expect(linkCalls.map((entry) => entry.step)).toEqual(["prepare"]);
+    });
+  });
+
+  it.effect("registers a copy of a check's project as automated there", () => {
+    const { add, calls } = setup({ automated: true });
+    return Effect.gen(function* () {
+      yield* add({ machine: "M1", projectId });
+      expect(calls[1]).toEqual({
+        tool: "studio_project_create",
+        arguments: {
+          title: "Widgets",
+          workspaceRoot: "/home/example/Projects/widgets",
+          origin: "automated",
+        },
+      });
+    });
+  });
+
+  it.effect("links only for another machine's work, never for an agent here", () => {
+    const { call } = setup();
+    const relayed = setup({
+      origin: {
+        coordinatorEnvironmentId: EnvironmentId.make("env-m3"),
+        path: [EnvironmentId.make("env-m3")],
+        hops: 1,
+      } as unknown as WorkOrigin,
+    });
+    return Effect.gen(function* () {
+      const params = {
+        operationId: "00000000-0000-4000-8000-000000000000",
+        projectId: "remote-widgets",
+        kept: {
+          environmentId: "env-m4",
+          projectId: "project",
+          coordinatorThreadId: "project-coordinator:project",
+        },
+        logicalProject: {
+          id: "logical:widgets",
+          title: "Widgets",
+          coordinatorId: "coordinator:logical:widgets",
+          members: [],
+        },
+        coordinatorBinding: { epoch: 0, state: "active" },
+        keptFingerprint: {
+          root: "repository",
+          repositories: [],
+          skippedLinks: 0,
+          truncated: false,
+        },
+      };
+      expect(yield* call("studio_project_link_accept", params)).toMatchObject({
+        code: "capability_denied",
+      });
+      // An agent that other machine's work started here is refused too.
+      expect(yield* relayed.call("studio_project_link_accept", params)).toMatchObject({
+        code: "capability_denied",
+      });
     });
   });
 

@@ -389,7 +389,7 @@ async function assemble(
   userSteps.push({
     id: "allow-workers",
     title:
-      "On your main machine, turn on Allow workers for this machine in Settings > Connections > Your private machines.",
+      "On your main machine, choose Allow workers on this machine's card in Settings > Connections > Your private machines.",
     command: null,
     optional: false,
   });

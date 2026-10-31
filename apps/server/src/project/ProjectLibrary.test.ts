@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -100,6 +100,108 @@ describe("readProjectLibrary", () => {
     const root = await project({ specweave: false });
     const library = await readProjectLibrary(root);
     expect(library).toMatchObject({ specweave: false, hub: null, artifacts: [], folders: [] });
+  });
+
+  it("lists output files from reports folders, newest first, without following symlinks", async () => {
+    const root = await project();
+    const write = async (relative: string, at: number) => {
+      const file = NodePath.join(root, relative);
+      await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+      await NodeFSP.writeFile(file, "x".repeat(10));
+      await NodeFSP.utimes(file, at, at);
+    };
+    await write(".specweave/reports/threads/summary.md", 1_800_000_000);
+    await write(".specweave/increments/1148-shelf/reports/light.png", 1_800_000_300);
+    await write(".specweave/increments/1148-shelf/reports/run/dark.png", 1_800_000_200);
+    await write(".specweave/increments/1148-shelf/spec.md", 1_800_000_400);
+    await write(".specweave/reports/.hidden.md", 1_800_000_500);
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-outside-"));
+    roots.push(outside);
+    await NodeFSP.writeFile(NodePath.join(outside, "secret.txt"), "secret");
+    await NodeFSP.symlink(outside, NodePath.join(root, ".specweave/reports/linked"));
+    await NodeFSP.symlink(
+      NodePath.join(outside, "secret.txt"),
+      NodePath.join(root, ".specweave/reports/secret.txt"),
+    );
+
+    const library = await readProjectLibrary(root);
+    expect(library.outputs).toEqual([
+      {
+        path: ".specweave/increments/1148-shelf/reports/light.png",
+        byteLength: 10,
+        modifiedAt: new Date(1_800_000_300_000).toISOString(),
+        increment: "1148-shelf",
+      },
+      {
+        path: ".specweave/increments/1148-shelf/reports/run/dark.png",
+        byteLength: 10,
+        modifiedAt: new Date(1_800_000_200_000).toISOString(),
+        increment: "1148-shelf",
+      },
+      {
+        path: ".specweave/reports/threads/summary.md",
+        byteLength: 10,
+        modifiedAt: new Date(1_800_000_000_000).toISOString(),
+        increment: null,
+      },
+    ]);
+  });
+
+  it("finds a new file in an old increment's subfolder past a large reports tree", async () => {
+    const root = await project();
+    const bulk = NodePath.join(root, ".specweave/reports/bulk");
+    await NodeFSP.mkdir(bulk, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 4100 }, (_, index) =>
+        NodeFSP.writeFile(NodePath.join(bulk, `old-${index}.md`), "x"),
+      ),
+    );
+    const old = 1_700_000_000;
+    for (const name of await NodeFSP.readdir(bulk)) {
+      await NodeFSP.utimes(NodePath.join(bulk, name), old, old);
+    }
+    await NodeFSP.utimes(bulk, old, old);
+    const run = NodePath.join(root, ".specweave/increments/0900-x/reports/run");
+    await NodeFSP.mkdir(run, { recursive: true });
+    await NodeFSP.utimes(NodePath.join(root, ".specweave/increments/0900-x/reports"), old, old);
+    await NodeFSP.writeFile(NodePath.join(run, "new.png"), "png");
+
+    const outputs = (await readProjectLibrary(root)).outputs ?? [];
+    expect(outputs).toHaveLength(120);
+    expect(outputs[0]?.path).toBe(".specweave/increments/0900-x/reports/run/new.png");
+  });
+
+  it("finds a report rewritten in place in an old folder behind 120 newer files", async () => {
+    const root = await project();
+    const recent = NodePath.join(root, ".specweave/reports");
+    await NodeFSP.mkdir(recent, { recursive: true });
+    const hourAgo = Date.now() / 1000 - 3600;
+    for (let index = 0; index < 130; index += 1) {
+      const file = NodePath.join(recent, `recent-${index}.md`);
+      await NodeFSP.writeFile(file, "x");
+      await NodeFSP.utimes(file, hourAgo, hourAgo);
+    }
+    const old = NodePath.join(root, ".specweave/increments/1100-x/reports");
+    await NodeFSP.mkdir(old, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(old, "report.html"), "v1");
+    const week = Date.now() / 1000 - 7 * 86_400;
+    await NodeFSP.utimes(old, week, week);
+    // Rewritten in place: the file is new, its folder keeps last week's time.
+    await NodeFSP.writeFile(NodePath.join(old, "report.html"), "v2");
+    await NodeFSP.utimes(old, week, week);
+
+    const outputs = (await readProjectLibrary(root)).outputs ?? [];
+    expect(outputs[0]?.path).toBe(".specweave/increments/1100-x/reports/report.html");
+  });
+
+  it("lists no outputs through a symlinked .specweave", async () => {
+    const real = await project();
+    await NodeFSP.mkdir(NodePath.join(real, ".specweave/reports"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(real, ".specweave/reports/a.md"), "a");
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-library-"));
+    roots.push(root);
+    await NodeFSP.symlink(NodePath.join(real, ".specweave"), NodePath.join(root, ".specweave"));
+    expect((await readProjectLibrary(root)).outputs).toEqual([]);
   });
 });
 

@@ -156,7 +156,7 @@ try {
         if (scenario === "unknown") assert.match(text, /usage could not be read/);
         if (scenario === "offline") assert.match(text, /Studio Mac is not connected/);
         if (scenario === "stale") assert.match(text, /too old to rely on/);
-        if (scenario === "reset") assert.match(text, /Reset since last read/);
+        if (scenario === "reset") assert.match(text, /Limit reset since last read/);
         if (scenario === "running") {
           assert.match(
             text,
@@ -255,8 +255,15 @@ try {
       await open("account", theme, width);
       const labels = await page.locator("[data-model-picker-content] kbd").allTextContents();
       assert.deepEqual(labels.slice(0, 5), ["⌘1", "⌘2", "⌘3", "⌘4", "⌘5"]);
-      await page.keyboard.press("Meta+4");
-      assert.equal(await selection(), "claudeAgent:claude-fable-5-1");
+      // The first spent row's own shortcut picks it; row order follows the model groups.
+      const spentKey = await page
+        .locator("[data-model-usage-warning=true]")
+        .first()
+        .locator("kbd")
+        .first()
+        .textContent();
+      await page.keyboard.press(`Meta+${spentKey?.replace("⌘", "")}`);
+      assert.match((await selection()) ?? "", /^claudeAgent:/);
       await closed();
       await open("account", theme, width);
       const warningRow = page
@@ -299,6 +306,39 @@ try {
         fullPage: true,
       });
       checks.push(`${width}px ${theme}: trigger meters for every state`);
+      // A reset since the read is good news: the chip shows no meter for it.
+      assert.equal(
+        await page.locator("[data-model-usage-meter=stale]").filter({ hasText: /Reset/ }).count(),
+        0,
+        "a reset limit reads as a button-like Reset",
+      );
+
+      // Taller than the room on either side of the chip, the picker still opens
+      // above it, aligned to it, and never beside it.
+      await page.setViewportSize({ width, height: 560 });
+      await page.goto(`${origin}/?case=room&theme=${theme}`);
+      const trigger = page.locator("[data-chat-provider-model-picker]");
+      await trigger.click();
+      await page.locator("[data-model-picker-content]").waitFor();
+      await settle();
+      const placement = await page.evaluate(() => {
+        const picker = document.querySelector("[data-model-picker-content]");
+        const chip = document.querySelector("[data-chat-provider-model-picker]");
+        const p = picker.getBoundingClientRect();
+        const c = chip.getBoundingClientRect();
+        return {
+          side: picker.closest("[data-slot=popover-positioner]")?.getAttribute("data-side"),
+          gap: c.top - p.bottom,
+          left: p.left - c.left,
+          inside: p.top >= 0 && p.left >= 0 && p.right <= innerWidth + 0.5,
+        };
+      });
+      assert.equal(placement.side, "top", "picker left the chip's axis");
+      assert.ok(placement.gap >= 0 && placement.gap <= 12, `picker floats ${placement.gap}px off`);
+      assert.ok(placement.inside, "picker leaves the viewport");
+      if (width >= 1280) assert.ok(Math.abs(placement.left) <= 2, "picker not aligned to chip");
+      await page.screenshot({ path: join(output, `placement-${width}-${theme}.png`) });
+      checks.push(`${width}px ${theme}: short window keeps the picker above its chip`);
     }
   }
   assert.deepEqual(errors, []);

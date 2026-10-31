@@ -469,7 +469,7 @@ export async function signInStudioFleetTailscale(
 }
 
 /**
- * "Who can run work on this Mac": coordinator machines with a grant on this
+ * "Who can run work here": coordinator machines with a grant on this
  * server's machine. Servers from before scoped grants answer with nothing.
  */
 export function useMachineWorkGrants(environmentId: EnvironmentId | null) {

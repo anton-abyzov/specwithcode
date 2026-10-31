@@ -411,7 +411,7 @@ def connect_machines(home):
             reason = 'it has no SpecWithCode Connect address'
         elif not _proof_bound(machine.get('managementToken')):
             reason = ('its management token is not proof-bound, so it is never sent over SpecWithCode Connect; '
-                      'choose Invite this machine on it again and add the new line on M4')
+                      'choose Join a main machine on it again and add the new line on M4')
         else:
             reason = None
         found.append({'identity': identity, 'machine': machine['id'], 'label': label,

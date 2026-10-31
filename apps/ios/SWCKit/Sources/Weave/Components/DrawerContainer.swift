@@ -8,6 +8,8 @@ import SwiftUI
 ///
 /// The edge swipe sits above the content, so turn it off while a pushed
 /// screen needs the system back swipe: `edgeSwipeEnabled: path.isEmpty`.
+/// The drawer reads `isNavigationSidebarVisible` to tell a persistent column
+/// from the modal drawer.
 public struct DrawerContainer<Drawer: View, Content: View>: View {
   @Binding var isOpen: Bool
   let edgeSwipeEnabled: Bool
@@ -47,6 +49,7 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
       ZStack(alignment: .leading) {
         if persistent || isOpen || dragging {
           drawer
+            .environment(\.isNavigationSidebarVisible, persistent)
             .safeAreaPadding(EdgeInsets(
               top: sceneInsets.top, leading: sceneInsets.leading,
               bottom: sceneInsets.bottom,

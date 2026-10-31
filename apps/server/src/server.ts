@@ -217,6 +217,7 @@ import * as CoordinatorLease from "./project/CoordinatorLease.ts";
 import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
+import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
@@ -680,6 +681,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerCoordinatorLease,
   // Records a routine turn that fails after its message was dispatched.
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
+  // Wakes the thread that launched a worker on this machine when the worker's run ends.
+  Layer.effectDiscard(LaunchedWorkerWake.start),
   // Handoff moves between machines; the receiver also serves the peer route.
   HandoffMoves.layerFleet.pipe(
     Layer.provideMerge(HandoffReceiver.layer),

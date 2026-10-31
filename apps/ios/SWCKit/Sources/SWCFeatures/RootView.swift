@@ -72,11 +72,14 @@ private struct AppScreens: View {
     .task(id: launchKey) { router.applyLaunchRoute(in: model) }
   }
 
-  /// The drawer and the main stack. The drawer clips the main screen to its
-  /// own frame, so it fills the space and the stack is inset by the real safe
-  /// area (keyboard included). The canvas behind the stack then reaches under
-  /// the status bar and home indicator, and the stack's frame never overlaps
-  /// an unsafe area.
+  /// The drawer and the main stack. At regular width with room for both,
+  /// the drawer becomes a persistent column holding the native sidebar;
+  /// otherwise it is the modal drawer. The main stack is the same subtree in
+  /// both, so a fold or rotation keeps its navigation, draft, focus and
+  /// scroll. The drawer clips the main screen to its own frame, so it fills
+  /// the space and the stack is inset by the real safe area (keyboard
+  /// included). The canvas behind the stack then reaches under the status bar
+  /// and home indicator, and the stack's frame never overlaps an unsafe area.
   private var screens: some View {
     @Bindable var router = router
     @Bindable var main = router.main
@@ -86,7 +89,7 @@ private struct AppScreens: View {
         bottom: max(proxy.safeAreaInsets.bottom, keyboardInset), trailing: proxy.safeAreaInsets.trailing
       )
       DrawerContainer(isOpen: $router.isDrawerOpen, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
-        DrawerView()
+        NavigationColumn()
       } content: {
         NavigationStack(path: $main.path) {
           RootContent()
@@ -104,6 +107,20 @@ private struct AppScreens: View {
 
   /// Changes when the data a launch route waits for arrives.
   private var launchKey: String { "\(model.isLoading)-\(model.machines.count)-\(model.projects.count)" }
+}
+
+/// Navigation beside or over the main stack: a native sidebar list in the
+/// persistent column, the phone drawer when it is modal.
+private struct NavigationColumn: View {
+  @Environment(\.isNavigationSidebarVisible) private var persistent
+
+  var body: some View {
+    if persistent {
+      NavigationStack { SidebarView() }
+    } else {
+      DrawerView()
+    }
+  }
 }
 
 /// The screen at the root of the main stack.

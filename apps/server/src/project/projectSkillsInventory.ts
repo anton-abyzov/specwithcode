@@ -94,6 +94,8 @@ export interface SkillFileFact {
   readonly fileVersion?: string | null;
   /** `version` from the manifest of the plugin this file sits in. */
   readonly pluginVersion?: string | null;
+  /** When the file was last written, in milliseconds since the epoch; null when unknown. */
+  readonly modifiedAtMs?: number | null;
 }
 
 /** One `vskill doctor --json` finding, keyed to its skill. */
@@ -356,6 +358,23 @@ function skillFolderName(skillPath: string): string {
 function digestMatches(locked: string, digest: string): boolean {
   const normalized = locked.toLowerCase();
   return /^[0-9a-f]{8,64}$/.test(normalized) && digest.startsWith(normalized);
+}
+
+/**
+ * vskill's lock sha hashes the SKILL.md it downloaded, but it writes a copy
+ * with `name:` set to the folder, Claude-only fields dropped for other agents
+ * and `version:` synced, and stamps `installedAt` after those writes. A copy
+ * last written no later than that stamp (plus filesystem clock slack) is the
+ * one vskill wrote, so a different hash there is not drift.
+ */
+const INSTALL_WRITE_SLACK_MS = 2_000;
+
+function writtenByInstall(entry: VskillLockEntry, fact: SkillFileFact): boolean {
+  if (entry.installedAt === null || fact.modifiedAtMs == null) return false;
+  const installedAtMs = Date.parse(entry.installedAt);
+  return (
+    Number.isFinite(installedAtMs) && fact.modifiedAtMs <= installedAtMs + INSTALL_WRITE_SLACK_MS
+  );
 }
 
 function lockSupportsDrift(entry: VskillLockEntry): boolean {
@@ -663,16 +682,18 @@ export function buildProjectSkillRows(
           : !isInside(input.cwd, presence.path),
       );
       const compared = (scoped.length > 0 ? scoped : facts).flatMap(({ fact }) =>
-        fact.digest === null ? [] : [fact.digest],
+        fact.digest === null ? [] : [{ fact, digest: fact.digest }],
       );
       if (!entry.sha || !lockSupportsDrift(entry)) {
         drift = "unknown";
       } else if (compared.length === 0) {
         drift = "unknown";
-      } else if (compared.some((digest) => digestMatches(entry.sha!, digest))) {
-        drift = compared.every((digest) => digestMatches(entry.sha!, digest)) ? "match" : "drift";
       } else {
-        drift = "drift";
+        drift = compared.every(
+          ({ fact, digest }) => digestMatches(entry.sha!, digest) || writtenByInstall(entry, fact),
+        )
+          ? "match"
+          : "drift";
       }
       if (drift === "drift") {
         issues.unshift(

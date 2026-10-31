@@ -390,7 +390,7 @@ async function verifyWorkGrants() {
     settings
       .locator("section")
       .filter({
-        has: settings.getByRole("heading", { name: "Who can run work on this Mac", exact: true }),
+        has: settings.getByRole("heading", { name: "Who can run work here", exact: true }),
       })
       .last();
   const shoot = async (file) => {
@@ -415,7 +415,7 @@ async function verifyWorkGrants() {
     throw error;
   }
   await shoot("03-who-can-run-work.png");
-  receipt.checks.push("Who can run work on this Mac lists the coordinator, scope and sign-ins");
+  receipt.checks.push("Who can run work here lists the coordinator, scope and sign-ins");
   const revokedAt = Date.now();
   await change("revoke");
   grant = await grantOf();

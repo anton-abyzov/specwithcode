@@ -369,6 +369,42 @@ describe("ProjectSkillsView", () => {
     );
   });
 
+  it("says what the lock names when a file's version field disagrees, without calling it out of date", async () => {
+    state.data = {
+      ...snapshot,
+      rows: [
+        row("greet-anton", {
+          providers: [
+            {
+              ...claude,
+              path: "/work/app/.claude/skills/greet-anton/SKILL.md",
+              scope: "project",
+              enabled: true,
+              fileVersion: "1.0.3",
+            },
+          ],
+          lock: {
+            lockPath: "/work/app/vskill.lock",
+            lockScope: "project",
+            version: "1.0.4",
+            tier: "VERIFIED",
+            source: "github:anton-abyzov/vskill",
+            sha: "abc",
+            installedAt: null,
+            pinnedVersion: "1.0.4",
+            skillId: "anton-abyzov/vskill/greet-anton",
+          },
+          drift: "match",
+        }),
+      ],
+    };
+    await render();
+    const cell = container.querySelector("tr[data-skill=greet-anton] td:nth-child(4)")!;
+    expect(cell.textContent).toContain("1.0.3");
+    expect(cell.textContent).toContain("lock says 1.0.4");
+    expect(cell.textContent).not.toContain("out of date");
+  });
+
   async function openRowMenu(skill: string) {
     const trigger = container.querySelector<HTMLButtonElement>(
       `button[aria-label='More actions for ${skill}']`,
@@ -399,6 +435,14 @@ describe("ProjectSkillsView", () => {
     ).not.toBeNull();
     // A local skill has no registry versions to change or push.
     expect(item("Change version…").hasAttribute("data-disabled")).toBe(true);
+  });
+
+  it("opens the sheet with the push panel open from the row menu", async () => {
+    await render();
+    const item = await openRowMenu("deploy");
+    await act(async () => item("Push to machines…").click());
+    expect(document.querySelector("[data-testid=skill-details]")).not.toBeNull();
+    expect(document.querySelector("[data-testid=skill-fleet-push]")).not.toBeNull();
   });
 
   it("shows the version, and previews a switch before it writes, with Undo after", async () => {

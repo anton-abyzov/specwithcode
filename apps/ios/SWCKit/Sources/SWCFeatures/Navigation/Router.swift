@@ -23,6 +23,13 @@ nonisolated enum SheetRoute: Hashable, Identifiable, Sendable {
   var id: Self { self }
 }
 
+/// A row of the expanded sidebar. Chats replace the root of the main stack;
+/// a machine replaces the whole stack with its detail screen.
+nonisolated enum SidebarItem: Hashable, Sendable {
+  case chat(ChatTarget)
+  case machine(String)
+}
+
 /// The path of one navigation stack. The main screen and the settings sheet
 /// each have their own; views push through whichever is in the environment.
 @Observable
@@ -74,6 +81,42 @@ final class AppRouter {
   func push(_ route: Route) {
     main.path.append(route)
     isDrawerOpen = false
+  }
+
+  /// The sidebar row of the screen that is showing, if it has one.
+  func sidebarSelection(in model: AppModel) -> SidebarItem? {
+    if main.path.isEmpty { return landing(in: model).map(SidebarItem.chat) }
+    if main.path.count == 1, case let .machine(id) = main.path[0] { return .machine(id) }
+    return nil
+  }
+
+  /// Shows a sidebar row in the detail column.
+  func select(_ item: SidebarItem) {
+    switch item {
+    case let .chat(target): open(target)
+    case let .machine(id):
+      main.path = [.machine(id)]
+      isDrawerOpen = false
+    }
+  }
+
+  /// Opens Aide, or the composer of the current project when there is no
+  /// Aide, with the composer focused.
+  func startNewChat(in model: AppModel) {
+    let target: ChatTarget?
+    if let aide = model.aide, !aide.archived {
+      target = .aide(aide.ref)
+    } else if let current = landing(in: model), current.projectRef != nil {
+      target = current
+    } else {
+      target = model.projects.first(where: { !$0.archived && !$0.isAutomated }).map { .project($0.ref) }
+    }
+    guard let target else {
+      isDrawerOpen = false
+      return
+    }
+    pendingComposerFocus = target
+    open(target)
   }
 
   func showError(_ error: any Error) {

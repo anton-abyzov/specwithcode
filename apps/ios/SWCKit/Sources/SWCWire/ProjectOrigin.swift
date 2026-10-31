@@ -20,6 +20,9 @@ public enum ProjectOrigin: String, Codable, Hashable, Sendable {
     [".local", "share", "specweave-studio"],
   ]
 
+  /// A word only a recorded demo's own folder uses; a parent such as `~/Projects/demo/` may hold the person's work.
+  static let demoFolderWord = "demo"
+
   static let tempPrefixes = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"]
 
   /// True when a folder is plainly a check's workspace. The app's projects folder
@@ -41,9 +44,10 @@ public enum ProjectOrigin: String, Codable, Hashable, Sendable {
       inAppData = true
     }
     if inAppData { return true }
-    return lowered.contains { segment in
-      segment.split(whereSeparator: { "-_. ".contains($0) }).contains { automatedFolderWords.contains(String($0)) }
-    }
+    let segments = lowered.filter { !$0.isEmpty }
+    func words(_ segment: String) -> [String] { segment.split(whereSeparator: { "-_. ".contains($0) }).map(String.init) }
+    if let last = segments.last, words(last).contains(demoFolderWord) { return true }
+    return segments.contains { words($0).contains { automatedFolderWords.contains($0) } }
   }
 }
 

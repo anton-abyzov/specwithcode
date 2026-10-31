@@ -172,6 +172,11 @@ export interface FleetSkillLockEntry {
 export interface FleetSkillWorkerDeps {
   /** The vskill binary's absolute path, or null when none is installed. */
   readonly resolveVskill: Effect.Effect<string | null>;
+  /**
+   * npm's `npx`, to run the published vskill when none is installed: a freshly
+   * provisioned machine has Node but no vskill. Null when there is no npx.
+   */
+  readonly resolveNpx?: Effect.Effect<string | null>;
   /** This user's home folder. */
   readonly home: string;
   /** A project's own workspace root here, or null for an unknown project. */
@@ -214,8 +219,13 @@ export function runFailureText(run: FleetSkillRun, what: string): string {
   return `${what} exited with ${run.exitCode}${tail === "" ? "." : `: ${tail}`}`;
 }
 
+/** What runs vskill through npx: `npx --yes vskill@latest <args>`. */
+export const NPX_VSKILL_ARGS: ReadonlyArray<string> = ["--yes", "vskill@latest"];
+
 interface Prepared {
   readonly vskill: string;
+  /** Arguments before vskill's own: empty for an installed vskill, {@link NPX_VSKILL_ARGS} for npx. */
+  readonly vskillArgs: ReadonlyArray<string>;
   readonly installCwd: string;
   readonly lockDirs: ReadonlyArray<string>;
 }
@@ -247,15 +257,18 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
         } else {
           root = deps.home;
         }
-        const vskill = yield* deps.resolveVskill;
+        const installed = yield* deps.resolveVskill;
+        const npx = installed === null && deps.resolveNpx ? yield* deps.resolveNpx : null;
+        const vskill = installed ?? npx;
         if (vskill === null)
           return yield* refuse(
             "vskill-missing",
-            "vskill is not installed on this machine (looked on PATH, in the usual user install folders and npm's global bin). Install it with npm i -g vskill there.",
+            "Neither vskill nor npx is installed on this machine (looked on PATH, in the usual user install folders and npm's global bin). Install Node.js, or vskill with npm i -g vskill, there.",
           );
         const userLock = `${deps.home}/.agents`;
         return {
           vskill,
+          vskillArgs: installed === null ? NPX_VSKILL_ARGS : [],
           installCwd: root,
           // The current user lock, then the legacy one vskill still reads.
           lockDirs: ask.scope === "user" ? [userLock, deps.home] : [root],
@@ -283,7 +296,7 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
           });
         const install = yield* deps.run({
           command: prepared.vskill,
-          args: fleetSkillInstallArgs(ask),
+          args: [...prepared.vskillArgs, ...fleetSkillInstallArgs(ask)],
           cwd: prepared.installCwd,
           timeout: INSTALL_TIMEOUT,
         });
@@ -472,6 +485,7 @@ export const layer = Layer.effect(
       const npmBin = yield* npmGlobalBin;
       return npmBin === null ? null : yield* findIn([npmBin], "vskill");
     });
+    const resolveNpx = findIn(searchDirs, "npx");
 
     const projectRoot = (projectId: string) =>
       Effect.gen(function* () {
@@ -554,6 +568,7 @@ export const layer = Layer.effect(
 
     return yield* makeFleetSkillWorker({
       resolveVskill,
+      resolveNpx,
       home,
       projectRoot,
       run,
@@ -646,7 +661,7 @@ async function refusalOf(response: Response): Promise<FleetSkillFailure> {
   if (response.status === 401 || response.status === 403)
     return new FleetSkillFailure(
       "unauthorized",
-      `The management token saved for this machine is not allowed to install skills there (${message}). On that machine choose Invite this machine again and add the new line here.`,
+      `The management token saved for this machine is not allowed to install skills there (${message}). On that machine choose Join a main machine again and add the new line here.`,
     );
   if (response.status === 400)
     return new FleetSkillFailure("invalid-skill", `The machine refused the request: ${message}`);
@@ -680,7 +695,7 @@ export async function runFleetSkillInstall(
   if (token === undefined)
     throw new FleetSkillFailure(
       "unauthorized",
-      `No management token is saved for ${target.label}. On that machine choose Invite this machine and add the line here.`,
+      `No management token is saved for ${target.label}. On that machine choose Join a main machine and add the line here.`,
     );
   let descriptor;
   try {

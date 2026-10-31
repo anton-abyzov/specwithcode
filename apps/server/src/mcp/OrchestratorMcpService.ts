@@ -765,14 +765,13 @@ function launchIncrementFor(
     OrchestrationV2ThreadProjection["thread"],
     "id" | "title" | "branch" | "worktreePath"
   >,
-  input: { readonly ref: string | undefined; readonly title: string | undefined },
+  input: { readonly ref: string | undefined },
 ): Effect.Effect<LaunchIncrementOutcome, OrchestratorMcpFailure> {
   return Effect.promise(() =>
     resolveLaunchIncrement({
       workspaceRoot: project.workspaceRoot,
       worktreePath: caller.worktreePath ?? null,
       ref: input.ref,
-      title: input.title,
       caller: {
         threadId: caller.id,
         title: caller.title ?? null,
@@ -2675,7 +2674,6 @@ const make = Effect.gen(function* () {
         // The child runs in the parent's checkout; a bad ref dispatches nothing.
         const increment = yield* launchIncrementFor(project, parent.thread, {
           ref: input.increment,
-          title: input.title,
         });
         if (increment.increment !== undefined) {
           const seeded = increment.increment;
@@ -2948,7 +2946,6 @@ const make = Effect.gen(function* () {
         const increments = yield* Effect.forEach(input.threads, (request) =>
           launchIncrementFor(project, parent.thread, {
             ref: request.increment,
-            title: request.title,
           }),
         );
         const created = yield* Effect.forEach(

@@ -22,7 +22,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
-  stageCodexUpdate,
+  stageProviderUpdate,
   assertProviderInstallerIdle,
   ProviderInUseError,
 } from "./stagedProviderUpdate.ts";
@@ -460,10 +460,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
-            const result = command.stagedCodex
+            const result = command.staged
               ? {
                   stdout: yield* Effect.tryPromise({
-                    try: () => stageCodexUpdate(command.stagedCodex!, candidateVersion ?? ""),
+                    try: () => stageProviderUpdate(command.staged!, candidateVersion ?? ""),
                     catch: maintenanceCommandError,
                   }),
                   stderr: "",

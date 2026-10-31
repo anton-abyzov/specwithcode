@@ -367,8 +367,9 @@ vi.mock("../../state/session", async (importOriginal) => ({
       : state.canOperate,
 }));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: (query: { starters?: true; reports?: true } | null) => {
-    if (query === null)
+  useEnvironmentQuery: (query: { starters?: true; reports?: true; library?: true } | null) => {
+    // The artifacts shelf's Library read: an empty project here.
+    if (query === null || query.library)
       return { data: null, isPending: false, error: null, refresh: vi.fn<FixtureProcedure>() };
     if (query.reports) {
       return { data: state.threadReports, isPending: false, error: null, refresh: state.refresh };
@@ -440,6 +441,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
     threadReports: () => ({ reports: true }),
     threadReportSave: {},
     threadIncrementProgress: () => null,
+    library: () => ({ library: true }),
   },
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({

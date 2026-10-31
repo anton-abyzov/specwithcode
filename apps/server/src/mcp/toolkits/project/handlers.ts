@@ -37,6 +37,7 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
+import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -431,7 +432,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                       ? (caller.worktreePath ?? null)
                       : null,
                   ref: input.increment,
-                  title: input.title,
                   caller:
                     caller === undefined || caller.projectId !== project.id
                       ? null
@@ -701,7 +701,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       if (work !== undefined && work.grant.projects.kind !== "all")
         return yield* new OrchestratorMcpFailure({
           code: "outside_grant_scope",
-          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot add projects here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work on this Mac.`,
+          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot add projects here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work here.`,
         });
       // As for studio_project_update: scripts and new folders run or land on
       // this machine, so only its user sets them; a model default stays
@@ -870,7 +870,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       if (work !== undefined && work.grant.projects.kind !== "all")
         return yield* new OrchestratorMcpFailure({
           code: "outside_grant_scope",
-          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot clone repositories here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work on this Mac.`,
+          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot clone repositories here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work here.`,
         });
       const repositories = yield* Repositories.SourceControlRepositoryService;
       return yield* repositories.cloneRepository(input).pipe(
@@ -886,6 +886,34 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   studio_project_add_to_machine: McpToolAccess.writesEnvironment((input) =>
     addProjectToMachine(input),
+  ),
+  studio_project_link_accept: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      // Only the machine that just added this project here (under a grant covering
+      // every project, as for its clone and create) links it to its own; work it
+      // started here runs as an agent and may not.
+      const work = yield* workGrantOf(yield* readCaller());
+      if (work === undefined || work.origin !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Only another SpecWithCode machine links a project it added here.",
+        });
+      yield* refuseRevoked(work);
+      if (work.grant.projects.kind !== "all")
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot link projects here.`,
+        });
+      const link = yield* ProjectLink.ProjectLink;
+      return yield* link
+        .accept(input)
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+          ),
+        );
+    }),
   ),
   studio_model_preference: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {

@@ -76,14 +76,14 @@ export class FleetError extends Error {
         "pairing-unavailable":
           "Pairing is unavailable. Ask the server owner to renew this machine's connection permission.",
         "invitation-limited":
-          "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+          "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Join a main machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
         "reapproval-required":
-          "That machine no longer accepts the invitation saved here: its update asks every machine that manages it to be approved again. On that machine, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine.",
+          "That machine no longer accepts the invitation saved here: its update asks every machine that manages it to be approved again. On that machine, choose Join a main machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine.",
         forbidden: "This connection cannot pair with that machine.",
         "connect-unbound":
-          "This machine answers only through SpecWithCode Connect, and the invitation saved here works only over Tailscale. On that machine choose Invite this machine again and add the new line here.",
+          "This machine answers only through SpecWithCode Connect, and the invitation saved here works only over Tailscale. On that machine choose Join a main machine again and add the new line here.",
         "connect-key-missing":
-          "This machine's fleet key is missing or unreadable, so the invitation saved for that machine cannot be used. On that machine choose Invite this machine again and add the new line here.",
+          "This machine's fleet key is missing or unreadable, so the invitation saved for that machine cannot be used. On that machine choose Join a main machine again and add the new line here.",
         "connect-browser-unsupported":
           "That machine answers only through SpecWithCode Connect right now, and opening it in this window needs Tailscale. Work you send to it still goes through.",
       }[kind],

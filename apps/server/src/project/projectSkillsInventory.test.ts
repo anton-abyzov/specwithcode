@@ -318,6 +318,37 @@ describe("buildProjectSkillRows", () => {
     assert.match(drifted.issues[0] ?? "", /changed since vskill installed it/);
   });
 
+  it("does not flag the copy vskill rewrote at install time as drift", () => {
+    // vskill locks the sha of the downloaded SKILL.md but writes it with `name:` set to the folder.
+    const downloaded = "---\nname: greet-anton-abyzov\nversion: 1.0.3\n---\nHi\n";
+    const written = "---\nname: greet-anton\nversion: 1.0.3\n---\nHi\n";
+    const path = `${CWD}/.agents/skills/greet-anton/SKILL.md`;
+    const installedAt = "2026-10-31T07:56:36.630Z";
+    const build = (content: string, modifiedAtMs: number | null) =>
+      buildProjectSkillRows({
+        cwd: CWD,
+        providers: [provider("claude", "claudeAgent", "Claude", [skill("greet-anton", path)])],
+        locks: [
+          lock("project", {
+            "greet-anton": lockEntry({ sha: vskillContentSha(downloaded), installedAt }),
+          }),
+        ],
+        files: new Map([[path, fact(path, content, { modifiedAtMs })]]),
+        doctor: [],
+      })[0]!;
+    const installMs = Date.parse(installedAt);
+    const fresh = build(written, installMs - 191);
+    assert.strictEqual(fresh.drift, "match");
+    assert.strictEqual(fresh.status, "ok");
+    assert.deepEqual(fresh.issues, []);
+    // Edited after the install, or with no write time to go on: drift.
+    assert.strictEqual(
+      build("---\nname: greet-anton\n---\nBye\n", installMs + 60_000).drift,
+      "drift",
+    );
+    assert.strictEqual(build(written, null).drift, "drift");
+  });
+
   it("reports unknown drift for empty shas and multi-file or plugin entries", () => {
     const path = `${CWD}/.claude/skills/kit/SKILL.md`;
     const build = (entry: VskillLockEntry) =>

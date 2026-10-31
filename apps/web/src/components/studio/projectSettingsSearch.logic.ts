@@ -88,10 +88,10 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
   },
   {
     id: "project-auto-resume",
-    title: "Automatic usage-limit recovery",
+    title: "Auto-continue when limits reset",
     tab: "general",
-    anchors: ["Automatically arm recovery"],
-    searchTerms: ["resume quota limit stop"],
+    anchors: ["Auto-continue this project's threads"],
+    searchTerms: ["resume quota limit stop auto-continue recovery"],
   },
   {
     id: "project-worker-machine",

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   ENFORCED_INCREMENT_MESSAGE,
+  NEW_INCREMENT_BRIEF,
   NO_INCREMENT_BRIEF,
   REMINDED_INCREMENT_MESSAGE,
   launchIncrementFields,
@@ -143,13 +144,13 @@ describe("resolveLaunchIncrement", () => {
 
   it('briefs "new" and "none" without binding anything', async () => {
     const root = await project("enforce");
-    expect(await launch(root, { ref: "new", title: 'Add "export"', isCoordinator: true })).toEqual({
+    // The increment is named for the work, never after the planner's thread.
+    expect(await launch(root, { ref: "new", isCoordinator: true })).toEqual({
       ok: true,
-      value: {
-        brief:
-          'Plan it first: `specweave create-increment "Add export"`, fill spec.md, then edit code.',
-      },
+      value: { brief: NEW_INCREMENT_BRIEF },
     });
+    expect(NEW_INCREMENT_BRIEF).toContain('`specweave create-increment "<title>"`');
+    expect(NEW_INCREMENT_BRIEF).toContain("not this thread's title");
     expect(await launch(root, { ref: "none", isCoordinator: true })).toEqual({
       ok: true,
       value: { brief: NO_INCREMENT_BRIEF },

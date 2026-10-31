@@ -200,11 +200,11 @@ export function MachineListSection({
         </ul>
       )}
       <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-        Add machines and allow or stop workers in{" "}
+        Add machines and allow or stop workers on them in{" "}
         <Link to="/settings/connections" className="underline underline-offset-2">
           Settings &gt; Connections
         </Link>
-        .
+        . Machines that may run work here are under Who can run work here.
       </p>
       {error ? (
         <p

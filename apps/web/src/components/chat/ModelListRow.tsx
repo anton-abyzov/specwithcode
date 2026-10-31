@@ -96,9 +96,13 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 className="size-3.5 shrink-0"
                 iconClassName="size-3.5"
               />
+              {/* The provider names the row: the pill's weight makes it give way first. */}
               <div className="min-w-0 truncate text-sm leading-snug">{providerLabel}</div>
               {props.providerAsTitle.plan ? (
-                <span className="sws-picker-pill shrink-0" data-model-row-plan="">
+                <span
+                  className="sws-picker-pill min-w-0 shrink-[100] truncate"
+                  data-model-row-plan=""
+                >
                   {props.providerAsTitle.plan}
                 </span>
               ) : null}

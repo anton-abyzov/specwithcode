@@ -44,7 +44,8 @@ export const ProjectSkillsReadInput = Schema.Struct({
 export type ProjectSkillsReadInput = typeof ProjectSkillsReadInput.Type;
 
 /**
- * `drift`: the SKILL.md on disk no longer hashes to the locked sha.
+ * `drift`: the SKILL.md on disk no longer hashes to the locked sha and was
+ * written after vskill installed it.
  * `duplicate`: agents load different contents under this name.
  * `missing`: a lockfile lists the skill but no agent loads it (see
  * `ProjectSkillRow.staleLock` for entries with nothing on disk).
@@ -60,7 +61,8 @@ export const ProjectSkillStatus = Schema.Literals([
 export type ProjectSkillStatus = typeof ProjectSkillStatus.Type;
 
 /**
- * `match` and `drift` compare the on-disk SKILL.md with the locked sha.
+ * `match` and `drift` compare the on-disk SKILL.md with the locked sha; a copy
+ * vskill itself rewrote at install time (last written by its `installedAt`) matches.
  * `unknown`: the lock has no usable sha, or its sha covers several files.
  * `unlocked`: no vskill lockfile lists the skill.
  */

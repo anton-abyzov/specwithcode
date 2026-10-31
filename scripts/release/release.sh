@@ -1443,10 +1443,19 @@ main() {
   # the same candidate (stop_stale_server ends it for a new one). A hosted runner (--ci, 3 cores)
   # has no room for both, so there it still starts after stage 1.
   # Not in stub mode: the self-test counts stage-1 commands, and this one is not a suite.
+  # A self-hosted Mac with 8 or more cores (the M1 runner) has room for both, so --ci starts it
+  # beside stage 1 there too, and a failing suite stops the release before signing instead of about
+  # 20 minutes in. Dry and stub runs keep the hosted order whatever Mac runs them.
+  local early_server=0
+  if [ "$CI_MODE" -eq 0 ]; then
+    early_server=1
+  elif [ "$MODE" != dry ] && [ "$MODE" != stub ] && [ "$(sysctl -n hw.ncpu 2> /dev/null || echo 0)" -ge 8 ]; then
+    early_server=1
+  fi
   if [ "$MODE" != stub ] && { ! is_done stage1 "$SHA" || ! is_done server "$SHA"; }; then playwright_shell; fi
-  if [ "$CI_MODE" -eq 0 ]; then start_server; fi
+  if [ "$early_server" -eq 1 ]; then start_server; fi
   run_stage stage1 sha
-  if [ "$CI_MODE" -eq 1 ]; then start_server; fi
+  if [ "$early_server" -eq 0 ]; then start_server; fi
   run_stage build sha
   for stage in bundle sign helpers plan drafts; do
     stop_if_server_failed

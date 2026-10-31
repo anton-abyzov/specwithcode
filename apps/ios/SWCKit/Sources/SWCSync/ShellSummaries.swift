@@ -51,14 +51,19 @@ public enum ShellSummaries {
   ///   - names: Labels of machines the phone knows only from the main
   ///     machine's roster, so a thread running there still shows its name.
   ///   - nicknames: The user's nicknames by environment id, for every machine.
-  public static func build(_ machines: [Machine], names: [String: String] = [:], nicknames: [String: String] = [:]) -> Output {
-    let ordered = machines.map { machine in
+  ///   - home: Machines whose projects are listed, as the desktop app lists
+  ///     its own machine's (see `listedMachines`). Empty lists every machine.
+  public static func build(_ machines: [Machine], names: [String: String] = [:], nicknames: [String: String] = [:], home: Set<String> = []) -> Output {
+    let known = machines.map { machine in
       var machine = machine
       if machine.nickname == nil { machine.nickname = nicknames[machine.environmentId] }
       return machine
     }.sorted { $0.environmentId < $1.environmentId }
+    let listedIds = listedMachines(known, home: home)
+    let ordered = known.filter { listedIds.contains($0.environmentId) }
     let orders = ordered.compactMap(\.projectOrder)
-    let directory = Directory(machines: ordered, names: names, nicknames: nicknames)
+    // Every known machine still names threads that run on it.
+    let directory = Directory(machines: known, names: names, nicknames: nicknames)
     let listed = Set(ordered.flatMap { machine in (machine.snapshot?.threads ?? []).map { "\(machine.environmentId)/\($0.id)" } })
     var aide: ProjectSummary?
     var archivedAide: ProjectSummary?
@@ -130,6 +135,39 @@ public enum ShellSummaries {
   }
 
   // MARK: - Machines
+
+  /// The machines whose projects and threads the phone lists, as the desktop
+  /// app's catalog holds them: the home machines, then every machine a listed
+  /// project names as a linked member or as its coordinator's new home
+  /// (`linkedMachineIds` on the web), or a listed thread was moved to another
+  /// project on, repeated until nothing new is named.
+  /// Another machine's own projects, which the desktop never lists, stay out,
+  /// so a worker's unlinked copy of a project is not a second row. With no home
+  /// machine known yet (paired only through Connect, or an install from before
+  /// home machines were kept), every machine is listed.
+  static func listedMachines(_ machines: [Machine], home: Set<String>) -> Set<String> {
+    let all = Set(machines.map(\.environmentId))
+    var listed = home.intersection(all)
+    guard !listed.isEmpty else { return all }
+    let byId = Dictionary(machines.map { ($0.environmentId, $0) }, uniquingKeysWith: { first, _ in first })
+    var pending = Array(listed)
+    while let id = pending.popLast() {
+      let snapshot = byId[id]?.snapshot
+      var named: [String] = []
+      for project in snapshot?.projects ?? [] where project.deletedAt == nil {
+        let settings = project.workspaceSettings
+        named += (settings?.logicalProject?.members.map(\.environmentId) ?? []) + [settings?.coordinatorBinding?.successor?.environmentId].compactMap { $0 }
+      }
+      // The desktop moves a thread to another project only on a machine it
+      // lists. A handoff to a worker is not one: the source copy stays listed,
+      // placed on the worker, as on the desktop.
+      named += (snapshot?.threads ?? []).compactMap { $0.movedTo?.isHandoff == false ? $0.movedTo?.environmentId : nil }
+      for next in named where all.contains(next) && listed.insert(next).inserted {
+        pending.append(next)
+      }
+    }
+    return listed
+  }
 
   /// Names and reachability of every machine the phone knows.
   struct Directory {

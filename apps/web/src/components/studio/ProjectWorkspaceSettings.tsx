@@ -499,11 +499,12 @@ export function ProjectWorkspaceSettings({
                       disabled={disabled}
                       onChange={(e) => change(setAutoResume, e.target.checked)}
                     />
-                    Automatically arm recovery for new usage-limit stops in this project
+                    Auto-continue this project's threads when limits reset
                   </label>
                   <p className="project-muted">
-                    Native providers own quota recovery. Already armed threads keep their recovery
-                    controls. This never changes accounts or enables paid overage.
+                    Threads stopped on a usage limit continue by themselves at the reset, including
+                    threads already waiting, unless you turned a thread's own auto-continue off.
+                    This never changes accounts or enables paid overage.
                   </p>
                   {machineChoices.length > 1 || workerMachine ? (
                     <label>

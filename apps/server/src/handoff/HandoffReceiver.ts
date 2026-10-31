@@ -279,8 +279,8 @@ export const make = Effect.gen(function* () {
       caller.grant.accounts.kind === "listed" ? caller.grant.accounts.instanceIds : [];
     return at(
       allowed.length === 0
-        ? `this machine lets ${sourceLabel} use none of its sign-ins, so it cannot continue work here. The user can allow sign-ins in Settings > Connections > Who can run work on this Mac.`
-        : `this machine lets ${sourceLabel} use only these sign-ins: ${allowed.join(", ")}. The user can allow ${instanceId} in Settings > Connections > Who can run work on this Mac.`,
+        ? `this machine lets ${sourceLabel} use none of its sign-ins, so it cannot continue work here. The user can allow sign-ins in Settings > Machines > Who can run work here.`
+        : `this machine lets ${sourceLabel} use only these sign-ins: ${allowed.join(", ")}. The user can allow ${instanceId} in Settings > Machines > Who can run work here.`,
     );
   };
 

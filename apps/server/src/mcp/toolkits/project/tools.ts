@@ -12,6 +12,8 @@ import {
   ProviderInteractionMode,
   Project,
   ProjectCreatePayload,
+  ProjectLinkAcceptInput,
+  ProjectLinkAcceptResult,
   ProjectUpdatePayload,
   ProjectId,
   OrchestratorMcpFailure,
@@ -38,6 +40,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
+import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectCoordinatorService from "../../../project/ProjectCoordinatorService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -209,15 +212,32 @@ const ProjectAddToMachineTool = Tool.make("studio_project_add_to_machine", {
     workspaceRoot: Schema.String,
     remoteUrl: Schema.String,
     branch: Schema.optional(Schema.String),
+    linked: Schema.optional(
+      Schema.Boolean.annotate({
+        description:
+          "True when the copy there is linked to the project here, so it is listed once with both machines.",
+      }),
+    ),
+    linkProblem: Schema.optional(
+      Schema.String.annotate({ description: "Why the copy is not linked. Tell the user." }),
+    ),
     next: Schema.String.annotate({ description: "How to start work there. Follow it." }),
   }),
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+const ProjectLinkAcceptTool = Tool.make("studio_project_link_accept", {
+  ...shared,
+  description:
+    "Internal, between SpecWithCode machines. After studio_project_add_to_machine adds a project here, the machine it came from links that copy to its own project. Agents never call this.",
+  parameters: ProjectLinkAcceptInput,
+  success: ProjectLinkAcceptResult,
+  dependencies: [...shared.dependencies, ProjectLink.ProjectLink],
+}).annotate(Tool.Destructive, true);
 const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
   description:
-    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. When the project holds nested repositories, add repository (an id from the project\'s environment repositories, or that checkout\'s absolute path) so git runs in that repository instead of the project root; a baseRef missing there fails rather than falling back to another branch. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree; when the project\'s Use worktrees setting is on, it means a new worktree off the project\'s checked-out branch instead. Pass {type:"root"} to work in the project root anyway. Pass effort when the user names one ("extra high" is xhigh). Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model, else this host\'s default worker model); a caller outside a SpecWithCode thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. A thread in a project starts its threads in that project; scratch from there also needs projectless:true, and only when the user asked for a chat outside any project. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling SpecWithCode thread\'s own modes, or the permission mode an outside agent was approved with. ' +
+    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. When the project holds nested repositories, add repository (an id from the project\'s environment repositories, or that checkout\'s absolute path) so git runs in that repository instead of the project root; a baseRef missing there fails rather than falling back to another branch. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree; when the project\'s Use worktrees setting is on, it means a new worktree off the project\'s checked-out branch instead. Pass {type:"root"} to work in the project root anyway. Pass effort when the user names one ("extra high" is xhigh). Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model, else this host\'s default worker model); a caller outside a SpecWithCode thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. A thread in a project starts its threads in that project; scratch from there also needs projectless:true, and only when the user asked for a chat outside any project. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. Called from a thread, each run of the new thread that completes or fails wakes the caller, on this machine too, so end the turn instead of polling. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling SpecWithCode thread\'s own modes, or the permission mode an outside agent was approved with. ' +
     INCREMENT_LAUNCH_INSTRUCTION,
   parameters: Schema.Struct({
     machine: Schema.optional(
@@ -465,6 +485,7 @@ export const ProjectToolkit = Toolkit.make(
   ProjectDeleteTool,
   ProjectCloneTool,
   ProjectAddToMachineTool,
+  ProjectLinkAcceptTool,
   RouteTargetsTool,
   ProjectRouteTool,
   ModelPreferenceTool,

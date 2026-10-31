@@ -156,7 +156,7 @@ allows:
 A thread there never runs with more permissions than the lower of the agent's
 access and what that machine lets this one use. Allow workers on a machine in
 **Settings → Connections → Your private machines**; each machine sets what
-others may use on it in **Settings → Machines → Who can run work on this Mac**.
+others may use on it in **Settings → Machines → Who can run work here**.
 
 ## Remove an agent
 

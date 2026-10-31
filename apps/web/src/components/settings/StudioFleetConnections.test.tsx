@@ -611,14 +611,14 @@ describe("inviting this machine from its own roster", () => {
       tree,
       (element) =>
         element.props.onClick !== undefined &&
-        ["Invite this machine", "Manage access required"].includes(label(element)),
+        ["Make a join line", "Manage access required"].includes(label(element)),
     ) as { props: { onClick: () => void; disabled?: boolean; children: unknown } } | null;
   it("offers the invitation to an access manager and opens its dialog", () => {
     const onInvite = vi.fn();
     const dialog = { type: "fleet-invite-dialog", props: {}, key: null };
     const tree = render({ canManageWorkers: true, onInvite, inviteDialog: dialog as never });
     const action = inviteButton(tree)!;
-    expect(label(action)).toBe("Invite this machine");
+    expect(label(action)).toBe("Make a join line");
     expect(action.props.disabled).toBe(false);
     action.props.onClick();
     expect(onInvite).toHaveBeenCalledOnce();
@@ -630,7 +630,7 @@ describe("inviting this machine from its own roster", () => {
   });
   it("asks for SpecWithCode Connect before making the line", () => {
     const tree = label(render({ canManageWorkers: true, onInvite: vi.fn() }));
-    expect(tree).toContain("Sign in to SpecWithCode Connect here first");
+    expect(tree).toContain("Link SpecWithCode Connect here first");
     expect(tree).not.toContain("Tailscale");
   });
   it("says which address reached a machine, and when a bearer-only line needs renewing", () => {
@@ -648,7 +648,7 @@ describe("inviting this machine from its own roster", () => {
     };
     const text = label(render({ snapshot: viaConnect }));
     expect(text).toContain("via SpecWithCode Connect");
-    expect(text).toContain("Invite this machine again to use SpecWithCode Connect.");
+    expect(text).toContain("On that machine, choose Join a main machine again and add the new line here to use SpecWithCode Connect.");
     const bound = label(
       render({
         snapshot: {
@@ -658,20 +658,20 @@ describe("inviting this machine from its own roster", () => {
       }),
     );
     expect(bound).toContain("via SpecWithCode Connect");
-    expect(bound).not.toContain("Invite this machine again");
+    expect(bound).not.toContain("Join a main machine again");
     expect(label(render())).toContain("Reachable");
   });
   it("puts SpecWithCode Connect first in the Add a machine steps, with this machine's id", () => {
     const hint = label(
       render({ onAddMachine: vi.fn(), onInvitationChange: vi.fn(), canManageWorkers: true }),
     );
-    expect(hint).toContain("sign in to SpecWithCode Connect");
-    expect(hint).toContain("this machine does not need to be signed in");
-    expect(hint).toContain("choose Invite this machine under Settings > Connections");
+    expect(hint).toContain("link SpecWithCode Connect");
+    expect(hint).toContain("This machine does not need to be signed in");
+    expect(hint).toContain("choose Join a main machine under Settings > Connections");
     expect(hint).toContain(`specwithcode fleet invite --coordinator '${m4}'`);
     expect(hint).not.toContain("<main-machine-environment-id>");
     expect(hint).not.toContain("Tailscale");
-    expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Invite this machine"));
+    expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Join a main machine"));
   });
   it("hands the dialog to the roster with this machine's name and permission", () => {
     hooks.reset();

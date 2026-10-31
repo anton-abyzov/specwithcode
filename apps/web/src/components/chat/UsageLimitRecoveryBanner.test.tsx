@@ -791,3 +791,56 @@ it("claims room for a pre-switched thread only below the switch threshold", () =
     "Claude Opus 5.5 neared its usage limit. The idle thread goes back on its own once it has room.",
   );
 });
+
+const projectBox = () =>
+  renderer!.root
+    .findAllByType("checkbox" as never)
+    .find(
+      (node) =>
+        node.props["aria-label"] === "Auto-continue this project's threads when limits reset",
+    )!;
+it("turns on auto-continue for the whole project and continues this thread too", async () => {
+  const change = vi.fn().mockResolvedValue(undefined);
+  const projectChange = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    canCheck: false,
+    onChange: change,
+    project: { on: false, global: false, onChange: projectChange },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  expect(projectBox().props.checked).toBe(false);
+  await act(async () => projectBox().props.onCheckedChange());
+  expect(projectChange).toHaveBeenCalledWith(true);
+  expect(change).toHaveBeenCalledWith({ runId, resetAt: future, autoResume: true });
+});
+it("turning the project off leaves this thread's own choice alone", async () => {
+  const change = vi.fn().mockResolvedValue(undefined);
+  const projectChange = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    canCheck: false,
+    onChange: change,
+    project: { on: true, global: false, onChange: projectChange },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  await act(async () => projectBox().props.onCheckedChange());
+  expect(projectChange).toHaveBeenCalledWith(false);
+  expect(change).not.toHaveBeenCalled();
+});
+it("shows the project switch locked on while Settings turns it on everywhere", async () => {
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    onChange: vi.fn(),
+    project: { on: false, global: true, onChange: vi.fn() },
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  expect(projectBox().props.checked).toBe(true);
+  expect(projectBox().props.disabled).toBe(true);
+});

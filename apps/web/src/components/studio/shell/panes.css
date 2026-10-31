@@ -99,8 +99,10 @@
   margin: 0 -4px 6px;
   padding: 4px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  row-gap: 6px;
   background: var(--card);
 }
 .sws-library-spacer {
@@ -1069,4 +1071,389 @@ button.sws-subagent-row:focus-visible {
 }
 .sws-subagents-sections ul {
   overflow-y: visible;
+}
+
+/* Project artifacts: the shelf above Threads and Library > Artifacts. */
+.sws-artifact-shelf {
+  margin: 0 0 14px;
+}
+.sws-artifact-shelf-head {
+  height: 30px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sws-artifact-shelf-head h3 {
+  display: contents;
+}
+.sws-artifact-shelf-toggle {
+  height: 26px;
+  margin-inline-start: -4px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.sws-artifact-shelf-toggle:hover {
+  background: var(--accent);
+}
+.sws-artifact-shelf-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-artifact-shelf-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+  transition: transform 120ms ease;
+}
+.sws-artifact-shelf-toggle[aria-expanded="false"] .sws-artifact-shelf-chevron {
+  transform: rotate(-90deg);
+}
+.sws-artifact-shelf-count {
+  margin-inline-start: 2px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.sws-artifact-view-all-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  text-align: start;
+  cursor: pointer;
+}
+.sws-artifact-view-all-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: var(--shell-link, var(--primary));
+  background: transparent;
+}
+.sws-artifact-view-all-thumb svg {
+  width: 20px;
+  height: 20px;
+}
+.sws-artifact-view-all-card:hover .sws-artifact-view-all-thumb {
+  background: var(--accent);
+}
+.sws-artifact-view-all-card .sws-artifact-title {
+  color: var(--shell-link, var(--primary));
+}
+.sws-artifact-page {
+  position: absolute;
+  inset: 0;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 5.5px;
+  line-height: 1.35;
+  pointer-events: none;
+  user-select: none;
+}
+.sws-artifact-page-line {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sws-artifact-page-line[data-heading] {
+  margin-top: 1px;
+  color: var(--foreground);
+  font-weight: 600;
+}
+.sws-artifact-page-line[data-heading="1"] {
+  font-size: 8.5px;
+  -webkit-line-clamp: 1;
+}
+.sws-artifact-page-line[data-heading="2"] {
+  font-size: 7px;
+}
+.sws-artifact-page-html {
+  padding: 0;
+  background: #fff;
+}
+.sws-artifact-page-html iframe {
+  width: 400%;
+  height: 400%;
+  border: 0;
+  transform: scale(0.25);
+  transform-origin: 0 0;
+}
+.sws-artifact-view-all-card:focus-visible,
+.sws-artifact-open:focus-visible,
+.sws-artifact-pin:focus-visible,
+.sws-artifact-more:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-artifact-row {
+  display: flex;
+  gap: 10px;
+  padding: 4px 2px 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  list-style: none;
+}
+.sws-artifact-row[hidden] {
+  display: none;
+}
+.sws-artifact-row > .sws-artifact-card {
+  flex: none;
+  width: 168px;
+  scroll-snap-align: start;
+}
+.sws-artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  list-style: none;
+}
+.sws-artifact-card {
+  position: relative;
+  min-width: 0;
+}
+.sws-artifact-open {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  text-align: start;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.sws-artifact-open:disabled {
+  cursor: default;
+}
+.sws-artifact-thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  margin-bottom: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+  transition: border-color 120ms ease;
+}
+.sws-artifact-open:hover .sws-artifact-thumb {
+  border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
+}
+.sws-artifact-thumb-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+.sws-artifact-thumb-tile {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--card) 70%, transparent),
+    color-mix(in srgb, var(--muted) 90%, transparent)
+  );
+}
+.sws-artifact-thumb-tile svg {
+  width: 26px;
+  height: 26px;
+}
+.sws-artifact-thumb-tile[data-kind="design"],
+.sws-artifact-thumb-tile[data-kind="slides"] {
+  color: color-mix(in srgb, var(--primary) 70%, var(--foreground));
+}
+.sws-artifact-thumb-ext {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  background: var(--card);
+}
+.sws-artifact-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 2px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.sws-artifact-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 2px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.sws-artifact-card[data-missing] .sws-artifact-title {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+.sws-artifact-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.sws-artifact-card:hover .sws-artifact-actions,
+.sws-artifact-card:focus-within .sws-artifact-actions,
+.sws-artifact-actions:has([aria-expanded="true"]),
+.sws-artifact-card[data-pinned] .sws-artifact-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .sws-artifact-actions {
+    opacity: 1;
+  }
+}
+.sws-artifact-pin,
+.sws-artifact-more {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+.sws-artifact-pin:hover,
+.sws-artifact-more:hover {
+  color: var(--foreground);
+}
+.sws-artifact-pin svg,
+.sws-artifact-more svg {
+  width: 14px;
+  height: 14px;
+}
+.sws-artifact-pin[aria-pressed="true"] {
+  color: color-mix(in srgb, var(--primary) 70%, var(--foreground));
+}
+/* A pinned card that is not hovered shows only its pin; touch keeps the menu. */
+@media (hover: hover) {
+  .sws-artifact-card[data-pinned]:not(:hover):not(:focus-within)
+    .sws-artifact-actions:not(:has([aria-expanded="true"]))
+    .sws-artifact-more {
+    display: none;
+  }
+}
+
+.sws-library-sections {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.sws-library-section {
+  height: 24px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-library-section[aria-pressed="true"] {
+  color: var(--foreground);
+  background: var(--accent);
+  font-weight: 500;
+}
+.sws-library-section-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.sws-artifact-table .sws-library-head,
+.sws-artifact-table .sws-library-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 140px) 124px 64px 84px 56px;
+}
+.sws-artifact-thread-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-artifact-thread-cell button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sws-artifact-thread-cell button:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+}
+.sws-artifact-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  opacity: 0;
+}
+.sws-library-row:hover .sws-artifact-row-actions,
+.sws-library-row:focus-within .sws-artifact-row-actions,
+.sws-library-row[data-pinned] .sws-artifact-row-actions,
+.sws-artifact-row-actions:has([aria-expanded="true"]) {
+  opacity: 1;
+}
+@media (hover: none) {
+  .sws-artifact-row-actions {
+    opacity: 1;
+  }
+}
+@container (max-width: 560px) {
+  .sws-artifact-table .sws-library-head,
+  .sws-artifact-table .sws-library-row {
+    grid-template-columns: minmax(0, 1fr) 92px 56px;
+  }
+  .sws-artifact-table .sws-library-head > :nth-child(2),
+  .sws-artifact-table .sws-library-head > :nth-child(4),
+  .sws-artifact-table .sws-library-head > :nth-child(5),
+  .sws-artifact-table .sws-library-row > :nth-child(2),
+  .sws-artifact-table .sws-library-row > :nth-child(4),
+  .sws-artifact-table .sws-library-row > :nth-child(5) {
+    display: none;
+  }
+}
+.sws-link-button {
+  padding: 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--shell-link, var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }

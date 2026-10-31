@@ -71,6 +71,16 @@ type RecoveryProps = {
   /** The project lists other machines a limited thread may move to: offer the first that can take it. */
   machines?: { environmentId: EnvironmentId; threadId: ThreadId } | null;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
+  /**
+   * The project-wide switch: auto-continue every thread of this project when
+   * its limit resets, including threads already waiting. Absent outside a project.
+   */
+  project?: {
+    readonly on: boolean;
+    /** Settings turns it on for every project, so this one cannot turn it off. */
+    readonly global: boolean;
+    readonly onChange: (on: boolean) => Promise<void>;
+  } | null;
 };
 
 /** One entry of the fallback order on the limit banner. */
@@ -248,6 +258,7 @@ function RecoveryActions({
   device,
   machines,
   onChange,
+  project,
 }: RecoveryProps) {
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   const [pending, setPending] = useState(false);
@@ -307,6 +318,20 @@ function RecoveryActions({
     setPending(false);
   }
   const canAutoContinue = canSchedule || canCheck === true;
+  async function toggleProject(on: boolean) {
+    if (!project) return;
+    setPending(true);
+    setError(null);
+    try {
+      await project.onChange(on);
+      // The project rule reaches this thread on the next sweep; turning it on here
+      // continues this thread too, without waiting for that.
+      if (on && canAutoContinue && !scheduled) await onChange({ runId, resetAt, autoResume: true });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not change the project setting.");
+    }
+    setPending(false);
+  }
   const choices = fallbackChoices ?? [];
   const handoffs = [fallback, device, ...choices].filter((target) => target != null);
   return (
@@ -332,6 +357,24 @@ function RecoveryActions({
         {canCheck ? "Auto-continue when usage is available" : "Auto-continue when the limit resets"}
         {pending ? <span className="text-muted-foreground">Saving...</span> : null}
       </label>
+      {project ? (
+        <label
+          className="flex basis-full items-center gap-2 text-xs text-foreground has-data-disabled:text-muted-foreground"
+          title={
+            project.global
+              ? "On for every project in Settings."
+              : "Also continues this project's threads already waiting on a limit."
+          }
+        >
+          <Checkbox
+            aria-label="Auto-continue this project's threads when limits reset"
+            checked={project.on || project.global}
+            disabled={pending || project.global}
+            onCheckedChange={() => void toggleProject(!project.on)}
+          />
+          Auto-continue this project's threads when limits reset
+        </label>
+      ) : null}
       {!canAutoContinue ? (
         <p className="basis-full text-xs text-muted-foreground">
           {handoffs.length > 0

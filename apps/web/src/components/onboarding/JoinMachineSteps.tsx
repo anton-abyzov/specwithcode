@@ -64,8 +64,8 @@ export function MachineRoleStep({
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">Connect to an existing one</span>
             <span className="block text-xs font-normal text-muted-foreground">
-              This {machineNoun} does work for your main machine elsewhere. You sign in to
-              SpecWithCode Connect here, then paste one line on the main machine.
+              This {machineNoun} does work for your main machine elsewhere. You link SpecWithCode
+              Connect here, then paste one line on the main machine.
             </span>
           </span>
           <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -76,8 +76,8 @@ export function MachineRoleStep({
           Decide later
         </Button>
         <p className="text-xs text-muted-foreground">
-          Look around or update first. To join a main machine later, choose Invite this machine
-          under Settings &gt; Connections.
+          Look around or update first. To join later, choose Join a main machine under Settings &gt;
+          Connections.
         </p>
       </div>
     </>
@@ -112,7 +112,7 @@ export function JoinMachineStep({
         Connect this {machineNoun} to your main machine
       </h1>
       <ol className="mt-2.5 list-decimal space-y-1 ps-5 text-sm leading-relaxed text-muted-foreground">
-        <li>Sign in to SpecWithCode Connect on this {machineNoun}.</li>
+        <li>Sign in to SpecWithCode Connect and link this {machineNoun}.</li>
         <li>
           Paste your main machine&apos;s environment ID (Settings &gt; Connections there) and make
           the line.

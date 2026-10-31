@@ -297,7 +297,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
         const stopped = await stopStudioFleetWorkers(environmentId, machine.id);
         if (stopped.remoteSessionKept)
           setNotice(
-            `Workers are stopped here. ${machine.label} could not be told, so its access stays listed there until it expires; revoke it in that machine's Settings > Connections.`,
+            `Workers are stopped here. ${machine.label} could not be told, so its access stays listed there until it expires; revoke it on ${machine.label} under Settings > Machines > Who can run work here.`,
           );
       } else
         await allowStudioFleetWorkers(environmentId, {
@@ -482,7 +482,7 @@ export function fleetMachineNeedsReinvite(
   machine: Pick<StudioFleetMachine, "transport" | "managementBinding">,
 ): string | null {
   return machine.transport === "connect" && machine.managementBinding === "bearer"
-    ? "Invite this machine again to use SpecWithCode Connect."
+    ? "On that machine, choose Join a main machine again and add the new line here to use SpecWithCode Connect."
     : null;
 }
 
@@ -831,16 +831,21 @@ export function StudioFleetRoster({
             <span className="block text-sm">Add a machine</span>
             <ol className="mt-1 list-decimal space-y-0.5 ps-4 text-xs text-muted-foreground">
               <li>
-                On the other machine, sign in to SpecWithCode Connect (Sign in to SpecWithCode
-                Connect at the bottom of its Settings sidebar). Any Connect account works; this
-                machine does not need to be signed in.
+                On the other machine, link SpecWithCode Connect (Settings &gt; Connections &gt;
+                SpecWithCode Connect, or{" "}
+                <code className="font-mono">specwithcode connect link</code>
+                ). Any Connect account works. This machine does not need to be signed in: the line
+                gives it its own key to that machine.
               </li>
               <li>
-                There, choose Invite this machine under Settings &gt; Connections and paste this
+                There, choose Join a main machine under Settings &gt; Connections and paste this
                 machine’s environment ID:{" "}
                 <code className="font-mono break-all select-all">{environmentId}</code>
               </li>
-              <li>Paste the line it makes here within an hour. It works once.</li>
+              <li>
+                Paste the line it makes here within an hour (it works once), then choose Allow
+                workers on its card.
+              </li>
             </ol>
             <span className="mt-1 block text-xs text-muted-foreground">
               Without its window, run{" "}
@@ -892,9 +897,9 @@ export function StudioFleetRoster({
         >
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <span className="min-w-0">
-              <span className="block text-sm">Add this machine to another one</span>
+              <span className="block text-sm">Join a main machine</span>
               <span className="block text-xs text-muted-foreground">
-                Sign in to SpecWithCode Connect here first, then make a line to paste on your main
+                Link SpecWithCode Connect here first, then make a line to paste on your main
                 machine.
               </span>
             </span>
@@ -905,7 +910,7 @@ export function StudioFleetRoster({
               disabled={pending !== null || !canManageWorkers}
               onClick={onInvite}
             >
-              {canManageWorkers ? "Invite this machine" : "Manage access required"}
+              {canManageWorkers ? "Make a join line" : "Manage access required"}
             </Button>
           </div>
           {inviteDialog}
