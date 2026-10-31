@@ -36,6 +36,11 @@ describe("native Claude authorization metadata", () => {
       "apiKey",
     );
   });
+  it("names the renamed Ultra plan that Claude Code 2.1.302 reports", () => {
+    expect(
+      claudeAuthMetadata({ subscriptionType: "Claude Ultra", authMethod: "claude.ai" }),
+    ).toEqual({ type: "Claude Ultra", label: "Claude Ultra Subscription" });
+  });
 });
 
 const nativeAuth = {

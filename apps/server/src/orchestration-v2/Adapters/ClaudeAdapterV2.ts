@@ -3678,12 +3678,17 @@ export function makeClaudeAdapterV2(
           ) {
             return true;
           }
-          // A moved project folder keeps its transcript under the old name.
+          // A moved project folder keeps its transcript under the old name. An entry that is not
+          // a folder (macOS leaves a .DS_Store here) fails its lookup with ENOTDIR; it holds no
+          // transcript, so it counts as not found instead of making the whole scan unknown.
           return yield* fileSystem.readDirectory(projects).pipe(
             Effect.flatMap((entries) =>
               Effect.forEach(
                 entries,
-                (entry) => fileSystem.exists(path.join(projects, entry, fileName)),
+                (entry) =>
+                  fileSystem
+                    .exists(path.join(projects, entry, fileName))
+                    .pipe(Effect.orElseSucceed(() => false)),
                 { concurrency: 16 },
               ),
             ),

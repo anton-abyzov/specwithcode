@@ -106,7 +106,10 @@ export function settingInheritanceLayers(
 ): readonly InheritanceLayer[] {
   const environmentValue = environmentSettings[key];
   const source = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
-  const environmentSet = !Equal.equals(environmentValue, DEFAULT_SERVER_SETTINGS[key]);
+  // The new-thread workspace has no environment tier: a value stored there
+  // by an older version is not part of the chain.
+  const environmentSet =
+    key !== "defaultThreadEnvMode" && !Equal.equals(environmentValue, DEFAULT_SERVER_SETTINGS[key]);
   const fileBacked = isProjectFileBackedSettingKey(key);
   const layers: InheritanceLayer[] = [];
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
@@ -143,10 +146,7 @@ export function settingInheritanceLayers(
   layers.push({
     key: "built-in",
     label: "Default",
-    value:
-      key === "defaultThreadEnvMode"
-        ? "Automatic (worktree for one Git repository; otherwise current checkout)"
-        : formatValue(key, builtIn),
+    value: formatValue(key, builtIn),
     effective: source === "environment" && !environmentSet,
     set: true,
   });

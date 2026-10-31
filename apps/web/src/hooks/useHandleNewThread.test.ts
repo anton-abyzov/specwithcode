@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { RuntimeMode } from "@specweave-studio/contracts";
 
 const testState = vi.hoisted(() => {
-  let completeProjectFileRead: (value: null) => void = () => undefined;
-  let projectFileRead = Promise.resolve<null>(null);
+  let completeProjectFileRead: (
+    value: { defaultThreadEnvMode?: "local" | "worktree" } | null,
+  ) => void = () => undefined;
+  let projectFileRead: Promise<{ defaultThreadEnvMode?: "local" | "worktree" } | null> =
+    Promise.resolve(null);
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree" | null,
     newWorktreesStartFromOrigin: false,
@@ -53,19 +56,6 @@ const testState = vi.hoisted(() => {
 
   return {
     coordinatorDraft: vi.fn(),
-    folderCheck: vi.fn(async () => ({
-      _tag: "Success",
-      value: {
-        layout: {
-          kind: "umbrella",
-          rootIsRepository: true,
-          repositories: ["repositories/acme/api"],
-          repositoryCount: 1,
-          truncated: false,
-          separateClones: true,
-        },
-      },
-    })),
     legacy: true,
     scratchRoot: undefined as string | undefined,
     setExplicitModelPick(value: boolean) {
@@ -74,7 +64,8 @@ const testState = vi.hoisted(() => {
     get explicitModelPick() {
       return explicitModelPick;
     },
-    completeProjectFileRead: (value: null) => completeProjectFileRead(value),
+    completeProjectFileRead: (value: { defaultThreadEnvMode?: "local" | "worktree" } | null) =>
+      completeProjectFileRead(value),
     draftStore,
     get projectFileRead() {
       return projectFileRead;
@@ -118,9 +109,11 @@ const testState = vi.hoisted(() => {
       router.navigate.mockClear();
       draftStore.setDraftThreadContext.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
-      projectFileRead = new Promise<null>((resolve) => {
-        completeProjectFileRead = resolve;
-      });
+      projectFileRead = new Promise<{ defaultThreadEnvMode?: "local" | "worktree" } | null>(
+        (resolve) => {
+          completeProjectFileRead = resolve;
+        },
+      );
     },
     router,
   };
@@ -206,25 +199,6 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   hasExplicitComposerModelSelection: () => testState.explicitModelPick,
   resolveNewThreadModelSelectionOverride: () => null,
 }));
-vi.mock("../lib/newThreadWorkspaceDefault", () => ({
-  readNewThreadWorkspaceDefault: vi.fn(
-    async ({ configuredMode }: { configuredMode: "local" | "worktree" | null }) =>
-      configuredMode ?? "worktree",
-  ),
-}));
-vi.mock("../studio/useProjectFolderHealth", () => ({
-  useProjectFolderCheckCommand: () => testState.folderCheck,
-  readProjectFolderCheck: async (
-    run: (request: unknown) => Promise<{ _tag: string; value?: unknown }>,
-    project: { environmentId: string; id: string; workspaceRoot: string },
-  ) => {
-    const outcome = await run({
-      environmentId: project.environmentId,
-      input: { projectId: project.id, workspaceRoot: project.workspaceRoot },
-    });
-    return outcome._tag === "Success" ? outcome.value : null;
-  },
-}));
 vi.mock("../lib/studioProjectFileDefaults", () => ({
   readStudioProjectFile: () => testState.projectFileRead,
 }));
@@ -268,7 +242,6 @@ vi.mock("./useSettings", () => ({
 }));
 
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { readNewThreadWorkspaceDefault } from "../lib/newThreadWorkspaceDefault";
 
 function expectNoWorkspaceOverrides(options: Record<string, unknown>) {
   for (const key of ["envMode", "branch", "worktreePath", "startFromOrigin"]) {
@@ -507,8 +480,8 @@ describe("explicit host intent across draft reuse", () => {
   });
 });
 
-describe("Git-aware workspace default integration", () => {
-  it("asks only the selected environment about an unconfigured project", async () => {
+describe("per-project workspace default", () => {
+  it("starts an unconfigured project in its current checkout", async () => {
     testState.reset(null, { envMode: null, startFromOrigin: false });
     const open = useNewThreadHandler()(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
@@ -516,30 +489,31 @@ describe("Git-aware workspace default integration", () => {
     );
     testState.completeProjectFileRead(null);
     await open;
-    expect(readNewThreadWorkspaceDefault).toHaveBeenLastCalledWith({
-      configuredMode: null,
-      environmentId: "environment-ssh",
-      workspaceRoot: "/remote/project",
-      readHoldsSeparateClones: expect.any(Function),
-    });
-    // The layout comes from the project's own folder check on its machine.
-    const { readHoldsSeparateClones } = vi.mocked(readNewThreadWorkspaceDefault).mock
-      .lastCall![0] as { readHoldsSeparateClones: () => Promise<boolean | undefined> };
-    await expect(readHoldsSeparateClones()).resolves.toBe(true);
-    expect(testState.folderCheck).toHaveBeenLastCalledWith({
-      environmentId: "environment-ssh",
-      input: { projectId: "project-remote", workspaceRoot: "/remote/project" },
-    });
     expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenLastCalledWith(
       "remote-project",
       expect.objectContaining({ environmentId: "environment-ssh" }),
       "draft-delayed",
       expect.objectContaining({
-        envMode: "worktree",
+        envMode: "local",
         branch: null,
         worktreePath: null,
         environmentSelection: "manual",
       }),
+    );
+  });
+  it("uses the workspace the project's specweave-studio.json names", async () => {
+    testState.reset(null, { envMode: null, startFromOrigin: false });
+    const open = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { environmentSelection: "manual" },
+    );
+    testState.completeProjectFileRead({ defaultThreadEnvMode: "worktree" });
+    await open;
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenLastCalledWith(
+      "remote-project",
+      expect.objectContaining({ environmentId: "environment-ssh" }),
+      "draft-delayed",
+      expect.objectContaining({ envMode: "worktree" }),
     );
   });
   it("preserves a reused workspace and explicit provider/model pick without querying defaults", async () => {
@@ -555,12 +529,10 @@ describe("Git-aware workspace default integration", () => {
     };
     testState.reset(stored, { envMode: null, startFromOrigin: true });
     testState.setExplicitModelPick(true);
-    vi.mocked(readNewThreadWorkspaceDefault).mockClear();
     await useNewThreadHandler()({
       environmentId: "environment-ssh",
       projectId: "project-remote",
     } as never);
-    expect(readNewThreadWorkspaceDefault).not.toHaveBeenCalled();
     expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
       stored.draftId,
       expect.objectContaining({ runtimeMode: "full-access" }),
@@ -575,7 +547,7 @@ describe("Git-aware workspace default integration", () => {
       testState.draftStore.setLogicalProjectDraftThreadId.mock.calls[0]![3],
     ).not.toHaveProperty("environmentSelection");
   });
-  it("does not overwrite a raced winner with the newly observed Git default", async () => {
+  it("does not overwrite a raced winner with the resolved workspace default", async () => {
     testState.reset(null, { envMode: null, startFromOrigin: true });
     const pending = useNewThreadHandler()({
       environmentId: "environment-ssh",
@@ -607,12 +579,10 @@ describe("Git-aware workspace default integration", () => {
   });
   it("does not query or replace an explicit current-checkout choice", async () => {
     testState.reset(null, { envMode: null, startFromOrigin: false });
-    vi.mocked(readNewThreadWorkspaceDefault).mockClear();
     await useNewThreadHandler()(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
       { envMode: "local", branch: "feature/mine", environmentSelection: "manual" },
     );
-    expect(readNewThreadWorkspaceDefault).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenLastCalledWith(
       "remote-project",
       expect.anything(),

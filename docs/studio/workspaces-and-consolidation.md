@@ -1,12 +1,26 @@
 # Workspaces, branches and storage
 
-Worktrees are optional. Choose **Settings → General → New threads → Workspace → Current checkout** to run new threads in the existing project folder. Set it for the environment or override it for one project. The workspace menu on a new thread also offers **Current checkout**, **New worktree**, and **Previous worktree**.
+## Projects, repositories and folders
 
-**Automatic** uses a new worktree for Git projects and the current folder for non-Git projects. An explicit per-project setting takes precedence over `specweave-studio.json`, which takes precedence over the environment default. To share a repository preference, use:
+A project is the identity of the work — a product, an initiative, a body of intent. It spans repositories and machines; it is not a folder. A repository is where code is versioned: work lands as a branch and a pull request into that repository's own trunk. There is no branch that spans repositories and no lockstep merging across them. The increment and its threads coordinate the work; each repository merges on its own evidence.
+
+How checkouts sit on disk is a local arrangement, never a structure SpecWithCode imposes. All of these work:
+
+- **One checkout.** The project folder is a single Git repository.
+- **Several checkouts, wherever they live.** Sibling folders, service clones in different places, checkouts other tools made. The project lists its repositories by path or URL, and existing checkouts are matched where they are.
+- **An umbrella folder.** One folder holding clones of several repositories, for example under `repositories/<owner>/<repo>`. This is the layout SpecWithCode uses when it prepares a new checkout for you, and how multi-repository products such as EasyChamp (its service repositories behind one product) and SpecWeave itself (the framework and this app) sit on our machines. It is a working example, not a requirement: renaming the folder, nesting differently, or not nesting at all changes nothing about how threads run.
+
+SpecWithCode only *detects* the layout, to give advice. What matters to behavior is whether the folder holds clones of other repositories — anywhere inside it, not only under a `repositories/` folder — because a worktree of such a folder would hold none of their code.
+
+## Where new threads start
+
+Worktrees are optional, and the choice belongs to each project. New threads start in the project's current checkout. Turn on **Settings → Project → New threads → Use worktrees** for a project to give its new threads their own worktree instead. There is no machine-wide workspace default above the project. A repository can check the same preference in for everyone who opens it:
 
 ```json
-{ "defaultThreadEnvMode": "local" }
+{ "defaultThreadEnvMode": "worktree" }
 ```
+
+The project's own setting wins over `specweave-studio.json`. An explicit choice for one thread — the composer's **Use worktree** tick, starting from a branch, a launch's `workspaceStrategy`, a scheduled task's stored strategy — wins over both. An agent that needs an isolated copy of another repository can clone it into a sibling folder itself; the platform does not pre-create worktrees for every repository a project touches.
 
 Use the current checkout for one writer working sequentially. Use separate worktrees for simultaneous code-writing threads on different branches. Two local threads see the same files, index and checked-out branch; selecting Local does not isolate their edits. Reusing an existing worktree avoids another checkout but also shares its files with any thread still using it.
 

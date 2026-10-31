@@ -9,7 +9,9 @@ import * as DateTime from "effect/DateTime";
 import { buildStatusServices, publicIncidents, type StatusInputs } from "./catalog.ts";
 import { serviceDays, serviceUptime, type StatusHistory } from "./history.ts";
 
-const RESOLVED_INCIDENTS_SHOWN = 10;
+/** The page lists resolved incidents by day for this long, like a public status page. */
+const RESOLVED_INCIDENT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const RESOLVED_INCIDENTS_SHOWN = 60;
 
 export interface MonitorState {
   readonly inputs: StatusInputs | null;
@@ -35,7 +37,11 @@ export function snapshotFrom(
     .filter((incident) => incident.resolvedAt === null)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const resolved = incidents
-    .filter((incident) => incident.resolvedAt !== null)
+    .filter(
+      (incident) =>
+        incident.resolvedAt !== null &&
+        now - Date.parse(incident.resolvedAt) <= RESOLVED_INCIDENT_WINDOW_MS,
+    )
     .sort((a, b) => b.resolvedAt!.localeCompare(a.resolvedAt!))
     .slice(0, RESOLVED_INCIDENTS_SHOWN);
   return {

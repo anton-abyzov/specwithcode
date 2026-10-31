@@ -77,6 +77,50 @@ describe("RemoteWorkerFollower", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("reports the fallback run the other machine started after the first one failed", () => {
+    const { world, layer } = setup({
+      studio_thread_wait: (args) => {
+        // Run 1 hit a usage limit; the other machine's fallback answered in run 2.
+        if (args.runId === "b-run-1")
+          return {
+            result: { threadId: "b-thread-1", runId: "b-run-1", status: "failed", timedOut: false },
+          };
+        return finished("b-run-2");
+      },
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(row).toMatchObject({
+        lastStatus: "completed",
+        followedRunId: "b-run-2",
+        deliveredRunIds: ["b-run-2"],
+      });
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-wake:rwt:command-1:b-run-2",
+      ]);
+      expect(world.wakes[0]?.text).toContain("finished: completed");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports a failed run once no newer run follows it", () => {
+    const failed = {
+      result: { threadId: "b-thread-1", runId: "b-run-1", status: "failed", timedOut: false },
+    };
+    const { world, layer } = setup({ studio_thread_wait: () => failed });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(row).toMatchObject({ lastStatus: "failed", deliveredRunIds: ["b-run-1"] });
+      expect(world.wakes).toHaveLength(1);
+      expect(world.wakes[0]?.text).toContain("finished: failed");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("ignores a run noted or seen by a thread other than the one that launched it", () => {
     let release = false;
     const { world, layer } = setup({
@@ -245,6 +289,47 @@ describe("RemoteWorkerFollower", () => {
         "remote-worker-wake:rwt:command-1:b-run-1",
         "remote-worker-wake:rwt:command-1:b-run-1",
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("picks up at boot the fallback run of a worker already reported failed", () => {
+    let fallbackStarted = false;
+    const { world, layer } = setup(
+      {
+        studio_thread_wait: (args) =>
+          args.runId === "b-run-1" || !fallbackStarted
+            ? {
+                result: {
+                  threadId: "b-thread-1",
+                  runId: "b-run-1",
+                  status: "failed",
+                  timedOut: false,
+                },
+              }
+            : finished("b-run-2"),
+      },
+      { fallbackGraceMs: 0 },
+    );
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      yield* eventually(rows, (current) => current[0]?.lastStatus === "failed");
+      // As before this fix: the fallback run started after the failure was reported.
+      fallbackStarted = true;
+      const follower = yield* RemoteWorkerFollower.RemoteWorkerFollower;
+      yield* follower.resume;
+      const [row] = yield* eventually(
+        rows,
+        (current) => current[0]?.state === "idle" && current[0].lastStatus === "completed",
+      );
+      expect(row).toMatchObject({
+        followedRunId: "b-run-2",
+        deliveredRunIds: ["b-run-1", "b-run-2"],
+      });
+      expect(world.wakes.map((wake) => wake.commandId)).toContain(
+        "remote-worker-wake:rwt:command-1:b-run-2",
+      );
     }).pipe(Effect.provide(layer));
   });
 

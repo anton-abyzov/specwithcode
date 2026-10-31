@@ -144,7 +144,12 @@ beforeEach(() => {
   fixture.projects = [primaryScratch, scratch, gitProject];
   fixture.settings = {
     ...DEFAULT_SERVER_SETTINGS,
+    // A value left on the retired environment tier must not configure any
+    // project. The Git project's own choice is what makes it configured.
     defaultThreadEnvMode: "worktree",
+    projectSettingsOverrides: {
+      [gitProject.id]: { defaultThreadEnvMode: "worktree" },
+    },
     newWorktreesStartFromOrigin: true,
   };
   fixture.router.state.location.href = "/";
@@ -158,7 +163,7 @@ beforeEach(() => {
 });
 afterEach(resetStore);
 
-describe("No project drafts with a global worktree default", () => {
+describe("No project drafts when another project uses worktrees", () => {
   it("creates a local, unsubmitted draft for the exact scratch project on the requested host", async () => {
     const opened = await useScratchProject().startScratchThread(requestedHost);
 
@@ -187,7 +192,9 @@ describe("No project drafts with a global worktree default", () => {
 
   it("reuses an empty scratch draft as local without importing another project's workspace", async () => {
     // Reproduce an empty draft created before this fix inherited worktree mode.
-    const existing = await useNewThreadHandler()(scopeProjectRef(requestedHost, scratch.id));
+    const existing = await useNewThreadHandler()(scopeProjectRef(requestedHost, scratch.id), {
+      envMode: "worktree",
+    });
     expect(existing).not.toBeNull();
     const other = await useNewThreadHandler()(scopeProjectRef(requestedHost, gitProject.id), {
       envMode: "worktree",

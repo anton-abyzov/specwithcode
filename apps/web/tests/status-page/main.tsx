@@ -4,7 +4,11 @@
 import type { ServerProvider } from "@specweave-studio/contracts";
 import { createRoot } from "react-dom/client";
 
-import { buildStatusServices, type StatusInputs } from "../../../server/src/statusPage/catalog";
+import {
+  PROVIDERS,
+  buildStatusServices,
+  type StatusInputs,
+} from "../../../server/src/statusPage/catalog";
 import {
   parseGoogleCloudIncidents,
   parseStatuspageSummary,
@@ -12,6 +16,7 @@ import {
 } from "../../../server/src/statusPage/feeds";
 import {
   emptyStatusHistory,
+  failingSince,
   recordStatusChecks,
   recordUnexpectedStop,
 } from "../../../server/src/statusPage/history";
@@ -118,6 +123,15 @@ function feedsFor(day: number) {
       ],
       day <= 1
         ? [
+            // OpenAI posts ChatGPT incidents without a component; Codex must ignore this one.
+            {
+              id: "chatgpt-search",
+              name: "Elevated errors with search in ChatGPT Work",
+              status: "investigating",
+              impact: "minor",
+              started_at: new Date(NOW - 40 * 60_000).toISOString(),
+              components: [],
+            },
             {
               id: "codex-latency",
               name: "Increased Codex task latency",
@@ -133,7 +147,9 @@ function feedsFor(day: number) {
     {
       serviceId: "openai",
       pageUrl: "https://status.openai.com",
-      include: (name) => /Codex|^Responses$|^Login$|^Chat Completions$/iu.test(name),
+      include: (name) => PROVIDERS.codex.components!.test(name),
+      incidentTitle: PROVIDERS.codex.incidentTitle!,
+      otherProducts: PROVIDERS.codex.otherProducts!,
     },
   );
   const github = parseStatuspageSummary(
@@ -174,7 +190,11 @@ function feedsFor(day: number) {
   return { claude, openai, github, tailscale, google, xai };
 }
 
-function inputsFor(day: number, at: number): StatusInputs {
+function inputsFor(
+  day: number,
+  at: number,
+  failing: Readonly<Record<string, number>> = {},
+): StatusInputs {
   const m3Down = day === 0 || day === 33 || day === 34;
   return {
     now: at,
@@ -219,17 +239,35 @@ function inputsFor(day: number, at: number): StatusInputs {
           status: m3Down ? "unreachable" : "reachable",
           pairingConfigured: true,
         },
+        // A laptop shut 11 days ago: offline, not an outage.
+        {
+          id: "air" as never,
+          label: "Anna's MacBook Air",
+          environmentId: "env-air" as never,
+          url: "https://air.example.ts.net",
+          status: day <= 11 ? "unreachable" : "reachable",
+          pairingConfigured: true,
+        },
       ],
     },
     tailscale: { state: "running", dnsName: "m4.example.ts.net" },
     connect: { mode: "managed", tunnel: "running" },
     feeds: feedsFor(day),
     releaseFeedReachable: day !== 12,
+    failingSince: failing,
   };
 }
 
 // Six checks a day for 90 days; today's last two checks are the current state.
 let history = emptyStatusHistory();
+// What the monitor passes each check: when every failing service began failing.
+const failingNow = () =>
+  Object.fromEntries(
+    Object.keys(history.streaks).flatMap((id) => {
+      const since = failingSince(history, id);
+      return since === null ? [] : [[id, since]];
+    }),
+  );
 for (let day = 89; day >= 0; day -= 1) {
   if (day === 0) {
     // The service crashed overnight: its last check finished at 1:36 AM and it restarted at 1:40 AM.
@@ -245,7 +283,7 @@ for (let day = 89; day >= 0; day -= 1) {
   for (let check = 0; check < 6; check += 1) {
     const at = NOW - day * DAY - (5 - check) * 10 * 60_000;
     // Day 20 has one failing GitHub API check among healthy ones.
-    const inputs = inputsFor(day === 20 && check > 0 ? 21 : day, at);
+    const inputs = inputsFor(day === 20 && check > 0 ? 21 : day, at, failingNow());
     history = recordStatusChecks(
       history,
       buildStatusServices(inputs).map((service) => ({
@@ -254,6 +292,7 @@ for (let day = 89; day >= 0; day -= 1) {
         level: service.level,
         note: service.level === "operational" ? null : service.detail,
         tracksIncidents: service.tracksIncidents,
+        ...(service.dormant ? { dormant: true } : {}),
       })),
       at,
     );
@@ -265,7 +304,7 @@ const snapshot = empty
   ? null
   : withLocalComponents(
       snapshotFrom(
-        { inputs: inputsFor(0, NOW), checkedAt: NOW - 2 * 60_000, checking: false },
+        { inputs: inputsFor(0, NOW, failingNow()), checkedAt: NOW - 2 * 60_000, checking: false },
         history,
         NOW,
       ),

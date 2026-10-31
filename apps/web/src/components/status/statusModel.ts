@@ -3,6 +3,7 @@ import {
   rollupStatusLevels,
   type DesktopUpdateState,
   type StatusComponent,
+  type StatusIncident,
   type StatusLevel,
   type StatusService,
   type StatusServiceGroup,
@@ -239,4 +240,87 @@ export function formatAge(iso: string | null, now: number): string {
 export function formatUptime(percent: number | null): string {
   if (percent === null) return "No data";
   return `${percent >= 99.995 ? "100" : percent.toFixed(2)}% uptime`;
+}
+
+/** One line in the past incidents list: repeats of one title on one service that day. */
+export interface PastIncidentEntry {
+  readonly key: string;
+  readonly serviceId: string;
+  readonly title: string;
+  readonly level: StatusLevel;
+  readonly origin: StatusIncident["origin"];
+  readonly url: string | null;
+  readonly count: number;
+  readonly firstStartedAt: string;
+  readonly lastResolvedAt: string;
+}
+
+export interface PastIncidentDay {
+  /** Local calendar day the incidents resolved, `YYYY-MM-DD`. */
+  readonly date: string;
+  readonly entries: ReadonlyArray<PastIncidentEntry>;
+}
+
+const pad = (value: number) => String(value).padStart(2, "0");
+const localDay = (iso: string) => {
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+/**
+ * Resolved incidents by the day they resolved, newest first. Repeats of one
+ * title on one service collapse into a single entry with a count, so a noisy
+ * check reads as one line, not a wall.
+ */
+export function groupPastIncidents(
+  incidents: ReadonlyArray<StatusIncident>,
+): ReadonlyArray<PastIncidentDay> {
+  const days = new Map<string, Map<string, PastIncidentEntry>>();
+  const resolved = incidents
+    .filter((incident) => incident.resolvedAt !== null)
+    .toSorted((a, b) => b.resolvedAt!.localeCompare(a.resolvedAt!));
+  for (const incident of resolved) {
+    const date = localDay(incident.resolvedAt!);
+    const entries = days.get(date) ?? new Map<string, PastIncidentEntry>();
+    days.set(date, entries);
+    const key = `${incident.serviceId}\u0000${incident.title}`;
+    const existing = entries.get(key);
+    entries.set(
+      key,
+      existing === undefined
+        ? {
+            key: incident.id,
+            serviceId: incident.serviceId,
+            title: incident.title,
+            level: incident.level,
+            origin: incident.origin,
+            url: incident.url,
+            count: 1,
+            firstStartedAt: incident.startedAt,
+            lastResolvedAt: incident.resolvedAt!,
+          }
+        : {
+            ...existing,
+            level: rollupStatusLevels([existing.level, incident.level]),
+            count: existing.count + 1,
+            firstStartedAt:
+              incident.startedAt < existing.firstStartedAt
+                ? incident.startedAt
+                : existing.firstStartedAt,
+          },
+    );
+  }
+  return [...days].map(([date, entries]) => ({ date, entries: [...entries.values()] }));
+}
+
+export function formatClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+export function formatShortDate(date: string): string {
+  return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 }

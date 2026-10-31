@@ -202,6 +202,9 @@ function claudeSubscriptionLabel(subscriptionType: string | undefined): string |
       return "Max 5x";
     case "claudemax20xsubscription":
       return "Max 20x";
+    case "claudeultra":
+    case "claudeultrasubscription":
+      return "Ultra";
     case "claudeenterprisesubscription":
       return "Enterprise";
     case "claudeteamsubscription":
@@ -217,6 +220,8 @@ function claudeSubscriptionLabel(subscriptionType: string | undefined): string |
       return "Max 5x";
     case "max20":
       return "Max 20x";
+    case "ultra":
+      return "Ultra";
     case "enterprise":
       return "Enterprise";
     case "team":

@@ -119,16 +119,15 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       }
     }
   } else if (platform === "linux") {
-    const dirs = [
-      ...(home ? [path.join(home, ".local/bin")] : []),
-      "/usr/local/bin",
-      "/usr/bin",
-      "/snap/bin",
-    ];
+    // Per-user installs shadow system ones, as on the other platforms: a
+    // Toolbox-managed shim in the user's data home is the current install,
+    // while a stale `/usr/local/bin` entry must not win over it.
+    const dirs = [...(home ? [path.join(home, ".local/bin")] : [])];
     if (jetbrains) {
       const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
       if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
     }
+    dirs.push("/usr/local/bin", "/usr/bin", "/snap/bin");
     for (const dir of dirs) {
       for (const name of editor.commands) candidates.push(path.join(dir, name));
     }

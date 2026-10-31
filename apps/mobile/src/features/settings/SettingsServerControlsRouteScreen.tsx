@@ -82,17 +82,13 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
   { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
 ];
 
+// The workspace is a per-project choice only; there is no environment-wide
+// default to inherit. "Use defaults" clears a project's choice.
 const WORKSPACE_CHOICES: ReadonlyArray<{
-  readonly mode: ThreadEnvMode | null;
+  readonly mode: ThreadEnvMode;
   readonly label: string;
   readonly description: string;
 }> = [
-  // Only offered at environment scope; a project falls back through "Use defaults".
-  {
-    mode: null,
-    label: "Inherit",
-    description: "Use the repository's specweave-studio.json, or the current checkout.",
-  },
   {
     mode: "local",
     label: "Current checkout",
@@ -281,22 +277,27 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       ) : null
                     }
                   >
-                    {WORKSPACE_CHOICES.filter(
-                      (choice) => choice.mode !== null || !projectSelected,
-                    ).map((choice, index) => (
-                      <SettingsChoiceRow
-                        key={choice.mode ?? "inherit"}
-                        label={choice.label}
-                        description={choice.description}
-                        selected={
-                          !isMixed("defaultThreadEnvMode") &&
-                          uniform("defaultThreadEnvMode") === choice.mode
-                        }
-                        separated={index > 0}
-                        disabled={disabledFor("defaultThreadEnvMode")}
-                        onPress={() => write({ defaultThreadEnvMode: choice.mode })}
-                      />
-                    ))}
+                    {projectSelected ? (
+                      WORKSPACE_CHOICES.map((choice, index) => (
+                        <SettingsChoiceRow
+                          key={choice.mode}
+                          label={choice.label}
+                          description={choice.description}
+                          selected={
+                            !isMixed("defaultThreadEnvMode") &&
+                            uniform("defaultThreadEnvMode") === choice.mode
+                          }
+                          separated={index > 0}
+                          disabled={disabledFor("defaultThreadEnvMode")}
+                          onPress={() => write({ defaultThreadEnvMode: choice.mode })}
+                        />
+                      ))
+                    ) : (
+                      <Text className="px-2 text-base text-foreground-muted">
+                        Set per project. Select a project to choose where its new threads start;
+                        without a project choice they start in the current checkout.
+                      </Text>
+                    )}
                   </SettingsSection>
                   <SettingsSection
                     title="Worktree submodules"

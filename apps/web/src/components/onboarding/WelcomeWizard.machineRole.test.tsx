@@ -232,6 +232,67 @@ it("sets this machine up as the main one with the regular setup, unchanged", asy
   expect(mocks.invite).not.toHaveBeenCalled();
 });
 
+it("opens focused on the first choice, not on the close button", async () => {
+  await act(async () =>
+    root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
+  );
+  await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  expect(document.activeElement?.textContent?.trim()).toMatch(/^Start as a main machine/);
+});
+
+it("decides later: opens the app with nothing chosen or set up", async () => {
+  const machineRole = role();
+  const onDone = vi.fn();
+  await act(async () =>
+    root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={onDone} />),
+  );
+  expect(document.body.textContent).toContain("Invite this machine under Settings > Connections");
+  await click("Decide later");
+  expect(mocks.complete).toHaveBeenCalledOnce();
+  expect(onDone).toHaveBeenCalledExactlyOnceWith(undefined);
+  expect(machineRole.onChange).not.toHaveBeenCalled();
+  expect(mocks.invite).not.toHaveBeenCalled();
+});
+
+const closeSetup = () =>
+  document.querySelector<HTMLButtonElement>('button[aria-label="Close setup"]');
+
+it.each([
+  ["the choice", role()],
+  ["a joined machine's status", role({ offer: false, role: "joined" })],
+  ["the regular setup", role({ offer: false })],
+])("closes setup from %s and opens the app", async (_, machineRole) => {
+  const onDone = vi.fn();
+  await act(async () =>
+    root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={onDone} />),
+  );
+  expect(closeSetup()).not.toBeNull();
+  await act(async () => closeSetup()!.click());
+  expect(mocks.complete).toHaveBeenCalledOnce();
+  expect(onDone).toHaveBeenCalledExactlyOnceWith(undefined);
+  expect(machineRole.onChange).not.toHaveBeenCalled();
+});
+
+it("keeps Escape inside setup, where the agent terminal also uses it", async () => {
+  const onDone = vi.fn();
+  await act(async () =>
+    root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={onDone} />),
+  );
+  await act(async () => {
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+  });
+  expect(heading()).toBe("How will you use this machine?");
+  expect(mocks.complete).not.toHaveBeenCalled();
+  expect(onDone).not.toHaveBeenCalled();
+});
+
+it("keeps pairing required without a server on this machine", async () => {
+  await act(async () => root.render(<WelcomeWizard localAvailable={false} onDone={vi.fn()} />));
+  expect(closeSetup()).toBeNull();
+});
+
 it("joins existing machines: makes the line once, then opens to this machine's status", async () => {
   mocks.invite.mockResolvedValue(invitation);
   const machineRole = role();

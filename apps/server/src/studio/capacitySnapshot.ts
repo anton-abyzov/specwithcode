@@ -299,13 +299,28 @@ export function nativeSnapshotAuthorized(
   if (!freshlyAuthenticated(provider, now)) return false;
   const type = provider!.auth.type?.toLowerCase().replace(/[\s_.-]+/g, "");
   if (provider!.driver === "codex") return type === "chatgpt" || type === "chatgptauthtokens";
-  if (provider!.driver === "claudeAgent")
-    return (
-      !!type &&
-      (type === "claudeai" ||
-        /^(?:claude)?(?:max(?:5x|20x|5|20)?|pro|team|enterprise)(?:subscription)?$/.test(type))
-    );
+  if (provider!.driver === "claudeAgent") return claudeSubscriptionAuthType(type);
   return false;
+}
+/**
+ * Auth types a Claude snapshot uses for anything that is not a verified plan.
+ * ClaudeProvider names the plan only after the CLI's own `auth status` shows a
+ * claude.ai login, so every other type is a plan name. Plans get renamed (Max
+ * 20x became Ultra, reported as "Claude Ultra", on 2026-10-30): an allow-list of
+ * plan names marked a signed-in subscription unverified on every machine.
+ */
+const CLAUDE_NOT_A_PLAN = new Set([
+  "subscriptionauthunverified",
+  "statuscheckfailed",
+  "apikey",
+  "bedrock",
+  "none",
+  "unknown",
+]);
+function claudeSubscriptionAuthType(type: string | undefined): boolean {
+  if (!type || !/^[a-z0-9]+$/.test(type) || CLAUDE_NOT_A_PLAN.has(type)) return false;
+  // A free claude.ai login has no Claude Code plan to run on.
+  return !/^(?:claude)?free(?:plan|subscription)?$/.test(type);
 }
 export function unavailableCapacity(
   now: number,

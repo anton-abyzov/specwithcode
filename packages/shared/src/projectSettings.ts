@@ -165,7 +165,17 @@ function resolveProjectOverrides(
           ...stored,
         };
   if (Object.keys(overrides).length === 0) {
-    return { settings, sources: ENVIRONMENT_SOURCES, overrides: EMPTY_OVERRIDES };
+    // The new-thread workspace is a per-project choice only. A value older
+    // versions stored on the environment tier still decodes, but it no
+    // longer decides anything, so an unconfigured project resolves as unset
+    // and falls to specweave-studio.json, then the current checkout.
+    return settings.defaultThreadEnvMode === null
+      ? { settings, sources: ENVIRONMENT_SOURCES, overrides: EMPTY_OVERRIDES }
+      : {
+          settings: { ...settings, defaultThreadEnvMode: null },
+          sources: ENVIRONMENT_SOURCES,
+          overrides: EMPTY_OVERRIDES,
+        };
   }
   const sources: Record<ProjectScopedServerSettingKey, ProjectSettingSource> = {
     ...ENVIRONMENT_SOURCES,
@@ -189,6 +199,12 @@ function resolveProjectOverrides(
     }
     effective[key] = value;
     sources[key] = "project";
+  }
+  // Same per-project rule as the no-overrides path above: without the
+  // project's own workspace choice, the environment tier's stored value is
+  // not inherited.
+  if (sources.defaultThreadEnvMode !== "project") {
+    effective.defaultThreadEnvMode = null;
   }
   // A legacy project directory is one placement choice, independent of the
   // environment's explicit mode. Resetting the project restores inheritance.

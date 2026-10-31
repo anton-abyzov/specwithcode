@@ -8,7 +8,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { SpawnExecutableResolution } from "@specweave-studio/shared/shell";
 import {
   ProviderReplayEntry,
@@ -20,6 +20,7 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -1132,6 +1133,18 @@ function layerClaudeProviderAdapterRegistryReplay(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
+  // Before a resume the adapter looks for the native transcript under the
+  // host's ~/.claude/projects, which never holds a recorded session. A HOME
+  // that is not the host's turns that check off, as on a machine without
+  // Claude Code, and keeps the replay off the host's Claude state.
+  const layerHostEnvironment = Layer.effect(
+    HostProcessEnvironment,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-claude-replay-home-" });
+      return { ...process.env, HOME: home };
+    }).pipe(Effect.orDie),
+  ).pipe(Layer.provide(NodeServices.layer));
   return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
     configMap: {
@@ -1150,6 +1163,7 @@ function layerClaudeProviderAdapterRegistryReplay(
         IdAllocator.layer,
         NodeServices.layer,
         layerServerConfig,
+        layerHostEnvironment,
       ),
     ),
   );

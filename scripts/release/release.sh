@@ -131,7 +131,9 @@ stage_preflight() {
   for var in gh git python3 ditto codesign; do
     t "cmd-$var" -- command -v "$var" > /dev/null || check_fail "$var is not on PATH"
   done
-  t gh-auth -- gh auth status > /dev/null 2>&1 || check_fail "gh is not signed in (gh auth login)"
+  # Ask GitHub, not `gh auth status`: that exits 1 when any saved account is stale, even with a
+  # valid GH_TOKEN, which a self-hosted runner under a person's login can hit.
+  t gh-auth -- gh api user --jq .login > /dev/null 2>&1 || check_fail "gh is not signed in (gh auth login, or GH_TOKEN)"
   [ -e "$PUBLIC_RULES" ] || check_fail "missing $PUBLIC_RULES"
   if [ "$CI_MODE" -eq 0 ]; then
     for var in "$FLEET_HOSTS" "$(dirname "$FLEET_HOSTS")/id_ed25519" "$(dirname "$FLEET_HOSTS")/known_hosts"; do

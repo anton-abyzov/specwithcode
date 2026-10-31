@@ -39,7 +39,8 @@ import { Button } from "../ui/button";
  *
  * Decision order: a machine whose first-run choice was "joined" (it only
  * serves a main machine elsewhere) goes to the welcome flow, which shows that
- * status. Otherwise a set `onboardingCompletedAt` resolves to the app as soon
+ * status, until the person closes setup. Closing, or choosing to decide later,
+ * sets `onboardingCompletedAt`, which resolves to the app as soon
  * as settings hydrate (the common case, no server round-trip). A `null` flag also
  * covers installs that predate the field, so it alone is not enough — the gate
  * waits for environment shells to bootstrap and inspects the workspace.
@@ -100,7 +101,7 @@ export function FirstRunGate({
   // the wizard) resolve synchronously instead of blanking a frame.
   const [gateState, setGateState] = useState<FirstRunGateState>(() => ({
     decision:
-      (!enabled && !hostedStatic) || (hydrated && onboardingCompletedAt !== null && !joined)
+      (!enabled && !hostedStatic) || (hydrated && onboardingCompletedAt !== null)
         ? "app"
         : "pending",
     stalled: false,

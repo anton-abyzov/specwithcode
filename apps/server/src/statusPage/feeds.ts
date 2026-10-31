@@ -118,8 +118,10 @@ const incidentStage = (value: unknown): StatusIncidentStage => {
 
 /**
  * Reads a Statuspage `summary.json`. `include` picks the components that
- * matter to the app; incidents are kept when they touch one of them or name
- * no component at all.
+ * matter to the app; incidents are kept when they touch one of them or name no
+ * component at all. A component-less incident is dropped only when its title
+ * names another product (`otherProducts`) and nothing the app uses
+ * (`incidentTitle`): OpenAI posts ChatGPT incidents with no component.
  */
 export function parseStatuspageSummary(
   raw: string | null,
@@ -127,6 +129,8 @@ export function parseStatuspageSummary(
     readonly serviceId: string;
     readonly pageUrl: string;
     readonly include: (componentName: string) => boolean;
+    readonly incidentTitle?: RegExp;
+    readonly otherProducts?: RegExp;
   },
 ): FeedReading {
   if (raw === null) return unavailableFeed("Public status page unreachable.");
@@ -166,6 +170,12 @@ export function parseStatuspageSummary(
       ? incident.components.filter(record).map((component) => component.id)
       : [];
     if (touched.length > 0 && !touched.some((id) => includedIds.has(String(id)))) continue;
+    if (
+      touched.length === 0 &&
+      options.otherProducts?.test(title) &&
+      !options.incidentTitle?.test(title)
+    )
+      continue;
     const stage = incidentStage(incident.status);
     incidents.push({
       id: `${options.serviceId}:${String(incident.id ?? slug(title))}`,

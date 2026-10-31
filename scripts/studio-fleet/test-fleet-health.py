@@ -238,6 +238,62 @@ class FleetHealth(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(out)['status'], 'down')
 
+    def test_server_restarting_after_an_update_is_not_down(self):
+        # 2026-10-30 20:17: the 1.0.135 install restarted the service; one check landed while it booted.
+        base = make_home(self.root, closed_port())
+        write(base / 'userdata' / 'server-runtime.json', {'version': 1, 'pid': os.getpid(), 'host': '127.0.0.1',
+                                                          'port': closed_port(),
+                                                          'startedAt': iso(NOW - datetime.timedelta(seconds=20))})
+        server_check = self.check(fleet_health.report(base, NOW, timeout=1), 'server')
+        self.assertEqual(server_check['level'], 'ok', server_check)
+        self.assertTrue(server_check['starting'])
+        self.assertIn('is starting', server_check['summary'])
+        late = self.check(fleet_health.report(base, NOW + datetime.timedelta(minutes=5), timeout=1), 'server')
+        self.assertEqual(late['level'], 'down', 'a server still silent after the grace is down')
+        # A crash loop restarts it with a fresh start time; the watch that saw it starting reports down.
+        write(base / 'health' / 'latest.json', {'checks': [server_check]})
+        again = self.check(fleet_health.report(base, NOW, timeout=1), 'server')
+        self.assertEqual(again['level'], 'down', again)
+
+    def test_not_found_answers_are_counted_but_not_failures(self):
+        with EnvironmentServer() as server:
+            base = make_home(self.root, server.port)
+            minute = datetime.timedelta(minutes=1)
+            spans = [
+                effect_span('ws.rpc.projects.readFile', NOW - minute, 'n1',
+                            cause="ProjectReadFileError: File not found: 'specweave-studio.json' in '/w'."),
+                client_span('RpcClient.projects.readFile', NOW - minute,
+                            "File not found: 'specweave-studio.json' in '/w'."),
+                effect_span('ws.rpc.projects.listEntries', NOW - minute, 'n2',
+                            cause="ProjectListEntriesError: Failed to list workspace entries in '/gone'.\n{\n"
+                                  "  [cause]: WorkspaceRootNotExistsError: Workspace root does not exist: /gone\n}"),
+            ]
+            write(base / 'userdata' / 'logs' / 'server.trace.ndjson',
+                  ''.join(json.dumps(span) + '\n' for span in spans))
+            traces = self.check(fleet_health.report(base, NOW), 'traces')
+        self.assertEqual(traces['level'], 'ok', traces)
+        self.assertEqual(traces['notFoundAnswers'], 3)
+        self.assertIn('3 not-found answers', traces['summary'])
+
+    def test_a_not_found_answer_does_not_excuse_other_failures_of_the_same_call(self):
+        with EnvironmentServer() as server:
+            base = make_home(self.root, server.port)
+            minute = datetime.timedelta(minutes=1)
+            failed = "ProjectListEntriesError: Failed to list workspace entries in '/w'.\n{\n  [cause]: %s\n}"
+            spans = [
+                effect_span('ws.rpc.projects.listEntries', NOW - 2 * minute, 'n1',
+                            cause=failed % 'WorkspaceRootNotExistsError: Workspace root does not exist: /gone'),
+                effect_span('ws.rpc.projects.listEntries', NOW - minute, 'n2',
+                            cause=failed % "Error: EACCES: permission denied, scandir '/w'"),
+                effect_span('ws.rpc.git.status', NOW - minute, 'n3', cause='Error: spawn git ENOENT'),
+            ]
+            write(base / 'userdata' / 'logs' / 'server.trace.ndjson',
+                  ''.join(json.dumps(span) + '\n' for span in spans))
+            traces = self.check(fleet_health.report(base, NOW), 'traces')
+        self.assertEqual(traces['level'], 'degraded', traces)
+        self.assertEqual(traces['notFoundAnswers'], 1)
+        self.assertIn('2 user-facing RPC failures', traces['summary'])
+
     def test_server_running_another_release_is_degraded(self):
         with EnvironmentServer(version='1.0.37', commit='0' * 40) as server:
             base = make_home(self.root, server.port)

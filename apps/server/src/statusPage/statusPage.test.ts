@@ -3,6 +3,8 @@ import { rollupStatusLevels, type ServerProvider } from "@specweave-studio/contr
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  MACHINE_DORMANT_AFTER_MS,
+  PROVIDERS,
   buildStatusServices,
   decodeHealthWatch,
   publicIncidents,
@@ -12,6 +14,7 @@ import { parseGoogleCloudIncidents, parseStatuspageSummary, parseXaiStatusRss } 
 import {
   dayLevel,
   emptyStatusHistory,
+  failingSince,
   localDate,
   recordStatusChecks,
   recordUnexpectedStop,
@@ -136,6 +139,49 @@ describe("status feeds", () => {
   });
 });
 
+describe("status feed relevance", () => {
+  it("drops a component-less OpenAI incident about ChatGPT but keeps one about Codex", () => {
+    const summary = (name: string) =>
+      JSON.stringify({
+        components: [{ id: "x", name: "Codex", status: "operational" }],
+        incidents: [
+          {
+            id: "i",
+            name,
+            status: "investigating",
+            impact: "minor",
+            created_at: "2026-10-30T19:38:47Z",
+            components: [],
+          },
+        ],
+      });
+    const read = (name: string) =>
+      parseStatuspageSummary(summary(name), {
+        serviceId: "openai",
+        pageUrl: "https://status.openai.com",
+        include: (component) => PROVIDERS.codex.components!.test(component),
+        incidentTitle: PROVIDERS.codex.incidentTitle!,
+        otherProducts: PROVIDERS.codex.otherProducts!,
+      });
+    // 2026-10-30: this ChatGPT incident showed Codex as needing attention.
+    const chatgpt = read(
+      "Elevated errors with search in Dots, ChatGPT Work, and certain ChatGPT thinking experiences",
+    );
+    expect(chatgpt.incidents).toHaveLength(0);
+    expect(chatgpt.level).toBe("operational");
+    for (const title of [
+      "Increased Codex task latency",
+      "Elevated errors on APIs",
+      "Users unable to log into their accounts",
+      "Elevated errors for GPT-5",
+      "Elevated error rates across services",
+      "Users unable to sign in to ChatGPT",
+    ]) {
+      expect(read(title).incidents, title).toHaveLength(1);
+    }
+  });
+});
+
 describe("status history", () => {
   const sample = (level: "operational" | "major_outage" | "unknown") => ({
     serviceId: "local-service",
@@ -158,6 +204,48 @@ describe("status history", () => {
     history = recordStatusChecks(history, [sample("operational")], NOW + 240_000);
     expect(history.incidents[0]!.stage).toBe("resolved");
     expect(history.incidents[0]!.resolvedAt).not.toBeNull();
+  });
+
+  it("closes a dormant service's incident and keeps when its failing run began", () => {
+    let history = emptyStatusHistory();
+    history = recordStatusChecks(history, [sample("major_outage")], NOW);
+    history = recordStatusChecks(history, [sample("major_outage")], NOW + 60_000);
+    expect(failingSince(history, "local-service")).toBe(NOW);
+    history = recordStatusChecks(history, [{ ...sample("unknown"), dormant: true }], NOW + 2 * DAY);
+    expect(history.incidents[0]).toMatchObject({ stage: "resolved" });
+    expect(failingSince(history, "local-service")).toBe(NOW);
+    history = recordStatusChecks(history, [sample("operational")], NOW + 3 * DAY);
+    expect(failingSince(history, "local-service")).toBeNull();
+  });
+
+  it("resumes a failing run after one healthy check, and restarts it on a level change", () => {
+    const at = (level: "operational" | "major_outage" | "degraded", ms: number) =>
+      (history = recordStatusChecks(history, [{ ...sample("operational"), level }], ms));
+    let history = emptyStatusHistory();
+    at("major_outage", NOW);
+    at("major_outage", NOW + 60_000);
+    // A laptop opened for one check and shut again keeps its original start.
+    at("operational", NOW + DAY);
+    expect(failingSince(history, "local-service")).toBeNull();
+    at("major_outage", NOW + DAY + 60_000);
+    expect(failingSince(history, "local-service")).toBe(NOW);
+    // Two healthy checks end the run for good.
+    at("operational", NOW + 2 * DAY);
+    at("operational", NOW + 2 * DAY + 60_000);
+    at("major_outage", NOW + 3 * DAY);
+    expect(failingSince(history, "local-service")).toBe(NOW + 3 * DAY);
+    // A different failing level starts its own clock.
+    at("degraded", NOW + 4 * DAY);
+    expect(failingSince(history, "local-service")).toBe(NOW + 4 * DAY);
+  });
+
+  it("starts a saved streak without a start time at its open incident", () => {
+    let history = recordStatusChecks(emptyStatusHistory(), [sample("major_outage")], NOW);
+    history = recordStatusChecks(history, [sample("major_outage")], NOW + 60_000);
+    const { since: _since, ...legacy } = history.streaks["local-service"]!;
+    history = { ...history, streaks: { "local-service": legacy } };
+    history = recordStatusChecks(history, [sample("major_outage")], NOW + 120_000);
+    expect(failingSince(history, "local-service")).toBe(NOW + 60_000);
   });
 
   it("builds 90 days ending today with notes, and an uptime over known checks", () => {
@@ -302,6 +390,33 @@ describe("status catalog", () => {
     expect(publicIncidents(services, { claude }).map((incident) => incident.serviceId)).toEqual([
       "provider:claude",
     ]);
+  });
+
+  it("shows a machine offline for over a day as offline, not an outage", () => {
+    const fleet = {
+      configured: true,
+      connectPermission: "access:write" as const,
+      observedAt: "2026-10-16T15:00:00.000Z",
+      listener: "network" as const,
+      machines: [
+        {
+          id: "air" as never,
+          label: "Anna's Macbook Air",
+          environmentId: "env-air" as never,
+          url: "https://air.tailnet.ts.net",
+          status: "unreachable" as const,
+          pairingConfigured: true,
+        },
+      ],
+    };
+    const machine = (since: number) =>
+      buildStatusServices(inputs({ fleet, failingSince: { "machine:air": since } })).find(
+        (entry) => entry.id === "machine:air",
+      )!;
+    expect(machine(NOW - 60 * 60_000)).toMatchObject({ level: "major_outage" });
+    const dormant = machine(NOW - MACHINE_DORMANT_AFTER_MS - 10 * DAY);
+    expect(dormant).toMatchObject({ level: "unknown", dormant: true });
+    expect(dormant.detail).toMatch(/^Offline for 11 days; not counted/);
   });
 
   it("marks a signed-out provider and an unreachable machine", () => {

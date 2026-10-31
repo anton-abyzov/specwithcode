@@ -13,7 +13,10 @@ bash scripts/release/release.sh 1.0.37 --resume                # continue: publi
 bash scripts/release/release.sh 1.0.37 --status                # stage markers and timings
 ```
 
-Run it from a checkout of `anton-abyzov/specwithcode` on M4 with Node 22.20.0 installed
+Standard releases do **not** build on M4. Dispatch the **Release macOS** workflow; it runs on
+the self-hosted M1 release Mac (runner label `swc-release`) from any machine. Running `release.sh`
+locally on M4 is break-glass only, for a named reason recorded with the release, never the routine
+path. The local form needs a checkout of `anton-abyzov/specwithcode` with Node 22.20.0 installed
 through nvm. A run stops at the first failing stage and prints the command to continue. `--resume`
 skips every stage already done; `--self-test` checks the script itself with stubbed commands.
 
@@ -73,19 +76,21 @@ defaults to `studio.service`.
 ### From GitHub Actions
 
 The **Release macOS** workflow (`.github/workflows/release-macos.yml`, run by hand with the
-version) runs `release.sh --ci` on a Mac runner, so a release needs neither the M4 nor anyone at
-it. `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
+version) runs `release.sh --ci` on the self-hosted **M1** release Mac, so a release needs neither
+the M4 nor anyone at it. `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
 and `fleet-linux`: each Mac's update agent installs the release from the public feed on its next hourly
 check, and `fleet_rollout.py --version <v>` on the M4 asks them at once and then updates the M1
 and M3 apps ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)); `linux_rollout.py
 --version <v>` does the same for Linux workers, which have no update agent. The workflow writes
 release.env, the certificate, the notarization key, the Google pair and the mirror rules from
 repository secrets into the runner's temp folder and deletes them at the end; its header lists the
-secret names. It runs on GitHub's `macos-15` unless the repository variable
-`RELEASE_MACOS_RUNNER` names another runner, such as a self-hosted Mac, where `resume` continues a
-failed run. On GitHub's runner a failed run is simply run again: the bump stage removes the
-`release/<version>` branch the failed run left when it holds only the bump and the version is not
-tagged, then bumps the current `main`. Logs and timings are kept as a workflow artifact.
+secret names. It runs on the `swc-release` label of the M1 self-hosted runner (`m1-release`).
+`RELEASE_MACOS_RUNNER` must stay set to `swc-release`; the workflow also falls back to that
+label if the variable is missing, so a deleted variable queues for M1 instead of silently
+building somewhere else. Change the variable only when deliberately moving releases to a
+replacement self-hosted Mac, and update this runbook in the same change. On M1, `resume`
+continues a failed run from its surviving staging folder. Logs and timings are kept as a
+workflow artifact.
 
 ### Stages
 
