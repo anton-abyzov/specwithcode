@@ -81,6 +81,8 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
     reason: ConnectionTransientReason,
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
+    /** The relay reached its tunnel but the machine did not answer: it is asleep or off. */
+    machineOffline: Schema.optionalKey(Schema.Boolean),
   },
 ) {
   override get message(): string {

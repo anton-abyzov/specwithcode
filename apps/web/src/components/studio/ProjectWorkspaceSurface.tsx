@@ -1889,6 +1889,9 @@ export function ProjectWorkspaceSurface({
               ) : (
                 <ThreadsPane
                   environmentId={project.environmentId}
+                  projectId={project.id}
+                  // Remote workers' threads arrive with their list; a filter on them waits for it.
+                  threadsLoaded={threadsLoaded && remoteWorkersLoaded}
                   threads={workers}
                   attention={projectAttention}
                   onOpenAction={(threadId, environmentId) => {

@@ -111,7 +111,7 @@ describe("measureRowModelFitWidths", () => {
 });
 
 describe("rowModelRoom", () => {
-  it("leaves the line's plan and PR their room, but not the machine name", () => {
+  it("leaves the line's plan and PR their room, but not a long error", () => {
     const host = sized(document.createElement("div"), 300);
     const lead = document.createElement("span");
     const badge = sized(document.createElement("span"), 120, 100);
@@ -120,7 +120,7 @@ describe("rowModelRoom", () => {
     rest.style.display = "flex";
     rest.style.flexWrap = "wrap";
     const machine = sized(document.createElement("span"), 90);
-    machine.className = "sws-thread-machine";
+    machine.className = "sws-thread-error";
     rest.append(
       sized(document.createElement("span"), 60),
       sized(document.createElement("span"), 45),

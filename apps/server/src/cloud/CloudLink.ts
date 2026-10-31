@@ -256,6 +256,23 @@ export class CloudLinkEndpointUnavailableError extends Schema.TaggedError<CloudL
   }
 }
 
+/**
+ * The relay accepted the link and its config is stored, but the connector did
+ * not start yet (after an update the relay client may still be installing).
+ * Linking again cannot help: it only mints another credential and tunnel.
+ */
+const isCloudLinkEndpointUnavailableError = Schema.is(CloudLinkEndpointUnavailableError);
+
+export const isStoredLinkRuntimeNotStarted = (error: unknown): boolean =>
+  isCloudLinkEndpointUnavailableError(error) &&
+  error.reason === "runtime-not-started" &&
+  !(
+    typeof error.endpointRuntimeStatus === "object" &&
+    error.endpointRuntimeStatus !== null &&
+    "status" in error.endpointRuntimeStatus &&
+    error.endpointRuntimeStatus.status === "unsupported"
+  );
+
 const INTERNAL_OPERATION_MESSAGES = {
   "relay-url-unconfigured":
     "STUDIO_RELAY_URL must be configured as a secure absolute HTTPS origin.",
@@ -961,6 +978,15 @@ const make = Effect.gen(function* () {
           lockHeld: true,
           confirmedOrigin: parsedOrigin.origin,
         },
+      ).pipe(
+        // The link is stored even when its connector cannot start yet; keep
+        // its origin too so a later start does not need another link.
+        Effect.tapError((error) =>
+          isStoredLinkRuntimeNotStarted(error) &&
+          link.endpointRuntime?.providerKind === "cloudflare_tunnel"
+            ? persistConnectOrigin(link.endpoint.httpBaseUrl, "link").pipe(withSecrets)
+            : Effect.void,
+        ),
       );
       if (link.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         yield* persistConnectOrigin(link.endpoint.httpBaseUrl, "link").pipe(withSecrets);

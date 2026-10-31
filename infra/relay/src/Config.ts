@@ -94,6 +94,11 @@ export class RelayConfiguration extends Context.Service<
     readonly clerkSecretKey: Redacted.Redacted<string>;
     readonly clerkPublishableKey: string;
     readonly clerkJwtAudience: string;
+    /**
+     * Clerk's PEM public key. When set, session tokens verify without fetching
+     * JWKS from Clerk's Backend API on every cold isolate.
+     */
+    readonly clerkJwtKey?: string;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;

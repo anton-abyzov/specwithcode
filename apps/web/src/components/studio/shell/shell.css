@@ -2688,16 +2688,36 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
 }
 .sws-thread-machine {
-  /* Low emphasis, and it gives way before the model does. */
+  /* A column every row shares, so machines scan top to bottom beside the age. */
   flex: none;
+  /* One spare character: "ch" is a digit's width, and capitals run wider. */
+  width: calc(var(--sws-machine-col, 6ch) + 1ch + 16px);
   display: inline-flex;
   align-items: center;
-  max-width: none;
   overflow: hidden;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.sws-thread-machine-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
-  opacity: 0.85;
+}
+/* A narrow pane keeps the icon and the name's first letters; the tooltip has the rest. */
+@container threadlist (width < 360px) {
+  .sws-thread-machine {
+    width: calc(3ch + 16px);
+  }
+  .sws-thread-machine-name {
+    text-overflow: clip;
+  }
+  .sws-thread-machine-arrow {
+    display: none;
+  }
 }
 .sws-thread-machine svg {
+  flex: none;
   width: 12px;
   height: 12px;
   margin-right: 4px;
@@ -2787,6 +2807,14 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-thread-row:hover .sws-thread-age,
 .sws-thread-row:has(.sws-thread-action:focus-visible) .sws-thread-age {
   visibility: hidden;
+}
+/* A row with a machine column keeps it in view: Resolve is its icon alone, in the age's
+   place, as in a narrow list, and keeps its name in aria-label. */
+.sws-thread-row:has(.sws-thread-machine) .sws-thread-text {
+  --sws-row-action-reserve: 0px;
+}
+.sws-thread-row:has(.sws-thread-machine) .sws-thread-action span {
+  display: none;
 }
 @media (hover: none) {
   .sws-thread-action {

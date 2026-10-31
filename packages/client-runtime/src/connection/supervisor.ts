@@ -43,6 +43,13 @@ export { LOOPBACK_BACKOFF_RESET_AFTER_MS, LOOPBACK_RETRY_MAX_DELAY_MS } from "./
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
+/**
+ * Cap when the relay reports the machine itself unreachable: it is asleep or
+ * off, so each retry only costs a relay request and a failed mint through its
+ * tunnel. Returning to the app, the network coming back and an explicit retry
+ * still reconnect at once.
+ */
+export const OFFLINE_MACHINE_RETRY_MAX_DELAY_MS = 600_000;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const loopbackEstablishmentTimeout = Duration.fromInputUnsafe(
@@ -181,6 +188,15 @@ export function retryDelayMs(
 ): number {
   const ceiling = Math.min(maxDelayMs, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
+}
+
+export function retryMaxDelayMs(prefersLoopback: boolean, error: ConnectionAttemptError): number {
+  if (prefersLoopback) return LOOPBACK_RETRY_MAX_DELAY_MS;
+  // Only the machine itself being away earns the long cap; a relay or
+  // provisioning failure keeps the normal ladder so clients recover quickly.
+  return error._tag === "ConnectionTransientError" && error.machineOffline === true
+    ? OFFLINE_MACHINE_RETRY_MAX_DELAY_MS
+    : RETRY_MAX_DELAY_MS;
 }
 
 function annotateTarget(target: ConnectionTarget) {
@@ -1108,7 +1124,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const delayMs = retryDelayMs(
         failureCount - 1,
         yield* Random.next,
-        (yield* prefersLoopback) ? LOOPBACK_RETRY_MAX_DELAY_MS : RETRY_MAX_DELAY_MS,
+        retryMaxDelayMs(yield* prefersLoopback, error),
       );
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
