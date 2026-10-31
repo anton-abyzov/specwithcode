@@ -112,7 +112,14 @@ export class ClaudeReplayFrameMismatchError extends Schema.TaggedError<ClaudeRep
   },
 ) {
   override get message(): string {
-    return `Outbound Claude Agent SDK frame did not match replay cursor ${this.cursor} in scenario ${this.scenario}.`;
+    // CI failure summaries keep only this line, so the differing paths ride
+    // in it: which keys differ is the whole diagnosis when a replay passes
+    // locally and fails on a release runner.
+    const diffs: string[] = [];
+    collectFrameDiffs(this.expected, this.actual, "$", diffs);
+    const shown = diffs.slice(0, 6).join("; ");
+    const suffix = diffs.length > 6 ? `; +${diffs.length - 6} more` : "";
+    return `Outbound Claude Agent SDK frame did not match replay cursor ${this.cursor} in scenario ${this.scenario}. Diffs: ${shown}${suffix}`;
   }
 }
 
@@ -277,6 +284,38 @@ function stableStringify(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function clipFrameValue(value: unknown): string {
+  const text = value === undefined ? "<missing>" : stableStringify(value);
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+}
+
+function collectFrameDiffs(expected: unknown, actual: unknown, path: string, out: string[]): void {
+  if (stableStringify(expected) === stableStringify(actual)) return;
+  const bothRecords =
+    typeof expected === "object" &&
+    expected !== null &&
+    !Array.isArray(expected) &&
+    typeof actual === "object" &&
+    actual !== null &&
+    !Array.isArray(actual);
+  if (!bothRecords) {
+    out.push(`${path}: expected ${clipFrameValue(expected)}, actual ${clipFrameValue(actual)}`);
+    return;
+  }
+  const keys = [
+    ...new Set([...Object.keys(expected as object), ...Object.keys(actual as object)]),
+  ].toSorted();
+  for (const key of keys) {
+    collectFrameDiffs(
+      Reflect.get(expected as object, key),
+      Reflect.get(actual as object, key),
+      path === "$" ? key : `${path}.${key}`,
+      out,
+    );
+    if (out.length >= 24) return;
+  }
 }
 
 function normalizeContextHandoffText(value: string): string {

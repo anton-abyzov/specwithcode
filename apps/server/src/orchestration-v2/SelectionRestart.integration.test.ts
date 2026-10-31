@@ -1013,3 +1013,107 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
       }),
     ),
 );
+
+// October 31, 2026: switching a coordinator from Gemini to Claude while a Gemini
+// turn ran showed "The provider event stream closed unexpectedly". The switch
+// stops that turn; it must read as the person's Stop, not a provider error.
+it.live.each([
+  { type: "thread.model-selection.set", by: "web", stoppedBy: "Stopped by the user" },
+  { type: "provider.switch", by: "web", stoppedBy: "Stopped by the user" },
+  { type: "thread.model-selection.set", by: "mcp", stoppedBy: "Stopped by an agent" },
+] as const)(
+  "$type from $by during a running turn ends it as stopped, without a provider error",
+  ({ type, by, stoppedBy }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = `switch-during-turn-${by}-${type.replaceAll(".", "-")}`;
+        const cwd = yield* checkpointWorkspace(name);
+        const threadId = ThreadId.make(`thread:${name}`);
+        const projectId = ProjectId.make(`project:${name}`);
+        const state = yield* Ref.make<RestartAdapterState>({
+          activeTurn: null,
+          opened: [],
+          started: [],
+          closedSessionCount: 0,
+          failedReplacementOpen: false,
+        });
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeRestartAdapter(state, exclusiveCapabilities),
+          makeCompletingHandoffAdapter(yield* Ref.make(0)),
+        ]);
+
+        const result = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:${name}:create`),
+            threadId,
+            projectId,
+            title: name,
+            modelSelection: initialSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:${name}:first`),
+            threadId,
+            messageId: MessageId.make(`message:${name}:first`),
+            text: "first",
+            attachments: [],
+            modelSelection: initialSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          let running = false;
+          for (let index = 0; index < 1_000 && !running; index += 1) {
+            const current = yield* orchestrator.getThreadProjection(threadId);
+            running = current.providerTurns.some((turn) => turn.status === "running");
+            if (!running) yield* Effect.sleep("5 millis");
+          }
+          if (!running) return yield* Effect.die("the first turn never started");
+
+          yield* orchestrator.dispatch({
+            type,
+            commandId: CommandId.make(`${by}:${name}:switch`),
+            threadId,
+            modelSelection: handoffSelection,
+          });
+          for (let index = 0; index < 1_000; index += 1) {
+            const current = yield* orchestrator.getThreadProjection(threadId);
+            if (current.runs[0]?.status !== "running" && current.runs[0]?.status !== "starting") {
+              return current;
+            }
+            yield* Effect.sleep("5 millis");
+          }
+          return yield* Effect.die("the switched turn never ended");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry, {
+              databaseLayer: fixtureProjectDatabase([projectId]),
+            }),
+          ),
+        );
+
+        const run = result.runs[0]!;
+        const runItems = result.turnItems.filter((item) => item.runId === run.id);
+        assert.equal(run.status, "interrupted");
+        assert.isFalse(runItems.some((item) => item.type === "error"));
+        const request = runItems.find((item) => item.type === "run_interrupt_request");
+        assert.equal(
+          request?.type === "run_interrupt_request" ? request.message : undefined,
+          Orchestrator.MODEL_SWITCH_STOP_MESSAGE,
+        );
+        const stopped = runItems.find((item) => item.type === "run_interrupt_result");
+        assert.equal(
+          stopped?.type === "run_interrupt_result" ? stopped.message : undefined,
+          stoppedBy,
+        );
+      }),
+    ),
+);

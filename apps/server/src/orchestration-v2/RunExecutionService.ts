@@ -898,6 +898,21 @@ export const layer: Layer.Layer<
             failure,
             threadDisposition: "reusable",
           });
+          const makeInterruptedTerminalEvent = (): ProviderTerminalEvent => ({
+            type: "turn.terminal",
+            driver: input.providerThread.driver,
+            providerThreadId: input.providerThread.id,
+            providerTurnId:
+              input.attempt.providerTurnId ??
+              idAllocator.derive.providerTurn({
+                driver: input.providerThread.driver,
+                nativeTurnId: `interrupted:${input.attempt.id}`,
+              }),
+            runOrdinal: input.run.ordinal,
+            status: "interrupted",
+            failure: null,
+            threadDisposition: "reusable",
+          });
           const responseStreamingMode = yield* Effect.gen(function* () {
             const responseStreamingMode = yield* serverSettings.getSettings.pipe(
               Effect.map(
@@ -1443,31 +1458,50 @@ export const layer: Layer.Layer<
                                 Effect.flatMap((latestItemOrdinal) =>
                                   Ref.get(openRunOwnedSubagents).pipe(
                                     Effect.flatMap((openSubagents) =>
-                                      retryFinalWrite(
-                                        writeFinalRunEvents({
-                                          run: input.run,
-                                          rootNode: input.rootNode,
-                                          checkpointScope: input.checkpointScope,
-                                          providerThread,
-                                          attempt: input.attempt,
-                                          // The failure may be the ownership
-                                          // read itself, so check in the write.
-                                          writeIfRunCurrent: {
-                                            activeAttemptId: input.attempt.id,
-                                            expectedStatus: "running",
-                                          },
-                                          openRunOwnedSubagents: openSubagents,
-                                          terminal: makeFailedTerminalEvent(
-                                            makeProviderFailure({
-                                              cause: Cause.squash(cause),
-                                              class: "unknown",
+                                      // A stream that breaks after a Stop still
+                                      // unanswered (a model switch releases the
+                                      // session) ends the run as stopped, not as
+                                      // a provider error. Other failures stay failed.
+                                      (isEventStreamBreak(cause) &&
+                                      input.hasUnpairedRunInterruptRequest !== undefined
+                                        ? input.hasUnpairedRunInterruptRequest()
+                                        : Effect.succeed(false)
+                                      ).pipe(
+                                        Effect.flatMap((stopped) =>
+                                          retryFinalWrite(
+                                            writeFinalRunEvents({
+                                              run: input.run,
+                                              rootNode: input.rootNode,
+                                              checkpointScope: input.checkpointScope,
+                                              providerThread,
+                                              attempt: input.attempt,
+                                              // The failure may be the ownership
+                                              // read itself, so check in the write.
+                                              writeIfRunCurrent: {
+                                                activeAttemptId: input.attempt.id,
+                                                expectedStatus: "running",
+                                              },
+                                              ...(input.runInterruptRequest === undefined
+                                                ? {}
+                                                : {
+                                                    runInterruptRequest: input.runInterruptRequest,
+                                                  }),
+                                              openRunOwnedSubagents: openSubagents,
+                                              terminal: !stopped
+                                                ? makeFailedTerminalEvent(
+                                                    makeProviderFailure({
+                                                      cause: Cause.squash(cause),
+                                                      class: "unknown",
+                                                    }),
+                                                    latestItemOrdinal + 1,
+                                                  )
+                                                : makeInterruptedTerminalEvent(),
+                                              failureItemPersisted: false,
+                                              refreshAfterTurn,
                                             }),
-                                            latestItemOrdinal + 1,
+                                            input.run.id,
                                           ),
-                                          failureItemPersisted: false,
-                                          refreshAfterTurn,
-                                        }),
-                                        input.run.id,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -1823,6 +1857,18 @@ export const layer: Layer.Layer<
     } satisfies RunExecutionServiceV2Shape);
   }),
 );
+
+/** Whether an ingestion failure is the provider event stream breaking. */
+export function isEventStreamBreak(cause: Cause.Cause<unknown>): boolean {
+  let current: unknown = Cause.squash(cause);
+  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth++) {
+    if ((current as { readonly _tag?: unknown })._tag === "ProviderAdapterEventStreamError") {
+      return true;
+    }
+    current = (current as { readonly cause?: unknown }).cause;
+  }
+  return false;
+}
 
 /** A run's latest Stop request: who asked, and the reason it gave. */
 export type RunInterruptRequest = Pick<
