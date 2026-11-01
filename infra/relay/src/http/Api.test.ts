@@ -74,6 +74,7 @@ import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
 import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
+import { layerPhoneRemovalsUnused } from "../testing/phoneRemovalMocks.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -135,6 +136,7 @@ describe("device listing compatibility", () => {
           Layer.mock(HookInbox.HookInbox, {}),
           Layer.mock(AccountDeletion.AccountRecords, {}),
           Layer.mock(AccountDeletion.ClerkUsers, {}),
+          layerPhoneRemovalsUnused,
           NodeCryptoLayer.layer,
         ),
       ),
@@ -216,6 +218,7 @@ describe("managed tunnel policy API", () => {
           Layer.mock(HookInbox.HookInbox, {}),
           Layer.mock(AccountDeletion.AccountRecords, {}),
           Layer.mock(AccountDeletion.ClerkUsers, {}),
+          layerPhoneRemovalsUnused,
           NodeCryptoLayer.layer,
         ),
       ),
@@ -1479,6 +1482,7 @@ describe("relay routing fallback", () => {
                 Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
                 Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {}),
                 Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+                layerPhoneRemovalsUnused,
               ),
             ),
             Layer.provide([layerPublisher, layerSignatures, Layer.mock(HeldHooks.HeldHooks, {})]),
@@ -1747,6 +1751,7 @@ describe("relay managed tunnel limit errors", () => {
     ).pipe(
       Layer.provide(
         RelayHttpApi.layerServerApi.pipe(
+          HttpRouter.provideRequest(layerPhoneRemovalsUnused),
           Layer.provide(layerServices),
           Layer.provide([
             Layer.mock(AgentActivityPublisher.AgentActivityPublisher, {}),

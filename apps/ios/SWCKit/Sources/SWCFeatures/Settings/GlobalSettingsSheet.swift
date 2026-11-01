@@ -26,7 +26,10 @@ private struct GlobalSettingsRoot: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
-        if let connect = model.connect { ConnectAccountCard(state: connect) }
+        if let connect = model.connect {
+          ConnectAccountCard(state: connect)
+          if connect.isSignedIn { ConnectPhonesCard(state: connect) }
+        }
         machines
         if !model.machines.isEmpty { MachineDefaultsCard() }
         appearance

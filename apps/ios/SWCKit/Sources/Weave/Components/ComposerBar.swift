@@ -15,6 +15,7 @@ public struct ComposerBar: View {
   let onMic: (() -> Void)?
 
   @FocusState private var ownFocus: Bool
+  @Environment(\.verticalSizeClass) private var verticalSizeClass
 
   /// - Parameters:
   ///   - placeholder: Overrides "Message…" (idle) and "Queue a message…" (running).
@@ -73,7 +74,8 @@ public struct ComposerBar: View {
         TextField(prompt, text: $text, prompt: Text.weavePlaceholder(prompt), axis: .vertical)
           .font(.weave(.body))
           .foregroundStyle(Color.weave.ink)
-          .lineLimit(1...6)
+          // Landscape phones have little height; a 6-line field would hide the transcript.
+          .lineLimit(1...(verticalSizeClass == .compact ? 3 : 6))
           .focused(focus ?? $ownFocus)
           .disabled(isBlocked)
           .padding(.vertical, 7)

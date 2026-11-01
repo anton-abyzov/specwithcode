@@ -17,6 +17,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as CloudLink from "./CloudLink.ts";
+import * as ConnectPhoneRevocation from "./ConnectPhoneRevocation.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -110,6 +111,7 @@ export const layer = HttpApiBuilder.group(
   "connect",
   Effect.fnUntraced(function* (handlers) {
     const cloudLink = yield* CloudLink.CloudLink;
+    const phoneRevocation = yield* ConnectPhoneRevocation.ConnectPhoneRevocation;
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
@@ -123,6 +125,8 @@ export const layer = HttpApiBuilder.group(
       .handle("relayConfig", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
+          // A new link may follow phone removals this environment never heard about.
+          Effect.tap(() => phoneRevocation.requestSync()),
         ),
       )
       .handle("linkState", () =>
@@ -153,6 +157,13 @@ export const layer = HttpApiBuilder.group(
       .handle("studioMintCredential", ({ payload }) =>
         traceRelayRequest(
           toHttpError(cloudLink.mintCredential(payload)).pipe(
+            Effect.tap(() => appendCloudCredentialResponseHeaders),
+          ),
+        ),
+      )
+      .handle("studioRevokeClientKeys", ({ payload }) =>
+        traceRelayRequest(
+          toHttpError(phoneRevocation.revokeClientKeys(payload)).pipe(
             Effect.tap(() => appendCloudCredentialResponseHeaders),
           ),
         ),

@@ -1,4 +1,9 @@
-import type { EnvironmentId, ProjectWorkerMachine, RuntimeMode } from "@specweave-studio/contracts";
+import {
+  type EnvironmentId,
+  isLocalWorkerMachine,
+  LOCAL_WORKER_MACHINE_ID,
+  type ProjectWorkerMachine,
+} from "@specweave-studio/contracts";
 import type {
   StudioFleetRemoveResult,
   StudioFleetSnapshot,
@@ -13,10 +18,13 @@ export const FLEET_WORKER_ACCESS_CHOICES: ReadonlyArray<{
   readonly label: string;
 }> = runtimeModeOptions.map((mode) => ({ value: mode, label: runtimeModeConfig[mode].label }));
 
-/** Workers get no more by default than this server's own threads start with. */
-export const defaultFleetWorkerAccess = (
-  defaultRuntimeMode: RuntimeMode,
-): StudioFleetWorkerAccess => defaultRuntimeMode;
+/**
+ * Private machines are the owner's own, so workers there start with full
+ * access; the select can still give them less. This server's default mode
+ * for its own threads does not apply: a lower ceiling here would silently
+ * lower a Full access coordinator's workers.
+ */
+export const DEFAULT_FLEET_WORKER_ACCESS: StudioFleetWorkerAccess = "full-access";
 
 const accessLabel = (access: StudioFleetWorkerAccess | null) =>
   access === null ? "Auto" : runtimeModeConfig[access].label;
@@ -39,6 +47,13 @@ export interface FleetWorkersView {
   readonly action: "allow" | "stop";
   /** Allowing needs a pairing code made on that machine. */
   readonly codeNeeded: boolean;
+  /**
+   * An allowed grant's access can be changed by allowing again; that needs a
+   * pairing code when this server cannot mint there on its own.
+   */
+  readonly changeCodeNeeded: boolean;
+  /** Said when workers there run below full access, so a lowered launch is not a surprise. */
+  readonly accessHint: string | null;
 }
 
 const formatDate = (iso: string) =>
@@ -61,6 +76,11 @@ export function fleetWorkersView(workers: StudioFleetWorkers): FleetWorkersView 
         problem,
         action: "stop",
         codeNeeded: false,
+        changeCodeNeeded: !workers.renewable,
+        accessHint:
+          workers.access !== null && workers.access !== "full-access"
+            ? `Workers there run at most at ${accessLabel(workers.access)}, even when their coordinator has Full access.`
+            : null,
       };
     }
     case "revoked":
@@ -69,6 +89,8 @@ export function fleetWorkersView(workers: StudioFleetWorkers): FleetWorkersView 
         problem,
         action: "allow",
         codeNeeded,
+        changeCodeNeeded: false,
+        accessHint: null,
       };
     case "expired":
       return {
@@ -76,6 +98,8 @@ export function fleetWorkersView(workers: StudioFleetWorkers): FleetWorkersView 
         problem,
         action: "allow",
         codeNeeded,
+        changeCodeNeeded: false,
+        accessHint: null,
       };
     case "not_allowed":
       return {
@@ -83,8 +107,23 @@ export function fleetWorkersView(workers: StudioFleetWorkers): FleetWorkersView 
         problem,
         action: "allow",
         codeNeeded,
+        changeCodeNeeded: false,
+        accessHint: null,
       };
   }
+}
+
+/**
+ * The access a machine's Workers row starts from before the user picks one:
+ * the grant's current access once allowed, else `fallback`.
+ */
+export function fleetWorkerDraftAccess(
+  workers: StudioFleetWorkers | undefined,
+  fallback: StudioFleetWorkerAccess = DEFAULT_FLEET_WORKER_ACCESS,
+): StudioFleetWorkerAccess {
+  if (workers && (workers.status === "allowed" || workers.status === "expiring") && workers.access)
+    return workers.access;
+  return fallback;
 }
 
 export interface WorkerMachineChoice {
@@ -92,27 +131,32 @@ export interface WorkerMachineChoice {
   readonly value: string;
   readonly label: string;
   readonly disabled: boolean;
-  readonly machine: ProjectWorkerMachine | null;
+  readonly machine: ProjectWorkerMachine;
 }
 
 /**
- * Where a project's coordinator starts workers: here, or a fleet machine this
- * server may start workers on. A machine already chosen stays listed, so a
- * lapsed grant is visible instead of silently reading as "This machine".
+ * The machines a project's worker list may hold: this machine, and each fleet
+ * machine this server may start workers on. A machine already in the list
+ * stays listed, so a lapsed grant is visible instead of silently vanishing.
  */
 export function workerMachineChoices(
   snapshot: StudioFleetSnapshot | null,
   environmentId: EnvironmentId,
-  current: ProjectWorkerMachine | null,
+  current: ReadonlyArray<ProjectWorkerMachine>,
 ): ReadonlyArray<WorkerMachineChoice> {
   const choices: WorkerMachineChoice[] = [
-    { value: "local", label: "This machine", disabled: false, machine: null },
+    {
+      value: LOCAL_WORKER_MACHINE_ID,
+      label: "This machine",
+      disabled: false,
+      machine: { machineId: LOCAL_WORKER_MACHINE_ID, environmentId, projectId: null },
+    },
   ];
   for (const machine of snapshot?.machines ?? []) {
     if (machine.environmentId === environmentId) continue;
     const status = machine.workers?.status ?? "not_allowed";
     const allowed = status === "allowed" || status === "expiring";
-    const chosen = current?.machineId === machine.id;
+    const chosen = current.find((entry) => entry.machineId === machine.id);
     if (!allowed && !chosen && !machine.workers) continue;
     choices.push({
       value: machine.id,
@@ -121,20 +165,71 @@ export function workerMachineChoices(
       machine: {
         machineId: machine.id,
         environmentId: machine.environmentId,
-        projectId: chosen ? current.projectId : null,
+        projectId: chosen?.projectId ?? null,
       },
     });
   }
-  if (current && !choices.some((choice) => choice.value === current.machineId))
+  for (const entry of current) {
+    if (choices.some((choice) => choice.value === entry.machineId)) continue;
     choices.push({
-      value: current.machineId,
+      value: entry.machineId,
       // Until the machines are read, a saved one is only not known yet.
       label:
-        snapshot === null ? current.machineId : `${current.machineId} (not in this server's fleet)`,
+        snapshot === null ? entry.machineId : `${entry.machineId} (not in this server's fleet)`,
       disabled: false,
-      machine: current,
+      machine: entry,
     });
+  }
   return choices;
+}
+
+/** The ordered list as rows to show, and the machines that can still be added. */
+export function workerMachineListView(
+  choices: ReadonlyArray<WorkerMachineChoice>,
+  list: ReadonlyArray<ProjectWorkerMachine>,
+): {
+  readonly rows: ReadonlyArray<WorkerMachineChoice>;
+  readonly addable: ReadonlyArray<WorkerMachineChoice>;
+} {
+  const rows = list.map(
+    (entry) =>
+      choices.find((choice) => choice.value === entry.machineId) ?? {
+        value: entry.machineId,
+        label: entry.machineId,
+        disabled: false,
+        machine: entry,
+      },
+  );
+  const addable = choices.filter(
+    (choice) => !choice.disabled && !list.some((entry) => entry.machineId === choice.value),
+  );
+  return { rows, addable };
+}
+
+/** Moves the entry at `index` by `delta` places, or returns the list unchanged. */
+export function moveWorkerMachine<T>(list: ReadonlyArray<T>, index: number, delta: -1 | 1): T[] {
+  const target = index + delta;
+  if (index < 0 || index >= list.length || target < 0 || target >= list.length) return [...list];
+  const next = [...list];
+  [next[index], next[target]] = [next[target]!, next[index]!];
+  return next;
+}
+
+/**
+ * What to save for a worker machine list. Just this machine saves nothing
+ * (the default). `workerMachine` keeps the first other machine for hosts that
+ * predate lists, which try it and then run here.
+ */
+export function workerMachinesPatch(list: ReadonlyArray<ProjectWorkerMachine>): {
+  readonly workerMachines: ReadonlyArray<ProjectWorkerMachine> | null;
+  readonly workerMachine: ProjectWorkerMachine | null;
+} {
+  if (list.length === 0 || (list.length === 1 && isLocalWorkerMachine(list[0]!)))
+    return { workerMachines: null, workerMachine: null };
+  return {
+    workerMachines: list,
+    workerMachine: list.find((entry) => !isLocalWorkerMachine(entry)) ?? null,
+  };
 }
 
 /** What removing a machine left valid there, for the notice after Remove. */

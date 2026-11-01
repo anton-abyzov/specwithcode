@@ -867,7 +867,8 @@ it("scheduleTask gives a coordinator's routines their own thread and binds a wor
     for (const input of saved) {
       expect(input.threadId).toBeNull();
       expect(input.ownThread).toBe(true);
-      expect(input.workspaceStrategy.type).toBe("worktree");
+      // No server settings here, so no Use worktrees: the project folder.
+      expect(input.workspaceStrategy.type).toBe("root");
     }
     // From a worker: "wake me" binds to that worker's thread.
     const fromWorker = yield* service.scheduleTask(scopeFor(workerThreadId), watch);

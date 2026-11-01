@@ -29,6 +29,7 @@ import * as Devices from "../agentActivity/Devices.ts";
 import * as RelayHttpApi from "../http/Api.ts";
 import { RelayApi, RelayClientAuth, RelayClientPrincipal } from "@specweave-studio/contracts/relay";
 import * as AccountDeletion from "./AccountDeletion.ts";
+import { layerPhoneRemovalsUnused } from "../testing/phoneRemovalMocks.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -278,7 +279,7 @@ describe("DELETE /v1/client/account", () => {
   const send = (relay: ReturnType<typeof makeFakeRelay>) =>
     Effect.gen(function* () {
       const app = yield* withApp(relay);
-      const context = yield* Layer.build(relay.layer);
+      const context = yield* Layer.build(Layer.merge(relay.layer, layerPhoneRemovalsUnused));
       return yield* Effect.promise(() => app.handler(request(), context));
     });
 

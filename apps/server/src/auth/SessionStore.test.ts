@@ -102,6 +102,8 @@ const layerFailingSessionLookupRepository = Layer.succeed(AuthSessions.AuthSessi
   listActive: () => Effect.succeed([]),
   revoke: () => Effect.fail(repositoryFailure),
   revokeAllExcept: () => Effect.fail(repositoryFailure),
+  revokeByProofKeyThumbprints: () => Effect.fail(repositoryFailure),
+  backfillProofKeyThumbprint: () => Effect.void,
   setLastConnectedAt: () => Effect.void,
   setClientConnection: () => Effect.void,
 });
@@ -619,6 +621,94 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         expect(revokedClientWebSocket.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
       }
     }).pipe(Effect.provide(layerSessionStore())),
+  );
+
+  it.effect("revokes every session bound to a removed phone's key, and only those", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const phone = {
+        subject: "cloud-connect",
+        method: "dpop-access-token",
+        proofKeyThumbprint: "phone-key",
+        ttl: Duration.hours(1),
+        client: { label: "SpecWithCode Connect connect", deviceType: "mobile" },
+      } as const;
+      const first = yield* sessions.issue(phone);
+      const second = yield* sessions.issue(phone);
+      const otherPhone = yield* sessions.issue({ ...phone, proofKeyThumbprint: "other-key" });
+      const browser = yield* sessions.issue({ subject: "browser" });
+      yield* sessions.markConnected(first.sessionId);
+
+      expect(Option.getOrNull(yield* sessions.readProofKeyBinding(first.sessionId))).toEqual({
+        subject: "cloud-connect",
+        proofKeyThumbprint: "phone-key",
+      });
+      expect(Option.getOrNull(yield* sessions.readProofKeyBinding(browser.sessionId))).toEqual({
+        subject: "browser",
+        proofKeyThumbprint: null,
+      });
+
+      const changes = yield* Queue.unbounded<SessionStore.SessionCredentialChange>();
+      yield* sessions.streamChanges.pipe(
+        Stream.runForEach((change) => Queue.offer(changes, change)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const revoked = yield* sessions.revokeByProofKeyThumbprints(["phone-key"]);
+      expect(revoked.toSorted()).toEqual([first.sessionId, second.sessionId].toSorted());
+      // Open sockets end on these removals (watchEnd).
+      const removed = [yield* Queue.take(changes), yield* Queue.take(changes)];
+      expect(
+        removed.map((change) => (change.type === "clientRemoved" ? change.sessionId : null)),
+      ).toEqual(expect.arrayContaining([first.sessionId, second.sessionId]));
+      expect((yield* Effect.flip(sessions.verify(first.token)))._tag).toBe(
+        "SessionTokenRevokedError",
+      );
+      expect((yield* sessions.verify(otherPhone.token)).sessionId).toBe(otherPhone.sessionId);
+      expect((yield* sessions.listActive()).map((entry) => entry.sessionId).toSorted()).toEqual(
+        [otherPhone.sessionId, browser.sessionId].toSorted(),
+      );
+      expect(yield* sessions.revokeByProofKeyThumbprints(["phone-key"])).toEqual([]);
+      expect(yield* sessions.revokeByProofKeyThumbprints([])).toEqual([]);
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
+
+  it.effect("records the key of a Connect session stored before keys were recorded", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const sql = yield* SqlClient.SqlClient;
+      const phone = {
+        subject: "cloud-connect",
+        method: "dpop-access-token",
+        proofKeyThumbprint: "phone-key",
+        ttl: Duration.hours(1),
+        client: { label: "SpecWithCode Connect connect", deviceType: "mobile" },
+      } as const;
+      const older = yield* sessions.issue(phone);
+      const relay = yield* sessions.issue(relaySessionInput);
+      yield* sql`UPDATE auth_sessions SET proof_key_thumbprint = NULL`;
+      const unbound = Option.getOrNull(yield* sessions.readProofKeyBinding(older.sessionId));
+      expect(unbound?.proofKeyThumbprint).toBeNull();
+
+      yield* sessions.verify(older.token);
+      yield* sessions.verify(relay.token);
+      expect(Option.getOrNull(yield* sessions.readProofKeyBinding(older.sessionId))).toEqual({
+        subject: "cloud-connect",
+        proofKeyThumbprint: "phone-key",
+      });
+      // Only Connect sessions are backfilled.
+      const relayBinding = Option.getOrNull(yield* sessions.readProofKeyBinding(relay.sessionId));
+      expect(relayBinding?.proofKeyThumbprint).toBeNull();
+
+      // A recorded key is never overwritten.
+      yield* sql`UPDATE auth_sessions SET proof_key_thumbprint = 'kept-key' WHERE session_id = ${older.sessionId}`;
+      yield* sessions.verify(older.token);
+      const kept = Option.getOrNull(yield* sessions.readProofKeyBinding(older.sessionId));
+      expect(kept?.proofKeyThumbprint).toBe("kept-key");
+
+      yield* sql`UPDATE auth_sessions SET proof_key_thumbprint = NULL WHERE session_id = ${older.sessionId}`;
+      yield* sessions.verify(older.token);
+      expect(yield* sessions.revokeByProofKeyThumbprints(["phone-key"])).toEqual([older.sessionId]);
+    }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
   );
 
   it.effect("persists lastConnectedAt on first connect and updates it after reconnect", () =>

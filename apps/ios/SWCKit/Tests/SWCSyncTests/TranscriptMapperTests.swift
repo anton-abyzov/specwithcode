@@ -113,8 +113,15 @@ import SWCWire
     #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Edited 2 files", detail: nil, symbol: "pencil", status: .completed))
   }
 
+  /// The provider's own choices, carried through for the approval card.
+  private let fixtureOptions = [
+    ApprovalChoice(decision: .approve, label: "Allow"),
+    ApprovalChoice(decision: .approveForSession, label: "Allow for session"),
+    ApprovalChoice(decision: .deny, label: "Deny"),
+  ]
+
   @Test func requestsFollowTheItemWithoutRuntimeRequests() throws {
-    #expect(try kind("ti_approval") == .approval(requestId: "req_1", prompt: "Run npm install?", resolved: false))
+    #expect(try kind("ti_approval") == .approval(requestId: "req_1", prompt: "Run npm install?", resolved: false, kind: "command", options: fixtureOptions))
     #expect(try kind("ti_input") == .question(requestId: "req_2", prompt: "Which database?", resolved: false))
   }
 
@@ -124,12 +131,12 @@ import SWCWire
       throw FixtureError("Expected runtime requests")
     }
     var requests = ["req_1": approval, "req_2": question]
-    #expect(try kind("ti_approval", requests: requests) == .approval(requestId: "req_1", prompt: "Run npm install?", resolved: false))
+    #expect(try kind("ti_approval", requests: requests) == .approval(requestId: "req_1", prompt: "Run npm install?", resolved: false, kind: "command", options: fixtureOptions))
     #expect(try kind("ti_input", requests: requests) == .question(requestId: "req_2", prompt: "Which database?", resolved: true))
 
     approval.status = .resolved
     requests["req_1"] = approval
-    #expect(try kind("ti_approval", requests: requests) == .approval(requestId: "req_1", prompt: "Run npm install?", resolved: true))
+    #expect(try kind("ti_approval", requests: requests) == .approval(requestId: "req_1", prompt: "Run npm install?", resolved: true, kind: "command", options: fixtureOptions))
   }
 
   @Test func approvalWithoutPromptGetsOne() throws {
@@ -137,7 +144,7 @@ import SWCWire
     guard case var .approvalRequest(request) = item.content else { throw FixtureError("Expected an approval") }
     request.prompt = nil
     item.content = .approvalRequest(request)
-    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .approval(requestId: "req_1", prompt: "Allow this command?", resolved: false))
+    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .approval(requestId: "req_1", prompt: "Allow this command?", resolved: false, kind: "command", options: fixtureOptions))
   }
 
   @Test func subagentErrorAndNotices() throws {

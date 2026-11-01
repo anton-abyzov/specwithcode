@@ -83,7 +83,7 @@ public enum TranscriptMapper {
 
     case let .approvalRequest(request):
       let resolved = requests[request.requestId].map { !$0.isPending } ?? !item.isInFlight
-      return .approval(requestId: request.requestId, prompt: request.prompt ?? approvalPrompt(request.requestKind, appName: request.appName), resolved: resolved)
+      return .approval(requestId: request.requestId, prompt: request.prompt ?? approvalPrompt(request.requestKind, appName: request.appName), resolved: resolved, kind: request.requestKind.rawValue, options: (request.options ?? []).compactMap(approvalChoice))
 
     case let .userInputRequest(request):
       let resolved = requests[request.requestId].map { !$0.isPending } ?? (request.isAnswered || !item.isInFlight)
@@ -164,6 +164,19 @@ public enum TranscriptMapper {
     case .failed, .cancelled, .interrupted: .failed
     default: failed ? .failed : .completed
     }
+  }
+
+  static func approvalChoice(_ option: ApprovalOption) -> ApprovalChoice? {
+    let decision: ApprovalDecision? = switch option.decision {
+    case .accept: .approve
+    case .acceptForSession: .approveForSession
+    case .acceptAlways: .approveAlways
+    case .decline: .deny
+    case .cancel: .cancel
+    // A choice this version does not know is left out rather than sent as another.
+    default: nil
+    }
+    return decision.map { ApprovalChoice(decision: $0, label: option.label, warning: option.warning) }
   }
 
   static func approvalPrompt(_ kind: RuntimeRequestKind, appName: String?) -> String {

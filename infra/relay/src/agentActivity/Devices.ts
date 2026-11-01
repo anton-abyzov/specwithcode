@@ -7,7 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
@@ -18,7 +18,12 @@ export class DeviceRegistrationPersistenceError extends Schema.TaggedError<Devic
   {
     userId: Schema.String,
     deviceId: Schema.String,
-    stage: Schema.Literals(["claim-push-token", "claim-push-to-start-token", "upsert-device"]),
+    stage: Schema.Literals([
+      "claim-push-token",
+      "claim-push-to-start-token",
+      "upsert-device",
+      "drop-stale-registrations",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -53,13 +58,39 @@ export class DeviceListPersistenceError extends Schema.TaggedError<DeviceListPer
   }
 }
 
+export class DeviceTouchPersistenceError extends Schema.TaggedError<DeviceTouchPersistenceError>()(
+  "DeviceTouchPersistenceError",
+  {
+    userId: Schema.String,
+    deviceId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to record activity for mobile device ${this.userId}/${this.deviceId}.`;
+  }
+}
+
 export class Devices extends Context.Service<
   Devices,
   {
     readonly register: (input: {
       readonly userId: string;
       readonly registration: RelayDeviceRegistrationRequest;
+      /** The DPoP key and Clerk session of the registering request. */
+      readonly proofKeyThumbprint?: string | undefined;
+      readonly clerkSessionId?: string | undefined;
     }) => Effect.Effect<void, DeviceRegistrationPersistenceError>;
+    /**
+     * Records that a registered phone is in use with this DPoP key (and Clerk
+     * session, when known). Does nothing for a device that is not registered.
+     */
+    readonly touch: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly proofKeyThumbprint: string;
+      readonly clerkSessionId?: string | undefined;
+    }) => Effect.Effect<void, DeviceTouchPersistenceError>;
     readonly unregister: (input: {
       readonly userId: string;
       readonly deviceId: string;
@@ -72,6 +103,51 @@ export class Devices extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+
+  /**
+   * A reinstalled app keeps its Keychain DPoP key under a new device id:
+   * once `deviceId` is registered with the key, the user's other
+   * registrations holding it are the same phone's stale ones. Deletes them
+   * and their Live Activities. Does nothing when `deviceId` is not registered.
+   */
+  const dropStaleRegistrations = Effect.fnUntraced(function* (input: {
+    readonly userId: string;
+    readonly deviceId: string;
+    readonly proofKeyThumbprint: string;
+  }) {
+    const rows = yield* db
+      .select({ deviceId: relayMobileDevices.deviceId })
+      .from(relayMobileDevices)
+      .where(
+        and(
+          eq(relayMobileDevices.userId, input.userId),
+          eq(relayMobileDevices.proofKeyThumbprint, input.proofKeyThumbprint),
+        ),
+      );
+    if (!rows.some((row) => row.deviceId === input.deviceId)) return;
+    const stale = rows.map((row) => row.deviceId).filter((id) => id !== input.deviceId);
+    if (stale.length === 0) return;
+    yield* Effect.annotateCurrentSpan({ "relay.mobile.stale_registrations": stale.length });
+    yield* RelayDb.batch(db, [
+      db
+        .delete(relayLiveActivities)
+        .where(
+          and(
+            eq(relayLiveActivities.userId, input.userId),
+            inArray(relayLiveActivities.deviceId, stale),
+          ),
+        ),
+      db
+        .delete(relayMobileDevices)
+        .where(
+          and(
+            eq(relayMobileDevices.userId, input.userId),
+            eq(relayMobileDevices.proofKeyThumbprint, input.proofKeyThumbprint),
+            ne(relayMobileDevices.deviceId, input.deviceId),
+          ),
+        ),
+    ]);
+  });
 
   return Devices.of({
     register: Effect.fn("relay.devices.register")(function* (input) {
@@ -135,6 +211,10 @@ export const make = Effect.gen(function* () {
           apsEnvironment: registration.apsEnvironment ?? null,
           pushToken: registration.pushToken ?? null,
           pushToStartToken: registration.pushToStartToken ?? null,
+          proofKeyThumbprint: input.proofKeyThumbprint ?? null,
+          clerkSessionId: input.clerkSessionId ?? null,
+          model: registration.model ?? null,
+          lastSeenAt: updatedAt,
           preferencesJson: registration.preferences,
           createdAt: updatedAt,
           updatedAt,
@@ -159,7 +239,24 @@ export const make = Effect.gen(function* () {
                 excluded.push_to_start_token,
                 ${relayMobileDevices.pushToStartToken}
               )`,
-            preferencesJson: registration.preferences,
+            proofKeyThumbprint: sql`coalesce(
+                excluded.proof_key_thumbprint,
+                ${relayMobileDevices.proofKeyThumbprint}
+              )`,
+            clerkSessionId: sql`coalesce(
+                excluded.clerk_session_id,
+                ${relayMobileDevices.clerkSessionId}
+              )`,
+            model: sql`coalesce(excluded.model, ${relayMobileDevices.model})`,
+            lastSeenAt: updatedAt,
+            // A registration without a push token (notifications not set up
+            // on this install yet) keeps the preferences of a row that has one.
+            preferencesJson: sql`case
+                when excluded.push_token is null
+                  and ${relayMobileDevices.pushToken} is not null
+                then ${relayMobileDevices.preferencesJson}
+                else excluded.preferences_json
+              end`,
             updatedAt,
           },
         })
@@ -174,6 +271,60 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+      if (input.proofKeyThumbprint) {
+        yield* dropStaleRegistrations({
+          userId: input.userId,
+          deviceId: registration.deviceId,
+          proofKeyThumbprint: input.proofKeyThumbprint,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DeviceRegistrationPersistenceError({
+                userId: input.userId,
+                deviceId: registration.deviceId,
+                stage: "drop-stale-registrations",
+                cause,
+              }),
+          ),
+        );
+      }
+    }),
+    touch: Effect.fn("relay.devices.touch")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.mobile.device_id": input.deviceId });
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* db
+        .update(relayMobileDevices)
+        .set({
+          proofKeyThumbprint: input.proofKeyThumbprint,
+          ...(input.clerkSessionId ? { clerkSessionId: input.clerkSessionId } : {}),
+          lastSeenAt: now,
+        })
+        .where(
+          and(
+            eq(relayMobileDevices.userId, input.userId),
+            eq(relayMobileDevices.deviceId, input.deviceId),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DeviceTouchPersistenceError({
+                userId: input.userId,
+                deviceId: input.deviceId,
+                cause,
+              }),
+          ),
+        );
+      yield* dropStaleRegistrations(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceTouchPersistenceError({
+              userId: input.userId,
+              deviceId: input.deviceId,
+              cause,
+            }),
+        ),
+      );
     }),
     unregister: Effect.fn("relay.devices.unregister")(function* (input) {
       yield* Effect.annotateCurrentSpan({

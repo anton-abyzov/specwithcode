@@ -1,6 +1,7 @@
 import {
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
+  EnvironmentRateLimitedError,
   type EnvironmentAuthInvalidError,
   type EnvironmentInternalError,
   type EnvironmentOperationForbiddenError,
@@ -19,6 +20,7 @@ import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+const isEnvironmentRateLimitedError = Schema.is(EnvironmentRateLimitedError);
 
 export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
   "RemoteEnvironmentAuthFetchError",
@@ -76,7 +78,8 @@ export type RemoteEnvironmentRequestError =
   | RemoteEnvironmentAuthFetchError
   | RemoteEnvironmentAuthInvalidJsonError
   | RemoteEnvironmentAuthUndeclaredStatusError
-  | RemoteEnvironmentAuthTimeoutError;
+  | RemoteEnvironmentAuthTimeoutError
+  | EnvironmentRateLimitedError;
 
 export const layerRemoteHttpClient = (
   fetchFn: typeof globalThis.fetch,
@@ -126,7 +129,7 @@ const failRemoteRequest = (
   if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
     return Effect.fail(cause);
   }
-  if (isEnvironmentHttpCommonError(cause)) {
+  if (isEnvironmentHttpCommonError(cause) || isEnvironmentRateLimitedError(cause)) {
     return Effect.fail(cause);
   }
   if (Schema.isSchemaError(cause)) {

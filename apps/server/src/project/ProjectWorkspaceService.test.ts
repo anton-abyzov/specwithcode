@@ -619,8 +619,32 @@ it("tells a coordinator how to run workers on another machine and where this pro
     index: "",
   });
   // Named by label, the way the user sees it.
-  assert.include(routed, "This project's workers run on Studio B:");
+  // A single saved machine keeps its old meaning: there first, then here.
+  assert.include(routed, "This project's workers run on Studio B, then this machine:");
+  assert.include(routed, 'delegate_task runs here, so pass machine:"local"');
   assert.notInclude(routed, "studio-b");
+  const machine = (machineId: string, environmentId: string) => ({
+    machineId,
+    environmentId: EnvironmentId.make(environmentId),
+    projectId: null,
+  });
+  const listed = (workerMachines: ReadonlyArray<ReturnType<typeof machine>>) =>
+    Workspace.projectContextText({
+      projectId: "p",
+      threadId: "c",
+      fleet: [...fleet, { id: "m3", label: "M3" }],
+      settings: { ...settings, workerMachines },
+      files: [],
+      index: "",
+    });
+  const strict = listed([machine("m3", "env-m3"), machine("studio-b", "env-m1")]);
+  assert.include(strict, "This project's workers run on M3, then Studio B:");
+  assert.include(strict, "This machine is not in the list");
+  const hereFirst = listed([machine("local", "env-here"), machine("m3", "env-m3")]);
+  assert.include(hereFirst, "This project's workers run on this machine, then M3:");
+  assert.notInclude(hereFirst, "delegate_task runs here");
+  assert.include(listed([machine("m3", "env-m3")]), "This project's workers run on M3 only");
+  assert.notInclude(listed([machine("local", "env-here")]), "This project's workers run on");
   const worker = Workspace.projectContextText({
     projectId: "p",
     threadId: "w",

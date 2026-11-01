@@ -99,7 +99,20 @@ export class NamedProjectCreateError extends Schema.TaggedError<NamedProjectCrea
   }
 }
 
-export type NamedProjectError = NamedProjectFolderError | NamedProjectCreateError;
+/** A new personal assistant while Settings keeps Aide off. */
+export class PersonalAssistantDisabledError extends Schema.TaggedError<PersonalAssistantDisabledError>()(
+  "PersonalAssistantDisabledError",
+  {},
+) {
+  override get message(): string {
+    return ProjectService.PERSONAL_ASSISTANT_DISABLED_MESSAGE;
+  }
+}
+
+export type NamedProjectError =
+  | NamedProjectFolderError
+  | NamedProjectCreateError
+  | PersonalAssistantDisabledError;
 
 export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
@@ -129,7 +142,9 @@ export class ManagedProjectFolders extends Context.Service<
      * `<parentPath ?? namedProjectsRoot>/<slug>`
      * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
      * README, an icon, and a first commit, then creates the project. Personal
-     * projects claim a private managed folder without invoking Git. A failed
+     * projects return this machine's assistant when it has one; a new one is
+     * refused while Settings keeps Aide off, and otherwise claims a private
+     * managed folder without invoking Git. A failed
      * commit (no Git identity, a signing prompt) keeps the project and returns
      * why in `commitError`. The folder is removed when the create fails or is
      * cancelled before the project exists, never once another project owns it.
@@ -580,6 +595,9 @@ const make = Effect.gen(function* () {
     if (input.kind === "personal") {
       const existing = yield* existingAssistant;
       if (existing) return { projectId: existing.id, workspaceRoot: existing.workspaceRoot };
+      // Checked before a folder is claimed, so a refusal leaves nothing behind.
+      if (!(yield* ProjectService.personalAssistantEnabled))
+        return yield* new PersonalAssistantDisabledError();
     }
     if (input.kind !== "personal" && input.parentPath !== undefined) {
       const existing = yield* existingProjectFolder(input.name, input.parentPath);

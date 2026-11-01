@@ -43,6 +43,8 @@ struct DrawerView: View {
 
   private var header: some View {
     HStack(spacing: WeaveSpacing.s2) {
+      WeaveLogo(size: 30)
+        .accessibilityHidden(true)
       Text("SpecWithCode")
         .weaveFont(.title, weight: .bold)
         .foregroundStyle(Color.weave.ink)
@@ -64,7 +66,10 @@ struct DrawerView: View {
   // MARK: Aide
 
   @ViewBuilder private var aideRow: some View {
-    if let aide = model.aide, !aide.archived {
+    // Aide stays hidden, set-up offer included, until its switch is on.
+    if !model.aideEnabled {
+      EmptyView()
+    } else if let aide = model.aide, !aide.archived {
       let target = ChatTarget.aide(aide.ref)
       WeaveRow("Aide", titleLineLimit: 1, action: { router.open(target) }) {
         ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
@@ -172,6 +177,7 @@ struct DrawerView: View {
     }
     .accessibilityValue(ProjectStatusGlyphs.spoken(project))
     .drawerSelection(isSelected(target))
+    .projectRowActions(project)
   }
 
   private func foldButton(_ title: String, open: Bool, toggle: @escaping () -> Void) -> some View {
@@ -213,13 +219,14 @@ struct DrawerView: View {
             .padding(.horizontal, WeaveSpacing.s4)
           ForEach(rows) { thread in
             let target = ChatTarget.thread(thread.ref)
-            WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 2, action: { router.open(target) }) {
+            WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 3, action: { router.open(target) }) {
               ThreadIdentityMarks(identity: thread.identity)
             } trailing: {
               RecentThreadGlyph(thread: thread)
             }
             .accessibilityValue(RecentThreadGlyph.spoken(thread))
             .drawerSelection(isSelected(target))
+            .threadRowActions(thread)
           }
         }
       }
@@ -235,12 +242,13 @@ struct DrawerView: View {
     if !model.machines.isEmpty {
       DrawerSectionLabel("Machines")
       ForEach(model.machines) { machine in
-        WeaveRow(machine.displayName, titleLineLimit: 1, action: { router.push(.machine(machine.id)) }) {
+        // The status goes under the name: beside it, the narrow drawer cut one or the other.
+        WeaveRow(machine.displayName, subtitle: machine.statusLabel, titleLineLimit: 1, subtitleLineLimit: 2, action: { router.push(.machine(machine.id)) }) {
           MachineBadge(status: machine.displayStatus, size: 18)
             .frame(width: 28)
             .accessibilityHidden(true)
         } trailing: {
-          WeaveRowTrailingText(machine.statusLabel)
+          EmptyView()
         }
         .accessibilityIdentifier("drawer.machine")
       }

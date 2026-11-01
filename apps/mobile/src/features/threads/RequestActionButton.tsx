@@ -13,7 +13,8 @@ export function RequestActionButton({
   ...props
 }: Omit<ComponentProps<typeof Pressable>, "children" | "className" | "style"> & {
   label: string;
-  tone?: "primary" | "secondary" | "danger";
+  /** `quiet` is a text-only action, such as Cancel under a stack of buttons. */
+  tone?: "primary" | "secondary" | "danger" | "quiet";
   size?: "default" | "large";
 }) {
   return (
@@ -25,7 +26,13 @@ export function RequestActionButton({
       className={cn(
         "items-center justify-center active:opacity-70 disabled:opacity-50",
         size === "large" ? "rounded-2xl px-4 py-3.5" : "rounded-[14px] px-3.5 py-3",
-        tone === "primary" ? "bg-primary" : tone === "danger" ? "bg-danger" : "bg-subtle-strong",
+        tone === "primary"
+          ? "bg-primary"
+          : tone === "danger"
+            ? "bg-danger"
+            : tone === "quiet"
+              ? "bg-transparent"
+              : "bg-subtle-strong",
       )}
     >
       <Text
@@ -35,7 +42,9 @@ export function RequestActionButton({
             ? "font-studio-extrabold text-primary-foreground"
             : tone === "danger"
               ? "font-studio-bold text-danger-foreground"
-              : "font-studio-bold text-foreground",
+              : tone === "quiet"
+                ? "font-studio-semibold text-foreground-secondary"
+                : "font-studio-bold text-foreground",
         )}
       >
         {label}

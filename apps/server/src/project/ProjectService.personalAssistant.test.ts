@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -160,4 +161,42 @@ it.effect("never changes a project's kind after creation", () =>
     const saved = Option.getOrThrow(yield* service.getById(assistant.id));
     assert.equal(saved.workspaceSettings?.kind, "personal");
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses a new assistant while Aide is off and keeps an existing one", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    // Aide is off by default.
+    const refused = yield* createAssistant(service, "aide-off").pipe(Effect.flip);
+    assert.equal(reasonOf(refused), "assistant_disabled");
+    assert.equal(
+      ProjectService.projectMutationErrorMessage(refused),
+      "The personal assistant is turned off. Turn it on in Settings > General.",
+    );
+    assert.isTrue(Option.isNone(yield* service.getById(ProjectId.make("project:aide-off"))));
+
+    // Code projects are not affected.
+    const code = yield* service.create({
+      commandId: CommandId.make("code:while-off"),
+      projectId: ProjectId.make("project:while-off"),
+      title: "Atlas",
+      workspaceRoot: "/fixtures/example-studio/atlas",
+    });
+    assert.equal(code.workspaceSettings?.kind ?? "code", "code");
+
+    // Turned on, the assistant can be created.
+    yield* settings.updateSettings({ aideEnabled: true });
+    const assistant = yield* createAssistant(service, "aide-on");
+    assert.equal(assistant.workspaceSettings?.kind, "personal");
+
+    // Turned off again, nothing is deleted: the assistant stays readable.
+    yield* settings.updateSettings({ aideEnabled: false });
+    const kept = Option.getOrThrow(yield* service.getById(assistant.id));
+    assert.equal(kept.workspaceSettings?.kind, "personal");
+    assert.equal(
+      reasonOf(yield* createAssistant(service, "aide-off-again").pipe(Effect.flip)),
+      "assistant_disabled",
+    );
+  }).pipe(Effect.provide(Layer.merge(layerTest, ServerSettings.layerTest()))),
 );

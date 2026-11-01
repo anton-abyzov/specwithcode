@@ -33,6 +33,13 @@ struct LaunchOptionsTests {
     #expect(options.route == nil)
     #expect(LaunchOptions.parse(["app", "-SWCRoute"]).route == nil)
   }
+
+  @Test func aideSwitch() {
+    #expect(LaunchOptions.parse(["app", "-SWCFixture"]).aide == nil)
+    #expect(LaunchOptions.parse(["app", "-SWCFixture", "-SWCAide", "off"]).aide == false)
+    #expect(LaunchOptions.parse(["app", "-SWCAide", "ON"]).aide == true)
+    #expect(LaunchOptions.parse(["app", "-SWCAide", "maybe"]).aide == nil)
+  }
 }
 
 @Suite("Deep links")
@@ -322,6 +329,19 @@ struct BootstrapTests {
     #expect(router.appearanceOverride == .dark)
     #expect(router.pendingLaunchRoute == .pair)
     #expect(AppBootstrap.router(for: full) === router)
+  }
+
+  @Test func aideArgumentHidesAideInSampleData() throws {
+    let shown = AppBootstrap.makeModel(arguments: ["app", "-SWCFixture"])
+    #expect(shown.aideEnabled)
+    #expect(shown.aide != nil)
+    let hidden = AppBootstrap.makeModel(arguments: ["app", "-SWCFixture", "-SWCAide", "off"])
+    #expect(!hidden.aideEnabled)
+    #expect(hidden.aide == nil)
+    // Home opens the first of the person's own projects instead.
+    #expect(AppBootstrap.router(for: hidden).landing(in: hidden) == .project(try #require(hidden.projects.first).ref))
+    AppBootstrap.release(shown)
+    AppBootstrap.release(hidden)
   }
 
   @Test func liveFactoryIsUsedWithoutFixtureArgument() {

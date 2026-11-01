@@ -1,4 +1,7 @@
-import { StudioFleetRemoteWorkerState } from "@specweave-studio/contracts/studioFleet";
+import {
+  StudioFleetRemoteWorkerState,
+  StudioFleetWorkerAccess,
+} from "@specweave-studio/contracts/studioFleet";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -75,6 +78,10 @@ export const RemoteWorkerRecord = Schema.Struct({
    * this server shows the worker but never steers or follows it.
    */
   readOnly: Schema.optionalKey(Schema.Boolean),
+  /** The mode it was started with; rows written before this have none. */
+  runtimeMode: Schema.optionalKey(StudioFleetWorkerAccess),
+  /** The caller's own mode when the machine's worker grant lowered it to `runtimeMode`. */
+  loweredFrom: Schema.optionalKey(StudioFleetWorkerAccess),
 });
 export type RemoteWorkerRecord = typeof RemoteWorkerRecord.Type;
 

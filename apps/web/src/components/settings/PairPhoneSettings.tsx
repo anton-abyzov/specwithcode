@@ -180,7 +180,9 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
       ? hasAccessControls
         ? "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead."
         : "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`."
-      : `Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to ${address.httpBaseUrl.replace(/\/$/u, "")}.`;
+      : folded
+        ? "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code."
+        : `Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to ${address.httpBaseUrl.replace(/\/$/u, "")}.`;
 
   const content = (
     <>

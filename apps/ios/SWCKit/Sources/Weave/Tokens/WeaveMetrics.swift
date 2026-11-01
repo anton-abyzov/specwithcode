@@ -54,4 +54,11 @@ public nonisolated enum WeaveSize {
   public static let titleTile: CGFloat = 27
   /// Hairline width.
   public static let hairline: CGFloat = 0.5
+  /// Widest a transcript, composer or list grows in a wide detail column, so
+  /// lines stay readable on an unfolded or rotated phone.
+  public static let readableColumn: CGFloat = 720
+  /// Scene width from which navigation sits beside the detail as a column.
+  /// Below it (a folded phone, an unfolded Duo held upright, Split View) the
+  /// chat keeps the whole width and navigation is the modal drawer.
+  public static let sidebarBreakpoint: CGFloat = 760
 }

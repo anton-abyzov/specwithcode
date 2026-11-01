@@ -72,6 +72,10 @@ describe("actionable project rejection messages", () => {
       "Stop active project work before removing or changing folder access. Adding a folder works while threads run.",
     ],
     ["project_environment_invalid", "approved folders"],
+    [
+      "project_assistant_disabled",
+      "The personal assistant is turned off. Turn it on in Settings > General.",
+    ],
   ] as const)("retains a safe message for %s", (reason, message) => {
     const failure = new EnvironmentRequestInvalidError({
       code: "invalid_request",

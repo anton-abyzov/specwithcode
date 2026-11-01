@@ -6,13 +6,20 @@
  *
  * Clients are told apart by Cloudflare's `cf-connecting-ip` for requests that
  * came through the Connect tunnel (they all arrive from loopback), and by the
- * connection's peer address otherwise. Other loopback requests are not
+ * connection's peer address otherwise. A request carrying a DPoP proof is
+ * also told apart by its proof key, so one device behind a home address that
+ * keeps presenting a refused credential does not lock out the others there;
+ * all proof keys behind one address still share a higher ceiling, because a
+ * guesser can mint a new key for every attempt. Other loopback requests are not
  * limited: a process on this machine can read the credential store anyway,
  * and Tailscale Serve also forwards from loopback, so limiting it would only
  * lock the owner's own apps out after a burst of stale-token retries.
  *
  * State lives in memory: a restart clears it.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous hash inside a pure key function.
+import { createHash } from "node:crypto";
+
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -27,6 +34,10 @@ export const CREDENTIAL_FAILURE_WINDOW_MS = 10 * 60_000;
 export const CREDENTIAL_FAILURE_LIMIT = 30;
 export const CREDENTIAL_BLOCK_MS = 10 * 60_000;
 export const CREDENTIAL_LIMITER_MAX_KEYS = 512;
+/** Marks a bucket for one DPoP proof key behind an address. */
+const PROOF_KEY_BUCKET_MARK = "#key:";
+/** Failures all clients behind one address may share before it is blocked. */
+export const CREDENTIAL_ADDRESS_FAILURE_LIMIT = CREDENTIAL_FAILURE_LIMIT * 10;
 
 export class CredentialRateLimited extends Data.TaggedError("CredentialRateLimited")<{
   readonly retryAfterSeconds: number;
@@ -39,8 +50,11 @@ export class CredentialRateLimited extends Data.TaggedError("CredentialRateLimit
 export interface CredentialFailureLimiterShape {
   /** Fails while `key` is blocked. A null key (an exempt client) always passes. */
   readonly gate: (key: string | null) => Effect.Effect<void, CredentialRateLimited>;
-  /** Counts one failed check for `key`; blocks it once the limit is reached. */
-  readonly recordFailure: (key: string | null) => Effect.Effect<void>;
+  /**
+   * Counts one failed check for `key`; blocks it once the limit is reached.
+   * `limit` overrides the limiter's own for this key.
+   */
+  readonly recordFailure: (key: string | null, limit?: number) => Effect.Effect<void>;
 }
 
 interface Entry {
@@ -62,10 +76,16 @@ export function makeCredentialFailureLimiter(
   const blockMs = options.blockMs ?? CREDENTIAL_BLOCK_MS;
   const maxKeys = options.maxKeys ?? CREDENTIAL_LIMITER_MAX_KEYS;
   // Insertion order is recency order: a touched key moves to the end, and the
-  // oldest is dropped first once the map is full.
-  const entries = new Map<string, Entry>();
+  // oldest is dropped first once the map is full. Proof-key buckets live in a
+  // map of their own: a guesser minting a key per attempt must not push its
+  // address's buckets out and so reset them.
+  const addressEntries = new Map<string, Entry>();
+  const proofKeyEntries = new Map<string, Entry>();
+  const mapFor = (key: string) =>
+    key.includes(PROOF_KEY_BUCKET_MARK) ? proofKeyEntries : addressEntries;
 
   const touch = (key: string, entry: Entry, now: number) => {
+    const entries = mapFor(key);
     entries.delete(key);
     entries.set(key, entry);
     while (entries.size > maxKeys) {
@@ -91,7 +111,7 @@ export function makeCredentialFailureLimiter(
         ? Effect.void
         : Clock.currentTimeMillis.pipe(
             Effect.flatMap((now) => {
-              const entry = entries.get(key);
+              const entry = mapFor(key).get(key);
               if (entry === undefined || entry.blockedUntil <= now) return Effect.void;
               return Effect.fail(
                 new CredentialRateLimited({
@@ -100,18 +120,18 @@ export function makeCredentialFailureLimiter(
               );
             }),
           ),
-    recordFailure: (key) =>
+    recordFailure: (key, keyLimit = limit) =>
       key === null
         ? Effect.void
         : Clock.currentTimeMillis.pipe(
             Effect.map((now) => {
-              const previous = entries.get(key);
+              const previous = mapFor(key).get(key);
               const entry: Entry =
                 previous === undefined || now - previous.windowStart >= windowMs
                   ? { windowStart: now, failures: 0, blockedUntil: previous?.blockedUntil ?? 0 }
                   : previous;
               entry.failures += 1;
-              if (entry.failures >= limit) {
+              if (entry.failures >= keyLimit) {
                 entry.blockedUntil = now + blockMs;
                 entry.failures = 0;
                 entry.windowStart = now;
@@ -211,14 +231,60 @@ export function countsAsCredentialGuess(error: unknown): boolean {
   return !(typeof cause?._tag === "string" && GENUINE_BUT_STALE.has(cause._tag));
 }
 
+/**
+ * A short stable id for the public key in a DPoP proof's header, or null when
+ * the header is not a readable proof. The proof is not verified here: a forged
+ * key only lands its sender in a bucket of its own under the address ceiling.
+ */
+export function dpopProofKeyId(proof: string | undefined): string | null {
+  const header = proof?.trim().split(".")[0];
+  if (!header || header.length > 2048) return null;
+  try {
+    const jwk = (JSON.parse(Buffer.from(header, "base64url").toString("utf8")) as { jwk?: unknown })
+      .jwk as Record<string, unknown> | undefined;
+    if (typeof jwk !== "object" || jwk === null) return null;
+    const members = ["kty", "crv", "x", "y", "n", "e"].map((name) => String(jwk[name] ?? ""));
+    if (!members[2] && !members[4]) return null;
+    return createHash("sha256").update(members.join(".")).digest("base64url").slice(0, 22);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The buckets a request's failures count against: its proof key behind its
+ * address with the normal limit, or the address itself when no proof is
+ * presented, plus the ceiling every client behind the address shares.
+ */
+export function credentialLimiterBuckets(
+  request: HttpServerRequest.HttpServerRequest,
+): ReadonlyArray<{ readonly key: string; readonly limit?: number }> {
+  const address = credentialLimiterKey(request);
+  if (address === null) return [];
+  const proofKey = dpopProofKeyId(request.headers.dpop);
+  const ceiling = { key: `${address}#all`, limit: CREDENTIAL_ADDRESS_FAILURE_LIMIT };
+  if (proofKey === null) return [{ key: address }, ceiling];
+  return [{ key: `${address}${PROOF_KEY_BUCKET_MARK}${proofKey}` }, ceiling];
+}
+
 /** Gate `request`'s client, failing with `CredentialRateLimited` while it is blocked. */
 export const gateRequest = (request: HttpServerRequest.HttpServerRequest) =>
   CredentialFailureLimiter.pipe(
-    Effect.flatMap((limiter) => limiter.gate(credentialLimiterKey(request))),
+    Effect.flatMap((limiter) =>
+      Effect.forEach(credentialLimiterBuckets(request), (bucket) => limiter.gate(bucket.key), {
+        discard: true,
+      }),
+    ),
   );
 
 /** Count one failed credential check against `request`'s client. */
 export const recordRequestFailure = (request: HttpServerRequest.HttpServerRequest) =>
   CredentialFailureLimiter.pipe(
-    Effect.flatMap((limiter) => limiter.recordFailure(credentialLimiterKey(request))),
+    Effect.flatMap((limiter) =>
+      Effect.forEach(
+        credentialLimiterBuckets(request),
+        (bucket) => limiter.recordFailure(bucket.key, bucket.limit),
+        { discard: true },
+      ),
+    ),
   );

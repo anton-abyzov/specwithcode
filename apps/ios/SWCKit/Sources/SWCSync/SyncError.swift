@@ -9,6 +9,10 @@ public enum SyncError: Error, Sendable, Hashable {
   case noMachineConnected
   /// A paired machine is offline or has not listed its projects yet.
   case machinesNotLoaded
+  /// Aide is turned off in the desktop's settings.
+  case aideDisabled
+  /// Aide is on elsewhere but turned off on the machine that would create it.
+  case aideDisabledOn(label: String)
   case projectNotFound
   case nothingRunning
   case emptyMessage
@@ -53,6 +57,10 @@ extension SyncError: LocalizedError {
       "No computer is connected. Open SpecWithCode on one of your computers and try again."
     case .machinesNotLoaded:
       "Aide may already be on a computer that hasn't connected yet. Reconnect your computers, then try again."
+    case .aideDisabled:
+      "Aide is turned off. Turn it on in SpecWithCode's settings on your computer."
+    case let .aideDisabledOn(label):
+      "Aide is turned off on \(label.isEmpty ? "that computer" : label). Turn it on in SpecWithCode's settings there."
     case .projectNotFound:
       "This project no longer exists on that computer."
     case .nothingRunning:

@@ -38,6 +38,7 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
       environment_active: "project_environment_active",
       name_taken: "project_name_taken",
       assistant_exists: "project_assistant_exists",
+      assistant_disabled: "project_assistant_disabled",
       kind_fixed: "project_kind_fixed",
       too_many_deletes: "project_delete_rate_limited",
     } as const;

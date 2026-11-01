@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   navigate: vi.fn(),
+  aideHidden: false,
   props: null as null | {
     onProjectKeyMoved: (key: string) => void;
     onSelectThread: (id: string | null) => void;
@@ -26,12 +27,14 @@ vi.mock("../components/studio/ProjectWorkspace", () => ({
     return null;
   },
 }));
+vi.mock("../studio/hiddenAideRoute", () => ({ useHiddenAideRoute: () => state.aideHidden }));
 import { Route } from "./projects.$projectKey";
 let root: ReturnType<typeof createRoot>;
 beforeEach(async () => {
   root = createRoot(document.createElement("div"));
   state.navigate.mockReset();
   state.props = null;
+  state.aideHidden = false;
   // The web project config code-splits routes, just as the production router does.
   const component = (
     Route as unknown as { component: ComponentType & { preload?: () => Promise<unknown> } }
@@ -69,4 +72,13 @@ it("explicit overview from a restored page clears the restoration marker without
   expect(state.navigate).toHaveBeenCalledWith(
     expect.objectContaining({ search: { checkout: "m4:p" } }),
   );
+});
+it("sends a hidden personal assistant's page to Overview without opening it", async () => {
+  state.search = { thread: "private" };
+  state.aideHidden = true;
+  await act(async () =>
+    root.render(createElement((Route as unknown as { component: ComponentType }).component)),
+  );
+  expect(state.props).toBeNull();
+  expect(state.navigate).toHaveBeenCalledWith({ to: "/", replace: true });
 });

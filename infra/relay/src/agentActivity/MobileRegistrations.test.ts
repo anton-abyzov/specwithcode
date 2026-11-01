@@ -55,6 +55,7 @@ function makeDevices(
 ): Devices.Devices["Service"] {
   return {
     register: () => Effect.void,
+    touch: () => Effect.void,
     unregister: () => Effect.void,
     listForUser: () => Effect.succeed([]),
     ...overrides,

@@ -186,11 +186,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         const probed = yield* Effect.result(
           Effect.tryPromise({
             try: async () => {
-              const { host, client } = await connectMuse(
-                settings,
-                environment,
-                serverConfig.cwd,
-              );
+              const { host, client } = await connectMuse(settings, environment, serverConfig.cwd);
               try {
                 const [catalog, usage] = await museControl(
                   Promise.all([
@@ -204,7 +200,11 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
                 await client.close();
               }
             },
-            catch: (cause) => new MuseCheckError({ detail: museCheckFailure(cause), cause }),
+            catch: (cause) =>
+              new MuseCheckError({
+                detail: museCheckFailure(cause, settings.binaryPath || "muse"),
+                cause,
+              }),
           }),
         );
         if (probed._tag === "Failure") {

@@ -43,6 +43,15 @@ final class DrawerUITests: SWCUITestCase {
     attachScreenshot("Drawer, machines")
   }
 
+  func testDrawerHidesAideWhileItsSwitchIsOff() throws {
+    launch(aide: false)
+    waitForHome()
+    openDrawer(firstRow: "SpecWeave")
+    XCTAssertFalse(app.buttons.matching(titled("Aide")).firstMatch.exists, "Aide shows while its switch is off")
+    XCTAssertFalse(app.buttons.matching(titled("Set up Aide")).firstMatch.exists, "Set up Aide shows while its switch is off")
+    attachScreenshot("Drawer without Aide")
+  }
+
   func testTappingAProjectOpensItsCoordinatorChat() throws {
     launch()
     waitForHome()

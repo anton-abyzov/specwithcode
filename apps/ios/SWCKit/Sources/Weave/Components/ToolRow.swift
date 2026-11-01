@@ -35,7 +35,9 @@ public struct ToolRow: View {
           Text(title)
             .font(.weave(.callout, weight: .medium))
             .foregroundStyle(Color.weave.ink)
-            .lineLimit(expanded ? nil : 1)
+            // Without detail the row cannot expand, so its title must not be cut for good.
+            .lineLimit(expanded ? nil : (detail == nil ? 3 : 1))
+            .truncationMode(.middle)
           if let detail, expanded || state == .failed {
             Text(detail)
               .weaveFont(.code)

@@ -105,6 +105,34 @@ describe("RemoteWorkerStore", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps a lowered launch's modes and reads rows written before them", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const store = yield* RemoteWorkerStore.RemoteWorkerStore;
+      // A file from before the mode fields: it still decodes, with none set.
+      NodeFS.writeFileSync(
+        NodePath.join(config.stateDir, "remote-workers.json"),
+        JSON.stringify({ version: 1, workers: [row({ id: "rwt:old" })] }),
+      );
+      const [old] = yield* store.list;
+      expect(old?.runtimeMode).toBeUndefined();
+      expect(old?.loweredFrom).toBeUndefined();
+      yield* store.modify("rwt:lowered", () =>
+        row({ id: "rwt:lowered", runtimeMode: "approval-required", loweredFrom: "full-access" }),
+      );
+      const saved = JSON.parse(
+        NodeFS.readFileSync(NodePath.join(config.stateDir, "remote-workers.json"), "utf8"),
+      );
+      expect(saved.workers[1]).toMatchObject({
+        runtimeMode: "approval-required",
+        loweredFrom: "full-access",
+      });
+      expect((yield* store.list).find((worker) => worker.id === "rwt:lowered")).toMatchObject({
+        loweredFrom: "full-access",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reports an unreadable file instead of overwriting it", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

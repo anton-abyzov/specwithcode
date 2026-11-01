@@ -95,10 +95,10 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
   },
   {
     id: "project-worker-machine",
-    title: "Worker machine",
+    title: "Machines for workers",
     tab: "general",
-    anchors: ["Worker machine"],
-    searchTerms: ["host remote fleet"],
+    anchors: ["Machines for workers"],
+    searchTerms: ["worker machine host remote fleet order fallback"],
   },
   {
     id: "project-pause",

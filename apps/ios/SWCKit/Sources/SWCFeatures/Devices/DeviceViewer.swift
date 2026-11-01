@@ -149,7 +149,7 @@ struct DeviceViewerScreen: View {
         if let detail = session?.detail, !detail.isEmpty {
           Text(detail)
             .weaveFont(.caption)
-            .foregroundStyle(Color.weave.muted)
+            .foregroundStyle(Color.weave.ink.opacity(0.8))
             .lineLimit(1)
         }
       }
@@ -190,7 +190,7 @@ struct DeviceViewerScreen: View {
     .padding(.bottom, WeaveSpacing.s4)
     // Keeps the name readable over a light device screen.
     .background {
-      LinearGradient(colors: [Color.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom)
+      LinearGradient(stops: [.init(color: .black.opacity(0.75), location: 0), .init(color: .black.opacity(0.65), location: 0.8), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom)
         .ignoresSafeArea(edges: .top)
         .allowsHitTesting(false)
     }

@@ -8,6 +8,8 @@ import SWCWire
 final class FakeAccount: ConnectAccount {
   let config = ConnectConfig(publishableKey: "pk_test_x", relayURL: URL(string: "https://relay.example.com")!, oauthProviders: ["github"])
   var currentUser: ConnectUser?
+  /// The Clerk session ended server-side while `currentUser` is still cached.
+  var sessionEnded = false
 
   init(signedIn: Bool) {
     currentUser = signedIn ? ConnectUser(id: "user_1", displayName: "Anton", email: "anton@example.com") : nil
@@ -17,8 +19,9 @@ final class FakeAccount: ConnectAccount {
   func signIn(with method: ConnectSignInMethod) async throws {
     currentUser = ConnectUser(id: "user_1", displayName: "Anton", email: "anton@example.com")
   }
-  func signOut() async throws { currentUser = nil }
-  func sessionToken(refresh: Bool) async throws -> String? { currentUser == nil ? nil : "clerk-jwt" }
+  private(set) var signOutCount = 0
+  func signOut() async throws { currentUser = nil; signOutCount += 1 }
+  func sessionToken(refresh: Bool) async throws -> String? { currentUser == nil || sessionEnded ? nil : "clerk-jwt" }
 }
 
 final class TestKeyStore: DpopKeyStore {
@@ -190,11 +193,16 @@ final class TestKeyStore: DpopKeyStore {
     let device = ConnectDevice(label: "Anton's iPhone", iosMajorVersion: 26, appVersion: "0.1.0", bundleId: "com.specwithcode.ios", apsEnvironment: ConnectDevice.apsEnvironment("development"))
     let h = try await harness(device: device)
     #expect(await until { h.model.machines.first?.status == .connected })
-    #expect(h.relay.requests(path: "/v1/mobile/devices").isEmpty)
+    // Signed in, the phone is registered before any APNs token arrives.
+    #expect(await until { h.relay.requests(path: "/v1/mobile/devices").count == 1 })
+    let bare = try #require(h.relay.requests(path: "/v1/mobile/devices").first?.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+    #expect(bare["pushToken"] == nil)
+    #expect(bare["apsEnvironment"] == nil)
+    #expect((bare["preferences"] as? [String: Any])?["notificationsEnabled"] as? Bool == false)
 
     h.engine.connectSetPushToken(Data([0x0a, 0xff, 0x01]))
-    #expect(await until { !h.relay.requests(path: "/v1/mobile/devices").isEmpty })
-    let request = try #require(h.relay.requests(path: "/v1/mobile/devices").first)
+    #expect(await until { h.relay.requests(path: "/v1/mobile/devices").count == 2 })
+    let request = try #require(h.relay.requests(path: "/v1/mobile/devices").last)
     #expect(request.httpMethod == "POST")
     #expect(request.value(forHTTPHeaderField: "DPoP") != nil)
     let body = try #require(request.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
@@ -208,19 +216,30 @@ final class TestKeyStore: DpopKeyStore {
     // The same token for the same account is not sent twice.
     h.engine.connectSetPushToken(Data([0x0a, 0xff, 0x01]))
     try await Task.sleep(for: .milliseconds(50))
-    #expect(h.relay.requests(path: "/v1/mobile/devices").count == 1)
+    #expect(h.relay.requests(path: "/v1/mobile/devices").count == 2)
 
     await h.engine.connectSignOut()
     let removal = try #require(h.relay.requests(path: "/v1/mobile/devices/\(Self.deviceId)").first)
     #expect(removal.httpMethod == "DELETE")
   }
 
-  @Test func buildWithoutPushEntitlementNeverRegisters() async throws {
+  @Test func buildWithoutPushEntitlementRegistersWithoutAToken() async throws {
     let h = try await harness()
     #expect(await until { h.model.machines.first?.status == .connected })
+    #expect(await until { h.relay.requests(path: "/v1/mobile/devices").count == 1 })
     h.engine.connectSetPushToken(Data([0x01]))
     try await Task.sleep(for: .milliseconds(50))
-    #expect(h.relay.requests(path: "/v1/mobile/devices").isEmpty)
+    let posts = h.relay.requests(path: "/v1/mobile/devices")
+    #expect(posts.count == 1, "a token the build cannot use changes nothing")
+    let body = try #require(posts.first?.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+    #expect(body["pushToken"] == nil)
+    #expect(body["model"] == nil)
+    #expect((body["preferences"] as? [String: Any])?["notificationsEnabled"] as? Bool == false)
+
+    // Sign-out still unregisters a phone registered without notifications.
+    await h.engine.connectSignOut()
+    #expect(h.relay.requests(path: "/v1/mobile/devices/\(Self.deviceId)").first?.httpMethod == "DELETE")
+    #expect(LiveEngine.registrationKey(userId: "u", pushToken: nil) != LiveEngine.registrationKey(userId: "u", pushToken: "none"))
     #expect(ConnectDevice.apsEnvironment("production") == "production")
     #expect(ConnectDevice.apsEnvironment("$(SWC_APS_ENVIRONMENT)") == nil)
   }

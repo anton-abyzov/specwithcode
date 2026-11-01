@@ -289,6 +289,23 @@ it.effect("binds a launched thread to the increment it names, and refuses a bad 
     const inRoot = yield* handle(onBranch);
     expect(inRoot.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     expect(launched).toHaveLength(3);
+
+    // Use worktrees is off here, so an agent's worktree starts in the project
+    // folder unless the user asked for a worktree.
+    expect(launched[2]?.workspaceStrategy).toEqual({ type: "root" });
+    expect(fromBranch.at(-1)?.result).toMatchObject({
+      workspaceNotice: expect.stringContaining("Use worktrees is off"),
+    });
+    const named = { ...newWorktree, branch: "feat/y" } as const;
+    yield* handle({ ...onBranch, workspaceStrategy: named });
+    expect(launched[3]?.workspaceStrategy).toEqual({ type: "root" });
+    const asked = yield* handle({
+      ...onBranch,
+      workspaceStrategy: named,
+      userAskedForWorktree: true,
+    });
+    expect(launched[4]?.workspaceStrategy).toEqual(named);
+    expect(asked.at(-1)?.result).not.toHaveProperty("workspaceNotice");
   }).pipe(Effect.scoped),
 );
 

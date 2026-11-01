@@ -28,6 +28,22 @@ export const SCRATCH_PRUNE_DEFAULT_AGE_MS = 14 * DAY_MS;
 /** A larger tree is kept rather than walked further. */
 export const SCRATCH_PRUNE_WALK_LIMIT = 20_000;
 
+/**
+ * A folder the walk reads but does not enter: `node_modules`, and the
+ * `objects` folder of a `.git` folder. Installs and fetches fill them with
+ * tens of thousands of entries, which would put every clone past the limit,
+ * and their contents' times say when packages arrived, not when anyone last
+ * worked there. The folder's own time still counts, so an install in progress
+ * keeps the clone, and a commit still shows through the rest of `.git`.
+ */
+export const isOpaqueFolder = (path: string): boolean => {
+  const name = NodePath.basename(path);
+  return (
+    name === "node_modules" ||
+    (name === "objects" && NodePath.basename(NodePath.dirname(path)) === ".git")
+  );
+};
+
 /** `14d`, `2w` or `336h` in milliseconds; null for anything else. */
 export function parseAge(text: string): number | null {
   const match = /^(\d+)([hdw])$/.exec(text.trim());
@@ -50,6 +66,8 @@ export const changedAt = (stat: NodeFS.Stats): number => Math.max(stat.mtimeMs, 
  * Newest change time of `root` and everything under it, read with lstat so a
  * symlink counts by its own time and is never followed. Any failed read, a
  * missing or non-finite time, or more than `limit` entries makes it unknown.
+ * An opaque folder below `root` (see `isOpaqueFolder`) counts as one entry by
+ * its own time; nothing inside it is read, counted or dated.
  * `timeOf` exists for tests, which can set mtimes but not ctimes.
  */
 export function newestTreeMtime(
@@ -74,6 +92,7 @@ export function newestTreeMtime(
     if (!Number.isFinite(changed)) return { known: false, reason: `no time for ${current}` };
     newest = newest === null ? changed : Math.max(newest, changed);
     if (!stat.isDirectory()) continue;
+    if (current !== root && isOpaqueFolder(current)) continue;
     let names: Array<string>;
     try {
       names = NodeFS.readdirSync(current);

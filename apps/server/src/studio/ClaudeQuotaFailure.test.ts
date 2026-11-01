@@ -477,7 +477,6 @@ describe("Claude failure observation expiry", () => {
     { utilization: NaN, resets_at: null },
     { utilization: Infinity, resets_at: null },
     { utilization: 101, resets_at: null },
-    { utilization: null, resets_at: null },
   ])("does not normalize invalid native evidence into unused capacity: %j", async (five_hour) => {
     const usageLimits = claudeUsageResponseToLimits({
       checkedAt: claude().checkedAt,
@@ -494,6 +493,30 @@ describe("Claude failure observation expiry", () => {
       /no remaining permitted usage/,
     );
   });
+
+  it.each([undefined, null, { utilization: null, resets_at: null }])(
+    "reads a missing 5-hour window (%j) as no 5-hour limit, without clearing an old failure",
+    async (five_hour) => {
+      const usageLimits = claudeUsageResponseToLimits({
+        checkedAt: claude().checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            ...(five_hour === undefined ? {} : { five_hour }),
+            seven_day: { utilization: 2, resets_at: "2026-10-10T08:00:00Z" },
+          },
+        },
+      }).limits;
+      expect(usageLimits.unavailable).toBeUndefined();
+      expect(usageLimits.windows.map((window) => window.id)).toEqual(["seven_day"]);
+      // Without a 5-hour reading the read is not a complete allowance, so a
+      // recorded quota failure still needs a complete read to clear.
+      expect(usageLimits.nativeAllowanceObservedAt).toBeUndefined();
+      await expect(start(record(), { ...claude(), usageLimits })).rejects.toThrow(
+        /no remaining permitted usage/,
+      );
+    },
+  );
 
   it("does not clear an old failure when the native response has no complete account windows", async () => {
     for (const rate_limits of [

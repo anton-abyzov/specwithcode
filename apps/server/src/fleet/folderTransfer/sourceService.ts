@@ -1450,6 +1450,47 @@ export class SourceTransfers {
       return loaded.record;
     });
   }
+
+  /**
+   * Cancels copies whose grant expired unreleased (the destination now gets 401 and
+   * can never release them) and retries pending snapshot cleanup. Never throws.
+   */
+  async sweepExpired(): Promise<ReadonlyArray<string>> {
+    const cancelled: Array<string> = [];
+    const names = await NodeFSP.readdir(NodePath.join(this.stateRoot, "folder-sources")).catch(
+      () => [] as Array<string>,
+    );
+    for (const operationId of names) {
+      if (this.closed || !OPERATION_ID.test(operationId)) continue;
+      try {
+        const stored = this.operations.has(operationId)
+          ? null
+          : await readJson<SourceOperationRecord>(
+              NodePath.join(this.directory(operationId), "operation.json"),
+            );
+        // Checked after the disk read: a request may have loaded or re-offered it meanwhile.
+        const cached = this.operations.get(operationId);
+        const record = cached?.record ?? stored;
+        if (!record || record.operationId !== operationId) continue;
+        if (TERMINAL.has(record.state) || record.state === "failed") {
+          // The same cleanup retry read() makes.
+          if (record.snapshotCleanupPending && !cached?.readers.size) await this.read(operationId);
+          continue;
+        }
+        if (cached && (cached.building || cached.readers.size > 0 || cached.stopRequested))
+          continue;
+        if (record.grant.revokedAt !== null || this.now() < transferGrantExpiresAt(record.grant))
+          continue;
+        // Not load(): an expired scan or build is not restarted only to be cancelled.
+        if (!this.operations.has(operationId)) this.operations.set(operationId, newLoaded(record));
+        await this.cancel(operationId, "The copy offer expired before the destination finished.");
+        cancelled.push(operationId);
+      } catch {
+        // One unreadable operation must not stop the sweep.
+      }
+    }
+    return cancelled;
+  }
 }
 
 export function errorText(cause: unknown): string {

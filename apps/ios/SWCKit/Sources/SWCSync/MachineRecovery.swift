@@ -8,6 +8,7 @@ extension MachineSummary {
   public var recoveryTitle: String {
     if isDisconnected { return "Disconnected on this phone" }
     if needsSignIn { return "Sign in again" }
+    if isRefusingSignIns { return "\(displayName) is refusing sign-ins for now" }
     if status == .unsupported { return "Update needed" }
     if status == .needsRepair {
       return "Connection needs attention"
@@ -25,15 +26,18 @@ extension MachineSummary {
     if status == .unsupported {
       return "Update SpecWithCode on this phone and on \(displayName), then reconnect."
     }
+    if isRefusingSignIns {
+      return "\(displayName) is up, but it stopped accepting sign-ins from your network for a few minutes after too many failed attempts, usually from another device on the same Wi-Fi with an old pairing. You are still signed in. The app tries again on its own; updating SpecWithCode on \(displayName) stops one device from locking out the others."
+    }
     if status == .needsRepair {
       if viaConnect {
-        return "Check your account in SpecWithCode Connect and make sure Connect is enabled in the computer's Settings > Connections. You can also pair with a fresh link from that computer."
+        return "Check your account in SpecWithCode Connect, and on the computer check that Settings > Connections > Use SpecWithCode on your phone says it is ready for your iPhone. As a fallback, you can pair with a fresh link or QR code from that computer."
       }
-      return "Use SpecWithCode Connect to restore access. The fallback pairing is expired or no longer accepted. To refresh that fallback, open Settings > Connections > Pair a phone on the computer, then use its new link or QR code here."
+      return "Use SpecWithCode Connect to restore access. The fallback pairing is expired or no longer accepted. To refresh that fallback, open Settings > Connections on the computer, choose Pair a phone, then Use a private QR code instead, and use its new link or QR code here."
     }
     if viaConnect {
-      return "SpecWithCode Connect is the primary connection. Check that the computer is awake, SpecWithCode is running, and Connect is enabled in its Settings > Connections. A saved local or Tailscale pairing is used only as a fallback."
+      return "SpecWithCode Connect is the primary connection. Check that the computer is awake, SpecWithCode is running, and its Settings > Connections > Use SpecWithCode on your phone says it is ready for your iPhone. A saved Wi-Fi or Tailscale pairing is used only as a fallback."
     }
-    return "Use SpecWithCode Connect to reach this computer. Enable Connect in the computer's Settings > Connections and sign in with the same account on this phone. Keep the computer awake with SpecWithCode running. Local Wi-Fi or Tailscale pairing is a fallback."
+    return "Use SpecWithCode Connect to reach this computer. On the computer, open Settings > Connections > Use SpecWithCode on your phone, sign in and turn it on. Then sign in with the same account on this phone. Keep the computer awake with SpecWithCode running. Wi-Fi or Tailscale pairing is only a fallback."
   }
 }

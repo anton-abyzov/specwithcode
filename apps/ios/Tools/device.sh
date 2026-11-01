@@ -50,6 +50,17 @@ if [ "$#" -eq 1 ]; then
   esac
 fi
 
+# An app built with an SDK older than iOS 27.1 runs on iPhone Duo in a scaled
+# compatibility window: it never fills the unfolded display and rotation
+# rescales it. Refuse such builds; point DEVELOPER_DIR at a newer Xcode.
+MIN_SDK=27.1
+sdk=$(xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || echo 0)
+if [ "$(printf '%s\n%s\n' "$MIN_SDK" "$sdk" | sort -V | head -1)" != "$MIN_SDK" ]; then
+  printf 'iPhone SDK %s is older than %s; iPhone Duo would run this build in compatibility mode.\n' "$sdk" "$MIN_SDK" >&2
+  printf 'Use a newer Xcode, for example: DEVELOPER_DIR=/Applications/Xcode-27.2.app Tools/device.sh\n' >&2
+  exit 1
+fi
+
 : "${DEVICE:?set DEVICE to a name or identifier from: Tools/device.sh list}"
 : "${STUDIO_APPLE_TEAM_ID:?set STUDIO_APPLE_TEAM_ID to the Apple team id}"
 export STUDIO_APPLE_TEAM_ID

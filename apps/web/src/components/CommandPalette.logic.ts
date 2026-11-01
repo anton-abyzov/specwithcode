@@ -83,7 +83,8 @@ export type CommandPaletteUiAction =
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
   | { readonly _tag: "OpenAddProject" }
-  | { readonly _tag: "OpenNewAssistant" }
+  // `aideEnabled` false (Settings → General) leaves the palette as it is: no setup.
+  | { readonly _tag: "OpenNewAssistant"; readonly aideEnabled: boolean }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
   | { readonly _tag: "ClearOpenIntent" };
@@ -114,7 +115,9 @@ export function reduceCommandPaletteUiState(
     case "OpenAddProject":
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
     case "OpenNewAssistant":
-      return { open: true, mode: "command", openIntent: { kind: "new-assistant" } };
+      return action.aideEnabled
+        ? { open: true, mode: "command", openIntent: { kind: "new-assistant" } }
+        : state;
     case "OpenNewThreadIn":
       return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
     case "OpenChangeTheme":
@@ -122,6 +125,14 @@ export function reduceCommandPaletteUiState(
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }
+}
+
+/** Whether the palette offers to set up a personal assistant: only while it is on and a machine can hold one. */
+export function personalAssistantActionOffered(input: {
+  readonly aideEnabled: boolean;
+  readonly newProjectMachineCount: number;
+}): boolean {
+  return input.aideEnabled && input.newProjectMachineCount > 0;
 }
 
 export interface CommandPaletteThreadContentMatch {

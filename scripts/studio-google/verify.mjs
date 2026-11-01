@@ -31,7 +31,7 @@ const state = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-google-"
 NodeFS.mkdirSync(NodePath.join(state, "userdata"), { recursive: true });
 NodeFS.writeFileSync(
   NodePath.join(state, "userdata/settings.json"),
-  JSON.stringify({ providerInstances: {} }),
+  JSON.stringify({ providerInstances: {}, aideEnabled: true }),
 );
 
 const CLIENT_ID = "123456789012-verifystudio.apps.googleusercontent.com";

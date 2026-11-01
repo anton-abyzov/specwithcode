@@ -21,7 +21,7 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     // Wide outer-display landscape can still have compact traits. The native
     // component tests enforce the trait/width policy; verify each visible mode here.
     if !button("Menu").exists {
-      XCTAssertGreaterThanOrEqual(app.frame.width, 600)
+      XCTAssertGreaterThanOrEqual(app.frame.width, 760)
       waitForHittable(search)
       waitForHittable(field("Message"))
       XCTAssertFalse(button("Close menu").exists)

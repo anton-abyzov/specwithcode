@@ -593,3 +593,80 @@ describe("a learned preference for a paid model", () => {
     });
   });
 });
+
+describe("spending quota about to reset unused", () => {
+  const resetIn = (minutes: number) =>
+    DateTime.formatIso(DateTime.makeUnsafe(now + minutes * 60_000));
+  const codexWindows = (windows: NonNullable<ServerProvider["usageLimits"]>["windows"]) => ({
+    ...codex,
+    usageLimits: { checkedAt: at, windows },
+  });
+  const session = (usedPercent: number, minutes: number) => ({
+    id: "five_hour",
+    kind: "session" as const,
+    label: "Session",
+    usedPercent,
+    resetsAt: resetIn(minutes),
+  });
+  const weekly = (usedPercent: number, minutes: number) => ({
+    id: "seven_day",
+    kind: "weekly" as const,
+    label: "Weekly",
+    usedPercent,
+    resetsAt: resetIn(minutes),
+  });
+
+  it("moves routine work to a lane model whose 5-hour quota resets soon mostly unused", () => {
+    const decision = route("Update the changelog for 1.0.73", {
+      providers: [claude, codexWindows([session(20, 30)]), copilot, gemini],
+      baseline: opus,
+    });
+    expect(decision).toMatchObject({ lane: "routine", moved: true, selection: astra });
+    expect(decision?.escalation).toEqual(copilotOpus);
+    expect(decision?.reason).toContain("80% of its 5-hour quota resets in 30 min");
+  });
+
+  it("does nothing when the setting is off", () => {
+    const decision = route("Update the changelog for 1.0.73", {
+      providers: [claude, codexWindows([session(20, 30)]), copilot, gemini],
+      policy: { ...policy, spendExpiringQuota: false },
+    });
+    expect(decision?.selection).toEqual(copilotOpus);
+  });
+
+  it("ignores a window that resets later, or with little left", () => {
+    for (const windows of [[session(20, 200)], [session(75, 30)]]) {
+      const decision = route("Update the changelog for 1.0.73", {
+        providers: [claude, codexWindows(windows), copilot, gemini],
+      });
+      expect(decision?.selection).toEqual(copilotOpus);
+    }
+  });
+
+  it("spends a weekly in its last day only while the 5-hour window has room too", () => {
+    const roomy = route("Update the changelog for 1.0.73", {
+      providers: [claude, codexWindows([session(10, 200), weekly(30, 600)]), copilot, gemini],
+    });
+    expect(roomy?.selection).toEqual(astra);
+    expect(roomy?.reason).toContain("70% of its weekly quota resets in 10 h");
+    const tight = route("Update the changelog for 1.0.73", {
+      providers: [claude, codexWindows([session(80, 200), weekly(30, 600)]), copilot, gemini],
+    });
+    expect(tight?.selection).toEqual(copilotOpus);
+  });
+
+  it("keeps the first model when its own quota is about to reset too", () => {
+    const decision = route("Design a new architecture for offline sync from scratch", {
+      providers: [
+        codexWindows([session(10, 20)]),
+        {
+          ...claude,
+          usageLimits: { checkedAt: at, windows: [session(10, 40)] },
+        },
+        copilot,
+        gemini,
+      ],
+    });
+    expect(decision?.selection).toEqual(sol);
+  });
+});

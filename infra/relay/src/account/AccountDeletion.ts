@@ -24,6 +24,8 @@ import {
   relayLiveActivities,
   relayManagedEndpointAllocations,
   relayManagedTunnelLimits,
+  relayClientKeys,
+  relayMobileDeviceRemovals,
   relayMobileDevices,
 } from "../persistence/schema.ts";
 
@@ -89,7 +91,8 @@ export class AccountRecords extends Context.Service<
       readonly userId: string;
     }) => Effect.Effect<void, AccountRecordsPersistenceError>;
     /**
-     * Hard-deletes devices, Live Activities, delivery records, tunnel limits,
+     * Hard-deletes devices, phone removals, client keys, Live Activities,
+     * delivery records, tunnel limits,
      * the Connect account and links, only while the account holds no managed
      * allocation; the check and the deletes are one batch. Returns false,
      * deleting nothing, when an allocation remains. A founder seat is never
@@ -154,6 +157,10 @@ export const layerAccountRecords = Layer.effect(
             .delete(relayMobileDevices)
             .where(and(eq(relayMobileDevices.userId, userId), noAllocation)),
           db
+            .delete(relayMobileDeviceRemovals)
+            .where(and(eq(relayMobileDeviceRemovals.userId, userId), noAllocation)),
+          db.delete(relayClientKeys).where(and(eq(relayClientKeys.userId, userId), noAllocation)),
+          db
             .delete(relayDeliveryAttempts)
             .where(and(eq(relayDeliveryAttempts.userId, userId), noAllocation)),
           db
@@ -168,7 +175,7 @@ export const layerAccountRecords = Layer.effect(
             .where(and(eq(relayEnvironmentLinks.userId, userId), noAllocation)),
           RelayDb.rawQuery(sql`select ${noAllocation} as deleted`),
         ]).pipe(Effect.mapError(fail(userId, "delete-rows")));
-        return Number(results[6]?.[0]?.deleted ?? 0) === 1;
+        return Number(results.at(-1)?.[0]?.deleted ?? 0) === 1;
       }),
     });
   }),

@@ -52,12 +52,21 @@ SCHEMA = '''
 '''
 
 
+def session_window(last_connected):
+    """Issued a week before its last connection and active for a month after it. Fixed dates
+    expired on 2026-11-01 and failed every wall-clock heartbeat proof from then on."""
+    connected = datetime.datetime.fromisoformat(last_connected.replace('Z', '+00:00'))
+    stamp = lambda moment: moment.astimezone(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    return stamp(connected - datetime.timedelta(days=8)), stamp(connected + datetime.timedelta(days=30))
+
+
 def build(path, last_connected):
     db = sqlite3.connect(path)
     db.executescript(SCHEMA)
+    issued, expires = session_window(last_connected)
     db.execute('INSERT INTO auth_sessions VALUES (?,?,?,?,?,?,?,?)',
-               ('synthetic-private-session', 'browser-session-cookie', 'web', '2026-10-01T00:00:00.000Z',
-                '2026-11-01T00:00:00.000Z', last_connected, None, b'synthetic-private-credential'))
+               ('synthetic-private-session', 'browser-session-cookie', 'web', issued,
+                expires, last_connected, None, b'synthetic-private-credential'))
     db.commit()
     db.close()
 

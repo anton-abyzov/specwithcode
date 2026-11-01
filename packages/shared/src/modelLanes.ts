@@ -31,6 +31,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { describeExpiringQuota, type ExpiringQuota, expiringQuota } from "./expiringQuota.ts";
 import { canTakeTurn, isGeminiSpendProvider, providerUsedPercent } from "./providerFallback.ts";
 import {
   billingOf,
@@ -260,7 +261,7 @@ export interface ResolveLaneRoutingInput {
    * Auto is on (`mode: "auto"`); otherwise, or when absent, it reads as `never`.
    */
   readonly policy: Pick<TaskRoutingSettings, "excludedProviders" | "escalate"> &
-    Partial<Pick<TaskRoutingSettings, "minimumTier" | "paidApi" | "mode">>;
+    Partial<Pick<TaskRoutingSettings, "minimumTier" | "paidApi" | "mode" | "spendExpiringQuota">>;
   readonly switchAtPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   readonly runnableInstanceIds?: ReadonlySet<string> | undefined;
@@ -367,6 +368,35 @@ export interface LaneRoutingResult {
   readonly baselineUnavailable: string | null;
 }
 
+/**
+ * Which eligible lane entry after the first spends quota about to reset
+ * unused, or null. Off with the setting, for a learned "prefer" pick (it
+ * names the model on purpose), and when the first entry is itself about to
+ * reset with quota left.
+ */
+function spendExpiringQuotaFirst(
+  eligible: ReadonlyArray<ModelSelection>,
+  preferred: LearnedModelPreference | undefined,
+  input: ResolveLaneRoutingInput,
+): { readonly index: number; readonly quota: ExpiringQuota } | null {
+  if (input.policy.spendExpiringQuota === false || eligible.length < 2) return null;
+  if (
+    preferred?.action.kind === "prefer" &&
+    selectionKey(preferred.action.model) === selectionKey(eligible[0]!)
+  )
+    return null;
+  const quotaOf = (selection: ModelSelection) => {
+    const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+    return provider === undefined ? null : expiringQuota(provider, selection.model, input.nowMs);
+  };
+  if (quotaOf(eligible[0]!) !== null) return null;
+  for (let index = 1; index < eligible.length; index += 1) {
+    const quota = quotaOf(eligible[index]!);
+    if (quota !== null) return { index, quota };
+  }
+  return null;
+}
+
 export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingResult | null {
   const lane = classifyLane({
     task: input.task,
@@ -430,17 +460,24 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
   const eligible: ModelSelection[] = [];
   for (const selection of ordered) {
     const label = laneEntryLabel(input.providers, selection);
+    // Past the first two that can run, entries are only looked at for expiring quota.
+    const noted = eligible.length < 2;
     if (avoided.has(selectionKey(selection))) {
-      skipped.push(`${label}: avoided for tasks like this`);
+      if (noted) skipped.push(`${label}: avoided for tasks like this`);
       continue;
     }
     const why = laneEntryUnavailable(selection, input);
     if (why !== null) {
-      skipped.push(`${label}: ${why}`);
+      if (noted) skipped.push(`${label}: ${why}`);
       continue;
     }
     eligible.push(selection);
-    if (eligible.length === 2) break;
+  }
+  // Quota that resets soon unused goes first: the lane's first model keeps its own.
+  const expiring = spendExpiringQuotaFirst(eligible, preferred, input);
+  if (expiring !== null) {
+    const [chosenFirst] = eligible.splice(expiring.index, 1);
+    eligible.unshift(chosenFirst!);
   }
   const laneLabel = LANE_LABELS[lane.lane];
   const signals = [`lane: ${lane.lane}`, ...lane.signals, ...input.classification.signals].slice(
@@ -501,6 +538,7 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
           : "no sign of complex work";
   const via = usedPreference !== undefined ? " (learned preference)" : "";
   const passed = skipped.length > 0 ? ` after skipping ${skipped.length}` : "";
+  const spending = expiring !== null ? `, because ${describeExpiringQuota(expiring.quota)}` : "";
   const detail = billingOf(provider, model);
   const decision: TaskRoutingDecision = {
     ...common,
@@ -512,7 +550,7 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     escalation: moved && input.policy.escalate ? (eligible[1] ?? null) : null,
     billing: taskRoutingBilling(detail),
     modelBilling: detail,
-    reason: `${laneLabel} (${why}): ${laneEntryLabel(input.providers, chosen)}${via}${passed}.`,
+    reason: `${laneLabel} (${why}): ${laneEntryLabel(input.providers, chosen)}${via}${spending}${passed}.`,
   };
   return { decision, found: true, baselineUnavailable: null };
 }

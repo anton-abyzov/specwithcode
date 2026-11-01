@@ -515,6 +515,33 @@
     align-items: center;
     gap: 8px;
   }
+  & .project-worker-machines {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    & h3 {
+      margin: 0;
+    }
+    & ol {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    & li {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+    & .project-worker-machine-name {
+      flex: 1 1 160px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+  }
   /* Secondary actions read as buttons: one line, an optional leading icon, a quiet border.
      Memory file rows and the inline icon picker keep their own look. */
   & .project-control:not(.project-memory-list *, .project-name-icon) {

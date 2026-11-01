@@ -294,10 +294,14 @@ function NativeDecisionFixture({
                   requestKind: "command",
                   responseCapability: "live",
                   createdAt: "2026-10-13T12:00:00Z",
-                  detail: "npm run test:unit -- coordinator-recovery",
+                  detail:
+                    "npm run test:unit -- coordinator-recovery --reporter=verbose --testNamePattern='keeps the held queue and the approval bar in step after a restart'",
+                  // Every option the bar can show, accept listed first: it still renders last.
                   options: [
-                    { decision: "decline", label: "Decline" },
                     { decision: "accept", label: "Approve" },
+                    { decision: "acceptForSession", label: "Always allow this session" },
+                    { decision: "decline", label: "Decline" },
+                    { decision: "cancel", label: "Cancel" },
                   ],
                 },
               ]

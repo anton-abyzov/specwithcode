@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import { resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -130,6 +131,61 @@ describe("claudeUsageResponseToLimits", () => {
         windowDurationMins: 10080,
       },
     ]);
+  });
+});
+
+describe("a Claude account without a 5-hour limit", () => {
+  const weekly = { utilization: 36, resets_at: "2026-07-25T08:00:00Z" };
+  const weeklyRow = {
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 36,
+    windowDurationMins: 10080,
+    resetsAt: "2026-07-25T08:00:00.000Z",
+  };
+  const read = (rateLimits: object, at = checkedAt) =>
+    claudeUsageResponseToLimits({
+      checkedAt: at,
+      response: { rate_limits_available: true, rate_limits: rateLimits as never },
+    }).limits;
+
+  it.each([
+    ["is missing", { seven_day: weekly }],
+    ["is null", { five_hour: null, seven_day: weekly }],
+    [
+      "has no utilization",
+      { five_hour: { utilization: null, resets_at: null }, seven_day: weekly },
+    ],
+  ])("draws only the weekly row, as a valid read, when five_hour %s", (_case, rateLimits) => {
+    const limits = read(rateLimits);
+    expect(limits.windows).toEqual([weeklyRow]);
+    expect(limits.unavailable).toBeUndefined();
+  });
+
+  it("still flags a five_hour with a malformed reset", () => {
+    expect(
+      read({ five_hour: { utilization: null, resets_at: "not a time" }, seven_day: weekly })
+        .unavailable,
+    ).toEqual({ reason: "probeFailed", invalidResponse: true });
+  });
+
+  it("drops a 5-hour row an earlier read showed once a fresh read omits it", () => {
+    const earlier = read(
+      {
+        five_hour: { utilization: 54, resets_at: "2026-07-18T14:39:00Z" },
+        seven_day: { utilization: 20, resets_at: "2026-07-25T08:00:00Z" },
+      },
+      "2026-07-18T09:00:00.000Z",
+    );
+    expect(earlier.windows.map((window) => window.id)).toEqual(["five_hour", "seven_day"]);
+    const resolved = resolveUsageLimitsAfterProbe({
+      driver: "claudeAgent" as never,
+      published: earlier,
+      probed: read({ seven_day: weekly }),
+    });
+    expect(resolved?.windows).toEqual([weeklyRow]);
+    expect(resolved?.unavailable).toBeUndefined();
   });
 });
 

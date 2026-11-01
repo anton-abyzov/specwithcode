@@ -22,9 +22,7 @@ public struct ThinkingGlyph: View {
   public var body: some View {
     Group {
       if pulsing && !reduceMotion {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-          dotsView.opacity(Self.pulseOpacity(at: context.date.timeIntervalSinceReferenceDate))
-        }
+        dotsView.weaveBreathing()
       } else {
         dotsView
       }
@@ -33,10 +31,8 @@ public struct ThinkingGlyph: View {
     .accessibilityHidden(true)
   }
 
-  /// Between 0.45 and 1 on a 1.6 second breath.
-  public static func pulseOpacity(at time: TimeInterval) -> Double {
-    0.725 + 0.275 * cos(time / 1.6 * 2 * .pi)
-  }
+  /// The breath's ends, which `weaveBreathing()` eases between.
+  public static let breathRange: ClosedRange<Double> = 0.45...1
 
   private var dotsView: some View {
     Canvas { context, canvas in
@@ -69,4 +65,18 @@ public struct ThinkingGlyph: View {
   }
   .foregroundStyle(Color.weave.muted)
   .weavePreview(.dark)
+}
+
+extension View {
+  /// Fades between 1 and 0.45 on a 1.6 second breath. The render server runs
+  /// the fade, so the view's body is not re-evaluated every frame the way a
+  /// TimelineView would; that per-frame work kept the main thread and the
+  /// phone busy for as long as a reply streamed.
+  public func weaveBreathing() -> some View {
+    phaseAnimator([true, false]) { content, high in
+      content.opacity(high ? ThinkingGlyph.breathRange.upperBound : ThinkingGlyph.breathRange.lowerBound)
+    } animation: { _ in
+      .easeInOut(duration: 0.8)
+    }
+  }
 }

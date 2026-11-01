@@ -4,6 +4,7 @@ import {
   type RelayClientDeviceRecord,
   type RelayClientEnvironmentRecord,
   type RelayEnvironmentStatusResponse,
+  type RelayPhoneRecord,
 } from "@specweave-studio/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -24,6 +25,7 @@ import {
   ManagedRelaySessionError,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
+  removeManagedRelayPhone,
   setManagedRelaySession,
 } from "./managedRelayState.ts";
 
@@ -59,6 +61,16 @@ const device = {
   updatedAt: "2026-06-01T00:00:00.000Z",
 } satisfies RelayClientDeviceRecord;
 
+const phone = {
+  deviceId: "device-1",
+  label: "Alice's iPhone",
+  platform: "ios",
+  model: "iPhone 16 Pro",
+  appVersion: "0.1.1",
+  lastSeenAt: "2026-06-01T00:00:00.000Z",
+  current: false,
+} satisfies RelayPhoneRecord;
+
 function resetRegistry() {
   registry.dispose();
   registry = AtomRegistry.make();
@@ -85,6 +97,8 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     registerDevice: () => Effect.die("unused"),
     unregisterDevice: () => Effect.die("unused"),
     registerLiveActivity: () => Effect.die("unused"),
+    listPhones: () => Effect.die("unused"),
+    removePhone: () => Effect.die("unused"),
     getAgentActivitySnapshot: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
     ...overrides,
@@ -153,6 +167,44 @@ describe("createManagedRelayQueryManager", () => {
 
       expect(error).toBeInstanceOf(ManagedRelaySessionError);
       expect(unlinkEnvironment).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("removes a phone through the current Clerk session", () =>
+    Effect.gen(function* () {
+      const removePhone = vi.fn(() => Effect.succeed({ removed: true, current: false }));
+      setSession();
+
+      const result = yield* removeManagedRelayPhone(registry, {
+        accountId: "account-1",
+        deviceId: phone.deviceId,
+      }).pipe(
+        Effect.provideService(ManagedRelay.ManagedRelayClient, createClient({ removePhone })),
+      );
+
+      expect(result).toEqual({ removed: true, current: false });
+      expect(removePhone).toHaveBeenCalledWith({
+        clerkToken: "clerk-token",
+        deviceId: phone.deviceId,
+      });
+    }),
+  );
+
+  it.effect("rejects removing a phone after the account changes", () =>
+    Effect.gen(function* () {
+      const removePhone = vi.fn(() => Effect.succeed({ removed: true, current: false }));
+      setSession();
+
+      const error = yield* removeManagedRelayPhone(registry, {
+        accountId: "previous-account",
+        deviceId: phone.deviceId,
+      }).pipe(
+        Effect.provideService(ManagedRelay.ManagedRelayClient, createClient({ removePhone })),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(ManagedRelaySessionError);
+      expect(removePhone).not.toHaveBeenCalled();
     }),
   );
 
@@ -347,6 +399,22 @@ describe("createManagedRelayQueryManager", () => {
     await vi.waitFor(() => {
       expect(readManagedRelaySnapshotState(registry.get(atom)).data).toEqual([device]);
     });
+  });
+
+  it("loads the account's phones and reloads them on refresh", async () => {
+    const listPhones = vi.fn(() => Effect.succeed([phone]));
+    const manager = createManager({ listPhones });
+    setSession();
+    const atom = manager.phonesAtom("account-1");
+
+    registry.get(atom);
+    await vi.waitFor(() => {
+      expect(readManagedRelaySnapshotState(registry.get(atom)).data).toEqual([phone]);
+    });
+    expect(listPhones).toHaveBeenCalledWith({ clerkToken: "clerk-token" });
+
+    manager.refreshPhones(registry, "account-1");
+    await vi.waitFor(() => expect(listPhones).toHaveBeenCalledTimes(2));
   });
 
   it("reports token and relay request phases for environment status queries", async () => {

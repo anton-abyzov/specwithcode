@@ -2,9 +2,11 @@ import SwiftUI
 import SWCSync
 import Weave
 
-/// The expanded layout's navigation column: Aide, projects, recent threads and
-/// machines in a native sidebar list. Selection reads from and writes to the
-/// router, the same state the compact drawer uses.
+/// The expanded layout's navigation column: Aide, projects with their threads
+/// nested under them, recent threads and machines in a native sidebar list.
+/// Selection reads from and writes to the router, the same state the compact
+/// drawer uses. Tapping a project opens its coordinator and unfolds its
+/// threads; tapping the open project again folds them.
 struct SidebarView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
@@ -13,9 +15,11 @@ struct SidebarView: View {
   @State private var showAutomated = false
   @State private var showArchived = false
   @State private var settingUpAide = false
+  @State private var expanded: Set<ProjectRef> = []
 
   private static let collapsedProjectCount = 8
   private static let recentCount = 12
+  private static let nestedThreadCount = 5
 
   var body: some View {
     @Bindable var router = router
@@ -27,19 +31,9 @@ struct SidebarView: View {
         list
       }
     }
-    .navigationTitle("SpecWithCode")
-    #if os(iOS)
-    .navigationBarTitleDisplayMode(.large)
-    .toolbar(router.isDrawerSearching ? .hidden : .automatic, for: .navigationBar)
-    #endif
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          withAnimation(.snappy) { router.isDrawerSearching = true }
-        } label: {
-          Label("Search projects and threads", systemImage: "magnifyingglass")
-        }
-      }
+    .hideNavigationBar()
+    .safeAreaInset(edge: .top, spacing: 0) {
+      if !router.isDrawerSearching { header }
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if !router.isDrawerSearching { bottomBar }
@@ -54,6 +48,62 @@ struct SidebarView: View {
         .accessibilityHidden(true)
     }
     .tint(Color.weave.iris)
+    .onAppear { revealSelection() }
+    .onChange(of: router.sidebarSelection(in: model)) { revealSelection() }
+  }
+
+  // MARK: Header
+
+  /// The wordmark with round search and collapse buttons, as in the Claude
+  /// and Codex sidebars.
+  private var header: some View {
+    HStack(spacing: WeaveSpacing.s2) {
+      // The mark, with the name beside it only when it fits whole: a narrow
+      // column showed "Spec…" with the wordmark cut off.
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: WeaveSpacing.s2) {
+          WeaveLogo(size: 30)
+          Text("SpecWithCode")
+            .font(.system(size: 20, weight: .semibold, design: .serif))
+            .foregroundStyle(Color.weave.ink)
+            .lineLimit(1)
+            .fixedSize()
+        }
+        WeaveLogo(size: 30)
+      }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("SpecWithCode")
+      .accessibilityAddTraits(.isHeader)
+      Spacer(minLength: 0)
+      WeaveIconButton("magnifyingglass", label: "Search projects and threads") {
+        withAnimation(.snappy) { router.isDrawerSearching = true }
+      }
+      WeaveIconButton("sidebar.left", label: "Hide sidebar") {
+        router.isSidebarCollapsed = true
+      }
+      .accessibilityIdentifier("sidebar.collapse")
+    }
+    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+    .padding(.leading, WeaveSpacing.s6)
+    .padding(.trailing, WeaveSpacing.s4)
+    .padding(.top, WeaveSpacing.s1)
+    .padding(.bottom, WeaveSpacing.s2)
+    .background(Color.weave.sunken)
+  }
+
+  /// Unfolds the project of the chat on screen, so its row and the open
+  /// thread are visible.
+  private func revealSelection() {
+    guard case let .chat(target)? = router.sidebarSelection(in: model) else { return }
+    let ref: ProjectRef?
+    switch target {
+    case let .project(project): ref = model.project(project)?.ref
+    case let .thread(thread): ref = model.thread(thread)?.projectRef.flatMap { model.project($0)?.ref }
+    case .aide: ref = nil
+    }
+    if let ref, !expanded.contains(ref) {
+      withAnimation(.snappy) { _ = expanded.insert(ref) }
+    }
   }
 
   private var list: some View {
@@ -71,7 +121,10 @@ struct SidebarView: View {
   // MARK: Aide
 
   @ViewBuilder private var aideSection: some View {
-    if let aide = model.aide, !aide.archived {
+    // Aide stays hidden, set-up offer included, until its switch is on.
+    if !model.aideEnabled {
+      EmptyView()
+    } else if let aide = model.aide, !aide.archived {
       Section {
         SidebarRow(title: "Aide") {
           ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
@@ -138,14 +191,62 @@ struct SidebarView: View {
     }
   }
 
-  private func projectRow(_ project: ProjectSummary, shared: Set<String>) -> some View {
-    SidebarRow(title: project.title, subtitle: shared.contains(project.title.lowercased()) ? project.machineLabel : nil) {
-      ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
-    } trailing: {
-      ProjectStatusGlyphs(project: project)
+  @ViewBuilder private func projectRow(_ project: ProjectSummary, shared: Set<String>) -> some View {
+    let item = SidebarItem.chat(.project(project.ref))
+    let selected = router.sidebarSelection(in: model) == item
+    let threads = model.threads(in: project.ref).filter { !$0.isResolved }
+    let open = expanded.contains(project.ref)
+    Button {
+      withAnimation(.snappy) {
+        if selected, !threads.isEmpty {
+          if open { expanded.remove(project.ref) } else { expanded.insert(project.ref) }
+        } else {
+          expanded.insert(project.ref)
+          router.select(item)
+        }
+      }
+    } label: {
+      SidebarRow(title: project.title, subtitle: shared.contains(project.title.lowercased()) ? project.machineLabel : nil) {
+        ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
+      } trailing: {
+        HStack(spacing: WeaveSpacing.s2) {
+          ProjectStatusGlyphs(project: project)
+          if !threads.isEmpty {
+            Image(systemName: "chevron.right")
+              .font(.system(size: 11, weight: .semibold))
+              .foregroundStyle(Color.weave.muted)
+              .rotationEffect(.degrees(open ? 90 : 0))
+              .accessibilityHidden(true)
+          }
+        }
+      }
     }
+    .buttonStyle(.plain)
     .accessibilityValue(ProjectStatusGlyphs.spoken(project))
-    .sidebarItem(.chat(.project(project.ref)))
+    .accessibilityAddTraits(selected ? .isSelected : [])
+    .accessibilityHint(threads.isEmpty ? "" : open ? "Folds its threads" : "Shows its threads")
+    .sidebarRowStyle(selected: selected)
+    .projectRowActions(project)
+    if open {
+      ForEach(threads.prefix(Self.nestedThreadCount)) { thread in
+        NestedThreadRow(thread: thread)
+          .sidebarItem(.chat(.thread(thread.ref)))
+          .threadRowActions(thread)
+          .transition(.opacity.combined(with: .move(edge: .top)))
+      }
+      if threads.count > Self.nestedThreadCount {
+        Button { router.push(.overview(project.ref)) } label: {
+          Text("All \(threads.count) threads")
+            .font(.weave(.callout))
+            .foregroundStyle(Color.weave.muted)
+            .padding(.leading, 28 + WeaveSpacing.s3)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sidebarRowStyle(selected: false)
+      }
+    }
   }
 
   private func foldButton(_ title: String, toggle: @escaping () -> Void) -> some View {
@@ -174,13 +275,14 @@ struct SidebarView: View {
       if !rows.isEmpty {
         Section {
           ForEach(rows) { thread in
-            SidebarRow(title: thread.title, subtitle: thread.projectTitle.map { "\($0) · \(thread.identity.label)" } ?? thread.identity.label) {
+            SidebarRow(title: thread.title, subtitle: thread.identity.label + "\n" + ([thread.projectTitle, thread.placement.subtitle()].compactMap(\.self).joined(separator: " · "))) {
               ThreadIdentityMarks(identity: thread.identity)
             } trailing: {
               RecentThreadGlyph(thread: thread)
             }
             .accessibilityValue(RecentThreadGlyph.spoken(thread))
             .sidebarItem(.chat(.thread(thread.ref)))
+            .threadRowActions(thread)
           }
           if group.label == grouped.groups.last(where: { g in g.threads.contains { visible.contains($0.ref) } })?.label,
              model.recentThreads.count > Self.recentCount {
@@ -203,13 +305,12 @@ struct SidebarView: View {
     if !model.machines.isEmpty {
       Section("Machines") {
         ForEach(model.machines) { machine in
-          SidebarRow(title: machine.displayName) {
+          SidebarRow(title: machine.displayName, subtitle: machine.statusLabel) {
             MachineBadge(status: machine.displayStatus, size: 18)
           } trailing: {
-            Text(machine.statusLabel)
-              .font(.weave(.footnote))
-              .foregroundStyle(Color.weave.muted)
+            EmptyView()
           }
+          .accessibilityValue(machine.statusLabel)
           .accessibilityIdentifier("drawer.machine")
           .sidebarItem(.machine(machine.id))
         }
@@ -313,7 +414,7 @@ private struct SidebarRow<Icon: View, Trailing: View>: View {
           Text(subtitle)
             .font(.weave(.footnote))
             .foregroundStyle(Color.weave.muted)
-            .lineLimit(1)
+            .lineLimit(3)
         }
       }
       Spacer(minLength: 0)
@@ -324,6 +425,29 @@ private struct SidebarRow<Icon: View, Trailing: View>: View {
     .contentShape(Rectangle())
     .accessibilityElement(children: .combine)
     .accessibilityLabel(title)
+  }
+}
+
+/// A thread under its project: indented title, one line, with its status.
+private struct NestedThreadRow: View {
+  let thread: ThreadSummary
+
+  var body: some View {
+    HStack(spacing: WeaveSpacing.s2) {
+      Text(thread.title)
+        .font(.weave(.callout))
+        .foregroundStyle(Color.weave.ink)
+        .lineLimit(1)
+        .truncationMode(.tail)
+      Spacer(minLength: WeaveSpacing.s2)
+      RecentThreadGlyph(thread: thread)
+    }
+    .padding(.leading, 28 + WeaveSpacing.s3)
+    .frame(minHeight: 36)
+    .contentShape(Rectangle())
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(thread.title)
+    .accessibilityValue(RecentThreadGlyph.spoken(thread))
   }
 }
 

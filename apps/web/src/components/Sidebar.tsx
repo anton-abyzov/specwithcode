@@ -152,7 +152,8 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useAideEnabled, useClientSettings } from "../hooks/useSettings";
+import { threadsVisibleWithAide, visibleWithAide } from "../studio/personalAssistant";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -2409,9 +2410,21 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
-  const projects = useSidebarProjects(useProjects());
+  const catalogProjects = useProjects();
+  const allProjects = useSidebarProjects(catalogProjects);
+  // A hidden personal assistant (Settings → General) and its chats are left out
+  // of the lists, including the unscoped inbox.
+  const aideEnabled = useAideEnabled();
+  const projects = useMemo(
+    () => visibleWithAide(allProjects, aideEnabled),
+    [allProjects, aideEnabled],
+  );
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const allThreads = useThreadShells();
+  const threads = useMemo(
+    () => threadsVisibleWithAide(allThreads, catalogProjects, aideEnabled),
+    [allThreads, catalogProjects, aideEnabled],
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -3971,19 +3984,19 @@ export default function Sidebar() {
   const { pinnedKeysById, activeKeysById } = useMemo(
     () => ({
       pinnedKeysById: new Map(
-        threads.map((thread) => [
+        allThreads.map((thread) => [
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           thread.pinOrderKey ?? null,
         ]),
       ),
       activeKeysById: new Map(
-        threads.map((thread) => [
+        allThreads.map((thread) => [
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           thread.activeOrderKey ?? null,
         ]),
       ),
     }),
-    [threads],
+    [allThreads],
   );
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;

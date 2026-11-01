@@ -441,6 +441,7 @@ import {
 import { cn, randomUUID } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { resolveDraftDefaultRuntimeMode } from "./chat/draftRuntimeMode";
 import {
   decodeProjectScriptKeybindingRule,
   keybindingValueForCommand,
@@ -2658,8 +2659,17 @@ function useChatViewState(props: ChatViewProps) {
   // session.lastError. Bump a tick so the banner hides immediately. Mirrors
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
-  const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
-    .settings.defaultRuntimeMode;
+  const primarySettings = useEnvironmentSettings(
+    primaryEnvironment?.environmentId ?? environmentId,
+  );
+  const defaultRuntimeMode = resolveDraftDefaultRuntimeMode({
+    environmentSettings: settings,
+    projectId: activeThread?.projectId ?? null,
+    primarySettings:
+      primaryEnvironment != null && primaryEnvironment.environmentId !== environmentId
+        ? primarySettings
+        : null,
+  });
   // Implicit drafts follow their current project/environment, including retargets.
   // Explicit composer choices and existing server threads retain their permissions.
   const runtimeMode =
@@ -6693,15 +6703,43 @@ function useChatViewActions(
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
       }
+      // A started chat takes the new mode now rather than on its next message:
+      // raising it to Full access answers the approval it is waiting on, on
+      // whichever machine it runs. A running turn keeps its session; providers
+      // that fix access per session take the mode on their next turn.
+      if (serverThread && serverThread.runtimeMode !== mode) {
+        void setThreadRuntimeMode({
+          environmentId,
+          input: {
+            threadId: serverThread.id,
+            runtimeMode: mode,
+            applyOnNextTurn: true,
+            createdAt: new Date().toISOString(),
+          },
+        }).then((result) => {
+          if (result._tag === "Failure") {
+            // Show the access the chat really has, so the change can be tried again.
+            setComposerDraftRuntimeMode(composerDraftTarget, null);
+            toastManager.add({
+              type: "error",
+              title: "Could not change access",
+              description: "The chat keeps its current access. Try again.",
+            });
+          }
+        });
+      }
       scheduleComposerFocus();
     },
     [
+      environmentId,
       isLocalDraftThread,
       runtimeMode,
       scheduleComposerFocus,
       composerDraftTarget,
+      serverThread,
       setComposerDraftRuntimeMode,
       setDraftThreadContext,
+      setThreadRuntimeMode,
     ],
   );
 

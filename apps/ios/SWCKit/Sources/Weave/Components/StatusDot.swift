@@ -85,7 +85,7 @@ public struct MachineBadge: View {
         Text(label)
           .font(.weave(.callout))
           .foregroundStyle(Color.weave.muted)
-          .lineLimit(1)
+          .lineLimit(2)
       }
     }
     .accessibilityElement(children: .ignore)

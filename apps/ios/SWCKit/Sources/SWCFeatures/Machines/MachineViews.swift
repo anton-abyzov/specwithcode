@@ -11,7 +11,16 @@ struct MachinesView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
         if model.machines.isEmpty {
-          EmptyState(systemName: "laptopcomputer", title: "No machines yet", message: "Open SpecWithCode on your computer and pair this phone.", actionTitle: "Pair a machine") {
+          EmptyState(
+            systemName: "laptopcomputer",
+            title: "No machines yet",
+            message: model.connect == nil
+              ? "Open SpecWithCode on your computer and pair this phone."
+              : model.connect?.user == nil
+                ? "Sign in to SpecWithCode Connect in Settings with the same account as on your computer, and it appears here. Or pair it with a link or QR code."
+                : "Turn on SpecWithCode Connect on your computer with this account, and it appears here. Or pair it with a link or QR code.",
+            actionTitle: model.connect == nil ? "Pair a machine" : "Pair with a link or QR code"
+          ) {
             nav.push(.pair)
           }
           .frame(maxWidth: .infinity)

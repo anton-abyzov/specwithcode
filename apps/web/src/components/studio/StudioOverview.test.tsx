@@ -15,6 +15,9 @@ const state = vi.hoisted(() => ({
   /** The worker project's coordinator, which routes its other threads to its page. */
   workerCoordinator: null as string | null,
   workerArchived: false,
+  /** The worker project is a personal assistant, and whether Settings shows Aide. */
+  workerPersonal: false,
+  aideEnabled: true,
   shells: [] as EnvironmentThreadShell[],
   projects: [
     { id: "project-local", environmentId: "host-local", title: "Local project" },
@@ -80,6 +83,7 @@ vi.mock("../settings/useSettingsProjectGroups", () => ({
           workspaceSettings: {
             coordinatorThreadId: state.workerCoordinator,
             archived: state.workerArchived,
+            ...(state.workerPersonal ? { kind: "personal" } : {}),
           },
         },
       ],
@@ -140,8 +144,16 @@ vi.mock("../ui/select", async () => {
     },
   };
 });
+vi.mock("../../hooks/useSettings", () => ({ useAideEnabled: () => state.aideEnabled }));
 vi.mock("../../state/entities", () => ({
-  useProjects: () => state.projects,
+  useProjects: () =>
+    state.workerPersonal
+      ? state.projects.map((project) =>
+          project.id === "project-worker"
+            ? { ...project, workspaceSettings: { kind: "personal" } }
+            : project,
+        )
+      : state.projects,
   useThreadShells: () => state.shells,
   useServerConfigs: () => new Map([["host-worker", { providers: state.providers }]]),
   useAllEnvironmentShellsBootstrapped: () => true,
@@ -244,6 +256,8 @@ beforeEach(() => {
   state.shells = [];
   state.workerCoordinator = null;
   state.workerArchived = false;
+  state.workerPersonal = false;
+  state.aideEnabled = true;
   state.createDraft.mockResolvedValue({
     kind: "draft",
     draftId: "owned-new-draft",
@@ -573,6 +587,32 @@ describe("deliberate native session entry", () => {
     state.workerArchived = false;
     await render();
     expect(container.querySelectorAll(".studio-session-item")).toHaveLength(2);
+  });
+  it("leaves out a hidden personal assistant, its chats and its draft choice", async () => {
+    state.shells = [
+      shell("aide-ask", { hasPendingApprovals: true }),
+      shell("local-ask", {
+        environmentId: "host-local" as EnvironmentThreadShell["environmentId"],
+        projectId: "project-local" as EnvironmentThreadShell["projectId"],
+        hasPendingApprovals: true,
+      }),
+    ];
+    state.workerPersonal = true;
+    state.aideEnabled = false;
+    await render();
+    expect(container.querySelectorAll(".studio-session-item")).toHaveLength(1);
+    expect(container.textContent).toContain("Cached local-ask");
+    expect(container.textContent).not.toContain("Cached aide-ask");
+    expect(container.textContent).not.toContain("Worker project");
+    await click(" New session");
+    expect(option("host-local:project-local")).not.toBeNull();
+    expect(option("host-worker:project-worker")).toBeNull();
+
+    // Turned back on, the same assistant and its chat return: nothing was deleted.
+    state.aideEnabled = true;
+    await render();
+    expect(container.querySelectorAll(".studio-session-item")).toHaveLength(2);
+    expect(container.textContent).toContain("Worker project");
   });
   it("advances the displayed session age without new session observations or work", async () => {
     vi.useFakeTimers();

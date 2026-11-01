@@ -27,6 +27,7 @@ import {
 import { blockedLabel, leftPercent, usageLeftLabel } from "../../../studio/usageIndicatorModel";
 import { loadSavedHostReadings, saveHostReadings } from "../../../studio/hostLimitsStorage";
 import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
+import { RunOutNotice } from "../../usage/RunOutNotice";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import {
   Select,
@@ -161,6 +162,9 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
             </div>
           ))
         )}
+        {row.notice === null ? (
+          <RunOutNotice driver={row.driver} windows={row.windows} now={now} />
+        ) : null}
         {row.bankedResets > 0 ? (
           <span className="sws-hl-banked">
             <TicketIcon aria-hidden />

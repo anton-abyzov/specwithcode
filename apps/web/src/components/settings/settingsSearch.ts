@@ -689,6 +689,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "aide-enabled",
+    title: "Personal assistant (beta)",
+    to: "/settings/general",
+    searchTerms: ["aide assistant private routines briefing show hide"],
+  },
+  {
     id: "legacy-plan-mode",
     title: "Plan mode (legacy)",
     to: "/settings/general",

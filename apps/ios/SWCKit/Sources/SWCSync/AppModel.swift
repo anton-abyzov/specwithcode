@@ -86,6 +86,9 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var hasDirectPairing: Bool
   /// This phone has paused the connection without forgetting its credentials.
   public var isDisconnected: Bool = false
+  /// The computer is refusing sign-ins from this network for a while after
+  /// too many failed attempts, usually from another device on the same Wi-Fi.
+  public var isRefusingSignIns: Bool = false
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)
@@ -303,7 +306,9 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
     case tool(title: String, detail: String?, symbol: String, status: ToolStatus)
     case plan(steps: [TodoStep])
     case proposedPlan(markdown: String)
-    case approval(requestId: String, prompt: String, resolved: Bool)
+    /// `kind` is the wire request kind ("command", "file-change"); `options` are
+    /// the provider's choices, empty for the default accept and decline.
+    case approval(requestId: String, prompt: String, resolved: Bool, kind: String? = nil, options: [ApprovalChoice] = [])
     case question(requestId: String, prompt: String, resolved: Bool)
     case subagent(title: String, child: ThreadRef?)
     case error(message: String)
@@ -319,7 +324,20 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
   }
 }
 
-public enum ApprovalDecision: String, Sendable { case approve, approveForSession, deny }
+public enum ApprovalDecision: String, Sendable { case approve, approveForSession, approveAlways, deny, cancel }
+
+/// One choice a provider offers on an approval, with its own label.
+public struct ApprovalChoice: Hashable, Sendable {
+  public var decision: ApprovalDecision
+  public var label: String
+  public var warning: String?
+
+  public init(decision: ApprovalDecision, label: String, warning: String? = nil) {
+    self.decision = decision
+    self.label = label
+    self.warning = warning
+  }
+}
 
 /// One open conversation. The engine keeps it current while the view is visible.
 @MainActor @Observable
@@ -366,8 +384,11 @@ public struct ProjectSettingsDraft: Hashable, Sendable {
   public var coordinatorModel: String?
   /// Optimistic-concurrency revision from the last read.
   public var revision: Int
+  /// A newly chosen icon; nil leaves the project's icon as it is.
+  public var icon: ProjectIcon?
 
-  public init(title: String, goal: String, instructions: String, paused: Bool, archived: Bool, coordinatorModel: String?, revision: Int) {
+  public init(title: String, goal: String, instructions: String, paused: Bool, archived: Bool, coordinatorModel: String?, revision: Int, icon: ProjectIcon? = nil) {
+    self.icon = icon
     self.title = title
     self.goal = goal
     self.instructions = instructions
@@ -470,6 +491,10 @@ public protocol AppEngine: AnyObject {
   func connectRefresh() async
   /// Hands over the APNs device token so the relay can send notifications.
   func connectSetPushToken(_ token: Data)
+  /// The account's phones, this one first.
+  func connectPhones() async throws -> [ConnectPhone]
+  /// Removes a phone from the account. Removing this phone signs it out.
+  func connectRemovePhone(_ phoneId: String) async throws
 
   /// A fresh ticket for watching a device on a machine's device hub. Each
   /// (re)connect of the viewer asks again; a ticket lives five minutes.
@@ -509,6 +534,8 @@ extension AppEngine {
   public func connectDeleteAccount() async throws {}
   public func connectRefresh() async {}
   public func connectSetPushToken(_ token: Data) {}
+  public func connectPhones() async throws -> [ConnectPhone] { [] }
+  public func connectRemovePhone(_ phoneId: String) async throws {}
 
   public func deviceHubAccess(machineId: String, hostId: String) async throws -> DeviceHubAccess {
     throw SyncError.sendBlocked(MachineDevices.unsupportedMessage)
@@ -521,6 +548,9 @@ public final class AppModel {
   public var machines: [MachineSummary] = []
   /// The personal assistant project, if one exists on any machine.
   public var aide: ProjectSummary?
+  /// Whether Aide is shown: true when any machine's settings turn it on.
+  /// While false, `aide` is nil and Aide's chats are left out of every list.
+  public var aideEnabled = false
   /// Code projects across machines, pinned first, then by title.
   public var projects: [ProjectSummary] = []
   /// Threads by project.

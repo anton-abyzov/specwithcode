@@ -118,6 +118,15 @@ import {
 } from "./OrchestratorMcpBulkThreads.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  resolveProjectSettings,
+  type ResolvedProjectSettings,
+} from "@specweave-studio/shared/projectSettings";
+import {
+  holdsSeparateClones,
+  launchWorkspaceDefault,
+  projectUsesWorktrees,
+} from "./toolkits/project/launchWorkspace.ts";
 import { checkAllowedFor, isModelPinned } from "../scheduledTasks/ScheduledTaskCheck.ts";
 import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -344,11 +353,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Workspace strategy for a scheduled task created/updated over MCP: bound runs
- * post into the existing thread (the strategy is unused, keep root); unbound
- * runs launch a fresh worktree per run.
- */
 /** Whether the calling thread is the routine project's coordinator. */
 function callerIsCoordinator(
   parent: { readonly thread: { readonly id: string } } | undefined,
@@ -360,12 +364,25 @@ function callerIsCoordinator(
   return parent !== undefined && isProjectCoordinatorThreadId(parent.thread.id, project);
 }
 
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
+/**
+ * Workspace strategy for a scheduled task created/updated over MCP: bound runs
+ * post into the existing thread (the strategy is unused, keep root); unbound
+ * runs follow the project's "Use worktrees" switch, as a launch naming no
+ * workspace does: the project folder unless it is on, then a fresh worktree
+ * per run. A routine runs later, so it starts from `main` rather than
+ * whichever branch is checked out when it is made. `resolved` is null when the
+ * server settings cannot be read, which keeps the project folder.
+ */
+export function scheduledTaskWorkspaceStrategy(input: {
+  readonly boundToThread: boolean;
+  readonly resolved: Pick<ResolvedProjectSettings, "settings" | "sources"> | null;
+  /** The project folder holds separate clones a worktree of it would leave out. */
+  readonly separateClones: boolean;
+}): ScheduledTask["workspaceStrategy"] {
+  if (input.boundToThread || input.resolved === null || input.separateClones) {
+    return { type: "root" };
+  }
+  return launchWorkspaceDefault({ resolved: input.resolved, currentBranch: "main" });
 }
 
 /**
@@ -1156,6 +1173,25 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  /** Where an MCP-made routine's runs start; see scheduledTaskWorkspaceStrategy. */
+  const routineWorkspaceStrategy = (
+    boundToThread: boolean,
+    project: Effect.Success<ReturnType<typeof requireProject>>,
+  ) =>
+    Effect.gen(function* () {
+      if (boundToThread || Option.isNone(serverSettings)) return { type: "root" as const };
+      const settings = yield* serverSettings.value.getSettings.pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      const resolved =
+        settings === null ? null : resolveProjectSettings(settings, project.id, project);
+      const separateClones =
+        resolved !== null && projectUsesWorktrees(resolved)
+          ? yield* Effect.promise(() => holdsSeparateClones(project.workspaceRoot))
+          : false;
+      return scheduledTaskWorkspaceStrategy({ boundToThread, resolved, separateClones });
+    });
 
   /** A client has no thread to inherit a model from, so it falls back to the project default. */
   const projectDefaultModelSelection = (
@@ -2186,7 +2222,7 @@ const make = Effect.gen(function* () {
           schedule: input.schedule,
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+          workspaceStrategy: yield* routineWorkspaceStrategy(bindToCurrentThread, project),
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
@@ -2281,12 +2317,14 @@ const make = Effect.gen(function* () {
                 ? parent.thread.id
                 : null;
         // Rebinding changes where runs execute, so the workspace strategy must
-        // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
+        // follow: an unbound routine takes the project's "Use worktrees" choice.
         const workspaceStrategy =
           bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(bindToCurrentThread);
+            : yield* routineWorkspaceStrategy(
+                bindToCurrentThread,
+                yield* requireProject(existing.projectId),
+              );
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,

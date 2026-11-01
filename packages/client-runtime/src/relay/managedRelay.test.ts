@@ -733,6 +733,46 @@ describe("ManagedRelayClient", () => {
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 
+  it.effect("lists the account's phones through the Clerk bearer client endpoint", () => {
+    const phone = {
+      deviceId: "device-1",
+      label: "Alice's iPhone",
+      platform: "ios",
+      model: "iPhone 16 Pro",
+      appVersion: "0.1.1",
+      lastSeenAt: "2026-06-01T00:00:00.000Z",
+      current: true,
+    };
+    const fetchFn = ((input, init) => {
+      expect(String(input)).toBe("https://relay.example.test/v1/client/phones");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer clerk-token");
+      return Promise.resolve(Response.json({ phones: [phone] }));
+    }) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      expect(yield* relayClient.listPhones({ clerkToken: "clerk-token" })).toEqual([phone]);
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+  });
+
+  it.effect("removes one phone through the Clerk bearer client endpoint", () => {
+    const fetchFn = ((input, init) => {
+      expect(String(input)).toBe("https://relay.example.test/v1/client/phones/device-1");
+      expect(init?.method).toBe("DELETE");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer clerk-token");
+      return Promise.resolve(Response.json({ removed: true, current: false }));
+    }) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const result = yield* relayClient.removePhone({
+        clerkToken: "clerk-token",
+        deviceId: "device-1",
+      });
+      expect(result).toEqual({ removed: true, current: false });
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+  });
+
   it.effect("deletes the relay account through the Clerk bearer client endpoint", () => {
     const fetchFn = ((input, init) => {
       expect(String(input)).toBe("https://relay.example.test/v1/client/account");

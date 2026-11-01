@@ -11,7 +11,8 @@ public struct ProjectAvatar: View {
     case emoji(String)
     /// Up to two letters are shown.
     case monogram(String, tint: String?)
-    /// Shows a folder.
+    /// No chosen icon: the project's initials on a tile tinted from its name,
+    /// so every project is told apart at a glance and keeps its color.
     case none
   }
 
@@ -42,7 +43,8 @@ public struct ProjectAvatar: View {
     content
       .frame(width: size, height: size)
       .background {
-        if style == .tile {
+        // Initials are only legible on a tile, so they get one in every style.
+        if style == .tile || showsInitials {
           RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
             .fill(tint.opacity(0.14))
         }
@@ -66,7 +68,17 @@ public struct ProjectAvatar: View {
         .foregroundStyle(tint)
         .minimumScaleFactor(0.6)
     case .none:
-      glyph("folder")
+      Text(Self.identityMonogram(title))
+        .font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
+        .foregroundStyle(tint)
+        .minimumScaleFactor(0.6)
+    }
+  }
+
+  private var showsInitials: Bool {
+    switch icon {
+    case .monogram, .none: true
+    default: false
     }
   }
 
@@ -79,8 +91,40 @@ public struct ProjectAvatar: View {
   private var tint: Color {
     switch icon {
     case let .lucide(_, tint), let .symbol(_, tint), let .monogram(_, tint): WeaveTint.color(tint)
-    case .emoji, .none: .weave.muted
+    case .none: WeaveTint.color(Self.tintName(for: title))
+    case .emoji: .weave.muted
     }
+  }
+
+  /// The generated color for a project without an icon. Same algorithm and
+  /// palette order as the desktop's `deriveProjectIdentity`, so a project has
+  /// one color everywhere.
+  public static func tintName(for title: String) -> String {
+    let seed = title.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let palette = WeaveTintName.allCases
+    var index = 0
+    for scalar in (seed.isEmpty ? "project" : seed).unicodeScalars {
+      index = (index * 31 + Int(scalar.value)) % palette.count
+    }
+    return palette[index].rawValue
+  }
+
+  /// The generated initials for a project without an icon, matching the
+  /// desktop: the first letter, then a digit from the first word, else the
+  /// last word's first letter, else the first word's last letter.
+  public static func identityMonogram(_ title: String) -> String {
+    let normalized = title.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines)
+    var words: [[Character]] = []
+    var current: [Character] = []
+    for character in normalized {
+      if character.isLetter || character.isNumber { current.append(character) } else if !current.isEmpty { words.append(current); current = [] }
+    }
+    if !current.isEmpty { words.append(current) }
+    guard let firstWord = words.first, let first = firstWord.first else { return "PR" }
+    let second = firstWord.dropFirst().first(where: \.isNumber)
+      ?? (words.count > 1 ? words.last?.first : firstWord.last)
+      ?? first
+    return String(String([first, second]).uppercased().prefix(2))
   }
 
   /// Brain and padlock emoji are retired; a project that saved one keeps it
@@ -99,6 +143,7 @@ public struct ProjectAvatar: View {
 
   static func monogram(_ text: String) -> String {
     let words = text.split(whereSeparator: { $0 == " " || $0 == "-" || $0 == "_" })
+    guard !text.isEmpty else { return "?" }
     let letters = words.count >= 2 ? words.prefix(2).compactMap(\.first).map(String.init).joined() : String(text.prefix(2))
     return letters.uppercased()
   }

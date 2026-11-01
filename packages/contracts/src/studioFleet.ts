@@ -312,6 +312,10 @@ export const StudioFleetRemoteWorker = Schema.Struct({
   updatedAt: IsoDateTime,
   /** When the coordinator started it; older servers send none. */
   launchedAt: Schema.optionalKey(IsoDateTime),
+  /** The mode it started with; older servers and older rows send none. */
+  runtimeMode: Schema.optionalKey(StudioFleetWorkerAccess),
+  /** The coordinator's own mode when that machine's worker grant lowered it. */
+  loweredFrom: Schema.optionalKey(StudioFleetWorkerAccess),
 });
 export type StudioFleetRemoteWorker = typeof StudioFleetRemoteWorker.Type;
 

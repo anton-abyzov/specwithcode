@@ -4,6 +4,8 @@ import {
   type RelayClientEnvironmentRecord,
   type RelayManagedTunnelPolicy,
   type RelayClientDeviceRecord,
+  type RelayPhoneRecord,
+  type RelayRemovePhoneResponse,
   RelayConnectEnvironmentEndpoint,
   type RelayDeviceRegistrationRequest,
   RelayDpopAccessTokenScope,
@@ -90,6 +92,8 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "list relay-managed environments",
   "read managed tunnel policy",
   "list relay client devices",
+  "list relay account phones",
+  "remove relay account phone",
   "create relay environment link challenge",
   "link relay environment",
   "unlink relay environment",
@@ -108,6 +112,8 @@ export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay environment listing",
   "Relay account policy",
   "Relay client device listing",
+  "Relay phone listing",
+  "Relay phone removal",
   "Relay environment link challenge",
   "Relay environment linking",
   "Relay environment unlinking",
@@ -271,6 +277,15 @@ export class ManagedRelayClient extends Context.Service<
     readonly listDevices: (input: {
       readonly clerkToken: string;
     }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, ManagedRelayClientError>;
+    /** The account's phones, as shown in "Your phones". */
+    readonly listPhones: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<ReadonlyArray<RelayPhoneRecord>, ManagedRelayClientError>;
+    /** Removes one phone from the account until it signs in again. */
+    readonly removePhone: (input: {
+      readonly clerkToken: string;
+      readonly deviceId: string;
+    }) => Effect.Effect<RelayRemovePhoneResponse, ManagedRelayClientError>;
     readonly createEnvironmentLinkChallenge: (input: {
       readonly clerkToken: string;
       readonly payload: RelayEnvironmentLinkChallengeRequest;
@@ -425,6 +440,8 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     listEnvironments: unavailable("clientRuntime.managedRelay.listEnvironments"),
     getManagedTunnelPolicy: unavailable("clientRuntime.managedRelay.getManagedTunnelPolicy"),
     listDevices: unavailable("clientRuntime.managedRelay.listDevices"),
+    listPhones: unavailable("clientRuntime.managedRelay.listPhones"),
+    removePhone: unavailable("clientRuntime.managedRelay.removePhone"),
     createEnvironmentLinkChallenge: unavailable(
       "clientRuntime.managedRelay.createEnvironmentLinkChallenge",
     ),
@@ -756,6 +773,32 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           );
       },
       Effect.withSpan("clientRuntime.managedRelay.listDevices"),
+      withRelayClientTracing,
+    ),
+    listPhones: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client.listPhones({ headers: bearerHeaders(input.clerkToken) }).pipe(
+          Effect.map((response) => response.phones),
+          Effect.mapError(relayRequestError("list relay account phones")),
+          timeoutRelayRequest("Relay phone listing"),
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.listPhones"),
+      withRelayClientTracing,
+    ),
+    removePhone: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .removePhone({
+            headers: bearerHeaders(input.clerkToken),
+            params: { deviceId: input.deviceId },
+          })
+          .pipe(
+            Effect.mapError(relayRequestError("remove relay account phone")),
+            timeoutRelayRequest("Relay phone removal"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.removePhone"),
       withRelayClientTracing,
     ),
     createEnvironmentLinkChallenge: Effect.fnUntraced(

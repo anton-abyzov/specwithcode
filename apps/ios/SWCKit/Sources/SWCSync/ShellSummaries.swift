@@ -53,7 +53,9 @@ public enum ShellSummaries {
   ///   - nicknames: The user's nicknames by environment id, for every machine.
   ///   - home: Machines whose projects are listed, as the desktop app lists
   ///     its own machine's (see `listedMachines`). Empty lists every machine.
-  public static func build(_ machines: [Machine], names: [String: String] = [:], nicknames: [String: String] = [:], home: Set<String> = []) -> Output {
+  ///   - includeAide: False hides Aide: no `aide`, and its chats are left out
+  ///     of recents and `threadsByProject`. Nothing on the machines changes.
+  public static func build(_ machines: [Machine], names: [String: String] = [:], nicknames: [String: String] = [:], home: Set<String> = [], includeAide: Bool = true) -> Output {
     let known = machines.map { machine in
       var machine = machine
       if machine.nickname == nil { machine.nickname = nicknames[machine.environmentId] }
@@ -62,11 +64,17 @@ public enum ShellSummaries {
     let listedIds = listedMachines(known, home: home)
     let ordered = known.filter { listedIds.contains($0.environmentId) }
     let orders = ordered.compactMap(\.projectOrder)
+    // The desktop arranges its list by its own machine's saved order. The
+    // phone follows the first home machine that holds one, in pairing order,
+    // then any other listed machine's.
+    let byPairing = machines.filter { listedIds.contains($0.environmentId) }
+    let mainOrder = (byPairing.filter { home.contains($0.environmentId) } + byPairing)
+      .compactMap(\.projectOrder)
+      .first { !$0.pinned.isEmpty || !$0.unpinned.isEmpty }
     // Every known machine still names threads that run on it.
     let directory = Directory(machines: known, names: names, nicknames: nicknames)
     let listed = Set(ordered.flatMap { machine in (machine.snapshot?.threads ?? []).map { "\(machine.environmentId)/\($0.id)" } })
-    var aide: ProjectSummary?
-    var archivedAide: ProjectSummary?
+    var aides: [ProjectSummary] = []
     var projects: [ProjectSummary] = []
     var copies: [LinkedCopy] = []
     var threadsByProject: [ProjectRef: [ThreadSummary]] = [:]
@@ -74,55 +82,79 @@ public enum ShellSummaries {
 
     for machine in ordered {
       guard let snapshot = machine.snapshot else { continue }
-      let name = machine.displayName
-      let coordinatorIds = Set(snapshot.projects.map(\.coordinatorThreadId))
-      let titles = Dictionary(snapshot.projects.map { ($0.id, $0.displayTitle) }, uniquingKeysWith: { first, _ in first })
-
-      var byProject: [String: [ThreadSummary]] = [:]
-      for thread in snapshot.threads where isTopLevel(thread, coordinatorIds: coordinatorIds) {
-        // A handed-off copy is listed through its continuation when that is known.
-        if let next = thread.movedTo, next.isHandoff, listed.contains("\(next.environmentId ?? machine.environmentId)/\(next.threadId)") { continue }
-        var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: name, machineOnline: machine.online, providers: machine.providers)
-        summary.placement = placement(thread, on: machine, directory: directory)
-        byProject[thread.projectId, default: []].append(summary)
-        all.append(summary)
-      }
+      let personalIds = Set(snapshot.projects.filter(\.isPersonal).map(\.id))
+      let byProject = topLevelThreads(on: machine, directory: directory, listed: listed) { includeAide || !personalIds.contains($0) }
+      all += byProject.values.joined()
 
       for project in snapshot.projects where project.deletedAt == nil {
         let ref = ProjectRef(environmentId: machine.environmentId, projectId: project.id)
+        if project.isPersonal && !includeAide { continue }
         let threads = sortThreads(byProject[project.id] ?? [])
         threadsByProject[ref] = threads
-        var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: name, machineOnline: machine.online, threads: threads)
+        var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, threads: threads)
         if project.isPersonal {
-          // An active Aide beats an archived one, then the lowest environment id
-          // wins (machines are visited in that order), as the web's findPersonalAssistant.
-          if project.isArchived {
-            if archivedAide == nil { archivedAide = summary }
-          } else if aide == nil {
-            aide = summary
-          }
+          aides.append(summary)
         } else if isScratch(project, scratchWorkspaceRoot: machine.scratchWorkspaceRoot) {
           // Its chats are listed under recents; the project is never a row, as on the web.
           continue
         } else {
-          summary.isPinned = ProjectPinning.isPinned(project, environmentId: machine.environmentId, orders: orders)
-          copies.append(LinkedCopy(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt))
+          // The desktop reads pins from the same one order it arranges by.
+          summary.isPinned = ProjectPinning.isPinned(project, environmentId: machine.environmentId, orders: mainOrder.map { [$0] } ?? orders)
+          copies.append(LinkedCopy(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt, keys: ProjectPinning.projectKeys(project, environmentId: machine.environmentId)))
         }
       }
     }
 
+    // Aide is private to its machine, so it may live on one the desktop does
+    // not list (another person's home Mac, a worker no project links to).
+    // Those machines are searched too, after the listed ones, so the phone
+    // never offers to set up a second Aide.
+    var others: [ProjectSummary] = []
+    var otherThreads: [ProjectRef: [ThreadSummary]] = [:]
+    if includeAide {
+      for machine in known where !listedIds.contains(machine.environmentId) {
+        guard let snapshot = machine.snapshot else { continue }
+        let personalIds = Set(snapshot.projects.filter { $0.isPersonal && $0.deletedAt == nil }.map(\.id))
+        guard !personalIds.isEmpty else { continue }
+        let byProject = topLevelThreads(on: machine, directory: directory, listed: listed) { personalIds.contains($0) }
+        for project in snapshot.projects where personalIds.contains(project.id) {
+          let ref = ProjectRef(environmentId: machine.environmentId, projectId: project.id)
+          let threads = sortThreads(byProject[project.id] ?? [])
+          otherThreads[ref] = threads
+          others.append(projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, threads: threads))
+        }
+      }
+    }
+    // An active Aide beats an archived one, then a listed machine's beats
+    // another's, then the lowest environment id wins (machines are visited in
+    // that order), as the web's findPersonalAssistant.
+    let aide = aides.first { !$0.archived } ?? others.first { !$0.archived } ?? aides.first ?? others.first
+    if let aide, let threads = otherThreads[aide.ref] {
+      // Only the chosen Aide's chats come from a machine that is not listed.
+      threadsByProject[aide.ref] = threads
+      all += threads
+    }
+
+    var ranks: [ProjectRef: ProjectOrdering.Rank] = [:]
     for group in sameProjectGroups(copies) {
+      // A linked project is one row under its logical key alone, apart from
+      // unlinked checkouts of its repository.
+      let linked = group.filter { $0.project.workspaceSettings?.logicalProject != nil }
+      let rank = ProjectOrdering.rank(keys: (linked.isEmpty ? group : linked).flatMap(\.keys), members: group.map { "\($0.summary.ref.environmentId):\($0.summary.ref.projectId)" }, in: mainOrder)
       if group.count == 1, group[0].project.workspaceSettings?.logicalProject == nil {
         projects.append(group[0].summary)
+        ranks[group[0].summary.ref] = rank
         continue
       }
       let merged = merge(group)
       projects.append(merged.summary)
+      ranks[merged.summary.ref] = rank
       for member in group { threadsByProject[member.summary.ref] = merged.threads }
     }
 
     projects.sort { a, b in
       if a.isPinned != b.isPinned { return a.isPinned }
+      if let first = ProjectOrdering.precedes(ranks[a.ref], ranks[b.ref], pinned: a.isPinned) { return first }
       let order = a.title.localizedStandardCompare(b.title)
       if order != .orderedSame { return order == .orderedAscending }
       return (a.ref.environmentId, a.ref.projectId) < (b.ref.environmentId, b.ref.projectId)
@@ -131,7 +163,7 @@ public enum ShellSummaries {
       if $0.activityAt != $1.activityAt { return $0.activityAt > $1.activityAt }
       return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }.prefix(recentLimit))
-    return Output(aide: aide ?? archivedAide, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
+    return Output(aide: aide, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
   }
 
   // MARK: - Machines
@@ -167,6 +199,23 @@ public enum ShellSummaries {
       }
     }
     return listed
+  }
+
+  /// One machine's top-level threads by project id, for the projects `include`
+  /// accepts. A handed-off copy is left out when its continuation is listed.
+  static func topLevelThreads(on machine: Machine, directory: Directory, listed: Set<String>, include: (String) -> Bool) -> [String: [ThreadSummary]] {
+    guard let snapshot = machine.snapshot else { return [:] }
+    let coordinatorIds = Set(snapshot.projects.map(\.coordinatorThreadId))
+    let titles = Dictionary(snapshot.projects.map { ($0.id, $0.displayTitle) }, uniquingKeysWith: { first, _ in first })
+    var byProject: [String: [ThreadSummary]] = [:]
+    for thread in snapshot.threads where include(thread.projectId) && isTopLevel(thread, coordinatorIds: coordinatorIds) {
+      // A handed-off copy is listed through its continuation when that is known.
+      if let next = thread.movedTo, next.isHandoff, listed.contains("\(next.environmentId ?? machine.environmentId)/\(next.threadId)") { continue }
+      var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: machine.displayName, machineOnline: machine.online, providers: machine.providers)
+      summary.placement = placement(thread, on: machine, directory: directory)
+      byProject[thread.projectId, default: []].append(summary)
+    }
+    return byProject
   }
 
   /// Names and reachability of every machine the phone knows.
@@ -292,6 +341,8 @@ public enum ShellSummaries {
     var summary: ProjectSummary
     var threads: [ThreadSummary]
     var lastSeenAt: Date?
+    /// Every key the web app may have saved for this copy in a sidebar order.
+    var keys: [String] = []
   }
 
   /// One row for a project linked across machines or registered twice. The row
@@ -478,6 +529,50 @@ public enum ShellSummaries {
   }
 }
 
+/// Places projects as the desktop's sidebar does (`arrangeProjects` in
+/// apps/web/src/studio/projectOrder.ts): pinned projects in their saved order,
+/// then projects the order has never seen, then the rest in their saved order.
+public enum ProjectOrdering {
+  /// A project's place in each part of a saved order; `nil` where it is absent.
+  public struct Rank: Hashable, Sendable {
+    public var pinned: Int?
+    public var unpinned: Int?
+
+    public init(pinned: Int? = nil, unpinned: Int? = nil) {
+      self.pinned = pinned
+      self.unpinned = unpinned
+    }
+  }
+
+  /// - Parameters:
+  ///   - keys: Every key of the project's copies (`ProjectPinning.projectKeys`).
+  ///   - members: The copies' `environmentId:projectId` ids, matched against `pinnedMembers`.
+  public static func rank(keys: [String], members: [String], in order: SidebarProjectOrder?) -> Rank {
+    guard let order else { return Rank() }
+    let keys = Set(keys)
+    let members = Set(members)
+    let pinned = order.pinned.firstIndex { key in
+      keys.contains(key) || order.pinnedMembers?[key]?.contains(where: members.contains) == true
+    }
+    return Rank(pinned: pinned, unpinned: order.unpinned.firstIndex(where: keys.contains))
+  }
+
+  /// Whether the first of two projects in the same part (both pinned or both
+  /// not) comes first; `nil` when the order does not tell them apart. A pinned
+  /// project the order does not place follows the placed ones; an unpinned
+  /// one the order has never seen leads, as a new project does on the desktop.
+  public static func precedes(_ a: Rank?, _ b: Rank?, pinned: Bool) -> Bool? {
+    let first = pinned ? a?.pinned : a?.unpinned
+    let second = pinned ? b?.pinned : b?.unpinned
+    switch (first, second) {
+    case let (x?, y?): return x == y ? nil : x < y
+    case (nil, _?): return !pinned
+    case (_?, nil): return pinned
+    case (nil, nil): return nil
+    }
+  }
+}
+
 /// Matches projects against the sidebar order the web app saves in server
 /// settings (apps/web/src/studio/projectOrder.ts). Saved keys are logical
 /// project keys, repository keys or physical `environmentId:path` keys, and
@@ -496,12 +591,13 @@ public enum ProjectPinning {
     return false
   }
 
-  /// Every key the web app may have saved for this project.
+  /// Every key the web app may have saved for this project. A linked project
+  /// has only its logical key (`deriveLogicalProjectKey`).
   public static func projectKeys(_ project: ProjectShell, environmentId: String) -> [String] {
-    var keys: [String] = []
     if let logical = project.workspaceSettings?.logicalProject {
-      keys.append("logical-project:\(logical.id)")
+      return ["logical-project:\(logical.id)"]
     }
+    var keys: [String] = []
     let root = normalizePath(project.workspaceRoot)
     keys.append("\(environmentId):\(root)")
     if let identity = project.repositoryIdentity {
@@ -513,6 +609,7 @@ public enum ProjectPinning {
         if root != rootPath, root.hasPrefix(rootPath + separator) {
           let relative = String(root.dropFirst(rootPath.count + 1)).replacingOccurrences(of: "\\", with: "/")
           keys.append("\(canonical)::\(relative)")
+          if identity.groupingKey != canonical { keys.append("\(identity.groupingKey)::\(relative)") }
         }
       }
     }

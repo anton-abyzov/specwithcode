@@ -370,6 +370,13 @@ export function claudeUsageResponseToLimits(input: {
   let invalidEvidence = false;
   for (const id of Object.keys(WINDOWS)) {
     const window = response.rate_limits[id as "five_hour" | "seven_day"];
+    // Many subscriptions have no 5-hour limit, and Claude reports it only
+    // while one applies: missing, null or unmeasured is no row, not a
+    // malformed read. Claude Code's own /usage skips it the same way.
+    if (id === "five_hour" && (window == null || window.utilization === null)) {
+      if (window != null) invalidEvidence ||= malformedUsageWindow(null, window.resets_at);
+      continue;
+    }
     if (!window || typeof window.utilization !== "number") {
       invalidEvidence = true;
       continue;

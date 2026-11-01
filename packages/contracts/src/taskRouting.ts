@@ -86,6 +86,11 @@ export const TaskRoutingSettings = Schema.Struct({
   paidApi: TaskRoutingPaidApi.pipe(Schema.withDecodingDefault(Effect.succeed("never" as const))),
   /** A failed run on a cheaper model continues once on the baseline model. */
   escalate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * A lane model whose subscription quota resets soon with much of it unused
+   * takes the worker before the lane's first model, which keeps its quota.
+   */
+  spendExpiringQuota: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type TaskRoutingSettings = typeof TaskRoutingSettings.Type;
 
@@ -97,6 +102,7 @@ export const DEFAULT_TASK_ROUTING_SETTINGS: TaskRoutingSettings = {
   excludedProviders: [],
   paidApi: "never",
   escalate: true,
+  spendExpiringQuota: true,
 };
 
 // ── Model lanes ──────────────────────────────────────────────────────

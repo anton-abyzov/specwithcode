@@ -116,6 +116,8 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     registerDevice: () => Effect.die("unused"),
     unregisterDevice: () => Effect.die("unused"),
     registerLiveActivity: () => Effect.die("unused"),
+    listPhones: () => Effect.die("unused"),
+    removePhone: () => Effect.die("unused"),
     getAgentActivitySnapshot: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
   } satisfies ManagedRelay.ManagedRelayClient["Service"]);
@@ -283,6 +285,8 @@ describe("RelayEnvironmentDiscovery", () => {
         registerDevice: () => Effect.die("unused"),
         unregisterDevice: () => Effect.die("unused"),
         registerLiveActivity: () => Effect.die("unused"),
+        listPhones: () => Effect.die("unused"),
+        removePhone: () => Effect.die("unused"),
         getAgentActivitySnapshot: () => Effect.die("unused"),
         resetTokenCache: Effect.void,
       } satisfies ManagedRelay.ManagedRelayClient["Service"]);

@@ -15,12 +15,14 @@ import {
   ComposerBannerStack,
   type ComposerBannerStackItem,
 } from "../../src/components/chat/ComposerBannerStack";
+import { ComposerPendingApprovalActions } from "../../src/components/chat/ComposerPendingApprovalActions";
+import { ComposerPendingApprovalPanel } from "../../src/components/chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "../../src/components/chat/ComposerPendingUserInputPanel";
 import { ComposerSurface } from "../../src/components/chat/ComposerSurface";
 import { usageLimitRecoveryBannerItem } from "../../src/components/chat/UsageLimitRecoveryBanner";
 import { Button } from "../../src/components/ui/button";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
-import type { PendingUserInput } from "../../src/session-logic";
+import type { PendingApproval, PendingUserInput } from "../../src/session-logic";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -130,7 +132,7 @@ const questionDrawer = (
     </ComposerBanner.Root>
   </ComposerBanner.Attachment>
 );
-// Stand-ins for the queue and the approval drawer, from the primitives ChatComposer uses.
+// Stand-in for the queue, from the primitives ChatComposer uses.
 const queue = (
   <ComposerBanner.Attachment>
     <ComposerBanner.Root density="comfortable">
@@ -146,6 +148,21 @@ const queue = (
     </ComposerBanner.Root>
   </ComposerBanner.Attachment>
 );
+// The approval drawer exactly as ChatComposer builds it: the real panel and actions.
+const approvalRequest: PendingApproval = {
+  requestId: RuntimeRequestId.make("fixture-approval"),
+  requestKind: "command",
+  responseCapability: params.get("live") === "false" ? "not_resumable" : "live",
+  createdAt: "2026-10-31T12:00:00.000Z",
+  detail: `gh pr merge 662 --squash --delete-branch --subject "fix: approval bar wraps long commands" --body "$(cat <<'EOF'\nThe approval bar wraps long commands instead of scrolling sideways.\nEvery provider option is a visible button, accept last.\nEOF\n)"`,
+  // Accept first, as Antigravity sends it: the bar still shows accept last.
+  options: [
+    { decision: "accept", label: "Allow once" },
+    { decision: "acceptForSession", label: "Allow for this thread" },
+    { decision: "decline", label: "Deny" },
+    { decision: "cancel", label: "Cancel" },
+  ],
+};
 const approval = (
   <ComposerBanner.Attachment>
     <ComposerBanner.Root variant="warning" density="spacious">
@@ -154,13 +171,17 @@ const approval = (
           <ShieldIcon />
         </ComposerBanner.Icon>
         <ComposerBanner.Content>
-          <span className="font-medium">Run gh pr merge 662 --squash?</span>
+          <ComposerPendingApprovalPanel approval={approvalRequest} pendingCount={2} />
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
-          <Button size="xs" variant="outline">
-            Deny
-          </Button>
-          <Button size="xs">Allow</Button>
+          <ComposerPendingApprovalActions
+            requestId={approvalRequest.requestId}
+            isResponding={false}
+            canRespond={approvalRequest.responseCapability === "live"}
+            options={approvalRequest.options}
+            onRespondToApproval={async () => undefined}
+            onSwitchToFullAccess={() => undefined}
+          />
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
     </ComposerBanner.Root>
@@ -192,7 +213,7 @@ function Fixture() {
                   items={items}
                   attachedAbove={scenario === "many" ? queue : undefined}
                 />
-                {scenario === "many" ? approval : null}
+                {scenario === "many" || scenario === "approval" ? approval : null}
                 {scenario === "question" ? questionDrawer : null}
               </ComposerBanner.Column>
             </ComposerBanner.Dock>

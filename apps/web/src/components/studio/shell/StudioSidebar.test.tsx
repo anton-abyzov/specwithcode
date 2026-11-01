@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   shells: [] as EnvironmentThreadShell[],
   keybindings: [] as unknown[],
   primaryEnvironmentId: "host" as string | null,
+  aideEnabled: true,
   environments: [] as Array<{ environmentId: string; label: string }>,
   savedMachines: {} as Record<string, string>,
   scratchRoots: new Map<string, { scratchWorkspaceRoot: string }>(),
@@ -134,6 +135,7 @@ vi.mock("../../../hooks/useSettings", () => ({
   ) => select({ projectCoordinatorMachines: state.savedMachines }),
   // No host in these tests: the project order lives in this browser.
   usePrimarySettingsAvailable: () => false,
+  useAideEnabled: () => state.aideEnabled,
   useUpdatePrimarySettings: () => vi.fn(),
 }));
 vi.mock("../../../hooks/useScratchProject", () => ({
@@ -242,6 +244,7 @@ beforeEach(() => {
   state.search = {};
   state.keybindings = [];
   state.primaryEnvironmentId = "host";
+  state.aideEnabled = true;
   state.environments = [];
   state.savedMachines = {};
   state.scratchRoots = new Map();
@@ -804,6 +807,39 @@ describe("projects and chats sidebar", () => {
     expect(projects.textContent).not.toContain("Aide");
     expect(projects.querySelectorAll(".sws-project-row")).toHaveLength(7);
     expect(projects.textContent).toContain("Show 3 more");
+  });
+  it("hides the personal assistant, its chats and the setup row while Aide is off", async () => {
+    state.aideEnabled = false;
+    state.groups = [
+      ...state.groups,
+      {
+        projectKey: "host:/aide",
+        displayName: "Aide",
+        memberProjects: [
+          { environmentId: "host", id: "aide", workspaceSettings: { kind: "personal" } },
+        ],
+      },
+    ];
+    state.shells = [
+      shell("atlas"),
+      shell("private", { projectId: "aide" as EnvironmentThreadShell["projectId"] }),
+    ];
+    await render();
+    expect(container.querySelector('[aria-label="Personal assistant"]')).toBeNull();
+    expect(
+      [...container.querySelectorAll("button")].some((b) =>
+        b.textContent?.startsWith("Personal assistant"),
+      ),
+    ).toBe(false);
+    expect(container.textContent).not.toContain("Aide");
+    expect(chats()).toEqual(["Chat atlas"]);
+    // Turning it back on shows the same assistant and its chat: nothing was deleted.
+    state.aideEnabled = true;
+    await render();
+    expect(
+      container.querySelector('.sws-side-actions [aria-label="Personal assistant"]')?.textContent,
+    ).toContain("Aide");
+    expect(chats()).toContain("Chat private");
   });
   it("starts an independent chat even when several projects are available", async () => {
     const opened: unknown[] = [];

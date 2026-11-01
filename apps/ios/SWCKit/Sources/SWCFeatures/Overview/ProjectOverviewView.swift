@@ -102,7 +102,7 @@ struct ProjectOverviewView: View {
   }
 
   private func row(_ thread: ThreadSummary) -> some View {
-    WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + meta(thread), titleLineLimit: 1, subtitleLineLimit: 2, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
+    WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + meta(thread), titleLineLimit: 1, subtitleLineLimit: 3, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
       ThreadIdentityMarks(identity: thread.identity)
     } trailing: {
       HStack(spacing: WeaveSpacing.s2) {

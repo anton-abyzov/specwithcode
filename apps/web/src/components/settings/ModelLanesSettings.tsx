@@ -27,6 +27,7 @@ import { useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -154,11 +155,11 @@ export function ModelLanesSettings() {
   const lanes: ModelLanes = settings.modelLanes ?? { complex: [], routine: [] };
   const complexList = lanes.complex ?? [];
   const routineList = lanes.routine ?? [];
-  const learnedList: ReadonlyArray<LearnedModelPreference> =
-    settings.learnedModelPreferences ?? [];
+  const learnedList: ReadonlyArray<LearnedModelPreference> = settings.learnedModelPreferences ?? [];
 
   const mixedLanes = useScopedSettingsMixed(["modelLanes"]);
   const mixedLearned = useScopedSettingsMixed(["learnedModelPreferences"]);
+  const mixedRouting = useScopedSettingsMixed(["taskRouting"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
 
   const pickerSelection = resolveDefaultProviderModelSelection(
@@ -221,10 +222,7 @@ export function ModelLanesSettings() {
         }
         resetAction={
           complexList.length > 0 ? (
-            <SettingResetButton
-              label="complex lane"
-              onClick={() => saveLane("complex", [])}
-            />
+            <SettingResetButton label="complex lane" onClick={() => saveLane("complex", [])} />
           ) : null
         }
         control={
@@ -280,10 +278,7 @@ export function ModelLanesSettings() {
         }
         resetAction={
           routineList.length > 0 ? (
-            <SettingResetButton
-              label="routine lane"
-              onClick={() => saveLane("routine", [])}
-            />
+            <SettingResetButton label="routine lane" onClick={() => saveLane("routine", [])} />
           ) : null
         }
         control={
@@ -328,6 +323,24 @@ export function ModelLanesSettings() {
 
       <SettingsRow
         serverScoped
+        settingKeys={["taskRouting"]}
+        mixed={mixedRouting}
+        id="model-lanes-expiring-quota"
+        title="Use quota before it resets"
+        description="When a model later in a lane has much of its subscription quota left and that quota resets soon (the 5-hour window within 90 minutes, the weekly within a day), the worker starts there instead, so the first model keeps its own quota. It only picks models already in the lane, and only from quota windows a subscription reports."
+        control={
+          <Switch
+            aria-label="Use quota before it resets"
+            checked={settings.taskRouting.spendExpiringQuota}
+            onCheckedChange={(spendExpiringQuota) =>
+              updateSettings({ taskRouting: { ...settings.taskRouting, spendExpiringQuota } })
+            }
+          />
+        }
+      />
+
+      <SettingsRow
+        serverScoped
         settingKeys={["learnedModelPreferences"]}
         mixed={mixedLearned}
         id="learned-model-preferences"
@@ -348,7 +361,8 @@ export function ModelLanesSettings() {
       >
         {learnedList.length === 0 ? (
           <div className="text-xs text-muted-foreground italic">
-            No learned model preferences yet. Rules are learned when you give feedback in chat, or can be recorded by the coordinator.
+            No learned model preferences yet. Rules are learned when you give feedback in chat, or
+            can be recorded by the coordinator.
           </div>
         ) : (
           <ul className="flex flex-col gap-1.5" aria-label="Learned model preferences">

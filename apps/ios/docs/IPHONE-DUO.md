@@ -20,6 +20,12 @@ Fold control on the M1 uses agent-device's fold-helper (`simctl spawn <udid> fol
 
 The existing implementation already reads local geometry, uses a lazy transcript and does not use UIScreen.main or phone/pad identity for layout. No new continuous animation or polling is introduced. The drawer remains custom: iOS 27.1 reserved-region and vertical-toolbar acceptance is still required before calling this fully optimized.
 
+## Wide layout, November 1
+
+Width alone decides the layout now: from `WeaveSize.sidebarBreakpoint` (760 points) the navigation is a column beside the chat, even when the Duo reports a compact class at full width; below it (folded, unfolded upright at 669 points, Split View) the chat keeps the whole width and navigation is the modal drawer. 760 sits between Claude's 700-point and Codex's 768-point overlay breakpoints. The column is 32% of the scene, clamped to 288-340 points, and `AppRouter.isSidebarCollapsed` (remembered) hides it with a 0.3-second, 0.1-bounce spring. Transcript and composer are capped at `WeaveSize.readableColumn` (720 points) and centered. Projects in the sidebar unfold their open threads in place.
+
+A phone build made with an iOS 26 SDK runs on Duo as a compatibility layout, scaled and letterboxed, and rotation rescales it. The copy installed on October 31 was such a build (DTSDKName iphoneos26.2), which explains "not using the full width". `Tools/device.sh` refuses an SDK older than 27.1; build device copies with `DEVELOPER_DIR=/Applications/Xcode-27.2.app`.
+
 ## Simulator commands
 
 All runs use owned simulators booted with simctl; do not open Simulator.app. Browser checks, if added, must explicitly use headless Chrome with PWDEBUG=0 and PLAYWRIGHT_HTML_OPEN=never.

@@ -64,6 +64,7 @@ export const ConnectionTransientReason = Schema.Literals([
   "endpoint-unavailable",
   "relay-unavailable",
   "remote-unavailable",
+  "rate-limited",
 ]);
 export type ConnectionTransientReason = typeof ConnectionTransientReason.Type;
 
@@ -83,6 +84,8 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
     traceId: Schema.optionalKey(Schema.String),
     /** The relay reached its tunnel but the machine did not answer: it is asleep or off. */
     machineOffline: Schema.optionalKey(Schema.Boolean),
+    /** The machine refused this client for a while; no retry comes sooner. */
+    retryAfterMs: Schema.optionalKey(Schema.Number),
   },
 ) {
   override get message(): string {

@@ -850,6 +850,7 @@ export async function execute(options) {
         defaultRuntimeMode: "full-access",
         newWorktreesStartFromOrigin: false,
         cursorKeychainUsageEnabled: false,
+        aideEnabled: true,
       }),
       { mode: 0o600, flag: "wx" },
     );

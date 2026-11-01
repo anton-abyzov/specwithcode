@@ -180,8 +180,15 @@ the coordinator itself runs on, since the coordinator is using it right now, and
 another signed-in provider with room. **Wait for the reset**, or a reset within **Wait when the
 reset is close**, keeps the recommended model. A thread or the coordinator that stops on the limit
 moves the same way, first to the same model elsewhere. Threads run on the coordinator's machine
-unless the project's **Worker machine** names another one; a limit never moves them to another
+unless the project's **Machines for workers** lists others; a limit never moves them to another
 machine by itself.
+
+**Use quota before it resets** (Settings > Providers, under the model lanes, on by default) starts a
+worker on a later model in its lane when that model's subscription quota resets soon with at least
+40% left: the 5-hour window within 90 minutes, or the weekly within its last day. The lane's first
+model keeps its own quota for later, and the routing chip says which quota was spent, for example
+"80% of its 5-hour quota resets in 30 min". It only picks models already in the lane, never one
+billed per token outside it, and a model you name for a thread always wins.
 
 A provider that reports no usage (Copilot and the other agents set up under
 [ACP providers](providers-acp.md)) counts as having room while it is signed in and ready, until a

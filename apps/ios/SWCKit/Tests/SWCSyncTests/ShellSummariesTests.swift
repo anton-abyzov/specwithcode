@@ -520,6 +520,62 @@ import SWCWire
     #expect(only.aide?.archived == true)
   }
 
+  @Test func aideTurnedOffHidesAideAndItsChats() throws {
+    var personal = try TestData.project(id: "aide", title: "Aide", root: "/aide")
+    personal.workspaceSettings?.kind = .personal
+    let code = try TestData.project(id: "proj_1", title: "Web", root: "/web")
+    let machines = [machine("m4", threads: [
+      try TestData.thread(id: "ask", projectId: "aide", updatedAt: "2026-10-21T12:00:00.000Z"),
+      try TestData.thread(id: "work", projectId: "proj_1", updatedAt: "2026-10-21T10:00:00.000Z"),
+    ], projects: [personal, code])]
+
+    let shown = ShellSummaries.build(machines)
+    #expect(shown.aide?.ref == ProjectRef(environmentId: "m4", projectId: "aide"))
+    #expect(shown.recentThreads.map(\.ref.threadId) == ["ask", "work"])
+
+    let hidden = ShellSummaries.build(machines, includeAide: false)
+    #expect(hidden.aide == nil)
+    #expect(hidden.projects.map(\.title) == ["Web"])
+    #expect(hidden.recentThreads.map(\.ref.threadId) == ["work"])
+    #expect(hidden.threadsByProject[ProjectRef(environmentId: "m4", projectId: "aide")] == nil)
+    #expect(hidden.threadsByProject.values.joined().allSatisfy { $0.ref.threadId != "ask" })
+  }
+
+  @Test func aideOnAMachineTheDesktopDoesNotListIsStillFound() throws {
+    // The #1123 regression: the phone's home is the M4, and Aide lives on the
+    // M1, which no listed project links to. M1's own projects stay out.
+    var personal = try TestData.project(id: "aide", title: "Aide", root: "/aide")
+    personal.workspaceSettings?.kind = .personal
+    let m4 = machine("m4", threads: [try TestData.thread(id: "work", projectId: "web")], projects: [try TestData.project(id: "web", title: "Web", root: "/web")])
+    let m1 = machine("m1", threads: [
+      try TestData.thread(id: "ask", projectId: "aide"),
+      try TestData.thread(id: "stray-chat", projectId: "stray"),
+    ], projects: [personal, try TestData.project(id: "stray", title: "Stray", root: "/stray")])
+
+    let output = ShellSummaries.build([m4, m1], home: ["m4"])
+    let aideRef = ProjectRef(environmentId: "m1", projectId: "aide")
+    #expect(output.aide?.ref == aideRef)
+    #expect(output.projects.map(\.title) == ["Web"])
+    #expect(output.threadsByProject[aideRef]?.map(\.ref.threadId) == ["ask"])
+    #expect(Set(output.recentThreads.map(\.ref.threadId)) == ["work", "ask"])
+
+    // A listed machine's Aide wins over another machine's.
+    var homeAide = personal
+    homeAide.id = "home-aide"
+    let m4WithAide = machine("m4", threads: [], projects: [homeAide])
+    #expect(ShellSummaries.build([m4WithAide, m1], home: ["m4"]).aide?.ref == ProjectRef(environmentId: "m4", projectId: "home-aide"))
+
+    // An active Aide elsewhere beats an archived one at home.
+    homeAide.workspaceSettings?.archived = true
+    let archivedHome = machine("m4", threads: [], projects: [homeAide])
+    #expect(ShellSummaries.build([archivedHome, m1], home: ["m4"]).aide?.ref == aideRef)
+
+    // Turned off, no machine's Aide is found.
+    let off = ShellSummaries.build([m4, m1], home: ["m4"], includeAide: false)
+    #expect(off.aide == nil)
+    #expect(off.recentThreads.map(\.ref.threadId) == ["work"])
+  }
+
   @Test func pinnedProjectsComeFirst() throws {
     let projects = try [
       TestData.project(id: "a", title: "Alpha", root: "/w/alpha"),
@@ -530,6 +586,99 @@ import SWCWire
     let output = ShellSummaries.build([machine("env", threads: [], projects: projects, order: order)])
     #expect(output.projects.map(\.title) == ["Beta", "Alpha", "Gamma"])
     #expect(output.projects.map(\.isPinned) == [true, false, false])
+  }
+
+  @Test func projectsFollowTheDesktopsSavedOrder() throws {
+    let projects = try [
+      TestData.project(id: "a", title: "Alpha", root: "/w/alpha"),
+      TestData.project(id: "b", title: "Beta", root: "/w/beta"),
+      TestData.project(id: "c", title: "Gamma", root: "/w/gamma"),
+      TestData.project(id: "d", title: "Delta", root: "/w/delta"),
+      TestData.project(id: "n", title: "New", root: "/w/new"),
+    ]
+    let order = SidebarProjectOrder(
+      pinned: ["env:/w/gamma", "env:/w/alpha"],
+      unpinned: ["env:/w/delta", "env:/w/gone", "env:/w/beta"]
+    )
+    let output = ShellSummaries.build([machine("env", threads: [], projects: projects, order: order)])
+    // Pinned in their order, then the project the order never saw, then the rest in order.
+    #expect(output.projects.map(\.title) == ["Gamma", "Alpha", "New", "Delta", "Beta"])
+    #expect(output.projects.map(\.isPinned) == [true, true, false, false, false])
+  }
+
+  @Test func theFirstHomeMachinesOrderWins() throws {
+    let projects = try [
+      TestData.project(id: "a", title: "Alpha", root: "/w/alpha"),
+      TestData.project(id: "b", title: "Beta", root: "/w/beta"),
+    ]
+    let main = SidebarProjectOrder(unpinned: ["main:/w/beta", "main:/w/alpha"])
+    let other = SidebarProjectOrder(unpinned: ["main:/w/alpha", "main:/w/beta"])
+    // The worker sorts first by id; the main machine was paired first and is home.
+    let output = ShellSummaries.build([
+      machine("main", threads: [], projects: projects, order: main),
+      machine("a-worker", threads: [], projects: [], order: other),
+    ], home: ["main"])
+    #expect(output.projects.map(\.title) == ["Beta", "Alpha"])
+  }
+
+  @Test func aMergedProjectTakesItsPlaceFromAnyMember() throws {
+    var here = try TestData.project(id: "p1", title: "Shared", root: "/w/shared")
+    here.workspaceSettings?.logicalProject = LogicalProject(id: "lp", title: "Shared", coordinatorId: "c")
+    var there = try TestData.project(id: "p2", title: "Shared", root: "/x/shared")
+    there.workspaceSettings?.logicalProject = LogicalProject(id: "lp", title: "Shared", coordinatorId: "c")
+    let solo = try TestData.project(id: "s", title: "Solo", root: "/w/solo")
+    let order = SidebarProjectOrder(unpinned: ["env:/w/solo", "logical-project:lp"])
+    let output = ShellSummaries.build([
+      machine("env", threads: [], projects: [here, solo], order: order),
+      machine("env2", threads: [], projects: [there]),
+    ])
+    #expect(output.projects.map(\.title) == ["Solo", "Shared"])
+  }
+
+  @Test func aLinkedProjectIsPlacedByItsLogicalKeyOnly() throws {
+    let identity = RepositoryIdentity(canonicalKey: "github.com/example/repo")
+    var linked = try TestData.project(id: "l", title: "Linked", root: "/w/linked", identity: identity)
+    linked.workspaceSettings?.logicalProject = LogicalProject(id: "lp", title: "Linked", coordinatorId: "c")
+    let checkout = try TestData.project(id: "u", title: "Checkout", root: "/w/checkout", identity: identity)
+    let other = try TestData.project(id: "o", title: "Other", root: "/w/other")
+    // The repository key belongs to the unlinked checkout's row, and it is pinned.
+    let order = SidebarProjectOrder(pinned: ["github.com/example/repo"], unpinned: ["env:/w/other", "logical-project:lp"])
+    let output = ShellSummaries.build([machine("env", threads: [], projects: [linked, checkout, other], order: order)])
+    #expect(output.projects.map(\.title) == ["Checkout", "Other", "Linked"])
+    #expect(output.projects.map(\.isPinned) == [true, false, false])
+  }
+
+  @Test func pinsComeFromTheSameOrderAsThePlaces() throws {
+    let projects = try [
+      TestData.project(id: "a", title: "Alpha", root: "/w/alpha"),
+      TestData.project(id: "b", title: "Beta", root: "/w/beta"),
+    ]
+    let main = SidebarProjectOrder(unpinned: ["main:/w/beta", "main:/w/alpha"])
+    let worker = SidebarProjectOrder(pinned: ["main:/w/alpha"])
+    let output = ShellSummaries.build([
+      machine("main", threads: [], projects: projects, order: main),
+      machine("worker", threads: [], projects: [], order: worker),
+    ], home: ["main"])
+    #expect(output.projects.map(\.title) == ["Beta", "Alpha"])
+    #expect(output.projects.allSatisfy { !$0.isPinned })
+  }
+
+  @Test func subfolderKeysUseTheOriginKeyToo() throws {
+    var identity = RepositoryIdentity(canonicalKey: "github.com/fork/repo")
+    identity.rootPath = "/w/repo"
+    identity.origin = RepositoryIdentity.Origin(canonicalKey: "github.com/upstream/repo")
+    let project = try TestData.project(id: "p", root: "/w/repo/app", identity: identity)
+    #expect(ProjectPinning.projectKeys(project, environmentId: "env").contains("github.com/upstream/repo::app"))
+  }
+
+  @Test func ranksMatchPinnedMembers() {
+    let order = SidebarProjectOrder(pinned: ["old-key", "other"], unpinned: ["k2"], pinnedMembers: ["old-key": ["env:p"]])
+    #expect(ProjectOrdering.rank(keys: ["k1"], members: ["env:p"], in: order) == ProjectOrdering.Rank(pinned: 0))
+    #expect(ProjectOrdering.rank(keys: ["k2"], members: [], in: order) == ProjectOrdering.Rank(unpinned: 0))
+    #expect(ProjectOrdering.rank(keys: ["k2"], members: [], in: nil) == ProjectOrdering.Rank())
+    #expect(ProjectOrdering.precedes(nil, ProjectOrdering.Rank(unpinned: 0), pinned: false) == true)
+    #expect(ProjectOrdering.precedes(nil, ProjectOrdering.Rank(pinned: 0), pinned: true) == false)
+    #expect(ProjectOrdering.precedes(nil, nil, pinned: true) == nil)
   }
 
   @Test func pinMatchingFollowsTheWebKeys() throws {
@@ -614,5 +763,57 @@ import SWCWire
     #expect(CoordinatorRouting.resolve(project) == .needsStart(fallback: "project-coordinator:p9"))
     #expect(CoordinatorRouting.threadId(for: project, projectId: "p9") == "project-coordinator:p9")
     #expect(CoordinatorRouting.threadId(for: nil, projectId: "p7") == "project-coordinator:p7")
+  }
+}
+
+@Suite struct AideSettingTests {
+  typealias M = AideSetting.Machine
+
+  @Test func anyMachineWithAideOnShowsIt() {
+    #expect(AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false), M(environmentId: "b", displayName: "B", aideEnabled: true)], previous: false))
+    #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false)], previous: true))
+    #expect(!AideSetting.visible([], previous: true))
+    // A switched-off pairing has no say, even with Aide saved as on.
+    #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false), M(environmentId: "b", displayName: "B", enabled: false, aideEnabled: nil, cachedAideEnabled: true)], previous: true))
+  }
+
+  @Test func coldStartUsesTheSavedSettingThenKeepsThePreviousAnswer() {
+    // Saved on the phone, no live settings yet: Aide shows at once.
+    #expect(AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: nil, cachedAideEnabled: true)], previous: false))
+    // A live answer replaces the saved one.
+    #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false, cachedAideEnabled: true)], previous: true))
+    // Nothing known about a switched-on machine: the previous answer stands either way.
+    let unknown = [M(environmentId: "a", displayName: "A", aideEnabled: false), M(environmentId: "b", displayName: "B", aideEnabled: nil)]
+    #expect(AideSetting.visible(unknown, previous: true))
+    #expect(!AideSetting.visible(unknown, previous: false))
+    // A machine never reached, with nothing saved, has no say yet.
+    #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false), M(environmentId: "b", displayName: "B", aideEnabled: nil, listed: false)], previous: true))
+    // A switched-off pairing never answers, so it does not hold the answer.
+    #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false), M(environmentId: "b", displayName: "B", enabled: false, aideEnabled: nil)], previous: true))
+  }
+
+  @Test func targetPrefersTheLowestIdWhenItHasAideOn() throws {
+    let machines = [M(environmentId: "b", displayName: "B", aideEnabled: true), M(environmentId: "a", displayName: "A", aideEnabled: true)]
+    #expect(try AideSetting.target(machines, readOnlyReason: "ro") == "a")
+  }
+
+  @Test func targetSkipsAMachineWhoseOwnSettingIsOff() throws {
+    // The desktop wrote the switch only to the machine connected at the time.
+    let machines = [M(environmentId: "a", displayName: "M4", aideEnabled: false), M(environmentId: "b", displayName: "Mac mini", aideEnabled: true)]
+    #expect(try AideSetting.target(machines, readOnlyReason: "ro") == "b")
+  }
+
+  @Test func targetNamesTheMachineThatRefuses() {
+    let machines = [M(environmentId: "b", displayName: "Mac mini", aideEnabled: false), M(environmentId: "a", displayName: "M4", aideEnabled: false)]
+    #expect(throws: SyncError.aideDisabledOn(label: "M4")) { try AideSetting.target(machines, readOnlyReason: "ro") }
+    #expect(SyncError.aideDisabledOn(label: "M4").localizedDescription == "Aide is turned off on M4. Turn it on in SpecWithCode's settings there.")
+    #expect(throws: SyncError.aideDisabled) { try AideSetting.target([], readOnlyReason: "ro") }
+  }
+
+  @Test func targetNeedsAnOperablePairingWithAideOn() throws {
+    let readOnly = [M(environmentId: "a", displayName: "M4", aideEnabled: true, canOperate: false), M(environmentId: "b", displayName: "Mac mini", aideEnabled: false)]
+    #expect(throws: SyncError.sendBlocked("ro")) { try AideSetting.target(readOnly, readOnlyReason: "ro") }
+    let mixed = [M(environmentId: "a", displayName: "M4", aideEnabled: true, canOperate: false), M(environmentId: "b", displayName: "Mac mini", aideEnabled: true)]
+    #expect(try AideSetting.target(mixed, readOnlyReason: "ro") == "b")
   }
 }

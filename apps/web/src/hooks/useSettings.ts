@@ -47,7 +47,11 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { toastManager } from "~/components/ui/toast";
 import { isHostedStaticApp } from "~/hostedPairing";
-import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
+import {
+  primaryServerConfigAtom,
+  primaryServerSettingsAtom,
+  serverEnvironment,
+} from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
@@ -417,6 +421,29 @@ export function useInboxSidebarEnabled(): boolean {
   const settingsHydrated = useClientSettingsHydrated();
   const inboxSidebarEnabled = useClientSettingsValue().inboxSidebarEnabled;
   return settingsHydrated && inboxSidebarEnabled;
+}
+
+/**
+ * Whether the personal assistant (Aide) is shown (Settings → General → Personal
+ * assistant). Saved per machine on the primary server and off by default; while
+ * off, its sidebar rows, setup offers and pages are hidden, and nothing is deleted.
+ * Stays off where primary settings have nowhere to live, so it never flashes in.
+ */
+export function useAideEnabled(): boolean {
+  const aideEnabled = usePrimarySettings((settings) => settings.aideEnabled);
+  const available = usePrimarySettingsAvailable();
+  return available && aideEnabled;
+}
+
+/**
+ * Whether `useAideEnabled` is final: the primary server's settings have arrived,
+ * or there is no primary to wait for. Until then off only means "not loaded yet",
+ * so nothing should be sent away for it.
+ */
+export function useAideSettingSettled(): boolean {
+  const config = useAtomValue(primaryServerConfigAtom);
+  const available = usePrimarySettingsAvailable();
+  return !available || config !== null;
 }
 
 /** Read current settings for one environment, merged with client-local preferences. */

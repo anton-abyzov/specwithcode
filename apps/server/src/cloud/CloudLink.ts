@@ -205,7 +205,7 @@ export class CloudLinkAuthorizationMissingError extends Schema.TaggedError<Cloud
   }
 }
 
-const SignedRelayRequest = Schema.Literals(["health", "mint"]);
+const SignedRelayRequest = Schema.Literals(["health", "mint", "revoke"]);
 
 /** A signed relay request whose proof does not verify for this environment. */
 export class CloudLinkProofRejectedError extends Schema.TaggedError<CloudLinkProofRejectedError>()(
@@ -292,6 +292,7 @@ const INTERNAL_OPERATION_MESSAGES = {
   "persist-preferences": "Could not persist environment cloud preferences.",
   "answer-health": "Could not answer cloud health request.",
   "issue-credential": "Could not issue cloud connection credential.",
+  "revoke-client-keys": "Could not end the sessions of removed phones.",
 } as const;
 
 /** A link step failed on this machine: storage, signing, or an unexpected relay answer. */

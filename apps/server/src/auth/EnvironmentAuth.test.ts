@@ -674,4 +674,40 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         ),
       ),
   );
+
+  it.effect("revoking a Connect phone's session ends every session bound to its key", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const owner = yield* serverAuth.issueSession({ subject: "desktop-bootstrap" });
+      const phone = {
+        subject: "cloud-connect",
+        scopes: AuthStandardClientScopes,
+        proofKeyThumbprint: "phone-key",
+      } as const;
+      const phoneSession = yield* serverAuth.issueSession(phone);
+      const samePhone = yield* serverAuth.issueSession(phone);
+      // Another phone, and a pairing client bound to the same kind of key, stay.
+      const otherPhone = yield* serverAuth.issueSession({
+        ...phone,
+        proofKeyThumbprint: "other-key",
+      });
+      const pairedClient = yield* serverAuth.issueSession({
+        subject: "one-time-token",
+        proofKeyThumbprint: "paired-key",
+      });
+
+      expect(
+        yield* serverAuth.revokeClientSession(owner.sessionId, phoneSession.sessionId),
+      ).toEqual({ revoked: true, connectProofKeyThumbprint: "phone-key" });
+      expect(
+        yield* serverAuth.revokeClientSession(owner.sessionId, pairedClient.sessionId),
+      ).toEqual({ revoked: true, connectProofKeyThumbprint: null });
+      const remaining = (yield* serverAuth.listSessions()).map((session) => session.sessionId);
+      expect(remaining.toSorted()).toEqual([owner.sessionId, otherPhone.sessionId].toSorted());
+      expect(remaining).not.toContain(samePhone.sessionId);
+
+      expect(yield* serverAuth.revokeSessionsByProofKeyThumbprints(["other-key"])).toBe(1);
+      expect(yield* serverAuth.revokeSessionsByProofKeyThumbprints(["other-key"])).toBe(0);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
 });

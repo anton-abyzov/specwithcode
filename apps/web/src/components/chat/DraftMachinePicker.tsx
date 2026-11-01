@@ -17,13 +17,14 @@ import {
   PlusIcon,
   RotateCwIcon,
 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "~/composerDraftStore";
 import { environmentCatalog } from "~/connection/catalog";
 import { isThisMachineTarget } from "~/connection/desktopLocal";
 import { useScratchProject } from "~/hooks/useScratchProject";
-import { useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
+import { useAideEnabled, useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
+import { visibleWithAide } from "~/studio/personalAssistant";
 import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -87,7 +88,13 @@ export function DraftMachinePicker(props: Props) {
   const composer = useComposerDraftStore((store) => store.getComposerDraft(draftId));
   const { environments } = useEnvironments();
   const permitted = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
-  const projects = useProjects();
+  // A hidden personal assistant (Settings → General) is not offered as a destination.
+  const aideEnabled = useAideEnabled();
+  const catalogProjects = useProjects();
+  const projects = useMemo(
+    () => visibleWithAide(catalogProjects, aideEnabled),
+    [catalogProjects, aideEnabled],
+  );
   const legacy = useLegacySidebarEnabled();
   const coordinatorHandoff = useProjectCoordinatorHandoff();
   const grouping = useClientSettings(selectProjectGroupingSettings);

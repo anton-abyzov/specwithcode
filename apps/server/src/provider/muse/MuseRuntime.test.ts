@@ -301,8 +301,46 @@ describe("Muse native MSP runtime", () => {
     expect(museCheckFailure(failure)).toBe(
       "Muse Code 1.0.0 speaks a protocol this SpecWithCode build does not support. Update SpecWithCode, then refresh Providers.",
     );
-    expect(museCheckFailure(new Error("spawn muse ENOENT"))).toMatch(
-      /Install the official muse CLI/,
+  });
+  it("says the CLI is missing when the binary is not on this machine", async () => {
+    const input = await fixture();
+    const binaryPath = join(input.cwd, "no-such-muse");
+    const missing = await connectMuse(
+      { ...input.settings, binaryPath },
+      input.environment,
+      input.cwd,
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(museCheckFailure(missing, binaryPath)).toBe(
+      `${binaryPath} does not exist on this machine. Install the official muse CLI here, sign in, then refresh Providers.`,
+    );
+    const bare = Object.assign(new Error("spawn muse ENOENT"), { code: "ENOENT" });
+    expect(museCheckFailure(bare)).toBe(
+      "The muse CLI is not installed on this machine, or not on SpecWithCode's PATH. Install the official muse CLI here, sign in, then refresh Providers.",
+    );
+  });
+  it("says the binary is not executable", () => {
+    const denied = Object.assign(new Error("spawn /opt/muse EACCES"), { code: "EACCES" });
+    expect(museCheckFailure(denied, "/opt/muse")).toBe(
+      "/opt/muse is not executable on this machine. Install the official muse CLI here, sign in, then refresh Providers.",
+    );
+  });
+  it("shows the host's last stderr line when muse exits during the handshake", async () => {
+    const input = await fixture({
+      MUSE_TEST_EXIT_STDERR:
+        "\u001b[31mmuse: the download was rejected (HTTP 401); rerun the installer to sign in again\u001b[0m",
+    });
+    const failure = await connectMuse(input.settings, input.environment, input.cwd).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(museCheckFailure(failure)).toBe(
+      "Muse Code did not start on this machine. muse: the download was rejected (HTTP 401); rerun the installer to sign in again. Sign in with muse here, then refresh Providers.",
+    );
+    expect(museCheckFailure(undefined)).toBe(
+      "Muse Code did not start on this machine. Sign in with muse here, then refresh Providers.",
     );
   });
 });

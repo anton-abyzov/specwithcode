@@ -14,6 +14,10 @@ import {
 import { useClientSettings } from "./useSettings";
 import { findFolderCopies, type FolderToAdd } from "../studio/folderLinkSuggestion";
 import { projectLink } from "../studio/projectLink";
+import {
+  isPersonalAssistantDisabledError,
+  personalAssistantDisabledMessage,
+} from "../studio/personalAssistant";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useEnvironments } from "~/state/environments";
@@ -41,6 +45,7 @@ function errorMessage(error: unknown): string {
 export function useNewProject() {
   const navigate = useNavigate();
   const clientSettings = useClientSettings();
+  const { environments } = useEnvironments();
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
@@ -103,11 +108,19 @@ export function useNewProject() {
       });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
+          const failure = squashAtomCommandFailure(result);
           toastManager.add(
             stackedThreadToast({
               type: "error",
               title: "Could not create the project",
-              description: errorMessage(squashAtomCommandFailure(result)),
+              // Machines keep their own Aide switch: name the one that refused.
+              description: isPersonalAssistantDisabledError(failure)
+                ? personalAssistantDisabledMessage(
+                    environments.find(
+                      (environment) => environment.environmentId === input.environmentId,
+                    )?.label,
+                  )
+                : errorMessage(failure),
             }),
           );
         }
@@ -186,7 +199,7 @@ export function useNewProject() {
       });
       return true;
     },
-    [createNew, handleNewThread, publishToGitHub, navigate, clientSettings],
+    [createNew, environments, handleNewThread, publishToGitHub, navigate, clientSettings],
   );
 }
 

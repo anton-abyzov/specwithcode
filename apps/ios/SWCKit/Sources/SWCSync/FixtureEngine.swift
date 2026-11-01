@@ -9,6 +9,8 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case `default`
   /// No machines yet, as on first launch.
   case empty
+  /// First launch with SpecWithCode Connect offered and not signed in yet.
+  case connectWelcome = "connect-welcome"
   /// Like `default`, but every opened chat is mid-run with one queued message.
   case running
   /// One project linked across M4 and Minis; one thread lives on M4 and runs
@@ -37,6 +39,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case offlineRecovery = "offline-recovery"
   /// Paired machines are offline and no project/chat cache has loaded yet.
   case offlineStartup = "offline-startup"
+  /// Like `default`, signed in to SpecWithCode Connect with this iPhone and
+  /// two more phones on the account.
+  case connect
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -68,9 +73,15 @@ public final class FixtureEngine: AppEngine {
   public var faultStep: Duration = .seconds(6)
   private var counter = 0
   private var continuedThreads: [ThreadRef: ThreadRef] = [:]
+  /// Whether the sample machines turn Aide on. On by default, so screenshots
+  /// and UI tests show it; `-SWCAide off` launches with it hidden.
+  public let aideEnabled: Bool
+  /// The Connect account's phones in the `connect` scenario.
+  private var phones: [ConnectPhone] = []
 
-  public init(scenario: FixtureScenario = .default) {
+  public init(scenario: FixtureScenario = .default, aideEnabled: Bool = true) {
     self.scenario = scenario
+    self.aideEnabled = aideEnabled
   }
 
   // Simulated handoff updates the same in-memory summaries and transcript the UI reads.
@@ -108,7 +119,7 @@ public final class FixtureEngine: AppEngine {
     transcripts[nextTarget] = rows.map { original in
       var row = Self.finished(original)
       switch row.kind {
-      case let .approval(_, prompt, _), let .question(_, prompt, _):
+      case let .approval(_, prompt, _, _, _), let .question(_, prompt, _):
         row.kind = .notice(text: "Previous machine request (historical): " + prompt)
       case let .plan(steps):
         row.kind = .plan(steps: steps.map { step in
@@ -135,8 +146,10 @@ public final class FixtureEngine: AppEngine {
 
   public func start(model: AppModel) {
     self.model = model
+    model.aideEnabled = aideEnabled
     defer { model.isLoading = false }
-    guard scenario != .empty else { return }
+    if scenario == .connectWelcome { model.connect = ConnectState(methods: ConnectSignInMethod.allCases) }
+    guard scenario != .empty, scenario != .connectWelcome else { return }
     let now = Date()
     if scenario.isFleet {
       model.machines = FixtureFleet.machines
@@ -158,7 +171,7 @@ public final class FixtureEngine: AppEngine {
     model.machines = FixtureSample.machines
     unreachable = [FixtureSample.travel]
     lastSeen = [FixtureSample.travel: now.addingTimeInterval(-26 * 3600)]
-    model.aide = FixtureSample.aide
+    model.aide = aideEnabled ? FixtureSample.aide : nil
     model.projects = FixtureSample.projects
     var threads = FixtureSample.threads(now: now)
     if scenario == .threadLists {
@@ -172,6 +185,10 @@ public final class FixtureEngine: AppEngine {
     }
     model.threadsByProject = Dictionary(grouping: threads) { $0.projectRef ?? FixtureSample.specweave }
     if scenario == .devices { model.devices = FixtureSample.devices }
+    if scenario == .connect {
+      model.connect = ConnectState(methods: [.apple, .github], user: FixtureSample.connectUser)
+      phones = FixtureSample.phones(now: now)
+    }
     if scenario == .offlineRecovery || scenario == .offlineStartup {
       model.connect = ConnectState(methods: [.apple])
       for i in model.machines.indices {
@@ -197,6 +214,36 @@ public final class FixtureEngine: AppEngine {
   }
 
   public func setActive(_ active: Bool) {}
+
+  // MARK: Connect
+
+  public func connectSignIn(with method: ConnectSignInMethod) async throws {
+    guard model?.connect != nil else { return }
+    await pause(latency)
+    model?.connect?.user = FixtureSample.connectUser
+    model?.connect?.wasRemoved = false
+    if phones.isEmpty { phones = FixtureSample.phones(now: Date()) }
+  }
+
+  public func connectSignOut() async {
+    model?.connect?.user = nil
+  }
+
+  public func connectPhones() async throws -> [ConnectPhone] {
+    guard model?.connect?.isSignedIn == true else { return [] }
+    await pause(latency)
+    return ConnectPhone.ordered(phones)
+  }
+
+  public func connectRemovePhone(_ phoneId: String) async throws {
+    await pause(latency)
+    guard let index = phones.firstIndex(where: { $0.id == phoneId }) else { return }
+    let removed = phones.remove(at: index)
+    if removed.isThisPhone {
+      phones = []
+      model?.connect?.user = nil
+    }
+  }
 
   public func pair(link: String) async throws -> MachineSummary {
     try await pair(link: link, expectedEnvironmentId: nil)
@@ -326,7 +373,7 @@ public final class FixtureEngine: AppEngine {
     await pause(latency / 3)
     var prompt = ""
     switch rows[index].kind {
-    case let .approval(id, text, _):
+    case let .approval(id, text, _, _, _):
       prompt = text
       rows[index].kind = .approval(requestId: id, prompt: text, resolved: true)
     case let .question(id, text, _):
@@ -375,6 +422,7 @@ public final class FixtureEngine: AppEngine {
 
   public func setupAide() async throws -> ProjectRef {
     guard let model else { throw FixtureFailure("SpecWithCode isn't ready yet. Try again in a moment.") }
+    guard aideEnabled else { throw SyncError.aideDisabled }
     if let aide = model.aide { return aide.ref }
     // Every client puts Aide on the machine with the lowest environment id,
     // offline ones included, and creates nothing while a machine is offline:
@@ -411,13 +459,17 @@ public final class FixtureEngine: AppEngine {
     saved.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !saved.title.isEmpty else { throw FixtureFailure("A project needs a name.") }
     saved.revision += 1
+    let icon = saved.icon
+    saved.icon = nil
     projectSettings[project] = saved
     guard let model else { return }
     if model.aide?.ref == project {
+      if let icon { model.aide?.icon = icon }
       model.aide?.title = saved.title
       model.aide?.paused = saved.paused
       model.aide?.archived = saved.archived
     } else if let index = model.projects.firstIndex(where: { $0.ref == project }) {
+      if let icon { model.projects[index].icon = icon }
       model.projects[index].title = saved.title
       model.projects[index].paused = saved.paused
       model.projects[index].archived = saved.archived
@@ -779,7 +831,7 @@ public final class FixtureEngine: AppEngine {
 
   private static func requestId(of row: TranscriptRow) -> String? {
     switch row.kind {
-    case let .approval(id, _, _), let .question(id, _, _): id
+    case let .approval(id, _, _, _, _), let .question(id, _, _): id
     default: nil
     }
   }
@@ -806,6 +858,16 @@ private enum FixtureSample {
   static let travel = "env-travel-laptop"
 
   static let specweave = ProjectRef(environmentId: studio, projectId: "specweave")
+
+  static let connectUser = ConnectUser(id: "user_fixture", displayName: "Anton", email: "anton@example.com")
+
+  static func phones(now: Date) -> [ConnectPhone] {
+    [
+      ConnectPhone(id: "phone-this", label: "Anton's iPhone", model: "iPhone 17 Pro", appVersion: "0.2.0", lastSeen: now, isThisPhone: true),
+      ConnectPhone(id: "phone-old", label: "Old iPhone", model: "iPhone 13 mini", appVersion: "0.1.1", lastSeen: now.addingTimeInterval(-9 * 86_400)),
+      ConnectPhone(id: "phone-work", label: "Work iPhone", model: "iPhone 16", appVersion: "0.2.0", lastSeen: now.addingTimeInterval(-2 * 3600)),
+    ]
+  }
 
   static let devices: [String: MachineDevices] = [
     studio: MachineDevices(support: .available, sessions: [

@@ -394,6 +394,17 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+export class ProofKeySessionsRevocationError extends Schema.TaggedError<ProofKeySessionsRevocationError>()(
+  "ProofKeySessionsRevocationError",
+  {
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke the sessions of a removed key.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   PrincipalRevocationError,
   SessionClaimsEncodingError,
@@ -404,6 +415,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  ProofKeySessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -514,6 +526,17 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /** The subject and DPoP key of a stored session, or none when there is no such row. */
+    readonly readProofKeyBinding: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<
+      Option.Option<{ readonly subject: string; readonly proofKeyThumbprint: string | null }>,
+      SessionCredentialInternalError
+    >;
+    /** Revokes every active session bound to one of these DPoP keys; returns their ids. */
+    readonly revokeByProofKeyThumbprints: (
+      proofKeyThumbprints: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly recordClientConnection: (
@@ -607,6 +630,22 @@ export const make = Effect.gen(function* () {
       ? authSessions.getById(input)
       : Effect.succeedSome<AuthSessions.AuthSessionRecord>(kept);
   };
+  // Connect sessions stored before keys were recorded learn theirs on first use,
+  // so a phone revoke or a relay order finds them. Best effort.
+  const backfillProofKey = (row: AuthSessions.AuthSessionRecord, jkt: string | undefined) =>
+    jkt === undefined ||
+    row.subject !== "cloud-connect" ||
+    row.method !== "dpop-access-token" ||
+    row.proofKeyThumbprint != null ||
+    inMemorySessions.has(row.sessionId)
+      ? Effect.void
+      : authSessions
+          .backfillProofKeyThumbprint({ sessionId: row.sessionId, proofKeyThumbprint: jkt })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not record the key of a Connect session", { cause }),
+            ),
+          );
   const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -858,6 +897,7 @@ export const make = Effect.gen(function* () {
         },
         issuedAt,
         expiresAt,
+        proofKeyThumbprint: claims.jkt ?? null,
       } satisfies AuthSessions.CreateAuthSessionInput;
       if (input?.inMemory) {
         inMemorySessions.set(sessionId, {
@@ -1012,6 +1052,7 @@ export const make = Effect.gen(function* () {
       }
 
       yield* checkPrincipal(row.value);
+      yield* backfillProofKey(row.value, claims.jkt);
       return {
         ...(row.value.principal
           ? { principal: row.value.principal, principalGeneration: row.value.principalGeneration }
@@ -1374,6 +1415,23 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Revoked sessions are no longer connected; open sockets end through watchEnd.
+  const forgetRevoked = (revokedSessionIds: ReadonlyArray<AuthSessionId>) =>
+    revokedSessionIds.length === 0
+      ? Effect.void
+      : Ref.update(connectedSessionsRef, (current) => {
+          const next = new Map(current);
+          for (const revokedSessionId of revokedSessionIds) next.delete(revokedSessionId);
+          return next;
+        }).pipe(
+          Effect.andThen(
+            Effect.forEach(revokedSessionIds, emitRemoved, {
+              concurrency: "unbounded",
+              discard: true,
+            }),
+          ),
+        );
+
   const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
     "SessionStore.revokeAllExcept",
   )(function* (sessionId) {
@@ -1388,25 +1446,29 @@ export const make = Effect.gen(function* () {
           (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
         ),
       );
-    if (revokedSessionIds.length > 0) {
-      yield* Ref.update(connectedSessionsRef, (current) => {
-        const next = new Map(current);
-        for (const revokedSessionId of revokedSessionIds) {
-          next.delete(revokedSessionId);
-        }
-        return next;
-      });
-      yield* Effect.forEach(
-        revokedSessionIds,
-        (revokedSessionId) => emitRemoved(revokedSessionId),
-        {
-          concurrency: "unbounded",
-          discard: true,
-        },
-      );
-    }
+    yield* forgetRevoked(revokedSessionIds);
     return revokedSessionIds.length;
   });
+
+  const readProofKeyBinding: SessionStore["Service"]["readProofKeyBinding"] = (sessionId) =>
+    getSessionRow({ sessionId }).pipe(
+      Effect.map(
+        Option.map((row) => ({
+          subject: row.subject,
+          proofKeyThumbprint: row.proofKeyThumbprint ?? null,
+        })),
+      ),
+      Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })),
+    );
+
+  const revokeByProofKeyThumbprints: SessionStore["Service"]["revokeByProofKeyThumbprints"] =
+    Effect.fn("SessionStore.revokeByProofKeyThumbprints")(function* (proofKeyThumbprints) {
+      const revokedSessionIds = yield* authSessions
+        .revokeByProofKeyThumbprints({ proofKeyThumbprints, revokedAt: yield* DateTime.now })
+        .pipe(Effect.mapError((cause) => new ProofKeySessionsRevocationError({ cause })));
+      yield* forgetRevoked(revokedSessionIds);
+      return revokedSessionIds;
+    });
 
   return SessionStore.of({
     setPrincipalRevoked,
@@ -1425,6 +1487,8 @@ export const make = Effect.gen(function* () {
     watchEnd,
     revoke,
     revokeAllExcept,
+    readProofKeyBinding,
+    revokeByProofKeyThumbprints,
     markConnected,
     markDisconnected,
     recordClientConnection,

@@ -156,7 +156,7 @@ public final class LiveEngine: AppEngine {
     started = true
     self.model = model
     if options.monitorsNetwork { startPathMonitor() }
-    if let connect { model.connect = ConnectState(methods: ConnectSignInMethod.offered(by: connect.account.config)) }
+    if let connect { model.connect = ConnectState(methods: ConnectSignInMethod.offered(by: connect.account.config), wasRemoved: connect.wasRemoved) }
     Task {
       await bootstrap()
       await startConnect()
@@ -263,6 +263,9 @@ public final class LiveEngine: AppEngine {
     guard let entry = machines[env] else { return }
     if entry.status.state == .connected, status.state != .connected { markSeen(entry) }
     entry.status = status
+    if case let .connect(error)? = status.lastError, error.isDeviceRemoved {
+      Task { await connectHandleRemoval(error) }
+    }
     if let days = status.tokenDaysLeft { entry.tokenDaysLeft = days }
     switch status.state {
     case .connected:
@@ -306,7 +309,10 @@ public final class LiveEngine: AppEngine {
       let config = try await Self.decode(ServerConfig.self, from: value)
       guard machines[entry.environmentId] === entry else { return }
       entry.config = config
-      if let settings = config.settings { entry.settings = settings }
+      if let settings = config.settings {
+        entry.settings = settings
+        rememberAide(entry)
+      }
       rename(entry, config.environment.label)
       learnRoutes(entry, socket, config.directEndpoints.map(\.httpBaseUrl))
       schedulePublish()
@@ -448,11 +454,14 @@ public final class LiveEngine: AppEngine {
     let entries = machineOrder.compactMap { machines[$0] }
     let nicknames = fleetNicknames
     assign(model, \.machines, entries.map { summary($0, nicknames: nicknames) })
+    // Aide is a beta the user turns on in the desktop's settings; any machine saying so shows it.
+    let aideEnabled = AideSetting.visible(entries.map { aideMachine($0, nicknames: nicknames) }, previous: model.aideEnabled)
+    assign(model, \.aideEnabled, aideEnabled)
 
     let output = ShellSummaries.build(entries.map { entry in
       // A live list replaces the saved one wholesale, so a reconnect never doubles rows.
       ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
-    }, names: fleetNames, nicknames: nicknames, home: fleetHome)
+    }, names: fleetNames, nicknames: nicknames, home: fleetHome, includeAide: aideEnabled)
     assign(model, \.aide, output.aide)
     assign(model, \.projects, output.projects)
     assign(model, \.threadsByProject, output.threadsByProject)
@@ -484,6 +493,10 @@ public final class LiveEngine: AppEngine {
     MachineNickname.resolve(environmentId: entry.environmentId, label: entry.label, nicknames: nicknames ?? fleetNicknames)
   }
 
+  func aideMachine(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> AideSetting.Machine {
+    AideSetting.Machine(environmentId: entry.environmentId, displayName: displayName(entry, nicknames: nicknames), enabled: entry.record.enabled, aideEnabled: entry.settings?.aideEnabled, cachedAideEnabled: entry.cachedAideEnabled, canOperate: entry.canOperate, listed: entry.isOnline || entry.cachedSnapshot != nil)
+  }
+
   func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> MachineSummary {
     let status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
     var result = MachineSummary(
@@ -502,6 +515,7 @@ public final class LiveEngine: AppEngine {
       hasDirectPairing: !entry.record.routes.isEmpty
     )
     result.isDisconnected = !entry.record.enabled
+    if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
     return result
   }
 
@@ -557,6 +571,8 @@ final class MachineEntry {
   var snapshot: ShellSnapshot?
   /// The thread list saved on the phone, shown until the live one arrives.
   var cachedSnapshot: ShellSnapshot?
+  /// The machine's `aideEnabled` saved on the phone, used until `settings` arrive.
+  var cachedAideEnabled: Bool?
   /// When the phone last had this machine connected.
   var lastSeenAt: Date?
   var shellSavedAt: ContinuousClock.Instant?

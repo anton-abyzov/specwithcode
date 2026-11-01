@@ -11,6 +11,8 @@ public actor FleetCache {
   public struct Cached: Sendable, Hashable {
     public var snapshot: ShellSnapshot?
     public var lastSeenAt: Date?
+    /// The machine's `aideEnabled` the last time its settings arrived.
+    public var aideEnabled: Bool?
   }
 
   struct State: Codable, Hashable {
@@ -22,6 +24,9 @@ public actor FleetCache {
     /// machine's: ones paired by hand and ones that served a fleet roster.
     /// Optional so a file saved before it existed still decodes.
     var home: Set<String>?
+    /// Each machine's last known `aideEnabled`, so a cold start shows Aide as
+    /// it was before the machines answer. Optional for older files.
+    var aide: [String: Bool]?
   }
 
   static let log = Logger(subsystem: "com.specwithcode.ios", category: "fleet")
@@ -70,6 +75,7 @@ public actor FleetCache {
       $0.lastSeen[environmentId] = nil
       $0.labels[environmentId] = nil
       $0.home?.remove(environmentId)
+      $0.aide?[environmentId] = nil
     }
   }
 
@@ -82,7 +88,8 @@ public actor FleetCache {
 
   public func cached(_ environmentId: String) -> Cached {
     let snapshot = (try? Data(contentsOf: shellURL(environmentId))).flatMap { try? WireCoding.decoder.decode(ShellSnapshot.self, from: $0) }
-    return Cached(snapshot: snapshot, lastSeenAt: load().lastSeen[environmentId])
+    let state = load()
+    return Cached(snapshot: snapshot, lastSeenAt: state.lastSeen[environmentId], aideEnabled: state.aide?[environmentId])
   }
 
   public func lastSeen() -> [String: Date] { load().lastSeen }
@@ -97,6 +104,10 @@ public actor FleetCache {
     } catch {
       Self.log.error("Could not cache the thread list of \(environmentId, privacy: .public): \(String(describing: error), privacy: .public)")
     }
+  }
+
+  public func setAideEnabled(_ enabled: Bool, for environmentId: String) {
+    change { $0.aide = ($0.aide ?? [:]).merging([environmentId: enabled]) { _, new in new } }
   }
 
   public func labels() -> [String: String] { load().labels }

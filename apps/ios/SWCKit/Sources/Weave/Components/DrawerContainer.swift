@@ -10,8 +10,15 @@ import SwiftUI
 /// screen needs the system back swipe: `edgeSwipeEnabled: path.isEmpty`.
 /// The drawer reads `isNavigationSidebarVisible` to tell a persistent column
 /// from the modal drawer.
+///
+/// From `WeaveSize.sidebarBreakpoint` points wide the drawer is a column
+/// beside the content, whatever the size class: an unfolded or rotated iPhone
+/// Duo can report a compact class at full width. `isCollapsed` hides that
+/// column so the content takes the whole width; `isWideLayout` tells screens
+/// the column exists, shown or not.
 public struct DrawerContainer<Drawer: View, Content: View>: View {
   @Binding var isOpen: Bool
+  @Binding var isCollapsed: Bool
   let edgeSwipeEnabled: Bool
   let sceneInsets: EdgeInsets
   let drawer: Drawer
@@ -19,12 +26,19 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
 
   @State private var drag: CGFloat = 0
   @State private var dragging = false
+  /// The column width the person dragged to; 0 follows the scene width.
+  @AppStorage("swc.sidebarWidth") private var chosenWidth: Double = 0
+  /// How far the divider has moved in the drag in progress. Gesture state
+  /// resets itself when the drag ends or is cancelled (a fold, a rotation, a
+  /// system gesture), so a lost drag never leaves a stale width behind.
+  @GestureState private var resizeDrag: CGFloat?
+  private var resizing: Bool { resizeDrag != nil }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.layoutDirection) private var layoutDirection
 
-  public init(isOpen: Binding<Bool>, edgeSwipeEnabled: Bool = true, sceneInsets: EdgeInsets = EdgeInsets(), @ViewBuilder drawer: () -> Drawer, @ViewBuilder content: () -> Content) {
+  public init(isOpen: Binding<Bool>, isCollapsed: Binding<Bool> = .constant(false), edgeSwipeEnabled: Bool = true, sceneInsets: EdgeInsets = EdgeInsets(), @ViewBuilder drawer: () -> Drawer, @ViewBuilder content: () -> Content) {
     self._isOpen = isOpen
+    self._isCollapsed = isCollapsed
     self.edgeSwipeEnabled = edgeSwipeEnabled
     self.sceneInsets = sceneInsets
     self.drawer = drawer()
@@ -35,26 +49,36 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
 
   private static var spring: Animation { .spring(response: 0.36, dampingFraction: 0.88) }
 
+  /// Showing or hiding the wide column: a short, nearly critically damped
+  /// spring, the sidebar motion desktop coding apps use.
+  private var collapseAnimation: Animation { reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.3, bounce: 0.1) }
+
   /// The spring, or a short fade under Reduce Motion.
   private var animation: Animation { reduceMotion ? .easeInOut(duration: 0.2) : Self.spring }
 
   public var body: some View {
     GeometryReader { proxy in
-      // A regular size class also occurs on an unfolded iPhone. Keep a
-      // readable detail column when Split View or mirroring narrows the scene.
-      let persistent = horizontalSizeClass == .regular && proxy.size.width >= 600
-      let width = persistent ? min(proxy.size.width * 0.4, 320) : min(max(proxy.size.width * 0.8, 1), 340)
+      // Width alone decides: Split View or mirroring narrows the scene below
+      // the breakpoint, and the Duo reports compact classes at full width.
+      let wide = proxy.size.width >= WeaveSize.sidebarBreakpoint
+      let persistent = wide && !isCollapsed
+      let width = persistent ? columnWidth(scene: proxy.size.width) : min(max(proxy.size.width * 0.8, 1), 340)
       let modalOpen = isOpen && !persistent
       let progress: CGFloat = persistent ? 0 : progress(drawerWidth: width)
       ZStack(alignment: .leading) {
         if persistent || isOpen || dragging {
           drawer
             .environment(\.isNavigationSidebarVisible, persistent)
+            .environment(\.isWideLayout, wide)
             .safeAreaPadding(EdgeInsets(
               top: sceneInsets.top, leading: sceneInsets.leading,
               bottom: sceneInsets.bottom,
               trailing: max(0, width - (proxy.size.width - sceneInsets.trailing))
             ))
+            // The drawer takes only the insets computed here. On iPhone Duo
+            // the system reports its rail as a trailing inset to every
+            // UIKit-backed view, which narrowed the column by the rail's width.
+            .ignoresSafeArea(.container, edges: .horizontal)
             .frame(width: width)
             .frame(maxHeight: .infinity)
             // Above the content under Reduce Motion, so it needs its own fill.
@@ -64,8 +88,11 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
             .opacity(persistent ? 1 : reduceMotion ? progress : 0.4 + 0.6 * progress)
             .allowsHitTesting(persistent || progress > 0.99)
             .accessibilityAction(.escape) { close() }
-            .transition(drawerTransition(drawerWidth: width))
-            .zIndex(reduceMotion ? 1 : 0)
+            // The wide column slides away whole when it collapses.
+            .transition(wide && !reduceMotion ? .move(edge: .leading) : drawerTransition(drawerWidth: width))
+            // Only the modal drawer fades in above the content. A column stays
+            // below it so the divider's whole grab area takes touches.
+            .zIndex(reduceMotion && !persistent ? 1 : 0)
         }
 
         ZStack {
@@ -79,6 +106,7 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
             .accessibilityHidden(modalOpen)
             .environment(\.isCoveredByDrawer, modalOpen)
             .environment(\.isNavigationSidebarVisible, persistent)
+            .environment(\.isWideLayout, wide)
           // Keep the dismissal control outside the hidden content subtree.
           // Newer SwiftUI versions propagate that hidden state to overlays.
           dim(progress: progress, drawerWidth: width, active: modalOpen)
@@ -89,7 +117,18 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
           .scaleEffect(reduceMotion ? 1 : 1 - 0.06 * progress, anchor: .leading)
           .offset(x: persistent ? width : reduceMotion ? 0 : (width + 8) * progress)
           .overlay(alignment: .leading) {
-            if edgeSwipeEnabled, !isOpen, !persistent {
+            if persistent {
+              // The content is moved by offset, which leaves its overlay at
+              // the scene's leading edge, so the handle moves to the divider.
+              ResizeHandle(
+                active: resizing,
+                adjust: { step in chosenWidth = Double(clampColumn(width + step, scene: proxy.size.width)) },
+                reset: { withAnimation(collapseAnimation) { chosenWidth = 0 } }
+              )
+                .offset(x: width - ResizeHandle.width / 2)
+                .gesture(resizeGesture(scene: proxy.size.width))
+            }
+            if edgeSwipeEnabled, !isOpen, !wide {
               Color.clear
                 .frame(width: WeaveSpacing.gutter)
                 .contentShape(Rectangle())
@@ -101,7 +140,15 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
       .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
       .background(Color.weave.sunken.ignoresSafeArea())
       .animation(dragging ? nil : animation, value: isOpen)
-      .onChange(of: persistent) { _, _ in
+      .animation(collapseAnimation, value: isCollapsed)
+      .transaction { if resizing { $0.animation = nil } }
+      .onChange(of: isCollapsed) { _, _ in
+        // Hiding the column must not reveal a modal drawer left open earlier.
+        drag = 0
+        dragging = false
+        isOpen = false
+      }
+      .onChange(of: wide) { _, _ in
         // A fold can arrive in the middle of a swipe. Do not carry a stale
         // translation or an invisible modal cover into the new layout.
         drag = 0
@@ -109,6 +156,40 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
         isOpen = false
       }
     }
+  }
+
+  /// Width bounds of the wide column: wide enough for project names, never
+  /// more than 45% of the scene so the chat keeps a readable column.
+  private static var minColumn: CGFloat { 240 }
+  private static func maxColumn(scene: CGFloat) -> CGFloat { max(minColumn, min(440, scene * 0.45)) }
+
+  private var savedWidth: CGFloat? { chosenWidth > 0 ? CGFloat(chosenWidth) : nil }
+
+  private func clampColumn(_ wanted: CGFloat, scene: CGFloat) -> CGFloat {
+    min(max(wanted, Self.minColumn), Self.maxColumn(scene: scene))
+  }
+
+  private func columnWidth(scene: CGFloat) -> CGFloat {
+    let resting = savedWidth ?? min(max(scene * 0.32, 288), 340)
+    return clampColumn(resting + (resizeDrag ?? 0), scene: scene)
+  }
+
+  /// Drag the divider to resize the column; drag it well past the narrowest
+  /// width to hide the column, as desktop sidebars do. Double tap resets.
+  private func resizeGesture(scene: CGFloat) -> some Gesture {
+    DragGesture(minimumDistance: 2, coordinateSpace: .global)
+      .updating($resizeDrag) { value, state, _ in
+        state = value.translation.width * direction
+      }
+      .onEnded { value in
+        let resting = savedWidth ?? min(max(scene * 0.32, 288), 340)
+        let target = resting + value.translation.width * direction
+        if target < Self.minColumn - 72 {
+          withAnimation(collapseAnimation) { isCollapsed = true }
+        } else {
+          chosenWidth = Double(clampColumn(target, scene: scene))
+        }
+      }
   }
 
   /// The drawer leaves the tree once it is closed, so neither VoiceOver nor
@@ -192,11 +273,21 @@ private nonisolated struct CoveredByDrawerKey: EnvironmentKey {
   static let defaultValue = false
 }
 
+private nonisolated struct WideLayoutKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
 extension EnvironmentValues {
   /// Navigation is already visible beside the detail; a menu button is redundant.
   public nonisolated var isNavigationSidebarVisible: Bool {
     get { self[NavigationSidebarVisibleKey.self] }
     set { self[NavigationSidebarVisibleKey.self] = newValue }
+  }
+
+  /// The scene is wide enough for a navigation column, shown or collapsed.
+  public nonisolated var isWideLayout: Bool {
+    get { self[WideLayoutKey.self] }
+    set { self[WideLayoutKey.self] = newValue }
   }
 
   /// True while an open drawer covers this content.
@@ -297,5 +388,42 @@ private struct DrawerContainerPreview: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.weave.canvas)
     }
+  }
+}
+
+/// The divider between the wide column and the content: a wide invisible
+/// grab area with a short grip that shows while dragging.
+private struct ResizeHandle: View {
+  static let width: CGFloat = 16
+  let active: Bool
+  let adjust: (CGFloat) -> Void
+  let reset: () -> Void
+
+  var body: some View {
+    ZStack {
+      Rectangle()
+        .fill(Color.weave.line)
+        .frame(width: WeaveSize.hairline)
+      Capsule()
+        .fill(active ? Color.weave.iris : Color.weave.muted.opacity(0.35))
+        .frame(width: active ? 4 : 3, height: 36)
+        .animation(.easeOut(duration: 0.15), value: active)
+    }
+    .frame(width: Self.width)
+    .frame(maxHeight: .infinity)
+    .contentShape(Rectangle())
+    .onTapGesture(count: 2, perform: reset)
+    .accessibilityElement()
+    .accessibilityLabel("Sidebar width")
+    .accessibilityHint("Swipe up or down to resize.")
+    .accessibilityAdjustableAction { direction in
+      switch direction {
+      case .increment: adjust(24)
+      case .decrement: adjust(-24)
+      @unknown default: break
+      }
+    }
+    .accessibilityAction(named: "Reset width", reset)
+    .accessibilityIdentifier("sidebar.resize")
   }
 }

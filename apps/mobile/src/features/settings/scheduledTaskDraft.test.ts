@@ -283,6 +283,12 @@ it("continues to default newly created tasks to origin", () => {
   expect(createDraft(null, null).startFromOrigin).toBe(true);
 });
 
+it("defaults newly created tasks to the project folder, keeping worktree a choice", () => {
+  const draft = createDraft(null, null);
+  expect(draft.workspace).toBe("root");
+  expect(hasScheduledTaskDraftChanges(draft, { ...draft, workspace: "worktree" })).toBe(true);
+});
+
 describe("scheduled task model defaults", () => {
   const instanceId = ProviderInstanceId.make("codex");
   const projectId = ProjectId.make("project");

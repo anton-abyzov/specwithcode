@@ -924,6 +924,56 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("removes legacy scan caches older than a week after writing the current cache", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
+        const staleLegacy = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        const freshLegacy = NodePath.join(stateDir, "usage-scan-cache.json");
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+
+        const nowMs = yield* Clock.currentTimeMillis;
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(staleLegacy, "{}");
+          await NodeFSP.writeFile(freshLegacy, "{}");
+          const eightDaysAgo = (nowMs - 8 * 24 * 60 * 60 * 1000) / 1000;
+          await NodeFSP.utimes(staleLegacy, eightDaysAgo, eightDaysAgo);
+          // A changed transcript dirties the cache, so this scan writes it.
+          await NodeFSP.appendFile(transcript, claudeLine(2, 7));
+        });
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(summary), 12);
+
+        const exists = (filePath: string) =>
+          Effect.promise(() =>
+            NodeFSP.access(filePath).then(
+              () => true,
+              () => false,
+            ),
+          );
+        assert.isTrue(yield* exists(cachePath));
+        assert.isFalse(yield* exists(staleLegacy));
+        // A recently written legacy file may belong to an older server still running.
+        assert.isTrue(yield* exists(freshLegacy));
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-legacy-cleanup-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

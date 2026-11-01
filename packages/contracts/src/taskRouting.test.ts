@@ -38,6 +38,7 @@ describe("taskRouting setting", () => {
         excludedProviders: ["copilot-0889"],
         paidApi: "never",
         escalate: false,
+        spendExpiringQuota: false,
       },
     });
     const reloaded = decodeServerSettings(encodeServerSettings(saved));
@@ -49,6 +50,7 @@ describe("taskRouting setting", () => {
       excludedProviders: ["copilot-0889"],
       paidApi: "never",
       escalate: false,
+      spendExpiringQuota: false,
     });
   });
 

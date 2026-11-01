@@ -50,7 +50,7 @@ export interface ManagedRelaySnapshotState<A> {
 }
 
 export interface ManagedRelayQueryEvent {
-  readonly operation: "environments" | "devices" | "environment-status";
+  readonly operation: "environments" | "devices" | "phones" | "environment-status";
   readonly stage: "clerk-token" | "relay-request" | "validation";
   readonly phase: "start" | "success" | "failure";
   readonly accountId: string;
@@ -207,6 +207,27 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   const relay = yield* ManagedRelay.ManagedRelayClient;
   yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
 });
+
+/**
+ * Removes one phone from the signed-in account: it loses access everywhere
+ * until it signs in to Connect again.
+ */
+export const removeManagedRelayPhone = Effect.fn("clientRuntime.managedRelaySession.removePhone")(
+  function* (
+    registry: AtomRegistry.AtomRegistry,
+    input: { readonly accountId: string; readonly deviceId: string },
+  ) {
+    const session = registry.get(managedRelaySessionAtom);
+    if (!session || session.accountId !== input.accountId) {
+      return yield* new ManagedRelaySessionError({
+        message: "Sign in to SpecWithCode Connect before removing a phone.",
+      });
+    }
+    const clerkToken = yield* readSessionClerkToken(session);
+    const relay = yield* ManagedRelay.ManagedRelayClient;
+    return yield* relay.removePhone({ clerkToken, deviceId: input.deviceId });
+  },
+);
 
 function requireClerkToken(
   get: Atom.AtomContext,
@@ -383,6 +404,29 @@ export function createManagedRelayQueryManager(
       ),
   );
 
+  const phonesAtom = Atom.family((accountId: string) =>
+    runtime
+      .atom((get) =>
+        Effect.gen(function* () {
+          const base = { operation: "phones" as const, accountId };
+          const clerkToken = yield* observe(
+            { ...base, stage: "clerk-token" },
+            requireClerkToken(get, accountId),
+          );
+          const relay = yield* ManagedRelay.ManagedRelayClient;
+          return yield* observe(
+            { ...base, stage: "relay-request" },
+            relay.listPhones({ clerkToken }),
+          );
+        }),
+      )
+      .pipe(
+        Atom.swr({ staleTime, revalidateOnMount: true }),
+        Atom.setIdleTTL(idleTtl),
+        Atom.withLabel(`managed-relay:phones:${accountId}`),
+      ),
+  );
+
   const environmentStatusAtom = Atom.family((key: string) => {
     const { accountId, environment } = parseStatusKey(key);
     return runtime
@@ -422,6 +466,7 @@ export function createManagedRelayQueryManager(
   return {
     environmentsAtom,
     devicesAtom,
+    phonesAtom,
     environmentStatusAtom: (input: {
       readonly accountId: string;
       readonly environment: RelayClientEnvironmentRecord;
@@ -431,6 +476,9 @@ export function createManagedRelayQueryManager(
     },
     refreshDevices(registry: AtomRegistry.AtomRegistry, accountId: string): void {
       registry.refresh(devicesAtom(accountId));
+    },
+    refreshPhones(registry: AtomRegistry.AtomRegistry, accountId: string): void {
+      registry.refresh(phonesAtom(accountId));
     },
     refreshEnvironmentStatus(
       registry: AtomRegistry.AtomRegistry,

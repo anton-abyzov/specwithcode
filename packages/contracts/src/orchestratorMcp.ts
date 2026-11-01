@@ -1039,8 +1039,13 @@ export const OrchestratorMcpMachineListResult = Schema.Struct({
     environmentId: EnvironmentId,
   }),
   machines: Schema.Array(OrchestratorMcpMachine),
-  /** The machine this project's coordinator starts workers on, or null for this one. */
+  /** The first other machine this project's coordinator starts workers on, or null for this one. */
   projectWorkerMachine: Schema.NullOr(Schema.String),
+  /**
+   * Every machine this project's workers may run on, in the order a launch
+   * without machine tries them; "local" is this machine. Absent from older hosts.
+   */
+  projectWorkerMachines: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OrchestratorMcpMachineListResult = typeof OrchestratorMcpMachineListResult.Type;
 

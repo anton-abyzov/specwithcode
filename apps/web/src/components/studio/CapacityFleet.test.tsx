@@ -247,7 +247,7 @@ it("reads capacity without refresh, policy mutation or inference on mount", asyn
   expect(state.draft).not.toHaveBeenCalled();
   expect(container.textContent).toContain("Independent capacity unknown");
   expect(container.textContent).toContain("70% left");
-  expect(container.textContent).toContain("EDT");
+  expect(container.textContent).toMatch(/EDT|EST/);
 });
 it("refreshes observations only from its explicit action", async () => {
   await render();

@@ -143,6 +143,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { UpdatePreferencesSection } from "./UpdatePreferencesSection";
 import { ScopedSwitch } from "./ScopedSwitch";
+import { AideSetting } from "./AideSetting";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -3464,6 +3465,10 @@ export function GeneralSettingsPanel() {
             </Button>
           }
         />
+      </SettingsSection>
+
+      <SettingsSection id="beta" title="Beta">
+        <AideSetting />
       </SettingsSection>
 
       <LegacyFeaturesSection />

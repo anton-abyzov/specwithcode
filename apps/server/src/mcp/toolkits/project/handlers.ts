@@ -71,7 +71,12 @@ import {
   workGrantOf,
 } from "../../workGrantAccess.ts";
 import { addProjectToMachine } from "./addToMachine.ts";
-import { launchRemote, launchTarget, placementSkippable } from "./remoteLaunch.ts";
+import {
+  launchRemote,
+  launchTarget,
+  noWorkerMachineFailure,
+  placementSkippable,
+} from "./remoteLaunch.ts";
 import { routeTargets, routeToProject } from "./route.ts";
 import {
   holdsSeparateClones,
@@ -79,6 +84,7 @@ import {
   NO_BRANCH_WORKTREE_NOTICE,
   projectUsesWorktrees,
   UMBRELLA_WORKTREE_NOTICE,
+  WORKTREE_OFF_NOTICE,
 } from "./launchWorkspace.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -131,6 +137,19 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
     message:
       "The user sees an approval card in this thread. End your turn now; their decision and what changed arrive as their answer.",
   };
+});
+
+/** Whether the project's own "Use worktrees" switch is on. */
+const projectWantsWorktrees = Effect.fn("mcp.projectWantsWorktrees")(function* (project: {
+  readonly id: ProjectId;
+  readonly workspaceRoot: string;
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
+}) {
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  if (Option.isNone(settingsService)) return false;
+  const settings = yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
+  if (settings === null) return false;
+  return projectUsesWorktrees(resolveProjectSettings(settings, project.id, project));
 });
 
 /** The workspace a launch naming none starts in; see launchWorkspaceDefault. */
@@ -263,10 +282,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 return Option.getOrUndefined(found);
               });
         const placed = yield* launchTarget(context, input, targetProject);
-        let skipped = placed.skipped;
-        // A personal assistant's work stays on its machine: neither it nor
-        // its threads start work on another machine.
-        if (placed.target.kind === "remote") {
+        const skipped = [...placed.skipped];
+        const explicit = placed.candidates.some((candidate) => candidate.reason === "explicit");
+        let landedHere = false;
+        for (const candidate of placed.candidates) {
+          if (candidate.target.kind === "local") {
+            landedHere = true;
+            break;
+          }
+          // A personal assistant's work stays on its machine: neither it nor
+          // its threads start work on another machine.
           const callerProject =
             caller === undefined || caller.projectId === targetProject?.id
               ? targetProject
@@ -283,9 +308,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               code: "invalid_request",
               message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Start this work here, or route it with studio_project_route to a project on this machine.`,
             });
-        }
-        if (placed.target.kind === "remote") {
-          const machine = placed.target;
+          const machine = candidate.target;
           // A project thread's scratch work elsewhere follows the same rule as here.
           if (
             input.scratch === true &&
@@ -313,20 +336,23 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           }).pipe(
             Effect.map((result) => ({ ok: true as const, result })),
             Effect.catchIf(
-              (error) => placed.reason !== "explicit" && placementSkippable(error),
+              (error) => !explicit && placementSkippable(error),
               (error) => Effect.succeed({ ok: false as const, error }),
             ),
           );
           if (launched.ok)
             return {
               ...launched.result,
-              placement: { machine: machine.machine.label, reason: placed.reason, skipped },
+              placement: {
+                machine: machine.machine.label,
+                reason: candidate.reason,
+                skipped,
+              },
             };
-          skipped = [
-            ...skipped,
-            { machine: machine.machine.label, reason: launched.error.message },
-          ];
+          skipped.push({ machine: machine.machine.label, reason: launched.error.message });
         }
+        // The project's list leaves this machine out: never run here on its own.
+        if (!landedHere && placed.strict) return yield* noWorkerMachineFailure(skipped);
         // Work another machine started here stays inside the grant this machine gave it.
         const work = yield* admitLaunch(context, input.delegation);
         const threadId = ThreadId.make(commandId);
@@ -567,8 +593,19 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // The header badge names the outside client or machine that started it.
         const origin = launchOriginOf(context, work, input.originHint);
         // An explicit workspaceStrategy wins; otherwise the project's "Use worktrees" switch decides.
-        const workspace =
-          input.workspaceStrategy !== undefined
+        // A new worktree in a project with the switch off needs the user's own ask:
+        // agents otherwise fill the disk with checkouts the user turned off.
+        const declinedWorktree =
+          input.workspaceStrategy?.type === "worktree" &&
+          input.userAskedForWorktree !== true &&
+          project !== undefined &&
+          scratchProjectId === undefined &&
+          !(yield* projectWantsWorktrees(project));
+        // A root launch only records a branch, so naming one there would claim a
+        // checkout that never happens; the agent switches branches itself.
+        const workspace = declinedWorktree
+          ? { strategy: { type: "root" as const }, notice: WORKTREE_OFF_NOTICE }
+          : input.workspaceStrategy !== undefined
             ? { strategy: input.workspaceStrategy }
             : project === undefined || scratchProjectId !== undefined
               ? { strategy: { type: "root" as const } }
@@ -642,7 +679,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           delegationChecked: true,
           placement: {
             machine: "this machine",
-            reason: placed.reason === "explicit" ? "explicit" : "this_machine",
+            reason: explicit ? "explicit" : "this_machine",
             skipped,
           },
         };
@@ -798,12 +835,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         lifecycle?.paused !== undefined ||
         lifecycle?.archived !== undefined ||
         lifecycle?.autoResume !== undefined ||
-        lifecycle?.workerMachine !== undefined
+        lifecycle?.workerMachine !== undefined ||
+        lifecycle?.workerMachines !== undefined
       )
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message:
-            "Pause, auto-resume and the worker machine are the user's to change in project settings. To archive or restore a project, call studio_project_request; the user approves it.",
+            "Pause, auto-resume and the worker machines are the user's to change in project settings. To archive or restore a project, call studio_project_request; the user approves it.",
         });
       // Which list a project sits in is the person's choice once the project exists:
       // an agent must not hide their project under Automated or lift a check into theirs.

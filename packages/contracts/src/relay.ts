@@ -58,6 +58,9 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
   apsEnvironment: Schema.optional(RelayApnsEnvironment),
   pushToken: Schema.optional(TrimmedNonEmptyString),
   pushToStartToken: Schema.optional(TrimmedNonEmptyString),
+  // Human-readable hardware model, e.g. "iPhone 16 Pro". Optional so older
+  // app builds keep registering; shown in "Your phones".
+  model: Schema.optional(TrimmedNonEmptyString),
   preferences: RelayAgentAwarenessPreferences,
 }).check(
   Schema.makeFilter((device) =>
@@ -118,6 +121,58 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
+
+/**
+ * One phone in "Your phones". `current` is true when the request was made
+ * with the Clerk session this phone last used, i.e. from that phone.
+ */
+export const RelayPhoneRecord = Schema.Struct({
+  deviceId: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  platform: RelayAgentAwarenessPlatform,
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  appVersion: Schema.NullOr(TrimmedNonEmptyString),
+  lastSeenAt: TrimmedNonEmptyString,
+  current: Schema.Boolean,
+});
+export type RelayPhoneRecord = typeof RelayPhoneRecord.Type;
+
+export const RelayListPhonesResponse = Schema.Struct({
+  phones: Schema.Array(RelayPhoneRecord),
+});
+export type RelayListPhonesResponse = typeof RelayListPhonesResponse.Type;
+
+export const RelayRemovePhoneParams = Schema.Struct({
+  deviceId: TrimmedNonEmptyString,
+});
+export type RelayRemovePhoneParams = typeof RelayRemovePhoneParams.Type;
+
+/**
+ * `removed` is false only when the account has no such phone. `current` is
+ * true when the caller removed the phone it is calling from.
+ */
+export const RelayRemovePhoneResponse = Schema.Struct({
+  removed: Schema.Boolean,
+  current: Schema.Boolean,
+});
+export type RelayRemovePhoneResponse = typeof RelayRemovePhoneResponse.Type;
+
+/** A Mac revoking a Connect phone it knows only by its DPoP key thumbprint. */
+export const RelayRemoveClientKeyRequest = Schema.Struct({
+  proofKeyThumbprint: TrimmedNonEmptyString,
+});
+export type RelayRemoveClientKeyRequest = typeof RelayRemoveClientKeyRequest.Type;
+
+export const RelayRemoveClientKeyResponse = Schema.Struct({
+  removed: Schema.Boolean,
+});
+export type RelayRemoveClientKeyResponse = typeof RelayRemoveClientKeyResponse.Type;
+
+/** DPoP key thumbprints of the owner's removed phones, for a Mac to revoke. */
+export const RelayRemovedClientKeysResponse = Schema.Struct({
+  proofKeyThumbprints: Schema.Array(TrimmedNonEmptyString),
+});
+export type RelayRemovedClientKeysResponse = typeof RelayRemovedClientKeysResponse.Type;
 
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
@@ -407,6 +462,9 @@ export const RelayAuthInvalidReason = Schema.Literals([
   "invalid_bearer",
   "invalid_dpop",
   "not_authorized",
+  // The phone was removed from the account; only a fresh interactive
+  // Connect sign-in on that phone lets it back in.
+  "device_removed",
 ]);
 export type RelayAuthInvalidReason = typeof RelayAuthInvalidReason.Type;
 
@@ -675,6 +733,8 @@ export class RelayClientPrincipal extends Context.Service<
     readonly token: string;
     readonly proofKeyThumbprint?: string;
     readonly dpopScopes?: ReadonlyArray<RelayDpopAccessTokenScope>;
+    /** The caller's Clerk session id, when its credential carries one. */
+    readonly clerkSessionId?: string;
   }
 >()("@specweave-studio/contracts/relay/RelayClientPrincipal") {}
 
@@ -803,6 +863,11 @@ export const RelayDpopAccessTokenRequest = Schema.Struct({
     description: "Space-separated relay scopes requested by the client.",
   }),
   client_id: RelayPublicClientId,
+  device_id: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "The calling phone's device id, so a removed phone is refused.",
+    }),
+  ),
 })
   .annotate({ description: "OAuth token exchange request for a DPoP-bound relay access token." })
   .pipe(HttpApiSchema.asFormUrlEncoded());
@@ -903,6 +968,30 @@ export const RelayCloudMintCredentialRequest = Schema.Struct({
   proof: RelayCloudMintCredentialProof,
 });
 export type RelayCloudMintCredentialRequest = typeof RelayCloudMintCredentialRequest.Type;
+
+/**
+ * Relay-signed (`RELAY_REVOKE_CLIENT_KEYS_REQUEST_TYP`, mint key) order for
+ * an environment to end every session bound to these DPoP keys: the owner
+ * removed those phones from their account.
+ */
+export const RelayRevokeClientKeysProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  proofKeyThumbprints: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1)),
+  nonce: TrimmedNonEmptyString,
+  scope: Schema.Array(Schema.Literal("environment:revoke-client")),
+});
+export type RelayRevokeClientKeysProofPayload = typeof RelayRevokeClientKeysProofPayload.Type;
+
+export const RelayRevokeClientKeysRequest = Schema.Struct({
+  proof: TrimmedNonEmptyString,
+});
+export type RelayRevokeClientKeysRequest = typeof RelayRevokeClientKeysRequest.Type;
+
+export const RelayRevokeClientKeysResponse = Schema.Struct({
+  revoked: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type RelayRevokeClientKeysResponse = typeof RelayRevokeClientKeysResponse.Type;
 
 export const RelayCloudEnvironmentHealthProofPayload = Schema.Struct({
   ...RelaySignedJwtRegisteredClaims,
@@ -1170,6 +1259,22 @@ const RelayClientGroup = HttpApiGroup.make("client")
         OpenApi.Description,
         "Deletes the provisioned Cloudflare tunnel while keeping the environment link and its hostname reservation, so a later link re-provisions the tunnel under the same URL. Environments call this when they shut down; Cloudflare bills per provisioned tunnel, so idle tunnels should not outlive their environment.",
       ),
+    HttpApiEndpoint.get("listPhones", "/v1/client/phones", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayListPhonesResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "List the account's phones"),
+    HttpApiEndpoint.delete("removePhone", "/v1/client/phones/:deviceId", {
+      headers: RelayBearerRequestHeaders,
+      params: RelayRemovePhoneParams,
+      success: RelayRemovePhoneResponse,
+      error: RelayAuthAndInternalErrors,
+    })
+      .annotate(OpenApi.Summary, "Remove one phone from the account")
+      .annotate(
+        OpenApi.Description,
+        "Stops push and Live Activity delivery to the phone, ends its Clerk session, tells linked environments to end its sessions, and refuses its token exchange, registration and connect requests until it completes a fresh interactive sign-in. Idempotent.",
+      ),
     HttpApiEndpoint.delete("deleteAccount", "/v1/client/account", {
       headers: RelayBearerRequestHeaders,
       success: RelayAccountDeletionResponse,
@@ -1200,8 +1305,28 @@ export const RelayExchangeDpopAccessTokenEndpoint = HttpApiEndpoint.post(
     "Bootstrap endpoint. Send the DPoP proof JWT in the dpop header and the Clerk token in subject_token. The returned access token is bound to the proof key.",
   );
 
+export const RelayRemovalStatusResponse = Schema.Struct({
+  removed: Schema.Boolean,
+});
+export type RelayRemovalStatusResponse = typeof RelayRemovalStatusResponse.Type;
+
+export const RelayRemovalStatusEndpoint = HttpApiEndpoint.post(
+  "removalStatus",
+  "/v1/client/removal-status",
+  {
+    headers: RelayDpopProofRequestHeaders,
+    success: RelayRemovalStatusResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+)
+  .annotate(OpenApi.Summary, "Ask whether the phone holding this DPoP key was removed")
+  .annotate(
+    OpenApi.Description,
+    "Needs only a DPoP proof, so a phone whose Clerk session was ended by its removal can still learn why it was signed out. Answers only for the key that signed the proof.",
+  );
+
 const RelayTokenGroup = HttpApiGroup.make("token")
-  .add(RelayExchangeDpopAccessTokenEndpoint)
+  .add(RelayExchangeDpopAccessTokenEndpoint, RelayRemovalStatusEndpoint)
   .annotate(OpenApi.Description, "OAuth token exchange for DPoP-bound client access.");
 
 export const RelayConnectEnvironmentEndpoint = HttpApiEndpoint.post(
@@ -1293,6 +1418,25 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post(
+      "removeClientKey",
+      "/v1/environments/:environmentId/client-keys/remove",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: RelayRemoveClientKeyRequest,
+        success: RelayRemoveClientKeyResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ).annotate(OpenApi.Summary, "Remove the owner's phone that holds this DPoP key"),
+    HttpApiEndpoint.get(
+      "listRemovedClientKeys",
+      "/v1/environments/:environmentId/client-keys/removed",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        success: RelayRemovedClientKeysResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ).annotate(OpenApi.Summary, "List DPoP keys of the owner's removed phones"),
     HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
       params: Schema.Struct({ environmentId: EnvironmentId }),
       success: RelayWakeHeldHooksResponse,

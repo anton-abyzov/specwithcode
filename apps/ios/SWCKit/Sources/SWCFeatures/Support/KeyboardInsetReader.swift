@@ -24,6 +24,7 @@ final class KeyboardFrameView: UIView {
   var onChange: ((CGFloat) -> Void)?
   private var keyboardFrame: CGRect?
   private var lastInset: CGFloat = 0
+  private var lastSize: CGSize = .zero
 
   init() {
     super.init(frame: .zero)
@@ -37,8 +38,13 @@ final class KeyboardFrameView: UIView {
 
   deinit { NotificationCenter.default.removeObserver(self) }
 
+  /// Only a new size can move the keyboard relative to this view. Layout
+  /// passes at the same size (every SwiftUI commit) must not recompute and
+  /// schedule state writes, or a rotation can keep layout from settling.
   override func layoutSubviews() {
     super.layoutSubviews()
+    guard bounds.size != lastSize else { return }
+    lastSize = bounds.size
     updateInset()
   }
 

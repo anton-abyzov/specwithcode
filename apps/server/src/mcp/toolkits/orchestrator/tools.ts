@@ -66,7 +66,7 @@ const threadMetadataDependencies = [
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List the V2 provider instances and their current models from the same live catalog as the composer, including configured custom models, inherited runtime settings, and app-owned orchestration features available to this caller. For a separate top-level thread in a new or existing worktree, use studio_thread_launch with workspaceStrategy.",
+    "List the V2 provider instances and their current models from the same live catalog as the composer, including configured custom models, inherited runtime settings, and app-owned orchestration features available to this caller. For a separate top-level thread, use studio_thread_launch; the project's Use worktrees setting decides whether it gets a worktree.",
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -195,7 +195,7 @@ const AskUserTool = Tool.make("ask_user", {
 
 export const CreateThreadsTool = Tool.make("create_threads", {
   description:
-    "Needs an agent running inside a SpecWithCode thread. Create one or more ORDINARY TOP-LEVEL SpecWithCode conversations. This is not delegation and does not create child agents/subagents. For delegated work, choose models from orchestrator_capabilities. Prefer native subagents only when they support the chosen model; otherwise call delegate_task, including for same-provider work. Use create_threads for a batch of separate top-level threads sharing this checkout. Prefer studio_thread_launch for a single thread. Both require the user to request separate/new/top-level threads or conversations. Each entry may override provider, model, options, effort (target.effort, e.g. 'xhigh'), runtime mode, and interaction mode; omitted settings inherit. Project, branch, and worktree always inherit and cannot be overridden here. For independent implementation or a PR stack in its own worktree, use studio_thread_launch with workspaceStrategy instead of asking the agent to create a worktree in its prompt. Each run of a new thread that completes or fails wakes this thread, so end the turn instead of polling. " +
+    "Needs an agent running inside a SpecWithCode thread. Create one or more ORDINARY TOP-LEVEL SpecWithCode conversations. This is not delegation and does not create child agents/subagents. For delegated work, choose models from orchestrator_capabilities. Prefer native subagents only when they support the chosen model; otherwise call delegate_task, including for same-provider work. Use create_threads for a batch of separate top-level threads sharing this checkout. Prefer studio_thread_launch for a single thread. Both require the user to request separate/new/top-level threads or conversations. Each entry may override provider, model, options, effort (target.effort, e.g. 'xhigh'), runtime mode, and interaction mode; omitted settings inherit. Project, branch, and worktree always inherit and cannot be overridden here. For independent implementation, use studio_thread_launch and let the project's Use worktrees setting decide the workspace; never ask the agent to create a worktree or clone in its prompt. Each run of a new thread that completes or fails wakes this thread, so end the turn instead of polling. " +
     INCREMENT_LAUNCH_INSTRUCTION,
   parameters: OrchestratorMcpCreateThreadsInput,
   success: OrchestratorMcpCreateThreadsResult,

@@ -6,7 +6,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const runtime = vi.hoisted(() => ({
   projects: [] as any[],
   status: null as any,
+  aideEnabled: true,
 }));
+vi.mock("../../hooks/useSettings", () => ({ useAideEnabled: () => runtime.aideEnabled }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => runtime.projects,
   useServerConfigs: () =>
@@ -73,6 +75,7 @@ beforeEach(() => {
     project("scratch", "No project", "/home/x/.specwithcode/m4/scratch"),
   ];
   runtime.status = { configured: true, enabled: true, paired: false, projectId: "app" };
+  runtime.aideEnabled = true;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -111,5 +114,24 @@ it.each([
 it("still saves a channel bound to an archived project when it is turned off", async () => {
   runtime.status = { ...runtime.status, projectId: "old", enabled: false };
   await act(async () => root.render(<MessagingSettingsPanel />));
+  expect(saveButton().disabled).toBe(false);
+});
+
+it("leaves a hidden personal assistant out of the choices", async () => {
+  runtime.aideEnabled = false;
+  await act(async () => root.render(<MessagingSettingsPanel />));
+  expect(options()).toEqual([["App", false]]);
+  expect(container.textContent).not.toContain("A personal assistant works best");
+});
+
+it("keeps the hidden personal assistant a channel already uses, so nothing changes on its own", async () => {
+  runtime.aideEnabled = false;
+  runtime.status = { ...runtime.status, projectId: "errands" };
+  await act(async () => root.render(<MessagingSettingsPanel />));
+  expect(options()).toEqual([
+    ["Errands (personal)", false],
+    ["App", false],
+  ]);
+  expect(container.querySelector("[data-trigger]")?.textContent).toBe("Errands (personal)");
   expect(saveButton().disabled).toBe(false);
 });

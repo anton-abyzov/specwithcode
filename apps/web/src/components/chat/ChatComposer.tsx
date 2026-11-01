@@ -1355,8 +1355,16 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             render={
               <ComposerSelectControl
                 data-composer-shortcut="composer.mode"
+                data-runtime-mode={runtimeModeOption.mode}
                 size={size}
-                aria-label="Runtime mode"
+                aria-label={`Access: ${runtimeModeOption.label}`}
+                // Full access is the one mode that runs without asking, so it reads
+                // at a glance; the stricter modes stay neutral.
+                className={cn(
+                  "shrink-0 whitespace-nowrap",
+                  runtimeModeOption.mode === "full-access" &&
+                    "text-warning-foreground hover:text-warning-foreground [&_[data-composer-control-icon]]:text-warning-foreground [&_[data-composer-control-icon]]:opacity-100",
+                )}
               />
             }
           >
@@ -3107,6 +3115,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const isComposerApprovalState = activePendingApproval !== null;
+  // Raising the chat to Full access answers this prompt and the ones after it,
+  // on whichever machine the chat runs. Questions and forms still ask.
+  const canSwitchApprovalToFullAccess =
+    activePendingApproval !== null &&
+    canOperateThread &&
+    compatibleRuntimeMode !== "full-access" &&
+    compatibleRuntimeModeOptions.some((option) => option.mode === "full-access") &&
+    (activePendingApproval.requestKind !== "mcp-elicitation" ||
+      (activePendingApproval.options ?? []).some((option) => option.decision === "accept"));
   const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
@@ -5645,9 +5662,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden: composerControlsHidden || restingHiddenBlockCount > 0,
   });
+  // The access mode is the last block to give up its label or hide: a chat
+  // should always say whether it runs with Full access.
   const restingBlockDefs = [
+    {
+      id: "mode",
+      content: (
+        <ComposerFooterModeControls
+          showInteractionModeToggle={planModeUiEnabled}
+          interactionMode={interactionMode}
+          runtimeMode={compatibleRuntimeMode}
+          runtimeModeOptions={compatibleRuntimeModeOptions}
+          size={composerControlsCollapsed ? "xs" : "sm"}
+          hidden={
+            composerControlsHidden || restingHiddenBlockCount > (providerTraitsPicker ? 1 : 0)
+          }
+          onToggleInteractionMode={toggleInteractionMode}
+          onRuntimeModeChange={handleRuntimeModeChange}
+        />
+      ),
+    },
     ...(providerTraitsPicker
       ? [
           {
@@ -5661,21 +5697,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           },
         ]
       : []),
-    {
-      id: "mode",
-      content: (
-        <ComposerFooterModeControls
-          showInteractionModeToggle={planModeUiEnabled}
-          interactionMode={interactionMode}
-          runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
-          size={composerControlsCollapsed ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
-          onToggleInteractionMode={toggleInteractionMode}
-          onRuntimeModeChange={handleRuntimeModeChange}
-        />
-      ),
-    },
   ];
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
@@ -7082,6 +7103,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         options={activePendingApproval.options}
                         canRespond={activePendingApproval.responseCapability === "live"}
                         onRespondToApproval={onRespondToApproval}
+                        {...(canSwitchApprovalToFullAccess
+                          ? { onSwitchToFullAccess: () => handleRuntimeModeChange("full-access") }
+                          : {})}
                       />
                     </ComposerBanner.Actions>
                   </ComposerBanner.Row>

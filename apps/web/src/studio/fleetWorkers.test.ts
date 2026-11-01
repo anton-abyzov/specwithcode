@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId } from "@specweave-studio/contracts";
+import { EnvironmentId, projectWorkerMachineOrder } from "@specweave-studio/contracts";
 import type {
   StudioFleetSnapshot,
   StudioFleetWorkers,
 } from "@specweave-studio/contracts/studioFleet";
 import {
+  DEFAULT_FLEET_WORKER_ACCESS,
   sentSecretsWarning,
   fleetRemoveNotice,
+  fleetWorkerDraftAccess,
   fleetWorkersView,
+  moveWorkerMachine,
   workerMachineChoices,
+  workerMachineListView,
+  workerMachinesPatch,
 } from "./fleetWorkers";
 
 const base: StudioFleetWorkers = {
@@ -42,6 +47,29 @@ describe("fleet workers row", () => {
     // The composer's own name for the mode.
     expect(view.summary).toContain("Auto-accept edits");
     expect(view.summary).toContain("Renews on its own.");
+  });
+
+  it("says when workers there run below Full access, and not at Full access", () => {
+    const lowered = fleetWorkersView({ ...base, status: "allowed", access: "approval-required" });
+    expect(lowered.accessHint).toBe(
+      "Workers there run at most at Supervised, even when their coordinator has Full access.",
+    );
+    expect(lowered.changeCodeNeeded).toBe(false);
+    expect(
+      fleetWorkersView({ ...base, status: "expiring", access: "full-access", renewable: false }),
+    ).toMatchObject({ accessHint: null, changeCodeNeeded: true });
+    expect(fleetWorkersView(base).accessHint).toBeNull();
+  });
+
+  it("starts the access choice at Full access, or at the grant's access once allowed", () => {
+    expect(DEFAULT_FLEET_WORKER_ACCESS).toBe("full-access");
+    expect(fleetWorkerDraftAccess(base)).toBe("full-access");
+    expect(fleetWorkerDraftAccess(undefined)).toBe("full-access");
+    expect(fleetWorkerDraftAccess({ ...base, status: "allowed", access: "auto" })).toBe("auto");
+    // A lapsed grant's old access is not reused: allowing again starts at Full access.
+    expect(fleetWorkerDraftAccess({ ...base, status: "expired", access: "auto" })).toBe(
+      "full-access",
+    );
   });
 
   it("says a revoked grant needs the user to allow it again", () => {
@@ -91,7 +119,7 @@ describe("worker machine choices", () => {
   };
 
   it("lists this machine and allowed machines, and points to Connections for the rest", () => {
-    const choices = workerMachineChoices(snapshot, here, null);
+    const choices = workerMachineChoices(snapshot, here, []);
     expect(choices.map((choice) => [choice.value, choice.disabled])).toEqual([
       ["local", false],
       ["m1", false],
@@ -111,18 +139,20 @@ describe("worker machine choices", () => {
       environmentId: EnvironmentId.make("env-m3"),
       projectId: null,
     };
-    expect(workerMachineChoices(snapshot, here, current)[2]).toMatchObject({
+    expect(workerMachineChoices(snapshot, here, [current])[2]).toMatchObject({
       value: "m3",
       disabled: false,
     });
     expect(
-      workerMachineChoices(snapshot, here, { ...current, machineId: "gone" }).at(-1),
+      workerMachineChoices(snapshot, here, [{ ...current, machineId: "gone" }]).at(-1),
     ).toMatchObject({
       value: "gone",
       label: expect.stringContaining("not in this server's fleet"),
     });
     // While the machines are still being read, a saved one is not called missing.
-    expect(workerMachineChoices(null, here, { ...current, machineId: "m3" }).at(-1)).toMatchObject({
+    expect(
+      workerMachineChoices(null, here, [{ ...current, machineId: "m3" }]).at(-1),
+    ).toMatchObject({
       value: "m3",
       label: "m3",
     });
@@ -164,5 +194,38 @@ describe("sentSecretsWarning", () => {
     );
     expect(many).toContain("7 secret files to M3");
     expect(many).toContain("/p/app/.env.4 and 2 more. Rotate them");
+  });
+});
+
+describe("worker machine lists", () => {
+  const here = EnvironmentId.make("env-here");
+  const local = { machineId: "local", environmentId: here, projectId: null };
+  const m3 = { machineId: "m3", environmentId: EnvironmentId.make("env-m3"), projectId: null };
+  const m1 = { machineId: "m1", environmentId: EnvironmentId.make("env-m1"), projectId: null };
+
+  it("saves nothing for this machine alone, and keeps the first other machine for older hosts", () => {
+    expect(workerMachinesPatch([local])).toEqual({ workerMachines: null, workerMachine: null });
+    expect(workerMachinesPatch([])).toEqual({ workerMachines: null, workerMachine: null });
+    expect(workerMachinesPatch([local, m3, m1])).toEqual({
+      workerMachines: [local, m3, m1],
+      workerMachine: m3,
+    });
+  });
+
+  it("reads an older single choice as that machine, then this one", () => {
+    expect(projectWorkerMachineOrder({ workerMachine: m3 }, here)).toEqual([m3, local]);
+    expect(projectWorkerMachineOrder({ workerMachine: m3, workerMachines: [m1] }, here)).toEqual([
+      m1,
+    ]);
+    expect(projectWorkerMachineOrder(null, here)).toEqual([local]);
+  });
+
+  it("moves entries within bounds and offers only machines not yet listed", () => {
+    expect(moveWorkerMachine([local, m3, m1], 2, -1)).toEqual([local, m1, m3]);
+    expect(moveWorkerMachine([local, m3], 0, -1)).toEqual([local, m3]);
+    const choices = workerMachineChoices(null, here, [local, m3]);
+    const view = workerMachineListView(choices, [m3, local]);
+    expect(view.rows.map((row) => row.label)).toEqual(["m3", "This machine"]);
+    expect(view.addable).toEqual([]);
   });
 });

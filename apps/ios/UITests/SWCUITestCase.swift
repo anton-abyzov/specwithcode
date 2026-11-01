@@ -18,11 +18,13 @@ class SWCUITestCase: XCTestCase {
   }
 
   @discardableResult
-  func launch(fixture: String = "default", route: String? = nil, appearance: String = "light") -> XCUIApplication {
+  func launch(fixture: String = "default", route: String? = nil, appearance: String = "light", aide: Bool = true) -> XCUIApplication {
     app?.terminate()
     let app = XCUIApplication()
-    var arguments = ["-SWCFixture", fixture, "-SWCAppearance", appearance]
+    // A sidebar hidden on this simulator earlier must not change the layout under test.
+    var arguments = ["-SWCFixture", fixture, "-SWCAppearance", appearance, "-swc.sidebarCollapsed", "NO", "-swc.sidebarWidth", "0"]
     if let route { arguments += ["-SWCRoute", route] }
+    if !aide { arguments += ["-SWCAide", "off"] }
     app.launchArguments = arguments
     app.launch()
     self.app = app
@@ -136,8 +138,9 @@ class SWCUITestCase: XCTestCase {
     waitForHittable(button("Menu"), "The root chat did not load", file: file, line: line)
   }
 
-  /// Opens the drawer from the menu button of the root chat.
-  func openDrawer(file: StaticString = #filePath, line: UInt = #line) {
+  /// Opens the drawer from the menu button of the root chat and waits for
+  /// `firstRow`, its top row.
+  func openDrawer(firstRow: String = "Aide", file: StaticString = #filePath, line: UInt = #line) {
     let menu = button("Menu")
     waitFor(menu, file: file, line: line)
     // On SDK 27.1 Duo, isHittable can be false at accessibility XXXL even
@@ -149,7 +152,7 @@ class SWCUITestCase: XCTestCase {
     XCTAssertTrue(app.frame.contains(menu.frame), "Menu target is outside the scene", file: file, line: line)
     menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     waitFor(button("Close menu"), "The drawer did not open", file: file, line: line)
-    _ = hittableButton(titled("Aide"), file: file, line: line)
+    _ = hittableButton(titled(firstRow), file: file, line: line)
     settle(0.4)
   }
 

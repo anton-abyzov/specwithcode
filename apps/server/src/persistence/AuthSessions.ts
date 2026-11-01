@@ -46,6 +46,8 @@ export const AuthSessionRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  /** The DPoP key the session is bound to; null for unbound and older rows. */
+  proofKeyThumbprint: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 
@@ -59,6 +61,7 @@ export const CreateAuthSessionInput = Schema.Struct({
   client: AuthSessionClientMetadataRecord,
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
+  proofKeyThumbprint: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
@@ -105,6 +108,18 @@ export const RevokeOtherAuthSessionsInput = Schema.Struct({
   revokedAt: Schema.DateTimeUtcFromString,
 });
 export type RevokeOtherAuthSessionsInput = typeof RevokeOtherAuthSessionsInput.Type;
+
+export const RevokeAuthSessionsByProofKeyInput = Schema.Struct({
+  proofKeyThumbprints: Schema.Array(Schema.String),
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeAuthSessionsByProofKeyInput = typeof RevokeAuthSessionsByProofKeyInput.Type;
+
+export const BackfillAuthSessionProofKeyInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  proofKeyThumbprint: Schema.String,
+});
+export type BackfillAuthSessionProofKeyInput = typeof BackfillAuthSessionProofKeyInput.Type;
 
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
@@ -153,6 +168,14 @@ export class AuthSessionRepository extends Context.Service<
     readonly revokeAllExcept: (
       input: RevokeOtherAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    /** Revokes every active session bound to one of these DPoP keys. */
+    readonly revokeByProofKeyThumbprints: (
+      input: RevokeAuthSessionsByProofKeyInput,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    /** Records the DPoP key of a session stored before keys were recorded; never overwrites one. */
+    readonly backfillProofKeyThumbprint: (
+      input: BackfillAuthSessionProofKeyInput,
+    ) => Effect.Effect<void, AuthSessionRepositoryError>;
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
@@ -179,6 +202,7 @@ const AuthSessionDbRow = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  proofKeyThumbprint: Schema.NullOr(Schema.String),
 });
 
 const AuthSessionRawDbRow = Schema.Struct({
@@ -198,6 +222,7 @@ const AuthSessionRawDbRow = Schema.Struct({
   expiresAt: Schema.Unknown,
   lastConnectedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
+  proofKeyThumbprint: Schema.Unknown,
 });
 
 const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
@@ -222,6 +247,7 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
     expiresAt: row.expiresAt,
     lastConnectedAt: row.lastConnectedAt,
     revokedAt: row.revokedAt,
+    proofKeyThumbprint: row.proofKeyThumbprint,
   };
 }
 
@@ -264,7 +290,8 @@ export const make = Effect.gen(function* () {
           client_browser,
           issued_at,
           expires_at,
-          revoked_at
+          revoked_at,
+          proof_key_thumbprint
         )
         VALUES (
           ${input.principal ? JSON.stringify(input.principal) : null},
@@ -281,7 +308,8 @@ export const make = Effect.gen(function* () {
           ${input.client.browser},
           ${input.issuedAt},
           ${input.expiresAt},
-          NULL
+          NULL,
+          ${input.proofKeyThumbprint ?? null}
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
@@ -346,7 +374,8 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          COALESCE(revoked_at, (SELECT revoked_at FROM auth_principal_revocations WHERE principal = auth_sessions.principal)) AS "revokedAt"
+          COALESCE(revoked_at, (SELECT revoked_at FROM auth_principal_revocations WHERE principal = auth_sessions.principal)) AS "revokedAt",
+          proof_key_thumbprint AS "proofKeyThumbprint"
         FROM auth_sessions
         WHERE session_id = ${sessionId}
       `,
@@ -409,7 +438,8 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          COALESCE(revoked_at, (SELECT revoked_at FROM auth_principal_revocations WHERE principal = auth_sessions.principal)) AS "revokedAt"
+          COALESCE(revoked_at, (SELECT revoked_at FROM auth_principal_revocations WHERE principal = auth_sessions.principal)) AS "revokedAt",
+          proof_key_thumbprint AS "proofKeyThumbprint"
         FROM auth_sessions
         WHERE revoked_at IS NULL
           AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
@@ -465,6 +495,30 @@ export const make = Effect.gen(function* () {
         WHERE session_id <> ${currentSessionId}
           AND revoked_at IS NULL
         RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const revokeProofKeySessionRows = SqlSchema.findAll({
+    Request: RevokeAuthSessionsByProofKeyInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ proofKeyThumbprints, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE ${sql.in("proof_key_thumbprint", proofKeyThumbprints)}
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const backfillProofKeyThumbprintRow = SqlSchema.void({
+    Request: BackfillAuthSessionProofKeyInput,
+    execute: ({ sessionId, proofKeyThumbprint }) =>
+      sql`
+        UPDATE auth_sessions
+        SET proof_key_thumbprint = ${proofKeyThumbprint}
+        WHERE session_id = ${sessionId}
+          AND proof_key_thumbprint IS NULL
       `,
   });
 
@@ -600,6 +654,32 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  const revokeByProofKeyThumbprints: AuthSessionRepository["Service"]["revokeByProofKeyThumbprints"] =
+    (input) =>
+      input.proofKeyThumbprints.length === 0
+        ? Effect.succeed([])
+        : revokeProofKeySessionRows(input).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "AuthSessionRepository.revokeByProofKeyThumbprints:query",
+                "AuthSessionRepository.revokeByProofKeyThumbprints:decodeRows",
+              ),
+            ),
+            Effect.map((rows) => rows.map((row) => row.sessionId)),
+          );
+
+  const backfillProofKeyThumbprint: AuthSessionRepository["Service"]["backfillProofKeyThumbprint"] =
+    (input) =>
+      backfillProofKeyThumbprintRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthSessionRepository.backfillProofKeyThumbprint:query",
+            "AuthSessionRepository.backfillProofKeyThumbprint:encodeRequest",
+            { sessionId: input.sessionId },
+          ),
+        ),
+      );
+
   const setLastConnectedAt: AuthSessionRepository["Service"]["setLastConnectedAt"] = (input) =>
     setLastConnectedAtRow(input).pipe(
       Effect.mapError(
@@ -633,6 +713,8 @@ export const make = Effect.gen(function* () {
     listActive,
     revoke,
     revokeAllExcept,
+    revokeByProofKeyThumbprints,
+    backfillProofKeyThumbprint,
     setLastConnectedAt,
     setClientConnection,
   } satisfies AuthSessionRepository["Service"];

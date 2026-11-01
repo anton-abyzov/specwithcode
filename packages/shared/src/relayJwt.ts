@@ -12,6 +12,7 @@ export const RELAY_HEALTH_RESPONSE_TYP = "studio-env-health+jwt";
 export const RELAY_ACTIVITY_PUBLISH_TYP = "studio-env-activity+jwt";
 export const RELAY_MANAGED_TUNNEL_RECOVERY_TYP = "studio-env-managed-tunnel-recovery+jwt";
 export const RELAY_HOOK_DELIVERY_TYP = "studio-relay-hook-delivery+jwt";
+export const RELAY_REVOKE_CLIENT_KEYS_REQUEST_TYP = "studio-cloud-revoke-client-keys+jwt";
 /** Header carrying the signed proof that a webhook request came from the relay. */
 export const RELAY_HOOK_DELIVERY_HEADER = "x-studio-relay-delivery";
 

@@ -4,7 +4,8 @@ import SWCSync
 /// Builds the app model and routes incoming links.
 ///
 /// Launch arguments: `-SWCFixture [default|empty|running|fleet|m4-blip|minis-blip|long]` serves sample data,
-/// `-SWCAppearance light|dark` forces an appearance, and
+/// `-SWCAppearance light|dark` forces an appearance, `-SWCAide off` hides Aide
+/// in that sample data, and
 /// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search`
 /// opens a screen once data is in, for screenshots.
 public enum AppBootstrap {
@@ -22,7 +23,7 @@ public enum AppBootstrap {
     let options = LaunchOptions.parse(arguments)
     let engine: any AppEngine
     if let scenario = options.fixture {
-      engine = FixtureEngine(scenario: scenario)
+      engine = FixtureEngine(scenario: scenario, aideEnabled: options.aide ?? true)
     } else if let liveEngineFactory {
       engine = liveEngineFactory()
     } else {

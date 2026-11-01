@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { beforeEach } from "vite-plus/test";
 import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_HEADER,
@@ -32,7 +33,12 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
-import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
+import {
+  clearEnvironmentRequestCooldown,
+  clearEnvironmentRequestCooldowns,
+  UNFIXABLE_CREDENTIAL_BACKOFF_MS,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
@@ -100,6 +106,8 @@ const THREAD_HISTORY = {
   nextCursor: null,
   hasMoreHistory: false,
 } satisfies OrchestrationV2ThreadHistoryPage;
+
+beforeEach(() => clearEnvironmentRequestCooldowns());
 
 function credentialRejectedResponse(reason = "invalid_credential") {
   return Response.json(
@@ -698,4 +706,118 @@ describe("orchestration HTTP compatibility header", () => {
       [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
     });
   });
+});
+
+describe("environments that refuse a renewed credential or rate limit the client", () => {
+  const loadShell = (harness: ReturnType<typeof makeHarness>) =>
+    fetchEnvironmentShellSnapshot(harness.input).pipe(
+      Effect.provide(harness.httpLayer),
+      Effect.flip,
+    );
+
+  it.effect("stops re-authorizing for five minutes after a renewed token is still rejected", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => credentialRejectedResponse());
+      expect((yield* loadShell(harness))._tag).toBe("EnvironmentAuthInvalidError");
+      expect(harness.authorizations).toHaveLength(2);
+
+      // The next polls fail at once: no relay connect, mint or token exchange.
+      expect((yield* loadShell(harness))._tag).toBe("EnvironmentAuthInvalidError");
+      yield* TestClock.adjust(UNFIXABLE_CREDENTIAL_BACKOFF_MS - 1000);
+      expect((yield* loadShell(harness))._tag).toBe("EnvironmentAuthInvalidError");
+      expect(harness.authorizations).toHaveLength(2);
+      expect(harness.calls).toHaveLength(2);
+
+      yield* TestClock.adjust(1000);
+      yield* loadShell(harness);
+      expect(harness.authorizations).toHaveLength(4);
+    }),
+  );
+
+  it.effect("does not hold other requests back after a missing scope", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() =>
+        Response.json(
+          {
+            _tag: "EnvironmentScopeRequiredError",
+            code: "insufficient_scope",
+            requiredScope: "orchestration:read",
+            traceId: "trace-scope",
+          },
+          { status: 403 },
+        ),
+      );
+      yield* loadShell(harness);
+      yield* loadShell(harness);
+      expect(harness.authorizations).toHaveLength(2);
+      expect(harness.calls).toHaveLength(2);
+    }),
+  );
+
+  it.effect("waits out retry-after before contacting a rate-limiting environment again", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() =>
+        Response.json(
+          { _tag: "EnvironmentRateLimitedError", code: "rate_limited", retryAfterSeconds: 120 },
+          { status: 429, headers: { "retry-after": "120" } },
+        ),
+      );
+      const first = yield* loadShell(harness);
+      expect(first).toMatchObject({ _tag: "EnvironmentRateLimitedError", retryAfterSeconds: 120 });
+      yield* TestClock.adjust("119 seconds");
+      expect((yield* loadShell(harness))._tag).toBe("EnvironmentRateLimitedError");
+      expect(harness.calls).toHaveLength(1);
+      expect(harness.authorizations).toHaveLength(1);
+
+      yield* TestClock.adjust("1 second");
+      yield* loadShell(harness);
+      expect(harness.calls).toHaveLength(2);
+    }),
+  );
+
+  it.effect("waits out retry-after when the token exchange itself is rate limited", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(SHELL));
+      let exchanges = 0;
+      const limited = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
+        ...harness.remoteAuthorization,
+        authorizeDpopHttp: () =>
+          Effect.suspend(() => {
+            exchanges += 1;
+            return Effect.fail(
+              new ConnectionTransientError({
+                reason: "rate-limited",
+                detail: "rate limited",
+                retryAfterMs: 90_000,
+              }),
+            );
+          }),
+      });
+      const input = { ...harness.input, remoteAuthorization: Option.some(limited) };
+      const load = fetchEnvironmentShellSnapshot(input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+      expect(yield* load).toMatchObject({
+        _tag: "EnvironmentRateLimitedError",
+        retryAfterSeconds: 90,
+      });
+      yield* TestClock.adjust("89 seconds");
+      yield* load;
+      expect(exchanges).toBe(1);
+      yield* TestClock.adjust("1 second");
+      yield* load;
+      expect(exchanges).toBe(2);
+    }),
+  );
+
+  it.effect("lets requests through again once the connection supervisor reconnects", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => credentialRejectedResponse());
+      yield* loadShell(harness);
+      clearEnvironmentRequestCooldown(TARGET.environmentId);
+      yield* loadShell(harness);
+      expect(harness.authorizations).toHaveLength(4);
+    }),
+  );
 });

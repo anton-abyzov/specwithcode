@@ -43,6 +43,12 @@ export const LEGACY_SCAN_CACHE_FILE_NAMES = [
   "usage-scan-cache-v5.json",
   "usage-scan-cache.json",
 ] as const;
+/**
+ * A legacy file untouched this long is removed after a current-version write.
+ * An older server still running on this state directory rewrites its file on
+ * each scan, so a young mtime means it is in use and is kept.
+ */
+export const LEGACY_SCAN_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];

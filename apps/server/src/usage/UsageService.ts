@@ -65,6 +65,7 @@ import {
   decodeScanCache,
   dedupeWithinFile,
   LEGACY_SCAN_CACHE_FILE_NAMES,
+  LEGACY_SCAN_CACHE_MAX_AGE_MS,
   makeScanCacheWriter,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
@@ -449,6 +450,29 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  /**
+   * Removes legacy cache files once the current one is on disk. A v5 cache can
+   * run to tens of megabytes and is only read when the current file is
+   * missing. Each failure is ignored: a file left behind is retried next write.
+   */
+  const removeStaleLegacyScanCaches = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    for (const legacyPath of legacyScanCachePaths) {
+      yield* fileSystem.stat(legacyPath).pipe(
+        Effect.flatMap((info) => {
+          const mtimeMs = Option.match(info.mtime, {
+            onNone: () => null,
+            onSome: (mtime) => mtime.getTime(),
+          });
+          return mtimeMs !== null && now - mtimeMs > LEGACY_SCAN_CACHE_MAX_AGE_MS
+            ? fileSystem.remove(legacyPath, { force: true })
+            : Effect.void;
+        }),
+        Effect.ignoreCause,
+      );
+    }
+  });
+
   const writeScanCache = makeScanCacheWriter();
   // Scans with different windows can finish together; serializing the writes
   // keeps an older snapshot from landing after a newer one.
@@ -464,6 +488,7 @@ export const make = Effect.gen(function* () {
       writeScanCache(fileCache, { sources: Object.fromEntries(sourceCache) }),
     ).pipe(
       Effect.flatMap((contents) => writeCacheFile(scanCachePath, contents)),
+      Effect.andThen(removeStaleLegacyScanCaches),
       // A cache we cannot write is a slower next start, not a failed read.
       Effect.catchCause(() =>
         Effect.sync(() => {

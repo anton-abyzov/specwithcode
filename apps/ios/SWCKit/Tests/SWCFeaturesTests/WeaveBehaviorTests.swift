@@ -134,8 +134,7 @@ struct SymbolTests {
     #expect(ProjectAvatar.displayEmoji("\u{1F512}\u{FE0F}") == "\u{1F6E1}\u{FE0F}")
     #expect(ProjectAvatar.displayEmoji("\u{1F680}") == "\u{1F680}")
     #expect(ThinkingGlyph.dots.map(\.opacity) == [1, 0.6, 0.3])
-    let breath = stride(from: 0.0, through: 1.6, by: 0.05).map(ThinkingGlyph.pulseOpacity(at:))
-    #expect(breath.allSatisfy { $0 >= 0.449 && $0 <= 1.001 })
+    #expect(ThinkingGlyph.breathRange == 0.45...1)
   }
 
   #if canImport(AppKit)
@@ -163,6 +162,16 @@ struct DesignRefinementTests {
 
 @Suite("Markdown block boundaries")
 struct MarkdownBoundaryTests {
+  /// A view body asks again on every layout pass; the answer must not change.
+  @Test func cachedParseMatchesParseAndTracksEdits() {
+    let first = "## Plan\n- one\n- two"
+    #expect(MarkdownParser.cachedParse(first) == MarkdownParser.parse(first))
+    #expect(MarkdownParser.cachedParse(first) == MarkdownParser.parse(first))
+    let streamed = first + "\n- three"
+    #expect(MarkdownParser.cachedParse(streamed) == MarkdownParser.parse(streamed))
+    #expect(MarkdownParser.cachedParse(streamed) != MarkdownParser.cachedParse(first))
+  }
+
   @Test func tableAfterListKeepsItsColumns() {
     let source = "- **Done**: check `swift test`\n| Task | State |\n| --- | --- |\n| AC-01 | Passed |"
     #expect(MarkdownParser.parse(source) == [

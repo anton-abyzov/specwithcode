@@ -8,7 +8,7 @@ def compare(n, before, after, original_auth, current_auth, after_carried, restar
         if 'databaseCapture' in before:
             assert 'databaseCapture' in after, 'Complete database proof missing after restart'
             widenings = n.accepted_widenings(before['databaseCapture'], after['databaseCapture'], before['rows'])
-        # Migration 067 widens auth_sessions; its proofs then compare the earlier columns.
+        # Migrations 067 and 069 widen auth_sessions; its proofs then compare the earlier columns.
         heartbeat = n.prove_migration_preserved(
             before['rows'], n.narrowed_rows(after['rows'], widenings), original_auth,
             n.principal_auth(current_auth, after['rows'], widenings),

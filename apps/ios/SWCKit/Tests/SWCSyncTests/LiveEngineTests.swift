@@ -16,13 +16,13 @@ import SWCWire
     let connector: FakeConnector
   }
 
-  func harness(permissions: [String] = ["orchestration:read", "orchestration:operate"], failing: [String: String] = [:], staleThreadGrace: Duration = .seconds(3), resyncInterval: Duration = .seconds(10)) async throws -> Harness {
+  func harness(permissions: [String] = ["orchestration:read", "orchestration:operate"], failing: [String: String] = [:], staleThreadGrace: Duration = .seconds(3), resyncInterval: Duration = .seconds(10), config: String = FakeMachine.config) async throws -> Harness {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("swcsync-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let registry = MachineRegistry(fileURL: directory.appendingPathComponent("machines.json"))
     try await registry.upsert(MachineRecord(environmentId: env, label: "Old label", routes: [try #require(MachineRoute(httpBase: "http://192.168.1.20:8319"))]))
     let credentials = InMemoryCredentialStore([CredentialKey(environmentId: env, issuer: "http://192.168.1.20:8319"): MachineCredential(token: "tok", expiresAt: Date().addingTimeInterval(30 * 86_400), permissions: permissions)])
-    let machine = FakeMachine()
+    let machine = FakeMachine(config: config)
     for (tag, error) in failing { machine.fail(tag, with: error) }
     let connector = FakeConnector(machine)
     let engine = LiveEngine(
@@ -241,10 +241,18 @@ import SWCWire
   @Test func machineSettingsAndAide() async throws {
     let h = try await harness()
     #expect(await loaded(h))
+    // Aide is off until a machine's settings turn it on, and is never created while off.
+    #expect(!h.model.aideEnabled)
+    await #expect(throws: SyncError.aideDisabled) { try await h.engine.setupAide() }
+    #expect(h.machine.payloads("projects.createNew").isEmpty)
+
     let settings = try await h.engine.loadMachineSettings(env)
     #expect(settings.defaultRuntimeMode == .fullAccess)
+    // Turning it on on the desktop reaches the phone with the next settings.
+    h.machine.answer("server.updateSettings", with: #"{"defaultRuntimeMode":"approval-required","providerInstances":{},"aideEnabled":true}"#)
     try await h.engine.saveMachineSettings(MachineSettings(defaultRuntimeMode: .approvalRequired, defaultModel: nil), for: env)
     #expect(h.machine.payloads("server.updateSettings").first?["patch"]?["defaultRuntimeMode"] == .string("approval-required"))
+    #expect(await until { h.model.aideEnabled })
 
     let aide = try await h.engine.setupAide()
     #expect(aide == ProjectRef(environmentId: env, projectId: "aide_1"))
@@ -448,8 +456,9 @@ import SWCWire
   }
 
   @Test func setUpAideWaitsForEveryMachinesProjects() async throws {
-    let h = try await harness()
+    let h = try await harness(config: FakeMachine.aideConfig)
     #expect(await loaded(h))
+    #expect(await until { h.model.aideEnabled })
     #expect(h.model.allShellsLoaded)
     // A second machine that never connects may already hold Aide.
     let other = MachineRecord(environmentId: "env_other", label: "Travel laptop", routes: [try #require(MachineRoute(httpBase: "http://192.168.1.99:8319"))])
@@ -463,6 +472,36 @@ import SWCWire
     #expect(h.model.allShellsLoaded)
     let aide = try await h.engine.setupAide()
     #expect(aide.environmentId == env)
+  }
+
+  @Test func setUpAideWaitsForSettingsInsteadOfRefusing() async throws {
+    // A machine that has listed its projects but not yet sent its settings may have Aide on.
+    let noSettings = FakeMachine.config.replacingOccurrences(of: #""settings":{"defaultRuntimeMode":"auto","sidebarProjectOrder":{"pinned":["env-1:/Users/x/specweave"],"unpinned":[]},"providerInstances":{}},"#, with: "")
+    #expect(noSettings != FakeMachine.config)
+    let h = try await harness(config: noSettings)
+    #expect(await loaded(h))
+    #expect(h.engine.machines[env]?.settings == nil)
+    #expect(!h.model.aideEnabled)
+    await #expect(throws: SyncError.machinesNotLoaded) { try await h.engine.setupAide() }
+    #expect(h.machine.payloads("projects.createNew").isEmpty)
+
+    h.machine.answer("server.updateSettings", with: #"{"defaultRuntimeMode":"approval-required","providerInstances":{},"aideEnabled":true}"#)
+    try await h.engine.saveMachineSettings(MachineSettings(defaultRuntimeMode: .approvalRequired, defaultModel: nil), for: env)
+    #expect(await until { h.model.aideEnabled })
+    let aide = try await h.engine.setupAide()
+    #expect(aide == ProjectRef(environmentId: env, projectId: "aide_1"))
+  }
+
+  @Test func setUpAideRefusesWhenTheMachinesSettingTurnsItOff() async throws {
+    let h = try await harness(config: FakeMachine.aideConfig)
+    #expect(await loaded(h))
+    #expect(await until { h.model.aideEnabled })
+    // The desktop turned Aide off on this machine.
+    h.machine.answer("server.updateSettings", with: #"{"defaultRuntimeMode":"approval-required","providerInstances":{},"aideEnabled":false}"#)
+    try await h.engine.saveMachineSettings(MachineSettings(defaultRuntimeMode: .approvalRequired, defaultModel: nil), for: env)
+    #expect(await until { !h.model.aideEnabled })
+    await #expect(throws: SyncError.aideDisabled) { try await h.engine.setupAide() }
+    #expect(h.machine.payloads("projects.createNew").isEmpty)
   }
 
   @Test func deletedThreadBlocksTheComposer() async throws {
@@ -537,8 +576,7 @@ import SWCWire
     #expect(h.model.machines.isEmpty)
     #expect(h.model.projects.isEmpty)
     #expect(await until { h.model.recentThreads.isEmpty })
-    try await Task.sleep(for: .milliseconds(50))
-    #expect(await h.registry.machine(env) == nil)
+    #expect(await untilAsync { await h.registry.machine(env) == nil })
     await #expect(throws: SyncError.unknownMachine) { try await h.engine.loadMachineSettings(env) }
   }
 }

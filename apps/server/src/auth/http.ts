@@ -33,6 +33,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
@@ -47,6 +48,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
+import * as ConnectPhoneRevocation from "../cloud/ConnectPhoneRevocation.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { browserCookieAttributes } from "./browserCookiePolicy.ts";
@@ -448,6 +450,10 @@ export const layer = HttpApiBuilder.group(
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
     const updateHold = yield* ServiceUpdateHold.optional;
+    // The server provides it; a router built without Connect revokes locally only.
+    const phoneRevocation = yield* Effect.serviceOption(
+      ConnectPhoneRevocation.ConnectPhoneRevocation,
+    );
 
     return handlers
       .handle(
@@ -814,10 +820,15 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const revoked = yield* serverAuth.revokeClientSession(
+            const { revoked, connectProofKeyThumbprint } = yield* serverAuth.revokeClientSession(
               session.sessionId,
               args.payload.sessionId,
             );
+            // A Connect phone is also removed from the account, or it would mint
+            // itself a new session through the relay. Never fails the revoke.
+            if (connectProofKeyThumbprint !== null && Option.isSome(phoneRevocation)) {
+              yield* phoneRevocation.value.removeAtRelay(connectProofKeyThumbprint);
+            }
             return { revoked };
           },
           Effect.catchTags({

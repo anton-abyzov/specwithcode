@@ -370,7 +370,10 @@ describe("FleetWorkerGrants", () => {
       const error = yield* grants.allow({ machineId: "m1", access: "auto" }).pipe(Effect.flip);
       expect(error.reason).toBe("rate_limited");
       yield* setNow(NOW + 61_000);
-      yield* grants.allow({ machineId: "m1", access: "full-access" });
+      // Allowing an allowed machine again is how Connections changes its access.
+      const changed = yield* grants.allow({ machineId: "m1", access: "full-access" });
+      expect(changed).toMatchObject({ status: "allowed", access: "full-access" });
+      expect((yield* grants.status("m1")).access).toBe("full-access");
       expect((yield* grants.credential("m1")).access).toBe("full-access");
       // The second grant replaced the first session on the other machine.
       expect(machine.revokedSessions).toContain("old");

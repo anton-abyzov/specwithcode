@@ -11,6 +11,9 @@ nonisolated final class AdaptiveSplitTests: XCTestCase {
     let engine = FixtureEngine(scenario: .long)
     engine.latency = .zero
     engine.streamDelay = .zero
+    // A sidebar hidden on this simulator earlier must not change the layout under test.
+    UserDefaults.standard.removeObject(forKey: "swc.sidebarCollapsed")
+    UserDefaults.standard.removeObject(forKey: "swc.sidebarWidth")
     let host = UIHostingController(rootView: RootView(model: AppModel(engine: engine)))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)
@@ -23,11 +26,15 @@ nonisolated final class AdaptiveSplitTests: XCTestCase {
       previous?.makeKey()
     }
 
-    // Folded, unfolded portrait, unfolded landscape, narrow Split View, folded.
+    // Folded, unfolded portrait, unfolded landscape (regular and compact
+    // classes), narrow Split View, folded.
     let postures: [(CGSize, UIUserInterfaceSizeClass, Bool)] = [
       (CGSize(width: 466, height: 678), .compact, false),
-      (CGSize(width: 669, height: 951), .regular, true),
+      // Upright, the chat keeps the whole width; the sidebar would crowd it.
+      (CGSize(width: 669, height: 951), .regular, false),
       (CGSize(width: 951, height: 669), .regular, true),
+      // The Duo can report a compact class unfolded; width alone decides.
+      (CGSize(width: 951, height: 669), .compact, true),
       (CGSize(width: 540, height: 669), .regular, false),
       (CGSize(width: 466, height: 678), .compact, false),
     ]

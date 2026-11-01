@@ -1,6 +1,4 @@
-import { createClerkClient, verifyToken } from "@clerk/backend";
 import { sql as drizzleSql } from "drizzle-orm";
-import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -8,7 +6,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as Headers from "effect/http/Headers";
@@ -36,7 +33,6 @@ import {
   RelayMobileRegistrationScope,
   RelayAuthInvalidError,
   type RelayAuthInvalidReason,
-  type RelayDpopFailureReason,
   RelayEnvironmentAuth,
   RelayEnvironmentConnectNotAuthorizedError,
   RelayEnvironmentEndpointTimedOutError,
@@ -47,7 +43,6 @@ import {
   RelayEnvironmentLinkUnavailableError,
   RelayEnvironmentLinkLimitExceededError,
   RelayEnvironmentPrincipal,
-  type RelayEnvironmentConnectRequest,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
 } from "@specweave-studio/contracts/relay";
@@ -56,6 +51,7 @@ import { normalizeRelayIssuer } from "@specweave-studio/shared/relayJwt";
 import * as DeliveryAttempts from "../agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "../agentActivity/AgentActivityRows.ts";
 import * as Devices from "../agentActivity/Devices.ts";
+import * as PhoneRemovals from "../agentActivity/PhoneRemovals.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
@@ -79,6 +75,23 @@ import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as RelayDb from "../db.ts";
 import { currentTraceId, mapErrorTags } from "./mapErrorTags.ts";
+import {
+  clearClerkOAuthVerificationCache,
+  clerkSessionIdClaim,
+  clerkVerificationFailureReason,
+  hasExpectedClerkAudience,
+  verifyClerkBearerToken,
+  verifyRelayClientBearerToken,
+} from "./ClerkBearer.ts";
+import * as PhoneRemovalApi from "./PhoneRemovalApi.ts";
+import {
+  isDpopAuthorizationHeader,
+  readHttpAuthorizationCredential,
+  relayDpopFailureReason,
+  requireDpopProof,
+  requireDpopThumbprint,
+  resolveConnectClientKeyThumbprint,
+} from "./requestCredentials.ts";
 import {
   revokeEnvironmentLinkRecord,
   unlinkEnvironmentRecord,
@@ -323,6 +336,7 @@ export const layerClientAuth = Layer.effect(
   RelayClientAuth,
   Effect.gen(function* () {
     const config = yield* RelayConfiguration.RelayConfiguration;
+    const removals = yield* PhoneRemovals.PhoneRemovals;
     return {
       clientBearer: Effect.fn("relay.auth.client.bearer")(function* (httpEffect, { credential }) {
         const token = readHttpAuthorizationCredential(credential);
@@ -345,12 +359,34 @@ export const layerClientAuth = Layer.effect(
           "relay.auth.mode": verified.mode,
           "relay.auth.subject": verified.sub,
         });
+        if ("sid" in verified && verified.sid) {
+          // A removed phone's Clerk session is refused even before Clerk ends it.
+          const session = yield* PhoneRemovalApi.clerkSessionStatus({
+            userId: verified.sub,
+            clerkSessionId: verified.sid,
+          }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
+          if (session === "removed") return yield* relayAuthInvalidError("device_removed");
+          if (session === "unavailable") {
+            // The middleware's typed error is auth-only; answer with the
+            // encoded internal error every client endpoint declares.
+            return HttpServerResponse.jsonUnsafe(
+              {
+                _tag: "RelayInternalError",
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId: yield* currentTraceId,
+              },
+              { status: 500 },
+            );
+          }
+        }
 
         return yield* httpEffect.pipe(
           withSpanAttributes({ "user.id": verified.sub }),
           Effect.provideService(RelayClientPrincipal, {
             userId: verified.sub,
             token,
+            ...("sid" in verified && verified.sid ? { clerkSessionId: verified.sid } : {}),
           }),
         );
       }),
@@ -422,21 +458,13 @@ export const layerDpopClientAuth = Layer.effect(
             token,
             proofKeyThumbprint: verified.cnf.jkt,
             dpopScopes: verified.scope,
+            ...(verified.sid ? { clerkSessionId: verified.sid } : {}),
           }),
         );
       }),
     };
   }),
 );
-
-function isDpopAuthorizationHeader(value: string | undefined): boolean {
-  return /^DPoP +/iu.test(value ?? "");
-}
-
-function readHttpAuthorizationCredential(credential: Redacted.Redacted<string>): string {
-  // Effect beta.73 leaves the scheme separator in decoded HTTP credentials.
-  return Redacted.value(credential).trimStart();
-}
 
 export const layerMetadataApi = HttpApiBuilder.group(
   RelayApi,
@@ -509,6 +537,9 @@ export const layerHealthApi = HttpApiBuilder.group(
 );
 
 export {
+  clearClerkOAuthVerificationCache,
+  relayDpopFailureReason,
+  verifyRelayClientBearerToken,
   recoverEnvironmentTunnelRecord,
   registerEnvironmentTunnelRecovery,
   revokeEnvironmentLinkRecord,
@@ -527,12 +558,19 @@ export const layerMobileApi = HttpApiBuilder.group(
         "registerDevice",
         Effect.fn("relay.api.mobile.registerDevice")(function* (args) {
           const { payload } = args;
-          const { userId, token } = yield* RelayClientPrincipal;
-          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
+          const { userId, token, clerkSessionId } = yield* RelayClientPrincipal;
+          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration", {
+            deviceId: payload.deviceId,
+          });
           yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
-          return yield* registrations.registerDevice({ userId, payload });
+          return yield* registrations.registerDevice({
+            userId,
+            payload,
+            proofKeyThumbprint,
+            clerkSessionId,
+          });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       )
       .handle(
@@ -540,7 +578,9 @@ export const layerMobileApi = HttpApiBuilder.group(
         Effect.fn("relay.api.mobile.registerLiveActivity")(function* (args) {
           const { payload } = args;
           const { userId, token } = yield* RelayClientPrincipal;
-          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
+          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration", {
+            deviceId: payload.deviceId,
+          });
           yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
@@ -563,7 +603,9 @@ export const layerMobileApi = HttpApiBuilder.group(
         Effect.fn("relay.api.mobile.unregisterDevice")(function* (args) {
           const { params } = args;
           const { userId, token } = yield* RelayClientPrincipal;
-          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
+          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration", {
+            deviceId: params.deviceId,
+          });
           yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
@@ -741,6 +783,29 @@ export const layerClientApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "listPhones",
+        Effect.fn("relay.api.client.listPhones")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
+          const { userId, clerkSessionId, proofKeyThumbprint } = yield* RelayClientPrincipal;
+          const removals = yield* PhoneRemovals.PhoneRemovals;
+          return {
+            phones: yield* removals.listPhones({ userId, clerkSessionId, proofKeyThumbprint }),
+          };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "removePhone",
+        Effect.fn("relay.api.client.removePhone")(function* ({ params }) {
+          const { userId, clerkSessionId } = yield* RelayClientPrincipal;
+          const result = yield* PhoneRemovalApi.removePhone({ userId, deviceId: params.deviceId });
+          return {
+            removed: result.removed,
+            current:
+              clerkSessionId !== undefined && result.clerkSessionIds.includes(clerkSessionId),
+          };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "deleteAccount",
         Effect.fn("relay.api.client.deleteAccount")(function* () {
           const { userId } = yield* RelayClientPrincipal;
@@ -785,57 +850,80 @@ export const layerTokenApi = HttpApiBuilder.group(
     const crypto = yield* Crypto.Crypto;
     const dpopProofs = yield* DpopProofs.DpopProofReplay;
     const relayTokens = yield* RelayTokens.RelayTokens;
-    return handlers.handle(
-      "exchangeDpopAccessToken",
-      Effect.fn("relay.api.token.exchangeDpopAccessToken")(function* (args) {
-        yield* appendRelayCredentialResponseHeaders;
-        const issuer = normalizeRelayIssuer(config.relayIssuer);
-        const requestedScopes = relayTokens.resolveDpopAccessTokenScopes({
-          clientId: args.payload.client_id,
-          scope: args.payload.scope,
-        });
-        yield* Effect.annotateCurrentSpan({
-          "relay.auth.mode": "clerk_bearer_token_exchange",
-          "relay.oauth.client_id": args.payload.client_id,
-          "relay.oauth.scopes": args.payload.scope,
-        });
-        if (args.payload.resource !== issuer || requestedScopes === null) {
-          return yield* new HttpApiError.Unauthorized({});
-        }
+    return handlers
+      .handle(
+        "removalStatus",
+        Effect.fn("relay.api.token.removalStatus")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
+          const proofKeyThumbprint = yield* requireDpopProof().pipe(
+            Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
+          );
+          return yield* PhoneRemovalApi.removalStatus(proofKeyThumbprint);
+        }, mapRelayCommonApiErrors("invalid_dpop")),
+      )
+      .handle(
+        "exchangeDpopAccessToken",
+        Effect.fn("relay.api.token.exchangeDpopAccessToken")(function* (args) {
+          yield* appendRelayCredentialResponseHeaders;
+          const issuer = normalizeRelayIssuer(config.relayIssuer);
+          const requestedScopes = relayTokens.resolveDpopAccessTokenScopes({
+            clientId: args.payload.client_id,
+            scope: args.payload.scope,
+          });
+          yield* Effect.annotateCurrentSpan({
+            "relay.auth.mode": "clerk_bearer_token_exchange",
+            "relay.oauth.client_id": args.payload.client_id,
+            "relay.oauth.scopes": args.payload.scope,
+          });
+          if (args.payload.resource !== issuer || requestedScopes === null) {
+            return yield* new HttpApiError.Unauthorized({});
+          }
 
-        const verified = yield* verifyClerkBearerToken(config, args.payload.subject_token).pipe(
-          Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
-        );
-        if (!verified.sub || !hasExpectedClerkAudience(verified.aud, config.clerkJwtAudience)) {
-          return yield* relayAuthInvalidError("invalid_bearer");
-        }
-        const proofKeyThumbprint = yield* requireDpopProof().pipe(
-          Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
-        );
-        const now = yield* DateTime.now;
-        const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
-        const jti = yield* crypto.randomUUIDv4.pipe(
-          Effect.catch(() => relayInternalErrorResponse("internal_error")),
-        );
-        return {
-          access_token: yield* relayTokens
-            .issueDpopAccessToken({
-              userId: verified.sub,
-              proofKeyThumbprint,
-              jti,
-              issuedAtEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-              expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
-              clientId: args.payload.client_id,
-              scopes: requestedScopes,
-            })
-            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
-          issued_token_type: RelayAccessTokenType,
-          token_type: "DPoP" as const,
-          expires_in: Duration.toSeconds(RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL),
-          scope: encodeOAuthScope(requestedScopes),
-        };
-      }, mapRelayCommonApiErrors("invalid_dpop")),
-    );
+          const verified = yield* verifyClerkBearerToken(config, args.payload.subject_token).pipe(
+            Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
+          );
+          if (!verified.sub || !hasExpectedClerkAudience(verified.aud, config.clerkJwtAudience)) {
+            return yield* relayAuthInvalidError("invalid_bearer");
+          }
+          const proofKeyThumbprint = yield* requireDpopProof().pipe(
+            Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
+          );
+          const clerkSessionId = clerkSessionIdClaim(verified).sid;
+          const admitted = yield* PhoneRemovalApi.admitTokenExchange({
+            userId: verified.sub,
+            clientId: args.payload.client_id,
+            deviceId: args.payload.device_id,
+            proofKeyThumbprint,
+            clerkSessionId,
+          });
+          if (!admitted) {
+            return yield* relayAuthInvalidError("device_removed");
+          }
+          const now = yield* DateTime.now;
+          const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
+          const jti = yield* crypto.randomUUIDv4.pipe(
+            Effect.catch(() => relayInternalErrorResponse("internal_error")),
+          );
+          return {
+            access_token: yield* relayTokens
+              .issueDpopAccessToken({
+                userId: verified.sub,
+                proofKeyThumbprint,
+                jti,
+                issuedAtEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+                expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
+                clientId: args.payload.client_id,
+                scopes: requestedScopes,
+                clerkSessionId,
+              })
+              .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
+            issued_token_type: RelayAccessTokenType,
+            token_type: "DPoP" as const,
+            expires_in: Duration.toSeconds(RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL),
+            scope: encodeOAuthScope(requestedScopes),
+          };
+        }, mapRelayCommonApiErrors("invalid_dpop")),
+      );
   }),
 );
 
@@ -845,6 +933,7 @@ export const layerDpopClientApi = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const connector = yield* EnvironmentConnector.EnvironmentConnector;
     const dpopProofs = yield* DpopProofs.DpopProofReplay;
+    const devices = yield* Devices.Devices;
     return handlers
       .handle(
         "connectEnvironment",
@@ -852,8 +941,10 @@ export const layerDpopClientApi = HttpApiBuilder.group(
           function* (args) {
             const { params, payload } = args;
             yield* appendRelayCredentialResponseHeaders;
-            const { userId, token } = yield* RelayClientPrincipal;
-            const proofKeyThumbprint = yield* requireDpopPrincipalScope("environment:connect");
+            const { userId, token, clerkSessionId } = yield* RelayClientPrincipal;
+            const proofKeyThumbprint = yield* requireDpopPrincipalScope("environment:connect", {
+              deviceId: payload.deviceId,
+            });
             const requestedThumbprint = resolveConnectClientKeyThumbprint(payload);
             if (!requestedThumbprint || requestedThumbprint !== proofKeyThumbprint) {
               return yield* new HttpApiError.Unauthorized({});
@@ -861,6 +952,12 @@ export const layerDpopClientApi = HttpApiBuilder.group(
             const clientProofKeyThumbprint = yield* requireDpopThumbprint(proofKeyThumbprint, {
               expectedAccessToken: token,
             }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
+            if (payload.deviceId) {
+              // Best effort: "Your phones" shows when it was last used.
+              yield* devices
+                .touch({ userId, deviceId: payload.deviceId, proofKeyThumbprint, clerkSessionId })
+                .pipe(Effect.ignore);
+            }
             return yield* connector.connect({
               userId,
               environmentId: params.environmentId,
@@ -1190,6 +1287,29 @@ export const layerServerApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "removeClientKey",
+        Effect.fn("relay.api.server.removeClientKey")(function* ({ params, payload }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          return yield* PhoneRemovalApi.removeClientKeyForEnvironment({
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            proofKeyThumbprint: payload.proofKeyThumbprint,
+          });
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "listRemovedClientKeys",
+        Effect.fn("relay.api.server.listRemovedClientKeys")(function* ({ params }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          return yield* PhoneRemovalApi.listRemovedClientKeysForEnvironment({
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+          });
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "wakeHeldHooks",
         Effect.fn("relay.api.server.wakeHeldHooks")(function* ({ params }) {
           yield* requireOwnEnvironment(params.environmentId);
@@ -1204,17 +1324,6 @@ export const layerServerApi = HttpApiBuilder.group(
   }),
 );
 
-class ClerkTokenVerificationFailed extends Schema.TaggedError<ClerkTokenVerificationFailed>()(
-  "ClerkTokenVerificationFailed",
-  {
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return "Clerk token verification failed";
-  }
-}
-
 const isHttpUnauthorized = Schema.is(HttpApiError.Unauthorized);
 const isDpopProofRejected = Schema.is(DpopProofs.DpopProofRejected);
 
@@ -1223,6 +1332,8 @@ const RelayCommonPersistenceError = Schema.Union([
   Devices.DeviceRegistrationPersistenceError,
   Devices.DeviceUnregistrationPersistenceError,
   Devices.DeviceListPersistenceError,
+  Devices.DeviceTouchPersistenceError,
+  PhoneRemovals.PhoneRemovalPersistenceError,
   LiveActivities.LiveActivityRegistrationPersistenceError,
   EnvironmentLinks.EnvironmentLinkUserListPersistenceError,
   EnvironmentLinks.EnvironmentLinkListPersistenceError,
@@ -1253,29 +1364,6 @@ type MapRelayCommonApiError<E> =
   | (Extract<E, HttpApiError.Unauthorized> extends never ? never : RelayAuthInvalidError)
   | (Extract<E, DpopProofs.DpopProofRejected> extends never ? never : RelayAuthInvalidError)
   | (Extract<E, RelayCommonPersistenceError> extends never ? never : RelayInternalError);
-
-export function relayDpopFailureReason(
-  code: DpopProofs.DpopProofFailureCode,
-): RelayDpopFailureReason {
-  switch (code) {
-    case "time_window":
-      return "time_window";
-    case "key_mismatch":
-      return "key_mismatch";
-    case "method_mismatch":
-    case "url_mismatch":
-      return "request_mismatch";
-    case "access_token_hash_mismatch":
-      return "token_mismatch";
-    case "replayed":
-      return "replay";
-    case "missing_proof":
-    case "malformed_proof":
-    case "invalid_signature":
-    case "invalid_proof":
-      return "invalid_proof";
-  }
-}
 
 /** The 403 every managed-machine path returns when a cap refuses a new machine. */
 function relayLinkLimitExceededError(
@@ -1349,234 +1437,29 @@ function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
   ): Effect.Effect<A, MapRelayCommonApiError<E>, R> => effect.pipe(Effect.catch(mapError));
 }
 
-function resolveConnectClientKeyThumbprint(payload: RelayEnvironmentConnectRequest): string | null {
-  const requestedThumbprint = payload.clientKeyThumbprint ?? payload.clientProofKeyThumbprint;
-  if (!requestedThumbprint) {
-    return null;
-  }
-  if (
-    payload.clientKeyThumbprint &&
-    payload.clientProofKeyThumbprint &&
-    payload.clientKeyThumbprint !== payload.clientProofKeyThumbprint
-  ) {
-    return null;
-  }
-  return requestedThumbprint;
-}
-
-function safeAuthFailureReason(value: string): string {
-  return /^[a-z0-9._-]+$/i.test(value) ? value : "unknown";
-}
-
-function clerkVerificationFailureReason(cause: unknown): string {
-  if (
-    cause instanceof Error &&
-    (cause.message.startsWith("Invalid JWT audience claim ") ||
-      cause.message.startsWith("Invalid JWT audience claim array "))
-  ) {
-    return "audience_mismatch";
-  }
-  if (typeof cause === "object" && cause !== null && "reason" in cause) {
-    const reason = (cause as { readonly reason?: unknown }).reason;
-    if (typeof reason === "string" && reason.length > 0) {
-      return safeAuthFailureReason(reason);
-    }
-  }
-  if (cause instanceof Error && cause.name) {
-    return safeAuthFailureReason(cause.name);
-  }
-  return "unknown";
-}
-
-function hasExpectedClerkAudience(audience: unknown, expectedAudience: string): boolean {
-  return typeof audience === "string"
-    ? audience === expectedAudience
-    : Array.isArray(audience) &&
-        audience.some((entry) => typeof entry === "string" && entry === expectedAudience);
-}
-
-function verifyClerkBearerToken(
-  config: RelayConfiguration.RelayConfiguration["Service"],
-  token: string,
-) {
-  const verifyRemote = () =>
-    verifyToken(token, {
-      secretKey: Redacted.value(config.clerkSecretKey),
-      audience: config.clerkJwtAudience,
-    });
-  return Effect.tryPromise({
-    try: async () => {
-      if (!config.clerkJwtKey) return verifyRemote();
-      try {
-        return await verifyToken(token, {
-          jwtKey: config.clerkJwtKey,
-          audience: config.clerkJwtAudience,
-        });
-      } catch (error) {
-        // An expired token stays rejected. Anything else (a rotated Clerk key,
-        // a malformed pinned key) gets the remote JWKS check, so a bad
-        // variable degrades to the old path instead of rejecting sign-ins.
-        if (clerkVerificationFailureReason(error) === "token-expired") throw error;
-        return verifyRemote();
-      }
-    },
-    catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
-  }).pipe(
-    Effect.withSpan("verify_clerk_bearer_token", {
-      attributes: {
-        "relay.auth.token_length": token.length,
-        "relay.auth.jwt_key_pinned": config.clerkJwtKey !== undefined,
-      },
-    }),
-  );
-}
-
-const CLERK_OAUTH_TOKEN_PREFIX = "oat_";
-const CLERK_OAUTH_CACHE_TTL_MS = 60_000;
-const CLERK_OAUTH_CACHE_MAX_ENTRIES = 1_000;
-
 /**
- * Successful CLI OAuth verifications per isolate, keyed by a token digest.
- * Opaque OAuth tokens verify through Clerk's Backend API, which is rate
- * limited per instance; a headless host calls the relay several times a
- * minute with the same token. Revocation takes effect within the TTL.
+ * Every DPoP-authenticated call goes through here, so a removed phone's
+ * already-issued access tokens stop working too.
  */
-const clerkOAuthVerifications = new Map<
-  string,
-  { readonly sub: string; readonly expiresAt: number }
->();
-
-async function clerkOAuthCacheKey(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-export function clearClerkOAuthVerificationCache(): void {
-  clerkOAuthVerifications.clear();
-}
-
-function rememberClerkOAuthVerification(key: string, sub: string, now: number): void {
-  if (clerkOAuthVerifications.size >= CLERK_OAUTH_CACHE_MAX_ENTRIES) {
-    for (const [entryKey, entry] of clerkOAuthVerifications) {
-      if (entry.expiresAt <= now) clerkOAuthVerifications.delete(entryKey);
-    }
-    if (clerkOAuthVerifications.size >= CLERK_OAUTH_CACHE_MAX_ENTRIES) {
-      const oldest = clerkOAuthVerifications.keys().next();
-      if (!oldest.done) clerkOAuthVerifications.delete(oldest.value);
-    }
-  }
-  clerkOAuthVerifications.set(key, { sub, expiresAt: now + CLERK_OAUTH_CACHE_TTL_MS });
-}
-
-function verifyClerkOAuthBearerToken(
-  config: RelayConfiguration.RelayConfiguration["Service"],
-  token: string,
-) {
-  return Clock.currentTimeMillis.pipe(
-    Effect.flatMap((now) =>
-      Effect.tryPromise({
-        try: async () => {
-          const key = await clerkOAuthCacheKey(token);
-          const cached = clerkOAuthVerifications.get(key);
-          if (cached && cached.expiresAt > now) {
-            return { sub: cached.sub };
-          }
-          clerkOAuthVerifications.delete(key);
-          const client = createClerkClient({
-            secretKey: Redacted.value(config.clerkSecretKey),
-            publishableKey: config.clerkPublishableKey,
-          });
-          const state = await client.authenticateRequest(
-            new Request(config.relayIssuer, {
-              headers: { authorization: `Bearer ${token}` },
-            }),
-            { acceptsToken: "oauth_token" },
-          );
-          const auth = state.toAuth();
-          if (!state.isAuthenticated || !auth.userId) {
-            throw new Error("Clerk OAuth token is not authenticated.");
-          }
-          rememberClerkOAuthVerification(key, auth.userId, now);
-          return { sub: auth.userId };
-        },
-        catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
-      }),
-    ),
-  );
-}
-
-export function verifyRelayClientBearerToken(
-  config: RelayConfiguration.RelayConfiguration["Service"],
-  token: string,
-) {
-  const verifyOAuth = verifyClerkOAuthBearerToken(config, token).pipe(
-    Effect.map((verified) => ({ ...verified, mode: "clerk_oauth_bearer" as const })),
-  );
-  // Opaque OAuth tokens are never session JWTs; skip the JWKS round trip.
-  if (token.startsWith(CLERK_OAUTH_TOKEN_PREFIX)) {
-    return verifyOAuth;
-  }
-  return verifyClerkBearerToken(config, token).pipe(
-    Effect.flatMap((verified) =>
-      verified.sub && hasExpectedClerkAudience(verified.aud, config.clerkJwtAudience)
-        ? Effect.succeed({ sub: verified.sub, mode: "clerk_session_bearer" as const })
-        : Effect.fail(new ClerkTokenVerificationFailed({ cause: "missing_relay_audience" })),
-    ),
-    Effect.catch(() => verifyOAuth),
-  );
-}
-
 const requireDpopPrincipalScope = Effect.fn("relay.api.require_dpop_principal_scope")(function* (
   scope: RelayDpopAccessTokenScope,
+  options?: { readonly deviceId?: string | undefined },
 ) {
   yield* Effect.annotateCurrentSpan({ "relay.dpop.required_scope": scope });
   const principal = yield* RelayClientPrincipal;
   if (!principal.proofKeyThumbprint || !principal.dpopScopes?.includes(scope)) {
     return yield* new HttpApiError.Unauthorized({});
   }
+  const removed = yield* PhoneRemovalApi.isRemovedPhone({
+    userId: principal.userId,
+    deviceId: options?.deviceId,
+    proofKeyThumbprint: principal.proofKeyThumbprint,
+    clerkSessionId: principal.clerkSessionId,
+  });
+  if (removed) {
+    return yield* relayAuthInvalidError("device_removed");
+  }
   return principal.proofKeyThumbprint;
-});
-
-const requireDpopThumbprint = Effect.fn("relay.api.require_dpop_thumbprint")(function* (
-  expectedThumbprint: string,
-  options?: {
-    readonly expectedAccessToken?: string;
-  },
-) {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const now = yield* DateTime.now;
-  const url = HttpServerRequest.toURL(request);
-  if (url._tag === "None") {
-    return yield* new HttpApiError.Unauthorized({});
-  }
-  const dpopProofs = yield* DpopProofs.DpopProofReplay;
-  return yield* dpopProofs.verifyAndConsume({
-    proof: request.headers.dpop,
-    method: request.method,
-    url: url.value.href,
-    now,
-    expectedThumbprint,
-    ...(options?.expectedAccessToken ? { expectedAccessToken: options.expectedAccessToken } : {}),
-  });
-});
-
-const requireDpopProof = Effect.fn("relay.api.require_dpop_proof")(function* (options?: {
-  readonly expectedAccessToken?: string;
-}) {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const now = yield* DateTime.now;
-  const url = HttpServerRequest.toURL(request);
-  if (url._tag === "None") {
-    return yield* new HttpApiError.Unauthorized({});
-  }
-  const dpopProofs = yield* DpopProofs.DpopProofReplay;
-  return yield* dpopProofs.verifyAndConsume({
-    proof: request.headers.dpop,
-    method: request.method,
-    url: url.value.href,
-    now,
-    ...(options?.expectedAccessToken ? { expectedAccessToken: options.expectedAccessToken } : {}),
-  });
 });
 
 const relayAuthInvalidError = Effect.fnUntraced(function* (reason: RelayAuthInvalidReason) {

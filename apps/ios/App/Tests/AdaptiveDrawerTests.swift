@@ -4,6 +4,12 @@ import Weave
 
 /// Native component resizing is not a substitute for Duo pose acceptance.
 nonisolated final class AdaptiveDrawerTests: XCTestCase {
+  override func setUp() {
+    super.setUp()
+    // A width dragged in an earlier run would replace the automatic width.
+    UserDefaults.standard.removeObject(forKey: "swc.sidebarWidth")
+  }
+
   @MainActor func testResizePreservesDraftAndFitsBothColumns() throws {
     for direction in [LayoutDirection.leftToRight, .rightToLeft] {
       let host = UIHostingController(rootView: DrawerContainer(isOpen: .constant(false)) {
@@ -36,7 +42,7 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
         host.view.frame.size.width = width
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
-        let expectedWidth = width >= 600 ? width - min(width * 0.4, 320) : width
+        let expectedWidth = width - Self.columnWidth(width)
         XCTAssertTrue(waitUntil {
           guard let field = self.findField(in: host.view) else { return false }
           return abs(field.frame.width - expectedWidth) < 1
@@ -47,9 +53,9 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
         let frame = current.convert(current.bounds, to: host.view)
         XCTAssertGreaterThanOrEqual(frame.minX, -1)
         XCTAssertLessThanOrEqual(frame.maxX, width + 1)
-        if width >= 600 {
-          XCTAssertEqual(frame.width, width - min(width * 0.4, 320), accuracy: 1)
-          XCTAssertEqual(frame.minX, direction == .leftToRight ? min(width * 0.4, 320) : 0, accuracy: 1)
+        if Self.columnWidth(width) > 0 {
+          XCTAssertEqual(frame.width, width - Self.columnWidth(width), accuracy: 1)
+          XCTAssertEqual(frame.minX, direction == .leftToRight ? Self.columnWidth(width) : 0, accuracy: 1)
         } else {
           XCTAssertEqual(frame.width, width, accuracy: 1)
         }
@@ -61,7 +67,8 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
     // Scene width, leading/trailing system regions, expected navigation/detail widths.
     let cases: [(Double, CGFloat, CGFloat, CGFloat, CGFloat, LayoutDirection)] = [
       (1000, 0, 84, 320, 596, .leftToRight),
-      (669, 0, 84, 267.6, 317.4, .leftToRight),
+      // Below the breakpoint the open drawer is modal over full-width content.
+      (669, 0, 84, 340, 585, .leftToRight),
       (320, 0, 84, 236, 236, .leftToRight),
       (1000, 84, 0, 236, 680, .rightToLeft),
     ]
@@ -100,9 +107,12 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
     }
   }
 
-  @MainActor func testWideCompactSizeClassRetainsModalDrawer() throws {
-    for open in [false, true] {
-      let host = UIHostingController(rootView: DrawerContainer(isOpen: .constant(open)) {
+  /// The Duo can report a compact class at full width, so width alone
+  /// decides: a compact wide scene still gets the column, and collapsing it
+  /// gives the content the whole width.
+  @MainActor func testWideCompactSizeClassGetsColumnUntilCollapsed() throws {
+    for collapsed in [false, true] {
+      let host = UIHostingController(rootView: DrawerContainer(isOpen: .constant(false), isCollapsed: .constant(collapsed)) {
         DraftProbe(name: "navigation")
       } content: {
         DraftProbe(name: "detail")
@@ -127,14 +137,20 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
       host.view.layoutIfNeeded()
       XCTAssertTrue(waitUntil { self.findField(in: host.view, name: "detail") != nil })
       let detail = try XCTUnwrap(findField(in: host.view, name: "detail"))
-      XCTAssertEqual(detail.bounds.width, 1000, accuracy: 1, "Compact traits must never reserve a persistent column")
-      if open {
-        let navigation = try XCTUnwrap(findField(in: host.view, name: "navigation"))
-        XCTAssertEqual(navigation.bounds.width, 340, accuracy: 1)
+      if collapsed {
+        XCTAssertTrue(waitUntil { self.findField(in: host.view, name: "navigation") == nil }, "A collapsed column must leave the hierarchy")
+        XCTAssertEqual(detail.bounds.width, 1000, accuracy: 1)
       } else {
-        XCTAssertNil(findField(in: host.view, name: "navigation"), "Closed modal navigation must leave the hierarchy")
+        let navigation = try XCTUnwrap(findField(in: host.view, name: "navigation"))
+        XCTAssertEqual(navigation.bounds.width, 320, accuracy: 1)
+        XCTAssertEqual(detail.bounds.width, 680, accuracy: 1)
       }
     }
+  }
+
+  /// The column's width at a scene width, or 0 below the breakpoint.
+  private static func columnWidth(_ width: Double) -> Double {
+    width >= Double(WeaveSize.sidebarBreakpoint) ? min(max(width * 0.32, 288), 340) : 0
   }
 
   @MainActor private func waitUntil(_ predicate: () -> Bool) -> Bool {

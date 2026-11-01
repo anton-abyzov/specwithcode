@@ -24,6 +24,7 @@ private struct ChatScreen: View {
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
   @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
+  @Environment(\.verticalSizeClass) private var verticalSizeClass
 
   @FocusState private var composerFocused: Bool
   @State private var position = ScrollPosition(edge: .bottom)
@@ -36,6 +37,8 @@ private struct ChatScreen: View {
   @State private var showingHandoff = false
   @State private var showingIncrement = false
   @State private var deviceViewer: DeviceViewerRoute?
+  @State private var headerWidth: CGFloat = 0
+  @State private var increment: IncrementProgress?
 
   /// A thread's thinking rows carry its provider's mark; a coordinator chat has no single provider.
   private var thinkingBrand: String? {
@@ -60,6 +63,7 @@ private struct ChatScreen: View {
         router.pendingDeviceViewer = nil
         deviceViewer = pending
       }
+      .task(id: incrementKey) { await loadIncrement() }
       .onAppear { model.openSession(session) }
       .onDisappear {
         // Navigation must not restore a keyboard over a hidden safe-area bar.
@@ -145,7 +149,9 @@ private struct ChatScreen: View {
       }
       // Not containerRelativeFrame: on iPhone Duo it resolves against the scene,
       // so the transcript, header and composer spill past the chat column.
-      .frame(maxWidth: .infinity, alignment: .leading)
+      // A readable column, centered, once the detail is wider than that.
+      .frame(maxWidth: WeaveSize.readableColumn, alignment: .leading)
+      .frame(maxWidth: .infinity)
       .padding(.horizontal, WeaveSpacing.gutter)
       .padding(.top, WeaveSpacing.s4)
       .padding(.bottom, WeaveSpacing.s4)
@@ -166,8 +172,26 @@ private struct ChatScreen: View {
 
   private static let typingId = "typing-indicator"
 
+  /// A new conversation: the spark and a serif question, as in Claude.
   private var emptyTranscript: some View {
-    transcriptPlaceholder(title: emptyTitle, message: emptyMessage)
+    VStack(spacing: WeaveSpacing.s4) {
+      WeaveSpark(size: 52)
+      Text(emptyTitle)
+        .font(.system(size: 28, weight: .regular, design: .serif))
+        .foregroundStyle(Color.weave.ink)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityAddTraits(.isHeader)
+      Text(emptyMessage)
+        .weaveFont(.callout)
+        .foregroundStyle(Color.weave.muted)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: 420)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.horizontal, WeaveSpacing.s6)
+    .padding(.top, WeaveSpacing.s8 * 3)
   }
 
   private var machineLabel: String { session.machineLabel.isEmpty ? "This machine" : session.machineLabel }
@@ -256,7 +280,7 @@ private struct ChatScreen: View {
 
   private var emptyTitle: String {
     switch target {
-    case .aide: "How can I help?"
+    case .aide: "What should we build?"
     case .project: session.title
     case .thread: "No messages yet"
     }
@@ -294,6 +318,13 @@ private struct ChatScreen: View {
   // MARK: Header
 
   private var header: some View {
+    // On narrow phones (iPhone SE, mini, the 6.1-inch models) the Threads
+    // label gives its width to the title, so the title and subtitle fit.
+    header(threadsLabel: headerWidth >= 380)
+      .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+  }
+
+  private func header(threadsLabel: Bool) -> some View {
     // Beside the sidebar the title leads the detail column, as on iPad.
     ScreenHeader(alignment: target.threadRef == nil && !sidebarVisible ? .center : .leading) {
       if isPushed { BackButton() } else if !sidebarVisible { MenuButton() }
@@ -309,18 +340,32 @@ private struct ChatScreen: View {
         switch target {
         case let .aide(project), let .project(project):
           let needsYou = model.threads(in: project).contains { $0.needsAttention }
+          // One glass capsule: the machine this coordinator runs on, a
+          // hairline, then the project's threads.
           HStack(spacing: 0) {
-            if case .project = target { OrchestratorSwitcher(current: project) }
+            if case .project = target, OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1 {
+              OrchestratorSwitcher(current: project)
+              Rectangle()
+                .fill(Color.weave.line)
+                .frame(width: WeaveSize.hairline, height: 20)
+                .accessibilityHidden(true)
+            }
             Button {
               nav.push(.overview(project))
             } label: {
               Label("Threads", systemImage: "bubble.left.and.bubble.right")
-                .font(.weave(.caption, weight: .semibold))
+                .labelStyle(ThreadsLabelStyle(showsTitle: threadsLabel))
+                .font(.weave(.callout, weight: .semibold))
                 .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
+                .padding(.horizontal, WeaveSpacing.s3)
                 .frame(minHeight: WeaveSize.minTap)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(PressableStyle())
+            .accessibilityLabel("Threads")
             .accessibilityIdentifier("chat.threads")
           }
+          .weaveGlass(in: Capsule(), interactive: true)
         case let .thread(thread):
           threadControls(thread)
         }
@@ -448,25 +493,31 @@ private struct ChatScreen: View {
 
   // MARK: Composer
 
+  /// Landscape phones are short: notices take fewer lines, and while typing
+  /// the increment row steps aside so the transcript stays in view.
+  private var isShort: Bool { verticalSizeClass == .compact }
+
   private var composerArea: some View {
     VStack(spacing: WeaveSpacing.s2) {
-      HStack {
-        Button { showingIncrement = true } label: {
-          Text("SpecWeave increment")
-            .font(.weave(.caption, weight: .medium))
-            .frame(minHeight: WeaveSize.minTap)
-            .contentShape(Rectangle())
-        }
-          .accessibilityIdentifier("chat.increment")
-        Spacer()
-        if let plan = session.plan {
-          Button { scrollToPlan() } label: {
-            Text("Provider checklist · \(plan.completed)/\(plan.total)")
-              .font(.weave(.caption))
-              .frame(minHeight: WeaveSize.minTap)
-              .contentShape(Rectangle())
+      // Only a chat with a bound SpecWeave increment shows it; a coordinator
+      // or Aide chat without one shows nothing here.
+      if !(isShort && composerFocused), increment != nil || session.plan != nil {
+        HStack {
+          if let increment {
+            TaskProgressPill(settled: increment.settledCount, total: increment.tasks.count) { showingIncrement = true }
+              .accessibilityIdentifier("chat.increment")
+              .transition(.opacity.combined(with: .scale(scale: 0.9)))
           }
-            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+          Spacer()
+          if let plan = session.plan {
+            Button { scrollToPlan() } label: {
+              Text("Provider checklist · \(plan.completed)/\(plan.total)")
+                .font(.weave(.caption))
+                .frame(minHeight: WeaveSize.minTap)
+                .contentShape(Rectangle())
+            }
+              .transition(.opacity.combined(with: .scale(scale: 0.9)))
+          }
         }
       }
       if !isNearBottom {
@@ -479,7 +530,7 @@ private struct ChatScreen: View {
         .transition(.opacity)
       }
       if let notice = connectionNotice {
-        Banner(notice.message, kind: notice.kind, actionTitle: notice.action == nil ? nil : notice.actionTitle, action: notice.action)
+        Banner(notice.message, kind: notice.kind, actionTitle: notice.action == nil ? nil : notice.actionTitle, action: notice.action, lineLimit: isShort ? 2 : nil)
       }
       if let error = session.lastError {
         Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
@@ -494,13 +545,31 @@ private struct ChatScreen: View {
         onStop: session.isStale ? nil : { stop() }
       )
     }
+    .frame(maxWidth: WeaveSize.readableColumn)
+    .frame(maxWidth: .infinity)
     .padding(.horizontal, WeaveSpacing.gutter)
     .padding(.top, WeaveSpacing.s2)
     // Sits right on the home indicator area; leaves a gap above the keyboard.
     .padding(.bottom, composerFocused ? WeaveSpacing.s2 : 0)
     .animation(.snappy, value: session.plan)
+    .animation(.snappy, value: increment)
     .animation(.snappy, value: isNearBottom)
     .animation(.snappy, value: session.lastError)
+    .animation(.snappy, value: composerFocused)
+  }
+
+  /// Reads the linked SpecWeave increment when the chat opens and again
+  /// when a run ends, never on a timer.
+  private var incrementKey: String { "\(target)-\(session.isRunning)-\(session.machineOnline)" }
+
+  private func loadIncrement() async {
+    guard session.machineOnline, !session.isRunning || increment == nil else { return }
+    // A failed read keeps what is shown; a read that finds no binding clears it.
+    switch try? await model.engine.incrementProgress(for: target) {
+    case let .bound(progress)?: increment = progress
+    case .unbound?: increment = nil
+    default: break
+    }
   }
 
   private var placeholder: String {
@@ -622,5 +691,21 @@ private struct ChatScreen: View {
   private func scrollToPlan() {
     guard let row = session.rows.last(where: { if case .plan = $0.kind { true } else { false } }) else { return }
     withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: row.id, anchor: .top) }
+  }
+}
+
+/// The header's Threads button: icon and title, or only the icon when the
+/// header is short of room. VoiceOver reads "Threads" either way.
+private struct ThreadsLabelStyle: LabelStyle {
+  let showsTitle: Bool
+
+  func makeBody(configuration: Configuration) -> some View {
+    if showsTitle {
+      Label(configuration)
+    } else {
+      configuration.icon
+        .frame(minWidth: WeaveSize.minTap)
+        .accessibilityShowsLargeContentViewer { Label(configuration) }
+    }
   }
 }

@@ -1,6 +1,11 @@
 // Deterministic MSP fixture. Never contacts a model, account, or external service.
 const readline = require("node:readline");
 const fs = require("node:fs");
+// A host that fails before answering, as the launcher does on a rejected sign-in.
+if (process.env.MUSE_TEST_EXIT_STDERR) {
+  process.stderr.write("starting\n" + process.env.MUSE_TEST_EXIT_STDERR + "\n");
+  process.exit(1);
+}
 let model = "muse-wonder-1.0";
 let cursor = 0;
 let pending;

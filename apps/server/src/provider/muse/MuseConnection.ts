@@ -38,8 +38,15 @@ export async function connectMuse(settings: MuseSettings, env: NodeJS.ProcessEnv
     });
     return { host, client };
   } catch (error) {
+    // A spawn failure (ENOENT, EACCES) rethrows from close(). A host that starts and
+    // exits only ends the handshake with "connection reached EOF"; its last stderr line
+    // (the launcher's sign-in or download error) is the reason the person needs.
     await handshake.close();
-    throw error;
+    const reason =
+      error instanceof Error && /does not support|timed out/i.test(error.message)
+        ? undefined
+        : handshake.child.stderrTail.findLast((line) => line.trim());
+    throw reason ? new Error(reason, { cause: error }) : error;
   } finally {
     timeout.abort();
   }
@@ -95,9 +102,37 @@ export class MuseCheckError extends Data.TaggedError("MuseCheckError")<{
   readonly cause?: unknown;
 }> {}
 
-/** A missing binary keeps the install hint; a protocol or timeout failure must not read as one. */
-export function museCheckFailure(cause: unknown): string {
+/** One readable line: no ANSI escapes or control characters, at most 240 characters. */
+function museReason(text: string): string {
+  const flat = text
+    // oxlint-disable-next-line no-control-regex -- strips terminal colour codes.
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
+    // oxlint-disable-next-line no-control-regex -- removing control characters is the point.
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const chars = Array.from(flat);
+  return chars.length > 240 ? `${chars.slice(0, 239).join("")}…` : flat;
+}
+
+/**
+ * A missing or unrunnable binary says so plainly; a protocol or timeout failure is shown
+ * as is; any other failure carries its reason, so a working CLI elsewhere never reads
+ * as "not checked".
+ */
+export function museCheckFailure(cause: unknown, binary = "muse"): string {
   const detail = cause instanceof Error ? cause.message : "";
-  if (/does not support|timed out/i.test(detail)) return detail;
-  return "Muse Code could not be checked. Install the official muse CLI, sign in, then refresh Providers.";
+  if (/does not support|timed out/i.test(detail)) return museReason(detail);
+  const code = (cause as { readonly code?: unknown } | null)?.code;
+  const install = "Install the official muse CLI here, sign in, then refresh Providers.";
+  if (code === "ENOENT" || /\bENOENT\b/.test(detail)) {
+    return binary.includes("/") || binary.includes("\\")
+      ? `${binary} does not exist on this machine. ${install}`
+      : `The ${binary} CLI is not installed on this machine, or not on SpecWithCode's PATH. ${install}`;
+  }
+  if (code === "EACCES" || /\bEACCES\b/.test(detail)) {
+    return `${binary} is not executable on this machine. ${install}`;
+  }
+  const reason = museReason(detail).replace(/[.\s]+$/, "");
+  return `Muse Code did not start on this machine.${reason ? ` ${reason}.` : ""} Sign in with muse here, then refresh Providers.`;
 }

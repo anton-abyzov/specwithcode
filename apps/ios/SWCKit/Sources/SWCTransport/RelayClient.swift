@@ -91,9 +91,11 @@ public struct ConnectDeviceRegistration: Sendable, Hashable, Codable {
   /// `sandbox` or `production`.
   public var apsEnvironment: String?
   public var pushToken: String?
+  /// The hardware model shown in "Your phones", e.g. "iPhone 16 Pro".
+  public var model: String?
   public var preferences: Preferences
 
-  public init(deviceId: String, label: String, iosMajorVersion: Int, appVersion: String?, bundleId: String?, apsEnvironment: String?, pushToken: String?, preferences: Preferences) {
+  public init(deviceId: String, label: String, iosMajorVersion: Int, appVersion: String?, bundleId: String?, apsEnvironment: String?, pushToken: String?, model: String? = nil, preferences: Preferences) {
     self.deviceId = deviceId
     self.label = label
     self.iosMajorVersion = iosMajorVersion
@@ -101,7 +103,43 @@ public struct ConnectDeviceRegistration: Sendable, Hashable, Codable {
     self.bundleId = bundleId
     self.apsEnvironment = apsEnvironment
     self.pushToken = pushToken
+    self.model = model
     self.preferences = preferences
+  }
+}
+
+/// One phone on the account (`GET /v1/client/phones`, `RelayPhoneRecord`).
+public struct ConnectPhoneRecord: Sendable, Hashable, Decodable {
+  public var deviceId: String
+  public var label: String
+  public var platform: String
+  public var model: String?
+  public var appVersion: String?
+  public var lastSeenAt: String
+  /// The request came with the Clerk session this phone last used.
+  public var current: Bool
+
+  public init(deviceId: String, label: String, platform: String = "ios", model: String? = nil, appVersion: String? = nil, lastSeenAt: String, current: Bool = false) {
+    self.deviceId = deviceId
+    self.label = label
+    self.platform = platform
+    self.model = model
+    self.appVersion = appVersion
+    self.lastSeenAt = lastSeenAt
+    self.current = current
+  }
+}
+
+/// `DELETE /v1/client/phones/:deviceId` (`RelayRemovePhoneResponse`).
+public struct ConnectPhoneRemoval: Sendable, Hashable, Decodable {
+  /// False only when the account has no such phone.
+  public var removed: Bool
+  /// The caller removed the phone it is calling from.
+  public var current: Bool
+
+  public init(removed: Bool, current: Bool) {
+    self.removed = removed
+    self.current = current
   }
 }
 
@@ -126,9 +164,22 @@ extension ConnectError {
   public var isPermanent: Bool {
     switch self {
     case .signedOut: true
-    case let .relay(_, code, _): code == "environment_connect_not_authorized"
+    case let .relay(_, code, _): code == "environment_connect_not_authorized" || isDeviceRemoved
     default: false
     }
+  }
+
+  /// The person removed this phone from their account. Only a fresh
+  /// interactive sign-in lets it back in.
+  public var isDeviceRemoved: Bool {
+    if case let .relay(_, code, reason) = self { return code == "auth_invalid" && reason == RelayClient.deviceRemoved }
+    return false
+  }
+
+  /// A 401 a fresh Clerk session may fix. A removed phone stays removed.
+  var isRenewable: Bool {
+    if case .relay(status: 401, _, _) = self { return !isDeviceRemoved }
+    return false
   }
 
   /// Account deletion stopped partway and is safe to run again.
@@ -147,6 +198,8 @@ extension ConnectError {
 }
 
 extension ConnectError: LocalizedError {
+  public static let deviceRemovedMessage = "This iPhone was removed from your account. Sign in again to reconnect."
+
   public var errorDescription: String? {
     switch self {
     case .signedOut:
@@ -159,6 +212,8 @@ extension ConnectError: LocalizedError {
         "This computer is not ready for SpecWithCode Connect yet. Update SpecWithCode on it and try again."
       case ("environment_endpoint_unavailable", _), ("environment_endpoint_timed_out", _):
         "The computer is offline."
+      case ("auth_invalid", RelayClient.deviceRemoved?):
+        ConnectError.deviceRemovedMessage
       case ("auth_invalid", _):
         "Your sign-in expired. Sign in again."
       default:
@@ -181,6 +236,8 @@ public actor RelayClient {
   public static let registrationScope = "mobile:registration"
   public static let clientId = "studio-mobile"
   static let upstreamUnavailable = "upstream_unavailable"
+  /// `RelayAuthInvalidReason` for a phone removed from the account.
+  public static let deviceRemoved = "device_removed"
   static let subjectTokenType = "urn:ietf:params:oauth:token-type:jwt"
   /// A relay token is renewed this long before it expires.
   static let refreshSkew: TimeInterval = 60
@@ -191,6 +248,8 @@ public actor RelayClient {
   private let transport: any HTTPTransport
   private let timeout: Duration
   private let now: @Sendable () -> Date
+  /// Sent with each token exchange so the relay refuses a removed phone.
+  public nonisolated let deviceId: String?
   private var tokens: [String: (token: String, expiresAt: Date, thumbprint: String)] = [:]
 
   public init(
@@ -199,6 +258,7 @@ public actor RelayClient {
     keys: any DpopKeyStore = KeychainDpopKeyStore(),
     transport: any HTTPTransport = URLSessionHTTPTransport(),
     timeout: Duration = .seconds(15),
+    deviceId: String? = nil,
     now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.config = config
@@ -206,6 +266,7 @@ public actor RelayClient {
     self.keys = keys
     self.transport = transport
     self.timeout = timeout
+    self.deviceId = deviceId
     self.now = now
   }
 
@@ -257,6 +318,33 @@ public actor RelayClient {
     _ = try await dpopRequest(path: "/v1/mobile/devices/\(Self.escape(deviceId))", method: "DELETE", scopes: [Self.registrationScope], body: nil)
   }
 
+  // MARK: - Phones
+
+  /// `GET /v1/client/phones`: the account's phones, for "Your phones".
+  public func phones() async throws -> [ConnectPhoneRecord] {
+    struct Response: Decodable { let phones: [ConnectPhoneRecord] }
+    return try decode(Response.self, from: await bearerRequest(path: "/v1/client/phones", method: "GET")).phones
+  }
+
+  /// `DELETE /v1/client/phones/:deviceId`: the relay stops notifications to
+  /// the phone, ends its sign-in and refuses it until it signs in again.
+  public func removePhone(_ deviceId: String) async throws -> ConnectPhoneRemoval {
+    let result = try decode(ConnectPhoneRemoval.self, from: await bearerRequest(path: "/v1/client/phones/\(Self.escape(deviceId))", method: "DELETE"))
+    if result.current { tokens = [:] }
+    return result
+  }
+
+  /// `POST /v1/client/removal-status`: whether the phone holding this DPoP
+  /// key was removed from its account. Needs only a DPoP proof, so a phone
+  /// whose Clerk session the removal ended can still learn why it is signed out.
+  public func removalStatus() async throws -> Bool {
+    struct Response: Decodable { let removed: Bool }
+    let key = try keys.loadOrCreate()
+    var request = try makeRequest("/v1/client/removal-status", method: "POST")
+    request.setValue(try DpopProof.make(key: key, method: "POST", url: request.url!, now: now()), forHTTPHeaderField: "DPoP")
+    return try decode(Response.self, from: await send(request)).removed
+  }
+
   // MARK: - Account
 
   /// `DELETE /v1/client/account`: the relay unlinks every computer, removes
@@ -281,8 +369,8 @@ public actor RelayClient {
   // MARK: - Token exchange
 
   /// The form body for `POST /v1/client/dpop-token`.
-  public static func tokenExchangeBody(sessionToken: String, resource: String, scopes: [String]) -> String {
-    FormQuery.encode([
+  public static func tokenExchangeBody(sessionToken: String, resource: String, scopes: [String], deviceId: String? = nil) -> String {
+    var fields = [
       ("grant_type", MachineHTTP.tokenExchangeGrantType),
       ("subject_token", sessionToken),
       ("subject_token_type", subjectTokenType),
@@ -290,7 +378,9 @@ public actor RelayClient {
       ("resource", resource),
       ("scope", scopes.joined(separator: " ")),
       ("client_id", clientId),
-    ])
+    ]
+    if let deviceId, !deviceId.isEmpty { fields.append(("device_id", deviceId)) }
+    return FormQuery.encode(fields)
   }
 
   /// A DPoP-bound relay token for `scopes`, from the cache when it has time left.
@@ -313,14 +403,12 @@ public actor RelayClient {
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
     request.setValue(try DpopProof.make(key: key, method: "POST", url: url, now: now()), forHTTPHeaderField: "DPoP")
-    request.httpBody = Data(Self.tokenExchangeBody(sessionToken: jwt, resource: config.relayURL.absoluteString, scopes: scopes).utf8)
+    request.httpBody = Data(Self.tokenExchangeBody(sessionToken: jwt, resource: config.relayURL.absoluteString, scopes: scopes, deviceId: deviceId).utf8)
     let response = try decode(Response.self, from: await send(request))
     tokens[cacheKey] = (response.access_token, now().addingTimeInterval(response.expires_in), key.thumbprint)
     return (response.access_token, key)
   }
 
-  /// Sends a DPoP request, renewing the relay token and the Clerk session
-  /// once when the relay rejects them.
   /// A request authorized by the Clerk session JWT alone, refreshed once on 401.
   private func bearerRequest(path: String, method: String) async throws -> Data {
     var refresh = false
@@ -330,12 +418,14 @@ public actor RelayClient {
       request.setValue("Bearer " + jwt, forHTTPHeaderField: "Authorization")
       do {
         return try await send(request)
-      } catch ConnectError.relay(status: 401, _, _) where !refresh {
+      } catch let error as ConnectError where error.isRenewable && !refresh {
         refresh = true
       }
     }
   }
 
+  /// Sends a DPoP request, renewing the relay token and the Clerk session
+  /// once when the relay rejects them.
   private func dpopRequest(path: String, method: String, scopes: [String], body: Data?) async throws -> Data {
     var refresh = false
     while true {
@@ -349,7 +439,7 @@ public actor RelayClient {
       }
       do {
         return try await send(request)
-      } catch ConnectError.relay(status: 401, _, _) where !refresh {
+      } catch let error as ConnectError where error.isRenewable && !refresh {
         refresh = true
       }
     }
@@ -405,7 +495,10 @@ public actor RelayClient {
     }
     guard (200..<300).contains(response.statusCode) else {
       let body = try? JSONDecoder().decode(ErrorBody.self, from: data)
-      throw ConnectError.relay(status: response.statusCode, code: body?.code, reason: body?.reason)
+      let error = ConnectError.relay(status: response.statusCode, code: body?.code, reason: body?.reason)
+      // A removed phone's tokens are worthless; the next sign-in exchanges anew.
+      if error.isDeviceRemoved { tokens = [:] }
+      throw error
     }
     return data
   }

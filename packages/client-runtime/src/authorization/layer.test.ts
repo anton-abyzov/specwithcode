@@ -193,6 +193,8 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     registerDevice: unexpected,
     unregisterDevice: unexpected,
     registerLiveActivity: unexpected,
+    listPhones: unexpected,
+    removePhone: unexpected,
     getAgentActivitySnapshot: unexpected,
     resetTokenCache: Effect.void,
   });

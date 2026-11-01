@@ -1,6 +1,9 @@
 import { aggregateProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
 import { projectAttentionRoots, useAttentionMembers } from "../../studio/useProjectAttention";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import { useAideEnabled } from "../../hooks/useSettings";
+import { threadsVisibleWithAide, visibleWithAide } from "../../studio/personalAssistant";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   archivedMemberKeys,
@@ -110,7 +113,19 @@ function attentionTone(session: SessionView): "amber" | "red" {
 }
 
 export function StudioOverview() {
-  const projectGroups = useSettingsProjectGroups();
+  // While the personal assistant is off (Settings → General), Overview shows neither
+  // its card, its chats nor offers it as a new chat's project.
+  const aideEnabled = useAideEnabled();
+  const allProjectGroups = useSettingsProjectGroups();
+  const projectGroups = useMemo(
+    () =>
+      aideEnabled
+        ? allProjectGroups
+        : allProjectGroups.filter(
+            (group) => !group.memberProjects.some(isPersonalAssistantProject),
+          ),
+    [aideEnabled, allProjectGroups],
+  );
   // A project's thread opens in that project's right panel, as from the sidebar.
   const chatTarget = useMemo(() => {
     const groupByMember = new Map<string, (typeof projectGroups)[number]>();
@@ -123,7 +138,11 @@ export function StudioOverview() {
         groupByMember.get(`${thread.environmentId}:${thread.projectId}`),
       );
   }, [projectGroups]);
-  const projects = useProjects();
+  const catalogProjects = useProjects();
+  const projects = useMemo(
+    () => visibleWithAide(catalogProjects, aideEnabled),
+    [catalogProjects, aideEnabled],
+  );
   const attentionMembers = useAttentionMembers(projects);
   const currentIds = useMemo(
     () =>
@@ -134,7 +153,11 @@ export function StudioOverview() {
       ),
     [attentionMembers],
   );
-  const allShells = useThreadShells();
+  const catalogShells = useThreadShells();
+  const allShells = useMemo(
+    () => threadsVisibleWithAide(catalogShells, catalogProjects, aideEnabled),
+    [catalogShells, catalogProjects, aideEnabled],
+  );
   const attentionComplete = useMemo(
     () =>
       aggregateProjectAttention({

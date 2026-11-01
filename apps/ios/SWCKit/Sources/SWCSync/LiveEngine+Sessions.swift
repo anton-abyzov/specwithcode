@@ -605,7 +605,9 @@ extension LiveEngine {
     let wireDecision: ProviderApprovalDecision = switch decision {
     case .approve: .accept
     case .approveForSession: isQuestion ? .accept : .acceptForSession
+    case .approveAlways: isQuestion ? .accept : .acceptAlways
     case .deny: isQuestion ? .cancel : .decline
+    case .cancel: .cancel
     }
     let command = OrchestrationCommand.runtimeRequestRespond(RuntimeRequestRespondCommand(commandId: Self.newId(), threadId: threadId, requestId: requestId, decision: wireDecision))
     try await dispatch(command, on: target.environmentId)

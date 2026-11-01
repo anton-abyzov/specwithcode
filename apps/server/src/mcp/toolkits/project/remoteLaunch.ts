@@ -1,9 +1,11 @@
 import {
+  isLocalWorkerMachine,
   type ModelSelection,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestratorMcpFailure,
   type Project,
   type ProjectId,
+  projectWorkerMachineOrder,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@specweave-studio/contracts";
@@ -27,6 +29,7 @@ export interface LaunchTargetInput {
   readonly modelSelection?: ModelSelection | undefined;
   readonly runtimeMode?: RuntimeMode | undefined;
   readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
+  readonly userAskedForWorktree?: boolean | undefined;
   readonly message?: string | undefined;
   readonly attachments?: ReadonlyArray<unknown> | undefined;
   readonly increment?: string | undefined;
@@ -43,10 +46,20 @@ export interface SkippedMachine {
   readonly reason: string;
 }
 
-export interface LaunchPlacement {
+export interface LaunchCandidate {
   readonly target: RemoteWorkers.MachineTarget;
   readonly reason: PlacementReason;
+}
+
+/**
+ * Where a launch may run, best first. `strict`: the project's list leaves this
+ * machine out, so a launch none of the candidates takes fails instead of
+ * running here.
+ */
+export interface LaunchPlacement {
+  readonly candidates: ReadonlyArray<LaunchCandidate>;
   readonly skipped: ReadonlyArray<SkippedMachine>;
+  readonly strict: boolean;
 }
 
 /**
@@ -73,12 +86,13 @@ export const placementSkippable = (error: unknown): error is OrchestratorMcpFail
   Schema.is(OrchestratorMcpFailure)(error) && PLACEMENT_SKIPPABLE.has(error.code);
 
 /**
- * Where a launch runs, in order: the machine the agent named (refused, never
+ * Where a launch runs: the machine the agent named (refused, never
  * substituted, when it cannot take the thread); else, for the project's
- * coordinator, the worker machine the user chose for the project; else this
- * machine, the coordinator's own. A worker machine that cannot take the
- * thread is skipped with its reason, so one machine being out does not stop
- * the project.
+ * coordinator, the project's worker machines in the user's order, where
+ * "local" is this machine; else this machine, the coordinator's own. A listed
+ * machine that cannot be resolved is skipped with its reason here, and one
+ * that refuses the launch is skipped by the caller, so one machine being out
+ * does not stop the project.
  */
 export const launchTarget = Effect.fn("mcp.launchTarget")(function* (
   context: Caller,
@@ -88,47 +102,73 @@ export const launchTarget = Effect.fn("mcp.launchTarget")(function* (
   const remote = yield* RemoteWorkers.RemoteWorkers;
   if (input.machine !== undefined)
     return {
-      target: yield* remote.resolveMachine(input.machine),
-      reason: "explicit",
+      candidates: [{ target: yield* remote.resolveMachine(input.machine), reason: "explicit" }],
       skipped: [],
+      strict: true,
     } satisfies LaunchPlacement;
-  const here = { target: { kind: "local" }, reason: "this_machine", skipped: [] } as const;
+  const here: LaunchPlacement = {
+    candidates: [{ target: { kind: "local" }, reason: "this_machine" }],
+    skipped: [],
+    strict: false,
+  };
   const isCoordinator =
     context.caller !== undefined &&
     project !== undefined &&
     project.workspaceSettings?.coordinatorThreadId === context.caller.id;
-  const configured = isCoordinator ? project.workspaceSettings?.workerMachine : undefined;
-  if (!configured) return here satisfies LaunchPlacement;
-  if (input.scratch === true)
+  if (!isCoordinator) return here;
+  const order = projectWorkerMachineOrder(project.workspaceSettings, context.scope.environmentId);
+  if (order.length === 1 && isLocalWorkerMachine(order[0]!)) return here;
+  if (input.scratch === true) {
+    if (isLocalWorkerMachine(order[0]!)) return here;
     return yield* invalid(
       'This project\'s workers run on another machine, and scratch threads run here. Pass machine:"local" with scratch to start one here.',
     );
-  const resolved = yield* remote.resolveMachine(configured.machineId).pipe(Effect.result);
-  if (resolved._tag === "Failure")
-    return {
-      ...here,
-      skipped: [{ machine: configured.machineId, reason: resolved.failure.message }],
-    } satisfies LaunchPlacement;
-  // The setting pins the machine it was saved for; a fleet entry re-pointed elsewhere is not it.
-  if (
-    resolved.success.kind === "remote" &&
-    resolved.success.machine.environmentId !== configured.environmentId
-  )
-    return {
-      ...here,
-      skipped: [
-        {
-          machine: resolved.success.machine.label,
-          reason: `${resolved.success.machine.label} is now a different machine than the one chosen for this project's workers; the user can choose it again in project settings.`,
-        },
-      ],
-    } satisfies LaunchPlacement;
+  }
+  const candidates: LaunchCandidate[] = [];
+  const skipped: SkippedMachine[] = [];
+  for (const configured of order) {
+    if (isLocalWorkerMachine(configured)) {
+      candidates.push({ target: { kind: "local" }, reason: "this_machine" });
+      continue;
+    }
+    const resolved = yield* remote.resolveMachine(configured.machineId).pipe(Effect.result);
+    if (resolved._tag === "Failure") {
+      skipped.push({ machine: configured.machineId, reason: resolved.failure.message });
+      continue;
+    }
+    // The setting pins the machine it was saved for; a fleet entry re-pointed elsewhere is not it.
+    if (
+      resolved.success.kind === "remote" &&
+      resolved.success.machine.environmentId !== configured.environmentId
+    ) {
+      skipped.push({
+        machine: resolved.success.machine.label,
+        reason: `${resolved.success.machine.label} is now a different machine than the one chosen for this project's workers; the user can choose it again in project settings.`,
+      });
+      continue;
+    }
+    candidates.push({
+      target: resolved.success,
+      reason: resolved.success.kind === "remote" ? "project_worker_machine" : "this_machine",
+    });
+  }
   return {
-    target: resolved.success,
-    reason: resolved.success.kind === "remote" ? "project_worker_machine" : "this_machine",
-    skipped: [],
+    candidates,
+    skipped,
+    strict: !order.some(isLocalWorkerMachine),
   } satisfies LaunchPlacement;
 });
+
+/** The refusal when no machine in the project's list could take a launch. */
+export const noWorkerMachineFailure = (skipped: ReadonlyArray<SkippedMachine>) =>
+  new OrchestratorMcpFailure({
+    code: "machine_unreachable",
+    message: `None of this project's worker machines could take the thread${
+      skipped.length > 0
+        ? `: ${skipped.map((entry) => `${entry.machine}: ${entry.reason}`).join("; ")}`
+        : "."
+    } The project's list leaves this machine out, so nothing started here. Tell the user in one line, and offer to run it here with machine:"local".`,
+  });
 
 /**
  * Starts the thread on another machine. A thread caller's worker is followed
@@ -218,6 +258,7 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
     requestedRuntimeMode: params.runtimeMode,
     interactionMode: input.interactionMode,
     workspaceStrategy: params.workspaceStrategy,
+    userAskedForWorktree: params.userAskedForWorktree === true,
     message: params.message,
     // Resolved by the machine that runs the thread, against its own checkout.
     increment: params.increment,

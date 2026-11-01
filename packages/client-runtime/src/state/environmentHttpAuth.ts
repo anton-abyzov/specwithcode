@@ -1,15 +1,22 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
+  EnvironmentRateLimitedError,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { withRelayClientTracing } from "@specweave-studio/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  ConnectionTransientError,
+  type PreparedConnection,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -121,6 +128,71 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
 
 const ENVIRONMENT_REQUEST_SPAN = "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest";
 
+/** How long an environment that refuses a freshly renewed credential is left alone. */
+export const UNFIXABLE_CREDENTIAL_BACKOFF_MS = 5 * 60_000;
+
+/**
+ * Environments that refused this client in a way a new credential cannot fix
+ * (a renewed token still rejected) or that rate limited it, with the error to repeat until the time given. Without this, a
+ * poll that gets 401 renews through the relay, mints and exchanges a token,
+ * fails again, and repeats on every tick; each failure also counts against
+ * every device behind the same address on that machine.
+ */
+const environmentCooldowns = new Map<
+  string,
+  { readonly until: number; readonly error: RemoteEnvironmentRequestError }
+>();
+
+/** Forgets every cooldown, for tests. */
+export function clearEnvironmentRequestCooldowns(): void {
+  environmentCooldowns.clear();
+}
+
+/**
+ * Forgets one environment's cooldown. The connection supervisor calls this
+ * when it connects with a fresh credential, so a re-pair, reapproval or a
+ * newly granted access is not held back for the rest of the five minutes.
+ */
+export function clearEnvironmentRequestCooldown(environmentId: string): void {
+  environmentCooldowns.delete(environmentId);
+}
+
+const isEnvironmentRateLimitedError = Schema.is(EnvironmentRateLimitedError);
+const isConnectionTransientError = Schema.is(ConnectionTransientError);
+
+/**
+ * The rate limit behind a failed request or authorization, if that is what it
+ * was. Authorization reports a token exchange refused with 429 as a
+ * `rate-limited` connection error carrying the wait.
+ */
+function rateLimitOf(error: unknown): EnvironmentRateLimitedError | undefined {
+  for (let current = error, depth = 0; current !== undefined && depth < 6; depth++) {
+    if (isEnvironmentRateLimitedError(current)) return current;
+    if (
+      isConnectionTransientError(current) &&
+      current.reason === "rate-limited" &&
+      current.retryAfterMs !== undefined
+    ) {
+      return new EnvironmentRateLimitedError({
+        code: "rate_limited",
+        retryAfterSeconds: Math.max(1, Math.ceil(current.retryAfterMs / 1000)),
+      });
+    }
+    current =
+      typeof current === "object" && current !== null && "cause" in current
+        ? (current as { readonly cause?: unknown }).cause
+        : undefined;
+  }
+  return undefined;
+}
+
+const coolDown = (environmentId: string, error: RemoteEnvironmentRequestError, ms: number) =>
+  Clock.currentTimeMillis.pipe(
+    Effect.map((now) => {
+      environmentCooldowns.set(environmentId, { until: now + ms, error });
+    }),
+  );
+
 const executeEnvironmentRequest = Effect.fnUntraced(function* <
   Group extends Parameters<typeof makeEnvironmentHttpApiGroupClient>[1],
   A,
@@ -148,9 +220,16 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   let httpBaseUrl = input.prepared.httpBaseUrl;
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
+    const environmentId = input.prepared.environmentId;
     for (;;) {
       let authorization = input.prepared.httpAuthorization;
       if (authorization?._tag === "Dpop") {
+        const cooldown = environmentCooldowns.get(environmentId);
+        if (cooldown !== undefined) {
+          if (cooldown.until > (yield* Clock.currentTimeMillis))
+            return yield* Effect.fail(cooldown.error);
+          environmentCooldowns.delete(environmentId);
+        }
         const remote = input.remoteAuthorization;
         if (remote === undefined || Option.isNone(remote)) {
           return yield* new RemoteEnvironmentAuthFetchError({
@@ -166,10 +245,16 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           .pipe(
             Effect.mapError(
               (cause) =>
+                rateLimitOf(cause) ??
                 new RemoteEnvironmentAuthFetchError({
                   message: "Could not authorize the environment request.",
                   cause,
                 }),
+            ),
+            Effect.tapError((error) =>
+              isEnvironmentRateLimitedError(error)
+                ? coolDown(environmentId, error, Math.max(1, error.retryAfterSeconds) * 1000)
+                : Effect.void,
             ),
           );
         // A learned direct route keeps its own origin; only the token renews.
@@ -203,6 +288,18 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           rejectedAccessToken = authorization.accessToken;
           continue;
         }
+        if (authorization?._tag === "Dpop") {
+          const failure = result.failure;
+          if (isEnvironmentRateLimitedError(failure)) {
+            yield* coolDown(environmentId, failure, Math.max(1, failure.retryAfterSeconds) * 1000);
+          } else if (
+            // A missing scope is per endpoint and never renews, so it needs no cooldown.
+            failure._tag === "EnvironmentAuthInvalidError" &&
+            rejectedAccessToken !== undefined
+          ) {
+            yield* coolDown(environmentId, failure, UNFIXABLE_CREDENTIAL_BACKOFF_MS);
+          }
+        }
         return yield* result.failure;
       }
 
@@ -214,10 +311,12 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           rejectedAccessToken = authorization.accessToken;
           continue;
         }
-        return yield* new RemoteEnvironmentAuthFetchError({
+        const rejected = new RemoteEnvironmentAuthFetchError({
           message: "The environment rejected the renewed session authorization.",
           cause: result.success,
         });
+        yield* coolDown(environmentId, rejected, UNFIXABLE_CREDENTIAL_BACKOFF_MS);
+        return yield* rejected;
       }
       return result.success;
     }

@@ -62,6 +62,8 @@ extension TransportError: LocalizedError {
       "That address belongs to a different computer."
     case .upgradeFailed:
       "The computer refused the live connection."
+    case .http(status: 429, code: _):
+      "The computer is refusing sign-ins from this network for a few minutes after too many failed attempts."
     case let .http(status, _):
       "The computer answered with an error (\(status))."
     case .invalidResponse:

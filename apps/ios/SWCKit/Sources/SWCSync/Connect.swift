@@ -61,16 +61,58 @@ public struct ConnectState: Sendable, Hashable {
   /// Signing in, signing out or listing computers.
   public var isBusy: Bool
   public var lastError: String?
+  /// The person removed this phone from their account elsewhere. Kept across
+  /// launches until the next sign-in on this phone succeeds.
+  public var wasRemoved: Bool
 
-  public init(methods: [ConnectSignInMethod], user: ConnectUser? = nil, macs: [ConnectMac] = [], isBusy: Bool = false, lastError: String? = nil) {
+  public init(methods: [ConnectSignInMethod], user: ConnectUser? = nil, macs: [ConnectMac] = [], isBusy: Bool = false, lastError: String? = nil, wasRemoved: Bool = false) {
     self.methods = methods
     self.user = user
     self.macs = macs
     self.isBusy = isBusy
     self.lastError = lastError
+    self.wasRemoved = wasRemoved
   }
 
   public var isSignedIn: Bool { user != nil }
+
+  /// Shown while signed out after this phone was removed from the account.
+  public static let removedMessage = ConnectError.deviceRemovedMessage
+}
+
+/// A phone on the signed-in account, for "Your phones".
+public struct ConnectPhone: Sendable, Hashable, Identifiable {
+  /// The phone's device id.
+  public var id: String
+  public var label: String
+  public var model: String?
+  public var appVersion: String?
+  /// Nil when the relay sent a time the app could not read.
+  public var lastSeen: Date?
+  /// The phone running this app.
+  public var isThisPhone: Bool
+
+  public init(id: String, label: String, model: String? = nil, appVersion: String? = nil, lastSeen: Date? = nil, isThisPhone: Bool = false) {
+    self.id = id
+    self.label = label
+    self.model = model
+    self.appVersion = appVersion
+    self.lastSeen = lastSeen
+    self.isThisPhone = isThisPhone
+  }
+
+  /// This phone first, then the most recently seen.
+  public static func ordered(_ phones: [ConnectPhone]) -> [ConnectPhone] {
+    phones.enumerated().sorted { a, b in
+      if a.element.isThisPhone != b.element.isThisPhone { return a.element.isThisPhone }
+      switch (a.element.lastSeen, b.element.lastSeen) {
+      case let (x?, y?) where x != y: return x > y
+      case (_?, nil): return true
+      case (nil, _?): return false
+      default: return a.offset < b.offset
+      }
+    }.map(\.element)
+  }
 }
 
 /// A computer linked to the signed-in account.

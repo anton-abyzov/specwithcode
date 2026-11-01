@@ -177,6 +177,7 @@ import {
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as LocalCliCredential from "./auth/LocalCliCredential.ts";
 import * as CloudHttp from "./cloud/http.ts";
+import * as ConnectPhoneRevocation from "./cloud/ConnectPhoneRevocation.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
@@ -1359,13 +1360,15 @@ const layerMakeServer = Layer.unwrap(
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
       layerTailscaleServe,
       layerCloudDesiredLinkReconcile,
+      // Ends sessions of Connect phones removed while this computer was offline.
+      ConnectPhoneRevocation.layerStartupSync,
       HeapSnapshot.layer,
     );
 
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     return layerServerApplication.pipe(
       // The connect routes and the startup/shutdown link work share one instance.
-      Layer.provide(CloudLink.layer),
+      Layer.provide(Layer.mergeAll(CloudLink.layer, ConnectPhoneRevocation.layer)),
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(
         McpSessionRegistry.layer.pipe(

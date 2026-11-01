@@ -21,6 +21,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -671,6 +672,42 @@ it.effect("reuses one Personal assistant for concurrent requests without invokin
         execute: () => Effect.die("Personal must not execute Git"),
       }),
     },
+  ),
+);
+
+it.effect("refuses a new Personal assistant while Aide is off, leaving no folder", () =>
+  withScratch(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const fs = yield* FileSystem.FileSystem;
+      const refused = yield* folders
+        .createNamedProject({ name: "Aide", kind: "personal" })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "PersonalAssistantDisabledError");
+      assert.equal(
+        refused.message,
+        "The personal assistant is turned off. Turn it on in Settings > General.",
+      );
+      assert.equal((yield* projects.snapshot).projects.length, 0);
+      const root = folders.namedProjectsRoot;
+      assert.deepEqual((yield* fs.exists(root)) ? yield* fs.readDirectory(root) : [], []);
+    }).pipe(Effect.provide(ServerSettings.layerTest())),
+  ),
+);
+
+it.effect("still opens an existing Personal assistant while Aide is off", () =>
+  withScratch(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({ aideEnabled: true });
+      const created = yield* folders.createNamedProject({ name: "Aide", kind: "personal" });
+      yield* settings.updateSettings({ aideEnabled: false });
+      const reopened = yield* folders.createNamedProject({ name: "Aide", kind: "personal" });
+      assert.equal(reopened.projectId, created.projectId);
+      assert.equal(reopened.workspaceRoot, created.workspaceRoot);
+    }).pipe(Effect.provide(ServerSettings.layerTest())),
   ),
 );
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Retain release evidence, not duplicate build payloads. Dry-run unless --apply.
 
-Normal publication removes stages older than the previous release and compacts a completed
-previous stage. --finished compacts completed unlocked stages without deleting their receipts.
+Normal publication removes published stages older than the previous release and compacts a
+published previous stage: a release that stops after publish-public (every --ci release) is
+still superseded once the next one is public. --finished compacts completed unlocked stages
+without deleting their receipts.
 A compacted release retains release.json, published/candidate SHAs, stage markers, logs, timing
 and stage-1 history. They are what later releases read; shipped binaries live in the release
 stores. Incomplete releases and every lock (including a stale lock) require their owner.
@@ -49,14 +51,21 @@ def owned(stage):
         return False
 
 
-def completed(stage):
-    if not all(marker(stage, name) for name in ('publish-private', 'publish-public', 'fleet-m4', 'desktop', 'fleet-workers', 'merge', 'fleet-linux')):
-        return False
+def published_sha(stage):
     path = stage / 'published.sha'
     try:
         return plain(path) and path.is_file() and re.fullmatch('[a-f0-9]{40}', path.read_text().strip()) is not None
     except OSError:
         return False
+
+
+def published(stage):
+    """Both publish markers and the recorded published commit; later rollout stages may be absent."""
+    return all(marker(stage, name) for name in ('publish-private', 'publish-public')) and published_sha(stage)
+
+
+def completed(stage):
+    return published(stage) and all(marker(stage, name) for name in ('fleet-m4', 'desktop', 'fleet-workers', 'merge', 'fleet-linux'))
 
 
 def stage_actions(stage, current=None, previous=None, finished=False, locked=False):
@@ -68,20 +77,21 @@ def stage_actions(stage, current=None, previous=None, finished=False, locked=Fal
     if not finished:
         if release >= current:
             return []
-        if release < previous and completed(stage):
-            return [{'path': str(stage), 'action': 'remove-stage', 'reason': 'superseded release with completed rollout'}]
+        if release < previous and published(stage):
+            return [{'path': str(stage), 'action': 'remove-stage', 'reason': 'superseded published release'}]
         if release != previous:
             return []
-    if not completed(stage):
+    if not (completed(stage) if finished else published(stage)):
         return []
     actions = []
-    published = (stage / 'published.sha').read_text().strip()[:12]
+    sha = (stage / 'published.sha').read_text().strip()[:12]
     for child in sorted(stage.iterdir()):
         match = PAYLOAD.fullmatch(child.name)
         # The exact published candidate is known generated output; unfamiliar folders stay.
-        if match and match.group(1) == published and plain(child) and child.is_dir():
+        if match and match.group(1) == sha and plain(child) and child.is_dir():
             actions.append({'path': str(child), 'action': 'remove-payload',
-                            'reason': 'published, rollout complete and merged; receipts and history retained'})
+                            'reason': ('published, rollout complete and merged' if finished else 'published and superseded')
+                            + '; receipts and history retained'})
     return actions
 
 

@@ -41,6 +41,20 @@ struct FixtureEngineTests {
     #expect(statuses == [.needsYou, .working, .failed, .idle])
   }
 
+  @Test func aideTurnedOffIsHiddenAndNeverSetUp() async throws {
+    let engine = FixtureEngine(scenario: .default, aideEnabled: false)
+    engine.latency = .zero
+    let model = AppModel(engine: engine)
+    #expect(!model.aideEnabled)
+    #expect(model.aide == nil)
+    #expect(model.projects.map(\.title) == ["SpecWeave", "Verified Skill", "Docs site", "Recipe app"])
+    await #expect(throws: SyncError.aideDisabled) { try await engine.setupAide() }
+    #expect(model.aide == nil)
+
+    let (shown, _) = make()
+    #expect(shown.aideEnabled)
+  }
+
   @Test func emptyScenarioHasNoMachines() {
     let (model, _) = make(.empty)
     #expect(!model.isLoading)
@@ -71,7 +85,7 @@ struct FixtureEngineTests {
     #expect(session.title == "Release 3.1 checklist")
     #expect(session.subtitle == "SpecWeave")
     #expect(session.plan == PlanProgress(completed: 3, total: 5))
-    #expect(session.rows.contains { if case .approval(_, _, false) = $0.kind { true } else { false } })
+    #expect(session.rows.contains { if case .approval(_, _, false, _, _) = $0.kind { true } else { false } })
     #expect(session.rows.contains { if case let .assistant(text, false) = $0.kind { text.count > 1_200 && text.contains("```bash") } else { false } })
     #expect(session.rows.contains { if case .tool = $0.kind { true } else { false } })
     #expect(session.rows.contains { if case .subagent(_, .some) = $0.kind { true } else { false } })

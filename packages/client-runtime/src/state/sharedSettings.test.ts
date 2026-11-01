@@ -104,12 +104,14 @@ describe("splitSharedServerPatch", () => {
       enableAgentBrowserAccess: false,
       defaultThreadEnvMode: "worktree",
       newWorktreesStartFromOrigin: true,
+      aideEnabled: true,
     });
     expect(sharedPatch).toEqual({
       sidebarAutoSettleAfterDays: 7,
       sidebarAutoSettleOnMerge: false,
       continueThreadsAfterServerUpdate: true,
       newWorktreesStartFromOrigin: true,
+      aideEnabled: true,
     });
     expect(localPatch).toEqual({
       enableAgentBrowserAccess: false,
@@ -123,6 +125,7 @@ describe("pickSharedServerSettings", () => {
     expect(
       Object.keys(pickSharedServerSettings(DEFAULT_SERVER_SETTINGS, restartCapabilities)).sort(),
     ).toEqual([
+      "aideEnabled",
       "autoResumeLimitedThreads",
       "continueThreadsAfterServerUpdate",
       "newWorktreesStartFromOrigin",

@@ -54,8 +54,10 @@ struct IncrementSheet: View {
         Text("The increment is linked, but its tasks or ledger could not be read. Empty rows do not mean the work is complete.").foregroundStyle(.orange)
       }
     }
-    Section("Tasks · \(p.tasks.filter { $0.status == "done" || $0.status == "skipped" }.count)/\(p.tasks.count) settled") {
+    Section("Tasks · \(p.settledCount)/\(p.tasks.count) settled") {
       ForEach(p.tasks) { task in
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        TaskStatusIcon(status: task.status)
         VStack(alignment: .leading, spacing: 6) {
           Text("\(task.id) · \(task.status)").font(.caption).foregroundStyle(.secondary)
           Text(task.line ?? task.title)
@@ -63,6 +65,7 @@ struct IncrementSheet: View {
           if !task.criteria.isEmpty { Text(task.criteria.joined(separator: ", ")).font(.caption) }
           if let raw = task.link, let url = URL(string: raw), url.scheme == "https", ["github.com", "claude.ai"].contains(url.host ?? "") { Link("Evidence", destination: url) }
           if let commit = task.commit { Text(commit).font(.caption.monospaced()).textSelection(.enabled) }
+        }
         }
       }
     }
@@ -92,5 +95,25 @@ struct IncrementSheet: View {
     defer { loading = false }
     do { result = try await model.engine.incrementProgress(for: target) }
     catch { self.error = error.localizedDescription }
+  }
+}
+
+/// A task's ledger state at a glance: filled check for done, slashed circle
+/// for skipped, warning for blocked, a partial ring while in progress.
+private struct TaskStatusIcon: View {
+  let status: String
+
+  var body: some View {
+    Group {
+      switch status {
+      case "done": Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.weave.pass)
+      case "skipped": Image(systemName: "slash.circle").foregroundStyle(Color.weave.muted)
+      case "blocked": Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Color.weave.warn)
+      case "in_progress", "active", "claimed": Image(systemName: "circle.dotted").foregroundStyle(Color.weave.iris)
+      default: Image(systemName: "circle").foregroundStyle(Color.weave.muted)
+      }
+    }
+    .font(.system(size: 17, weight: .medium))
+    .accessibilityHidden(true)
   }
 }

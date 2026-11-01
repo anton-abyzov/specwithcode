@@ -10,7 +10,13 @@ import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayDb from "../db.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
-import { relayDpopProofs, relayEnvironmentCredentials, relayEnvironmentLinks } from "./schema.ts";
+import {
+  relayDpopProofs,
+  relayEnvironmentCredentials,
+  relayClientKeys,
+  relayEnvironmentLinks,
+  relayMobileDeviceRemovals,
+} from "./schema.ts";
 import { layerSqliteRelayDb, makeSqliteD1 } from "../testing/sqliteD1.ts";
 
 const now = "2026-10-20T00:00:00.000Z";
@@ -222,20 +228,43 @@ describe("relay persistence on SQLite (D1)", () => {
       yield* provision();
 
       const db = yield* RelayDb.RelayDb;
+      for (const userId of ["user-1", "user-2"]) {
+        yield* db.insert(relayMobileDeviceRemovals).values({
+          id: `removal-${userId}`,
+          userId,
+          deviceId: "phone",
+          proofKeyThumbprint: "phone-key",
+          removedAt: now,
+        });
+        yield* db.insert(relayClientKeys).values({
+          userId,
+          proofKeyThumbprint: "phone-key",
+          clientId: "studio-mobile",
+          lastSeenAt: now,
+        });
+      }
       const linkUsers = db
         .select({ userId: relayEnvironmentLinks.userId })
         .from(relayEnvironmentLinks);
+      const removalUsers = db
+        .select({ userId: relayMobileDeviceRemovals.userId })
+        .from(relayMobileDeviceRemovals);
+      const keyUsers = db.select({ userId: relayClientKeys.userId }).from(relayClientKeys);
 
       // Allocations are torn down by deprovisioning, not by the row delete:
       // while one remains (for example from a link racing the deletion), the
       // batch deletes nothing.
       expect(yield* records.deleteUserRows({ userId: "user-1" })).toBe(false);
       expect(yield* linkUsers).toEqual([{ userId: "user-1" }, { userId: "user-2" }]);
+      expect(yield* removalUsers).toEqual([{ userId: "user-1" }, { userId: "user-2" }]);
+      expect(yield* keyUsers).toEqual([{ userId: "user-1" }, { userId: "user-2" }]);
       expect(yield* allocations.get({ userId: "user-1", environmentId: "env-1" })).not.toBeNull();
 
       yield* allocations.remove({ userId: "user-1", environmentId: "env-1" });
       expect(yield* records.deleteUserRows({ userId: "user-1" })).toBe(true);
       expect(yield* linkUsers).toEqual([{ userId: "user-2" }]);
+      expect(yield* removalUsers).toEqual([{ userId: "user-2" }]);
+      expect(yield* keyUsers).toEqual([{ userId: "user-2" }]);
     }).pipe(Effect.provide(layer())),
   );
 

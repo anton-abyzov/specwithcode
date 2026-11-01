@@ -4,6 +4,12 @@ import {
   findMachineAssistant,
   isExtraAssistant,
   personalAssistantSetupStep,
+  threadsVisibleWithAide,
+  visibleWithAide,
+  visibleWithAideKeeping,
+  machineOffersAssistant,
+  personalAssistantDisabledMessage,
+  isPersonalAssistantDisabledError,
 } from "./personalAssistant";
 
 // Two fictional machines; neither names a real person or folder.
@@ -79,5 +85,84 @@ describe("Set up", () => {
     expect(assistantDisplayTitle("Aide", "Anna's MacBook", 2)).toBe("Aide · Anna's MacBook");
     expect(assistantDisplayTitle("Aide", "Anna's MacBook", 1)).toBe("Aide");
     expect(assistantDisplayTitle("Aide", null, 3)).toBe("Aide");
+  });
+});
+
+describe("hiding the personal assistant", () => {
+  const code = { id: "atlas", environmentId: "m1", workspaceSettings: { kind: "code" } };
+  const aide = personal("aide", "m1", "2026-01-01T00:00:00Z");
+  const archivedAide = personal("old-aide", "m2", "2026-01-01T00:00:00Z", true);
+  const projects = [code, aide, archivedAide];
+  const threads = [
+    { id: "t1", environmentId: "m1", projectId: "atlas" },
+    { id: "t2", environmentId: "m1", projectId: "aide" },
+    { id: "t3", environmentId: "m2", projectId: "old-aide" },
+    // Same project id on another machine is a different project.
+    { id: "t4", environmentId: "m2", projectId: "aide" },
+  ];
+
+  it("lists every project while on, and leaves out personal ones, archived too, while off", () => {
+    expect(visibleWithAide(projects, true)).toBe(projects);
+    expect(visibleWithAide(projects, false)).toEqual([code]);
+    expect(visibleWithAide([code], false)).toEqual([code]);
+  });
+
+  it("drops a hidden assistant's chats and keeps every other chat", () => {
+    expect(threadsVisibleWithAide(threads, projects, true)).toBe(threads);
+    expect(threadsVisibleWithAide(threads, projects, false).map((t) => t.id)).toEqual(["t1", "t4"]);
+    expect(threadsVisibleWithAide(threads, [code], false)).toBe(threads);
+  });
+});
+
+describe("hiding the personal assistant from a picker with a saved choice", () => {
+  const code = { id: "code", workspaceSettings: { kind: "code" } };
+  const aide = { id: "aide", workspaceSettings: { kind: "personal" } };
+  it("drops a hidden assistant unless it is the saved or selected one", () => {
+    expect(visibleWithAideKeeping([aide, code], false, [null])).toEqual([code]);
+    expect(visibleWithAideKeeping([aide, code], false, ["aide"])).toEqual([aide, code]);
+    const all = [aide, code];
+    expect(visibleWithAideKeeping(all, true, [])).toBe(all);
+  });
+});
+
+describe("machines that disagree on the Aide switch", () => {
+  const aideOnM1 = { id: "a1", environmentId: "m1", workspaceSettings: { kind: "personal" } };
+  it("offers Set up only where the machine's own settings turn Aide on", () => {
+    expect(
+      machineOffersAssistant({ environmentId: "m4", aideEnabledOnMachine: true, projects: [] }),
+    ).toBe(true);
+    // This device shows Aide on, but M3 still has it off: no setup there.
+    expect(
+      machineOffersAssistant({ environmentId: "m3", aideEnabledOnMachine: false, projects: [] }),
+    ).toBe(false);
+  });
+
+  it("still opens an assistant a machine already has, whatever its switch says", () => {
+    expect(
+      machineOffersAssistant({
+        environmentId: "m1",
+        aideEnabledOnMachine: false,
+        projects: [aideOnM1],
+      }),
+    ).toBe(true);
+  });
+
+  it("names the machine that refused", () => {
+    expect(personalAssistantDisabledMessage("M3")).toBe(
+      "The personal assistant is turned off on M3. Turn it on in Settings > General while M3 is connected.",
+    );
+    expect(personalAssistantDisabledMessage(undefined)).toContain("on this machine");
+  });
+
+  it("recognizes the server's refusal by reason or by its words", () => {
+    expect(isPersonalAssistantDisabledError({ reason: "project_assistant_disabled" })).toBe(true);
+    expect(isPersonalAssistantDisabledError({ reason: "assistant_disabled" })).toBe(true);
+    expect(
+      isPersonalAssistantDisabledError(
+        new Error("The personal assistant is turned off. Turn it on in Settings > General."),
+      ),
+    ).toBe(true);
+    expect(isPersonalAssistantDisabledError(new Error("name taken"))).toBe(false);
+    expect(isPersonalAssistantDisabledError(null)).toBe(false);
   });
 });

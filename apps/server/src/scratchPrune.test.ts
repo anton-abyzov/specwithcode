@@ -210,6 +210,61 @@ describe("newestTreeMtime and archiveFolder", () => {
     expect(age.known && age.newestMs >= before).toBe(true);
   });
 
+  it("reads node_modules and .git/objects without entering them, so a clone keeps its source age", () => {
+    const folder = NodePath.join(temp(), "clone");
+    const modules = NodePath.join(folder, "node_modules");
+    const objects = NodePath.join(folder, ".git", "objects");
+    const source = NodePath.join(folder, "src", "index.ts");
+    NodeFS.mkdirSync(NodePath.dirname(source), { recursive: true });
+    NodeFS.writeFileSync(source, "x");
+    NodeFS.mkdirSync(objects, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(folder, ".git", "HEAD"), "ref");
+    for (let index = 0; index < 50; index += 1) {
+      NodeFS.mkdirSync(NodePath.join(modules, `pkg-${index}`), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(modules, `pkg-${index}`, "index.js"), "x");
+      NodeFS.mkdirSync(NodePath.join(objects, `${index}`.padStart(2, "0")), { recursive: true });
+    }
+    // node_modules under a package is opaque too, at any depth.
+    const nested = NodePath.join(folder, "src", "node_modules");
+    NodeFS.mkdirSync(nested);
+    NodeFS.writeFileSync(NodePath.join(nested, "new.js"), "x");
+    const old = NOW - 30 * DAY_MS;
+    for (const target of [
+      source,
+      NodePath.join(folder, ".git", "HEAD"),
+      modules,
+      objects,
+      nested,
+      NodePath.join(folder, ".git"),
+      NodePath.join(folder, "src"),
+      folder,
+    ])
+      setTime(target, old);
+    // Everything inside the opaque folders is new, as after a fresh install.
+    expect(newestTreeMtime(folder, 20, modifiedOnly)).toEqual({
+      known: true,
+      newestMs: old,
+      entries: 8,
+    });
+    // The opaque folder's own time still counts: an install in progress keeps the clone.
+    const recent = NOW - DAY_MS;
+    setTime(modules, recent);
+    expect(newestTreeMtime(folder, 20, modifiedOnly)).toEqual({
+      known: true,
+      newestMs: recent,
+      entries: 8,
+    });
+    // A file named node_modules, or an objects folder outside .git, still counts.
+    const plain = NodePath.join(temp(), "plain");
+    NodeFS.mkdirSync(NodePath.join(plain, "objects"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(plain, "objects", "new.txt"), "x");
+    NodeFS.writeFileSync(NodePath.join(plain, "node_modules"), "x");
+    for (const target of [NodePath.join(plain, "objects"), plain]) setTime(target, old);
+    const age = newestTreeMtime(plain, undefined, modifiedOnly);
+    expect(age.known && age.newestMs > old).toBe(true);
+    expect(age.known && age.entries).toBe(4);
+  });
+
   it("is unknown past the entry limit or when a folder cannot be listed", () => {
     const root = temp();
     for (const name of ["a", "b", "c"]) NodeFS.writeFileSync(NodePath.join(root, name), "");

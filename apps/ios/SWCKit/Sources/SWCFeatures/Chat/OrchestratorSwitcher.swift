@@ -32,19 +32,28 @@ struct OrchestratorSwitcher: View {
           }
         }
       } label: {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
+          Circle()
+            .fill(viewing?.machineOnline == false ? Color.weave.muted : Color.weave.pass)
+            .frame(width: 7, height: 7)
+            .accessibilityHidden(true)
+          // Long machine names keep both ends ("coordinator…M1").
           Text(viewing?.machineLabel ?? "Machine")
-            .font(.weave(.callout))
+            .font(.weave(.callout, weight: .medium))
             .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: 120, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
           Image(systemName: "chevron.down")
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(Color.weave.muted)
             .accessibilityHidden(true)
         }
         .foregroundStyle(viewing?.machineOnline == false ? Color.weave.muted : Color.weave.ink)
-        .padding(.horizontal, WeaveSpacing.s3)
+        .padding(.leading, WeaveSpacing.s3)
+        .padding(.trailing, WeaveSpacing.s2)
         .frame(height: WeaveSize.minTap)
-        .contentShape(Capsule())
-        .weaveGlass(in: Capsule(), interactive: true)
+        .contentShape(Rectangle())
       }
       .menuIndicator(.hidden)
       .buttonStyle(.plain)

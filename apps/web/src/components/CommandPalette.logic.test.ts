@@ -19,6 +19,7 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   findHighlightedCommandPaletteItem,
+  personalAssistantActionOffered,
   reduceCommandPaletteUiState,
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
@@ -184,6 +185,20 @@ describe("buildCommandPaletteProjectMetadata", () => {
   });
 });
 
+describe("personalAssistantActionOffered", () => {
+  it("offers Personal assistant only while Aide is on and a machine can hold it", () => {
+    expect(personalAssistantActionOffered({ aideEnabled: true, newProjectMachineCount: 1 })).toBe(
+      true,
+    );
+    expect(personalAssistantActionOffered({ aideEnabled: false, newProjectMachineCount: 2 })).toBe(
+      false,
+    );
+    expect(personalAssistantActionOffered({ aideEnabled: true, newProjectMachineCount: 0 })).toBe(
+      false,
+    );
+  });
+});
+
 describe("reduceCommandPaletteUiState", () => {
   const closedState = { open: false, mode: "command", openIntent: null } as const;
 
@@ -255,11 +270,17 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: { kind: "add-project" },
     });
-    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewAssistant" })).toEqual({
+    expect(
+      reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewAssistant", aideEnabled: true }),
+    ).toEqual({
       open: true,
       mode: "command",
       openIntent: { kind: "new-assistant" },
     });
+    // While Aide is off, the sidebar's or another surface's setup request changes nothing.
+    expect(
+      reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewAssistant", aideEnabled: false }),
+    ).toBe(filesOpen);
     expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewThreadIn" })).toEqual({
       open: true,
       mode: "command",

@@ -4,7 +4,13 @@ import {
 } from "@specweave-studio/shared/routineTemplates";
 import { stringifyJson } from "../json.ts";
 import * as DateTime from "effect/DateTime";
-import { projectCoordinatorIsFenced } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  isLocalWorkerMachine,
+  LOCAL_WORKER_MACHINE_ID,
+  projectCoordinatorIsFenced,
+  projectWorkerMachineOrder,
+} from "@specweave-studio/contracts";
 import {
   boundProjectContext,
   contextDigest,
@@ -121,6 +127,34 @@ export function validateProjectMemory(name: string, content = ""): boolean {
   return validName(name) && new TextEncoder().encode(content).length <= PROJECT_MEMORY_FILE_BYTES;
 }
 
+/**
+ * The coordinator's lines about where this project's workers run, or none when
+ * they run here only. Names machines by label, in the order a launch tries them.
+ */
+export function workerMachineLines(
+  settings: ProjectWorkspaceReadResult["settings"],
+  fleet: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined,
+): ReadonlyArray<string> {
+  // Only machine ids are read here, so the local entry's environment id is never used.
+  const order = projectWorkerMachineOrder(settings, EnvironmentId.make("local"));
+  if (order.length === 1 && isLocalWorkerMachine(order[0]!)) return [];
+  const label = (machineId: string) =>
+    machineId === LOCAL_WORKER_MACHINE_ID
+      ? "this machine"
+      : (fleet?.find((machine) => machine.id === machineId)?.label ?? "another machine");
+  const names = order.map((entry) => label(entry.machineId));
+  const lines = [
+    order.length === 1
+      ? `This project's workers run on ${names[0]} only: start them with studio_thread_launch, which runs there in the matching project and reports back here on its own. If it cannot take a thread, nothing starts here; say so in one line and offer machine:"local".`
+      : `This project's workers run on ${names.join(", then ")}: start them with studio_thread_launch and leave machine out. It tries the machines in that order, skips one that is offline, lacks the project or refuses the work, reports back here on its own, and its placement says where each thread went and what it skipped.${order.some(isLocalWorkerMachine) ? "" : ' This machine is not in the list, so when none of them can take a thread nothing starts here; say so in one line and offer machine:"local".'}`,
+  ];
+  if (!isLocalWorkerMachine(order[0]!))
+    lines.push(
+      'delegate_task runs here, so pass machine:"local" to it only when the user wants that.',
+    );
+  return lines;
+}
+
 export function projectContextText(input: {
   projectId: string;
   threadId: string;
@@ -147,14 +181,7 @@ export function projectContextText(input: {
               'This project plans its work in SpecWeave: pass increment on every launch, an open NNNN that covers the work, "new" for a change that needs planning, or "none" for questions, reviews and small fixes; post the spec a launch returns as [NNNN](<specPath>).',
             ]
           : []),
-        ...(settings.workerMachine
-          ? [
-              `This project's workers run on ${
-                input.fleet?.find((machine) => machine.id === settings.workerMachine?.machineId)
-                  ?.label ?? "another machine"
-              }: start them with studio_thread_launch, which runs there in the matching project and reports back here on its own. delegate_task runs here, so pass machine:"local" to it only when the user wants that.`,
-            ]
-          : []),
+        ...workerMachineLines(settings, input.fleet),
         // Single-machine installs keep the prompt they always had.
         ...((input.fleet?.length ?? 0) > 0
           ? [

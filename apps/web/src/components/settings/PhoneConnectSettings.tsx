@@ -16,6 +16,7 @@ import {
   shouldAutoTurnOn,
   shouldClearPending,
 } from "./PhoneConnect.logic";
+import { PhoneDevicesSettings } from "./PhoneDevicesSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 function readPending(): boolean {
@@ -124,7 +125,7 @@ function ConfiguredPhoneConnectSettings() {
         return (
           <SettingsRow
             title={`Sign in to reach this ${computer} from your iPhone`}
-            description="Use the same account on the iPhone app. No Tailscale, VPN or open ports."
+            description="Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports."
             control={
               <Button
                 size="sm"
@@ -162,7 +163,7 @@ function ConfiguredPhoneConnectSettings() {
         return (
           <SettingsRow
             title={`This ${computer} is ready for your iPhone`}
-            description={`Open SpecWithCode on the iPhone and sign in with the same account. This ${computer} appears in its list.`}
+            description={`Open SpecWithCode on the iPhone and sign in with the same account. This ${computer} appears in its list. Add another iPhone the same way.`}
             status={operationError ?? linkState.error}
           />
         );
@@ -170,13 +171,16 @@ function ConfiguredPhoneConnectSettings() {
   })();
 
   return (
-    <SettingsSection
-      id="phone-connect"
-      title="Use SpecWithCode on your phone"
-      icon={<SmartphoneIcon className="size-4" />}
-    >
-      {row}
-      {authPrompt}
-    </SettingsSection>
+    <>
+      <SettingsSection
+        id="phone-connect"
+        title="Use SpecWithCode on your phone"
+        icon={<SmartphoneIcon className="size-4" />}
+      >
+        {row}
+        {authPrompt}
+      </SettingsSection>
+      {isSignedIn === true ? <PhoneDevicesSettings /> : null}
+    </>
   );
 }

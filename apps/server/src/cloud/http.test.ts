@@ -12,6 +12,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
 import * as CloudLink from "./CloudLink.ts";
+import * as ConnectPhoneRevocation from "./ConnectPhoneRevocation.ts";
 import * as ConnectHttp from "./http.ts";
 
 class ConnectTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.connect) {}
@@ -22,13 +23,16 @@ type HealthFailure = Effect.Error<
   ReturnType<CloudLink.CloudLink["Service"]["answerHealthRequest"]>
 >;
 
-const answerHealthWith = async (failure: HealthFailure) => {
+const postSignedRelayRequest = async (input: {
+  readonly path: string;
+  readonly cloudLink?: Partial<CloudLink.CloudLink["Service"]>;
+  readonly phoneRevocation?: Partial<ConnectPhoneRevocation.ConnectPhoneRevocation["Service"]>;
+}) => {
   const layerRoutes = HttpApiBuilder.layer(ConnectTestApi).pipe(
     Layer.provide(ConnectHttp.layer),
+    Layer.provide(Layer.mock(CloudLink.CloudLink)(input.cloudLink ?? {})),
     Layer.provide(
-      Layer.mock(CloudLink.CloudLink)({
-        answerHealthRequest: () => Effect.fail(failure),
-      }),
+      Layer.mock(ConnectPhoneRevocation.ConnectPhoneRevocation)(input.phoneRevocation ?? {}),
     ),
     // The session-gated routes are declared too; this request never reaches them.
     Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -45,16 +49,28 @@ const answerHealthWith = async (failure: HealthFailure) => {
   });
   try {
     const response = await handler(
-      new Request("http://127.0.0.1/api/studio-connect/health", {
+      new Request(`http://127.0.0.1${input.path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ proof: "proof" }),
       }),
     );
-    return { status: response.status, body: (await response.json()) as unknown };
+    return {
+      status: response.status,
+      cacheControl: response.headers.get("cache-control"),
+      body: (await response.json()) as unknown,
+    };
   } finally {
     await dispose();
   }
+};
+
+const answerHealthWith = async (failure: HealthFailure) => {
+  const { status, body } = await postSignedRelayRequest({
+    path: "/api/studio-connect/health",
+    cloudLink: { answerHealthRequest: () => Effect.fail(failure) },
+  });
+  return { status, body };
 };
 
 describe("connect routes", () => {
@@ -94,5 +110,35 @@ describe("connect routes", () => {
   ])("answers $failure._tag with HTTP $status", async ({ failure, status, body }) => {
     const response = await answerHealthWith(failure);
     expect(response).toEqual({ status, body });
+  });
+
+  it("serves the relay's order to end removed phones' sessions", async () => {
+    const proofs: Array<string> = [];
+    const response = await postSignedRelayRequest({
+      path: "/api/studio-connect/revoke-client-keys",
+      phoneRevocation: {
+        revokeClientKeys: (request) =>
+          Effect.sync(() => {
+            proofs.push(request.proof);
+            return { revoked: 2 };
+          }),
+      },
+    });
+    expect(response).toEqual({ status: 200, cacheControl: "no-store", body: { revoked: 2 } });
+    expect(proofs).toEqual(["proof"]);
+  });
+
+  it("refuses a revoke order whose proof does not verify", async () => {
+    const response = await postSignedRelayRequest({
+      path: "/api/studio-connect/revoke-client-keys",
+      phoneRevocation: {
+        revokeClientKeys: () =>
+          Effect.fail(new CloudLink.CloudLinkProofRejectedError({ request: "revoke" })),
+      },
+    });
+    expect(response).toMatchObject({
+      status: 401,
+      body: { _tag: "EnvironmentHttpUnauthorizedError", message: "Invalid cloud revoke request." },
+    });
   });
 });

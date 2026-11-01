@@ -252,13 +252,18 @@ struct CloseButton: View {
 
 struct MenuButton: View {
   @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
+  @Environment(\.isWideLayout) private var wide
   @Environment(AppRouter.self) private var router
 
   var body: some View {
-    // Reserve the header spacing while removing the redundant control.
     if sidebarVisible {
+      // Reserve the header spacing while removing the redundant control.
       Color.clear.frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
         .accessibilityHidden(true)
+    } else if wide {
+      // The column is collapsed: bring it back rather than cover the chat.
+      WeaveIconButton("sidebar.left", label: "Show sidebar") { router.isSidebarCollapsed = false }
+        .accessibilityIdentifier("chrome.show-sidebar")
     } else {
       WeaveIconButton("line.3.horizontal", label: "Menu") { router.isDrawerOpen = true }
     }

@@ -19,6 +19,8 @@ import {
   projectPickerMembers,
 } from "../../studio/projectListVisibility";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useAideEnabled } from "../../hooks/useSettings";
+import { visibleWithAideKeeping } from "../../studio/personalAssistant";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
@@ -59,11 +61,22 @@ export function MessagingSettingsPanel() {
   const unpair = useAtomCommand(serverEnvironment.unpairTelegramChannel, { reportFailure: false });
   const remove = useAtomCommand(serverEnvironment.removeTelegramChannel, { reportFailure: false });
 
+  const [token, setToken] = useState("");
+  // Drafts stay null until edited, so the form shows what the host has saved.
+  const [projectDraft, setProjectId] = useState<ProjectId | null>(null);
+
   const allProjects = useProjects();
+  // A hidden personal assistant (Settings → General) is not offered, but the one
+  // the channel already uses stays listed so nothing changes on its own.
+  const aideEnabled = useAideEnabled();
+  const savedProjectId = status?.projectId ?? null;
   const projects = useMemo(
     () =>
-      allProjects
-        .filter((project) => project.environmentId === environmentId)
+      visibleWithAideKeeping(
+        allProjects.filter((project) => project.environmentId === environmentId),
+        aideEnabled,
+        [savedProjectId, projectDraft],
+      )
         // Personal projects first: they are the natural home for a phone agent.
         .toSorted(
           (left, right) =>
@@ -71,12 +84,8 @@ export function MessagingSettingsPanel() {
               Number(left.workspaceSettings?.kind === "personal") ||
             left.title.localeCompare(right.title),
         ),
-    [allProjects, environmentId],
+    [aideEnabled, allProjects, environmentId, projectDraft, savedProjectId],
   );
-
-  const [token, setToken] = useState("");
-  // Drafts stay null until edited, so the form shows what the host has saved.
-  const [projectDraft, setProjectId] = useState<ProjectId | null>(null);
   const [enabledDraft, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const projectId = projectDraft ?? status?.projectId ?? null;
@@ -253,8 +262,10 @@ export function MessagingSettingsPanel() {
                 {unavailableProject
                   ? `${ineligibleProjectLabel(unavailableProject.reason)}. Choose another project to save, or turn the channel off. `
                   : null}
-                Messages go to this project&apos;s coordinator. A personal assistant works best for
-                everyday errands; a code project works for checking on builds from your phone.
+                Messages go to this project&apos;s coordinator.{" "}
+                {aideEnabled
+                  ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
+                  : "A code project works for checking on builds from your phone."}
               </span>
             </div>
 

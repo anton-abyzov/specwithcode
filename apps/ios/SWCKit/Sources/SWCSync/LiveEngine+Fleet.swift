@@ -23,7 +23,17 @@ extension LiveEngine {
       let cached = await fleetCache.cached(entry.environmentId)
       if entry.snapshot == nil { entry.cachedSnapshot = cached.snapshot }
       if entry.lastSeenAt == nil { entry.lastSeenAt = cached.lastSeenAt }
+      entry.cachedAideEnabled = cached.aideEnabled
     }
+  }
+
+  /// Saves the machine's Aide switch when it changes, for the next cold start.
+  func rememberAide(_ entry: MachineEntry) {
+    guard let enabled = entry.settings?.aideEnabled, entry.cachedAideEnabled != enabled else { return }
+    entry.cachedAideEnabled = enabled
+    guard let fleetCache else { return }
+    let env = entry.environmentId
+    Task { await fleetCache.setAideEnabled(enabled, for: env) }
   }
 
   /// The machine was connected until now.

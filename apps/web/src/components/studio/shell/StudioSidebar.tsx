@@ -11,7 +11,7 @@ import {
  * there; a chat row opens that session. Chats group by date unless the filter
  * menu says otherwise, and the menu's choices are remembered per browser.
  */
-import { isExtraAssistant } from "../../../studio/personalAssistant";
+import { isExtraAssistant, threadsVisibleWithAide } from "../../../studio/personalAssistant";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeCanArchive } from "@specweave-studio/client-runtime/state/models";
 import {
@@ -54,7 +54,7 @@ import { useScratchProject } from "../../../hooks/useScratchProject";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { useOpenChat } from "../../../hooks/useOpenChat";
-import { useClientSettings } from "../../../hooks/useSettings";
+import { useAideEnabled, useClientSettings } from "../../../hooks/useSettings";
 import { useThreadActions } from "../../../hooks/useThreadActions";
 import {
   resolveShortcutCommand,
@@ -189,8 +189,24 @@ const PROJECT_PAGE = 7;
 const CHAT_PAGE = 30;
 
 export default function StudioSidebar() {
-  const projectGroups = useSettingsProjectGroups();
-  const threads = useThreadShells();
+  const allProjectGroups = useSettingsProjectGroups();
+  const allThreads = useThreadShells();
+  // While the personal assistant is off (Settings → General), it and its chats are
+  // left out of every list here. Nothing is deleted; turning it back on shows them.
+  const aideEnabled = useAideEnabled();
+  const projectGroups = useMemo(
+    () => (aideEnabled ? allProjectGroups : allProjectGroups.filter((g) => !isPersonalGroup(g))),
+    [aideEnabled, allProjectGroups],
+  );
+  const threads = useMemo(
+    () =>
+      threadsVisibleWithAide(
+        allThreads,
+        allProjectGroups.flatMap((group) => group.memberProjects),
+        aideEnabled,
+      ),
+    [aideEnabled, allProjectGroups, allThreads],
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
@@ -824,7 +840,7 @@ export default function StudioSidebar() {
                   />
                 ))}
               </ul>
-            ) : hasAssistant ? null : (
+            ) : hasAssistant || !aideEnabled ? null : (
               <Tip side="right" label={PERSONAL_ASSISTANT_DESCRIPTION}>
                 <button
                   type="button"

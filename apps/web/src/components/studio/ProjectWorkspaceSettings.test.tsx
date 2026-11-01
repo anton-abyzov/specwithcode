@@ -331,6 +331,11 @@ async function click(text: string) {
   expect(button).toBeDefined();
   await act(async () => button!.click());
 }
+async function press(label: string) {
+  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  expect(button).not.toBeNull();
+  await act(async () => button!.click());
+}
 async function openMemory(name: string) {
   const row = container.querySelector<HTMLButtonElement>(
     `.project-memory-list button[data-memory-file="${name}"]`,
@@ -397,7 +402,7 @@ function twoMachineFleet() {
   };
 }
 describe("project folder placement", () => {
-  it("puts Project folder right under Name and icon, before Goal and Worker machine", async () => {
+  it("puts Project folder right under Name and icon, before Goal and Machines for workers", async () => {
     state.fleet = twoMachineFleet();
     await render("general", true, { kind: "code" });
     const text = container.textContent ?? "";
@@ -408,7 +413,7 @@ describe("project folder placement", () => {
     };
     expect(at("Name and icon")).toBeLessThan(at("Project folder"));
     expect(at("Project folder")).toBeLessThan(at("Goal"));
-    expect(at("Project folder")).toBeLessThan(at("Worker machine"));
+    expect(at("Project folder")).toBeLessThan(at("Machines for workers"));
   });
   it("has no Project folder for a personal project", async () => {
     await render("general", true, { kind: "personal" });
@@ -502,7 +507,7 @@ describe("project settings and memory", () => {
     expect(text.indexOf("Recommended model for threads")).toBeLessThan(
       text.indexOf("When a model runs out"),
     );
-    const machine = text.indexOf("Worker machine");
+    const machine = text.indexOf("Machines for workers");
     if (machine !== -1) expect(text.indexOf("When a model runs out")).toBeLessThan(machine);
   });
   it("lists this project's overrides on the General tab", async () => {
@@ -538,34 +543,37 @@ describe("project settings and memory", () => {
   it("sends this project's workers to a machine that allows them, and back here", async () => {
     state.fleet = twoMachineFleet();
     await render();
-    const select = [...container.querySelectorAll("label")]
-      .find((node) => node.textContent?.startsWith("Worker machine"))!
-      .querySelector("select")!;
-    expect([...select.options].map((o) => [o.value, o.disabled])).toEqual([
-      ["local", false],
+    const add = () =>
+      [...container.querySelectorAll("label")]
+        .find((node) => node.textContent?.startsWith("Add a machine"))
+        ?.querySelector("select");
+    // M3 does not allow this machine's workers, so only M1 can be added.
+    expect([...add()!.options].map((o) => [o.value, o.disabled])).toEqual([
+      ["", true],
       ["m1", false],
-      ["m3", true],
     ]);
     await act(async () => {
-      select.value = "m1";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
+      add()!.value = "m1";
+      add()!.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    await press("Move M1 up");
     await click("Save changes");
-    expect(state.update.mock.calls[0]![0].input.workspaceSettings.workerMachine).toEqual({
-      machineId: "m1",
-      environmentId: "env-m1",
-      projectId: null,
+    const m1 = { machineId: "m1", environmentId: "env-m1", projectId: null };
+    const local = { machineId: "local", environmentId: "host", projectId: null };
+    expect(state.update.mock.calls[0]![0].input.workspaceSettings).toMatchObject({
+      workerMachines: [m1, local],
+      workerMachine: m1,
     });
-    await act(async () => {
-      select.value = "local";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await press("Remove M1");
     await click("Save changes");
-    expect(state.update.mock.calls[1]![0].input.workspaceSettings.workerMachine).toBeNull();
+    expect(state.update.mock.calls[1]![0].input.workspaceSettings).toMatchObject({
+      workerMachines: null,
+      workerMachine: null,
+    });
   });
   it("shows no worker machine choice without other machines", async () => {
     await render();
-    expect(container.textContent).not.toContain("Worker machine");
+    expect(container.textContent).not.toContain("Machines for workers");
     expect(container.textContent).toContain(
       "add it under Settings > Connections > Your private machines",
     );

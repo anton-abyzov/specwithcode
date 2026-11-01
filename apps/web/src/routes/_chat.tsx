@@ -1,11 +1,12 @@
 import { AuthPreviewOperateScope } from "@specweave-studio/contracts";
-import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useNavigate, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { resolveThreadRouteTarget } from "../threadRoutes";
+import { useHiddenAideThread } from "../studio/hiddenAideRoute";
 import { useLegacySidebarEnabled } from "../hooks/useSettings";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -206,10 +207,20 @@ function ChatRouteLayout() {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
+  // A hidden personal assistant's chat (Settings → General) has no page: links,
+  // notifications, history and reloads that name it land on Overview. Nothing is
+  // deleted; turning Aide back on opens the same chat again.
+  const aideHidden = useHiddenAideThread(
+    threadTarget?.kind === "server" ? threadTarget.threadRef : null,
+  );
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (aideHidden) void navigate({ to: "/", replace: true });
+  }, [aideHidden, navigate]);
   return (
     <>
       <ChatRouteGlobalShortcuts />
-      {threadTarget ? <ThreadRouteView target={threadTarget} /> : <Outlet />}
+      {threadTarget ? aideHidden ? null : <ThreadRouteView target={threadTarget} /> : <Outlet />}
     </>
   );
 }

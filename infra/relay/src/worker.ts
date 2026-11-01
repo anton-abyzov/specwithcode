@@ -31,6 +31,9 @@ import * as AccountDeletion from "./account/AccountDeletion.ts";
 import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "./agentActivity/AgentActivityRows.ts";
 import * as Devices from "./agentActivity/Devices.ts";
+import * as PhoneRemovals from "./agentActivity/PhoneRemovals.ts";
+import * as ClerkSessions from "./auth/ClerkSessions.ts";
+import * as ClientKeyRevocations from "./environments/ClientKeyRevocations.ts";
 import * as DpopProofs from "./auth/DpopProofs.ts";
 import * as RelayTokens from "./auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "./environments/EnvironmentCredentials.ts";
@@ -274,6 +277,9 @@ export const layer = Api.make(
           HeldHooks.layer,
           AccountDeletion.layerAccountRecords,
           AccountDeletion.layerClerkUsers,
+          ClientKeyRevocations.layer,
+          PhoneRemovals.layer,
+          ClerkSessions.layer,
         ),
       ),
       Layer.provideMerge(

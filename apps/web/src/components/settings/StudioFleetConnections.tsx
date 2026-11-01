@@ -20,8 +20,9 @@ import {
   useStudioFleet,
 } from "../../studio/fleet";
 import {
-  defaultFleetWorkerAccess,
+  DEFAULT_FLEET_WORKER_ACCESS,
   FLEET_WORKER_ACCESS_CHOICES,
+  fleetWorkerDraftAccess,
   fleetRemoveNotice,
   sentSecretsWarning,
   fleetWorkersView,
@@ -36,11 +37,7 @@ import { useEnvironments } from "../../state/environments";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { isThisMachineCatchingUp, lastSeenLabel, machineStatus } from "../../lib/machineStatus";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
-import {
-  useClientSettings,
-  useEnvironmentSettings,
-  useUpdateClientSettings,
-} from "../../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -110,6 +107,24 @@ export interface WorkerDraft {
   /** A one-time code made on that machine, for when this server cannot make one. */
   readonly pairingCode: string;
 }
+/** Full access on the owner's own machines; the Workers row's select can lower it. */
+const DEFAULT_WORKER_DRAFT: WorkerDraft = { access: DEFAULT_FLEET_WORKER_ACCESS, pairingCode: "" };
+/**
+ * A machine's Workers draft: what the user picked, else the grant's current
+ * access once allowed (so changing it starts from what is in force), else `fallback`.
+ */
+export function fleetWorkerDraft(
+  machine: Pick<StudioFleetMachine, "id" | "workers">,
+  drafts: Readonly<Record<string, WorkerDraft>>,
+  fallback: WorkerDraft = DEFAULT_WORKER_DRAFT,
+): WorkerDraft {
+  return (
+    drafts[machine.id] ?? {
+      ...fallback,
+      access: fleetWorkerDraftAccess(machine.workers, fallback.access),
+    }
+  );
+}
 
 /**
  * Whether coordinators on this server may start workers on a machine. The
@@ -134,14 +149,19 @@ export function FleetWorkersRow({
   if (!workers) return null;
   const view = fleetWorkersView(workers);
   const busy = disabled || !canManage;
+  // Allowed rows change their access by allowing again with the new ceiling.
+  const allowed = view.action === "stop";
+  const changed = allowed && draft.access !== workers.access;
+  const codeNeeded = allowed ? changed && view.changeCodeNeeded : view.codeNeeded;
   return (
     <div className="min-w-0 space-y-1.5" aria-label={`Workers on ${machine.label}`}>
       <p className="text-xs text-muted-foreground">
         <span className="text-foreground/80">Workers</span> · {view.summary}
         {view.action === "allow" && !canManage ? " Allowing them needs Manage access." : null}
       </p>
+      {view.accessHint ? <p className="text-xs text-muted-foreground">{view.accessHint}</p> : null}
       {view.problem ? <p className="text-xs text-warning-foreground">{view.problem}</p> : null}
-      {view.action === "allow" && canManage ? (
+      {canManage ? (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Select
             value={draft.access}
@@ -171,7 +191,7 @@ export function FleetWorkersRow({
               </SelectGroup>
             </SelectPopup>
           </Select>
-          {view.codeNeeded ? (
+          {codeNeeded ? (
             <input
               aria-label={`Pairing code made on ${machine.label}`}
               className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
@@ -183,13 +203,25 @@ export function FleetWorkersRow({
               onChange={(e) => onDraftChange({ ...draft, pairingCode: e.target.value })}
             />
           ) : null}
-          <Button
-            size="xs"
-            disabled={busy || (view.codeNeeded && !draft.pairingCode.trim())}
-            onClick={() => onAction("allow")}
-          >
-            Allow workers
-          </Button>
+          {allowed ? (
+            changed ? (
+              <Button
+                size="xs"
+                disabled={busy || (codeNeeded && !draft.pairingCode.trim())}
+                onClick={() => onAction("allow")}
+              >
+                Change access
+              </Button>
+            ) : null
+          ) : (
+            <Button
+              size="xs"
+              disabled={busy || (codeNeeded && !draft.pairingCode.trim())}
+              onClick={() => onAction("allow")}
+            >
+              Allow workers
+            </Button>
+          )}
         </div>
       ) : null}
     </div>
@@ -216,14 +248,6 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   const removeSupported = useFleetRemoveSupported(environmentId);
   const [notice, setNotice] = useState<string | null>(null);
   const [added, setAdded] = useState<string | null>(null);
-  const defaultRuntimeMode = useEnvironmentSettings(
-    environmentId,
-    (settings) => settings.defaultRuntimeMode,
-  );
-  const emptyWorkerDraft: WorkerDraft = {
-    access: defaultFleetWorkerAccess(defaultRuntimeMode),
-    pairingCode: "",
-  };
   const [workerDrafts, setWorkerDrafts] = useState<Readonly<Record<string, WorkerDraft>>>({});
   const [invitation, setInvitation] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -288,7 +312,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   }
   async function changeWorkers(machine: StudioFleetMachine, action: "allow" | "stop") {
     if (pending || !canManageWorkers) return;
-    const draft = workerDrafts[machine.id] ?? emptyWorkerDraft;
+    const draft = fleetWorkerDraft(machine, workerDrafts);
     setPending(`workers:${machine.id}`);
     setError(null);
     setNotice(null);
@@ -407,7 +431,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       canCheckReadiness
       canManageWorkers={canManageWorkers}
       workerDrafts={workerDrafts}
-      defaultWorkerDraft={emptyWorkerDraft}
+      defaultWorkerDraft={DEFAULT_WORKER_DRAFT}
       notice={notice}
       added={added}
       onWorkerDraftChange={(id, draft) =>
@@ -502,7 +526,7 @@ export function StudioFleetRoster({
   onPair,
   canManageWorkers = false,
   workerDrafts = {},
-  defaultWorkerDraft = { access: "auto", pairingCode: "" },
+  defaultWorkerDraft = DEFAULT_WORKER_DRAFT,
   notice = null,
   added = null,
   onWorkerDraftChange,
@@ -534,7 +558,7 @@ export function StudioFleetRoster({
   onPair: (machine: StudioFleetMachine) => void;
   canManageWorkers?: boolean;
   workerDrafts?: Readonly<Record<string, WorkerDraft>>;
-  /** A machine's draft before the user changes it: this server's default access. */
+  /** A not-yet-allowed machine's draft before the user changes it: full access. */
   defaultWorkerDraft?: WorkerDraft;
   /** What the last change did that the user should know, such as a session left there. */
   notice?: string | null;
@@ -733,7 +757,7 @@ export function StudioFleetRoster({
                       machine={machine}
                       disabled={busy}
                       canManage={canManageWorkers}
-                      draft={workerDrafts[machine.id] ?? defaultWorkerDraft}
+                      draft={fleetWorkerDraft(machine, workerDrafts, defaultWorkerDraft)}
                       onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
                       onAction={(action) => onWorkers(machine, action)}
                     />

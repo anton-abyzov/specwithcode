@@ -129,6 +129,8 @@ final class FakeMachine: Sendable {
    "settings":{"defaultRuntimeMode":"auto","sidebarProjectOrder":{"pinned":["env-1:/Users/x/specweave"],"unpinned":[]},"providerInstances":{}},
    "providers":[]}
   """#
+  /// `config` from a machine whose settings turn Aide on.
+  static let aideConfig = config.replacingOccurrences(of: #""providerInstances":{}}"#, with: #""providerInstances":{},"aideEnabled":true}"#)
 
   func requests(_ tag: String) -> [JSONValue] {
     requests.values.filter { $0["tag"]?.stringValue == tag }

@@ -170,6 +170,12 @@ export function mapRemoteEnvironmentError(
         detail: "The environment could not authorize the connection.",
         traceId: error.traceId,
       });
+    case "EnvironmentRateLimitedError":
+      return new ConnectionTransientError({
+        reason: "rate-limited",
+        detail: error.message,
+        retryAfterMs: Math.max(1, error.retryAfterSeconds) * 1000,
+      });
     case "RemoteEnvironmentAuthInvalidJsonError":
     case "RemoteEnvironmentAuthUndeclaredStatusError":
       return new ConnectionTransientError({

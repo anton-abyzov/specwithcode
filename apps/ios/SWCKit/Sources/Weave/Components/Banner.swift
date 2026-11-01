@@ -64,14 +64,17 @@ public struct Banner: View {
   let actionTitle: String?
   let action: (() -> Void)?
   let onDismiss: (() -> Void)?
+  let lineLimit: Int?
 
-  public init(_ message: String, title: String? = nil, kind: WeaveNoticeKind = .info, actionTitle: String? = nil, action: (() -> Void)? = nil, onDismiss: (() -> Void)? = nil) {
+  /// - Parameter lineLimit: Caps the message where height is short, such as above the composer in landscape.
+  public init(_ message: String, title: String? = nil, kind: WeaveNoticeKind = .info, actionTitle: String? = nil, action: (() -> Void)? = nil, onDismiss: (() -> Void)? = nil, lineLimit: Int? = nil) {
     self.title = title
     self.message = message
     self.kind = kind
     self.actionTitle = actionTitle
     self.action = action
     self.onDismiss = onDismiss
+    self.lineLimit = lineLimit
   }
 
   public var body: some View {
@@ -91,6 +94,7 @@ public struct Banner: View {
         Text(message)
           .weaveFont(.callout)
           .foregroundStyle(Color.weave.ink)
+          .lineLimit(lineLimit)
           .fixedSize(horizontal: false, vertical: true)
         if let actionTitle, let action {
           Button(actionTitle, action: action)
@@ -162,7 +166,8 @@ public struct Toast: View {
     }
     .padding(.horizontal, WeaveSpacing.s4)
     .padding(.vertical, WeaveSpacing.s3)
-    .weaveGlass(in: Capsule())
+    // A capsule's rounded ends would cut into a toast that wraps to more lines.
+    .weaveGlass(in: RoundedRectangle(cornerRadius: WeaveRadius.lg, style: .continuous))
     .accessibilityElement(children: .combine)
   }
 }

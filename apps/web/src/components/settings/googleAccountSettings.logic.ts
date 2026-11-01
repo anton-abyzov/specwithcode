@@ -7,6 +7,7 @@ import {
   type ProjectListMember,
   type ScratchRootLookup,
 } from "../../studio/projectListVisibility";
+import { visibleWithAideKeeping } from "../../studio/personalAssistant";
 
 interface GoogleProjectAccess {
   readonly projectId: ProjectId;
@@ -17,15 +18,24 @@ interface GoogleProjectAccess {
  * The projects Google access is offered to: the person's own active ones in the main list,
  * those a check or agent made for itself (acceptance runs, fixtures, tests) and archived ones
  * apart, so their access can still be checked. Scratch is not a project. Personal projects
- * lead, since a personal agent lives there.
+ * lead, since a personal agent lives there; a hidden one shows only while it holds access.
  */
 export function partitionGoogleProjects<
   P extends ProjectListMember & {
     readonly title: string;
     readonly workspaceSettings?: { readonly kind?: string | undefined } | null | undefined;
   },
->(projects: ReadonlyArray<P>, scratchRootFor: ScratchRootLookup) {
-  const sorted = projects
+>(
+  projects: ReadonlyArray<P>,
+  scratchRootFor: ScratchRootLookup,
+  aide: { readonly enabled: boolean; readonly keepIds: ReadonlyArray<string> } = {
+    enabled: true,
+    keepIds: [],
+  },
+) {
+  // A hidden personal assistant (Settings → General) is left out, unless it
+  // still holds Google access: it stays listed so that access can be seen and revoked.
+  const sorted = visibleWithAideKeeping(projects, aide.enabled, aide.keepIds)
     .filter((project) => !isScratchMember(project, scratchRootFor))
     .toSorted(
       (left, right) =>

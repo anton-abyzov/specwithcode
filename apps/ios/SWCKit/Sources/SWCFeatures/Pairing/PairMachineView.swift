@@ -22,11 +22,17 @@ struct PairMachineView: View {
   private var trimmed: String { link.trimmingCharacters(in: .whitespacesAndNewlines) }
 
   private var instructions: String {
-    let steps = "open SpecWithCode, go to Settings > Connections and choose Pair a phone. Then scan the code or copy the link."
+    let steps = model.connect == nil
+      ? "open SpecWithCode, go to Settings > Connections and choose Pair a phone. If it offers SpecWithCode Connect first, choose Use a private QR code instead. Then scan the code or copy the link."
+      : "open SpecWithCode, go to Settings > Connections and choose Pair a phone, then Use a private QR code instead. Then scan the code or copy the link."
+    let place: String
     if let id = expectedMachineId, let machine = model.machine(id) {
-      return "On \(machine.label), \(steps)"
+      place = "On \(machine.label), \(steps)"
+    } else {
+      place = "On your computer, \(steps)"
     }
-    return "On your computer, \(steps)"
+    guard model.connect != nil else { return place }
+    return "This is the fallback for a computer you can't reach with SpecWithCode Connect. Your phone must reach it on the same network or over Tailscale. \(place)"
   }
 
   var body: some View {

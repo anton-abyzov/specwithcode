@@ -6,9 +6,9 @@ import SwiftUI
 ///
 /// Titles and subtitles wrap. List previews pass line limits; at accessibility
 /// text sizes those limits double so more of the text stays readable. Rows
-/// with a text or menu value on the trailing edge pass `stacksTrailing`, and
-/// at accessibility sizes that value moves under the title instead of being
-/// squeezed beside it.
+/// with a text or menu value on the trailing edge pass `stacksTrailing`: the
+/// value sits beside the title when both fit on one line, and otherwise (and
+/// always at accessibility sizes) moves under the title instead of being cut.
 public struct WeaveRow<Leading: View, Trailing: View>: View {
   let title: String
   let subtitle: String?
@@ -60,17 +60,10 @@ public struct WeaveRow<Leading: View, Trailing: View>: View {
   }
 
   private var row: some View {
-    let stacked = stacksTrailing && dynamicTypeSize.isAccessibilitySize
-    let layout = stacked
-      ? AnyLayout(VStackLayout(alignment: .leading, spacing: WeaveSpacing.s1))
-      : AnyLayout(HStackLayout(spacing: WeaveSpacing.s3))
-    return HStack(spacing: WeaveSpacing.s3) {
+    HStack(spacing: WeaveSpacing.s3) {
       leading
         .foregroundStyle(isDestructive ? Color.weave.fail : Color.weave.ink)
-      layout {
-        titles
-        trailing
-      }
+      content
       if showsChevron {
         Image(systemName: "chevron.right")
           .font(.system(size: 13, weight: .semibold))
@@ -82,6 +75,34 @@ public struct WeaveRow<Leading: View, Trailing: View>: View {
     .frame(minHeight: subtitle == nil ? 52 : 64)
     .contentShape(Rectangle())
     .accessibilityElement(children: .combine)
+  }
+
+  @ViewBuilder private var content: some View {
+    if !stacksTrailing {
+      HStack(spacing: WeaveSpacing.s3) {
+        titles
+        trailing
+      }
+    } else if dynamicTypeSize.isAccessibilitySize {
+      stackedContent
+    } else {
+      // Beside the title only when the whole value fits; a half-width split
+      // would cut values such as model ids, machine names and statuses.
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: WeaveSpacing.s3) {
+          titles.frame(minWidth: 72)
+          trailing.fixedSize()
+        }
+        stackedContent
+      }
+    }
+  }
+
+  private var stackedContent: some View {
+    VStack(alignment: .leading, spacing: WeaveSpacing.s1) {
+      titles
+      trailing
+    }
   }
 
   private var titles: some View {
@@ -149,7 +170,8 @@ public struct WeaveRowTrailingText: View {
       Text(text)
         .font(.weave(.body))
         .foregroundStyle(Color.weave.muted)
-        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 }

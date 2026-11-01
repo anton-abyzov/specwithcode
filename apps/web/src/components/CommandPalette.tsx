@@ -2,7 +2,14 @@
 
 import { ProjectCreationAction } from "./studio/ProjectCreationAction";
 
-import { findMachineAssistant, personalAssistantSetupStep } from "../studio/personalAssistant";
+import {
+  findMachineAssistant,
+  machineOffersAssistant,
+  personalAssistantDisabledMessage,
+  personalAssistantSetupStep,
+  threadsVisibleWithAide,
+  visibleWithAide,
+} from "../studio/personalAssistant";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { CloneProjectDestination } from "./studio/CloneProjectDestination";
 import { threadPullRequestLinkMode } from "@specweave-studio/client-runtime/thread-pull-request-compatibility";
@@ -103,7 +110,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { useClientSettings } from "../hooks/useSettings";
+import { useAideEnabled, useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
@@ -222,6 +229,7 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
   collapseRestartedBrowsePath,
+  personalAssistantActionOffered,
   reduceCommandPaletteUiState,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
@@ -537,7 +545,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     [],
   );
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
-  const openNewAssistant = useCallback(() => dispatch({ _tag: "OpenNewAssistant" }), []);
+  const aideEnabled = useAideEnabled();
+  const openNewAssistant = useCallback(
+    () => dispatch({ _tag: "OpenNewAssistant", aideEnabled }),
+    [aideEnabled],
+  );
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   // Add folder found copies of the folder on other machines; the palette closes for it.
@@ -849,7 +861,13 @@ function OpenCommandPaletteDialog(props: {
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
-  const projects = useProjects();
+  // A hidden personal assistant (Settings → General) is neither listed nor set up here.
+  const aideEnabled = useAideEnabled();
+  const allProjects = useProjects();
+  const projects = useMemo(
+    () => visibleWithAide(allProjects, aideEnabled),
+    [allProjects, aideEnabled],
+  );
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -897,7 +915,11 @@ function OpenCommandPaletteDialog(props: {
     }
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const allThreads = useThreadShells();
+  const threads = useMemo(
+    () => threadsVisibleWithAide(allThreads, allProjects, aideEnabled),
+    [allThreads, allProjects, aideEnabled],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
     theme,
@@ -1927,6 +1949,32 @@ function OpenCommandPaletteDialog(props: {
   const newProjectEnvironmentOptions = addProjectEnvironmentOptions.filter(
     (option) => option.isConnected && newProjectsRootFor(option.environmentId) !== null,
   );
+  // Each machine saves its own Aide switch and they can disagree, so Set up is
+  // gated by the target machine's own settings, not only this device's.
+  const aideEnabledOnMachine = (environmentId: EnvironmentId): boolean =>
+    environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
+      ?.settings?.aideEnabled === true;
+  const machineOffersPersonalAssistant = (environmentId: EnvironmentId): boolean =>
+    machineOffersAssistant({
+      environmentId,
+      aideEnabledOnMachine: aideEnabledOnMachine(environmentId),
+      projects,
+    });
+  const assistantEnvironmentOptions = newProjectEnvironmentOptions.filter((option) =>
+    machineOffersPersonalAssistant(option.environmentId),
+  );
+  const refuseAssistantSetup = (environmentId: EnvironmentId) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not set up the personal assistant",
+        description: personalAssistantDisabledMessage(
+          addProjectEnvironmentOptions.find((option) => option.environmentId === environmentId)
+            ?.label,
+        ),
+      }),
+    );
+  };
 
   const addProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(
     () => [
@@ -1978,6 +2026,7 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const openNewProjectFlow = (kind: NewProjectKind = "code") => {
+    if (kind === "personal" && !aideEnabled) return;
     if (kind === "personal") {
       // Each machine has its own private assistant: open or make the one on
       // the machine in context, never another machine's.
@@ -1992,6 +2041,10 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       if (step.kind === "create") {
+        if (!aideEnabledOnMachine(step.environmentId as EnvironmentId)) {
+          refuseAssistantSetup(step.environmentId as EnvironmentId);
+          return;
+        }
         startNewProject(step.environmentId as EnvironmentId, null, kind);
         return;
       }
@@ -2003,19 +2056,24 @@ function OpenCommandPaletteDialog(props: {
             label: "Each machine has its own assistant. Choose one",
             items: addProjectEnvironmentOptions.map((option) => {
               const assistant = findMachineAssistant(projects, option.environmentId);
+              const offered = machineOffersPersonalAssistant(option.environmentId);
+              const item = buildEnvironmentItem(
+                option,
+                `action:assistant:machine:${option.environmentId}`,
+                (environmentId) =>
+                  assistant
+                    ? openMachineAssistant(assistant)
+                    : startNewProject(environmentId, null, kind),
+              );
               return {
-                ...buildEnvironmentItem(
-                  option,
-                  `action:assistant:machine:${option.environmentId}`,
-                  (environmentId) =>
-                    assistant
-                      ? openMachineAssistant(assistant)
-                      : startNewProject(environmentId, null, kind),
-                ),
+                ...item,
+                disabled: item.disabled || !offered,
                 description: option.isConnected
                   ? assistant
                     ? `Open ${assistant.title}`
-                    : "Set up its assistant"
+                    : offered
+                      ? "Set up its assistant"
+                      : "Personal assistant is turned off on this machine"
                   : option.status,
               };
             }),
@@ -2325,6 +2383,13 @@ function OpenCommandPaletteDialog(props: {
         openNewProjectFlow();
       },
     });
+  }
+  if (
+    personalAssistantActionOffered({
+      aideEnabled,
+      newProjectMachineCount: assistantEnvironmentOptions.length,
+    })
+  ) {
     actionItems.push({
       kind: "action",
       value: "action:new-personal-assistant",

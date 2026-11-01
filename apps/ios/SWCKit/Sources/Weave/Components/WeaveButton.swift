@@ -49,6 +49,7 @@ public struct WeaveButton: View {
         // Wraps to a second line at accessibility sizes instead of truncating.
         Text(title)
           .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+          .minimumScaleFactor(0.85)
           .multilineTextAlignment(.center)
       }
       .font(.weave(fullWidth ? .headline : .callout, weight: .semibold))

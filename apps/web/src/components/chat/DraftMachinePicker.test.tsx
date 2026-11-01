@@ -55,6 +55,7 @@ vi.mock("~/state/session", () => ({
 }));
 vi.mock("~/hooks/useSettings", () => ({
   useLegacySidebarEnabled: () => runtime.legacy,
+  useAideEnabled: () => true,
   useClientSettings: () => ({ mode: "directory", overrides: {} }),
 }));
 vi.mock("~/logicalProject", () => ({

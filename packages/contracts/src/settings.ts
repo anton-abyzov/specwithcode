@@ -1784,6 +1784,13 @@ export const ServerSettings = Schema.Struct({
    * not also grant providers control of simulators and emulators.
    */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Whether the personal assistant (Aide) is shown. Off hides every way into
+   * it on the desktop, web and iPhone, and stops new assistants from being
+   * created, until its voice experience is ready. Existing assistants and
+   * their threads are kept.
+   */
+  aideEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Whether the server-local Device panel setup flow has been completed. */
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -2296,6 +2303,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
+  aideEnabled: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   maxBootedDevices: Schema.optionalKey(Schema.NullOr(MaxBootedDevices)),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

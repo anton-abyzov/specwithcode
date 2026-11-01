@@ -1,8 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { ProjectWorkspace } from "../components/studio/ProjectWorkspace";
 import { parseProjectWorkspaceSearch, projectWorkspaceSearch } from "../studio/projectPaneThreads";
 import type { SelectProjectThread } from "../studio/useProjectPaneSelection";
+import { useHiddenAideRoute } from "../studio/hiddenAideRoute";
 export const Route = createFileRoute("/projects/$projectKey")({
   // `?thread=<id>` is the thread open in the right panel, so links, reload and
   // back/forward all land on it.
@@ -21,6 +22,12 @@ function ProjectWorkspaceRoute() {
   const search = Route.useSearch();
   const { thread, checkout, threadEnvironment, restoreThread } = search;
   const navigate = Route.useNavigate();
+  // A hidden personal assistant (Settings → General) has no page: links, history
+  // and reloads that name it land on Overview instead. Nothing is deleted.
+  const aideHidden = useHiddenAideRoute(projectKey);
+  useEffect(() => {
+    if (aideHidden) void navigate({ to: "/", replace: true });
+  }, [aideHidden, navigate]);
   const selectThread = useCallback<SelectProjectThread>(
     (next, options) => {
       if (
@@ -68,6 +75,7 @@ function ProjectWorkspaceRoute() {
     },
     [navigate, projectKey],
   );
+  if (aideHidden) return null;
   return (
     <ProjectWorkspace
       projectKey={projectKey}

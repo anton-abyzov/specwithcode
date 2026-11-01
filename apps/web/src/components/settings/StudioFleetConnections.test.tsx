@@ -13,7 +13,6 @@ const runtime = vi.hoisted(() => ({
   stopWorkers: vi.fn(),
   addMachine: vi.fn(),
   environments: [] as Array<{ readonly entry: unknown }>,
-  defaultRuntimeMode: "approval-required",
   removeSupported: true,
 }));
 vi.mock("react", async (importOriginal) => {
@@ -47,10 +46,6 @@ vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: { autoConnectPrivateMachines: boolean }) => unknown) =>
     select({ autoConnectPrivateMachines: runtime.autoConnect }),
   useUpdateClientSettings: () => runtime.updateSettings,
-  useEnvironmentSettings: (
-    _environmentId: string,
-    select: (settings: { defaultRuntimeMode: string }) => unknown,
-  ) => select({ defaultRuntimeMode: runtime.defaultRuntimeMode }),
 }));
 vi.mock("../../lib/machineLastSeen", () => ({
   machineLastSeenAt: () => null,
@@ -517,13 +512,91 @@ describe("workers on private machines", () => {
     });
   });
 
-  it("starts the access choice at this server's default, not above it", () => {
+  it("starts the access choice at Full access on the owner's own machines", () => {
     hooks.beginRender();
     const wrapper = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
-    expect(wrapper.props.defaultWorkerDraft).toEqual({
-      access: "approval-required",
-      pairingCode: "",
+    expect(wrapper.props.defaultWorkerDraft).toEqual({ access: "full-access", pairingCode: "" });
+    // The roster's own fallback agrees, with no stale "auto".
+    const rows = workersRows(
+      render({
+        snapshot: withWorkers,
+        onWorkers: vi.fn(),
+        onWorkerDraftChange: vi.fn(),
+        canManageWorkers: true,
+      }),
+    );
+    expect((rows[0]?.draft as { access: string }).access).toBe("full-access");
+  });
+
+  it("changes an allowed grant's access by allowing again with the new ceiling", async () => {
+    const allowed = {
+      ...notAllowed,
+      status: "allowed" as const,
+      access: "approval-required" as const,
+    };
+    const machine = { ...withWorkers.machines[1]!, workers: allowed };
+    runtime.snapshot = { ...withWorkers, machines: [withWorkers.machines[0]!, machine] };
+    runtime.allowWorkers.mockResolvedValue({
+      id: "m1",
+      workers: { ...allowed, access: "full-access" },
     });
+    hooks.beginRender();
+    const wrapper = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    // The row starts from the access in force, so nothing is offered until it changes.
+    const [row] = workersRows(StudioFleetRoster(wrapper.props));
+    expect(row?.draft).toEqual({ access: "approval-required", pairingCode: "" });
+    expect(button(FleetWorkersRow(row as never), "Change access")).toBeNull();
+    wrapper.props.onWorkerDraftChange("m1", { access: "full-access", pairingCode: "" });
+    hooks.beginRender();
+    const next = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    const [changedRow] = workersRows(StudioFleetRoster(next.props));
+    const change = button(FleetWorkersRow(changedRow as never), "Change access")!;
+    expect(change.props.disabled).toBe(false);
+    (change.props.onClick as () => void)();
+    await vi.waitFor(() => expect(runtime.allowWorkers).toHaveBeenCalledOnce());
+    expect(runtime.allowWorkers).toHaveBeenCalledWith(m4, { id: "m1", access: "full-access" });
+  });
+
+  it("says when workers there run below Full access, and asks for a code to change it when needed", () => {
+    const props = {
+      machine: {
+        ...withWorkers.machines[1]!,
+        workers: {
+          ...notAllowed,
+          status: "allowed" as const,
+          access: "approval-required" as const,
+          renewable: false,
+        },
+      },
+      disabled: false,
+      canManage: true,
+      draft: { access: "approval-required" as const, pairingCode: "" },
+      onDraftChange: vi.fn(),
+      onAction: vi.fn(),
+    };
+    const hint = (tree: unknown) =>
+      visitElements(
+        tree,
+        (element) =>
+          typeof element.props.children === "string" &&
+          element.props.children.startsWith("Workers there run at most at"),
+      );
+    expect(hint(FleetWorkersRow(props))?.props.children).toContain("Supervised");
+    const code = (tree: unknown) =>
+      visitElements(
+        tree,
+        (element) => element.props["aria-label"] === "Pairing code made on Mac M1",
+      );
+    expect(code(FleetWorkersRow(props))).toBeNull();
+    const raised = FleetWorkersRow({ ...props, draft: { access: "full-access", pairingCode: "" } });
+    expect(code(raised)).not.toBeNull();
+    expect(button(raised, "Change access")?.props.disabled).toBe(true);
+    const full = FleetWorkersRow({
+      ...props,
+      machine: { ...props.machine, workers: { ...props.machine.workers, access: "full-access" } },
+      draft: { access: "full-access", pairingCode: "" },
+    });
+    expect(hint(full)).toBeNull();
   });
 
   it("says when Stop could not end the session on the other machine", async () => {
@@ -648,7 +721,9 @@ describe("inviting this machine from its own roster", () => {
     };
     const text = label(render({ snapshot: viaConnect }));
     expect(text).toContain("via SpecWithCode Connect");
-    expect(text).toContain("On that machine, choose Join a main machine again and add the new line here to use SpecWithCode Connect.");
+    expect(text).toContain(
+      "On that machine, choose Join a main machine again and add the new line here to use SpecWithCode Connect.",
+    );
     const bound = label(
       render({
         snapshot: {

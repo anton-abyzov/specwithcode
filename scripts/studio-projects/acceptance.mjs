@@ -88,6 +88,7 @@ writeFileSync(
       instanceDrivers.map((driver) => [driver, { driver, enabled: false, config: {} }]),
     ),
     cursorKeychainUsageEnabled: false,
+    aideEnabled: true,
   }),
   { mode: 0o600 },
 );

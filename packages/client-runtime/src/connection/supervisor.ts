@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
+import { clearEnvironmentRequestCooldown } from "../state/environmentHttpAuth.ts";
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -197,6 +198,14 @@ export function retryMaxDelayMs(prefersLoopback: boolean, error: ConnectionAttem
   return error._tag === "ConnectionTransientError" && error.machineOffline === true
     ? OFFLINE_MACHINE_RETRY_MAX_DELAY_MS
     : RETRY_MAX_DELAY_MS;
+}
+
+/**
+ * The soonest a retry may come: a machine that refused this client for a
+ * while says how long, and an earlier attempt would only be refused.
+ */
+export function retryAfterFloorMs(error: ConnectionAttemptError): number {
+  return error._tag === "ConnectionTransientError" ? (error.retryAfterMs ?? 0) : 0;
 }
 
 function annotateTarget(target: ConnectionTarget) {
@@ -933,6 +942,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
+    // Connected with a fresh credential: requests held back by an earlier refusal may try again.
+    clearEnvironmentRequestCooldown(active.lease.prepared.environmentId);
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, active.lease).pipe(Effect.forkScoped);
     }
@@ -1121,10 +1132,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       failureCount += 1;
-      const delayMs = retryDelayMs(
-        failureCount - 1,
-        yield* Random.next,
-        retryMaxDelayMs(yield* prefersLoopback, error),
+      const delayMs = Math.max(
+        retryDelayMs(
+          failureCount - 1,
+          yield* Random.next,
+          retryMaxDelayMs(yield* prefersLoopback, error),
+        ),
+        retryAfterFloorMs(error),
       );
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,

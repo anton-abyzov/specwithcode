@@ -150,11 +150,13 @@ nonisolated enum LaunchRoute: String, Sendable, CaseIterable {
 
 /// Options read from launch arguments:
 /// `-SWCFixture [default|empty|running|fleet|m4-blip|minis-blip]`, `-SWCAppearance light|dark|system`,
-/// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search|coordinator|orchestrator|device`.
+/// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search|coordinator|orchestrator|device`,
+/// `-SWCAide on|off` (sample data shows Aide unless it is `off`).
 nonisolated struct LaunchOptions: Equatable, Sendable {
   var fixture: FixtureScenario?
   var appearance: AppearancePreference?
   var route: LaunchRoute?
+  var aide: Bool?
 
   static func parse(_ arguments: [String]) -> LaunchOptions {
     var options = LaunchOptions()
@@ -167,6 +169,12 @@ nonisolated struct LaunchOptions: Equatable, Sendable {
         options.appearance = next.flatMap { AppearancePreference(rawValue: $0.lowercased()) }
       case "-SWCRoute":
         options.route = next.flatMap { value in LaunchRoute.allCases.first { $0.rawValue.lowercased() == value.lowercased() } }
+      case "-SWCAide":
+        switch next?.lowercased() {
+        case "on", "yes", "true", "1": options.aide = true
+        case "off", "no", "false", "0": options.aide = false
+        default: break
+        }
       default:
         break
       }

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -27,8 +27,9 @@ export function PhoneSetupDialog(props: {
   readonly hasAccessControls: boolean;
   readonly onShowAccessSettings: () => void;
   /**
-   * Goes to the SpecWithCode Connect sign-in above instead of this private
-   * fallback. Provided only where Connect is shown on this page.
+   * Goes to the SpecWithCode Connect card on this page. Provided only where
+   * Connect is shown: the dialog then explains Connect first and keeps the
+   * private QR pairing behind "Use a private QR code instead".
    */
   readonly onUseConnect?: () => void;
   readonly onGenerate: () => void;
@@ -36,6 +37,23 @@ export function PhoneSetupDialog(props: {
   readonly onCopyCode: () => void;
 }) {
   const { address, code } = props;
+  const [fallbackChosen, setFallbackChosen] = useState(false);
+  // Reset on opening, not on closing, so the dialog keeps its content while it animates out.
+  useEffect(() => {
+    if (props.open) setFallbackChosen(false);
+  }, [props.open]);
+  if (props.onUseConnect && !fallbackChosen && code === null) {
+    return (
+      <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+        <DialogPopup className="max-w-lg">
+          <ConnectFirstContent
+            onUseConnect={props.onUseConnect}
+            onUseFallback={() => setFallbackChosen(true)}
+          />
+        </DialogPopup>
+      </Dialog>
+    );
+  }
   const showAccessSetup = props.hasAccessControls && address === null;
   const showPairing = address !== null && props.canPair;
   let instructions: ReactNode;
@@ -52,8 +70,8 @@ export function PhoneSetupDialog(props: {
     instructions = (
       <ol className="list-decimal space-y-2 pl-5">
         <li>
-          For this private fallback, install Tailscale on your iPhone. Sign in to the same tailnet
-          as this computer and turn the VPN on.
+          Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn
+          the VPN on.
         </li>
         <li>
           Copy the computer address below and open it in Safari on your iPhone. If it cannot load,
@@ -78,23 +96,16 @@ export function PhoneSetupDialog(props: {
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {code?.status === "ready" ? "Scan with your iPhone" : "Pair your iPhone with a QR code"}
+            {code?.status === "ready" ? "Scan with your iPhone" : "Pair with a private QR code"}
           </DialogTitle>
           <DialogDescription>
             {code?.status === "ready"
               ? `This code works once and expires at ${code.expiresAt}. Keep this computer awake.`
-              : props.onUseConnect
-                ? "Fastest: sign in to SpecWithCode Connect — no Tailscale needed. Use this QR code only as the private fallback."
-                : "This is the private alternative to signing in with SpecWithCode Connect. Prepare the connection first, then make a fresh one-time code."}
+              : "A fallback for when you can't use SpecWithCode Connect. Your iPhone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
-            {props.onUseConnect && code?.status !== "ready" ? (
-              <div>
-                <Button onClick={props.onUseConnect}>Use SpecWithCode Connect instead</Button>
-              </div>
-            ) : null}
             <div className="text-sm text-muted-foreground">{instructions}</div>
             {address !== null ? (
               <div className="rounded-lg border border-border p-3">
@@ -172,5 +183,47 @@ export function PhoneSetupDialog(props: {
         ) : null}
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/**
+ * What "Pair a phone" shows where Connect is available: signing in with the
+ * same account is the way to add an iPhone, and every further iPhone is added
+ * the same way. The private QR pairing is one click further.
+ */
+function ConnectFirstContent(props: {
+  readonly onUseConnect: () => void;
+  readonly onUseFallback: () => void;
+}) {
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Add your iPhone with SpecWithCode Connect</DialogTitle>
+        <DialogDescription>
+          Sign in with the same account on this computer and on the iPhone. It works from anywhere,
+          with no Tailscale, VPN or QR code.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogPanel>
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
+          <li>
+            On this computer, check Use SpecWithCode on your phone. If it does not say this computer
+            is ready for your iPhone yet, sign in there and turn it on.
+          </li>
+          <li>On the iPhone, open SpecWithCode and sign in with the same account.</li>
+          <li>This computer appears in the iPhone's list. Tap it to start.</li>
+        </ol>
+        <p className="mt-4 text-sm text-muted-foreground">
+          For a second iPhone, repeat the last two steps on it. Each iPhone signs in on its own;
+          phones do not count toward your Connect machines.
+        </p>
+      </DialogPanel>
+      <DialogFooter>
+        <Button variant="ghost" onClick={props.onUseFallback}>
+          Use a private QR code instead
+        </Button>
+        <Button onClick={props.onUseConnect}>Go to SpecWithCode Connect</Button>
+      </DialogFooter>
+    </>
   );
 }

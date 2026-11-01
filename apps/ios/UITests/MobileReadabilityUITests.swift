@@ -56,11 +56,9 @@ final class MobileReadabilityUITests: SWCUITestCase {
     let checklist = element(containing: "Provider checklist, 1 of 2 done")
     revealOlder(checklist)
     attachScreenshot("Provider checklist remains conversation content")
-    tap(app.buttons["chat.increment"])
-    waitFor(element(containing: "No linked increment"))
-    waitFor(element(containing: "A provider checklist does not create that binding."))
+    XCTAssertFalse(app.buttons["chat.increment"].exists, "A chat without a bound increment shows no increment pill")
     XCTAssertFalse(element(containing: "0970-phone-fleet-failover").exists)
-    attachScreenshot("Aide correctly reports no linked SpecWeave increment")
+    attachScreenshot("Aide shows no SpecWeave increment pill without a binding")
   }
 
   func testThreadsButtonExposesProjectConversations() throws {

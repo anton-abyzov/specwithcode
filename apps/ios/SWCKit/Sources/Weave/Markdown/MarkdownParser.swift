@@ -37,6 +37,17 @@ public nonisolated struct MarkdownListItem: Hashable, Sendable {
 }
 
 public nonisolated enum MarkdownParser {
+  /// `parse`, remembered per source text. A view body runs on every layout
+  /// pass (rotation, resize, scrolling), so a long transcript must not
+  /// re-parse each reply every time.
+  public static func cachedParse(_ source: String) -> [MarkdownBlock] {
+    let key = source as NSString
+    if let hit = ParseCache.shared.object(forKey: key) { return hit.blocks }
+    let blocks = parse(source)
+    ParseCache.shared.setObject(ParseCache.Entry(blocks), forKey: key, cost: source.utf8.count)
+    return blocks
+  }
+
   public static func parse(_ source: String) -> [MarkdownBlock] {
     let normalized = source.unicodeScalars.contains("\r") ? source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n") : source
     let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -363,4 +374,19 @@ public nonisolated enum MarkdownParser {
       return String(line[index...])
     }
   }
+}
+
+/// Bounded and thread-safe; the system evicts it under memory pressure.
+private nonisolated enum ParseCache {
+  final class Entry: Sendable {
+    let blocks: [MarkdownBlock]
+    init(_ blocks: [MarkdownBlock]) { self.blocks = blocks }
+  }
+
+  nonisolated(unsafe) static let shared: NSCache<NSString, Entry> = {
+    let cache = NSCache<NSString, Entry>()
+    cache.countLimit = 400
+    cache.totalCostLimit = 8 * 1024 * 1024
+    return cache
+  }()
 }

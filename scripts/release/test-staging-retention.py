@@ -71,21 +71,61 @@ class Retention(unittest.TestCase):
         self.assertTrue((current / 'notes/keep').is_file())
         self.assertTrue((current / ('runtime-' + 'b' * 12) / 'keep').is_file())
 
+    def published_only(self, name):
+        """A release that stopped after publish-public, as every --ci release does."""
+        stage = self.stage(name, done=False)
+        for marker in ('publish-private', 'publish-public'):
+            (stage / 'markers' / marker).write_text('once\n')
+        return stage
+
     def test_locks_incomplete_publication_and_foreign_descriptors_stay(self):
         locked = self.stage('1.0.0')
         (locked / 'lock').mkdir()  # A stale or empty lock is still a lock.
         partial = self.stage('1.0.1', done=False)
+        (partial / 'markers/publish-private').write_text('once\n')  # Private only: not public.
         foreign = self.stage('1.0.2')
         (foreign / 'release.json').write_text('{}')
-        published = self.stage('1.1.0')
-        (published / 'markers/merge').unlink()
+        unmerged = self.stage('1.1.0')
+        (unmerged / 'markers/merge').unlink()
         failed_fleet = self.stage('1.0.3')
         (failed_fleet / 'markers/fleet-workers').unlink()
-        plan = retention.prune(self.root, '1.2.0', '1.1.0', apply=True)
-        self.assertEqual(plan['removed'], [])
-        for stage in (locked, partial, foreign, published, failed_fleet):
+        result = retention.prune(self.root, '1.2.0', '1.1.0', apply=True)
+        # Published but not merged: the older stage goes, the previous one is compacted.
+        self.assertEqual(sorted(a['action'] for a in result['removed']), ['remove-payload'] * 5 + ['remove-stage'])
+        self.assertFalse(failed_fleet.exists())
+        self.assertFalse(list(unmerged.glob('runtime-*')))
+        self.assertTrue((unmerged / 'release.json').is_file())
+        self.assertTrue((unmerged / 'markers/publish-public').is_file())
+        for stage in (locked, partial, foreign):
             self.assertTrue(list(stage.glob('runtime-*')))
         self.assertEqual(retention.prune(self.root, finished=True, apply=True)['removed'], [])
+
+    def test_ci_releases_that_stop_after_publish_public_are_superseded(self):
+        old = self.published_only('1.0.134')
+        previous = self.published_only('1.0.135')
+        current = self.published_only('1.0.136')
+        result = retention.prune(self.root, '1.0.136', '1.0.135', apply=True)
+        self.assertEqual(len(result['removed']), 6)
+        self.assertFalse(old.exists())
+        self.assertFalse(list(previous.glob('runtime-*')))
+        self.assertEqual((previous / 'stage1/history.json').read_text(), '{"tests":"keep"}')
+        self.assertTrue(list(current.glob('runtime-*')))
+        # --finished still needs the whole rollout, so the current CI stage keeps its payloads.
+        self.assertEqual(retention.prune(self.root, finished=True, apply=True)['removed'], [])
+        self.assertTrue(list(current.glob('runtime-*')))
+
+    def test_published_needs_both_markers_and_a_recorded_sha(self):
+        missing_public = self.published_only('1.0.0')
+        (missing_public / 'markers/publish-public').unlink()
+        bad_sha = self.published_only('1.0.1')
+        (bad_sha / 'published.sha').write_text('not a commit')
+        no_sha = self.published_only('1.0.2')
+        (no_sha / 'published.sha').unlink()
+        started = self.published_only('1.0.3')
+        (started / 'markers/publish-private').write_text('started')
+        self.assertEqual(retention.prune(self.root, '1.2.0', '1.1.0', apply=True)['removed'], [])
+        for stage in (missing_public, bad_sha, no_sha, started):
+            self.assertTrue(list(stage.glob('runtime-*')))
 
     def test_invalid_marker_or_sha_does_not_prove_completed_release(self):
         current = self.stage('1.2.0')

@@ -66,6 +66,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -475,6 +476,11 @@ const make = Effect.gen(function* () {
   );
   // Interrupted copies continue (or replay their Apply journal) once the service is up.
   yield* Effect.promise(() => copies.resume().catch(() => undefined)).pipe(Effect.forkScoped);
+  // Offers whose grant expired unreleased would keep their captured files forever.
+  yield* Effect.promise(() => sources.sweepExpired()).pipe(
+    Effect.repeat(Schedule.spaced("1 hour")),
+    Effect.forkScoped,
+  );
   // Both addresses of this machine; destinations pull over SpecWithCode Connect first, the tailnet as fallback.
   const sourceAddressesNow = Effect.gen(function* () {
     const endpoints = Option.isSome(directEndpoints) ? yield* directEndpoints.value.resolve() : [];
@@ -1357,6 +1363,7 @@ const make = Effect.gen(function* () {
                     current.workspaceSettings?.coordinatorModelSelection ??
                     current.defaultModelSelection,
                   workerMachine: null,
+                  workerMachines: null,
                   goal: input.bundle.context.goal,
                   instructions: input.bundle.context.instructions,
                 },

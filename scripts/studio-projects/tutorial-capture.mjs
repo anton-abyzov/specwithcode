@@ -418,6 +418,7 @@ export async function capture(options) {
         ]),
       ),
       cursorKeychainUsageEnabled: false,
+      aideEnabled: true,
     });
     for (const project of projects) {
       fs.mkdirSync(project.dir, { mode: 0o700 });

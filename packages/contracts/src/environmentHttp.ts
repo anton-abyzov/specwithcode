@@ -132,6 +132,8 @@ import {
 import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
+  RelayRevokeClientKeysRequest,
+  RelayRevokeClientKeysResponse,
   RelayEnvironmentConfigRequest,
   RelayEnvironmentHealthResponse,
   RelayEnvironmentLinkProof,
@@ -169,6 +171,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "project_folder_missing",
   "project_name_taken",
   "project_assistant_exists",
+  "project_assistant_disabled",
   "project_kind_fixed",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
@@ -247,6 +250,8 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
         return "Another project already has this name. Choose a different one.";
       case "project_assistant_exists":
         return "This machine already has its personal assistant. Open it instead of creating another.";
+      case "project_assistant_disabled":
+        return "The personal assistant is turned off. Turn it on in Settings > General.";
       case "project_kind_fixed":
         return "A project's kind is set when it is created and cannot be changed.";
       default:
@@ -1001,6 +1006,11 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     HttpApiEndpoint.post("studioMintCredential", "/api/studio-connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
+      error: EnvironmentHttpCloudErrors,
+    }),
+    HttpApiEndpoint.post("studioRevokeClientKeys", "/api/studio-connect/revoke-client-keys", {
+      payload: RelayRevokeClientKeysRequest,
+      success: RelayRevokeClientKeysResponse,
       error: EnvironmentHttpCloudErrors,
     }),
   ) {}

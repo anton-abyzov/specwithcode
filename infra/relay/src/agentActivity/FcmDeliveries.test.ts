@@ -547,6 +547,17 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it.effect("sends nothing to a device registered without a push token", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      expect(
+        yield* delivery.enqueue({ target: { ...target, push_token: null }, state }),
+      ).toBeNull();
+      expect(h.queued).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it.effect("leaves iOS devices on their existing delivery path", () => {
     const h = harness();
     return Effect.gen(function* () {

@@ -17,6 +17,7 @@ import { MailIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
+import { useAideEnabled } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -78,6 +79,15 @@ export function GoogleAccountSettingsPanel() {
 
   const allProjects = useProjects();
   const scratchRoot = config?.scratchWorkspaceRoot ?? null;
+  const aideEnabled = useAideEnabled();
+  const statusProjects = status?.projects;
+  const projectsWithAccess = useMemo(
+    () =>
+      (statusProjects ?? [])
+        .filter((entry) => entry.services.length > 0)
+        .map((entry) => entry.projectId),
+    [statusProjects],
+  );
   const {
     active: projects,
     automated: automatedProjects,
@@ -87,8 +97,9 @@ export function GoogleAccountSettingsPanel() {
       partitionGoogleProjects(
         allProjects.filter((project) => project.environmentId === environmentId),
         () => scratchRoot,
+        { enabled: aideEnabled, keepIds: projectsWithAccess },
       ),
-    [allProjects, environmentId, scratchRoot],
+    [aideEnabled, allProjects, environmentId, projectsWithAccess, scratchRoot],
   );
 
   const [clientId, setClientId] = useState("");

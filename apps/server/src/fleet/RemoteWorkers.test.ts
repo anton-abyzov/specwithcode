@@ -415,6 +415,9 @@ describe("RemoteWorkers", () => {
         remoteThreadId: "b-thread-1",
         lastStatus: "completed",
         deliveredRunIds: ["b-run-1"],
+        // The lowering is kept on the row, not only logged.
+        runtimeMode: "auto",
+        loweredFrom: "full-access",
       });
       expect(world.wakes).toEqual([
         {
@@ -489,6 +492,10 @@ describe("RemoteWorkers", () => {
         ["codex", "full-access"],
         ["claude", "full-access"],
       ]);
+      for (const row of yield* rows) {
+        expect(row.runtimeMode).toBe("full-access");
+        expect(row.loweredFrom).toBeUndefined();
+      }
     }).pipe(Effect.provide(layer));
   });
 

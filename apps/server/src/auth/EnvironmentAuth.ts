@@ -255,10 +255,22 @@ export class EnvironmentAuth extends Context.Service<
     readonly listClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
+    /**
+     * Revoking a SpecWithCode Connect phone's session ends every session bound
+     * to its DPoP key and reports that key, so the caller can remove the phone
+     * from the account too.
+     */
     readonly revokeClientSession: (
       currentSessionId: AuthSessionId,
       targetSessionId: AuthSessionId,
-    ) => Effect.Effect<boolean, ServerAuthForbiddenOperationError | ServerAuthInternalError>;
+    ) => Effect.Effect<
+      { readonly revoked: boolean; readonly connectProofKeyThumbprint: string | null },
+      ServerAuthForbiddenOperationError | ServerAuthInternalError
+    >;
+    /** Ends every session bound to one of these DPoP keys; returns how many. */
+    readonly revokeSessionsByProofKeyThumbprints: (
+      proofKeyThumbprints: ReadonlyArray<string>,
+    ) => Effect.Effect<number, ServerAuthInternalError>;
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
@@ -1123,8 +1135,28 @@ export const make = Effect.gen(function* () {
     if (currentSessionId === targetSessionId) {
       return yield* new ServerAuthForbiddenOperationError({});
     }
-    return yield* revokeSession(targetSessionId);
+    const binding = yield* sessions
+      .readProofKeyBinding(targetSessionId)
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
+    const connectProofKeyThumbprint =
+      Option.isSome(binding) && binding.value.subject === "cloud-connect"
+        ? binding.value.proofKeyThumbprint
+        : null;
+    const revoked = yield* revokeSession(targetSessionId);
+    if (connectProofKeyThumbprint === null) {
+      return { revoked, connectProofKeyThumbprint };
+    }
+    const revokedWithKey = yield* revokeSessionsByProofKeyThumbprints([connectProofKeyThumbprint]);
+    return { revoked: revoked || revokedWithKey > 0, connectProofKeyThumbprint };
   });
+
+  const revokeSessionsByProofKeyThumbprints: EnvironmentAuth["Service"]["revokeSessionsByProofKeyThumbprints"] =
+    (proofKeyThumbprints) =>
+      sessions.revokeByProofKeyThumbprints(proofKeyThumbprints).pipe(
+        Effect.map((revokedSessionIds) => revokedSessionIds.length),
+        Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })),
+        Effect.withSpan("EnvironmentAuth.revokeSessionsByProofKeyThumbprints"),
+      );
 
   const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] = (
     currentSessionId,
@@ -1335,6 +1367,7 @@ export const make = Effect.gen(function* () {
     revokeOtherSessionsExcept,
     listClientSessions,
     revokeClientSession,
+    revokeSessionsByProofKeyThumbprints,
     revokeOtherClientSessions,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,

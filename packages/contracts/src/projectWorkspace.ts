@@ -57,6 +57,54 @@ export const ProjectWorkerMachine = Schema.Struct({
 });
 export type ProjectWorkerMachine = typeof ProjectWorkerMachine.Type;
 
+/** The entry in a worker machine list that stands for the coordinator's own machine. */
+export const LOCAL_WORKER_MACHINE_ID = "local";
+/** At most this many machines in a project's worker machine list. */
+export const MAX_PROJECT_WORKER_MACHINES = 8;
+
+/**
+ * The machines a project's coordinator starts workers on, best first. An entry
+ * whose `machineId` is `"local"` is the coordinator's own machine; a list
+ * without it never runs a worker here on its own. Each machine appears once.
+ */
+export const ProjectWorkerMachines = Schema.Array(ProjectWorkerMachine).check(
+  Schema.isMaxLength(MAX_PROJECT_WORKER_MACHINES),
+  Schema.makeFilter(
+    (machines) => new Set(machines.map((machine) => machine.machineId)).size === machines.length,
+  ),
+);
+export type ProjectWorkerMachines = typeof ProjectWorkerMachines.Type;
+
+/**
+ * The machines this project's workers may run on, in the order to try them.
+ * A saved list wins; a project that only chose one worker machine (before
+ * lists) tries it, then this machine, as it always did. Empty: this machine.
+ */
+export function projectWorkerMachineOrder(
+  settings:
+    | {
+        readonly workerMachine?: ProjectWorkerMachine | null | undefined;
+        readonly workerMachines?: ProjectWorkerMachines | null | undefined;
+      }
+    | null
+    | undefined,
+  localEnvironmentId: EnvironmentId,
+): ProjectWorkerMachines {
+  const local: ProjectWorkerMachine = {
+    machineId: LOCAL_WORKER_MACHINE_ID,
+    environmentId: localEnvironmentId,
+    projectId: null,
+  };
+  const list = settings?.workerMachines;
+  if (list != null && list.length > 0) return list;
+  const single = settings?.workerMachine;
+  return single ? [single, local] : [local];
+}
+
+/** Whether a worker machine entry is the coordinator's own machine. */
+export const isLocalWorkerMachine = (machine: Pick<ProjectWorkerMachine, "machineId">) =>
+  machine.machineId === LOCAL_WORKER_MACHINE_ID;
+
 /**
  * How much of a project reaches the person as alerts (sound, desktop
  * notification, phone push) and whether its row shows a waiting count. See
@@ -81,8 +129,10 @@ export const ProjectWorkspaceSettings = Schema.Struct({
   paused: Schema.Boolean,
   archived: Schema.Boolean,
   autoResume: Schema.Boolean,
-  /** Absent or null: workers run on this machine. */
+  /** Absent or null: workers run on this machine. Superseded by `workerMachines` when that is set. */
   workerMachine: Schema.optionalKey(Schema.NullOr(ProjectWorkerMachine)),
+  /** Absent, null or empty: `workerMachine`, else this machine (see `projectWorkerMachineOrder`). */
+  workerMachines: Schema.optionalKey(Schema.NullOr(ProjectWorkerMachines)),
   /**
    * Server-managed: the temporary `auth session issue` session that created
    * this project. The server deletes the project once that session ends.
@@ -126,6 +176,7 @@ export const ProjectWorkspacePatch = Schema.Struct({
   archived: Schema.optional(Schema.Boolean),
   autoResume: Schema.optional(Schema.Boolean),
   workerMachine: Schema.optional(Schema.NullOr(ProjectWorkerMachine)),
+  workerMachines: Schema.optional(Schema.NullOr(ProjectWorkerMachines)),
   origin: Schema.optional(ProjectOrigin),
   notifications: Schema.optional(ProjectNotificationLevel),
 });

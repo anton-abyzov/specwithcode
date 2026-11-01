@@ -196,7 +196,7 @@ try {
       assert.ok(originalRoute.modelProvider === null || originalRoute.modelProvider === 'openai'); assert.equal(originalRoute.routeVerified, true);
       step('fixture-native-route', originalRoute);
       // A deliberate standard workspace-write mode for this owned fixture, never full access.
-      await page.getByRole('combobox', { name: 'Runtime mode', exact: true }).click();
+      await page.getByRole('combobox', { name: /^Access: / }).click();
       await page.getByRole('option', { name: /Auto-accept edits/ }).click();
       step('explicit-native-runtime-mode', { mode: 'auto-accept-edits', sandbox: 'workspaceWrite', approvalPolicy: 'on-request', permissionBypass: false });
       const prompt = 'In this owned verification repository, change only marker.txt from studio-baseline to studio-native-completed followed by one newline. Read AGENTS.md if needed. Do not inspect home directories, credentials, other projects or network endpoints. Do not commit. Report the single file changed. Any automated browser must explicitly be headless:true/True; PWDEBUG=0 and PLAYWRIGHT_HTML_OPEN=never.';

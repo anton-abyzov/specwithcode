@@ -163,12 +163,13 @@ export function CoordinatorNativeControls({
       ) : null}
       {approval ? (
         <section
-          className="space-y-3 rounded-lg border border-warning/25 bg-warning-surface p-4"
+          className="@container space-y-3 rounded-lg border border-warning/25 bg-warning-surface p-4"
           aria-label="Approval request"
         >
           <ComposerPendingApprovalPanel approval={approval} pendingCount={approvals.length} />
+          {/* The composer's approval row: its own line under the request, right-aligned. */}
           <div
-            className="flex flex-wrap items-center gap-2"
+            className="flex justify-end"
             aria-busy={respondingApprovals.includes(approval.requestId)}
           >
             <ComposerPendingApprovalActions

@@ -214,7 +214,8 @@ import { requestRestartToUpdate } from "./sidebar/restartToUpdateRequests";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useAideEnabled, useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { visibleWithAide } from "~/studio/personalAssistant";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
@@ -3191,7 +3192,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 });
 
 export default function LegacySidebar() {
-  const projects = useSidebarProjects(useProjects());
+  const allProjects = useSidebarProjects(useProjects());
+  // A hidden personal assistant (Settings → General) is left out of the list.
+  const aideEnabled = useAideEnabled();
+  const projects = useMemo(
+    () => visibleWithAide(allProjects, aideEnabled),
+    [allProjects, aideEnabled],
+  );
   const serverConfigs = useServerConfigs();
   const scratchRootFor = useCallback(
     (environmentId: EnvironmentId) =>

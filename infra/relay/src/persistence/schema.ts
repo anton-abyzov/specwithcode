@@ -27,6 +27,12 @@ export const relayMobileDevices = sqliteTable(
     apsEnvironment: text("aps_environment").$type<"sandbox" | "production">(),
     pushToken: text("push_token"),
     pushToStartToken: text("push_to_start_token"),
+    // The DPoP key and Clerk session the phone last used; a removal copies
+    // them so the phone stays refused until a fresh interactive sign-in.
+    proofKeyThumbprint: text("proof_key_thumbprint"),
+    clerkSessionId: text("clerk_session_id"),
+    model: text("model"),
+    lastSeenAt: text("last_seen_at"),
     preferencesJson: text("preferences_json", { mode: "json" })
       .notNull()
       .$type<RelayAgentAwarenessPreferences>(),
@@ -37,6 +43,53 @@ export const relayMobileDevices = sqliteTable(
     primaryKey({ columns: [table.userId, table.deviceId] }),
     uniqueIndex("idx_relay_mobile_devices_push_token").on(table.pushToken),
     uniqueIndex("idx_relay_mobile_devices_push_to_start_token").on(table.pushToStartToken),
+  ],
+);
+
+/**
+ * Phones removed from an account. While a row matches a phone's device id or
+ * DPoP key, the relay refuses its token exchange, registration and connect
+ * requests; only a Clerk session created after `removedAt` (a fresh
+ * interactive sign-in) clears it.
+ */
+export const relayMobileDeviceRemovals = sqliteTable(
+  "relay_mobile_device_removals",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    deviceId: text("device_id"),
+    proofKeyThumbprint: text("proof_key_thumbprint"),
+    clerkSessionId: text("clerk_session_id"),
+    label: text("label"),
+    removedAt: text("removed_at").notNull(),
+  },
+  (table) => [
+    index("idx_relay_mobile_device_removals_device").on(table.userId, table.deviceId),
+    // Key first: the removal-status check knows only the key.
+    index("idx_relay_mobile_device_removals_key").on(table.proofKeyThumbprint, table.userId),
+    index("idx_relay_mobile_device_removals_session").on(table.userId, table.clerkSessionId),
+  ],
+);
+
+/**
+ * The DPoP keys an account exchanged Clerk sessions for, written on each
+ * token exchange. Removing a phone uses them to find every key and Clerk
+ * session the phone used, even one that never registered for notifications,
+ * and to tell a phone's key from a browser's.
+ */
+export const relayClientKeys = sqliteTable(
+  "relay_client_keys",
+  {
+    userId: text("user_id").notNull(),
+    proofKeyThumbprint: text("proof_key_thumbprint").notNull(),
+    clientId: text("client_id").notNull(),
+    deviceId: text("device_id"),
+    clerkSessionId: text("clerk_session_id"),
+    lastSeenAt: text("last_seen_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.proofKeyThumbprint] }),
+    index("idx_relay_client_keys_device").on(table.userId, table.deviceId),
   ],
 );
 

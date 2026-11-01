@@ -46,6 +46,17 @@ describe("partitionGoogleProjects", () => {
     expect(automated.map((entry) => entry.id)).toEqual(["demo", "check"]);
     expect(archived.map((entry) => entry.id)).toEqual(["old", "oldcheck"]);
   });
+
+  it("leaves a hidden personal assistant out unless it still holds Google access", () => {
+    const projects = [project("code", "Alpha"), project("aide", "Zeta", { kind: "personal" })];
+    const hidden = partitionGoogleProjects(projects, () => null, { enabled: false, keepIds: [] });
+    expect(hidden.active.map((entry) => entry.id)).toEqual(["code"]);
+    const withAccess = partitionGoogleProjects(projects, () => null, {
+      enabled: false,
+      keepIds: ["aide"],
+    });
+    expect(withAccess.active.map((entry) => entry.id)).toEqual(["aide", "code"]);
+  });
 });
 
 describe("bulk Google access", () => {

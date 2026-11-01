@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
+import { RunOutNotice, runOutWindowsOf } from "../usage/RunOutNotice";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -98,12 +99,19 @@ function UsageLimitsBannerBody({
               {notice ? (
                 <span className="text-xs text-muted-foreground">{notice}</span>
               ) : (
-                <LimitWindows
-                  compact
-                  driver={account.driver}
-                  windows={account.limits.windows}
-                  now={now}
-                />
+                <>
+                  <LimitWindows
+                    compact
+                    driver={account.driver}
+                    windows={account.limits.windows}
+                    now={now}
+                  />
+                  <RunOutNotice
+                    driver={account.driver}
+                    windows={runOutWindowsOf(account.limits.windows)}
+                    now={now}
+                  />
+                </>
               )}
               {externalUsage ? (
                 <Button

@@ -389,6 +389,28 @@ describe("retryMaxDelayMs", () => {
   });
 });
 
+describe("retryAfterFloorMs", () => {
+  it("holds a retry until a rate-limiting machine's retry-after has passed", () => {
+    const limited = new ConnectionTransientError({
+      reason: "rate-limited",
+      detail: "rate limited",
+      retryAfterMs: 173_000,
+    });
+    expect(EnvironmentSupervisor.retryAfterFloorMs(limited)).toBe(173_000);
+    expect(
+      Math.max(
+        EnvironmentSupervisor.retryDelayMs(0, 0),
+        EnvironmentSupervisor.retryAfterFloorMs(limited),
+      ),
+    ).toBe(173_000);
+    expect(
+      EnvironmentSupervisor.retryAfterFloorMs(
+        new ConnectionTransientError({ reason: "network", detail: "offline" }),
+      ),
+    ).toBe(0);
+  });
+});
+
 describe("EnvironmentSupervisor", () => {
   it.effect("exports each relay setup as a standalone linked trace that ends at readiness", () =>
     Effect.gen(function* () {
@@ -1645,6 +1667,8 @@ describe("EnvironmentSupervisor", () => {
         registerDevice: unused,
         unregisterDevice: unused,
         registerLiveActivity: unused,
+        listPhones: unused,
+        removePhone: unused,
         getAgentActivitySnapshot: unused,
         resetTokenCache: Effect.void,
       });

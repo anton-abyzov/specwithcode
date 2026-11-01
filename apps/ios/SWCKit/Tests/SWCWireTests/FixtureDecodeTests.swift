@@ -24,6 +24,15 @@ struct FixtureDecodeTests {
     #expect(settings.providerInstances.isEmpty)
   }
 
+  @Test func aideEnabledDecodesAndDefaultsToOff() throws {
+    // Older servers and saved settings omit the key: Aide stays hidden.
+    #expect(try Fixture.decode(ServerSettings.self, "serverSettings.default.json").aideEnabled == false)
+    #expect(try decodeJSON(ServerSettings.self, #"{"aideEnabled":true}"#).aideEnabled == true)
+    #expect(try decodeJSON(ServerSettings.self, #"{"aideEnabled":false}"#).aideEnabled == false)
+    // A malformed value hides Aide rather than failing the whole snapshot.
+    #expect(try decodeJSON(ServerSettings.self, #"{"aideEnabled":"yes"}"#).aideEnabled == false)
+  }
+
   @Test func shellStreamSnapshot() throws {
     let item = try Fixture.decode(ShellStreamItem.self, "shellStreamItem.snapshot.json")
     guard case let .snapshot(snapshot, roots) = item else {

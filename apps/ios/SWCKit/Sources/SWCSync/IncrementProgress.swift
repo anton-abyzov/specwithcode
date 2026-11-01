@@ -36,6 +36,11 @@ public struct IncrementProgress: Decodable, Sendable, Equatable {
   public let verify: Verification?
 }
 
+extension IncrementProgress {
+  /// Tasks the ledger shows as done or skipped.
+  public var settledCount: Int { tasks.filter { $0.status == "done" || $0.status == "skipped" }.count }
+}
+
 public enum IncrementRead: Sendable, Equatable {
   case bound(IncrementProgress)
   case unbound

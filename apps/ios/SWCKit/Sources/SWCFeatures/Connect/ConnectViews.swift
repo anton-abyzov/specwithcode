@@ -44,12 +44,17 @@ struct ConnectSignInButtons: View {
 /// First run with SpecWithCode Connect: sign in, or wait for a computer to
 /// appear on the account.
 struct ConnectWelcomeContent: View {
+  static let signInID = "connect.sign-in"
+
   let state: ConnectState
+  /// Told whether the sign-in buttons are on screen, so the welcome screen
+  /// can point to them when they are scrolled out of view.
+  var onSignInVisible: ((Bool) -> Void)?
   @Environment(AppModel.self) private var model
 
   static let signedInSteps = [
     "Open SpecWithCode on your Mac.",
-    "In Settings > Connections, turn on SpecWithCode Connect and sign in with the same account.",
+    "In Settings > Connections, under Use SpecWithCode on your phone, sign in with the same account and turn it on.",
     "Your Mac appears here. Tap it to start.",
   ]
 
@@ -71,11 +76,13 @@ struct ConnectWelcomeContent: View {
           Task { await model.engine.connectRefresh() }
         }
       } else {
-        Text("Sign in with the account you use in SpecWithCode on your Mac. Your Macs appear here, wherever you are.")
+        Text(state.wasRemoved ? ConnectState.removedMessage : "Sign in with the account you use in SpecWithCode on your Mac. Your Macs appear here, wherever you are. Every iPhone you sign in on gets the same Macs.")
           .weaveFont(.callout)
           .foregroundStyle(Color.weave.muted)
           .multilineTextAlignment(.center)
         ConnectSignInButtons(state: state)
+          .id(Self.signInID)
+          .onScrollVisibilityChange(threshold: 0.5) { onSignInVisible?($0) }
       }
       if let error = state.lastError {
         Text(error)
@@ -108,7 +115,7 @@ struct ConnectAccountCard: View {
         VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
           FieldLabel("Account")
           ConnectSignInButtons(state: state)
-          Text("Sign in with the account you use in SpecWithCode on your Mac to reach it from anywhere.")
+          Text(state.wasRemoved ? ConnectState.removedMessage : "Sign in with the account you use in SpecWithCode on your Mac to reach it from anywhere.")
             .font(.weave(.caption))
             .foregroundStyle(Color.weave.muted)
             .padding(.horizontal, WeaveSpacing.s4)

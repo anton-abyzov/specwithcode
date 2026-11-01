@@ -36,6 +36,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import * as ConnectPhoneRevocation from "../cloud/ConnectPhoneRevocation.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
 class DiskFullTestError extends Schema.TaggedError<DiskFullTestError>()("DiskFullTestError", {
@@ -801,6 +802,101 @@ it.effect("lets a bearer credential revoke itself, never a browser cookie", () =
         }),
       ({ dispose }) => Effect.promise(dispose),
     );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("revoking a Connect phone ends its other sessions and removes it from the account", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+    const crypto = yield* Crypto.Crypto;
+    const authContext = yield* Layer.build(
+      EnvironmentAuth.layer.pipe(
+        Layer.provide(SqlitePersistence.layerMemory),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(layerConfig),
+      ),
+    );
+    const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
+    const sessions = Context.get(authContext, SessionStore.SessionStore);
+    const management = yield* auth.issueSession({
+      scopes: ["access:read", "access:write"],
+      label: "Management token",
+    });
+    const phone = {
+      subject: "cloud-connect",
+      scopes: ["orchestration:read"],
+      proofKeyThumbprint: "phone-key",
+    } as const;
+    const phoneSession = yield* auth.issueSession(phone);
+    const samePhone = yield* auth.issueSession(phone);
+    const connectBrowser = yield* auth.issueSession({ ...phone, proofKeyThumbprint: "web-key" });
+    const browser = yield* auth.issueSession({ subject: "one-time-token", label: "Browser" });
+    const removedAtRelay: Array<string> = [];
+    const routes = HttpApiBuilder.layer(AuthTestApi).pipe(
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+      Layer.provide(Layer.succeed(SessionStore.SessionStore, sessions)),
+      Layer.provide(
+        Layer.mock(ConnectPhoneRevocation.ConnectPhoneRevocation)({
+          // The relay being down, or answering that a key is not a phone's,
+          // never fails the local revoke; the service logs it.
+          removeAtRelay: (proofKeyThumbprint) =>
+            Effect.sync(() => removedAtRelay.push(proofKeyThumbprint)).pipe(Effect.as(false)),
+        }),
+      ),
+      Layer.provide(layerConfig),
+      Layer.provide(
+        HttpPlatform.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Etag.layerWeak),
+        ),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+      (handler) =>
+        Effect.tryPromise(async () => {
+          const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+            Context.add(
+              ServerSecretStore.ServerSecretStore,
+              Context.get(authContext, ServerSecretStore.ServerSecretStore),
+            ),
+          );
+          const revoke = (sessionId: string) =>
+            handler.handler(
+              postJson(
+                "/api/auth/clients/revoke",
+                { sessionId },
+                { authorization: `Bearer ${management.token}` },
+              ),
+              requestContext,
+            );
+          const revokedPhone = await revoke(phoneSession.sessionId);
+          expect(revokedPhone.status).toBe(200);
+          expect(await revokedPhone.json()).toEqual({ revoked: true });
+          expect(removedAtRelay).toEqual(["phone-key"]);
+
+          // A browser over Connect is revoked here too; the relay decides it is
+          // not a phone and removes nothing.
+          const revokedConnectBrowser = await revoke(connectBrowser.sessionId);
+          expect(await revokedConnectBrowser.json()).toEqual({ revoked: true });
+          expect(removedAtRelay).toEqual(["phone-key", "web-key"]);
+
+          const revokedBrowser = await revoke(browser.sessionId);
+          expect(await revokedBrowser.json()).toEqual({ revoked: true });
+          // A session that never came through Connect stays off the relay.
+          expect(removedAtRelay).toEqual(["phone-key", "web-key"]);
+        }),
+      ({ dispose }) => Effect.promise(dispose),
+    );
+    const remaining = (yield* auth.listSessions()).map((session) => session.sessionId);
+    expect(remaining).toContain(management.sessionId);
+    for (const ended of [phoneSession, samePhone, connectBrowser, browser]) {
+      expect(remaining).not.toContain(ended.sessionId);
+    }
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 

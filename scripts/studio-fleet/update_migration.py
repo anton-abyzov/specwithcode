@@ -55,6 +55,21 @@ PRINCIPAL_TRIGGERS = {
     'auth_pairing_links': ['trigger', 'auth_pairing_principal_generation', 'auth_pairing_links',
                            _PRINCIPAL_TRIGGER.format(name='auth_pairing_principal_generation', table='auth_pairing_links')]}
 
+# Migration 069 (AuthSessionProofKeyThumbprint) records the DPoP key a session is bound to, so
+# every session of one SpecWithCode Connect phone can be ended together. It adds one nullable
+# column to auth_sessions, after 067's when both run, and one partial index on it. Accepted
+# exactly so (marked `proofKey`). Every earlier row holds NULL there, except that the new
+# server fills it once for a Connect session that reconnects during the restart (SessionStore.ts
+# backfillProofKey: subject cloud-connect, method dpop-access-token, the token's RFC 7638
+# thumbprint). That value can only end the session sooner; principal_auth checks each row.
+PROOF_KEY_COLUMNS = [['proof_key_thumbprint', 'TEXT', 0, None, 0, 0]]
+PROOF_KEY_DEFINITIONS = ', proof_key_thumbprint TEXT'
+PROOF_KEY_INDEX = ['index', 'auth_sessions_proof_key_thumbprint_idx', 'auth_sessions',
+                   'CREATE INDEX auth_sessions_proof_key_thumbprint_idx ON auth_sessions(proof_key_thumbprint) '
+                   'WHERE proof_key_thumbprint IS NOT NULL']
+PROOF_KEY_BACKFILL = {'subject': 'cloud-connect', 'method': 'dpop-access-token'}
+PROOF_KEY_THUMBPRINT = re.compile('[A-Za-z0-9_-]{43}')
+
 def _spaced(item):
     """A schema object with each run of whitespace in its SQL written as one space."""
     # ASCII whitespace only: SQLite reads any other character as part of a word.
@@ -66,65 +81,103 @@ def principal_trigger(item, widenings):
         return False
     return (widenings or {}).get(item[2], {}).get('principal') is True and _spaced(item) == PRINCIPAL_TRIGGERS[item[2]]
 
-def principal_widening(table, widening, before_capture, after_capture, before):
-    """Migration 067 on `table`, or False when its added columns are not 067's. Raises when
-    they are and anything else differs: a filled or changed new cell, another default, the
-    revocations table holding a row or defined otherwise, or the trigger missing or rewritten."""
-    if table not in PRINCIPAL_TABLES or [column[1:] for column in widening['added']] != PRINCIPAL_COLUMNS:
-        return False
-    assert widening.get('changedRows') == 0, 'A migration filled a new column of a protected table'
+def auth_widening(table, widening, before_capture, after_capture, before):
+    """Which of migrations 067 and 069 widened `table`, as {'principal': True} and/or
+    {'proofKey': True}, or {} when its added columns are neither's. Raises when they are and
+    anything else differs: a filled or changed new cell, another default, the revocations table
+    holding a row or defined otherwise, a trigger or index missing, added or rewritten."""
+    added = [column[1:] for column in widening['added']]
+    principal = table in PRINCIPAL_TABLES and added[:len(PRINCIPAL_COLUMNS)] == PRINCIPAL_COLUMNS
+    rest = added[len(PRINCIPAL_COLUMNS):] if principal else added
+    proof_key = table == 'auth_sessions' and rest == PROOF_KEY_COLUMNS
+    if not (principal or proof_key) or (rest and not proof_key):
+        return {}
+    if proof_key:
+        # A Connect session's backfill may fill the new cell; principal_auth checks every row.
+        assert table == 'auth_sessions', 'A migration filled a new column of a protected table'
+    else:
+        assert widening.get('changedRows') == 0, 'A migration filled a new column of a protected table'
     old = [item for item in before_capture['schema']['objects'] if item[0] == 'table' and item[1] == table]
     new = [item for item in after_capture['schema']['objects'] if item[0] == 'table' and item[1] == table]
     assert len(old) == len(new) == 1 and isinstance(old[0][3], str) and old[0][3].endswith(')'), \
         'History, provider, schedule or pairing table definition changed during migration'
-    assert new[0][:3] == old[0][:3] and new[0][3] == old[0][3][:-1] + PRINCIPAL_DEFINITIONS + ')', \
+    definitions = (PRINCIPAL_DEFINITIONS if principal else '') + (PROOF_KEY_DEFINITIONS if proof_key else '')
+    assert new[0][:3] == old[0][:3] and new[0][3] == old[0][3][:-1] + definitions + ')', \
         'History, provider, schedule or pairing table definition changed during migration'
     existing = {encoded(item) for item in before_capture['schema']['objects']}
     triggers = [item for item in after_capture['schema']['objects'] if item[0] == 'trigger' and item[2] == table
                 and encoded(item) not in existing]
-    assert len(triggers) == 1 and _spaced(triggers[0]) == PRINCIPAL_TRIGGERS[table], \
+    assert [_spaced(item) for item in triggers] == ([PRINCIPAL_TRIGGERS[table]] if principal else []), \
         'A migration added a trigger touching sessions, pairing, provider or schedule rows'
-    assert PRINCIPAL_REVOCATIONS not in before_capture['schema']['columns'] and \
-        not any(item[2] == PRINCIPAL_REVOCATIONS for item in before_capture['schema']['objects']), \
-        'Auth principal revocations existed before the migration'
-    revocations = sorted((_spaced(item) for item in after_capture['schema']['objects'] if item[2] == PRINCIPAL_REVOCATIONS),
-                         key=encoded)
-    assert revocations == PRINCIPAL_REVOCATIONS_OBJECTS and \
-        after_capture['summary']['tables'].get(PRINCIPAL_REVOCATIONS, {}).get('count') == 0, \
-        'A migration created a session, pairing, provider or schedule table holding rows'
-    assert not after_capture['schema']['foreignKeys'].get(PRINCIPAL_REVOCATIONS), \
-        'History, provider, schedule or pairing foreign keys changed during migration'
-    return True
+    indexes = [item for item in after_capture['schema']['objects'] if item[0] == 'index' and item[2] == table
+               and encoded(item) not in existing]
+    assert [_spaced(item) for item in indexes] == ([PROOF_KEY_INDEX] if proof_key else []), \
+        'Complete auth schema changed'
+    if principal:
+        assert PRINCIPAL_REVOCATIONS not in before_capture['schema']['columns'] and \
+            not any(item[2] == PRINCIPAL_REVOCATIONS for item in before_capture['schema']['objects']), \
+            'Auth principal revocations existed before the migration'
+        revocations = sorted((_spaced(item) for item in after_capture['schema']['objects'] if item[2] == PRINCIPAL_REVOCATIONS),
+                             key=encoded)
+        assert revocations == PRINCIPAL_REVOCATIONS_OBJECTS and \
+            after_capture['summary']['tables'].get(PRINCIPAL_REVOCATIONS, {}).get('count') == 0, \
+            'A migration created a session, pairing, provider or schedule table holding rows'
+        assert not after_capture['schema']['foreignKeys'].get(PRINCIPAL_REVOCATIONS), \
+            'History, provider, schedule or pairing foreign keys changed during migration'
+    return {**({'principal': True} if principal else {}), **({'proofKey': True} if proof_key else {})}
+
+def principal_widening(table, widening, before_capture, after_capture, before):
+    """Migration 067 on `table` (auth_widening), or False when its added columns are not 067's."""
+    return auth_widening(table, widening, before_capture, after_capture, before).get('principal') is True
+
+def proof_key_backfill(fields, value):
+    """True for the one value migration 069's server writes into an earlier session's new cell."""
+    return (isinstance(value, str) and PROOF_KEY_THUMBPRINT.fullmatch(value) is not None and
+            all(fields.get(name) == expected for name, expected in PROOF_KEY_BACKFILL.items()))
 
 def principal_auth(current, after, widenings):
     """`current` auth (bound to `after`, the real after-snapshot) seen through its earlier
-    columns, when migration 067 widened auth_sessions: the schema without 067's two trailing
-    columns, their table text and its trigger, and every row without its last two cells, which
-    must be NULL and the integer 0. The proofs then require that earlier schema and those rows
-    to be the original's. Without that widening, `current` itself."""
-    if current is None or (widenings or {}).get('auth_sessions', {}).get('principal') is not True:
+    columns, when migration 067 or 069 widened auth_sessions: the schema without their trailing
+    columns, their table text, 067's trigger and 069's index, and every row without those cells,
+    which must be NULL and the integer 0 (067) and NULL or a Connect session's backfilled key
+    (069). The proofs then require that earlier schema and those rows to be the original's.
+    Without either widening, `current` itself."""
+    marks = (widenings or {}).get('auth_sessions', {})
+    principal, proof_key = marks.get('principal') is True, marks.get('proofKey') is True
+    if current is None or not (principal or proof_key):
         return current
     bind_auth(current, after)
     columns, extended, definitions = copy.deepcopy(current['schema'])
-    added = len(PRINCIPAL_COLUMNS)
+    expected = (PRINCIPAL_COLUMNS if principal else []) + (PROOF_KEY_COLUMNS if proof_key else [])
+    suffix = (PRINCIPAL_DEFINITIONS if principal else '') + (PROOF_KEY_DEFINITIONS if proof_key else '') + ')'
+    added = len(expected)
     assert len(columns) > added and len(extended) > added and \
-        [column[1:] for column in extended[-added:]] == PRINCIPAL_COLUMNS and \
-        [column[1:] for column in columns[-added:]] == [column[:5] for column in PRINCIPAL_COLUMNS] and \
+        [column[1:] for column in extended[-added:]] == expected and \
+        [column[1:] for column in columns[-added:]] == [column[:5] for column in expected] and \
         [column[0] for column in extended[-added:]] == [len(extended) - added + index for index in range(added)] and \
         [column[0] for column in columns[-added:]] == [len(columns) - added + index for index in range(added)], \
         'Complete auth schema changed'
     tables = [item for item in definitions if item[0] == 'table' and item[1] == 'auth_sessions']
-    assert len(tables) == 1 and isinstance(tables[0][3], str) and tables[0][3].endswith(PRINCIPAL_DEFINITIONS + ')'), \
+    assert len(tables) == 1 and isinstance(tables[0][3], str) and tables[0][3].endswith(suffix), \
         'Complete auth schema changed'
-    tables[0][3] = tables[0][3][:-len(PRINCIPAL_DEFINITIONS + ')')] + ')'
-    triggers = [item for item in definitions if item[0] == 'trigger']
-    assert len(triggers) == 1 and _spaced(triggers[0]) == PRINCIPAL_TRIGGERS['auth_sessions'], 'Complete auth schema changed'
+    tables[0][3] = tables[0][3][:-len(suffix)] + ')'
+    removed = ([PRINCIPAL_TRIGGERS['auth_sessions']] if principal else []) + ([PROOF_KEY_INDEX] if proof_key else [])
+    added_objects = [item for item in definitions if (item[0] == 'trigger' and principal) or
+                     (item[0] == 'index' and item[1] == PROOF_KEY_INDEX[1])]
+    assert sorted((_spaced(item) for item in added_objects), key=encoded) == sorted(removed, key=encoded), \
+        'Complete auth schema changed'
     names = [column[1] for column in columns]
-    assert current['columns'] == names and names[-added:] == [column[0] for column in PRINCIPAL_COLUMNS], 'Complete auth schema changed'
+    assert current['columns'] == names and names[-added:] == [column[0] for column in expected], 'Complete auth schema changed'
     for row in current['rows']:
-        assert len(row) == len(names) and row[-2] is None and type(row[-1]) is int and row[-1] == 0, \
-            'A migration filled a new column of a protected table'
-    return {'schema': [columns[:-added], extended[:-added], [item for item in definitions if item[0] != 'trigger']],
+        assert len(row) == len(names), 'Complete auth schema changed'
+        fields = dict(zip(names, row))
+        if principal:
+            assert fields['principal'] is None and type(fields['principal_generation']) is int and \
+                fields['principal_generation'] == 0, 'A migration filled a new column of a protected table'
+        if proof_key:
+            assert fields['proof_key_thumbprint'] is None or proof_key_backfill(fields, fields['proof_key_thumbprint']), \
+                'A migration filled a new column of a protected table'
+    return {'schema': [columns[:-added], extended[:-added], [item for item in definitions if item not in added_objects]],
             'columns': names[:-added], 'rows': [list(row[:-added]) for row in current['rows']]}
 
 def accepted_widenings(before_capture, after_capture, before):
@@ -133,14 +186,15 @@ def accepted_widenings(before_capture, after_capture, before):
     unchanged (compared through the earlier columns), and every added column has no
     constraint, no default and no value in any row. {table: widening} from the after
     capture. Projection tables may change anyway; the event and receipt logs are never
-    widened, and auth_sessions only as migration 067 widens it (principal_widening, marked
-    `principal`)."""
+    widened, and auth_sessions only as migrations 067 and 069 widen it (auth_widening, marked
+    `principal` and `proofKey`)."""
     accepted = {}
     for table, widening in (after_capture.get('widened') or {}).items():
         if table not in before.get('counts', {}) or is_projection_table(table):
             continue
-        if principal_widening(table, widening, before_capture, after_capture, before):
-            accepted[table] = {**widening, 'principal': True}
+        marks = auth_widening(table, widening, before_capture, after_capture, before)
+        if marks:
+            accepted[table] = {**widening, **marks}
             continue
         assert table != 'auth_sessions' and table not in LOG_TABLES, \
             'A migration added columns to the auth sessions or history tables'
@@ -233,7 +287,7 @@ def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, 
         continuity.bind_rows(before_capture, before)
         continuity.bind_rows(after_capture, after)
         widenings = accepted_widenings(before_capture, after_capture, before)
-    # The proof compared auth widened by migration 067 through its earlier columns (principal_auth).
+    # The proof compared auth widened by migration 067 or 069 through its earlier columns (principal_auth).
     narrowed, current_auth = narrowed_rows(after, widenings), principal_auth(current_auth, after, widenings)
     typed = witness.get('migrationTypedAuth')
     assert isinstance(typed, dict) and set(typed) == {'schemaVersion', 'beforeSha256', 'afterSha256'}, 'Migration requires typed auth commitments'

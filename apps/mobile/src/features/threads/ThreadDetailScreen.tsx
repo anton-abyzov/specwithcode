@@ -176,6 +176,7 @@ export interface ThreadDetailScreenProps {
     | { readonly kind: "failed"; readonly reason: string; readonly onEditTask: () => void }
     | null;
   readonly activePendingApproval: PendingApproval | null;
+  readonly pendingApprovalCount?: number;
   readonly respondingApprovalId: RuntimeRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
@@ -1306,6 +1307,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       <PendingApprovalCard
                         canOperateThread={props.canOperateThread}
                         approval={props.activePendingApproval}
+                        {...(props.pendingApprovalCount === undefined
+                          ? {}
+                          : { pendingCount: props.pendingApprovalCount })}
                         respondingApprovalId={props.respondingApprovalId}
                         onRespond={props.onRespondToApproval}
                       />

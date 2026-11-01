@@ -25,7 +25,7 @@ struct TranscriptRowView: View {
       if markdown.isEmpty, streaming {
         EmptyView()
       } else {
-        MarkdownText(markdown, collapsible: !streaming && markdown.count > Self.collapseThreshold, onOpenLink: onOpenLink)
+        MarkdownText(markdown, collapsible: !streaming && markdown.count > Self.collapseThreshold, streaming: streaming, onOpenLink: onOpenLink)
           .padding(.leading, Self.textInset)
           .padding(.trailing, WeaveSpacing.s2)
       }
@@ -44,8 +44,14 @@ struct TranscriptRowView: View {
     case let .proposedPlan(markdown):
       ProposedPlanCard(markdown: markdown, onOpenLink: onOpenLink)
 
-    case let .approval(requestId, prompt, resolved):
-      ApprovalCard(prompt: prompt, isResolved: resolved, isBusy: busyRequests.contains(requestId)) { decision in
+    case let .approval(requestId, prompt, resolved, kind, options):
+      ApprovalCard(
+        kind: kind.flatMap(ApprovalCard.Kind.init(rawValue:)),
+        prompt: prompt,
+        isResolved: resolved,
+        options: options.isEmpty ? nil : options.map { ApprovalCard.Option(ApprovalCard.Decision(rawValue: $0.decision.rawValue) ?? .deny, label: $0.label, warning: $0.warning) },
+        isBusy: busyRequests.contains(requestId)
+      ) { decision in
         onDecision(requestId, decision.engineDecision)
       }
 
@@ -80,9 +86,7 @@ private struct ThinkingMark: View {
   var body: some View {
     if let brand {
       if streaming && !reduceMotion {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-          mark(brand).opacity(ThinkingGlyph.pulseOpacity(at: context.date.timeIntervalSinceReferenceDate))
-        }
+        mark(brand).weaveBreathing()
       } else {
         mark(brand)
       }

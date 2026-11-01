@@ -155,6 +155,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
   readonly runtimeMode: RuntimeMode;
+  /** Keep a running turn's session; the new mode reaches the provider on its next turn. */
+  readonly applyOnNextTurn?: boolean;
 }
 
 export interface SetThreadInteractionModeInput extends ThreadCommandInput {
@@ -673,6 +675,7 @@ export const setThreadRuntimeMode = Effect.fn("EnvironmentCommands.setThreadRunt
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       runtimeMode: input.runtimeMode,
+      ...(input.applyOnNextTurn === undefined ? {} : { applyOnNextTurn: input.applyOnNextTurn }),
     });
   },
 );

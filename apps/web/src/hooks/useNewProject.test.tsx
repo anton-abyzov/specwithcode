@@ -2,7 +2,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-const state = vi.hoisted(() => ({ fingerprint: vi.fn(), find: vi.fn() }));
+const state = vi.hoisted(() => ({ fingerprint: vi.fn(), find: vi.fn(), toast: vi.fn() }));
+vi.mock("~/components/ui/toast", () => ({
+  toastManager: { add: state.toast },
+  stackedThreadToast: (toast: unknown) => toast,
+}));
 vi.mock("../studio/projectLink", () => ({ projectLink: { fingerprint: "fingerprint" } }));
 vi.mock("../studio/folderLinkSuggestion", () => ({ findFolderCopies: state.find }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => state.fingerprint }));
@@ -28,17 +32,21 @@ vi.mock("../state/environments", () => ({
 vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
-import { useFindFolderCopies } from "./useNewProject";
+import * as Cause from "effect/Cause";
+import { useFindFolderCopies, useNewProject } from "./useNewProject";
 
 let root: Root, container: HTMLDivElement, find: ReturnType<typeof useFindFolderCopies>;
+let create: ReturnType<typeof useNewProject>;
 function Harness() {
   find = useFindFolderCopies();
+  create = useNewProject();
   return null;
 }
 beforeEach(async () => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   state.find.mockReset().mockResolvedValue([]);
   state.fingerprint.mockReset();
+  state.toast.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -71,4 +79,33 @@ it("asks each machine for fingerprints, reporting which ones can link", async ()
   });
   state.fingerprint.mockResolvedValueOnce({ _tag: "Failure", error: new Error("old server") });
   await expect(call.read("m4", { projectId: "ec" })).resolves.toBeNull();
+});
+
+it("names the machine that refused a personal assistant because Aide is off there", async () => {
+  // The server's own refusal, as an older client would show it.
+  const refusal = Object.assign(
+    new Error("The personal assistant is turned off. Turn it on in Settings > General."),
+    { reason: "project_assistant_disabled" },
+  );
+  state.fingerprint.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(refusal) });
+  await expect(
+    create({ environmentId: "m4" as never, name: "Aide", kind: "personal", github: null }),
+  ).resolves.toBe(false);
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      description:
+        "The personal assistant is turned off on M4MAX. Turn it on in Settings > General while M4MAX is connected.",
+    }),
+  );
+});
+
+it("keeps any other refusal in the server's words", async () => {
+  state.fingerprint.mockResolvedValueOnce({
+    _tag: "Failure",
+    cause: Cause.fail(new Error("Another project already has this name.")),
+  });
+  await create({ environmentId: "m4" as never, name: "ec", github: null });
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ description: "Another project already has this name." }),
+  );
 });

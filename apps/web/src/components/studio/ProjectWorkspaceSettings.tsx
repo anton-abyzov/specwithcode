@@ -10,11 +10,13 @@ import {
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type {
   ModelSelection,
+  ProjectWorkerMachine,
   ProjectWorkspaceReadResult,
   ThreadId,
 } from "@specweave-studio/contracts";
 import {
   PERSONAL_ASSISTANT_LABEL,
+  projectWorkerMachineOrder,
   PROJECT_GOAL_MAX_LENGTH,
   PROJECT_INSTRUCTIONS_MAX_LENGTH,
   logicalProjectTitle,
@@ -28,7 +30,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
 import { COORDINATOR_RECOMMENDED_TRAITS } from "../../studio/shellModel";
 import { useStudioFleet } from "../../studio/fleet";
-import { workerMachineChoices } from "../../studio/fleetWorkers";
+import { workerMachineChoices, workerMachinesPatch } from "../../studio/fleetWorkers";
+import { ProjectWorkerMachines } from "./ProjectWorkerMachines";
 import { ProjectModels } from "./ProjectModels";
 import { ProjectMemory } from "./ProjectMemory";
 import { ProjectKnowledge } from "./ProjectKnowledge";
@@ -180,9 +183,15 @@ export function ProjectWorkspaceSettings({
     snapshot.settings.environment ?? { additionalFolders: [], repositories: [] },
   );
   const [autoResume, setAutoResume] = useState(snapshot.settings.autoResume);
-  const [workerMachine, setWorkerMachine] = useState(snapshot.settings.workerMachine ?? null);
+  const [workerMachines, setWorkerMachines] = useState<ReadonlyArray<ProjectWorkerMachine>>(() =>
+    projectWorkerMachineOrder(snapshot.settings, project.environmentId),
+  );
   const fleet = useStudioFleet(project.environmentId);
-  const machineChoices = workerMachineChoices(fleet.snapshot, project.environmentId, workerMachine);
+  const machineChoices = workerMachineChoices(
+    fleet.snapshot,
+    project.environmentId,
+    workerMachines,
+  );
   const [baseRevision, setBaseRevision] = useState(snapshot.settings.revision);
   const [dirty, setDirty] = useState(false);
   const [environmentDraftDirty, setEnvironmentDraftDirty] = useState(false);
@@ -263,7 +272,7 @@ export function ProjectWorkspaceSettings({
           coordinatorModelSelection: coordinator,
           autoResume,
           environment,
-          workerMachine,
+          ...workerMachinesPatch(workerMachines),
         },
       },
     });
@@ -506,42 +515,12 @@ export function ProjectWorkspaceSettings({
                     threads already waiting, unless you turned a thread's own auto-continue off.
                     This never changes accounts or enables paid overage.
                   </p>
-                  {machineChoices.length > 1 || workerMachine ? (
-                    <label>
-                      Worker machine
-                      <select
-                        value={workerMachine?.machineId ?? "local"}
-                        disabled={disabled}
-                        onChange={(e) =>
-                          change(
-                            setWorkerMachine,
-                            machineChoices.find((choice) => choice.value === e.target.value)
-                              ?.machine ?? null,
-                          )
-                        }
-                      >
-                        {machineChoices.map((choice) => (
-                          <option
-                            key={choice.value}
-                            value={choice.value}
-                            disabled={choice.disabled}
-                          >
-                            {choice.label}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="project-muted">
-                        The coordinator starts this project's workers there, in the same repository,
-                        and hears back when each one finishes. It can still run one here when you
-                        ask.
-                      </span>
-                    </label>
-                  ) : (
-                    <p className="project-muted">
-                      Workers run on this machine. To run them on a second Mac or your own Linux
-                      VPS, add it under Settings &gt; Connections &gt; Your private machines.
-                    </p>
-                  )}
+                  <ProjectWorkerMachines
+                    choices={machineChoices}
+                    list={workerMachines}
+                    disabled={disabled}
+                    onChange={(list) => change(setWorkerMachines, list)}
+                  />
                   <div className="project-setting-row">
                     <div>
                       <h3>{snapshot.settings.paused ? "Resume project" : "Pause new work"}</h3>

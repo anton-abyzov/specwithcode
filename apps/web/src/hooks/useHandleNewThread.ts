@@ -5,11 +5,7 @@ import {
 } from "../studio/projectCoordinatorDraft";
 import { projectWorkspaceSearch } from "../studio/projectPaneThreads";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  scopedProjectKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@specweave-studio/client-runtime/environment";
+import { scopedProjectKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ScopedProjectRef,
@@ -26,10 +22,8 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
-import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
-  getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
@@ -42,9 +36,10 @@ import {
 import { readStudioProjectFile } from "../lib/studioProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { followNewestModels } from "./followNewestModels";
-import { useClientSettings, useLegacySidebarEnabled } from "./useSettings";
+import { useAideEnabled, useClientSettings, useLegacySidebarEnabled } from "./useSettings";
+import { defaultNewThreadProjectRef } from "./defaultNewThreadProjectRef";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -525,25 +520,18 @@ export function useHandleNewThread() {
       : null,
   );
   const projects = useProjects();
-  const orderedProjects = useMemo(() => {
-    return orderItemsByPreferredIds({
-      items: projects,
-      preferredIds: projectOrder,
-      getId: getProjectOrderKey,
-      getPreferenceIds: (project) => [
-        getProjectOrderKey(project),
-        legacyProjectCwdPreferenceKey(project.workspaceRoot),
-      ],
-    });
-  }, [projectOrder, projects]);
+  // A hidden personal assistant (Settings → General) is never the default target.
+  const aideEnabled = useAideEnabled();
+  const defaultProjectRef = useMemo(
+    () => defaultNewThreadProjectRef({ projects, projectOrder, aideEnabled }),
+    [aideEnabled, projectOrder, projects],
+  );
   const handleNewThread = useNewThreadHandler();
 
   return {
     activeDraftThread,
     activeThread,
-    defaultProjectRef: orderedProjects[0]
-      ? scopeProjectRef(orderedProjects[0].environmentId, orderedProjects[0].id)
-      : null,
+    defaultProjectRef,
     handleNewThread,
     routeDraftId,
     routeThreadRef,

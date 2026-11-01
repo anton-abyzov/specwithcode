@@ -1,4 +1,7 @@
-import { machineAssistantOf } from "@specweave-studio/shared/personalAssistant";
+import {
+  isPersonalAssistantProject,
+  machineAssistantOf,
+} from "@specweave-studio/shared/personalAssistant";
 
 interface AssistantCandidate {
   id?: string;
@@ -78,4 +81,90 @@ export function assistantDisplayTitle(
   machineCount: number,
 ): string {
   return machineCount > 1 && machineLabel ? `${title} · ${machineLabel}` : title;
+}
+
+/**
+ * The projects a list shows: every one while the personal assistant is on, and
+ * all but personal ones while it is off. Hiding never deletes; turning it back
+ * on brings the same assistant back.
+ */
+export function visibleWithAide<T extends Parameters<typeof isPersonalAssistantProject>[0]>(
+  projects: readonly T[],
+  aideEnabled: boolean,
+): readonly T[] {
+  if (aideEnabled || !projects.some(isPersonalAssistantProject)) return projects;
+  return projects.filter((project) => !isPersonalAssistantProject(project));
+}
+
+/**
+ * `visibleWithAide` for a picker that has a saved choice: a hidden personal
+ * project stays listed while it is the one saved or selected (`keepIds`), so
+ * hiding Aide never silently changes or blanks what a setting points at.
+ */
+export function visibleWithAideKeeping<
+  T extends Parameters<typeof isPersonalAssistantProject>[0] & { readonly id: string },
+>(
+  projects: readonly T[],
+  aideEnabled: boolean,
+  keepIds: ReadonlyArray<string | null | undefined>,
+): readonly T[] {
+  if (aideEnabled || !projects.some(isPersonalAssistantProject)) return projects;
+  return projects.filter(
+    (project) => !isPersonalAssistantProject(project) || keepIds.includes(project.id),
+  );
+}
+
+/** The chats a list shows: a hidden personal assistant's chats leave with it. */
+export function threadsVisibleWithAide<
+  T extends { readonly environmentId: string; readonly projectId: string },
+>(
+  threads: readonly T[],
+  projects: readonly {
+    readonly environmentId: string;
+    readonly id: string;
+    readonly workspaceSettings?: { readonly kind?: string | undefined } | null | undefined;
+  }[],
+  aideEnabled: boolean,
+): readonly T[] {
+  if (aideEnabled) return threads;
+  const hidden = new Set(
+    projects
+      .filter(isPersonalAssistantProject)
+      .map((project) => `${project.environmentId}:${project.id}`),
+  );
+  if (hidden.size === 0) return threads;
+  return threads.filter((thread) => !hidden.has(`${thread.environmentId}:${thread.projectId}`));
+}
+
+/**
+ * Whether Set up may make an assistant on this machine. The switch is saved on
+ * each machine, and a change reaches only the machines connected at the time,
+ * so machines can disagree: only one whose own settings turn Aide on (or that
+ * already has its assistant, which is then opened) is offered.
+ */
+export function machineOffersAssistant<T extends AssistantCandidate>(input: {
+  readonly environmentId: string;
+  readonly aideEnabledOnMachine: boolean;
+  readonly projects: readonly T[];
+}): boolean {
+  return (
+    input.aideEnabledOnMachine ||
+    findMachineAssistant(input.projects, input.environmentId) !== undefined
+  );
+}
+
+/** Why Set up was refused, naming the machine that keeps Aide off. */
+export function personalAssistantDisabledMessage(machineLabel: string | null | undefined): string {
+  return machineLabel
+    ? `The personal assistant is turned off on ${machineLabel}. Turn it on in Settings > General while ${machineLabel} is connected.`
+    : "The personal assistant is turned off on this machine. Turn it on in Settings > General.";
+}
+
+/** Whether a failed create is the server refusing a personal assistant because Aide is off there. */
+export function isPersonalAssistantDisabledError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const reason = (error as { readonly reason?: unknown }).reason;
+  if (reason === "project_assistant_disabled" || reason === "assistant_disabled") return true;
+  const message = (error as { readonly message?: unknown }).message;
+  return typeof message === "string" && message.startsWith("The personal assistant is turned off.");
 }

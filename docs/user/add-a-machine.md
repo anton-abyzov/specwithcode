@@ -297,6 +297,18 @@ two from **Settings > Project > Machines** so the coordinator finds that copy
 ([Shared projects](./shared-projects.md)). **Settings > Machines** shows each
 machine, whether this app can see it, its worker grants and its shared projects.
 
+**Choose where the project's workers run.** In the project's settings,
+**Machines for workers** is a list, tried top to bottom. Add a machine with
+**Add a machine**, put the one you want first at the top, and keep **This
+machine** in the list if work should still start here when the others can't
+take it. A machine that is offline, has no copy of the project or doesn't allow
+the work is skipped, and the coordinator says where each worker went and which
+machines it skipped. Leave **This machine** out to keep the project's workers
+off it: when none of the listed machines can take a worker, nothing starts and
+the coordinator tells you. The coordinator can still use a particular machine
+when you name it. A project that only exists on one machine needs nothing here:
+its coordinator runs on that machine and starts its workers there.
+
 **Give the worker GitHub.** The machine's readiness check shows its GitHub
 sign-in. With none, **Sign in with a code instead** signs the worker's `gh` in
 with a one-time code. **Use this Mac's GitHub sign-in** copies the main machine's
@@ -412,9 +424,9 @@ Messages may be worded slightly differently in older releases.
 | "This machine is unavailable. Check its private connection and retry."                          | The worker is off, asleep, signed out of Tailscale or not running SpecWithCode. Check each, and that its key has not expired in the Tailscale admin console.                                                                                                                                                |
 | "Manage access required"                                                                        | This session cannot manage the machine. Use the app on that machine itself.                                                                                                                                                                                                                                 |
 | "Refused: this launch would loop back to a machine it came from (M4 → M1 → M4)."                | Start the work on a machine not on that path, or on the machine itself.                                                                                                                                                                                                                                     |
-| "Refused: this launch came through …, 2 machine hops; this machine allows 1 for that sender."   | On the worker, set the sender to **My machine** in **Who can run work here** if it is yours, or start the work closer to where it began.                                                                                                                                                             |
-| "Project … on this machine is not linked to …"                                                  | Link the projects, or add the project under **Projects** in **Who can run work here** on the worker.                                                                                                                                                                                                 |
-| "This machine lets … use only these sign-ins: …"                                                | Pick one of the listed sign-ins, or add that sign-in under **Sign-ins** in **Who can run work here** on the worker.                                                                                                                                                                                  |
+| "Refused: this launch came through …, 2 machine hops; this machine allows 1 for that sender."   | On the worker, set the sender to **My machine** in **Who can run work here** if it is yours, or start the work closer to where it began.                                                                                                                                                                    |
+| "Project … on this machine is not linked to …"                                                  | Link the projects, or add the project under **Projects** in **Who can run work here** on the worker.                                                                                                                                                                                                        |
+| "This machine lets … use only these sign-ins: …"                                                | Pick one of the listed sign-ins, or add that sign-in under **Sign-ins** in **Who can run work here** on the worker.                                                                                                                                                                                         |
 | "… runs an older SpecWithCode that does not check delegation loops, project scope or …"         | The worker runs the work without these limits. Update SpecWithCode on the worker.                                                                                                                                                                                                                           |
 
 ## Keep your provider accounts safe

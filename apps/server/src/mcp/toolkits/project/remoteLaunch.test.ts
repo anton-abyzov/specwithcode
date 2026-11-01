@@ -39,12 +39,27 @@ const callerId = ThreadId.make("coordinator");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const workerModel = { instanceId: providerInstanceId, model: "gpt-5.5" } as ModelSelection;
 const M1 = { id: "m1", label: "M1", environmentId: EnvironmentId.make("env-m1") };
+const M3 = { id: "m3", label: "M3", environmentId: EnvironmentId.make("env-m3") };
+const listEntry = (id: "local" | "m1" | "m3") => ({
+  machineId: id,
+  environmentId:
+    id === "local"
+      ? EnvironmentId.make("env-m4")
+      : id === "m1"
+        ? M1.environmentId
+        : M3.environmentId,
+  projectId: null,
+});
 const codeProjectId = ProjectId.make("example-code");
 const missingProjectId = ProjectId.make("missing");
 
 const setup = (
   options: {
     readonly workerMachine?: boolean;
+    /** The project's ordered worker machine list. */
+    readonly workerMachines?: ReadonlyArray<"local" | "m1" | "m3">;
+    /** Only these machines refuse the launch (with `remoteFails`, or machine_unreachable). */
+    readonly failingMachines?: ReadonlyArray<string>;
     readonly outsideClient?: boolean;
     /** The outside client's approved access, full access unless given. */
     readonly clientAccess?: "read-only" | "approval-required" | "auto" | "full-access";
@@ -95,6 +110,7 @@ const setup = (
             },
           }
         : {}),
+      ...(options.workerMachines ? { workerMachines: options.workerMachines.map(listEntry) } : {}),
     },
   });
   const remote: RemoteWorkers.RemoteWorkersShape = {
@@ -105,24 +121,29 @@ const setup = (
         ? Effect.succeed({ kind: "local" })
         : target === "m1" || target === "M1"
           ? Effect.succeed({ kind: "remote", machine: M1 })
-          : Effect.die("unexpected machine"),
+          : target === "m3" || target === "M3"
+            ? Effect.succeed({ kind: "remote", machine: M3 })
+            : Effect.die("unexpected machine"),
     launch: (input) =>
       Effect.suspend(() => {
         remoteLaunches.push(input);
-        if (options.remoteFails !== undefined)
+        const failing =
+          options.failingMachines === undefined
+            ? options.remoteFails !== undefined
+            : options.failingMachines.includes(input.machine.id);
+        if (failing) {
+          const code = options.remoteFails ?? "machine_unreachable";
           return Effect.fail(
-            new OrchestratorMcpFailure({
-              code: options.remoteFails,
-              message: `M1: ${options.remoteFails}`,
-            }),
+            new OrchestratorMcpFailure({ code, message: `${input.machine.label}: ${code}` }),
           );
+        }
         return Effect.succeed({
           threadId: ThreadId.make("b-thread"),
           projectId: ProjectId.make("remote-project"),
           modelSelection: workerModel,
           runId: RunId.make("b-run"),
           status: "queued" as const,
-          machine: M1,
+          machine: input.machine,
           threadRef: "studio://thread/env-m1/b-thread",
           threadLink: "[Fix CI](studio://thread/env-m1/b-thread)",
           reportsBack: input.reportBack,
@@ -630,5 +651,58 @@ it.effect("keeps a project thread's scratch work elsewhere to projectless, as he
     expect(scratchChat.remoteLaunches).toHaveLength(1);
     yield* outside.launch(params);
     expect(outside.remoteLaunches).toHaveLength(1);
+  });
+});
+
+it.effect("tries the project's worker machines in order and skips one that cannot take it", () => {
+  const routed = setup({ workerMachines: ["m3", "m1", "local"], failingMachines: ["m3"] });
+  return Effect.gen(function* () {
+    expect(yield* routed.launch({ title: "a", message: "go" })).toMatchObject({
+      machine: M1,
+      placement: {
+        machine: "M1",
+        reason: "project_worker_machine",
+        skipped: [{ machine: "M3", reason: "M3: machine_unreachable" }],
+      },
+    });
+    expect(routed.remoteLaunches.map((input) => input.machine.id)).toEqual(["m3", "m1"]);
+    expect(routed.localLaunches).toEqual([]);
+  });
+});
+
+it.effect("runs here when every listed machine fails and this machine is in the list", () => {
+  const routed = setup({ workerMachines: ["m3", "local", "m1"], failingMachines: ["m3", "m1"] });
+  return Effect.gen(function* () {
+    expect(yield* routed.launch({ title: "a", message: "go" })).toMatchObject({
+      placement: { machine: "this machine", reason: "this_machine" },
+    });
+    // This machine comes before M1, so M1 is never tried.
+    expect(routed.remoteLaunches.map((input) => input.machine.id)).toEqual(["m3"]);
+    expect(routed.localLaunches).toHaveLength(1);
+  });
+});
+
+it.effect("starts nothing here when the list leaves this machine out and all refuse", () => {
+  const routed = setup({ workerMachines: ["m3", "m1"], failingMachines: ["m3", "m1"] });
+  return Effect.gen(function* () {
+    const result = yield* routed.launch({ title: "a", message: "go" });
+    expect(result).toMatchObject({
+      code: "machine_unreachable",
+      message: expect.stringContaining("nothing started here"),
+    });
+    expect(result.message).toContain("M3: M3: machine_unreachable");
+    expect(routed.remoteLaunches.map((input) => input.machine.id)).toEqual(["m3", "m1"]);
+    expect(routed.localLaunches).toEqual([]);
+  });
+});
+
+it.effect("starts work here first when this machine heads the list", () => {
+  const routed = setup({ workerMachines: ["local", "m3"] });
+  return Effect.gen(function* () {
+    expect(yield* routed.launch({ title: "a", message: "go" })).toMatchObject({
+      placement: { machine: "this machine", reason: "this_machine" },
+    });
+    expect(routed.remoteLaunches).toEqual([]);
+    expect(routed.localLaunches).toHaveLength(1);
   });
 });

@@ -5,6 +5,7 @@ import {
   ManagedRelay,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
+  removeManagedRelayPhone,
 } from "@specweave-studio/client-runtime/relay";
 import {
   createAtomCommandScheduler,
@@ -13,6 +14,7 @@ import {
 import type {
   RelayClientDeviceRecord,
   RelayClientEnvironmentRecord,
+  RelayPhoneRecord,
 } from "@specweave-studio/contracts/relay";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
@@ -51,6 +53,16 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
   },
 );
 
+export const removeManagedRelayPhoneCommand = createRuntimeCommand(managedRelayAtomRuntime, {
+  label: "web:managed-relay:remove-phone",
+  scheduler: managedRelayMutationScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly accountId: string; readonly deviceId: string }) => input.accountId,
+  },
+  execute: (input, registry) => removeManagedRelayPhone(registry, input),
+});
+
 const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
   AsyncResult.success<ReadonlyArray<RelayClientEnvironmentRecord>>([]),
 ).pipe(Atom.keepAlive, Atom.withLabel("managed-relay:web:environments:null"));
@@ -58,6 +70,11 @@ const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
 const EMPTY_DEVICES_ATOM = Atom.make(
   AsyncResult.success<ReadonlyArray<RelayClientDeviceRecord>>([]),
 ).pipe(Atom.keepAlive, Atom.withLabel("managed-relay:web:devices:null"));
+
+const EMPTY_PHONES_ATOM = Atom.make(AsyncResult.success<ReadonlyArray<RelayPhoneRecord>>([])).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("managed-relay:web:phones:null"),
+);
 
 export function useManagedRelayEnvironments() {
   const session = useAtomValue(managedRelaySessionAtom);
@@ -105,6 +122,34 @@ export function useManagedRelayDevices() {
   const refresh = useCallback(() => {
     if (accountId) {
       managedRelayQueryManager.refreshDevices(appAtomRegistry, accountId);
+    }
+  }, [accountId]);
+
+  return {
+    ...snapshot,
+    accountId,
+    refresh,
+  };
+}
+
+/** The signed-in account's phones; empty and idle when signed out of Connect. */
+export function useManagedRelayPhones() {
+  const session = useAtomValue(managedRelaySessionAtom);
+  const accountId = session?.accountId ?? null;
+  const atom = accountId ? managedRelayQueryManager.phonesAtom(accountId) : EMPTY_PHONES_ATOM;
+  const result = useAtomValue(atom);
+  const snapshot = readManagedRelaySnapshotState(result);
+  useEffect(() => {
+    if (snapshot.error) {
+      console.error("[studio-cloud] Relay phone listing failed", {
+        message: snapshot.error,
+        traceId: snapshot.errorTraceId,
+      });
+    }
+  }, [snapshot.error, snapshot.errorTraceId]);
+  const refresh = useCallback(() => {
+    if (accountId) {
+      managedRelayQueryManager.refreshPhones(appAtomRegistry, accountId);
     }
   }, [accountId]);
 

@@ -1,4 +1,7 @@
-import { EnvironmentAuthInvalidError } from "@specweave-studio/contracts";
+import {
+  EnvironmentAuthInvalidError,
+  EnvironmentRateLimitedError,
+} from "@specweave-studio/contracts";
 import {
   RelayAuthInvalidError,
   RelayEnvironmentEndpointTimedOutError,
@@ -153,4 +156,18 @@ it("preserves the required device reapproval reason for direct and relay connect
     }),
   );
   expect(invalid._tag === "ConnectionBlockedError" && invalid.reapprovalRequired).toBeFalsy();
+});
+
+describe("mapRemoteEnvironmentError rate limits", () => {
+  it("keeps retry-after so the supervisor waits it out", () => {
+    const mapped = mapRemoteEnvironmentError(
+      new EnvironmentRateLimitedError({ code: "rate_limited", retryAfterSeconds: 173 }),
+      "relay",
+    );
+    expect(mapped).toMatchObject({
+      _tag: "ConnectionTransientError",
+      reason: "rate-limited",
+      retryAfterMs: 173_000,
+    });
+  });
 });

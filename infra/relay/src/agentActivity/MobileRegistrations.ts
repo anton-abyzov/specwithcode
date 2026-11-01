@@ -25,6 +25,8 @@ export class MobileRegistrations extends Context.Service<
     readonly registerDevice: (input: {
       readonly userId: string;
       readonly payload: RelayDeviceRegistrationRequest;
+      readonly proofKeyThumbprint?: string | undefined;
+      readonly clerkSessionId?: string | undefined;
     }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
     readonly registerLiveActivity: (input: {
       readonly userId: string;
@@ -52,7 +54,12 @@ export const make = Effect.gen(function* () {
         "relay.mobile.device_id": input.payload.deviceId,
         "relay.mobile.platform": input.payload.platform,
       });
-      yield* devices.register({ userId: input.userId, registration: input.payload });
+      yield* devices.register({
+        userId: input.userId,
+        registration: input.payload,
+        proofKeyThumbprint: input.proofKeyThumbprint,
+        clerkSessionId: input.clerkSessionId,
+      });
       yield* publisher
         .replayForLiveActivityRegistration({
           userId: input.userId,

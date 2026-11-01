@@ -88,7 +88,7 @@ private struct AppScreens: View {
         top: proxy.safeAreaInsets.top, leading: proxy.safeAreaInsets.leading,
         bottom: max(proxy.safeAreaInsets.bottom, keyboardInset), trailing: proxy.safeAreaInsets.trailing
       )
-      DrawerContainer(isOpen: $router.isDrawerOpen, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
+      DrawerContainer(isOpen: $router.isDrawerOpen, isCollapsed: $router.isSidebarCollapsed, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
         NavigationColumn()
       } content: {
         NavigationStack(path: $main.path) {

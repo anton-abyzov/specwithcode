@@ -237,6 +237,7 @@ vi.mock("../uiStateStore", () => ({
   useUiStateStore: () => [],
 }));
 vi.mock("./useSettings", () => ({
+  useAideEnabled: () => false,
   useClientSettings: () => ({}),
   useLegacySidebarEnabled: () => testState.legacy,
 }));

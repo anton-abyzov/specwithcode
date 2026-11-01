@@ -53,6 +53,12 @@ final class AppRouter {
   var isDrawerOpen = false {
     didSet { if !isDrawerOpen { isDrawerSearching = false } }
   }
+  /// The person hid the wide layout's navigation column. Remembered across
+  /// launches, as in the iPad and desktop apps.
+  var isSidebarCollapsed = UserDefaults.standard.bool(forKey: AppRouter.sidebarCollapsedKey) {
+    didSet { UserDefaults.standard.set(isSidebarCollapsed, forKey: AppRouter.sidebarCollapsedKey) }
+  }
+  static let sidebarCollapsedKey = "swc.sidebarCollapsed"
   /// Search replaces the drawer list. Closing the drawer ends it.
   var isDrawerSearching = false
   var sheet: SheetRoute?
@@ -87,6 +93,7 @@ final class AppRouter {
   func sidebarSelection(in model: AppModel) -> SidebarItem? {
     if main.path.isEmpty { return landing(in: model).map(SidebarItem.chat) }
     if main.path.count == 1, case let .machine(id) = main.path[0] { return .machine(id) }
+    if case let .chat(target)? = main.path.last { return .chat(target) }
     return nil
   }
 

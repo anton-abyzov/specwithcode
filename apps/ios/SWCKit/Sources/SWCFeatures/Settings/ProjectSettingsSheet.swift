@@ -23,8 +23,10 @@ struct ProjectSettingsSheet: View {
   @State private var saveError: String?
   @State private var confirmArchive = false
   @State private var confirmDiscard = false
+  @State private var pickingIcon = false
 
   private var summary: ProjectSummary? { model.project(project) }
+  private var shownIcon: ProjectIcon { draft.icon ?? summary?.icon ?? .none }
   private var isDirty: Bool { original != nil && draft != original }
   private var canSave: Bool { isDirty && !saving && !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
@@ -53,6 +55,11 @@ struct ProjectSettingsSheet: View {
       .interactiveDismissDisabled(isDirty)
       .onSheetDismissAttempt { if isDirty, !saving { confirmDiscard = true } }
       .task { await load() }
+      .sheet(isPresented: $pickingIcon) {
+        ProjectIconPicker(title: draft.title, current: shownIcon) { draft.icon = $0 }
+          .presentationDetents([.medium, .large])
+          .presentationDragIndicator(.visible)
+      }
       .confirmationDialog("Archive \(draft.title.isEmpty ? "this project" : draft.title)?", isPresented: $confirmArchive, titleVisibility: .visible) {
         Button("Archive project", role: .destructive) { archive() }
         Button("Cancel", role: .cancel) {}
@@ -93,7 +100,21 @@ struct ProjectSettingsSheet: View {
           Banner(saveError, kind: .fail, onDismiss: { self.saveError = nil })
         }
         WeaveTextField("Project name", text: $draft.title, label: "Name") {
-          ProjectAvatar(icon: summary?.icon.avatarIcon ?? .none, title: draft.title, size: 31)
+          Button { pickingIcon = true } label: {
+            ProjectAvatar(icon: shownIcon.avatarIcon, title: draft.title, size: 31)
+              .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "pencil.circle.fill")
+                  .font(.system(size: 13))
+                  .symbolRenderingMode(.palette)
+                  .foregroundStyle(Color.weave.canvas, Color.weave.iris)
+                  .offset(x: 4, y: 4)
+              }
+              .frame(minWidth: WeaveSize.minTap, minHeight: WeaveSize.minTap)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(PressableStyle())
+          .accessibilityLabel("Change icon")
+          .accessibilityIdentifier("project.icon")
         }
         WeaveTextEditor("What should this project achieve?", text: $draft.goal, label: "Goal", minLines: 3, maxLines: 10)
         WeaveTextEditor("Anything the coordinator should always keep in mind", text: $draft.instructions, label: "Instructions (optional)", minLines: 2, maxLines: 10)

@@ -106,6 +106,35 @@ describe("RelayTokens", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("carries the Clerk session id and still accepts tokens without one", () =>
+    Effect.gen(function* () {
+      const relayTokens = yield* RelayTokens.RelayTokens;
+      const issue = (clerkSessionId?: string) =>
+        relayTokens.issueDpopAccessToken({
+          userId: "user_123",
+          proofKeyThumbprint: "proof-key-thumbprint",
+          jti: `access-token-${clerkSessionId ?? "none"}`,
+          issuedAtEpochSeconds: 100,
+          expiresAtEpochSeconds: 200,
+          clientId: "studio-mobile",
+          scopes: ["mobile:registration"],
+          ...(clerkSessionId ? { clerkSessionId } : {}),
+        });
+
+      const withSession = yield* relayTokens.verifyDpopAccessToken({
+        token: yield* issue("sess_1"),
+        nowEpochSeconds: 150,
+      });
+      expect(withSession?.sid).toBe("sess_1");
+      const legacy = yield* relayTokens.verifyDpopAccessToken({
+        token: yield* issue(),
+        nowEpochSeconds: 150,
+      });
+      expect(legacy).toMatchObject({ sub: "user_123" });
+      expect(legacy && "sid" in legacy).toBe(false);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("issues tunnel-only DPoP access tokens to web public clients", () =>
     Effect.gen(function* () {
       const relayTokens = yield* RelayTokens.RelayTokens;

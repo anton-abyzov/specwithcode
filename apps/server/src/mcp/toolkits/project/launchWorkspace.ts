@@ -33,6 +33,14 @@ export function projectUsesWorktrees(
   );
 }
 
+/**
+ * Why an agent's request for a new worktree started the thread in the project
+ * folder instead: the project's Use worktrees switch is off, and only the user
+ * asking for a separate worktree overrides it.
+ */
+export const WORKTREE_OFF_NOTICE =
+  "Use worktrees is off for this project, so the thread works in the project folder on whatever branch is checked out there; ask it to create or switch to its branch itself (for a nested repository, by that repository's path). Pass userAskedForWorktree:true with the worktree strategy only when the user asked for a separate worktree.";
+
 /** Why a project with Use worktrees on still started a thread in its folder. */
 export const UMBRELLA_WORKTREE_NOTICE =
   'Use worktrees is on, but this project folder holds separate clones of other repositories, which a worktree of the folder would leave out, so the thread works in the project folder. For a worktree of one of them, pass workspaceStrategy {type:"worktree", repository, baseRef}.';

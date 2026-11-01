@@ -229,7 +229,8 @@ export function createDraft(
     modelSelection,
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
-    workspace: "worktree",
+    // The project folder, as a new thread starts; worktree stays a choice.
+    workspace: "root",
     baseRef: "main",
     checkoutPath: "",
     enabled: true,

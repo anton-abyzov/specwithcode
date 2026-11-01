@@ -121,12 +121,20 @@ extension LiveEngine {
   /// listed: a machine that has not answered may already hold Aide, and a
   /// second one would split the conversation. Every client looks for Aide on
   /// the lowest environment id first, so that is where it goes.
+  /// While Aide is turned off it is never created, even by an old route.
+  /// Machines can disagree on the switch, so it goes to the lowest id whose
+  /// own setting has Aide on; a machine whose settings have not arrived yet
+  /// makes this wait rather than refuse.
   public func setupAide() async throws -> ProjectRef {
-    if let aide = model?.aide { return aide.ref }
+    if model?.aideEnabled == true, let aide = model?.aide { return aide.ref }
     let enabled = machines.values.filter(\.record.enabled).sorted { $0.environmentId < $1.environmentId }
+    let settled = enabled.allSatisfy { $0.settings != nil }
+    if settled, !enabled.contains(where: { $0.settings?.aideEnabled == true }) { throw SyncError.aideDisabled }
     guard enabled.contains(where: \.isOnline) else { throw SyncError.noMachineConnected }
-    guard enabled.allSatisfy({ $0.isOnline && $0.snapshot != nil }) else { throw SyncError.machinesNotLoaded }
-    guard let entry = enabled.first(where: \.canOperate) else { throw SyncError.sendBlocked(Self.readOnlyReason) }
+    guard settled, enabled.allSatisfy({ $0.isOnline && $0.snapshot != nil }) else { throw SyncError.machinesNotLoaded }
+    let nicknames = fleetNicknames
+    let targetId = try AideSetting.target(enabled.map { aideMachine($0, nicknames: nicknames) }, readOnlyReason: Self.readOnlyReason)
+    guard let entry = machines[targetId] else { throw SyncError.unknownMachine }
     let input = CreateNewProjectInput(name: "Aide", kind: .personal)
     let result = try await withRetry(entry.environmentId) { socket in
       try await Self.decode(CreateNewProjectResult.self, from: socket.call(tag: RpcMethod.createNewProject.rawValue, payload: JSONValue.from(input)))
@@ -171,7 +179,8 @@ extension LiveEngine {
         instructions: draft.instructions,
         paused: draft.paused,
         archived: draft.archived
-      )
+      ),
+      projectIcon: draft.icon.map(Self.iconOverride)
     )
     let payload = try JSONValue.from(command)
     do {
@@ -181,6 +190,16 @@ extension LiveEngine {
     } catch let error as SyncError where Self.isRevisionConflict(error) {
       let latest = try? await loadProjectSettings(project)
       throw SyncError.projectConflict(latest: latest)
+    }
+  }
+
+  /// The wire form of a chosen icon; `.none` clears it back to the default.
+  static func iconOverride(_ icon: ProjectIcon) -> Nullable<ProjectIconOverride> {
+    switch icon {
+    case let .symbol(name, color): .value(.lucide(name: name, color: color ?? "gray"))
+    case let .emoji(emoji): .value(.emoji(emoji))
+    case let .monogram(text, color): .value(.monogram(text: text, color: color ?? "gray"))
+    case .none: .null
     }
   }
 
@@ -225,6 +244,7 @@ extension LiveEngine {
   func settingsChanged(_ entry: MachineEntry, _ settings: ServerSettings) {
     guard machines[entry.environmentId] === entry else { return }
     entry.settings = settings
+    rememberAide(entry)
     schedulePublish()
   }
 

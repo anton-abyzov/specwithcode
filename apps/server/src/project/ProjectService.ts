@@ -80,6 +80,23 @@ export function createdOrigin(input: Pick<ProjectCreateInput, "origin" | "tempor
   return input.temporarySessionId !== undefined ? { origin: "automated" } : {};
 }
 
+/** Why a new personal assistant is refused while Settings keeps Aide off. */
+export const PERSONAL_ASSISTANT_DISABLED_MESSAGE =
+  "The personal assistant is turned off. Turn it on in Settings > General.";
+
+/**
+ * Whether a new personal assistant may be created: only while Settings turns
+ * Aide on. Settings that cannot be read count as off. A host without a
+ * settings service (a test double) is not gated. Existing assistants are
+ * never affected; this only guards creation.
+ */
+export const personalAssistantEnabled: Effect.Effect<boolean> = Effect.gen(function* () {
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  if (Option.isNone(serverSettings)) return true;
+  const settings = yield* serverSettings.value.getSettings.pipe(Effect.option);
+  return Option.isSome(settings) && settings.value.aideEnabled;
+});
+
 /** The key every personal create waits on, so concurrent ones see each other. */
 const PERSONAL_ASSISTANT_LOCK = "\u0000personal-assistant";
 
@@ -259,6 +276,7 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
       "environment_active",
       "name_taken",
       "assistant_exists",
+      "assistant_disabled",
       "kind_fixed",
       "too_many_deletes",
     ]),
@@ -278,6 +296,8 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
         return "Another project already has this name. Choose a different one.";
       case "assistant_exists":
         return "This machine already has its personal assistant. Open it instead of creating another.";
+      case "assistant_disabled":
+        return PERSONAL_ASSISTANT_DISABLED_MESSAGE;
       case "kind_fixed":
         return "A project's kind is set when it is created and cannot be changed.";
       case "too_many_deletes":
@@ -653,6 +673,14 @@ export const make = Effect.gen(function* () {
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
+      // Every create path (RPC, MCP, managed folders, older clients) ends here,
+      // so a hidden Aide cannot be brought back by creating a new one.
+      if (input.kind === "personal" && !(yield* personalAssistantEnabled)) {
+        return yield* new ProjectRequestDeniedError({
+          projectId: input.projectId,
+          reason: "assistant_disabled",
+        });
+      }
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,

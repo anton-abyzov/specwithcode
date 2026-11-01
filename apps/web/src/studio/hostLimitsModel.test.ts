@@ -460,3 +460,39 @@ describe("groupLimitsByAccount", () => {
     ]);
   });
 });
+
+describe("a Claude account without a 5-hour limit", () => {
+  it("shows the weekly row alone, with no empty 5-hour row or notice", () => {
+    const [block] = collectHostLimitBlocks(
+      new Map([
+        [
+          m4,
+          host("m4", "connected", [
+            provider({
+              driver: "claudeAgent",
+              usageLimits: {
+                checkedAt: at(0),
+                windows: [
+                  {
+                    id: "seven_day",
+                    kind: "weekly",
+                    label: "Weekly",
+                    usedPercent: 36,
+                    windowDurationMins: 10080,
+                    resetsAt: at(100),
+                  },
+                ],
+              },
+            }),
+          ]),
+        ],
+      ]),
+      { projectEnvironmentId: m4, saved: new Map(), driverLabel: label, now },
+    );
+    const [row] = block!.providers;
+    expect(row!.notice).toBeNull();
+    expect(row!.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["seven_day", 36],
+    ]);
+  });
+});

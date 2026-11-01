@@ -52,6 +52,9 @@ const RelayDpopAccessTokenClaims = Schema.Struct({
   client_id: Schema.Literals([RelayMobileClientId, RelayWebClientId]),
   scope: Schema.String,
   cnf: Schema.Struct({ jkt: Schema.String }),
+  // The Clerk session the token was exchanged from. Tokens issued before
+  // phone removal shipped have none.
+  sid: Schema.optionalKey(Schema.String),
 });
 export type RelayDpopAccessTokenClaims = Omit<typeof RelayDpopAccessTokenClaims.Type, "scope"> & {
   readonly scope: ReadonlyArray<RelayDpopAccessTokenScope>;
@@ -107,6 +110,7 @@ export class RelayTokens extends Context.Service<
       readonly expiresAtEpochSeconds: number;
       readonly clientId: RelayPublicClientId;
       readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+      readonly clerkSessionId?: string | undefined;
     }) => Effect.Effect<string, RelayJwtError>;
     readonly verifyDpopAccessToken: (input: {
       readonly token: string;
@@ -181,6 +185,7 @@ const make = Effect.gen(function* () {
         client_id: input.clientId,
         scope: encodeOAuthScope(input.scopes),
         cnf: { jkt: input.proofKeyThumbprint },
+        ...(input.clerkSessionId ? { sid: input.clerkSessionId } : {}),
       },
     });
   });

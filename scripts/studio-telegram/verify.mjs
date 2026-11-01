@@ -26,7 +26,7 @@ const state = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-telegram
 NodeFS.mkdirSync(NodePath.join(state, "userdata"), { recursive: true });
 NodeFS.writeFileSync(
   NodePath.join(state, "userdata/settings.json"),
-  JSON.stringify({ providerInstances: {} }),
+  JSON.stringify({ providerInstances: {}, aideEnabled: true }),
 );
 
 const TOKEN = "123456789:AAEhBP0av28mEaIzFhOxPj8lVk9VerifyToken";

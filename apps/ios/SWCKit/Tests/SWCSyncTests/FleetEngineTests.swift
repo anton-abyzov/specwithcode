@@ -216,6 +216,31 @@ final class SwitchedConnector: WebSocketConnector {
     #expect(h.model.projects.count == 1)
   }
 
+  @Test func coldStartKeepsTheSavedAideSettingUntilTheMachineAnswers() async throws {
+    let h = try await harness(cache: { cache in
+      await cache.saveSnapshot(try TestData.shell(), for: FakeMachine.environmentId)
+      await cache.setAideEnabled(true, for: FakeMachine.environmentId)
+    }, startOn: false)
+    // Offline with no live settings: Aide stays as it was, and setup waits instead of refusing.
+    #expect(await until { rows(h).count == 1 })
+    #expect(h.model.aideEnabled)
+    await #expect(throws: SyncError.noMachineConnected) { try await h.engine.setupAide() }
+
+    // The machine answers with Aide off: the live setting wins and is saved.
+    h.power.set(true)
+    h.engine.reconnect(machineId: env)
+    #expect(await until { h.model.machines.first?.status == .connected && !h.model.aideEnabled })
+    #expect(await untilAsync { await h.cache.cached(env).aideEnabled == false })
+  }
+
+  @Test func theMachinesAideSettingIsSavedForTheNextLaunch() async throws {
+    let h = try await harness(config: FakeMachine.aideConfig)
+    #expect(await until { h.model.aideEnabled })
+    #expect(await untilAsync { await h.cache.cached(env).aideEnabled == true })
+    await h.cache.dismiss(env)
+    #expect(await h.cache.cached(env).aideEnabled == nil)
+  }
+
   @Test func machineOffMidSessionThenBackLeavesNoDuplicates() async throws {
     let h = try await harness()
     #expect(await until { h.model.machines.first?.label == "M4" && h.model.machines.first?.status == .connected && rows(h).count == 1 })

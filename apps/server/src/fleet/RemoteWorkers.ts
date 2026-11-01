@@ -4,6 +4,7 @@ import {
   ModelSelection,
   OrchestrationV2RunStatus,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  isLocalWorkerMachine,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegation,
   type OrchestratorMcpOriginHint,
@@ -14,6 +15,7 @@ import {
   Project,
   ProjectId,
   type ProjectWorkerMachine,
+  projectWorkerMachineOrder,
   type ProviderInteractionMode,
   RunId,
   type RuntimeMode,
@@ -67,6 +69,33 @@ const COLD_IDENTITY_DELAY = Duration.millis(500);
 const MAX_REMOTE_PROJECT_PAGES = 5;
 const LAUNCH_TIMEOUT_MS = 60_000;
 
+/** The saved entry for `machine` in the project's worker machine list, if any. */
+export function savedWorkerMachine(
+  project: Project,
+  machine: Pick<OrchestratorMcpMachineRef, "id" | "environmentId">,
+): ProjectWorkerMachine | undefined {
+  const settings = project.workspaceSettings;
+  return [
+    ...(settings?.workerMachines ?? []),
+    ...(settings?.workerMachine ? [settings.workerMachine] : []),
+  ].find(
+    (entry) => entry.machineId === machine.id && entry.environmentId === machine.environmentId,
+  );
+}
+
+/** What `studio_machine_list` reports about where this project's workers run. */
+export function workerMachineSummary(
+  project: Project | undefined,
+  localEnvironmentId: EnvironmentId,
+): Pick<OrchestratorMcpMachineListResult, "projectWorkerMachine" | "projectWorkerMachines"> {
+  if (project === undefined) return { projectWorkerMachine: null };
+  const order = projectWorkerMachineOrder(project.workspaceSettings, localEnvironmentId);
+  return {
+    projectWorkerMachine: order.find((entry) => !isLocalWorkerMachine(entry))?.machineId ?? null,
+    projectWorkerMachines: order.map((entry) => entry.machineId),
+  };
+}
+
 export type MachineTarget =
   | { readonly kind: "local" }
   | { readonly kind: "remote"; readonly machine: OrchestratorMcpMachineRef };
@@ -113,6 +142,8 @@ export interface RemoteLaunchInput extends LauncherKey {
   readonly requestedRuntimeMode: RuntimeMode | undefined;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
+  /** The user asked for a separate worktree; the other machine's Use worktrees switch decides otherwise. */
+  readonly userAskedForWorktree?: boolean | undefined;
   readonly message: string | undefined;
   /** The SpecWeave increment ref, passed on unresolved. */
   readonly increment?: string | undefined;
@@ -241,7 +272,10 @@ export interface RemoteWorkersShape {
       readonly remoteThreadId: string;
     },
   ) => Effect.Effect<boolean>;
-  /** The machine the user chose for this project's workers, when the caller is its coordinator. */
+  /**
+   * The machine a launch without `machine` tries first, when the caller is the
+   * project's coordinator and that machine is not this one.
+   */
   readonly coordinatorWorkerMachine: (input: {
     readonly projectId: ProjectId;
     readonly callerThreadId: ThreadId;
@@ -587,11 +621,9 @@ const make = Effect.gen(function* () {
     remoteProjects: ReadonlyArray<Project>,
     explicit: ProjectId | undefined,
   ): RemoteProjectMatch => {
-    const configured = project.workspaceSettings?.workerMachine;
     // The saved project only counts on the machine it was saved for.
-    const sameMachine =
-      configured?.machineId === machine.id && configured.environmentId === machine.environmentId;
-    const projectId = explicit ?? (sameMachine ? (configured.projectId ?? undefined) : undefined);
+    const configured = savedWorkerMachine(project, machine);
+    const projectId = explicit ?? configured?.projectId ?? undefined;
     const logical = project.workspaceSettings?.logicalProject;
     return logical != null
       ? matchLogicalRemoteProject({
@@ -663,7 +695,7 @@ const make = Effect.gen(function* () {
           environmentId: descriptor.environmentId,
         },
         machines: rows,
-        projectWorkerMachine: project?.workspaceSettings?.workerMachine?.machineId ?? null,
+        ...workerMachineSummary(project, descriptor.environmentId),
       };
     });
 
@@ -675,14 +707,11 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const logical = project.workspaceSettings?.logicalProject;
       if (logical != null) {
-        const configured = project.workspaceSettings?.workerMachine;
-        const sameMachine =
-          configured?.machineId === machine.id &&
-          configured.environmentId === machine.environmentId;
+        const configured = savedWorkerMachine(project, machine);
         const selected = logicalProjectBindingMatch({
           logical,
           environmentId: machine.environmentId,
-          projectId: explicit ?? (sameMachine ? (configured.projectId ?? undefined) : undefined),
+          projectId: explicit ?? configured?.projectId ?? undefined,
         });
         if (selected.match === "ambiguous")
           return yield* failure(
@@ -883,6 +912,9 @@ const make = Effect.gen(function* () {
         lostContactNotified: false,
         lastError: null,
         updatedAt: startedAt,
+        runtimeMode: clamped.mode,
+        // Kept so the lowered mode can be shown, not only logged.
+        ...(clamped.loweredFrom === undefined ? {} : { loweredFrom: clamped.loweredFrom }),
       }));
       return yield* follower.trackLaunch(rowId)(
         sendAndRecord({ input, rowId, target, modelSelection, clamped }),
@@ -929,6 +961,7 @@ const make = Effect.gen(function* () {
             ...(input.workspaceStrategy === undefined
               ? {}
               : { workspaceStrategy: input.workspaceStrategy }),
+            ...(input.userAskedForWorktree === true ? { userAskedForWorktree: true } : {}),
             ...(input.message === undefined ? {} : { message: input.message }),
             ...(input.increment === undefined ? {} : { increment: input.increment }),
             delegation: input.delegation,
@@ -1215,10 +1248,18 @@ const make = Effect.gen(function* () {
 
   const coordinatorWorkerMachine: RemoteWorkersShape["coordinatorWorkerMachine"] = (input) =>
     localProject(input.projectId).pipe(
-      Effect.map((project) =>
+      Effect.flatMap((project) =>
         project?.workspaceSettings?.coordinatorThreadId === input.callerThreadId
-          ? (project.workspaceSettings?.workerMachine ?? null)
-          : null,
+          ? environment.getDescriptor.pipe(
+              Effect.map((descriptor) => {
+                const first = projectWorkerMachineOrder(
+                  project.workspaceSettings,
+                  descriptor.environmentId,
+                )[0];
+                return first === undefined || isLocalWorkerMachine(first) ? null : first;
+              }),
+            )
+          : Effect.succeed(null),
       ),
       Effect.orElseSucceed(() => null),
     );
@@ -1259,6 +1300,8 @@ const make = Effect.gen(function* () {
           ...(row.adoptedFrom
             ? {}
             : { launchedAt: row.launchStartedAt as StudioFleetRemoteWorker["updatedAt"] }),
+          ...(row.runtimeMode === undefined ? {} : { runtimeMode: row.runtimeMode }),
+          ...(row.loweredFrom === undefined ? {} : { loweredFrom: row.loweredFrom }),
         })),
       );
     });

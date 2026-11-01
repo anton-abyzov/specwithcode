@@ -11,10 +11,14 @@ public struct TypingIndicator: View {
   public var body: some View {
     Group {
       if reduceMotion {
-        dots(phase: nil)
+        dots(lit: nil)
       } else {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-          dots(phase: context.date.timeIntervalSinceReferenceDate)
+        // The render server runs the fades between phases; a TimelineView
+        // would re-evaluate this body every frame while a reply is on its way.
+        PhaseAnimator(0..<3) { lit in
+          dots(lit: lit)
+        } animation: { _ in
+          .easeInOut(duration: 0.25)
         }
       }
     }
@@ -23,22 +27,16 @@ public struct TypingIndicator: View {
     .accessibilityLabel(label)
   }
 
-  private func dots(phase: TimeInterval?) -> some View {
+  /// The dot at `lit` is full, the others faint; all at rest when nil.
+  private func dots(lit: Int?) -> some View {
     HStack(spacing: 5) {
       ForEach(0..<3, id: \.self) { index in
         Circle()
           .fill(Color.weave.muted)
           .frame(width: 8, height: 8)
-          .opacity(opacity(index: index, phase: phase))
+          .opacity(lit.map { $0 == index ? 1 : 0.35 } ?? 0.7)
       }
     }
-  }
-
-  private func opacity(index: Int, phase: TimeInterval?) -> Double {
-    guard let phase else { return 0.7 }
-    let t = (phase * 1.6 - Double(index) * 0.22).truncatingRemainder(dividingBy: 1.2)
-    let wave = t < 0.6 ? sin(t / 0.6 * .pi) : 0
-    return 0.35 + 0.65 * max(0, wave)
   }
 }
 

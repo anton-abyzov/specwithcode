@@ -9,6 +9,7 @@ public struct MarkdownText: View {
   let collapsible: Bool
   let collapsedHeight: CGFloat
   let onOpenLink: ((URL) -> Void)?
+  let streaming: Bool
 
   @State private var expanded = false
   @State private var fullHeight: CGFloat = 0
@@ -16,7 +17,10 @@ public struct MarkdownText: View {
   /// - Parameters:
   ///   - collapsible: Clips replies taller than `collapsedHeight` with a fade
   ///     and a "Show more" button.
-  public init(_ markdown: String, collapsible: Bool = false, collapsedHeight: CGFloat = 420, onOpenLink: ((URL) -> Void)? = nil) {
+  ///   - streaming: The text is still arriving. Each partial reply is parsed
+  ///     once and not cached, so it cannot push finished replies out.
+  public init(_ markdown: String, collapsible: Bool = false, collapsedHeight: CGFloat = 420, streaming: Bool = false, onOpenLink: ((URL) -> Void)? = nil) {
+    self.streaming = streaming
     self.markdown = markdown
     self.collapsible = collapsible
     self.collapsedHeight = collapsedHeight
@@ -29,11 +33,15 @@ public struct MarkdownText: View {
   private var isClipped: Bool { collapsible && !expanded && fullHeight > collapsedHeight + 80 }
 
   public var body: some View {
-    let blocks = MarkdownParser.parse(markdown)
+    let blocks = streaming ? MarkdownParser.parse(markdown) : MarkdownParser.cachedParse(markdown)
     VStack(alignment: .leading, spacing: isClipped ? 0 : WeaveSpacing.s2) {
       content(blocks)
         .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+        // Only a collapsible reply needs its height. Whole points only: a
+        // sub-point change after a resize must not start another layout pass.
+        .onGeometryChange(for: CGFloat.self) { collapsible ? $0.size.height.rounded() : 0 } action: { height in
+          if fullHeight != height { fullHeight = height }
+        }
         .frame(maxHeight: isClipped ? collapsedHeight : nil, alignment: .top)
         .clipped()
         .mask {

@@ -14,8 +14,11 @@ public struct ServerSettings: Codable, Hashable, Sendable {
   /// The user's short names for every machine in the fleet, by environment id.
   /// Older servers omit it.
   public var machineNicknames: [String: MachineNicknameEntry]
+  /// Whether Aide, the personal assistant, is shown. Off by default; older
+  /// servers omit it, so Aide stays hidden there.
+  public var aideEnabled: Bool
 
-  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil, machineNicknames: [String: MachineNicknameEntry] = [:]) {
+  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil, machineNicknames: [String: MachineNicknameEntry] = [:], aideEnabled: Bool = false) {
     self.defaultRuntimeMode = defaultRuntimeMode
     self.defaultModelSelection = defaultModelSelection
     self.textGenerationModelSelection = textGenerationModelSelection
@@ -24,11 +27,12 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     self.defaultThreadEnvMode = defaultThreadEnvMode
     self.environmentIcon = environmentIcon
     self.machineNicknames = machineNicknames
+    self.aideEnabled = aideEnabled
   }
 
   enum CodingKeys: String, CodingKey {
     case defaultRuntimeMode, defaultModelSelection, textGenerationModelSelection, sidebarProjectOrder
-    case providerInstances, defaultThreadEnvMode, environmentIcon, machineNicknames
+    case providerInstances, defaultThreadEnvMode, environmentIcon, machineNicknames, aideEnabled
   }
 
   public init(from decoder: Decoder) throws {
@@ -41,6 +45,7 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     defaultThreadEnvMode = try c.decodeIfPresent(ThreadEnvMode.self, forKey: .defaultThreadEnvMode)
     environmentIcon = try? c.decodeIfPresent(String.self, forKey: .environmentIcon)
     machineNicknames = Self.decodeNicknames(c)
+    aideEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .aideEnabled)) ?? false
   }
 
   /// Drops a malformed entry rather than failing the whole settings snapshot.

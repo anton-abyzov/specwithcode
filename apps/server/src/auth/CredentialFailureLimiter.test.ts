@@ -6,8 +6,13 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   arrivedOverConnect,
+  CREDENTIAL_ADDRESS_FAILURE_LIMIT,
+  CredentialFailureLimiter,
+  credentialLimiterBuckets,
   credentialLimiterKey,
+  gateRequest,
   makeCredentialFailureLimiter,
+  recordRequestFailure,
 } from "./CredentialFailureLimiter.ts";
 
 const failures = (
@@ -122,3 +127,110 @@ it("keys tunnel traffic by Cloudflare's client address and exempts other loopbac
     "peer:2001:db8:1:2::/64",
   );
 });
+
+const proofFor = (x: string) =>
+  `${Buffer.from(JSON.stringify({ typ: "dpop+jwt", alg: "ES256", jwk: { kty: "EC", crv: "P-256", x, y: "y" } })).toString("base64url")}.e30.sig`;
+
+it.effect("a device behind a shared address is not locked out by another device's failures", () =>
+  Effect.gen(function* () {
+    const limiter = makeCredentialFailureLimiter();
+    const managed = "prod-0123456789abcdef.spec-weave.com";
+    const stale = request({
+      host: managed,
+      "cf-connecting-ip": "203.0.113.9",
+      dpop: proofFor("desktop"),
+    });
+    const phone = request({
+      host: managed,
+      "cf-connecting-ip": "203.0.113.9",
+      dpop: proofFor("phone"),
+    });
+    const bare = request({ host: managed, "cf-connecting-ip": "203.0.113.9" });
+    const limited = <A, E>(effect: Effect.Effect<A, E, never>) =>
+      effect.pipe(Effect.provideService(CredentialFailureLimiter, limiter));
+    const refused = (req: typeof phone) =>
+      limited(gateRequest(req)).pipe(
+        Effect.as(false),
+        Effect.catchTags({ CredentialRateLimited: () => Effect.succeed(true) }),
+      );
+
+    yield* Effect.forEach(Array.from({ length: 40 }), () => limited(recordRequestFailure(stale)));
+    expect(yield* refused(stale)).toBe(true);
+    expect(yield* refused(phone)).toBe(false);
+    expect(yield* refused(bare)).toBe(false);
+    expect(credentialLimiterBuckets(bare)).toEqual([
+      { key: "cf:203.0.113.9" },
+      { key: "cf:203.0.113.9#all", limit: CREDENTIAL_ADDRESS_FAILURE_LIMIT },
+    ]);
+  }),
+);
+
+it.effect("proof keys minted per attempt still hit the address ceiling", () =>
+  Effect.gen(function* () {
+    const limiter = makeCredentialFailureLimiter();
+    const managed = "prod-0123456789abcdef.spec-weave.com";
+    const attempt = (n: number) =>
+      request({ host: managed, "cf-connecting-ip": "203.0.113.10", dpop: proofFor(`k${n}`) });
+    yield* Effect.forEach(Array.from({ length: CREDENTIAL_ADDRESS_FAILURE_LIMIT }), (_, n) =>
+      recordRequestFailure(attempt(n)).pipe(
+        Effect.provideService(CredentialFailureLimiter, limiter),
+      ),
+    );
+    const refused = yield* gateRequest(attempt(-1)).pipe(
+      Effect.provideService(CredentialFailureLimiter, limiter),
+      Effect.flip,
+    );
+    expect(refused.retryAfterSeconds).toBe(600);
+  }),
+);
+
+it.effect("keys minted per attempt from several addresses cannot evict an address's ceiling", () =>
+  Effect.gen(function* () {
+    const limiter = makeCredentialFailureLimiter();
+    const managed = "prod-0123456789abcdef.spec-weave.com";
+    const addresses = ["203.0.113.21", "203.0.113.22", "203.0.113.23"];
+    let accepted = 0;
+    for (let round = 0; round < 3; round++) {
+      for (const ip of addresses) {
+        for (let n = 0; n < CREDENTIAL_ADDRESS_FAILURE_LIMIT; n++) {
+          const attempt = request({
+            host: managed,
+            "cf-connecting-ip": ip,
+            dpop: proofFor(`${ip}-${round}-${n}`),
+          });
+          const open = yield* gateRequest(attempt).pipe(
+            Effect.as(true),
+            Effect.catchTags({ CredentialRateLimited: () => Effect.succeed(false) }),
+            Effect.provideService(CredentialFailureLimiter, limiter),
+          );
+          if (!open) continue;
+          accepted += 1;
+          yield* recordRequestFailure(attempt).pipe(
+            Effect.provideService(CredentialFailureLimiter, limiter),
+          );
+        }
+      }
+    }
+    expect(accepted).toBe(addresses.length * CREDENTIAL_ADDRESS_FAILURE_LIMIT);
+  }),
+);
+
+it.effect("switching between proof and no proof shares the address ceiling", () =>
+  Effect.gen(function* () {
+    const limiter = makeCredentialFailureLimiter();
+    const managed = "prod-0123456789abcdef.spec-weave.com";
+    const bare = request({ host: managed, "cf-connecting-ip": "203.0.113.30" });
+    const record = (req: typeof bare) =>
+      recordRequestFailure(req).pipe(Effect.provideService(CredentialFailureLimiter, limiter));
+    yield* Effect.forEach(Array.from({ length: 29 }), () => record(bare));
+    yield* Effect.forEach(Array.from({ length: CREDENTIAL_ADDRESS_FAILURE_LIMIT - 29 }), (_, n) =>
+      record(
+        request({ host: managed, "cf-connecting-ip": "203.0.113.30", dpop: proofFor(`s${n}`) }),
+      ),
+    );
+    const refused = yield* gateRequest(
+      request({ host: managed, "cf-connecting-ip": "203.0.113.30", dpop: proofFor("fresh") }),
+    ).pipe(Effect.provideService(CredentialFailureLimiter, limiter), Effect.flip);
+    expect(refused.retryAfterSeconds).toBe(600);
+  }),
+);

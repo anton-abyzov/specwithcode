@@ -33,6 +33,50 @@ describe("ComposerPendingApprovalPanel", () => {
     expect(markup).not.toContain("Command approval requested");
   });
 
+  it("wraps a long command in a bounded code well instead of scrolling sideways", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          requestId: RuntimeRequestId.make("approval-long"),
+          requestKind: "command",
+          createdAt: "2026-10-31T00:00:00.000Z",
+          detail: `npm run ${"x".repeat(400)}`,
+          responseCapability: "live",
+        }}
+        pendingCount={3}
+      />,
+    );
+    const detail = markup.match(/<code[^>]*aria-label="Command"[^>]*>/)?.[0] ?? "";
+
+    expect(detail).toContain("whitespace-pre-wrap");
+    expect(detail).toContain("wrap-anywhere");
+    expect(detail).toContain("font-mono");
+    expect(detail).toContain("max-h-31");
+    expect(detail).not.toMatch(/whitespace-pre[\s"]/);
+    expect(markup).toContain("1 of 3");
+  });
+
+  it("explains a gone provider in plain wrapped text, not in the code well", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          requestId: RuntimeRequestId.make("approval-gone"),
+          requestKind: "command",
+          createdAt: "2026-10-31T00:00:00.000Z",
+          detail: "rm -rf build",
+          responseCapability: "not_resumable",
+        }}
+        pendingCount={1}
+      />,
+    );
+
+    expect(markup).toMatch(
+      /<span class="text-xs text-muted-foreground"[^>]*>Provider process is gone/,
+    );
+    expect(markup).not.toContain("<code");
+    expect(markup).not.toContain("1 of");
+  });
+
   it("falls back to the approval kind when the provider sends an empty detail", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
