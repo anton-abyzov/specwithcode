@@ -90,6 +90,7 @@ import {
   originWorkspacePatch,
   sameNameHints,
 } from "../../../studio/projectListVisibility";
+import { useProjectLinkSuggestions } from "./useProjectLinkSuggestions";
 import {
   projectNotificationLevel,
   projectShowsWaitingCount,
@@ -749,6 +750,7 @@ export default function StudioSidebar() {
   const nameHints = sameNameHints(codeProjects, (group) =>
     displayNameOf(group, displayedCheckouts.get(group.projectKey)),
   );
+  const linkSuggestions = useProjectLinkSuggestions(codeProjects, scratchRootFor);
   const listedKeys = {
     pinned: arranged.pinned.map((group) => group.projectKey),
     unpinned: arranged.unpinned.map((group) => group.projectKey),
@@ -788,6 +790,7 @@ export default function StudioSidebar() {
 
   return (
     <>
+      {linkSuggestions.dialog}
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent>
         <div className="sws-sidebar">
@@ -903,6 +906,7 @@ export default function StudioSidebar() {
                   attentionComplete: attentionByProject.get(group.projectKey)?.complete,
                   current: group.projectKey === activeProjectKey,
                   hint: nameHints.get(group.projectKey),
+                  linkSuggestion: linkSuggestions.suggestionFor(group),
                   rename: renameFor(group),
                   designsProjectId: designsFor(group),
                   notifications: notificationsFor(group),

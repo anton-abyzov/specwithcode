@@ -39,6 +39,11 @@ vi.mock("../../state/environments", () => ({
       : null,
   }),
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (environmentId: string, label?: string | null) =>
+    label ?? environmentId,
+  useMachineNickname: (environmentId: string, label?: string | null) => label ?? environmentId,
+}));
 vi.mock("../../state/session", () => ({
   useEnvironmentScopeAccess: (_id: unknown, scope: string) =>
     scope.includes("filesystem") ? state.files : "granted",

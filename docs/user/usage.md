@@ -190,6 +190,19 @@ model keeps its own quota for later, and the routing chip says which quota was s
 "80% of its 5-hour quota resets in 30 min". It only picks models already in the lane, never one
 billed per token outside it, and a model you name for a thread always wins.
 
+**Decision model** (Settings > Providers) lets Jev, from TypeSafe, settle the choices the keyword
+rules can only guess. Under **Use Jev for decisions**, choose OpenRouter or TypeSafe (the same
+providers `specweave jev` uses) and save that provider's API key; the key stays in this machine's
+secret store and is only sent to that provider, and tokens and passwords in the task are masked
+before it is. When the coordinator starts a worker
+without saying whether the task is complex or routine, Jev picks the lane, and with Auto on it names
+the kind of work when the rules are unsure. Jev answers in well under a second and costs about
+$0.04 per million words read, with nothing charged for its answers. An answer below 70% sure, an
+answer that takes more than two seconds, or a failed request keeps the rules' choice, and the
+routing chip says when Jev decided ("the decision model judged it (88%)"). The coordinator can also
+ask Jev any multiple-choice question with `studio_decide`, for example which thread should own a
+follow-up.
+
 A provider that reports no usage (Copilot and the other agents set up under
 [ACP providers](providers-acp.md)) counts as having room while it is signed in and ready, until a
 turn on it stops on a limit; SpecWithCode then leaves it alone until that limit resets, or for five

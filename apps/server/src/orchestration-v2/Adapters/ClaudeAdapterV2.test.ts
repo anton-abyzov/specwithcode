@@ -60,6 +60,7 @@ import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
+import { DecisionToolkit } from "../../mcp/toolkits/decision/tools.ts";
 import { MachinesToolkit } from "../../mcp/toolkits/machines/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
 import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
@@ -928,6 +929,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
       ...Object.values(MachinesToolkit.tools),
+      ...Object.values(DecisionToolkit.tools),
       ...Object.values(DesignToolkit.tools),
       ...Object.values(DesignScreenshotToolkit.tools),
     ]

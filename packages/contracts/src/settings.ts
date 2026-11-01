@@ -1218,6 +1218,30 @@ export const VoiceSettings = Schema.Struct({
 export type VoiceSettings = typeof VoiceSettings.Type;
 
 /**
+ * The decision model: a fast model that picks one of a fixed list of options
+ * instead of writing text (TypeSafe's Jev, reached through OpenRouter or
+ * TypeSafe directly, the same providers `specweave jev` uses). When it is on,
+ * a worker whose lane the coordinator did not name gets its lane from it, and
+ * the coordinator can ask it any multiple-choice question. Off by default. An
+ * empty model is the provider's default. The API key lives in the server's
+ * secret store; settings and clients only see a redaction marker when one is
+ * set, and the server makes the request itself.
+ */
+export const DECISION_MODEL_PROVIDERS = ["off", "openrouter", "typesafe"] as const;
+export const DecisionModelProvider = Schema.Literals(DECISION_MODEL_PROVIDERS);
+export type DecisionModelProvider = typeof DecisionModelProvider.Type;
+export const DecisionModelSettings = Schema.Struct({
+  provider: DecisionModelProvider.pipe(Schema.withDecodingDefault(Effect.succeed("off" as const))),
+  model: TrimmedString.check(Schema.isMaxLength(100)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  apiKey: TrimmedString.check(Schema.isMaxLength(512)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+});
+export type DecisionModelSettings = typeof DecisionModelSettings.Type;
+
+/**
  * Bitbucket API credentials for this environment, used before the
  * `STUDIO_BITBUCKET_*` environment variables. The tokens live in the server's
  * secret store; settings and clients only see a redaction marker when one is
@@ -2043,6 +2067,7 @@ export const ServerSettings = Schema.Struct({
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   voice: VoiceSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  decisionModel: DecisionModelSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   github: GitHubSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
@@ -2383,6 +2408,14 @@ export const ServerSettingsPatch = Schema.Struct({
       ),
       elevenLabsVoiceId: Schema.optionalKey(ElevenLabsVoiceId),
       elevenLabsApiKey: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(512))),
+    }),
+  ),
+  /** An empty key clears it; an omitted one or the redaction marker keeps what the server has. */
+  decisionModel: Schema.optionalKey(
+    Schema.Struct({
+      provider: Schema.optionalKey(DecisionModelProvider),
+      model: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(100))),
+      apiKey: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(512))),
     }),
   ),
   /** An empty token clears it; an omitted one keeps what the server has. */

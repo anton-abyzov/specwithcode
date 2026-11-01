@@ -1,4 +1,4 @@
-import type { ThemeAppearance } from "./themePalettes.js";
+import type { ThemeAppearance } from "./themePalettes.ts";
 
 export type ThemePreviewColors = Readonly<{
   canvas: string;

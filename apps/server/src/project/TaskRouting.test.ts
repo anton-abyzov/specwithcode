@@ -154,3 +154,111 @@ it.effect("still follows a learned preference for a subscription", () =>
     assert.strictEqual(decision?.modelBilling, "subscription");
   }),
 );
+
+const sonnet = {
+  slug: "claude-sonnet-5-5",
+  name: "Claude Sonnet 5.5",
+  isCustom: false,
+  capabilities: null,
+};
+const laneProviders = [
+  instance(
+    claudeMax,
+    { status: "authenticated", type: "max" },
+    {
+      models: [
+        { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+        sonnet,
+      ],
+    },
+  ),
+];
+const settingsWithLanesAndJev = Option.some({
+  getSettings: Effect.succeed({
+    ...DEFAULT_SERVER_SETTINGS,
+    decisionModel: { provider: "typesafe" as const, model: "", apiKey: "ts-key" },
+    projectSettingsOverrides: {
+      [projectId]: {
+        modelLanes: {
+          complex: [{ instanceId: claudeMax, model: "claude-opus-5-5" }],
+          routine: [{ instanceId: claudeMax, model: "claude-sonnet-5-5" }],
+        },
+      },
+    },
+  }),
+} as unknown as ServerSettings.ServerSettingsService["Service"]);
+
+const jevAnswering = (lane: "complex" | "routine", probability: number) => {
+  const calls: Array<{ readonly authorization: string | null; readonly body: unknown }> = [];
+  const send = (async (_url: string, options?: RequestInit) => {
+    calls.push({
+      authorization: new Headers(options?.headers).get("authorization"),
+      body: JSON.parse(String(options?.body)),
+    });
+    return Response.json({
+      model: "jev-latest",
+      answers: {
+        lane: {
+          type: "choice",
+          choice: lane,
+          confidence: probability,
+          probabilities: {
+            [lane]: probability,
+            [lane === "complex" ? "routine" : "complex"]: 1 - probability,
+          },
+        },
+        taskClass: {
+          type: "choice",
+          choice: "general",
+          confidence: 0.9,
+          probabilities: { general: 0.9 },
+        },
+      },
+    });
+  }) as typeof fetch;
+  return { send, calls };
+};
+
+const routeWithJev = (send: typeof fetch, laneHint?: "complex" | "routine") =>
+  routeWorkerTask({
+    project: projectFixture(projectId),
+    baseline: { instanceId: claudeMax, model: "claude-sonnet-5-5" },
+    providers: laneProviders,
+    task: { title: "Changelog", text: "Update the changelog for 1.0.80" },
+    laneHint,
+    settings: settingsWithLanesAndJev,
+    decisionFetch: send,
+  });
+
+it.effect("asks the decision model for the lane the rules would guess", () =>
+  Effect.gen(function* () {
+    const jev = jevAnswering("complex", 0.88);
+    const decision = yield* routeWithJev(jev.send);
+    assert.strictEqual(decision?.lane, "complex");
+    assert.strictEqual(decision?.selection.model, "claude-opus-5-5");
+    assert.include(decision?.reason ?? "", "the decision model judged it (88%)");
+    assert.strictEqual(jev.calls.length, 1);
+    assert.strictEqual(jev.calls[0]?.authorization, "Bearer ts-key");
+    assert.deepInclude(jev.calls[0]?.body as object, { model: "jev-latest" });
+  }),
+);
+
+it.effect("keeps the rules' lane when the decision model is unsure or fails", () =>
+  Effect.gen(function* () {
+    const unsure = yield* routeWithJev(jevAnswering("complex", 0.6).send);
+    assert.strictEqual(unsure?.lane, "routine");
+    const down = yield* routeWithJev((async () => {
+      throw new Error("offline");
+    }) as typeof fetch);
+    assert.strictEqual(down?.lane, "routine");
+  }),
+);
+
+it.effect("never asks the decision model when the coordinator named the lane", () =>
+  Effect.gen(function* () {
+    const jev = jevAnswering("routine", 0.99);
+    const decision = yield* routeWithJev(jev.send, "complex");
+    assert.strictEqual(decision?.lane, "complex");
+    assert.strictEqual(jev.calls.length, 0);
+  }),
+);

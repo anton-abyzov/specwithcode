@@ -174,10 +174,7 @@ export function ProjectDesignsPane({
         {designs.problems.length > 0 ? (
           <ul className="flex flex-col gap-0.5 px-1 pb-3" role="status">
             {designs.problems.map((problem) => (
-              <li
-                key={problemKey(problem)}
-                className="text-xs text-muted-foreground"
-              >
+              <li key={problemKey(problem)} className="text-xs text-muted-foreground">
                 {problem.ownerLabel}: {problem.detail}
               </li>
             ))}

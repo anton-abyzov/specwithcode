@@ -28,6 +28,11 @@ vi.mock("../../state/environments", () => ({
     })),
   }),
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (environmentId: string, label?: string | null) =>
+    label ?? environmentId,
+  useMachineNickname: (environmentId: string, label?: string | null) => label ?? environmentId,
+}));
 vi.mock("../../state/session", () => ({ useEnvironmentsWithScope: () => new Set(["m4", "m1"]) }));
 const operationId = "7307ab55-fc59-4e07-abeb-de54be69215f";
 const scope = {

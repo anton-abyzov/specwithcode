@@ -177,20 +177,52 @@ export function useCopyActivities(): ReadonlyMap<string, CopyActivity> {
 export function useCopyActivity(
   projects: ReadonlyArray<{ readonly environmentId: string; readonly id: string }>,
 ): CopyActivity | null {
+  return useKeyedCopyActivity(projects)?.activity ?? null;
+}
+
+/** The running copy of any of these projects, with the key its dialog opens by. */
+export function useKeyedCopyActivity(
+  projects: ReadonlyArray<{ readonly environmentId: string; readonly id: string }>,
+): { readonly key: string; readonly activity: CopyActivity } | null {
   const all = useCopyActivities();
   for (const project of projects) {
-    const activity = all.get(copyActivityKey(project.environmentId, project.id));
-    if (activity) return activity;
+    const key = copyActivityKey(project.environmentId, project.id);
+    const activity = all.get(key);
+    if (activity) return { key, activity };
   }
   return null;
 }
 
+/** A review asked for before its project's dialog was on screen: opens once it mounts. */
+let pendingReview: { readonly key: string; readonly until: number } | null = null;
+/** How long a requested review waits for its project's page to open. */
+const PENDING_REVIEW_MS = 10_000;
+
 /** Registers the dialog that opens for a project's copy; returns the unregister. */
 export function registerCopyOpener(key: string, open: () => void): () => void {
   openers.set(key, open);
+  if (pendingReview?.key === key && Date.now() <= pendingReview.until) {
+    pendingReview = null;
+    // After the mounting render: the dialog's own effects run first.
+    queueMicrotask(() => openers.get(key)?.());
+  }
   return () => {
     if (openers.get(key) === open) openers.delete(key);
   };
+}
+
+/**
+ * Opens the review of a copy that waits for the person. From the sidebar the project
+ * opens first, so its dialog may not be mounted yet: then it opens once it registers.
+ */
+export function requestCopyReview(key: string): void {
+  const open = openers.get(key);
+  if (open) {
+    pendingReview = null;
+    open();
+    return;
+  }
+  pendingReview = { key, until: Date.now() + PENDING_REVIEW_MS };
 }
 
 /** Opens the project's copy dialog when its project is on screen; null otherwise. */
@@ -268,8 +300,13 @@ export function copyActivityFromSource(
   return null;
 }
 
-/** "Copy to ministorm: copying files, 42%", or "Move to ministorm: …" for a move. */
+/**
+ * "Copy to M1: copying files, 42%", or "Hand off to M1: …" for a move. A copy that
+ * waits for the person says so, since nothing moves until they act.
+ */
 export function copyActivityText(activity: CopyActivity): string {
+  if (activity.waiting)
+    return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine} is waiting for your review`;
   const percent = activity.fraction === null ? "" : `, ${Math.floor(activity.fraction * 100)}%`;
   const label = activity.label.charAt(0).toLowerCase() + activity.label.slice(1);
   return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine}: ${label}${percent}`;
@@ -278,6 +315,7 @@ export function copyActivityText(activity: CopyActivity): string {
 /** Test helper: forgets every activity, watch and opener. */
 export function resetCopyActivityForTests(): void {
   activities = new Map();
+  pendingReview = null;
   watches = new Map();
   openers.clear();
   emit();

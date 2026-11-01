@@ -185,6 +185,7 @@ const BITBUCKET_SECRET_NAMES = {
 } as const;
 const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
 const ELEVENLABS_VOICE_SECRET_NAME = "elevenlabs-voice-api-key";
+const DECISION_MODEL_SECRET_NAME = "decision-model-api-key";
 
 /** Hosts are case-insensitive; a patch can arrive before decoding lowercased its keys. */
 function gitHubTokenSecretName(host: string): string {
@@ -609,6 +610,10 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     ...settings.voice,
     elevenLabsApiKey: redactSecret(settings.voice.elevenLabsApiKey),
   };
+  const decisionModel = {
+    ...settings.decisionModel,
+    apiKey: redactSecret(settings.decisionModel.apiKey),
+  };
   return {
     ...settings,
     providers,
@@ -617,6 +622,7 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     bitbucket,
     github,
     voice,
+    decisionModel,
   };
 }
 
@@ -1404,8 +1410,32 @@ const make = Effect.gen(function* () {
           moved = true;
         }
       }
+      const decisionModel = { ...settings.decisionModel };
+      const decisionKey = decisionModel.apiKey;
+      if (decisionKey.length > 0 && decisionKey !== SECRET_REDACTED) {
+        const stored = yield* secretStore
+          .set(DECISION_MODEL_SECRET_NAME, textEncoder.encode(decisionKey))
+          .pipe(
+            Effect.as(true),
+            Effect.catch(() =>
+              Effect.logWarning("failed to move the decision model key into the secret store").pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (stored) {
+          decisionModel.apiKey = SECRET_REDACTED;
+          moved = true;
+        }
+      }
       return moved
-        ? { ...settings, bitbucket, github: { ...settings.github, tokens }, voice }
+        ? {
+            ...settings,
+            bitbucket,
+            github: { ...settings.github, tokens },
+            voice,
+            decisionModel,
+          }
         : settings;
     });
 
@@ -1656,6 +1686,17 @@ const make = Effect.gen(function* () {
           );
         voice.elevenLabsApiKey = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
       }
+      const decisionModel = { ...settings.decisionModel };
+      if (decisionModel.apiKey === SECRET_REDACTED) {
+        const secret = yield* secretStore
+          .get(DECISION_MODEL_SECRET_NAME)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        decisionModel.apiKey = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
@@ -1663,6 +1704,7 @@ const make = Effect.gen(function* () {
         bitbucket,
         github: { ...settings.github, tokens },
         voice,
+        decisionModel,
       };
     });
 
@@ -1923,6 +1965,30 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const decisionModel = { ...next.decisionModel };
+      {
+        let value = decisionModel.apiKey;
+        if (value === SECRET_REDACTED) {
+          // The marker keeps what is saved; a hand-edited plaintext key moves into the store.
+          const inline = current.decisionModel.apiKey;
+          value = inline === SECRET_REDACTED ? "" : inline;
+        }
+        if (value.length > 0) {
+          changes.push({
+            kind: "write",
+            secretName: DECISION_MODEL_SECRET_NAME,
+            value: textEncoder.encode(value),
+          });
+          decisionModel.apiKey = SECRET_REDACTED;
+        } else if (decisionModel.apiKey !== SECRET_REDACTED) {
+          changes.push({
+            kind: "remove",
+            secretName: DECISION_MODEL_SECRET_NAME,
+            operation: "remove-secret",
+          });
+        }
+      }
+
       return {
         settings: {
           ...next,
@@ -1931,6 +1997,7 @@ const make = Effect.gen(function* () {
           bitbucket,
           github: { ...next.github, tokens },
           voice,
+          decisionModel,
         },
         changes,
       };

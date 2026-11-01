@@ -1,6 +1,6 @@
 import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { isAppScratchFolder, projectOrigin } from "@specweave-studio/shared/projectOrigin";
-import { isScratchProject } from "./projects.js";
+import { isScratchProject } from "./projects.ts";
 
 /** Minimal catalog fields shared by web and mobile project choices. */
 export interface PickerProject {

@@ -8,7 +8,7 @@ import {
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
 } from "@specweave-studio/contracts";
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
@@ -28,7 +28,7 @@ export function ProjectHandoffRecovery({
   scopes: readonly ProjectExecutionScope[];
   members: readonly EnvironmentProject[];
 }) {
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const canOperate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
   const canGit = useEnvironmentsWithScope(environments, AuthSourceControlWriteScope);
   const canWrite = useEnvironmentsWithScope(environments, AuthFilesystemWriteScope);

@@ -32,7 +32,9 @@ import {
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
-const ANDROID_PACKAGE = "com.specweave.studio";
+// The Expo iOS build keeps its bundle id; the Android release package is SpecWithCode's Play listing.
+const IOS_BUNDLE_ID = "com.specweave.studio";
+const ANDROID_PACKAGE = "com.specwithcode.android";
 const APP_SCHEME = "studio";
 // expo-dev-launcher reads these off the manifest URL and updates the dev menu
 // preferences before the app loads, keeping captures free of dev chrome.
@@ -519,6 +521,31 @@ async function stopProcess(child: NodeChildProcess.ChildProcess): Promise<void> 
   await Promise.race([exited, delay(1_000)]);
 }
 
+async function waitForPortClosed(
+  port: number,
+  label = "Process",
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const open = await new Promise<boolean>((resolve) => {
+      const socket = NodeNet.createConnection({ host: "127.0.0.1", port });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+      socket.setTimeout(500, () => {
+        socket.destroy();
+        resolve(false);
+      });
+    });
+    if (!open) return;
+    await delay(200);
+  }
+  throw new Error(`${label} did not release port ${port} within ${timeoutMs}ms.`);
+}
+
 async function waitForPort(port: number, label = "Process", timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -932,7 +959,7 @@ async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
 
 async function iosAppContainer(udid: string): Promise<string> {
   return (
-    await commandOutput("xcrun", ["simctl", "get_app_container", udid, ANDROID_PACKAGE, "data"])
+    await commandOutput("xcrun", ["simctl", "get_app_container", udid, IOS_BUNDLE_ID, "data"])
   ).trim();
 }
 
@@ -1020,7 +1047,7 @@ async function presentIosLockScreen(udid: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = NodeChildProcess.execFile(
       "xcrun",
-      ["simctl", "push", udid, ANDROID_PACKAGE, "-"],
+      ["simctl", "push", udid, IOS_BUNDLE_ID, "-"],
       { cwd: REPO_ROOT },
       (error) => (error ? reject(error) : resolve()),
     );
@@ -1107,7 +1134,7 @@ async function captureIos(
   }
   await normalizeIosSimulator(capture.appearance, simulator.udid);
   if (appPath) {
-    await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, ANDROID_PACKAGE]).catch(
+    await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, IOS_BUNDLE_ID]).catch(
       () => undefined,
     );
     await runCommand("xcrun", ["simctl", "install", simulator.udid, appPath]);
@@ -1132,7 +1159,7 @@ async function captureIos(
       "launch",
       ...(terminateRunningProcess ? ["--terminate-running-process"] : []),
       simulator.udid,
-      ANDROID_PACKAGE,
+      IOS_BUNDLE_ID,
       "--initialUrl",
       metroUrl,
       "--showcasePairingUrl",
@@ -1543,6 +1570,23 @@ async function main(): Promise<void> {
       await NodeFSP.mkdir(workspaceRoot, { recursive: true });
       const shellPath = await createShowcaseShell(baseDir);
       const labelProbeDirectory = await createShowcaseLabelProbe(baseDir, environment.label);
+      const migrationServer = startShowcaseServer(
+        baseDir,
+        workspaceRoot,
+        port,
+        shellPath,
+        labelProbeDirectory,
+      );
+      showcaseServers.push(migrationServer);
+      await waitForPort(port, `${environment.label} server`);
+      await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
+      // The seed writes the legacy v1 projection tables, which the server only
+      // imports into orchestration v2 during startup. The first run migrates
+      // the schema; restart it so the startup import picks up the seeded rows,
+      // otherwise every client sees connected environments with no threads.
+      await stopProcess(migrationServer);
+      showcaseServers.splice(showcaseServers.indexOf(migrationServer), 1);
+      await waitForPortClosed(port, `${environment.label} server`);
       const server = startShowcaseServer(
         baseDir,
         workspaceRoot,
@@ -1552,7 +1596,6 @@ async function main(): Promise<void> {
       );
       showcaseServers.push(server);
       await waitForPort(port, `${environment.label} server`);
-      await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
       // The server begins listening before the ServerEnvironment layer
       // persists the environment id, so poll rather than read once.
       const environmentId = await waitForFileContent(

@@ -27,6 +27,7 @@ import {
   knowledgeTokens,
 } from "../../studio/projectKnowledgeModel";
 import { useEnvironment } from "../../state/environments";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScopeAccess } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -64,7 +65,8 @@ export function ProjectKnowledge({
     read,
     files,
   });
-  const problem = knowledgeAccessProblem(access, environment?.label ?? "this machine");
+  const machineName = useMachineNickname(environmentId, environment?.label ?? "this machine");
+  const problem = knowledgeAccessProblem(access, machineName);
   const query = useEnvironmentQuery(
     access === "ready" ? projectWorkspace.knowledge({ environmentId, input: { projectId } }) : null,
   );
@@ -185,8 +187,7 @@ export function ProjectKnowledge({
       </p>
       {access === "ready" && !canRebuild && (
         <p className="project-muted">
-          Rebuilding the index needs permission to run work on{" "}
-          {environment?.label ?? "this machine"}.
+          Rebuilding the index needs permission to run work on {machineName}.
         </p>
       )}
       {problem && (

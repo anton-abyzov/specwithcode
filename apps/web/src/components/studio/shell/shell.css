@@ -856,6 +856,18 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-side-row > .sws-side-row-shared {
   color: var(--primary);
 }
+/* The same repository on another machine, not linked yet: a link offer. */
+.sws-side-row > .sws-side-row-link-suggestion {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  color: var(--primary);
+}
+.sws-side-row > .sws-side-row-link-suggestion > svg {
+  width: 12px;
+  height: 12px;
+}
 /* Reserve independent badge and menu space: hover never hides a live count. */
 .sws-side-row-end {
   position: relative;
@@ -3298,6 +3310,24 @@ html.dark[data-theme-id]:not([data-theme-id=""])
     opacity: 0.5;
     animation: none;
   }
+}
+/* A copy waiting for the person: a "Review" pill in the row's end, not a stalled bar. */
+.sws-copy-review {
+  flex: none;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  background: color-mix(in srgb, var(--shell-waiting) 20%, transparent);
+  color: var(--foreground);
+  cursor: pointer;
+}
+.sws-copy-review:hover {
+  background: color-mix(in srgb, var(--shell-waiting) 32%, transparent);
 }
 /* The same bar, full width in the project's copy banner. */
 .sws-copy-progress[data-inline] {

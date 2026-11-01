@@ -9,7 +9,8 @@ import {
 } from "@specweave-studio/contracts";
 import { useMemo, useState, type ReactElement, type ReactNode } from "react";
 
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import {
   awaitEnvironmentScope,
   readEnvironmentScope,
@@ -46,7 +47,7 @@ export function useProjectIconEditor({
   const [saving, setSaving] = useState(false);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const update = useOrchestrationCommand(projectEnvironment.update, { reportFailure: false });
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const members = useMemo(
     () => (checkouts && checkouts.length > 0 ? checkouts : [project]),
     [checkouts, project],

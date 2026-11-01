@@ -5,7 +5,7 @@ import {
 } from "@specweave-studio/contracts";
 
 import { useProjects } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { linkedPlanGroups, planLink, syncLinkedPlans } from "../../studio/planLink";
@@ -20,7 +20,7 @@ const SYNC_EVERY_MS = 60_000;
  */
 export function LinkedPlanSync() {
   const projects = useProjects();
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const operate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
   const read = useEnvironmentsWithScope(environments, AuthOrchestrationReadScope);
   const exportPlan = useAtomCommand(planLink.export, { reportFailure: false });

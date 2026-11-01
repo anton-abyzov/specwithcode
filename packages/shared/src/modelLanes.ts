@@ -5,8 +5,9 @@
  *
  * A worker whose model nobody named starts on the first entry of its lane
  * that can run now. The lane comes from the caller's judgement (the
- * coordinator passes `taskLane`), else a learned preference, else the rules
- * below. Pure and deterministic: no model call is made to route a task.
+ * coordinator passes `taskLane`), else a learned preference, else the
+ * decision model's sure answer when the server asked one, else the rules
+ * below. Pure and deterministic: the server makes any model call.
  *
  * Lane entries are the user's explicit choices, so an instance billed per
  * token may be picked from a lane (the decision records `billing: "api"`).
@@ -31,6 +32,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { formatProbability } from "./decisionModel.ts";
 import { describeExpiringQuota, type ExpiringQuota, expiringQuota } from "./expiringQuota.ts";
 import { canTakeTurn, isGeminiSpendProvider, providerUsedPercent } from "./providerFallback.ts";
 import {
@@ -112,11 +114,20 @@ const MANY_REQUIREMENTS = 8;
 
 export interface LaneClassification {
   readonly lane: ModelLane;
-  /** `hint`: the caller said; `learned`: a project preference said; `rules`: the signals below. */
-  readonly source: "hint" | "learned" | "rules";
+  /**
+   * `hint`: the caller said; `learned`: a project preference said; `decision`:
+   * the decision model said; `rules`: the signals below.
+   */
+  readonly source: "hint" | "learned" | "decision" | "rules";
   readonly signals: ReadonlyArray<string>;
   /** The learned preference that set the lane, by id. */
   readonly preferenceId?: string | undefined;
+}
+
+/** A lane the decision model picked, with the probability it gave. */
+export interface LaneDecision {
+  readonly lane: ModelLane;
+  readonly probability: number;
 }
 
 export interface LaneTaskInput {
@@ -223,6 +234,8 @@ export function classifyLane(input: {
   readonly hint?: ModelLane | undefined;
   readonly classification?: Pick<TaskClassification, "taskClass" | "confidence"> | undefined;
   readonly preferences?: ReadonlyArray<LearnedModelPreference> | undefined;
+  /** The decision model's sure answer, when one was asked. */
+  readonly decision?: LaneDecision | null | undefined;
 }): LaneClassification {
   if (input.hint !== undefined)
     return { lane: input.hint, source: "hint", signals: [`hint: ${input.hint}`] };
@@ -240,6 +253,14 @@ export function classifyLane(input: {
       signals: [`learned: ${learned.note ?? learned.keywords.join(", ")}`.slice(0, 120)],
       preferenceId: learned.id,
     };
+  if (input.decision != null)
+    return {
+      lane: input.decision.lane,
+      source: "decision",
+      signals: [
+        `decision model: ${input.decision.lane} ${formatProbability(input.decision.probability)}`,
+      ],
+    };
   return classifyLaneByRules(input.task, input.classification);
 }
 
@@ -251,6 +272,8 @@ export interface ResolveLaneRoutingInput {
   readonly task: LaneTaskInput;
   readonly classification: TaskClassification;
   readonly laneHint?: ModelLane | undefined;
+  /** The decision model's sure lane, used after a hint and a learned lane, before the rules. */
+  readonly laneDecision?: LaneDecision | null | undefined;
   /** The model the app would use without lanes. */
   readonly baseline: ModelSelection;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -403,6 +426,7 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     hint: input.laneHint,
     classification: input.classification,
     preferences: input.preferences,
+    decision: input.laneDecision,
   });
   // A coordinator's rule naming a paid model without the person's consent
   // counts as absent, so it never shadows another matching rule; the next
@@ -533,9 +557,11 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
       ? "the coordinator judged it"
       : lane.source === "learned"
         ? "a learned preference says so"
-        : lane.signals.length > 0
-          ? lane.signals.slice(0, 2).join(", ")
-          : "no sign of complex work";
+        : lane.source === "decision"
+          ? `the decision model judged it (${formatProbability(input.laneDecision?.probability ?? 0)})`
+          : lane.signals.length > 0
+            ? lane.signals.slice(0, 2).join(", ")
+            : "no sign of complex work";
   const via = usedPreference !== undefined ? " (learned preference)" : "";
   const passed = skipped.length > 0 ? ` after skipping ${skipped.length}` : "";
   const spending = expiring !== null ? `, because ${describeExpiringQuota(expiring.quota)}` : "";

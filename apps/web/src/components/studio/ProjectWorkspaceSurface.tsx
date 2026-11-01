@@ -1467,7 +1467,7 @@ export function ProjectWorkspaceSurface({
                 </Tip>
                 {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
                   // Another machine runs this project: its coordinator, workers and sign-ins.
-                  <Tip label={`Runs on ${environment?.label ?? machineName}, not this computer`}>
+                  <Tip label={`Runs on ${machineName}, not this computer`}>
                     <span className="sws-tag sws-project-machine" data-project-machine>
                       <LaptopIcon aria-hidden />
                       <span className="sr-only">Runs on </span>

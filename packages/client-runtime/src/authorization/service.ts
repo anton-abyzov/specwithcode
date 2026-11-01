@@ -33,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
@@ -98,6 +99,40 @@ const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 
+/** First wait after a failed credential renewal; it doubles with each failure in a row. */
+export const DPOP_RENEWAL_BACKOFF_BASE_MS = 5_000;
+/** Longest wait between failed credential renewals for one environment. */
+export const DPOP_RENEWAL_BACKOFF_MAX_MS = 300_000;
+
+/**
+ * How long to wait before the next credential renewal after `failures` failed
+ * in a row (counting from 1). Each renewal asks the machine to mint a pairing
+ * credential through the relay, so a client that keeps failing must not ask on
+ * every poll. Equal jitter spreads clients that failed together.
+ */
+export function dpopRenewalBackoffMs(failures: number, random: number): number {
+  const ceiling = Math.min(
+    DPOP_RENEWAL_BACKOFF_MAX_MS,
+    DPOP_RENEWAL_BACKOFF_BASE_MS * 2 ** Math.max(0, failures - 1),
+  );
+  return Math.round(ceiling / 2 + (ceiling / 2) * random);
+}
+
+/**
+ * The failure to repeat while a renewal backoff lasts. A transient failure
+ * carries the time left, so the connection supervisor does not retry sooner.
+ */
+function withRenewalRetryAfter(error: ConnectionAttemptError, remainingMs: number) {
+  if (error._tag !== "ConnectionTransientError") return error;
+  return new ConnectionTransientError({
+    reason: error.reason,
+    detail: error.detail,
+    ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
+    ...(error.machineOffline === undefined ? {} : { machineOffline: error.machineOffline }),
+    retryAfterMs: remainingMs,
+  });
+}
+
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
     ? error
@@ -136,6 +171,29 @@ export const make = Effect.gen(function* () {
       readonly identity: ClientCapabilities.CloudSessionIdentity;
       readonly thumbprint: string;
       readonly token: Effect.Effect<TokenStore.RemoteDpopAccessToken, ConnectionAttemptError>;
+    }
+  >();
+  /**
+   * Renewals that minted a pairing credential through the relay and then
+   * failed, per environment, until the next one may be tried. Without this,
+   * every poll asked the machine to mint another credential (one desktop app
+   * minted one every few seconds for hours while the machine refused its
+   * exchange, or accepted it and then rejected the token it issued).
+   *
+   * A renewal whose exchange succeeds keeps its record, holding the issued
+   * token, until that token is accepted: a socket opens with it, or it is
+   * replaced without having been rejected. A rejection counts as one more
+   * failed renewal.
+   */
+  const failedRenewals = new Map<
+    EnvironmentId,
+    {
+      readonly identity: ClientCapabilities.CloudSessionIdentity;
+      readonly thumbprint: string;
+      readonly failures: number;
+      readonly retryAtEpochMs: number;
+      readonly error?: ConnectionAttemptError;
+      readonly renewedAccessToken?: string;
     }
   >();
   const bearerDescriptors = yield* Ref.make<
@@ -295,6 +353,58 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  /** Call with the token lock held. */
+  const recordFailedRenewal = Effect.fnUntraced(function* (
+    environmentId: EnvironmentId,
+    identity: ClientCapabilities.CloudSessionIdentity,
+    thumbprint: string,
+    error: ConnectionAttemptError,
+  ) {
+    const failedAt = yield* Clock.currentTimeMillis;
+    const previous = failedRenewals.get(environmentId);
+    const failures =
+      previous?.identity === identity && previous.thumbprint === thumbprint
+        ? previous.failures + 1
+        : 1;
+    const waitMs = Math.max(
+      dpopRenewalBackoffMs(failures, yield* Random.next),
+      // A machine that rate limits this client says when to come back.
+      error._tag === "ConnectionTransientError" ? (error.retryAfterMs ?? 0) : 0,
+    );
+    failedRenewals.set(environmentId, {
+      identity,
+      thumbprint,
+      failures,
+      retryAtEpochMs: failedAt + waitMs,
+      error,
+    });
+  });
+
+  /** A token issued by a renewal was rejected. Call with the token lock held. */
+  const recordRejectedRenewal = Effect.fnUntraced(function* (
+    environmentId: EnvironmentId,
+    accessToken: string,
+  ) {
+    const renewal = failedRenewals.get(environmentId);
+    if (renewal?.renewedAccessToken !== accessToken) return;
+    yield* recordFailedRenewal(
+      environmentId,
+      renewal.identity,
+      renewal.thumbprint,
+      new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "The environment rejected its renewed credential.",
+      }),
+    );
+  });
+
+  /** A token issued by a renewal was accepted. Call with the token lock held. */
+  const recordAcceptedRenewal = (environmentId: EnvironmentId, accessToken: string) => {
+    if (failedRenewals.get(environmentId)?.renewedAccessToken === accessToken) {
+      failedRenewals.delete(environmentId);
+    }
+  };
+
   const obtainBootstrap = Effect.fn("relay.connection.bootstrap.obtain")(function* (
     environmentId: EnvironmentId,
     identity: ClientCapabilities.CloudSessionIdentity,
@@ -330,8 +440,10 @@ export const make = Effect.gen(function* () {
       environmentId: EnvironmentId,
       thumbprint: string,
       identity: ClientCapabilities.CloudSessionIdentity,
+      attempt: { minted: boolean },
     ) {
       const bootstrap = yield* obtainBootstrap(environmentId, identity);
+      attempt.minted = true;
       const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl, "relay").pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.descriptor"),
@@ -381,7 +493,14 @@ export const make = Effect.gen(function* () {
   );
 
   const getDpopToken = Effect.fn("clientRuntime.connection.remote.getDpopToken")(function* (
-    input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]>[0],
+    input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]>[0] & {
+      /**
+       * Fail at once while an earlier renewal's backoff lasts. Only HTTP polls
+       * do this; the connection supervisor runs its own retry ladder and
+       * recovery for sockets.
+       */
+      readonly respectRenewalBackoff?: boolean;
+    },
   ) {
     const session = yield* cloudSession.identity;
     if (Option.isNone(session)) {
@@ -423,17 +542,41 @@ export const make = Effect.gen(function* () {
         }
         if (input.rejectedAccessToken !== undefined) {
           yield* removeRejectedToken(input.expectedEnvironmentId, input.rejectedAccessToken);
+          yield* recordRejectedRenewal(input.expectedEnvironmentId, input.rejectedAccessToken);
         }
         const pending = pendingTokens.get(input.expectedEnvironmentId);
         if (pending?.identity === identity && pending.thumbprint === thumbprint) {
           return { token: pending.token, fromCache: false };
         }
+        // A renewed token that is being replaced without a rejection served its purpose.
+        if (failedRenewals.get(input.expectedEnvironmentId)?.renewedAccessToken !== undefined) {
+          failedRenewals.delete(input.expectedEnvironmentId);
+        }
+        const failed = failedRenewals.get(input.expectedEnvironmentId);
+        if (
+          input.respectRenewalBackoff === true &&
+          failed?.error !== undefined &&
+          failed.identity === identity &&
+          failed.thumbprint === thumbprint &&
+          failed.retryAtEpochMs > now
+        ) {
+          yield* Effect.annotateCurrentSpan({
+            "connection.remote_token_renewal": "backoff",
+            "connection.remote_token_renewal_failures": failed.failures,
+          });
+          return {
+            token: Effect.fail(withRenewalRetryAfter(failed.error, failed.retryAtEpochMs - now)),
+            fromCache: false,
+          };
+        }
 
         const id = {};
+        const attempt = { minted: false };
         const fiber = yield* exchangeDpopToken(
           input.expectedEnvironmentId,
           thumbprint,
           identity,
+          attempt,
         ).pipe(
           Effect.flatMap((token) =>
             tokenLock.withPermits(1)(
@@ -450,6 +593,18 @@ export const make = Effect.gen(function* () {
                 tokenOwners.set(input.expectedEnvironmentId, {
                   accessToken: token.accessToken,
                   identity,
+                });
+                const previous = failedRenewals.get(input.expectedEnvironmentId);
+                failedRenewals.set(input.expectedEnvironmentId, {
+                  identity,
+                  thumbprint,
+                  // The count resets only once the machine accepts the token.
+                  failures:
+                    previous?.identity === identity && previous.thumbprint === thumbprint
+                      ? previous.failures
+                      : 0,
+                  retryAtEpochMs: 0,
+                  renewedAccessToken: token.accessToken,
                 });
                 if (pendingTokens.get(input.expectedEnvironmentId)?.id === id) {
                   pendingTokens.delete(input.expectedEnvironmentId);
@@ -468,6 +623,15 @@ export const make = Effect.gen(function* () {
                 }),
               ),
           }),
+          // Only a renewal that minted a credential costs the machine anything.
+          // A network or relay failure before that retries on the caller's terms.
+          Effect.tapError((error) =>
+            attempt.minted
+              ? tokenLock.withPermits(1)(
+                  recordFailedRenewal(input.expectedEnvironmentId, identity, thumbprint, error),
+                )
+              : Effect.void,
+          ),
           Effect.ensuring(
             tokenLock.withPermits(1)(
               Effect.sync(() => {
@@ -518,6 +682,10 @@ export const make = Effect.gen(function* () {
         connectionMethod: "direct",
       });
     }
+    const acceptSocketToken = (token: TokenStore.RemoteDpopAccessToken) =>
+      tokenLock.withPermits(1)(
+        Effect.sync(() => recordAcceptedRenewal(input.expectedEnvironmentId, token.accessToken)),
+      );
     const authorized = (token: TokenStore.RemoteDpopAccessToken, socketUrl: string) => ({
       ...httpAuthorization(token, endpoint?.httpBaseUrl),
       socketUrl,
@@ -531,6 +699,7 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.result);
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
+        yield* acceptSocketToken(selected.token);
         return authorized(selected.token, cachedSocket.success);
       }
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
@@ -553,13 +722,26 @@ export const make = Effect.gen(function* () {
     if (Result.isFailure(socket)) {
       // A direct address that refuses the socket says nothing about the token.
       if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
+        const failure = socket.failure;
         yield* tokenLock.withPermits(1)(
-          removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
+          Effect.gen(function* () {
+            yield* removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken);
+            if (
+              failure._tag === "EnvironmentAuthInvalidError" ||
+              (failure._tag === "ConnectionBlockedError" && failure.reason === "authentication")
+            ) {
+              yield* recordRejectedRenewal(
+                input.expectedEnvironmentId,
+                selected.token.accessToken,
+              );
+            }
+          }),
         );
       }
       return yield* mapDpopSocketError(socket.failure);
     }
     yield* assertSession(selected.identity);
+    yield* acceptSocketToken(selected.token);
     return authorized(selected.token, socket.success);
   });
 
@@ -568,7 +750,7 @@ export const make = Effect.gen(function* () {
     authorizeDpop: (input) =>
       authorizeDpop(input).pipe(Effect.withSpan("environment.authorization")),
     authorizeDpopHttp: (input) =>
-      getDpopToken(input).pipe(
+      getDpopToken({ ...input, respectRenewalBackoff: true }).pipe(
         Effect.map(({ token }) => httpAuthorization(token)),
         Effect.withSpan("environment.authorization.http"),
         withRelayClientTracing,

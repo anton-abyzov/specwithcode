@@ -1869,6 +1869,48 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect(
+    "keeps the decision model key in the secret store and tells clients only that one is set",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const saved = yield* serverSettings.updateSettings({
+          decisionModel: { provider: "typesafe", apiKey: "ts-test-key" },
+        });
+        assert.equal(saved.decisionModel.provider, "typesafe");
+        assert.equal(saved.decisionModel.model, "");
+        assert.equal(saved.decisionModel.apiKey, "ts-test-key");
+
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "ts-test-key");
+        const stored = yield* secrets.get("decision-model-api-key");
+        assert.equal(
+          Option.isSome(stored) ? new TextDecoder().decode(stored.value) : null,
+          "ts-test-key",
+        );
+
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).decisionModel;
+        assert.notInclude(forClient.apiKey, "ts-test-key");
+        assert.isAbove(forClient.apiKey.length, 0);
+
+        yield* serverSettings.updateSettings({ decisionModel: forClient });
+        yield* serverSettings.updateSettings({ decisionModel: { model: "jev-preview" } });
+        const kept = yield* serverSettings.getSettings;
+        assert.equal(kept.decisionModel.apiKey, "ts-test-key");
+        assert.equal(kept.decisionModel.model, "jev-preview");
+
+        const cleared = yield* serverSettings.updateSettings({
+          decisionModel: { provider: "off", apiKey: "" },
+        });
+        assert.equal(cleared.decisionModel.apiKey, "");
+        assert.isTrue(Option.isNone(yield* secrets.get("decision-model-api-key")));
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("reads a redacted secret once until settings or the secret store change", () => {
     const { layer, reads } = layerServerSettingsCountingSecretReads();
     const voiceKeyReads = () => reads.get("elevenlabs-voice-api-key") ?? 0;

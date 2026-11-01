@@ -86,7 +86,7 @@ const RELEASE_ASSETS = {
 
 const VARIANT_CONFIG = {
   development: {
-    appName: "SpecWeave Studio Dev",
+    appName: "SpecWithCode Dev",
     scheme: "studio-dev",
     iosBundleIdentifier: "com.specweave.studio.dev",
     androidPackage: "com.specweave.studio.dev",
@@ -94,7 +94,7 @@ const VARIANT_CONFIG = {
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
-    appName: "SpecWeave Studio Preview",
+    appName: "SpecWithCode Preview",
     scheme: "studio-preview",
     iosBundleIdentifier: "com.specweave.studio.preview",
     androidPackage: "com.specweave.studio.preview",
@@ -102,14 +102,24 @@ const VARIANT_CONFIG = {
     assets: PREVIEW_ASSETS,
   },
   production: {
-    appName: "SpecWeave Studio",
+    appName: "SpecWithCode",
     scheme: "studio",
     iosBundleIdentifier: "com.specweave.studio",
-    androidPackage: "com.specweave.studio",
+    // The Play Store listing; Play locks the package after the first upload.
+    androidPackage: "com.specwithcode.android",
     relyingParty: "clerk.studio.invalid",
     assets: RELEASE_ASSETS,
   },
 } as const;
+
+function parseAndroidVersionCode(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return 1;
+  const code = Number(value);
+  if (!Number.isInteger(code) || code < 1 || code > 2_100_000_000) {
+    throw new Error("STUDIO_ANDROID_VERSION_CODE must be a positive integer.");
+  }
+  return code;
+}
 
 function resolveAppVariant(value: string | undefined): AppVariant {
   switch (value) {
@@ -242,7 +252,8 @@ const config: ExpoConfig = {
   slug: "studio-code",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: "2.0.0",
+  // Matches the native iPhone app (apps/ios MARKETING_VERSION).
+  version: "0.1.1",
   runtimeVersion: {
     // Development manifests resolve on every launch, so avoid fingerprint's
     // expensive native-project calculation there. Preview and production stay
@@ -308,6 +319,8 @@ const config: ExpoConfig = {
   android: {
     icon: variant.assets.appIcon,
     package: variant.androidPackage,
+    // Local release builds set it per upload; EAS builds increment it remotely.
+    versionCode: parseAndroidVersionCode(repoEnv.STUDIO_ANDROID_VERSION_CODE),
     ...(repoEnv.STUDIO_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.STUDIO_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),

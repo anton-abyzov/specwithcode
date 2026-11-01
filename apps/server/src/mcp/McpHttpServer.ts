@@ -50,6 +50,8 @@ import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import { ProjectKnowledgeToolkit } from "./toolkits/projectKnowledge/tools.ts";
 import * as ProjectKnowledgeHandlers from "./toolkits/projectKnowledge/handlers.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
+import * as DecisionHandlers from "./toolkits/decision/handlers.ts";
+import { DecisionToolkit } from "./toolkits/decision/tools.ts";
 import * as MachinesHandlers from "./toolkits/machines/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
@@ -1123,6 +1125,7 @@ export const layer = Layer.mergeAll(
   layerAttachmentRegistration,
   layerProjectRegistration,
   toolkitRegistration(MachinesToolkit, MachinesHandlers.layer),
+  toolkitRegistration(DecisionToolkit, DecisionHandlers.layer),
   layerProjectMemoryRegistration,
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),

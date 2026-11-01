@@ -10,6 +10,7 @@ import {
   moveDestination,
   withoutMovingDestinations,
   registerCopyOpener,
+  requestCopyReview,
   resetCopyActivityForTests,
   setCopyActivity,
   type CopyActivity,
@@ -213,4 +214,47 @@ it("shows a moving project once in the sidebar, on its source row", () => {
   const idle = withoutMovingDestinations(visible, listedKeys, new Map());
   expect(idle.visible).toBe(visible);
   expect(idle.listedKeys).toBe(listedKeys);
+});
+
+it("says a copy waiting for review is waiting for the person", () => {
+  const waiting: CopyActivity = {
+    machine: "M1",
+    label: "Ready to review",
+    fraction: null,
+    waiting: true,
+  };
+  expect(copyActivityText(waiting)).toBe("Copy to M1 is waiting for your review");
+  expect(copyActivityText({ ...waiting, move: true })).toBe(
+    "Hand off to M1 is waiting for your review",
+  );
+});
+
+it("opens a requested review once its project's dialog registers", async () => {
+  let opened = 0;
+  requestCopyReview("env:project");
+  const unregister = registerCopyOpener("env:project", () => {
+    opened += 1;
+  });
+  await Promise.resolve();
+  expect(opened).toBe(1);
+  // Opened once: a later registration does not reopen it.
+  unregister();
+  registerCopyOpener("env:project", () => {
+    opened += 1;
+  });
+  await Promise.resolve();
+  expect(opened).toBe(1);
+  // Registered already: the request opens at once.
+  requestCopyReview("env:project");
+  expect(opened).toBe(2);
+});
+
+it("does not open a review for another project's dialog", async () => {
+  let opened = 0;
+  requestCopyReview("env:one");
+  registerCopyOpener("env:two", () => {
+    opened += 1;
+  });
+  await Promise.resolve();
+  expect(opened).toBe(0);
 });

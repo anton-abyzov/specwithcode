@@ -195,6 +195,28 @@ describe("classifyLane", () => {
       classifyLane({ task: { text: "Cut a promo video from the demo" }, preferences: [learned] }),
     ).toMatchObject({ lane: "complex", source: "learned", preferenceId: "lane-video" });
   });
+
+  it("uses the decision model's lane after a hint and a learned rule, before the rules", () => {
+    const decision = { lane: "complex" as const, probability: 0.86 };
+    expect(classifyLane({ task: { text: "Update the changelog" }, decision })).toMatchObject({
+      lane: "complex",
+      source: "decision",
+      signals: ["decision model: complex 86%"],
+    });
+    expect(
+      classifyLane({ task: { text: "Update the changelog" }, hint: "routine", decision }),
+    ).toMatchObject({ lane: "routine", source: "hint" });
+    const learned = preference({
+      keywords: ["changelog"],
+      action: { kind: "lane", lane: "routine" },
+    });
+    expect(
+      classifyLane({ task: { text: "Update the changelog" }, preferences: [learned], decision }),
+    ).toMatchObject({ lane: "routine", source: "learned" });
+    expect(classifyLane({ task: { text: "Update the changelog" }, decision: null })).toMatchObject({
+      source: "rules",
+    });
+  });
 });
 
 describe("preferenceMatch", () => {
@@ -232,6 +254,14 @@ describe("resolveLaneRouting", () => {
     expect(complex?.escalation).toEqual(fable);
     const routine = route("Update the changelog for 1.0.73");
     expect(routine).toMatchObject({ lane: "routine", moved: true, selection: copilotOpus });
+  });
+
+  it("routes on the decision model's lane and says so", () => {
+    const decision = route("Update the changelog for 1.0.73", {
+      laneDecision: { lane: "complex", probability: 0.9 },
+    });
+    expect(decision).toMatchObject({ lane: "complex", selection: sol });
+    expect(decision?.reason).toContain("the decision model judged it (90%)");
   });
 
   it("enforces the tier floor for lane entries and learned preferences", () => {

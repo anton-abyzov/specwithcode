@@ -56,6 +56,10 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => state.terminal }));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (environmentId: string, label?: string | null) =>
+    label ?? environmentId,
+}));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { error: Error }) => result.error,
 }));

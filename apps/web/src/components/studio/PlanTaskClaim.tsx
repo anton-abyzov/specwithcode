@@ -6,7 +6,7 @@ import type {
   ProjectPlanTask,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 
 export interface PlanClaimMachine {
   readonly label: string;
@@ -30,7 +30,7 @@ export function claimMachine(
 export function usePlanClaimMachines(
   snapshot: ProjectPlanSnapshot | null | undefined,
 ): PlanClaimMachines {
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   return useMemo(() => {
     const byId = new Map(environments.map((item) => [item.environmentId, item]));
     const saved = new Map(

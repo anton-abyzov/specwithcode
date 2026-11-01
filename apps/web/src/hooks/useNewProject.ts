@@ -20,7 +20,7 @@ import {
 } from "../studio/personalAssistant";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { useEnvironments } from "~/state/environments";
+import { useNamedEnvironments } from "~/components/settings/useNamedEnvironments";
 import { useProjects, waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
 import { sourceControlEnvironment } from "~/state/sourceControl";
@@ -45,7 +45,7 @@ function errorMessage(error: unknown): string {
 export function useNewProject() {
   const navigate = useNavigate();
   const clientSettings = useClientSettings();
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
@@ -209,7 +209,7 @@ export function useNewProject() {
  * leaves out any machine that fails or is slow; it never links on its own.
  */
 export function useFindFolderCopies() {
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const projects = useProjects();
   const readFingerprint = useAtomCommand(projectLink.fingerprint, {
     reportFailure: false,

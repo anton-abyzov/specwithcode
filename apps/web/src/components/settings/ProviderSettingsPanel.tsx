@@ -1,5 +1,6 @@
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SettingsGroup } from "./SettingsGroup";
+import { DecisionModelSettings } from "./DecisionModelSettings";
 import { ModelLanesSettings } from "./ModelLanesSettings";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -1390,6 +1391,13 @@ export function EnvironmentProviderSettings({
 
       <SettingsSection title="Model lanes" reach={{ kind: "machine", name: environmentLabel }}>
         <ModelLanesSettings />
+      </SettingsSection>
+
+      <SettingsSection title="Decision model" reach={{ kind: "machine", name: environmentLabel }}>
+        <DecisionModelSettings
+          environmentId={environmentId}
+          readOnly={readOnly || !canWriteSettings}
+        />
       </SettingsSection>
 
       <UsageProviderSettings

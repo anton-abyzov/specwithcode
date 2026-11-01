@@ -239,6 +239,10 @@
       "types": "./src/fallbackOptions.ts",
       "import": "./src/fallbackOptions.ts"
     },
+    "./decisionModel": {
+      "types": "./src/decisionModel.ts",
+      "import": "./src/decisionModel.ts"
+    },
     "./modelLanes": {
       "types": "./src/modelLanes.ts",
       "import": "./src/modelLanes.ts"

@@ -1158,6 +1158,7 @@ describe("RemoteEnvironmentAuthorization", () => {
           _tag: "ConnectionTransientError",
           reason: "timeout",
         });
+        // Nothing was minted, so the next request renews at once.
         const authorized = yield* remote.authorizeDpopHttp({
           expectedEnvironmentId: ENVIRONMENT_ID,
         });
@@ -1167,4 +1168,242 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
     }),
   );
+
+  it.effect("backs off after a refused exchange instead of minting on every request", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          authInvalid(),
+          Response.json(DESCRIPTOR),
+          authInvalid(),
+          Response.json(DESCRIPTOR),
+          accessToken("finally-accepted"),
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+
+        expect(yield* authorize.pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionBlockedError",
+          reason: "authentication",
+        });
+        // Polls inside the backoff fail at once: no mint through the relay, no exchange.
+        for (let poll = 0; poll < 5; poll++) {
+          yield* TestClock.adjust("400 millis");
+          expect(yield* authorize.pipe(Effect.flip)).toMatchObject({
+            _tag: "ConnectionBlockedError",
+          });
+        }
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+        expect(harness.fetch.calls).toHaveLength(2);
+
+        yield* TestClock.adjust(RemoteEnvironmentAuthorization.DPOP_RENEWAL_BACKOFF_BASE_MS);
+        yield* authorize.pipe(Effect.flip);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+        // The second failure in a row waits at least as long as the first could.
+        yield* TestClock.adjust(RemoteEnvironmentAuthorization.DPOP_RENEWAL_BACKOFF_BASE_MS - 1);
+        yield* authorize.pipe(Effect.flip);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+
+        yield* TestClock.adjust(RemoteEnvironmentAuthorization.DPOP_RENEWAL_BACKOFF_BASE_MS + 1);
+        const accepted = yield* authorize;
+        expect(accepted.httpAuthorization.accessToken).toBe("finally-accepted");
+        // The accepted session is reused rather than minting again.
+        expect((yield* authorize).httpAuthorization.accessToken).toBe("finally-accepted");
+      }).pipe(Effect.provide(harness.layer));
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(3);
+      expect(harness.fetch.calls).toHaveLength(6);
+    }),
+  );
+
+  it.effect("waits out a rate-limited exchange's retry-after before minting again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          Response.json(
+            { _tag: "EnvironmentRateLimitedError", code: "rate_limited", retryAfterSeconds: 173 },
+            { status: 429, headers: { "retry-after": "173" } },
+          ),
+          Response.json(DESCRIPTOR),
+          accessToken("after-lockout"),
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect(yield* authorize.pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "rate-limited",
+          retryAfterMs: 173_000,
+        });
+        yield* TestClock.adjust("170 seconds");
+        // The repeated failure tells the connection supervisor how long is left.
+        expect(yield* authorize.pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "rate-limited",
+          retryAfterMs: 3_000,
+        });
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+        yield* TestClock.adjust("3 seconds");
+        expect((yield* authorize).httpAuthorization.accessToken).toBe("after-lockout");
+      }).pipe(Effect.provide(harness.layer));
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+    }),
+  );
+
+  it.effect("retries at once after a renewal that failed before minting a credential", () =>
+    Effect.gen(function* () {
+      const attempts = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        responses: [Response.json(DESCRIPTOR), accessToken("after-outage")],
+        beforeBootstrap: Effect.gen(function* () {
+          if ((yield* Ref.updateAndGet(attempts, (count) => count + 1)) > 2) return;
+          return yield* new ManagedRelay.ManagedRelayRequestTimeoutError({
+            activity: "Relay environment connection",
+            timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+            traceId: null,
+          });
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect(yield* authorize.pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "timeout",
+        });
+        expect(yield* authorize.pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionTransientError",
+        });
+        expect((yield* authorize).httpAuthorization.accessToken).toBe("after-outage");
+      }).pipe(Effect.provide(harness.layer));
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(3);
+    }),
+  );
+
+  it.effect("lets the connection supervisor renew a socket during an HTTP backoff", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          authInvalid(),
+          Response.json(DESCRIPTOR),
+          accessToken("socket-token"),
+          websocketTicket("socket-ticket"),
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorizeHttp = remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect(yield* authorizeHttp.pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionBlockedError",
+          reason: "authentication",
+        });
+        expect(yield* authorizeHttp.pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionBlockedError",
+        });
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+
+        const socket = yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect(socket.socketUrl).toContain("wsTicket=socket-ticket");
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+        // The socket's token serves HTTP requests too.
+        expect((yield* authorizeHttp).httpAuthorization.accessToken).toBe("socket-token");
+      }).pipe(Effect.provide(harness.layer));
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+    }),
+  );
+
+  it.effect("counts a renewed token the environment rejects as a failed renewal", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ accessToken: "stale" }),
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-1"),
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-2"),
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-3"),
+          websocketTicket("accepted-ticket"),
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-4"),
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = (rejectedAccessToken?: string) =>
+          remote.authorizeDpopHttp({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+          });
+        const BASE_MS = RemoteEnvironmentAuthorization.DPOP_RENEWAL_BACKOFF_BASE_MS;
+
+        // An ordinary rejection renews at once.
+        expect((yield* authorize("stale")).httpAuthorization.accessToken).toBe("renewed-1");
+        // The exchange succeeded, but the environment rejects what it issued.
+        expect(yield* authorize("renewed-1").pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionBlockedError",
+          reason: "authentication",
+        });
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+
+        yield* TestClock.adjust(BASE_MS);
+        expect((yield* authorize()).httpAuthorization.accessToken).toBe("renewed-2");
+        expect(yield* authorize("renewed-2").pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionBlockedError",
+        });
+        // The count kept growing across the successful exchange: a second
+        // failure waits at least as long as the first could.
+        yield* TestClock.adjust(BASE_MS - 1);
+        expect(yield* authorize().pipe(Effect.flip)).toMatchObject({
+          _tag: "ConnectionBlockedError",
+        });
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+
+        yield* TestClock.adjust(BASE_MS + 1);
+        expect((yield* authorize()).httpAuthorization.accessToken).toBe("renewed-3");
+        // A socket accepts the token, which clears the count.
+        yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect((yield* authorize("renewed-3")).httpAuthorization.accessToken).toBe("renewed-4");
+      }).pipe(Effect.provide(harness.layer));
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(4);
+    }),
+  );
+
+  it.effect("keeps one environment's renewal backoff from holding back another", () =>
+    Effect.gen(function* () {
+      const otherEnvironmentId = EnvironmentId.make("environment-2");
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ environmentId: otherEnvironmentId, accessToken: "other" }),
+        responses: [Response.json(DESCRIPTOR), authInvalid()],
+      });
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip);
+        const other = yield* remote.authorizeDpopHttp({
+          expectedEnvironmentId: otherEnvironmentId,
+        });
+        expect(other.httpAuthorization.accessToken).toBe("other");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+});
+
+describe("dpopRenewalBackoffMs", () => {
+  it("doubles per failure in a row, with jitter, up to the cap", () => {
+    const { dpopRenewalBackoffMs, DPOP_RENEWAL_BACKOFF_BASE_MS, DPOP_RENEWAL_BACKOFF_MAX_MS } =
+      RemoteEnvironmentAuthorization;
+    expect(dpopRenewalBackoffMs(1, 0)).toBe(DPOP_RENEWAL_BACKOFF_BASE_MS / 2);
+    expect(dpopRenewalBackoffMs(1, 1)).toBe(DPOP_RENEWAL_BACKOFF_BASE_MS);
+    expect(dpopRenewalBackoffMs(2, 1)).toBe(DPOP_RENEWAL_BACKOFF_BASE_MS * 2);
+    expect(dpopRenewalBackoffMs(4, 0.5)).toBe(DPOP_RENEWAL_BACKOFF_BASE_MS * 8 * 0.75);
+    expect(dpopRenewalBackoffMs(30, 1)).toBe(DPOP_RENEWAL_BACKOFF_MAX_MS);
+    expect(dpopRenewalBackoffMs(30, 0)).toBe(DPOP_RENEWAL_BACKOFF_MAX_MS / 2);
+  });
 });

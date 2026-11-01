@@ -27,7 +27,7 @@ import {
   type ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -109,7 +109,7 @@ export function ProjectMachineHandoff({
   readonly onOpenChange?: (open: boolean) => void;
   readonly requestedTarget?: string | null;
 }) {
-  const { environments, isReady: catalogReady } = useEnvironments();
+  const { environments, isReady: catalogReady } = useNamedEnvironments();
   const projects = useProjects();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const sourceThread = useThreadShell(

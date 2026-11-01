@@ -137,6 +137,7 @@ import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
+import { useMachineNicknames } from "../studio/machineNickname";
 import {
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
@@ -2541,12 +2542,19 @@ export default function Sidebar() {
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
 
+  const machineName = useMachineNicknames();
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              machineName(environment.environmentId, environment.label),
+            ] as const,
+        ),
       ),
-    [environments],
+    [environments, machineName],
   );
   const environmentMachineById = useEnvironmentMachines();
   const orderedProjects = useMemo(

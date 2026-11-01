@@ -31,7 +31,12 @@ export function FolderCopyBanner({
       <div className="flex min-w-0 items-center gap-3">
         <span className="min-w-0 flex-1 truncate">
           {copyActivityText(activity)}
-          {activity.waiting ? null : (
+          {activity.waiting ? (
+            <span className="text-muted-foreground">
+              {" "}
+              · Nothing is copied until you approve it. Review it to approve or cancel.
+            </span>
+          ) : (
             <span className="text-muted-foreground">
               {" "}
               · You can keep working; changes made now may need another copy.
@@ -39,7 +44,7 @@ export function FolderCopyBanner({
           )}
         </span>
         {open ? (
-          <Button size="compact" variant="outline" onClick={open}>
+          <Button size="compact" variant={activity.waiting ? "default" : "outline"} onClick={open}>
             {activity.waiting ? "Review" : "Details"}
           </Button>
         ) : null}

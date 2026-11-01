@@ -394,6 +394,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   ),
   studio_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   studio_machine_list: tool(["List", "Listing", "Listed", "worker machines"], "environment-read"),
+  studio_decide: tool(["Decide", "Deciding", "Decided", "between options"], "environment-read"),
   studio_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
   studio_project_create: tool(
     ["Register", "Registering", "Registered", "a project"],

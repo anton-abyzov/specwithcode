@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
-import { useEnvironment, useEnvironments } from "../../state/environments";
+import { useEnvironment } from "../../state/environments";
+import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
@@ -137,7 +138,7 @@ export function ProjectThreadAvailability({
 }: {
   scopes: readonly ProjectExecutionScope[];
 }) {
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const nickname = useMachineNicknames();
   return (
     <>

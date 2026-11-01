@@ -12,7 +12,7 @@ import {
   subagentExecutionStatus,
   threadRuntimeIsActive,
   type EnvironmentThreadShell,
-} from "./models.js";
+} from "./models.ts";
 
 /** Request ids of the cards an update records to ask a closed question again. */
 const REOPENED_REQUEST_PREFIX = "update-reopen";

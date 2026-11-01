@@ -11,7 +11,13 @@ import {
 } from "@specweave-studio/contracts";
 import { withDefaultModelOptions } from "@specweave-studio/shared/coordinatorDefault";
 import { modelSelectionEffortValue } from "@specweave-studio/shared/effortLevel";
-import { resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
+import {
+  formatProbability,
+  readRoutingDecision,
+  routingDecisionRequest,
+  type RoutingDecision,
+} from "@specweave-studio/shared/decisionModel";
+import { classifyLane, resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   classifyTask,
@@ -23,6 +29,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import {
+  askDecisionModel,
+  jevConfigFromSettings,
+  ROUTING_DECISION_TIMEOUT_MS,
+} from "../decisions/DecisionModel.ts";
 import { simulatedUsageLimitInstances } from "../orchestration-v2/ProviderFailure.ts";
 import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
@@ -58,8 +69,10 @@ export function autoRoutingApplies(input: {
  * entry of its lane (complex or routine) that can run now. When the lane is
  * empty, or none of its entries can run, Auto tiers decide if Auto is on.
  * Reads the project's resolved settings, the switch threshold and provider
- * order; makes no model call. The decision is logged whether or not it moved
- * the worker.
+ * order. The only model call is to the decision model, when one is set up and
+ * the rules could not settle the lane or the kind of work; it waits at most
+ * two seconds and any failure keeps the rules' answer. The decision is logged
+ * whether or not it moved the worker.
  */
 export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (input: {
   readonly project: Project;
@@ -71,6 +84,8 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   readonly runnableInstanceIds?: ReadonlySet<string>;
   /** The settings service a long-lived caller captured; else the current context's. */
   readonly settings?: Option.Option<ServerSettings.ServerSettingsService["Service"]>;
+  /** How the decision model is reached; tests pass a fake. */
+  readonly decisionFetch?: typeof fetch;
 }) {
   const settings =
     input.settings !== undefined && Option.isSome(input.settings)
@@ -90,7 +105,55 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   // A provider that reports no usage but stopped a thread on its limit
   // (Copilot's monthly quota) reads as ready: no new worker starts there.
   for (const instanceId of yield* usageLimitHeldInstances(nowMs)) limited.add(instanceId);
-  const classification = classifyTask(input.task);
+  const ruled = classifyTask(input.task);
+  // The decision model settles what the rules cannot: a lane nobody named, or
+  // a kind of work the keywords left uncertain. Any failure keeps the rules.
+  const needsLane =
+    lanesSet &&
+    input.laneHint === undefined &&
+    classifyLane({
+      task: input.task,
+      classification: ruled,
+      preferences: rule.learnedModelPreferences,
+    }).source === "rules";
+  const needsClass =
+    rule.taskRouting.mode === "auto" &&
+    input.task.hint === undefined &&
+    ruled.confidence === "uncertain";
+  const decided: RoutingDecision | null =
+    (needsLane || needsClass) && jevConfigFromSettings(preferences.decisionModel) !== null
+      ? yield* askDecisionModel(routingDecisionRequest(input.task), {
+          timeoutMs: ROUTING_DECISION_TIMEOUT_MS,
+          settings,
+          ...(input.decisionFetch === undefined ? {} : { send: input.decisionFetch }),
+        }).pipe(
+          Effect.map(readRoutingDecision),
+          Effect.tapError((error) =>
+            Effect.logWarning("project.task-routing.decision-model-failed", {
+              projectId: input.project.id,
+              reason: error.message,
+            }),
+          ),
+          Effect.orElseSucceed(() => null),
+        )
+      : null;
+  const decidedClass = needsClass ? (decided?.taskClass ?? null) : null;
+  const classification =
+    decidedClass === null
+      ? ruled
+      : {
+          ...ruled,
+          taskClass: decidedClass.value,
+          confidence: "high" as const,
+          signals: [
+            `decision model: ${decidedClass.value} ${formatProbability(decidedClass.probability)}`,
+            ...ruled.signals,
+          ].slice(0, 12),
+        };
+  const laneDecision =
+    needsLane && decided?.lane != null
+      ? { lane: decided.lane.value, probability: decided.lane.probability }
+      : null;
   const lane = lanesSet
     ? resolveLaneRouting({
         lanes: rule.modelLanes,
@@ -98,6 +161,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
         task: input.task,
         classification,
         laneHint: input.laneHint,
+        laneDecision,
         baseline: input.baseline,
         providers: input.providers,
         nowMs,

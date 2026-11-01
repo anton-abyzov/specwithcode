@@ -37,6 +37,8 @@ import {
   BellOffIcon,
   BotIcon,
   BotOffIcon,
+  Link2Icon,
+  Link2OffIcon,
   MoreHorizontalIcon,
   PaletteIcon,
   PencilIcon,
@@ -95,8 +97,9 @@ import { requestProjectSettings } from "../../../studio/projectSettingsRequests"
 import type { ProjectNameCheck } from "../../../studio/projectRename";
 import {
   copyActivityText,
+  requestCopyReview,
   useCopyActivities,
-  useCopyActivity,
+  useKeyedCopyActivity,
   withoutMovingDestinations,
   type CopyActivity,
 } from "../../../studio/folderCopyActivity";
@@ -134,6 +137,8 @@ export interface ProjectRowState {
   current: boolean;
   /** Tells this project apart from another listed under the same name. */
   hint?: string | undefined;
+  /** This row is the same repository as another row on another machine: offer the link. */
+  linkSuggestion?: ProjectLinkSuggestion | undefined;
   rename?: ProjectRename | undefined;
   /** The project the Designs item opens; absent where the row has no Designs item. */
   designsProjectId?: ProjectId | undefined;
@@ -141,6 +146,17 @@ export interface ProjectRowState {
   automated?: boolean | undefined;
   /** The project's notification level; absent where the row has no Notifications item. */
   notifications?: ProjectNotificationLevel | undefined;
+}
+
+/** "Same repository as specweave on M4. Link them?" and its answers. */
+export interface ProjectLinkSuggestion {
+  /** "Same repository (anton-abyzov/specweave) as specweave on M4". */
+  readonly label: string;
+  /** "Link with specweave on M4…". */
+  readonly action: string;
+  readonly onLink: () => void;
+  /** "Not the same project": never suggested again for this copy. */
+  readonly onDismiss: () => void;
 }
 
 /** Renames a project in place: `check` validates a draft, `commit` saves it or says why not. */
@@ -490,6 +506,7 @@ export function ProjectRow(props: {
   attentionComplete?: boolean | undefined;
   current: boolean;
   hint?: string | undefined;
+  linkSuggestion?: ProjectLinkSuggestion | undefined;
   onOpen: () => void;
   onPin?: () => void;
   onStep?: (direction: "up" | "down") => void;
@@ -564,7 +581,8 @@ export function ProjectRow(props: {
         },
       );
   // A folder copy to another machine running in the background: dimmed with its progress.
-  const copying = useCopyActivity(group.memberProjects);
+  const keyedCopy = useKeyedCopyActivity(group.memberProjects);
+  const copying = keyedCopy?.activity ?? null;
   const copyingText = copying ? copyActivityText(copying) : null;
   return (
     <li
@@ -603,7 +621,7 @@ export function ProjectRow(props: {
           label={
             personal
               ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-              : `${displayName} · ${project.workspaceRoot}${shared ? ` · ${shared.label}` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
+              : `${displayName} · ${project.workspaceRoot}${shared ? ` · ${shared.label}` : ""}${props.linkSuggestion ? ` · ${props.linkSuggestion.label}. Link them?` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
           }
         >
           <Link
@@ -635,6 +653,21 @@ export function ProjectRow(props: {
                 {props.hint}
               </span>
             ) : null}
+            {props.linkSuggestion && !shared ? (
+              // Opens the link dialog, which compares both folders before anything links.
+              <span
+                className="sws-side-row-pin sws-side-row-link-suggestion"
+                role="img"
+                aria-label={`${props.linkSuggestion.label}. Link them?`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  props.linkSuggestion?.onLink();
+                }}
+              >
+                <Link2Icon aria-hidden />
+              </span>
+            ) : null}
             {shared ? (
               shared.role === "workers" ? (
                 <ArrowRightLeftIcon
@@ -659,6 +692,29 @@ export function ProjectRow(props: {
               <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" />
             ) : null}
             {/* Count and availability stay visible while the adjacent menu opens. */}
+            {copying?.waiting && keyedCopy ? (
+              // A copy waiting for the person is a clear call to act, not a stalled bar.
+              // A mouse shortcut: the row's accessible name says the copy waits, and the
+              // project's banner holds the Review button for keyboard and screen readers.
+              <span
+                className="sws-copy-review"
+                aria-hidden="true"
+                onClick={(event) => {
+                  // Open the checkout the copy started from: its page holds the review.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  props.onOpen();
+                  void navigate({
+                    to: "/projects/$projectKey",
+                    params: { projectKey: group.projectKey },
+                    search: { checkout: keyedCopy.key },
+                  });
+                  requestCopyReview(keyedCopy.key);
+                }}
+              >
+                Review
+              </span>
+            ) : null}
             <span className="sws-side-row-end">
               {waiting > 0 ? (
                 <span
@@ -680,7 +736,7 @@ export function ProjectRow(props: {
                 />
               ) : null}
             </span>
-            {copying ? <CopyProgressLine activity={copying} /> : null}
+            {copying && !copying.waiting ? <CopyProgressLine activity={copying} /> : null}
           </Link>
         </Tip>
       )}
@@ -760,6 +816,19 @@ export function ProjectRow(props: {
                 level={props.notifications}
                 onChange={props.onNotificationsChange}
               />
+              <MenuSeparator />
+            </>
+          ) : null}
+          {props.linkSuggestion ? (
+            <>
+              <MenuItem onClick={props.linkSuggestion.onLink}>
+                <Link2Icon aria-hidden />
+                {props.linkSuggestion.action}
+              </MenuItem>
+              <MenuItem onClick={props.linkSuggestion.onDismiss}>
+                <Link2OffIcon aria-hidden />
+                Not the same project
+              </MenuItem>
               <MenuSeparator />
             </>
           ) : null}
