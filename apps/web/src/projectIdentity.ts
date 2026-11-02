@@ -12,7 +12,14 @@ function normalizeProjectName(projectName: string): string {
 }
 
 function projectMonogram(projectName: string): string {
-  const words = normalizeProjectName(projectName).match(/[\p{L}\p{N}]+/gu) ?? [];
+  const allWords = normalizeProjectName(projectName).match(/[\p{L}\p{N}]+/gu) ?? [];
+  // A leading number names nothing ("1164 handoff check" is not "11"): start at the first word.
+  const words = allWords.slice(
+    Math.max(
+      0,
+      allWords.findIndex((word) => /\p{L}/u.test(word)),
+    ),
+  );
   const firstWord = words[0];
   if (!firstWord) return "PR";
 

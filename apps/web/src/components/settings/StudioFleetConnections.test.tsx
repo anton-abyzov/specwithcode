@@ -16,6 +16,9 @@ const runtime = vi.hoisted(() => ({
   removeSupported: true,
   closeTerminal: vi.fn(),
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (_id: string, label?: string | null) => label ?? "",
+}));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");

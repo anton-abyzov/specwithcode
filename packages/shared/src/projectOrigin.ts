@@ -65,8 +65,29 @@ export function isAppScratchFolder(workspaceRoot: string): boolean {
   return APP_SCRATCH_FOLDER.test(workspaceRoot.replaceAll("\\", "/"));
 }
 
+/** True for a folder only the app or the system makes: temporary, or inside the app's data. */
+function isAppOrTemporaryFolder(workspaceRoot: string): boolean {
+  const normalized = workspaceRoot.replaceAll("\\", "/");
+  const lower = normalized.toLowerCase();
+  if (TEMP_PREFIXES.some((prefix) => lower.startsWith(prefix))) return true;
+  if (/\/appdata\/local\/temp\//.test(lower)) return true;
+  return appDataPlacement(segmentsOf(normalized)) === "data";
+}
+
 function segmentsOf(path: string): string[] {
   return path.replaceAll("\\", "/").split("/").filter(Boolean);
+}
+
+function appDataPlacement(segments: ReadonlyArray<string>): "projects" | "data" | null {
+  let placement: "data" | null = null;
+  for (let index = 0; index < segments.length; index += 1) {
+    const data = APP_DATA_FOLDERS.find((sequence) => startsWithSequence(segments, index, sequence));
+    if (data === undefined) continue;
+    const rest = segments.slice(index + data.length).map((segment) => segment.toLowerCase());
+    if (rest[0] === "projects" || rest[1] === "projects") return "projects";
+    placement = "data";
+  }
+  return placement;
 }
 
 function startsWithSequence(
@@ -91,15 +112,8 @@ export function isAutomatedWorkspaceRoot(workspaceRoot: string): boolean {
   if (TEMP_PREFIXES.some((prefix) => lower.startsWith(prefix))) return true;
   if (/\/appdata\/local\/temp\//.test(lower)) return true;
   const segments = segmentsOf(normalized);
-  let inAppData = false;
-  for (let index = 0; index < segments.length; index += 1) {
-    const data = APP_DATA_FOLDERS.find((sequence) => startsWithSequence(segments, index, sequence));
-    if (data === undefined) continue;
-    const rest = segments.slice(index + data.length).map((segment) => segment.toLowerCase());
-    if (rest[0] === "projects" || rest[1] === "projects") return false;
-    inAppData = true;
-  }
-  if (inAppData) return true;
+  const placement = appDataPlacement(segments);
+  if (placement !== null) return placement === "data";
   if (wordsOf(segments.at(-1) ?? "").includes(DEMO_FOLDER_WORD)) return true;
   return segments.some((segment) =>
     wordsOf(segment).some((word) => AUTOMATED_FOLDER_WORDS.has(word)),
@@ -118,4 +132,21 @@ export function projectOrigin(project: ProjectOriginInput): ProjectOrigin {
 
 export function isAutomatedProject(project: ProjectOriginInput): boolean {
   return projectOrigin(project) === "automated";
+}
+
+/**
+ * True when nobody works in this project, so nothing in it should call for the
+ * person: a check saved it as automated, a temporary agent token made it, or its
+ * folder is one only the app or the system makes. A folder merely named like
+ * `scratch` or `client-demo` is listed under Automated but may be real work, so it
+ * keeps its alerts; so does a machine's "No project" folder, which holds the
+ * person's own chats.
+ */
+export function isUnattendedProject(project: ProjectOriginInput): boolean {
+  if (projectOrigin(project) !== "automated") return false;
+  const settings = project.workspaceSettings;
+  if (settings?.origin === "automated" || settings?.temporarySessionId !== undefined) return true;
+  return (
+    !isAppScratchFolder(project.workspaceRoot) && isAppOrTemporaryFolder(project.workspaceRoot)
+  );
 }

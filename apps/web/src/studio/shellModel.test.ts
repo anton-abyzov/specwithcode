@@ -509,6 +509,9 @@ describe("a project's Threads pane", () => {
   it("summarises what needs the person first", () => {
     expect(waitingCount(rows)).toBe(1);
     expect(threadsSummary(rows)).toBe("1 thread is waiting on you · 1 working.");
+    expect(threadsSummary(rows, 0, undefined, undefined, undefined, true)).toBe(
+      "Automated project. Nothing here alerts you.",
+    );
     expect(
       threadsSummary([
         thread({ id: "a", hasPendingUserInput: true }),

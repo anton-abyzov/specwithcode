@@ -15,7 +15,42 @@ direct fallback. Either way it does not matter which network
 each machine is on, and one machine moving to another network does not cut the
 others off.
 
-Joining always takes the same four steps:
+## Seeing a machine is not the same as adding it
+
+| Layer               | What it means                                                              | Where                                            |
+| ------------------- | -------------------------------------------------------------------------- | ------------------------------------------------ |
+| **App connection**  | This app window can see the machine and open its chats                     | **Settings → Machines**                          |
+| **Private machine** | This machine's server holds its own key to it, even with the window closed | **Add for agents**, or the steps below           |
+| **Workers allowed** | Agents on this machine may start work there                                | **Allow workers** on its card in **Connections** |
+
+If you only want to use a machine by hand, the app connection is enough.
+
+If the machine already shows as connected under **Settings → Machines**, choose
+**Add for agents** on its row, then **Allow workers**. There is nothing to copy
+or paste. Your main machine gets a key to that machine for a year, which can
+manage its access, updates and skills. It needs the desktop app, SpecWithCode
+Connect linked on that machine and a connection with full access to it;
+otherwise use the steps below.
+
+## Why the steps ask for an environment ID
+
+The invitation line grants access, so it names the one machine allowed to use
+it. That is what the environment ID is for. When this app already knows your
+main machine, **Join a main machine** lists it by name instead.
+
+## Disconnecting
+
+| To stop                                        | Do this                                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Agents starting new work there, keeping access | **Stop workers** on its card in **Settings → Connections**                             |
+| The main machine using it at all               | **Remove machine** on its card, or `specwithcode fleet remove`                         |
+| A main machine's work, from the worker's side  | **Revoke** under **Settings → Machines → Who can run work here**                       |
+| This app or phone seeing it                    | **Remove** under **Settings → Connections → Environments**; long-press it on the phone |
+| The machine's public Connect address           | Turn off **Enable SpecWithCode Connect** on that machine                               |
+
+## Adding a machine by hand
+
+Joining by hand takes the same four steps:
 
 1. On the machine you are adding (the **worker**), open **Settings → Connections**,
    choose **Sign in to SpecWithCode Connect** and turn on **Enable SpecWithCode

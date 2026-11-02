@@ -207,7 +207,7 @@ function sanitizeRelayAgentActivityState(
  */
 export function applyProjectNotificationLevel(
   state: RelayAgentActivityState | null,
-  project: Pick<Project, "workspaceSettings">,
+  project: Pick<Project, "workspaceRoot" | "workspaceSettings">,
 ): RelayAgentActivityState | null {
   if (state === null) return null;
   const allowed = projectAlertAllowed(projectNotificationLevel(project), {

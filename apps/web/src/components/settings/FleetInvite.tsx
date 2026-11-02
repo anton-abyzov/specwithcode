@@ -18,6 +18,8 @@ import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { ensureLocalApi } from "../../localApi";
+import { useEnvironments } from "../../state/environments";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
@@ -202,6 +204,104 @@ export function useFleetInvite(
   };
 }
 
+export interface MainMachineOption {
+  readonly environmentId: string;
+  readonly label: string;
+}
+
+const NO_MAIN_MACHINES: ReadonlyArray<MainMachineOption> = [];
+
+/** The ID field. It stays visible only when no known machine fits. */
+function MainMachineIdField({
+  controller,
+  canManage,
+}: {
+  readonly controller: Pick<
+    FleetInviteController,
+    "coordinatorEnvironmentId" | "setCoordinatorEnvironmentId" | "pending"
+  >;
+  readonly canManage: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-xs font-medium text-foreground">
+        Main machine environment ID
+      </span>
+      <Input
+        value={controller.coordinatorEnvironmentId}
+        autoComplete="off"
+        disabled={controller.pending !== null || !canManage}
+        onChange={(event) => controller.setCoordinatorEnvironmentId(event.target.value)}
+      />
+      <span className="text-xs text-muted-foreground">
+        The line works only for this machine, so nobody else can use it. Copy the ID from Settings
+        &gt; Connections &gt; Add a machine on that machine.
+      </span>
+    </label>
+  );
+}
+
+/** Machines this app already knows, so the common case needs no ID at all. */
+function MainMachinePicker({
+  options,
+  controller,
+  canManage,
+}: {
+  readonly options: ReadonlyArray<MainMachineOption>;
+  readonly controller: Pick<
+    FleetInviteController,
+    "coordinatorEnvironmentId" | "setCoordinatorEnvironmentId" | "pending"
+  >;
+  readonly canManage: boolean;
+}) {
+  const [otherChosen, setOtherChosen] = useState(false);
+  const chosenId = controller.coordinatorEnvironmentId;
+  // An ID no button stands for stays on show: it is what the line would approve.
+  const other =
+    otherChosen ||
+    (chosenId !== "" && !options.some((option) => option.environmentId === chosenId));
+  const disabled = controller.pending !== null || !canManage;
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <span className="text-xs font-medium text-foreground">Main machine</span>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((option) => (
+          <Button
+            key={option.environmentId}
+            size="xs"
+            variant={
+              !other && controller.coordinatorEnvironmentId === option.environmentId
+                ? "secondary"
+                : "outline"
+            }
+            aria-pressed={!other && controller.coordinatorEnvironmentId === option.environmentId}
+            disabled={disabled}
+            onClick={() => {
+              setOtherChosen(false);
+              controller.setCoordinatorEnvironmentId(option.environmentId);
+            }}
+          >
+            {option.label}
+          </Button>
+        ))}
+        <Button
+          size="xs"
+          variant={other ? "secondary" : "ghost-muted"}
+          aria-pressed={other}
+          disabled={disabled}
+          onClick={() => {
+            setOtherChosen(true);
+            controller.setCoordinatorEnvironmentId("");
+          }}
+        >
+          Another machine
+        </Button>
+      </div>
+      {other ? <MainMachineIdField controller={controller} canManage={canManage} /> : null}
+    </div>
+  );
+}
+
 /** The name field, the line once made, and plain-words problems. Layout belongs to the caller. */
 export function FleetInvitePanel({
   controller,
@@ -211,6 +311,7 @@ export function FleetInvitePanel({
   onCopy,
   createLabel = "Make the line",
   blocked = false,
+  mainMachines = NO_MAIN_MACHINES,
 }: {
   readonly controller: Pick<
     FleetInviteController,
@@ -234,6 +335,8 @@ export function FleetInvitePanel({
   readonly createLabel?: string;
   /** Neither Tailscale nor SpecWithCode Connect is ready here, so making the line would fail. */
   readonly blocked?: boolean;
+  /** Other machines this app knows, offered before asking for an ID. */
+  readonly mainMachines?: ReadonlyArray<MainMachineOption>;
 }) {
   const { name, setName, pending, invitation, revoked, problem } = controller;
   return (
@@ -281,21 +384,15 @@ export function FleetInvitePanel({
         </>
       ) : (
         <>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">
-              Main machine environment ID
-            </span>
-            <Input
-              value={controller.coordinatorEnvironmentId}
-              autoComplete="off"
-              disabled={pending !== null || !canManage}
-              onChange={(event) => controller.setCoordinatorEnvironmentId(event.target.value)}
+          {mainMachines.length > 0 ? (
+            <MainMachinePicker
+              options={mainMachines}
+              controller={controller}
+              canManage={canManage}
             />
-            <span className="text-xs text-muted-foreground">
-              Approve this main machine to manage access. Copy its environment ID from Settings &gt;
-              Connections on that machine.
-            </span>
-          </label>
+          ) : (
+            <MainMachineIdField controller={controller} canManage={canManage} />
+          )}
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">
               Name on the main machine (optional)
@@ -729,6 +826,20 @@ export function FleetInviteDialog({
 }) {
   const controller = useFleetInvite(environmentId, readiness.status?.connect !== undefined);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "invitation line" });
+  const { environments } = useEnvironments();
+  const machineName = useMachineNicknames();
+  const named = environments
+    .filter((environment) => environment.environmentId !== environmentId)
+    .map((environment) => ({
+      environmentId: environment.environmentId as string,
+      label: machineName(environment.environmentId, environment.label),
+    }));
+  // Two machines with one name must still read as two choices.
+  const mainMachines = named.map((option) =>
+    named.filter((candidate) => candidate.label === option.label).length > 1
+      ? { ...option, label: `${option.label} (${option.environmentId.slice(0, 8)})` }
+      : option,
+  );
   return (
     <Dialog
       open={open}
@@ -761,6 +872,7 @@ export function FleetInviteDialog({
             copied={isCopied}
             onCopy={(code) => copyToClipboard(code, undefined)}
             blocked={readiness.blocksInvite}
+            mainMachines={mainMachines}
           />
         </DialogPanel>
       </DialogPopup>

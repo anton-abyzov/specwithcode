@@ -18,6 +18,8 @@ import {
   projectChoiceIneligibleReason,
   projectPickerGroups,
   projectPickerMembers,
+  groupNotificationLevel,
+  membersToNotify,
   type ProjectListMember,
   type ProjectPickerPurpose,
 } from "./projectListVisibility";
@@ -409,5 +411,41 @@ describe("automated projects", () => {
       "m1",
       "m2",
     ]);
+  });
+});
+
+describe("notification level of a project on two machines", () => {
+  const member = (id: string, workspaceRoot: string, settings: Record<string, unknown> = {}) =>
+    ({
+      environmentId: id,
+      id,
+      workspaceRoot,
+      workspaceSettings: { kind: "code", ...settings },
+    }) as unknown as ProjectListMember;
+  const check = member("a", "/Users/me/Projects/scratch/check", { origin: "automated" });
+  const real = member("b", "/Users/me/Projects/invoices");
+  const noScratch = () => null;
+
+  it("keeps the count while another machine holds it as the person's own", () => {
+    const group = { projectKey: "k", memberProjects: [check, real] };
+    expect(groupNotificationLevel(group, check, noScratch)).toBe("coordinator");
+  });
+
+  it("stays quiet when every machine holds it as a check's", () => {
+    const group = { projectKey: "k", memberProjects: [check] };
+    expect(groupNotificationLevel(group, check, noScratch)).toBe("none");
+  });
+
+  it("honors a saved none wherever the other copy is", () => {
+    const muted = member("a", "/Users/me/Projects/own", { notifications: "none" });
+    const group = { projectKey: "k", memberProjects: [muted, real] };
+    expect(groupNotificationLevel(group, muted, noScratch)).toBe("none");
+  });
+
+  it("saves an explicit level even when it is already the effective one", () => {
+    const group = { projectKey: "k", memberProjects: [check] };
+    expect(membersToNotify(group, "none", noScratch)).toEqual([check]);
+    const saved = member("c", "/Users/me/Projects/own", { notifications: "none" });
+    expect(membersToNotify({ memberProjects: [saved] }, "none", noScratch)).toEqual([]);
   });
 });

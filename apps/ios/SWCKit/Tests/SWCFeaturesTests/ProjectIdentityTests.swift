@@ -6,6 +6,7 @@ struct ProjectIdentityTests {
   @Test(arguments: [
     ("Nebula", "NA"), ("Silver Orchard", "SO"), ("Quiet Lantern Workshop", "QW"),
     ("m7forge", "M7"), ("M7 Forge", "M7"), ("X", "XX"), ("---", "PR"),
+    ("1164 handoff move check", "HC"), ("1164 handoff", "HF"), ("2048", "20"),
   ])
   func initialsMatchTheDesktop(name: String, expected: String) {
     #expect(ProjectAvatar.identityMonogram(name) == expected)

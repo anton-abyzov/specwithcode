@@ -522,7 +522,11 @@ export function threadsSummary(
   unreachable?: ReadonlySet<string>,
   runningSubagents?: ReadonlyMap<string, number>,
   attention?: ProjectAttention,
+  /** A check's project: what it asks stays listed, but is not counted as waiting on the person. */
+  unattended = false,
 ): string {
+  if (unattended)
+    return `Automated project. Nothing here alerts you.${attention?.working ? ` ${attention.working} working.` : ""}`;
   const dependencyCount =
     attention?.roots.filter((root) => !root.actions.length && !root.working && root.waits?.length)
       .length ?? 0;

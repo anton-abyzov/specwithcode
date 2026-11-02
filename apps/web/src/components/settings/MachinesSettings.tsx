@@ -10,11 +10,12 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { LaptopIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
+import { InfoIcon, LaptopIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
+import { requestConfirmDialog } from "../../confirmDialog";
 import {
   createServerPairingCredential,
   readPrimaryEnvironmentTarget,
@@ -24,20 +25,26 @@ import { desktopNetworkAccessStateAtom } from "../../state/desktopNetworkAccess"
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { useMachineWorkGrants, useStudioFleet } from "../../studio/fleet";
+import {
+  addVisibleMachineToStudioFleet,
+  useMachineWorkGrants,
+  useStudioFleet,
+} from "../../studio/fleet";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ArchivedDisclosure } from "./ArchivedDisclosure";
 import { RenameMachineDialog } from "./RenameMachineDialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildMachineRows,
   connectBothWaysInstruction,
   pairingLinkBaseUrl,
+  type MachineProject,
   type MachineRowModel,
-  type MachineSharedProject,
   type MachineWorkerGrant,
   type MachineWorkHere,
 } from "./machinesSettings.logic";
@@ -85,6 +92,7 @@ export function MachinesSettingsPanel() {
   );
   const grants = { ...rawGrants, snapshot: labeledSnapshot };
   const projects = useProjects();
+  const configs = useServerConfigs();
   // Read once: the page shows sign-ins, not countdowns, so it never ticks.
   const [now] = useState(Date.now);
   const hostBlocks = useHostLimitBlocks(null, now);
@@ -110,8 +118,10 @@ export function MachinesSettingsPanel() {
         projects,
         hostBlocks,
         workGrants: grants.snapshot,
+        scratchRootFor: (id) => configs.get(id)?.scratchWorkspaceRoot,
+        displayName: machineName,
       }),
-    [environments, fleet, hostBlocks, projects, grants.snapshot],
+    [environments, fleet, hostBlocks, projects, grants.snapshot, configs, machineName],
   );
 
   async function connect(machine: StudioFleetMachine) {
@@ -136,6 +146,11 @@ export function MachinesSettingsPanel() {
         error={error}
         onRefresh={fleet.refresh}
         onConnect={(machine) => void connect(machine)}
+        renderAddForAgents={(row) =>
+          fleet.primaryEnvironmentId === null ? null : (
+            <AddForAgents row={row} primaryEnvironmentId={fleet.primaryEnvironmentId} />
+          )
+        }
         renderConnectBothWays={(row) =>
           fleet.primaryEnvironmentId === null ? null : (
             <ConnectBothWays row={row} primaryEnvironmentId={fleet.primaryEnvironmentId} />
@@ -159,6 +174,7 @@ export function MachineListSection({
   error,
   onRefresh,
   onConnect,
+  renderAddForAgents,
   renderConnectBothWays,
 }: {
   rows: readonly MachineRowModel[];
@@ -167,6 +183,7 @@ export function MachineListSection({
   error: string | null;
   onRefresh: () => void;
   onConnect: (machine: StudioFleetMachine) => void;
+  renderAddForAgents?: (row: MachineRowModel) => ReactNode;
   renderConnectBothWays?: (row: MachineRowModel) => ReactNode;
 }) {
   return (
@@ -192,6 +209,9 @@ export function MachineListSection({
               row={row}
               pending={pending}
               onConnect={onConnect}
+              addForAgents={
+                row.canAddForAgents && renderAddForAgents ? renderAddForAgents(row) : null
+              }
               connectBothWays={
                 row.connectBothWays && renderConnectBothWays ? renderConnectBothWays(row) : null
               }
@@ -204,7 +224,9 @@ export function MachineListSection({
         <Link to="/settings/connections" className="underline underline-offset-2">
           Settings &gt; Connections
         </Link>
-        . Machines that may run work here are under Who can run work here.
+        . Machines that may run work here are under Who can run work here. To disconnect one, use
+        its card there: Remove machine stops agents here from using it, and Remove under
+        Environments stops this app seeing it.
       </p>
       {error ? (
         <p
@@ -241,28 +263,97 @@ const WORKER_BADGE: Readonly<
   "not-allowed": "secondary",
 };
 
-function DetailLine({ label, children }: { label: string; children: ReactNode }) {
+function DetailLine({
+  label,
+  help,
+  children,
+}: {
+  label: string;
+  /** Shown on hover beside the label. */
+  help?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="min-w-0 space-y-1 pl-7">
-      <p className="text-xs text-foreground/80">{label}</p>
+      <p className="flex items-center gap-1 text-xs text-foreground/80">
+        {label}
+        {help ? (
+          <Tooltip>
+            <TooltipTrigger
+              delay={200}
+              render={
+                <Button size="icon-micro" variant="ghost-muted" aria-label={`About ${label}`}>
+                  <InfoIcon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top" className="max-w-72">
+              {help}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </p>
       {children}
     </div>
   );
 }
 
-function SharedProjectItem({ project }: { project: MachineSharedProject }) {
+const ROLE_BADGE: Readonly<
+  Record<NonNullable<MachineProject["role"]>, "info" | "secondary" | "warning" | "outline">
+> = {
+  coordinator: "info",
+  "runs-workers": "secondary",
+  "handoff-pending": "warning",
+  "only-here": "outline",
+};
+
+function projectWhere(project: MachineProject): string {
+  const alsoOn = project.alsoOn.length > 0 ? `Also on ${project.alsoOn.join(", ")}` : null;
+  return [alsoOn, project.folder].filter((part) => part !== null).join(" · ");
+}
+
+/** Text that may be cut short, in full on hover: paths run long, Windows paths longest. */
+function HoverText({ text, className }: { text: string; className: string }) {
+  if (!text) return <span className={className} />;
   return (
-    <li className="flex min-w-0 items-center gap-2 text-xs">
-      <span className="shrink-0 text-foreground">{project.title}</span>
-      <Badge size="sm" variant={project.role === "coordinator" ? "info" : "secondary"}>
-        {project.roleLabel}
-      </Badge>
-      {project.folder ? (
-        <span className="truncate font-mono text-muted-foreground" title={project.folder}>
-          {project.folder}
-        </span>
-      ) : null}
-    </li>
+    <Tooltip>
+      <TooltipTrigger delay={200} render={<span className={className} />}>
+        {text}
+      </TooltipTrigger>
+      <TooltipPopup side="top" className="max-w-96 break-all">
+        {text}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** One grid, so names, labels and folders line up however long a name or path is. */
+function ProjectList({ projects }: { projects: readonly MachineProject[] }) {
+  return (
+    <ul className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)]">
+      {projects.map((project) => (
+        <li key={project.key} className="contents">
+          <HoverText text={project.title} className="truncate text-foreground" />
+          <Tooltip>
+            <TooltipTrigger
+              delay={200}
+              render={<span className="inline-flex justify-self-start" />}
+            >
+              <Badge size="sm" variant={project.role ? ROLE_BADGE[project.role] : "secondary"}>
+                {project.roleLabel}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipPopup side="top" className="max-w-72">
+              {project.roleHelp}
+            </TooltipPopup>
+          </Tooltip>
+          <HoverText
+            text={projectWhere(project)}
+            className="col-span-2 min-w-0 truncate text-muted-foreground sm:col-span-1"
+          />
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -270,11 +361,13 @@ export function MachineRow({
   row,
   pending,
   onConnect,
+  addForAgents,
   connectBothWays,
 }: {
   row: MachineRowModel;
   pending: EnvironmentId | null;
   onConnect: (machine: StudioFleetMachine) => void;
+  addForAgents?: ReactNode;
   connectBothWays?: ReactNode;
 }) {
   const seen = row.seen.state === "this-machine" || row.seen.state === "connected";
@@ -330,15 +423,25 @@ export function MachineRow({
       </div>
 
       {row.workers ? (
-        <DetailLine label="Workers from this machine">
+        <DetailLine
+          label="Workers from this machine"
+          help="Whether agents on this machine may start work there. You decide this for each machine."
+        >
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge size="sm" variant={WORKER_BADGE[row.workers.status]}>
               {row.workers.label}
             </Badge>
             <span>{row.workers.detail}</span>
+            {row.workers.status === "not-allowed" ? (
+              <Link to="/settings/connections" className="underline underline-offset-2">
+                Allow workers
+              </Link>
+            ) : null}
           </p>
         </DetailLine>
       ) : null}
+
+      {addForAgents}
 
       {row.workHere ? (
         <DetailLine label="Work it may run here">
@@ -351,24 +454,31 @@ export function MachineRow({
         </DetailLine>
       ) : null}
 
-      <DetailLine label="Shared projects">
-        {row.sharedProjects.length > 0 ? (
-          <>
-            <p className="mb-1 text-xs text-muted-foreground">
-              Only projects with a copy on more than one machine. The main copy runs that
-              project&rsquo;s coordinator.
-            </p>
-            <ul className="space-y-1">
-              {row.sharedProjects.map((project) => (
-                <SharedProjectItem key={project.key} project={project} />
-              ))}
-            </ul>
-          </>
+      <DetailLine
+        label="Projects"
+        help="This machine's projects. For a machine this app cannot see, only those it shares with one it can. Automated ones were made by checks or agents; archived ones are kept but out of your lists. Both stay collapsed, as in the sidebar."
+      >
+        {row.projects.own.length > 0 ? (
+          <ProjectList projects={row.projects.own} />
         ) : (
           <p className="text-xs text-muted-foreground">
-            {seen ? "No shared projects." : "Connect to see its projects."}
+            {seen ? "No projects of your own here." : "Connect to see its projects."}
           </p>
         )}
+        <ArchivedDisclosure
+          count={row.projects.automated.length}
+          label="automated"
+          className="-ml-3 sm:-ml-4"
+        >
+          <div className="pl-3 sm:pl-4">
+            <ProjectList projects={row.projects.automated} />
+          </div>
+        </ArchivedDisclosure>
+        <ArchivedDisclosure count={row.projects.archived.length} className="-ml-3 sm:-ml-4">
+          <div className="pl-3 sm:pl-4">
+            <ProjectList projects={row.projects.archived} />
+          </div>
+        </ArchivedDisclosure>
       </DetailLine>
 
       <DetailLine label="Accounts">
@@ -390,6 +500,113 @@ export function MachineRow({
 
       {connectBothWays}
     </li>
+  );
+}
+
+/**
+ * This app already reaches both machines, so it carries the invitation line
+ * between them: no ID to copy and nothing to paste. The line stays inside
+ * the call. Allowing workers is still the person's separate choice.
+ */
+function AddForAgents({
+  row,
+  primaryEnvironmentId,
+}: {
+  row: MachineRowModel;
+  primaryEnvironmentId: EnvironmentId;
+}) {
+  const canInvite = useEnvironmentScope(row.environmentId, AuthAccessWriteScope);
+  const canAdd = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function add() {
+    if (adding || added) return;
+    // Fail closed: no mounted confirm host means no grant.
+    const confirmed = await requestConfirmDialog(
+      `Let this machine manage ${row.label}?\nThis machine's server gets a key to ${row.label} for a year, which can manage its access, updates and skills. Agents still cannot start work there until you allow workers.`,
+    );
+    if (confirmed !== true) return;
+    setAdding(true);
+    setError(null);
+    try {
+      await addVisibleMachineToStudioFleet(primaryEnvironmentId, row.environmentId, row.label);
+      setAdded(true);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not add this machine.");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <AddForAgentsView
+      machineLabel={row.label}
+      allowed={isElectron && canInvite && canAdd}
+      adding={adding}
+      added={added}
+      error={error}
+      onAdd={() => void add()}
+    />
+  );
+}
+
+export function AddForAgentsView({
+  machineLabel,
+  allowed,
+  adding,
+  added = false,
+  error,
+  onAdd,
+}: {
+  machineLabel: string;
+  /** The desktop app holding full access to both machines; a browser tab is refused. */
+  allowed: boolean;
+  adding: boolean;
+  added?: boolean;
+  error: string | null;
+  onAdd: () => void;
+}) {
+  return (
+    <DetailLine
+      label="Agents on this machine"
+      help="Seeing a machine in this app does not tell this machine's server about it. Adding it gives the server its own key to that machine for a year, which can manage its access, updates and skills, with this window closed. Agents still cannot start work until you allow workers."
+    >
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-muted-foreground">
+          {added ? (
+            <>
+              Added {machineLabel}. Next,{" "}
+              <Link to="/settings/connections" className="underline underline-offset-2">
+                allow workers
+              </Link>{" "}
+              on its card.
+            </>
+          ) : allowed ? (
+            `This app can see ${machineLabel}, but agents on this machine cannot use it yet.`
+          ) : (
+            `Adding ${machineLabel} from here needs the desktop app with full access to it. Otherwise, on ${machineLabel}, choose Join a main machine under Settings > Connections.`
+          )}
+        </p>
+        {allowed && !added ? (
+          <Button
+            className="shrink-0 self-start sm:self-auto"
+            size="xs"
+            variant="outline"
+            disabled={adding}
+            onClick={onAdd}
+          >
+            {adding ? "Adding…" : "Add for agents"}
+          </Button>
+        ) : null}
+      </div>
+      {error ? (
+        <p role="alert" className="text-xs text-destructive-foreground">
+          {error}
+        </p>
+      ) : null}
+    </DetailLine>
   );
 }
 

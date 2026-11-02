@@ -91,6 +91,11 @@ import {
   projectAdmissionReason,
 } from "../../studio/projectWorkspaceModel";
 import { modelLabel, THREAD_TONE_LABELS, threadTone } from "../../studio/shellModel";
+import { isAutomatedMember } from "../../studio/projectListVisibility";
+import {
+  projectNotificationLevel,
+  projectShowsWaitingCount,
+} from "@specweave-studio/shared/projectNotifications";
 import {
   PULL_REQUEST_REQUEST_EXPIRED_REASON,
   PULL_REQUEST_REQUEST_TTL_MS,
@@ -1276,7 +1281,12 @@ export function ProjectWorkspaceSurface({
     ],
   );
   const projectAttention = useProjectAttention(shells, attentionProjects);
-  const waiting = projectAttention.count;
+  // A check's project still lists what it asks; it just counts nothing as waiting.
+  const unattended =
+    isAutomatedMember(project) &&
+    iconCheckouts.every(isAutomatedMember) &&
+    !projectShowsWaitingCount(projectNotificationLevel(project));
+  const waiting = unattended ? 0 : projectAttention.count;
   const openLink = useOpenLink(null);
   const machineLabels = useMemo(
     () =>
@@ -1914,6 +1924,7 @@ export function ProjectWorkspaceSurface({
                   threadsLoaded={threadsLoaded && remoteWorkersLoaded}
                   threads={workers}
                   attention={projectAttention}
+                  unattended={unattended}
                   onOpenAction={(threadId, environmentId) => {
                     if (threadId === mainCoordinatorId && environmentId === project.environmentId)
                       openCoordinatorPage();

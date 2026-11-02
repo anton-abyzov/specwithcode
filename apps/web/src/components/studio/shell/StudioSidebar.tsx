@@ -100,10 +100,10 @@ import {
   notificationsWorkspacePatch,
   originWorkspacePatch,
   sameNameHints,
+  groupNotificationLevel,
 } from "../../../studio/projectListVisibility";
 import { useProjectLinkSuggestions } from "./useProjectLinkSuggestions";
 import {
-  projectNotificationLevel,
   projectShowsWaitingCount,
   type ProjectNotificationLevel,
 } from "@specweave-studio/shared/projectNotifications";
@@ -753,8 +753,10 @@ export default function StudioSidebar() {
   };
   // The level the row shows: the one saved on the checkout the project page opens.
   const notificationsFor = (group: SidebarProjectSnapshot) =>
-    projectNotificationLevel(
+    groupNotificationLevel(
+      group,
       displayedCheckouts.get(group.projectKey) ?? group.memberProjects[0] ?? null,
+      scratchRootFor,
     );
   // Renames a project wherever it lives; the first machine that refuses says why.
   const renameGroup = async (group: SidebarProjectSnapshot, name: string) => {

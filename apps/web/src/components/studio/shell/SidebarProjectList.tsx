@@ -685,7 +685,8 @@ export function ProjectRow(props: {
                 />
               )
             ) : null}
-            {muted && !archived ? (
+            {/* Automated rows start without alerts; a bell on each would say nothing. */}
+            {muted && !archived && !props.automated ? (
               <BellOffIcon className="sws-side-row-pin" aria-label="Notifications off" role="img" />
             ) : null}
             {pinned ? (
@@ -870,9 +871,8 @@ function ProjectNotificationsMenu(props: {
       <MenuSubPopup className="w-64">
         <MenuRadioGroup
           value={props.level}
-          onValueChange={(value) => {
-            if (value !== props.level) props.onChange(value as ProjectNotificationLevel);
-          }}
+          // Also fires for the shown level: a check's "Nothing" is not saved until it is picked.
+          onValueChange={(value) => props.onChange(value as ProjectNotificationLevel)}
         >
           {PROJECT_NOTIFICATION_LEVELS.map((level) => (
             <MenuRadioItem key={level} value={level} closeOnClick>

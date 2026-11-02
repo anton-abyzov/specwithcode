@@ -17,6 +17,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { projectOrigin } from "@specweave-studio/shared/projectOrigin";
 import {
+  DEFAULT_PROJECT_NOTIFICATION_LEVEL,
   projectNotificationLevel,
   type ProjectNotificationLevel,
 } from "@specweave-studio/shared/projectNotifications";
@@ -383,8 +384,28 @@ export function membersToNotify<M extends ProjectListMember>(
   return group.memberProjects.filter(
     (member) =>
       !isScratchMember(member, scratchRootFor) &&
-      projectNotificationLevel(member) !== notifications,
+      // A check's copy reads as "none" without saving it; saved, the choice outlives a move.
+      (projectNotificationLevel(member) !== notifications ||
+        (notifications === "none" && member.workspaceSettings?.notifications !== "none")),
   );
+}
+
+/**
+ * The level a project's row and counts follow, read from the checkout it displays. A
+ * check's copy starts without alerts, but while another machine holds the project as
+ * the person's own, the group is theirs and keeps its waiting count.
+ */
+export function groupNotificationLevel(
+  group: ProjectListGroup,
+  displayed: ProjectListMember | null | undefined,
+  scratchRootFor: ScratchRootLookup,
+): ProjectNotificationLevel {
+  const level = projectNotificationLevel(displayed);
+  return level === "none" &&
+    displayed?.workspaceSettings?.notifications !== "none" &&
+    !isAutomatedGroup(group, scratchRootFor)
+    ? DEFAULT_PROJECT_NOTIFICATION_LEVEL
+    : level;
 }
 
 /** The workspace-settings patch that archives or restores one project. */

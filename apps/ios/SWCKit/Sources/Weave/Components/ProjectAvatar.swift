@@ -111,7 +111,8 @@ public struct ProjectAvatar: View {
 
   /// The generated initials for a project without an icon, matching the
   /// desktop: the first letter, then a digit from the first word, else the
-  /// last word's first letter, else the first word's last letter.
+  /// last word's first letter, else the first word's last letter. Leading
+  /// numbers are skipped when a word with letters follows them.
   public static func identityMonogram(_ title: String) -> String {
     let normalized = title.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines)
     var words: [[Character]] = []
@@ -120,6 +121,10 @@ public struct ProjectAvatar: View {
       if character.isLetter || character.isNumber { current.append(character) } else if !current.isEmpty { words.append(current); current = [] }
     }
     if !current.isEmpty { words.append(current) }
+    for index in words.indices where words[index].contains(where: \.isLetter) {
+      words.removeFirst(index)
+      break
+    }
     guard let firstWord = words.first, let first = firstWord.first else { return "PR" }
     let second = firstWord.dropFirst().first(where: \.isNumber)
       ?? (words.count > 1 ? words.last?.first : firstWord.last)

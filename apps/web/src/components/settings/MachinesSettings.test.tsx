@@ -59,6 +59,17 @@ vi.mock("../ui/toast", () => ({
   toastManager: { add: vi.fn() },
   stackedThreadToast: (value: unknown) => value,
 }));
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children, render }: { children?: ReactNode; render?: ReactNode }) => (
+    <>
+      {render}
+      {children}
+    </>
+  ),
+  TooltipPopup: () => null,
+}));
+vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn(async () => true) }));
 vi.mock("./HandoffModeSettings", () => ({ HandoffModeSettings: () => null }));
 vi.mock("./usePrimaryFleet", () => ({ usePrimaryFleet: () => runtime.fleet }));
 vi.mock("../../state/environments", () => ({
@@ -97,7 +108,7 @@ vi.mock("../../environments/primary", () => ({
   readPrimaryEnvironmentTarget: () => ({ target: { httpBaseUrl: "https://m4max.tailnet.ts.net" } }),
 }));
 
-import { ConnectBothWaysView, MachinesSettingsPanel } from "./MachinesSettings";
+import { AddForAgentsView, ConnectBothWaysView, MachinesSettingsPanel } from "./MachinesSettings";
 
 const machine = (
   environmentId: EnvironmentId,
@@ -328,5 +339,50 @@ describe("Settings > Machines", () => {
     );
     expect(html).toContain("enter this machine&#x27;s private address and this pairing code");
     expect(html).toContain("Works once, until 12:05 PM");
+  });
+});
+
+describe("Add for agents", () => {
+  const view = (allowed: boolean, error: string | null = null) =>
+    renderToStaticMarkup(
+      <AddForAgentsView
+        machineLabel="Windows"
+        allowed={allowed}
+        adding={false}
+        error={error}
+        onAdd={vi.fn()}
+      />,
+    );
+
+  it("offers the button when this app can reach both machines", () => {
+    const html = view(true);
+    expect(html).toContain("Add for agents");
+    expect(html).toContain("agents on this machine cannot use it yet");
+  });
+
+  it("names the manual route, with no button, when the connection cannot add it", () => {
+    const html = view(false);
+    expect(html).not.toContain(">Add for agents<");
+    expect(html).toContain("choose Join a main machine");
+  });
+
+  it("says what is next once added, with no button to press twice", () => {
+    const html = renderToStaticMarkup(
+      <AddForAgentsView
+        machineLabel="Windows"
+        allowed
+        adding={false}
+        added
+        error={null}
+        onAdd={vi.fn()}
+      />,
+    );
+    expect(html).toContain("Added Windows");
+    expect(html).toContain("allow workers");
+    expect(html).not.toContain(">Add for agents<");
+  });
+
+  it("shows why adding failed", () => {
+    expect(view(true, "Machine offline")).toContain("Machine offline");
   });
 });

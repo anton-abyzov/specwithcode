@@ -401,6 +401,54 @@ export async function revokeStudioFleetInvitation(
   else if (invitation.pairingId) await revokeServerPairingLink(invitation.pairingId);
 }
 
+/**
+ * Settings > Machines > Add for agents: the machine makes a line for this one
+ * and this one redeems it, over connections this app already holds. Only a
+ * Connect line, whose credential works once. Unused, it lapses within the hour;
+ * redeemed and then failing, it leaves a session on that machine, listed under
+ * Authorized clients there. Nobody ever sees the line. Other machines take this
+ * request only from the desktop app, not from a browser tab.
+ */
+export async function addVisibleMachineToStudioFleet(
+  primaryEnvironmentId: EnvironmentId,
+  machineEnvironmentId: EnvironmentId,
+  label: string,
+): Promise<StudioFleetAddResult> {
+  const manually = `On ${label}, choose Join a main machine under Settings > Connections.`;
+  let linked: boolean;
+  try {
+    linked = (await readStudioFleetTailscale(machineEnvironmentId)).connect?.linked === true;
+  } catch {
+    throw new FleetInviteFailure("unknown", `Could not check ${label}. Try again.`);
+  }
+  if (!linked)
+    throw new FleetInviteFailure(
+      "connect_not_linked",
+      `${label} has no SpecWithCode Connect address to add it by. ${manually}`,
+    );
+  let code: string;
+  try {
+    ({ code } = await inviteStudioFleetMachine(machineEnvironmentId, {
+      coordinatorEnvironmentId: primaryEnvironmentId,
+      label,
+      via: "connect",
+    }));
+  } catch (failure) {
+    // The server's words say "this machine" for the one it runs on, which here is the other one.
+    if (failure instanceof FleetInviteFailure && failure.reason === "permission")
+      throw new FleetInviteFailure("permission", `${label} refused this request. ${manually}`);
+    if (failure instanceof FleetInviteFailure && failure.reason === "connect_unreachable")
+      throw new FleetInviteFailure(
+        failure.reason,
+        `${label}'s SpecWithCode Connect address is not answering. Try again.`,
+      );
+    if (failure instanceof FleetInviteFailure && failure.reason !== "unknown")
+      throw new FleetInviteFailure(failure.reason, `On ${label}: ${failure.message} ${manually}`);
+    throw new FleetInviteFailure("unknown", `Could not make the line on ${label}. ${manually}`);
+  }
+  return addStudioFleetMachine(primaryEnvironmentId, code);
+}
+
 function preparedForInvite(environmentId: EnvironmentId) {
   const prepared = readPreparedConnection(environmentId);
   if (

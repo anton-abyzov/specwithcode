@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { AuthSessionId, EnvironmentId } from "@specweave-studio/contracts";
 import type { StudioFleetInviteResult } from "@specweave-studio/contracts/studioFleet";
@@ -30,6 +31,12 @@ vi.mock("../../studio/fleet", () => {
     signInStudioFleetTailscale: vi.fn(),
   };
 });
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: [] }),
+}));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (_id: string, label?: string | null) => label ?? "",
+}));
 const cloud = vi.hoisted(() => ({ configured: true }));
 vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => cloud.configured }));
 vi.mock("../../localApi", () => ({
@@ -436,4 +443,57 @@ it("requires explicit coordinator approval and shows the local identity for enro
   expect(text(panel(controller))).toContain("env-m4");
   expect(await controller.create()).toBeNull();
   expect(runtime.invite).not.toHaveBeenCalled();
+});
+
+describe("FleetInvitePanel main machine choice", () => {
+  const tree = (mainMachines: { environmentId: string; label: string }[]) =>
+    panel(
+      {
+        ownEnvironmentId: null,
+        name: "",
+        setName: vi.fn(),
+        coordinatorEnvironmentId: "",
+        setCoordinatorEnvironmentId: vi.fn(),
+        pending: null,
+        invitation: null,
+        revoked: false,
+        problem: null,
+        create: vi.fn(),
+        revoke: vi.fn(),
+        reset: vi.fn(),
+      } as ReturnType<typeof useFleetInvite>,
+      { mainMachines },
+    );
+
+  it("keeps an ID no button stands for on show", () => {
+    const markup = renderToStaticMarkup(
+      panel(
+        {
+          ownEnvironmentId: null,
+          name: "",
+          setName: vi.fn(),
+          coordinatorEnvironmentId: "env-typed",
+          setCoordinatorEnvironmentId: vi.fn(),
+          pending: null,
+          invitation: null,
+          revoked: false,
+          problem: null,
+          create: vi.fn(),
+          revoke: vi.fn(),
+          reset: vi.fn(),
+        } as ReturnType<typeof useFleetInvite>,
+        { mainMachines: [{ environmentId: "env-m4", label: "M4" }] },
+      ),
+    );
+    expect(markup).toContain("Main machine environment ID");
+    expect(markup).toContain("env-typed");
+  });
+
+  it("asks for an ID only when this app knows no other machine", () => {
+    expect(renderToStaticMarkup(tree([]))).toContain("Main machine environment ID");
+    const known = renderToStaticMarkup(tree([{ environmentId: "env-m4", label: "M4" }]));
+    expect(known).toContain("M4");
+    expect(known).toContain("Another machine");
+    expect(known).not.toContain("Main machine environment ID");
+  });
 });

@@ -127,6 +127,8 @@ export function ThreadsPane({
   /** Working subagents per `environmentId:threadId`; they roll up into their thread's row. */
   runningSubagents?: ReadonlyMap<string, number>;
   attention?: ProjectAttention;
+  /** A check's project: its summary counts nothing as waiting on the person. */
+  unattended?: boolean | undefined;
   /** Opens where an attention action is answered, such as the coordinator's own page. */
   onOpenAction?: (id: ThreadId, environmentId: EnvironmentId) => void;
   canChange: boolean;
@@ -534,6 +536,7 @@ export function ThreadsPane({
                   unreachable,
                   props.runningSubagents,
                   props.attention,
+                  props.unattended,
                 )}
           </p>
           {coordinatorAsk ? (

@@ -185,16 +185,17 @@ describe("machine rows", () => {
       ],
       hostBlocks: [],
     });
-    expect(rows[0]?.sharedProjects).toEqual([
-      {
-        key: "logical-easychamp",
-        title: "EasyChamp",
-        role: "coordinator",
-        roleLabel: "Main copy",
-        folder: "/Users/a/Projects/sw-easychamp",
-      },
+    expect(rows[0]?.projects.own[0]).toMatchObject({
+      key: "logical-easychamp",
+      title: "EasyChamp",
+      role: "coordinator",
+      roleLabel: "Main copy",
+      alsoOn: ["MacBook Pro"],
+      folder: "/Users/a/Projects/sw-easychamp",
+    });
+    expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([
+      "Runs workers only",
     ]);
-    expect(rows[1]?.sharedProjects.map((project) => project.roleLabel)).toEqual(["Runs workers only"]);
 
     const hidden = buildMachineRows({
       environments: [env(m4, "M4MAX")],
@@ -204,8 +205,8 @@ describe("machine rows", () => {
       projects: [easyChamp(m4, "p-m4", "/Users/a/Projects/sw-easychamp", "transferring")],
       hostBlocks: [],
     });
-    expect(hidden[0]?.sharedProjects[0]?.roleLabel).toBe("Moving main copy");
-    expect(hidden[1]?.sharedProjects).toEqual([
+    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("Moving main copy");
+    expect(hidden[1]?.projects.own).toMatchObject([
       {
         key: "logical-easychamp",
         title: "EasyChamp",
@@ -303,5 +304,87 @@ describe("connect both ways", () => {
     expect(connectBothWaysInstruction("MacBook Pro")).toBe(
       "On MacBook Pro, open Settings > Connections > Add environment > Remote link and paste this link.",
     );
+  });
+});
+
+describe("buildMachineRows project lists", () => {
+  const project = (
+    id: string,
+    settings: NonNullable<MachineProjectInput["workspaceSettings"]> = {},
+    workspaceRoot = `/Users/a/Projects/${id}`,
+  ): MachineProjectInput => ({
+    environmentId: m4,
+    id,
+    title: id,
+    workspaceRoot,
+    workspaceSettings: settings,
+  });
+  const rowsFor = (projects: MachineProjectInput[], fleetSnapshot = fleet([])) =>
+    buildMachineRows({
+      environments: [env(m4, "M4MAX"), env(m3, "Windows")],
+      primaryEnvironmentId: m4,
+      fleet: fleetSnapshot,
+      canPair: true,
+      projects,
+      hostBlocks: [],
+      scratchRootFor: () => "/Users/a/scratch",
+    });
+
+  it("lists every project, keeping automated and archived apart and scratch out", () => {
+    const [row] = rowsFor([
+      project("mine"),
+      project("check", { origin: "automated" }),
+      project("old", { archived: true }),
+      project("old-check", { archived: true, origin: "automated" }),
+      project("scratch", {}, "/Users/a/scratch"),
+    ]);
+    expect(row?.projects.own.map((entry) => [entry.title, entry.roleLabel])).toEqual([
+      ["mine", "This machine only"],
+    ]);
+    expect(row?.projects.automated.map((entry) => entry.title)).toEqual(["check"]);
+    expect(row?.projects.archived.map((entry) => entry.title)).toEqual(["old", "old-check"]);
+  });
+
+  it("puts shared copies ahead of the ones only this machine has", () => {
+    const [row] = rowsFor([project("a-solo"), easyChamp(m4, "p-m4", "/Users/a/easychamp")]);
+    expect(row?.projects.own.map((entry) => entry.title)).toEqual(["EasyChamp", "a-solo"]);
+  });
+
+  it("offers Add for agents only for a machine this app sees and the server does not list", () => {
+    const unlisted = rowsFor([]);
+    expect(unlisted.map((row) => row.canAddForAgents)).toEqual([false, true]);
+    const listed = rowsFor([], fleet([fleetMachine(m3, "Windows")]));
+    expect(listed.map((row) => row.canAddForAgents)).toEqual([false, false]);
+    const unknown = buildMachineRows({
+      environments: [env(m4, "M4MAX"), env(m3, "Windows")],
+      primaryEnvironmentId: m4,
+      fleet: null,
+      canPair: true,
+      projects: [],
+      hostBlocks: [],
+    });
+    expect(unknown.map((row) => row.canAddForAgents)).toEqual([false, false]);
+  });
+
+  it("files a machine out of sight by all the copies in sight, not the first", () => {
+    const copy = (environmentId: EnvironmentId, id: string, settings: object) =>
+      ({
+        ...easyChamp(environmentId, id, `/Users/a/${id}`),
+        workspaceSettings: {
+          ...easyChamp(environmentId, id, `/Users/a/${id}`).workspaceSettings,
+          ...settings,
+        },
+      }) as MachineProjectInput;
+    const rows = buildMachineRows({
+      environments: [env(m4, "M4MAX"), env(m1, "M1")],
+      primaryEnvironmentId: m4,
+      fleet: fleet([fleetMachine(m3, "MacBook Pro")]),
+      canPair: true,
+      projects: [copy(m4, "a", { archived: true }), copy(m1, "b", {})],
+      hostBlocks: [],
+    });
+    const unseen = rows.find((row) => row.environmentId === m3);
+    expect(unseen?.projects.own.map((entry) => entry.title)).toEqual(["EasyChamp"]);
+    expect(unseen?.projects.archived).toEqual([]);
   });
 });

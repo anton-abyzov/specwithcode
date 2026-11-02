@@ -4,6 +4,8 @@ import {
   type LogicalProject,
   type ProjectCoordinatorBinding,
 } from "@specweave-studio/contracts";
+import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
+import { isAutomatedProject } from "@specweave-studio/shared/projectOrigin";
 import type {
   StudioFleetMachine,
   StudioFleetSnapshot,
@@ -44,6 +46,8 @@ export interface MachineProjectInput {
     | {
         readonly kind?: string | undefined;
         readonly archived?: boolean | undefined;
+        readonly origin?: string | undefined;
+        readonly temporarySessionId?: string | undefined;
         readonly logicalProject?: LogicalProject | undefined;
         readonly coordinatorBinding?: ProjectCoordinatorBinding | undefined;
       }
@@ -55,13 +59,24 @@ export type MachineSeenState = "this-machine" | "connected" | "elsewhere" | "not
 
 export type SharedProjectRole = "coordinator" | "runs-workers" | "handoff-pending";
 
-export interface MachineSharedProject {
+export interface MachineProject {
   readonly key: string;
   readonly title: string;
   /** Null when this app cannot see that copy, so its role is unknown here. */
-  readonly role: SharedProjectRole | null;
+  readonly role: SharedProjectRole | "only-here" | null;
   readonly roleLabel: string;
+  /** The role in a sentence, for the label's tooltip. */
+  readonly roleHelp: string;
+  /** The other machines that hold a copy. */
+  readonly alsoOn: readonly string[];
   readonly folder: string | null;
+}
+
+/** A machine's projects, split as the sidebar splits them. */
+export interface MachineProjects {
+  readonly own: readonly MachineProject[];
+  readonly automated: readonly MachineProject[];
+  readonly archived: readonly MachineProject[];
 }
 
 export interface MachineAccount {
@@ -103,17 +118,28 @@ export interface MachineRowModel {
   readonly workers: MachineWorkerGrant | null;
   /** Work that machine may start here; null when it holds no grant from this machine. */
   readonly workHere: MachineWorkHere | null;
-  readonly sharedProjects: readonly MachineSharedProject[];
+  readonly projects: MachineProjects;
   /** Null when this app cannot see the machine, so its sign-ins are unknown. */
   readonly accounts: readonly MachineAccount[] | null;
   /** A private machine this app sees, whose own app may not see this one yet. */
   readonly connectBothWays: boolean;
+  /** This app sees the machine, but this server does not list it, so agents here cannot use it. */
+  readonly canAddForAgents: boolean;
 }
 
-const ROLE_LABELS: Readonly<Record<SharedProjectRole, string>> = {
+const ROLE_LABELS: Readonly<Record<SharedProjectRole | "only-here", string>> = {
   coordinator: "Main copy",
   "runs-workers": "Runs workers only",
   "handoff-pending": "Moving main copy",
+  "only-here": "This machine only",
+};
+
+const ROLE_HELP: Readonly<Record<SharedProjectRole | "only-here", string>> = {
+  coordinator:
+    "This copy runs the project's coordinator, whether or not it is working right now. Copies on other machines take work from it.",
+  "runs-workers": "The coordinator moved to another machine. This copy only takes work from it.",
+  "handoff-pending": "The project's coordinator is moving between machines.",
+  "only-here": "No other machine has a copy of this project.",
 };
 
 /** A copy coordinates unless it handed the coordinator on or is handing it on now. */
@@ -172,43 +198,102 @@ export function fleetConnectAction(
   return { enabled: true, label: "Connect" };
 }
 
-function sharedProjectsOn(
+function otherMachines(
+  environmentId: EnvironmentId,
+  project: MachineProjectInput,
+  nameOf: (environmentId: EnvironmentId) => string,
+): string[] {
+  const members = project.workspaceSettings?.logicalProject?.members ?? [];
+  return [
+    ...new Set(
+      members
+        .filter((member) => member.environmentId !== environmentId)
+        .map((member) => nameOf(member.environmentId)),
+    ),
+  ];
+}
+
+/** Shared copies first, then by name, so the same project sits in the same place on each machine. */
+function byListOrder(left: MachineProject, right: MachineProject): number {
+  return (
+    Number(right.role !== "only-here") - Number(left.role !== "only-here") ||
+    left.title.localeCompare(right.title)
+  );
+}
+
+/** Which list a copy belongs in, by the same rules as the sidebar. */
+function projectListOf(project: MachineProjectInput): keyof MachineProjects {
+  if (project.workspaceSettings?.archived) return "archived";
+  return isAutomatedProject(project) ? "automated" : "own";
+}
+
+function projectsOn(
   environmentId: EnvironmentId,
   seen: boolean,
   projects: readonly MachineProjectInput[],
-): MachineSharedProject[] {
-  const live = projects.filter((project) => !project.workspaceSettings?.archived);
+  nameOf: (environmentId: EnvironmentId) => string,
+  scratchRootFor: (environmentId: EnvironmentId) => string | null | undefined,
+): MachineProjects {
+  const lists: Record<keyof MachineProjects, MachineProject[]> = {
+    own: [],
+    automated: [],
+    archived: [],
+  };
   if (seen) {
-    return live
-      .filter((project) => project.environmentId === environmentId && isSharedProject(project))
-      .map((project) => {
-        const role = sharedProjectRole(project.workspaceSettings?.coordinatorBinding);
-        return {
-          key: project.workspaceSettings?.logicalProject?.id ?? project.id,
-          title: logicalProjectTitle(project),
-          role,
-          roleLabel: ROLE_LABELS[role],
-          folder: project.workspaceRoot,
-        };
-      })
-      .toSorted((left, right) => left.title.localeCompare(right.title));
+    for (const project of projects) {
+      if (
+        project.environmentId !== environmentId ||
+        isScratchProject(project, scratchRootFor(environmentId))
+      )
+        continue;
+      const shared = isSharedProject(project);
+      const role = shared
+        ? sharedProjectRole(project.workspaceSettings?.coordinatorBinding)
+        : "only-here";
+      lists[projectListOf(project)].push({
+        key: project.workspaceSettings?.logicalProject?.id ?? project.id,
+        title: logicalProjectTitle(project),
+        role,
+        roleLabel: ROLE_LABELS[role],
+        roleHelp: ROLE_HELP[role],
+        alsoOn: shared ? otherMachines(environmentId, project, nameOf) : [],
+        folder: project.workspaceRoot,
+      });
+    }
+  } else {
+    // A machine this app cannot see still shows up in the member lists of the
+    // copies it can see; name those projects without guessing role or folder.
+    const seenIdentities = new Set<string>();
+    for (const project of projects) {
+      const logical = project.workspaceSettings?.logicalProject;
+      if (!logical || !isSharedProject(project) || seenIdentities.has(logical.id)) continue;
+      if (!logical.members.some((member) => member.environmentId === environmentId)) continue;
+      seenIdentities.add(logical.id);
+      // That machine's own copy is out of sight, so the copies in sight decide together.
+      const copies = projects.filter(
+        (copy) => copy.workspaceSettings?.logicalProject?.id === logical.id,
+      );
+      const list = copies.every((copy) => projectListOf(copy) === "archived")
+        ? "archived"
+        : copies.every((copy) => projectListOf(copy) !== "own")
+          ? "automated"
+          : "own";
+      lists[list].push({
+        key: logical.id,
+        title: logicalProjectTitle(project),
+        role: null,
+        roleLabel: "Connect to see its role",
+        roleHelp: "This app cannot see this machine, so it cannot tell what this copy does.",
+        alsoOn: otherMachines(environmentId, project, nameOf),
+        folder: null,
+      });
+    }
   }
-  // A machine this app cannot see still shows up in the member lists of the
-  // copies it can see; name those projects without guessing role or folder.
-  const byIdentity = new Map<string, MachineSharedProject>();
-  for (const project of live) {
-    const logical = project.workspaceSettings?.logicalProject;
-    if (!logical || !isSharedProject(project) || byIdentity.has(logical.id)) continue;
-    if (!logical.members.some((member) => member.environmentId === environmentId)) continue;
-    byIdentity.set(logical.id, {
-      key: logical.id,
-      title: logicalProjectTitle(project),
-      role: null,
-      roleLabel: "Connect to see its role",
-      folder: null,
-    });
-  }
-  return [...byIdentity.values()].toSorted((left, right) => left.title.localeCompare(right.title));
+  return {
+    own: lists.own.toSorted(byListOrder),
+    automated: lists.automated.toSorted(byListOrder),
+    archived: lists.archived.toSorted(byListOrder),
+  };
 }
 
 function accountsOn(
@@ -239,12 +324,27 @@ export function buildMachineRows(input: {
   readonly hostBlocks: readonly Pick<HostLimitBlock, "environmentId" | "providers">[];
   /** This machine's grants to coordinator machines, when its server lists them. */
   readonly workGrants?: StudioWorkGrantsSnapshot | null;
+  /** Each machine's scratch folder, whose project ("No project") is never listed. */
+  readonly scratchRootFor?: (environmentId: EnvironmentId) => string | null | undefined;
+  /** The name the person gave a machine; the rows' own label otherwise. */
+  readonly displayName?: (environmentId: EnvironmentId, label: string) => string;
 }): MachineRowModel[] {
   const fleetMachines = input.fleet?.machines ?? [];
   const fleetByEnvironment = new Map(
     fleetMachines.map((machine) => [machine.environmentId, machine] as const),
   );
   const saved = new Set<string>(input.environments.map((environment) => environment.environmentId));
+  const labels = new Map<string, string>([
+    ...fleetMachines.map((machine) => [machine.environmentId, machine.label] as const),
+    ...input.environments.map(
+      (environment) => [environment.environmentId, environment.label] as const,
+    ),
+  ]);
+  const nameOf = (environmentId: EnvironmentId) => {
+    const label = labels.get(environmentId) ?? "another machine";
+    return input.displayName?.(environmentId, label) ?? label;
+  };
+  const scratchRootFor = input.scratchRootFor ?? (() => null);
   const ordered = input.environments.toSorted(
     (left, right) =>
       Number(right.environmentId === input.primaryEnvironmentId) -
@@ -278,9 +378,16 @@ export function buildMachineRows(input: {
           : null,
       workers: fleetMachine ? workerGrant(fleetMachine) : null,
       workHere: isThisMachine ? null : workHereFor(environment.environmentId, input.workGrants),
-      sharedProjects: sharedProjectsOn(environment.environmentId, true, input.projects),
+      projects: projectsOn(environment.environmentId, true, input.projects, nameOf, scratchRootFor),
       accounts: accountsOn(environment.environmentId, input.hostBlocks),
       connectBothWays: fleetMachine !== null && connected,
+      // Without a fleet answer yet, "not listed" means nothing.
+      canAddForAgents:
+        !isThisMachine &&
+        connected &&
+        fleetMachine === null &&
+        input.fleet !== null &&
+        input.primaryEnvironmentId !== null,
     };
   });
 
@@ -297,9 +404,10 @@ export function buildMachineRows(input: {
       connect: fleetConnectAction(machine, input.canPair),
       workers: workerGrant(machine),
       workHere: workHereFor(machine.environmentId, input.workGrants),
-      sharedProjects: sharedProjectsOn(machine.environmentId, false, input.projects),
+      projects: projectsOn(machine.environmentId, false, input.projects, nameOf, scratchRootFor),
       accounts: null,
       connectBothWays: false,
+      canAddForAgents: false,
     });
   }
   return rows;

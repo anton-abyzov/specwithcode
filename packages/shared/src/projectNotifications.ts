@@ -6,7 +6,10 @@
  * notification or a phone push. Every level but "none" alerts on what needs
  * the person (an approval, an answer, a sign-in, a plan or a held queue), and
  * the project row's waiting count counts exactly those, so "none" hides it too.
+ * A project nobody works in (see isUnattendedProject) starts at "none"; a level the
+ * person saves on it always wins.
  */
+import { isUnattendedProject } from "./projectOrigin.ts";
 
 export type ProjectNotificationLevel = "all" | "coordinator" | "requests" | "none";
 
@@ -42,22 +45,32 @@ export const PROJECT_NOTIFICATION_LEVEL_COPY: Record<
 };
 
 export interface ProjectNotificationSettings {
+  readonly workspaceRoot?: string | undefined;
   readonly workspaceSettings?:
     | {
         /** A string on the wire; a value this version does not know reads as unset. */
         readonly notifications?: string | undefined;
+        readonly origin?: string | undefined;
+        readonly temporarySessionId?: string | undefined;
+        readonly kind?: string | undefined;
       }
     | null
     | undefined;
 }
 
-/** The project's saved level, or the default when none is saved or it is unknown. */
+/** The project's saved level, or its default when none is saved or it is unknown. */
 export function projectNotificationLevel(
   project: ProjectNotificationSettings | null | undefined,
 ): ProjectNotificationLevel {
   const saved = project?.workspaceSettings?.notifications;
-  return (PROJECT_NOTIFICATION_LEVELS as ReadonlyArray<string>).includes(saved ?? "")
-    ? (saved as ProjectNotificationLevel)
+  if ((PROJECT_NOTIFICATION_LEVELS as ReadonlyArray<string>).includes(saved ?? ""))
+    return saved as ProjectNotificationLevel;
+  return project?.workspaceRoot !== undefined &&
+    isUnattendedProject({
+      workspaceRoot: project.workspaceRoot,
+      workspaceSettings: project.workspaceSettings,
+    })
+    ? "none"
     : DEFAULT_PROJECT_NOTIFICATION_LEVEL;
 }
 

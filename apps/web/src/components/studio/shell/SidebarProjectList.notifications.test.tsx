@@ -133,6 +133,19 @@ describe("ProjectRow Notifications item", () => {
     expect(onChange).toHaveBeenCalledWith("none");
   });
 
+  it("reports the shown level too, so a check's unsaved Nothing can be saved", async () => {
+    await renderRow("none");
+    await openMenu();
+    const item = notificationsItem();
+    await act(async () => {
+      item!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      item!.click();
+    });
+    const options = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    await act(async () => options[3]!.click());
+    expect(onChange).toHaveBeenCalledWith("none");
+  });
+
   it("hides the waiting count and shows a muted bell when set to nothing", async () => {
     await renderRow("requests", 2);
     expect(container.querySelector(".sws-count-waiting")?.textContent).toContain("2");

@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { CheckIcon, EllipsisIcon, LaptopIcon, ListChecksIcon, RefreshCwIcon } from "lucide-react";
 import {
@@ -10,6 +11,7 @@ import type {
   StudioFleetSnapshot,
   StudioFleetWorkerAccess,
 } from "@specweave-studio/contracts/studioFleet";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   addStudioFleetMachine,
   allowStudioFleetWorkers,
@@ -470,6 +472,24 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
  * machine's private name (a relay port on it) says so, instead of showing
  * that other machine's host as if it were its own.
  */
+/** The ID with a Copy beside it, since nobody retypes one by hand. */
+function CopyEnvironmentId({ environmentId }: { readonly environmentId: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "environment ID" });
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 align-middle">
+      <code className="min-w-0 truncate font-mono select-all">{environmentId}</code>
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost-muted"
+        onClick={() => copyToClipboard(environmentId, undefined)}
+      >
+        {isCopied ? "Copied" : "Copy"}
+      </Button>
+    </span>
+  );
+}
+
 export function fleetMachineAddress(
   machine: Pick<StudioFleetMachine, "id" | "url" | "connectUrl" | "transport">,
   machines: ReadonlyArray<Pick<StudioFleetMachine, "id" | "label" | "url">>,
@@ -884,6 +904,13 @@ export function StudioFleetRoster({
         >
           <span className="min-w-0 sm:flex-1">
             <span className="block text-sm">Add a machine</span>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              Already see it under{" "}
+              <Link to="/settings/machines" className="underline underline-offset-2">
+                Settings &gt; Machines
+              </Link>
+              ? Choose Add for agents there; no line needed. Otherwise:
+            </span>
             <ol className="mt-1 list-decimal space-y-0.5 ps-4 text-xs text-muted-foreground">
               <li>
                 On the other machine, link SpecWithCode Connect (Settings &gt; Connections &gt;
@@ -894,8 +921,7 @@ export function StudioFleetRoster({
               </li>
               <li>
                 There, choose Join a main machine under Settings &gt; Connections and paste this
-                machine’s environment ID:{" "}
-                <code className="font-mono break-all select-all">{environmentId}</code>
+                machine’s environment ID: <CopyEnvironmentId environmentId={environmentId} />
               </li>
               <li>
                 Paste the line it makes here within an hour (it works once), then choose Allow

@@ -98,6 +98,56 @@ if (params.get("scenario") === "projects") {
   });
 }
 
+// `?scenario=automated-attention`: coordinators asking in the person's projects and in
+// checks' projects. Only a project nobody works in stays quiet; one merely named like a
+// check keeps its count, and a name that starts with a number gets real initials.
+if (params.get("scenario") === "automated-attention") {
+  const projects = [
+    ["easychamp", "EasyChamp", "/Users/me/Projects/sw-easychamp", {}],
+    ["specweave", "specweave", "/Users/me/Projects/specweave", {}],
+    [
+      "move-check",
+      "1164 handoff move check",
+      "/Users/me/Projects/scratch/swc-1164-handoff3",
+      { origin: "automated" },
+    ],
+    ["hello", "hello-handoff", "/Users/me/.specwithcode/m4/scratch/e2e/hello-handoff", {}],
+    ["client", "client-demo", "/Users/me/Projects/client-demo", {}],
+  ] as const;
+  const asking = ["easychamp", "move-check", "hello", "client"];
+  publish({
+    groups: projects.map(([id, name, root, settings]) => ({
+      projectKey: `host:${root}`,
+      displayName: name,
+      workspaceRoot: root,
+      memberProjects: [
+        {
+          environmentId: "host",
+          id,
+          title: name,
+          workspaceRoot: root,
+          workspaceSettings: { kind: "code", archived: false, revision: 1, ...settings },
+        },
+      ],
+    })),
+    shells: asking.map((id) =>
+      shell(`project-coordinator:${id}`, "Coordinator", {
+        projectId: id,
+        hasPendingUserInput: true,
+      } as Partial<EnvironmentThreadShell>),
+    ),
+    attentionMembers: projects.map(([id]) => ({
+      environmentId: "host",
+      projectId: id,
+      coordinatorThreadId: `project-coordinator:${id}`,
+      includeUserRoots: false,
+      freshness: "live",
+      remoteWorkers: [],
+      remoteWorkersComplete: true,
+    })),
+  });
+}
+
 // `?scenario=chats`: chats in the machine's "No project" folder, one of them marked
 // resolved by an older server's idle sweep, beside a project of the person's own.
 if (params.get("scenario") === "chats") {

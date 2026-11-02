@@ -5,6 +5,7 @@
 import type { PropsWithChildren } from "react";
 import { createContext, useSyncExternalStore } from "react";
 import * as Cause from "effect/Cause";
+import { deriveProjectIdentity } from "~/projectIdentity";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 
 type Listener = () => void;
@@ -12,6 +13,7 @@ const listeners = new Set<Listener>();
 export const fixture = {
   shells: [] as EnvironmentThreadShell[],
   params: {} as Record<string, string>,
+  attentionMembers: [] as unknown[],
   navigations: [] as string[],
   /** Titles sent with thread.meta.update, in order. */
   renames: [] as Array<{ threadId: string; title: string }>,
@@ -60,13 +62,17 @@ const keybindings = [
   },
 ];
 // The attention members the sidebar derives with its own Atom.make: no machine
-// reports any here, so every project's waiting count is zero.
+// reports any here, so a project's waiting count is zero unless a scenario sets them.
 const isDerivedAtom = (atom: unknown) =>
   typeof atom === "object" &&
   atom !== null &&
   typeof (atom as { read?: unknown }).read === "function";
 export const useAtomValue = (atom: unknown) =>
-  atom === primaryServerKeybindingsAtom ? keybindings : isDerivedAtom(atom) ? [] : null;
+  atom === primaryServerKeybindingsAtom
+    ? keybindings
+    : isDerivedAtom(atom)
+      ? fixture.attentionMembers
+      : null;
 
 // @tanstack/react-router
 export function Link({
@@ -214,7 +220,14 @@ const GROUPS = [
 export const useSettingsProjectGroups = () => useFixture(() => fixture.groups ?? GROUPS);
 const NO_PLANS = { plans: new Map(), loaders: null };
 export const useSidebarThreadPlans = () => NO_PLANS;
-export const ProjectFavicon = () => <i className="inline-block size-4 rounded bg-amber-500/60" />;
+export const ProjectFavicon = ({ project }: { project?: { title?: string } }) =>
+  new URLSearchParams(location.search).get("scenario") === "automated-attention" ? (
+    <b className="inline-block w-5 text-center text-[11px]" data-monogram>
+      {deriveProjectIdentity(project?.title ?? "").monogram}
+    </b>
+  ) : (
+    <i className="inline-block size-4 rounded bg-amber-500/60" />
+  );
 export const ModelBadgeMark = () => (
   <i className="inline-block size-4 rounded-full bg-orange-500/70" />
 );

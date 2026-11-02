@@ -944,6 +944,24 @@ describe("startup catch-up", { concurrent: false }, () => {
 });
 
 describe("applyProjectNotificationLevel", () => {
+  it("keeps a check's project off the phone's alerts unless a level is saved", () => {
+    const check = (notifications?: "requests") =>
+      ({
+        workspaceRoot: "/Users/me/Projects/scratch/swc-check",
+        workspaceSettings: {
+          origin: "automated",
+          ...(notifications ? { notifications } : {}),
+        },
+      }) as unknown as Parameters<typeof AgentAwarenessRelay.applyProjectNotificationLevel>[1];
+    const waiting = {
+      phase: "waiting_for_input",
+    } as Parameters<typeof AgentAwarenessRelay.applyProjectNotificationLevel>[0];
+    assert.equal(AgentAwarenessRelay.applyProjectNotificationLevel(waiting, check())?.quiet, true);
+    assert.isUndefined(
+      AgentAwarenessRelay.applyProjectNotificationLevel(waiting, check("requests"))?.quiet,
+    );
+  });
+
   const state = (phase: RelayAgentActivityState["phase"]) =>
     ({
       environmentId: "env",
@@ -957,6 +975,7 @@ describe("applyProjectNotificationLevel", () => {
       deepLink: "/threads/env/thread",
     }) as RelayAgentActivityState;
   const project = (notifications?: string) => ({
+    workspaceRoot: "/Users/me/Projects/atlas",
     workspaceSettings:
       notifications === undefined ? undefined : ({ notifications } as Project["workspaceSettings"]),
   });
