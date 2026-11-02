@@ -26,6 +26,21 @@ export const FolderCopyScopes = Schema.Struct({
   ),
 });
 export type FolderCopyScopes = typeof FolderCopyScopes.Type;
+/** What stays on this machine if the project moves, per repository that has any. */
+export const FolderCopyLeftBehind = Schema.Struct({
+  repositories: Schema.Array(
+    Schema.Struct({
+      name: bounded(200),
+      path: bounded(4096),
+      branch: Schema.NullOr(bounded(512)),
+      unpushedCommits: Schema.NullOr(Schema.Number),
+      uncommittedChanges: Schema.Number,
+      branchesAhead: Schema.Number,
+      branchesWithoutUpstream: Schema.Number,
+    }),
+  ),
+});
+export type FolderCopyLeftBehind = typeof FolderCopyLeftBehind.Type;
 export const FolderCopyCapabilities = Schema.Struct({
   scopeVersion: Schema.Literal(1),
   /** Accepts a coordinator handoff that summarizes worker chats (`context.retention`). */

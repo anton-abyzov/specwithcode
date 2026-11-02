@@ -298,6 +298,15 @@ export function HandoffFolderCopyWatcher({
           ),
         );
         if (!copySettled(destination.value)) return true;
+        // Closed on the machine, by a person or a later finished copy: nothing to come back to.
+        if (destination.value.state === "cancelled") {
+          try {
+            localStorage.removeItem(key);
+          } catch {
+            /* A kept pointer only re-reads this closed copy at the next start. */
+          }
+          return false;
+        }
         if (firstCheck) return false;
         if ((saved.auto || saved.replaceAll) && destination.value.state === "previewed") {
           // A refused choice or approval waits for the person instead of retrying.

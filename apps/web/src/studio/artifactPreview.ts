@@ -18,7 +18,14 @@ export interface ArtifactPreviewLine {
  * nothing to show.
  */
 export type ArtifactPreview =
-  | { readonly type: "image"; readonly src: string }
+  | {
+      readonly type: "image";
+      readonly src: string;
+      /** The colour the picture leans to, for the card behind it. */
+      readonly tint?: string | undefined;
+      /** A document's own heading. */
+      readonly title?: string | undefined;
+    }
   | { readonly type: "original" }
   | {
       readonly type: "lines";
@@ -83,6 +90,18 @@ export function plainPreviewLines(text: string): ReadonlyArray<ArtifactPreviewLi
     .map((line) => ({ text: line }));
 }
 
+/** The number of document tints in `panes.css`. */
+const DOCUMENT_TINTS = 5;
+
+/** A document's card keeps its own tint, so a row of white pages still reads apart. */
+export function artifactTintIndex(id: string): number {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) {
+    hash = (hash * 31 + id.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash) % DOCUMENT_TINTS;
+}
+
 /** A changed file has a new date or size, so it gets a new preview. */
 export function artifactPreviewKey(artifact: ProjectArtifact, scope: string): string {
   return [scope, artifact.root ?? "", artifact.path, artifact.updatedAt, artifact.byteLength].join(
@@ -91,7 +110,9 @@ export function artifactPreviewKey(artifact: ProjectArtifact, scope: string): st
 }
 
 function previewBytes(preview: ArtifactPreview): number {
-  if (preview.type === "image") return preview.src.length;
+  if (preview.type === "image") {
+    return preview.src.length + (preview.title?.length ?? 0) + (preview.tint?.length ?? 0);
+  }
   if (preview.type !== "lines") return 16;
   return preview.lines.reduce((sum, line) => sum + line.text.length + 16, 32);
 }
@@ -152,8 +173,8 @@ export class ArtifactPreviewCache {
   }
 }
 
-/** Every preview of 495 real artifacts measured 1.2 MB, so this rarely evicts. */
-export const artifactPreviewCache = new ArtifactPreviewCache(4 * 1024 * 1024);
+/** Far more than a screen of cards; whatever falls out is drawn again on the way back. */
+export const artifactPreviewCache = new ArtifactPreviewCache(8 * 1024 * 1024);
 
 /** At most `limit` previews build at once; the newest request goes first. */
 export class ArtifactPreviewSlots {

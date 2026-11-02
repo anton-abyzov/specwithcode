@@ -67,6 +67,7 @@ export * from "./projectKnowledge.ts";
 export * from "./projectSuggestions.ts";
 export * from "./projectConnections.ts";
 export * from "./projectEnvironment.ts";
+export * from "./projectRepositories.ts";
 export * from "./projectPlan.ts";
 export * from "./filesystem.ts";
 export * from "./agentSessions.ts";

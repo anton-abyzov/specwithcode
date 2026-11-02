@@ -1155,15 +1155,33 @@ button.sws-subagent-row:focus-visible {
 .sws-artifact-sheet {
   position: absolute;
   z-index: 1;
-  top: 10%;
-  left: 10%;
-  right: 10%;
-  bottom: -6px;
+  top: 15%;
+  left: 7%;
+  right: 7%;
+  bottom: -10px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
-  border-radius: 6px 6px 0 0;
+  border: 1px solid color-mix(in srgb, #000 8%, transparent);
+  border-radius: 9px;
   background: var(--card);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 8%, transparent),
+    0 4px 12px color-mix(in srgb, #000 10%, transparent);
+}
+/* Paper in either theme; only a little quieter on a dark screen. */
+.sws-artifact-sheet[data-format="markdown"]:has(> img),
+.sws-artifact-sheet[data-format="html"]:has(> img) {
+  background: #fff;
+}
+:root.dark .sws-artifact-sheet[data-format="markdown"]:has(> img),
+:root.dark .sws-artifact-sheet[data-format="html"]:has(> img) {
+  filter: brightness(0.92);
+}
+/* The text runs out toward the card's edge instead of stopping at it. */
+.sws-artifact-sheet[data-format="markdown"]:has(> img)::after {
+  content: "";
+  position: absolute;
+  inset: 62% 0 0;
+  background: linear-gradient(to bottom, transparent, #fff 88%);
 }
 .sws-artifact-sheet[data-page] {
   animation: sws-artifact-sheet-in 160ms ease-out;
@@ -1327,13 +1345,13 @@ button.sws-subagent-row:focus-visible {
   aspect-ratio: 16 / 10;
   margin-bottom: 6px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--sws-artifact-tint) 18%, var(--border));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--sws-artifact-tint) 14%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--sws-artifact-tint) 16%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--sws-artifact-tint) 22%, var(--card));
   transition: border-color 120ms ease;
 }
-.sws-artifact-thumb[data-kind="document"],
-.sws-artifact-thumb[data-kind="link"] {
+.sws-artifact-thumb[data-kind="link"],
+.sws-artifact-thumb[data-kind="document"] {
   --sws-artifact-tint: var(--info);
 }
 .sws-artifact-thumb[data-kind="page"],
@@ -1341,18 +1359,35 @@ button.sws-subagent-row:focus-visible {
 .sws-artifact-thumb[data-kind="slides"] {
   --sws-artifact-tint: var(--primary);
 }
-.sws-artifact-thumb[data-kind="data"],
-.sws-artifact-thumb[data-state="open"] {
+.sws-artifact-thumb[data-kind="data"] {
   --sws-artifact-tint: var(--success);
 }
 .sws-artifact-thumb[data-kind="video"] {
   --sws-artifact-tint: var(--warning);
 }
-.sws-artifact-thumb[data-state="merged"] {
-  --sws-artifact-tint: var(--color-violet-500);
+/* Documents differ by file, so a row of white pages still reads apart. */
+.sws-artifact-thumb[data-tint="0"] {
+  --sws-artifact-tint: #5b8def;
 }
-.sws-artifact-thumb[data-state="closed"] {
-  --sws-artifact-tint: var(--destructive);
+.sws-artifact-thumb[data-tint="1"] {
+  --sws-artifact-tint: #d9778f;
+}
+.sws-artifact-thumb[data-tint="2"] {
+  --sws-artifact-tint: #8a7fe0;
+}
+.sws-artifact-thumb[data-tint="3"] {
+  --sws-artifact-tint: #d9975a;
+}
+.sws-artifact-thumb[data-tint="4"] {
+  --sws-artifact-tint: #4fa8a0;
+}
+/* A picture with its own colour lends it to the card. */
+.sws-artifact-preview[style]::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: color-mix(in srgb, var(--sws-artifact-wash) 28%, var(--card));
 }
 /* A card far from the view: only its size and tint, nothing the compositor must track. */
 .sws-artifact-card[data-far] .sws-artifact-thumb {
@@ -1361,19 +1396,21 @@ button.sws-subagent-row:focus-visible {
 }
 .sws-artifact-far-lines {
   display: block;
-  height: 36px;
+  height: 18px;
 }
-/* The second sheet behind the page. */
+/* The second sheet, turned a little behind the page. */
 .sws-artifact-card:not([data-far]) .sws-artifact-thumb:not(.sws-artifact-view-all-thumb)::before {
   content: "";
   position: absolute;
-  top: 7%;
-  left: 13%;
+  top: 15%;
+  left: 7%;
   right: 7%;
-  bottom: -6px;
-  border: 1px solid color-mix(in srgb, var(--foreground) 8%, transparent);
-  border-radius: 6px 6px 0 0;
-  background: color-mix(in srgb, var(--card) 70%, transparent);
+  bottom: -10px;
+  border: 1px solid color-mix(in srgb, #000 8%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card) 86%, transparent);
+  transform: translateX(3px) rotate(3deg);
+  transform-origin: 50% 100%;
 }
 .sws-artifact-open:hover .sws-artifact-thumb {
   border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
@@ -1384,23 +1421,30 @@ button.sws-subagent-row:focus-visible {
   object-fit: cover;
   object-position: top center;
 }
+/* The title and its age share one line. */
+.sws-artifact-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 2px;
+}
 .sws-artifact-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 0 2px;
   font-size: 13px;
   line-height: 18px;
   font-weight: 500;
   color: var(--foreground);
 }
-.sws-artifact-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 2px;
-  font-size: 11.5px;
-  line-height: 16px;
+.sws-artifact-age {
+  flex: none;
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
 .sws-artifact-card[data-missing] .sws-artifact-title {
@@ -1493,7 +1537,34 @@ button.sws-subagent-row:focus-visible {
 
 .sws-artifact-table .sws-library-head,
 .sws-artifact-table .sws-library-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 140px) 124px 64px 84px 56px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 150px) 164px 64px 56px;
+}
+.sws-artifact-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.sws-artifact-sort:hover,
+.sws-artifact-sort[data-active] {
+  color: var(--foreground);
+}
+.sws-artifact-sort:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sws-artifact-sort svg {
+  width: 12px;
+  height: 12px;
+}
+.sws-artifact-missing-tag {
+  flex: none;
+  margin-inline-start: 6px;
+  font-size: 11px;
+  color: var(--destructive);
 }
 .sws-artifact-thread-cell {
   min-width: 0;
@@ -1532,14 +1603,12 @@ button.sws-subagent-row:focus-visible {
 @container (max-width: 560px) {
   .sws-artifact-table .sws-library-head,
   .sws-artifact-table .sws-library-row {
-    grid-template-columns: minmax(0, 1fr) 92px 56px;
+    grid-template-columns: minmax(0, 1fr) 152px 56px;
   }
   .sws-artifact-table .sws-library-head > :nth-child(2),
   .sws-artifact-table .sws-library-head > :nth-child(4),
-  .sws-artifact-table .sws-library-head > :nth-child(5),
   .sws-artifact-table .sws-library-row > :nth-child(2),
-  .sws-artifact-table .sws-library-row > :nth-child(4),
-  .sws-artifact-table .sws-library-row > :nth-child(5) {
+  .sws-artifact-table .sws-library-row > :nth-child(4) {
     display: none;
   }
 }

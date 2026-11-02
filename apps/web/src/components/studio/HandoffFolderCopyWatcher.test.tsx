@@ -600,3 +600,36 @@ it("never announces again a copy that finished before a reload", async () => {
     vi.useRealTimers();
   }
 });
+
+it("forgets a copy closed on the machine, so its banner stays gone after a restart", async () => {
+  const key = "specwithcode:folder-copy:m4:source";
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      operationId: "op-closed",
+      environmentId: "m3",
+      mode: "copy-only",
+      targetFolder: "/home/anton/umb",
+      projectId: null,
+    }),
+  );
+  state.handlers.copyStatus = () => copyStatus("cancelled");
+  vi.useFakeTimers();
+  try {
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          machineLabel={() => "M3"}
+          restored
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(state.toasts).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});

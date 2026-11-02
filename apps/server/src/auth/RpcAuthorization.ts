@@ -72,6 +72,10 @@ export const RPC_REQUIRED_SCOPES = {
   // The check walks the folder and reports its checkouts and planning roots.
   [WS_METHODS.projectsFolderCheck]: AuthFilesystemReadScope,
   [WS_METHODS.projectsWorktreesRead]: AuthFilesystemReadScope,
+  // Lists the checkouts inside the project folder.
+  [WS_METHODS.projectsRepositoriesRead]: AuthFilesystemReadScope,
+  // May clone missing checkouts into the project folder, as vcs clone does.
+  [WS_METHODS.projectsRepositoriesCheck]: AuthSourceControlWriteScope,
   // Same scope as vcs.removeWorktree: it removes checkouts.
   [WS_METHODS.projectsWorktreesRemove]: AuthSourceControlWriteScope,
   // Same scope as thread.delete and project.delete.

@@ -120,6 +120,14 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:folder-check",
       tag: WS_METHODS.projectsFolderCheck,
     }),
+    repositoriesRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:repositories-read",
+      tag: WS_METHODS.projectsRepositoriesRead,
+    }),
+    repositoriesCheck: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:repositories-check",
+      tag: WS_METHODS.projectsRepositoriesCheck,
+    }),
     worktreesRead: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:worktrees-read",
       tag: WS_METHODS.projectsWorktreesRead,

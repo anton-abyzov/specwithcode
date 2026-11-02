@@ -7,7 +7,6 @@ import type {
   ScopedThreadRef,
 } from "@specweave-studio/contracts";
 import { htmlRenderFileName } from "@specweave-studio/shared/htmlRender";
-import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import { htmlRenderFromToolItem } from "@specweave-studio/shared/toolOutput";
 import {
   CheckIcon,
@@ -38,11 +37,9 @@ import { stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { readLocalApi } from "~/localApi";
 import {
   ARTIFACT_KIND_LABEL,
-  canonicalLinkKey,
   shelfEntries,
   shelfLocalPath,
   type ShelfEntry,
-  type ShelfPullRequest,
 } from "~/artifactShelf";
 import {
   cachedDetailRead,
@@ -54,7 +51,7 @@ import {
 } from "~/nativeArtifacts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 // Relative, so the headless fixture (tests/project-workspace) can stand in for it.
-import { useThreadProjection, useThreadShell } from "../../state/entities";
+import { useThreadProjection } from "../../state/entities";
 import { useEnvironment, useUnreachableEnvironmentIds } from "../../state/environments";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { formatViewerDate, viewerIso } from "~/viewerDate";
@@ -371,7 +368,8 @@ export function ThreadArtifactsMenu(props: {
     () => new Map(entries.map((entry) => [entry.artifact.key, entry] as const)),
     [entries],
   );
-  if (artifacts.length === 0 || props.threadRef === null) return null;
+  // Entries, not artifacts: a thread that only named a pull request has nothing to list.
+  if (entries.length === 0 || props.threadRef === null) return null;
   const index = viewable.findIndex((artifact) => artifact.key === openKey);
   const visible = entries.filter((entry) => !entry.hidden).length;
   return (
@@ -648,8 +646,8 @@ function useShelfFileChecks(
 
 /**
  * The thread's artifacts as list entries: deduplicated, dated and named by
- * the message that last named them, pull requests with their tracked state,
- * and files checked against the host while the list is open.
+ * the message that last named them, and files checked against the host while
+ * the list is open.
  */
 function useShelfEntries(
   threadRef: ScopedThreadRef | null,
@@ -661,23 +659,10 @@ function useShelfEntries(
   inherited: InheritedArtifacts = NO_INHERITED,
 ): { readonly entries: ReadonlyArray<ShelfEntry>; readonly notice: string | null } {
   const thread = useThreadProjection(threadRef);
-  const shell = useThreadShell(threadRef);
   const messages = thread?.projection.messages;
   const turnItems = thread?.projection.turnItems;
   const dates = useMemo(() => artifactDates(messages, turnItems), [messages, turnItems]);
   const sources = useMemo(() => artifactSources(messages, turnItems), [messages, turnItems]);
-  const pullRequests = useMemo(
-    () =>
-      new Map(
-        visibleThreadPullRequests(shell?.pullRequests ?? []).map(
-          (link): [string, ShelfPullRequest] => [
-            canonicalLinkKey(link.url),
-            { state: link.snapshot?.state ?? "open", title: link.snapshot?.title ?? null },
-          ],
-        ),
-      ),
-    [shell?.pullRequests],
-  );
   const paths = useMemo(
     () => artifacts.flatMap((artifact) => shelfLocalPath(artifact) ?? []),
     [artifacts],
@@ -699,13 +684,12 @@ function useShelfEntries(
         inherited: (artifact) =>
           carried.has(artifact) ? { machineLabel: inherited.machineLabel } : null,
         root: cwd ?? null,
-        pullRequests,
         fileChecks: checks,
         pinned,
         hidden,
         now,
       }),
-    [artifacts, carried, checks, cwd, dates, hidden, inherited, now, pinned, pullRequests, sources],
+    [artifacts, carried, checks, cwd, dates, hidden, inherited, now, pinned, sources],
   );
   return { entries, notice };
 }

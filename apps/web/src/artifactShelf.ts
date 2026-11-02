@@ -6,14 +6,14 @@ import type { ThreadArtifact, ThreadArtifactKind } from "./threadArtifacts";
 /**
  * The artifacts list, organized so it stays usable at hundreds of entries:
  * pinned first, then one section per type with the newest few showing, and
- * what has gone quiet (merged or closed pull requests, files no longer on
- * disk, anything not named for a week) folded into Older. Hiding an entry
+ * what has gone quiet (files no longer on disk, anything not named for a
+ * week) folded into Older. Pull requests are not artifacts and never list. Hiding an entry
  * only takes it off the list; nothing here touches a file.
  */
 
-export type ShelfCategory = "files" | "reports" | "pullRequests" | "links";
+export type ShelfCategory = "files" | "reports" | "links";
 export type ShelfSectionId = "pinned" | ShelfCategory | "older" | "hidden" | "results";
-export type ShelfAgedReason = "merged" | "closed" | "missing" | "stale";
+export type ShelfAgedReason = "missing" | "stale";
 
 /**
  * Where a file stands on the machine that owns the thread. `unreachable`
@@ -50,18 +50,13 @@ export interface FolderHint {
   readonly full: string;
 }
 
-export interface ShelfPullRequest {
-  readonly state: "open" | "closed" | "merged";
-  readonly title: string | null;
-}
-
 export interface ShelfEntry {
-  /** One per thing: two URLs for the same pull request share it. */
+  /** One per thing: two URLs for the same page share it. */
   readonly id: string;
   readonly artifact: ThreadArtifact;
   readonly category: ShelfCategory;
   readonly label: string;
-  /** "Page", "Pull request", "Artifact": what the row is. */
+  /** "Page", "Link", "Artifact": what the row is. */
   readonly kindLabel: string;
   /** The host for a link, the folder for a file. */
   readonly detail: string | null;
@@ -76,7 +71,6 @@ export interface ShelfEntry {
   readonly stateReason: string | null;
   readonly checking: boolean;
   readonly inherited: ShelfInherited | null;
-  readonly pullRequest: ShelfPullRequest | null;
   readonly pinned: boolean;
   readonly hidden: boolean;
   /** Why it sits in Older, or null while it is current. */
@@ -107,12 +101,11 @@ export const SHELF_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 export const SHELF_SEARCH_THRESHOLD = 8;
 
 const CATEGORY_LABEL: Record<ShelfCategory, string> = {
-  pullRequests: "Pull requests",
   reports: "Reports",
   files: "Files",
   links: "Links",
 };
-const CATEGORY_ORDER: ReadonlyArray<ShelfCategory> = ["pullRequests", "reports", "files", "links"];
+const CATEGORY_ORDER: ReadonlyArray<ShelfCategory> = ["reports", "files", "links"];
 
 const TRACKING_PARAM = /^(?:utm_.+|ref|ref_src|fbclid|gclid|mc_cid|mc_eid)$/i;
 
@@ -151,9 +144,7 @@ export function shelfEntryId(artifact: ThreadArtifact): string {
 }
 
 export function shelfCategory(artifact: ThreadArtifact): ShelfCategory {
-  if (artifact.kind === "link") {
-    return parseChangeRequestUrl(artifact.url) ? "pullRequests" : "links";
-  }
+  if (artifact.kind === "link") return "links";
   return artifact.kind === "html" || artifact.kind === "native" ? "reports" : "files";
 }
 
@@ -171,8 +162,8 @@ export const ARTIFACT_KIND_LABEL: Record<ThreadArtifactKind, string> = {
   native: "Artifact",
 };
 
-export function shelfKindLabel(artifact: ThreadArtifact, category: ShelfCategory): string {
-  return category === "pullRequests" ? "Pull request" : ARTIFACT_KIND_LABEL[artifact.kind];
+export function shelfKindLabel(artifact: ThreadArtifact): string {
+  return ARTIFACT_KIND_LABEL[artifact.kind];
 }
 
 function lastSeparator(path: string): number {
@@ -207,36 +198,8 @@ export function folderHint(filePath: string, root?: string | null): FolderHint |
   return { head: shown.slice(0, split + 1), tail, full };
 }
 
-/**
- * A link named only by its own URL or a tail of its path (`pull/230`,
- * `1149/files`) says little; a title the message gave it says more.
- */
-function hasGenericName(artifact: Extract<ThreadArtifact, { kind: "link" }>): boolean {
-  const name = artifact.name.trim();
-  if (/^https?:\/\//i.test(name) || /^(?:pull|pulls|merge_requests)\/\d+$/.test(name)) return true;
-  try {
-    const path = new URL(artifact.url).pathname.replace(/\/+$/, "");
-    return name.length > 0 && path.endsWith(`/${name}`);
-  } catch {
-    return false;
-  }
-}
-
-function entryLabel(artifact: ThreadArtifact, pullRequest: ShelfPullRequest | null): string {
-  if (artifact.kind !== "link") return artifact.name;
-  const change = parseChangeRequestUrl(artifact.url);
-  if (!change || !hasGenericName(artifact)) return artifact.name;
-  if (pullRequest?.title) return pullRequest.title;
-  return `${change.repository.split("/").at(-1)} #${change.number}`;
-}
-
-function entryDetail(artifact: ThreadArtifact, label: string): string | null {
-  if (artifact.kind === "link") {
-    const change = parseChangeRequestUrl(artifact.url);
-    if (!change) return artifact.host;
-    const short = `${change.repository.split("/").at(-1)} #${change.number}`;
-    return label === short ? artifact.host : short;
-  }
+function entryDetail(artifact: ThreadArtifact): string | null {
+  if (artifact.kind === "link") return artifact.host;
   if (artifact.kind === "native") {
     const folder = folderHint(artifact.native.localPath)?.tail;
     return [nativeVersionLabel(artifact.native), folder].filter(Boolean).join(" · ") || null;
@@ -277,8 +240,6 @@ export interface ShelfInput {
   /** Newest first, as `useThreadArtifacts` returns them. */
   readonly artifacts: ReadonlyArray<ThreadArtifact>;
   readonly mentionedAt: (artifact: ThreadArtifact) => number | null;
-  /** State of the pull requests the thread tracks, by `canonicalLinkKey`. */
-  readonly pullRequests: ReadonlyMap<string, ShelfPullRequest>;
   /** What the host said about each local path; a path it has not answered for is unknown. */
   readonly fileChecks: ReadonlyMap<string, ShelfFileCheck>;
   readonly source?: ((artifact: ThreadArtifact) => ShelfSource | null) | undefined;
@@ -298,8 +259,9 @@ export function shelfEntries(input: ShelfInput): ShelfEntry[] {
     const id = shelfEntryId(artifact);
     if (seen.has(id)) continue;
     seen.add(id);
+    // Pull requests are not artifacts: the thread header and the PRs tab carry them.
+    if (id.startsWith("pr:")) continue;
     const category = shelfCategory(artifact);
-    const pullRequest = category === "pullRequests" ? (input.pullRequests.get(id) ?? null) : null;
     const mentionedAt = input.mentionedAt(artifact);
     const localPath = shelfLocalPath(artifact);
     const check = localPath === null ? undefined : input.fileChecks.get(localPath);
@@ -309,24 +271,17 @@ export function shelfEntries(input: ShelfInput): ShelfEntry[] {
     const aged: ShelfAgedReason | null =
       fileState === "missing"
         ? "missing"
-        : pullRequest?.state === "merged"
-          ? "merged"
-          : pullRequest?.state === "closed"
-            ? "closed"
-            : // An open pull request stays current however long since it was named.
-              pullRequest?.state !== "open" &&
-                mentionedAt !== null &&
-                input.now - mentionedAt > SHELF_STALE_AFTER_MS
-              ? "stale"
-              : null;
-    const label = entryLabel(artifact, pullRequest);
+        : mentionedAt !== null && input.now - mentionedAt > SHELF_STALE_AFTER_MS
+          ? "stale"
+          : null;
+    const label = artifact.name;
     entries.push({
       id,
       artifact,
       category,
       label,
-      kindLabel: shelfKindLabel(artifact, category),
-      detail: entryDetail(artifact, label),
+      kindLabel: shelfKindLabel(artifact),
+      detail: entryDetail(artifact),
       folder: localPath === null ? null : folderHint(localPath, input.root),
       fullPath: fullPathOf(artifact),
       mentionedAt,
@@ -335,7 +290,6 @@ export function shelfEntries(input: ShelfInput): ShelfEntry[] {
       stateReason: fileState === null ? null : (check?.reason ?? null),
       checking: check?.checking === true,
       inherited: input.inherited?.(artifact) ?? null,
-      pullRequest,
       pinned: input.pinned.has(id),
       hidden: input.hidden.has(id),
       aged,
@@ -354,7 +308,6 @@ function searchText(entry: ShelfEntry): string {
     entry.fullPath ?? "",
     artifact.kind === "native" ? `${artifact.native.url ?? ""}\nclaude.ai artifact` : "",
     CATEGORY_LABEL[entry.category],
-    entry.pullRequest?.state ?? "",
     shelfStateLabel(entry) ?? "",
     entry.source?.label ?? "",
   ]
@@ -454,8 +407,6 @@ export function organizeShelf(entries: ReadonlyArray<ShelfEntry>, options: Organ
 }
 
 export const AGED_LABEL: Record<ShelfAgedReason, string> = {
-  merged: "Merged",
-  closed: "Closed",
   missing: "Missing",
   stale: "",
 };

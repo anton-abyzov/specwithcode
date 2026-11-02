@@ -11,6 +11,7 @@ import {
 import {
   FolderCopyCancelInput,
   FolderCopyCapabilities,
+  FolderCopyLeftBehind,
   FolderCopyScopes,
   FolderCopyScopesInput,
   FolderCopyDecideInput,
@@ -36,6 +37,7 @@ import { MachineReadiness, MachineReadinessInput } from "./machineReadiness.ts";
 export const MACHINE_HANDOFF_RPC_METHODS = {
   machineHandoffCopyScopes: "machineHandoff.copyScopes",
   machineHandoffCopyCapabilities: "machineHandoff.copyCapabilities",
+  machineHandoffCopyLeftBehind: "machineHandoff.copyLeftBehind",
   machineHandoffPrepare: "machineHandoff.prepare",
   machineHandoffReceive: "machineHandoff.receive",
   machineHandoffCopyOffer: "machineHandoff.copyOffer",
@@ -75,6 +77,11 @@ export const folderCopyRpcs = [
   Rpc.make(M.machineHandoffCopyScopes, {
     payload: FolderCopyScopesInput,
     success: FolderCopyScopes,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffCopyLeftBehind, {
+    payload: FolderCopyScopesInput,
+    success: FolderCopyLeftBehind,
     error: copyError,
   }),
   Rpc.make(M.machineHandoffCopyCapabilities, {

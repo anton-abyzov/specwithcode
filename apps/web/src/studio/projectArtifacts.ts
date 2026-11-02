@@ -5,9 +5,9 @@
  *
  * An artifact is any of: a design or deck; a file threads wrote into
  * SpecWeave's shared output (`.specweave/reports/`, an increment's
- * `reports/`); a file or link registered in the project hub; a pull request a
- * thread opened or linked; a page, image or document a thread named, as this
- * device's thread artifact lists recorded it.
+ * `reports/`); a file or link registered in the project hub; a page, image or
+ * document a thread named, as this device's thread artifact lists recorded it.
+ * Pull requests are not artifacts: they live in the PRs tab.
  */
 import type {
   DesignSummary,
@@ -17,7 +17,6 @@ import type {
 } from "@specweave-studio/contracts";
 
 import { canonicalLinkKey } from "../artifactShelf";
-import type { ProjectPullRequest } from "./projectPaneModel";
 import { libraryFileExtension, libraryFileType } from "./projectPaneModel";
 
 export type ProjectArtifactKind =
@@ -29,11 +28,10 @@ export type ProjectArtifactKind =
   | "video"
   | "data"
   | "code"
-  | "pullRequest"
   | "link";
 
 /** Where the shelf learned of it; the richest source wins a merge. */
-export type ProjectArtifactSource = "design" | "registered" | "output" | "pullRequest" | "thread";
+export type ProjectArtifactSource = "design" | "registered" | "output" | "thread";
 
 export interface ProjectArtifactThread {
   readonly environmentId: EnvironmentId;
@@ -55,16 +53,13 @@ export interface ProjectArtifact {
   readonly path: string | null;
   /** A thread's worktree for a file that has not landed in the project; null for the project. */
   readonly root: string | null;
-  /** A link, a pull request, or a page published elsewhere. */
+  /** A link, or a page published elsewhere. */
   readonly url: string | null;
   readonly byteLength: number | null;
   readonly thread: ProjectArtifactThread | null;
   /** The SpecWeave increment folder an output belongs to. */
   readonly increment: string | null;
   readonly design: DesignSummary | null;
-  readonly pullRequestState: ProjectPullRequest["state"] | null;
-  readonly pullRequestNumber: number | null;
-  readonly pullRequestRepository: string | null;
   /** A registered file that is gone, or a link the hub must not open. */
   readonly missing: boolean;
   readonly pinned: boolean;
@@ -87,7 +82,6 @@ export interface ProjectArtifactsInput {
   readonly workspaceRoot: string;
   readonly library: ProjectLibrarySnapshot | null;
   readonly designs: ReadonlyArray<DesignSummary>;
-  readonly pullRequests: ReadonlyArray<ProjectPullRequest>;
   readonly threadArtifacts: ReadonlyArray<ProjectThreadArtifacts>;
   /** Looks up a thread for a design bound to one. */
   readonly threadOf?: ((threadId: string) => ProjectArtifactThread | null) | undefined;
@@ -96,10 +90,9 @@ export interface ProjectArtifactsInput {
 
 const SOURCE_RANK: Record<ProjectArtifactSource, number> = {
   design: 0,
-  pullRequest: 1,
-  registered: 2,
-  output: 3,
-  thread: 4,
+  registered: 1,
+  output: 2,
+  thread: 3,
 };
 
 function trimSlashes(path: string): string {
@@ -201,9 +194,6 @@ const BLANK = {
   thread: null,
   increment: null,
   design: null,
-  pullRequestState: null,
-  pullRequestNumber: null,
-  pullRequestRepository: null,
   missing: false,
   root: null,
 } as const;
@@ -241,6 +231,21 @@ function merge(current: Draft, next: Draft): Draft {
   };
 }
 
+/** `canonicalLinkKey` names a pull request's URL this way, whoever linked it. */
+function isPullRequestKey(id: string): boolean {
+  return id.startsWith("pr:");
+}
+
+/** The hub's registered artifacts, without the pull requests the PRs tab carries. */
+export function registeredArtifacts<T extends { readonly kind: string; readonly location: string }>(
+  artifacts: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  return artifacts.filter(
+    (artifact) =>
+      artifact.kind !== "link" || !isPullRequestKey(canonicalLinkKey(artifact.location)),
+  );
+}
+
 /** Every artifact once, pinned first, then newest; undated ones last. */
 export function collectProjectArtifacts(input: ProjectArtifactsInput): ProjectArtifact[] {
   const byId = new Map<string, Draft>();
@@ -262,27 +267,13 @@ export function collectProjectArtifacts(input: ProjectArtifactsInput): ProjectAr
     });
   }
 
-  for (const pullRequest of input.pullRequests) {
-    add({
-      ...BLANK,
-      id: canonicalLinkKey(pullRequest.url),
-      kind: "pullRequest",
-      source: "pullRequest",
-      title: pullRequest.title,
-      updatedAt: time(pullRequest.updatedAt),
-      url: pullRequest.url,
-      pullRequestState: pullRequest.state,
-      pullRequestNumber: pullRequest.number,
-      pullRequestRepository: pullRequest.repository,
-      thread: input.threadOf?.(pullRequest.threadId) ?? null,
-    });
-  }
-
   for (const artifact of input.library?.artifacts ?? []) {
     if (artifact.kind === "link") {
+      const id = canonicalLinkKey(artifact.location);
+      if (isPullRequestKey(id)) continue;
       add({
         ...BLANK,
-        id: canonicalLinkKey(artifact.location),
+        id,
         kind: "link",
         source: "registered",
         title: artifact.title,
@@ -322,8 +313,7 @@ export function collectProjectArtifacts(input: ProjectArtifactsInput): ProjectAr
 
   for (const { thread, entries } of input.threadArtifacts) {
     for (const entry of entries) {
-      // Pull requests come from the threads' own links, with their state.
-      if (entry.id.startsWith("pr:")) continue;
+      if (isPullRequestKey(entry.id)) continue;
       if (entry.path !== undefined) {
         const exact = entry.path.replace(/(?::\d+){1,2}$/, "");
         const located = relativeToRoot(exact, [input.workspaceRoot, thread.root]);
@@ -354,9 +344,11 @@ export function collectProjectArtifacts(input: ProjectArtifactsInput): ProjectAr
         });
       } else if (entry.url !== undefined && entry.kind === "native") {
         // Only a page a thread published; a link it merely mentioned is not its work.
+        const id = canonicalLinkKey(entry.url);
+        if (isPullRequestKey(id)) continue;
         add({
           ...BLANK,
-          id: canonicalLinkKey(entry.url),
+          id,
           kind: "page",
           source: "thread",
           title: entry.name,
@@ -381,6 +373,50 @@ export function compareArtifacts(left: ProjectArtifact, right: ProjectArtifact):
   return left.title.localeCompare(right.title);
 }
 
+/* Sorting ----------------------------------------------------------------- */
+
+export type ArtifactSortColumn = "name" | "thread" | "modified" | "size";
+export interface ArtifactSort {
+  readonly column: ArtifactSortColumn;
+  readonly descending: boolean;
+}
+export const DEFAULT_ARTIFACT_SORT: ArtifactSort = { column: "modified", descending: true };
+
+/** A header's click: the same column turns over; a new one starts where it reads best. */
+export function nextArtifactSort(sort: ArtifactSort, column: ArtifactSortColumn): ArtifactSort {
+  return sort.column === column
+    ? { column, descending: !sort.descending }
+    : { column, descending: column === "modified" || column === "size" };
+}
+
+function sortValue(artifact: ProjectArtifact, column: ArtifactSortColumn): string | number | null {
+  if (column === "modified") return artifact.updatedAt;
+  if (column === "size") return artifact.byteLength;
+  if (column === "name") return artifact.title;
+  return artifact.thread?.title ?? artifact.increment;
+}
+
+/** Pinned stay first and an artifact with no value stays last, whichever way a column runs. */
+export function sortArtifacts(
+  artifacts: ReadonlyArray<ProjectArtifact>,
+  sort: ArtifactSort,
+): ReadonlyArray<ProjectArtifact> {
+  return artifacts.toSorted((left, right) => {
+    if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+    const leftValue = sortValue(left, sort.column);
+    const rightValue = sortValue(right, sort.column);
+    if (leftValue === null || rightValue === null) {
+      if (leftValue !== rightValue) return leftValue === null ? 1 : -1;
+      return compareArtifacts(left, right);
+    }
+    const order =
+      typeof leftValue === "number" && typeof rightValue === "number"
+        ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true });
+    return order === 0 ? compareArtifacts(left, right) : sort.descending ? -order : order;
+  });
+}
+
 /* Type filter ------------------------------------------------------------- */
 
 export const ARTIFACT_TYPE_FILTERS = [
@@ -389,7 +425,6 @@ export const ARTIFACT_TYPE_FILTERS = [
   "pages",
   "images",
   "designs",
-  "pullRequests",
   "links",
   "files",
 ] as const;
@@ -400,7 +435,6 @@ export const ARTIFACT_TYPE_FILTER_LABELS: Record<ArtifactTypeFilter, string> = {
   pages: "Pages",
   images: "Images and video",
   designs: "Designs and decks",
-  pullRequests: "Pull requests",
   links: "Links",
   files: "Data and code",
 };
@@ -414,7 +448,6 @@ const FILTER_OF: Record<ProjectArtifactKind, Exclude<ArtifactTypeFilter, "all">>
   video: "images",
   data: "files",
   code: "files",
-  pullRequest: "pullRequests",
   link: "links",
 };
 
@@ -459,24 +492,8 @@ export const ARTIFACT_KIND_LABELS: Record<ProjectArtifactKind, string> = {
   video: "Video",
   data: "Data",
   code: "Code",
-  pullRequest: "Pull request",
   link: "Link",
 };
-
-export const PULL_REQUEST_STATE_WORDS: Record<ProjectPullRequest["state"], string> = {
-  open: "Open",
-  draft: "Draft",
-  merged: "Merged",
-  closed: "Closed",
-};
-
-/** "Merged PR", "Document": what an artifact is, short enough for a card or a column. */
-export function artifactKindLabel(artifact: ProjectArtifact): string {
-  if (artifact.kind !== "pullRequest" || artifact.pullRequestState === null) {
-    return ARTIFACT_KIND_LABELS[artifact.kind];
-  }
-  return `${PULL_REQUEST_STATE_WORDS[artifact.pullRequestState]} PR`;
-}
 
 /** The number of cards the shelf shows before View all. */
 export const ARTIFACT_SHELF_LIMIT = 12;
@@ -497,6 +514,18 @@ export function artifactAge(at: number | null, now: number): string {
     month: "short",
     day: "numeric",
     ...(date.getFullYear() === new Date(now).getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+/** "Oct 30, 2026, 3:09 PM": the Library list's Date modified. */
+export function formatArtifactDate(at: number | null): string {
+  if (at === null) return "";
+  return new Date(at).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   });
 }
 

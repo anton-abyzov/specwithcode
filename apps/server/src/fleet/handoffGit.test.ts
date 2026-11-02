@@ -330,6 +330,24 @@ describe("HandoffGit real repositories", () => {
       }),
   );
 
+  it.effect("describes a dirty project for a Git move by its root alone", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      write(NodePath.join(f.source, "root.ts"), "uncommitted\n");
+      const repositories = NodePath.join(f.source, "repositories");
+      git(f.source, "worktree", "add", "-b", "worker", NodePath.join(repositories, "worker"));
+      const local = NodePath.join(repositories, "no-origin");
+      NodeFS.mkdirSync(local);
+      git(local, "init", "--initial-branch=main");
+      write(NodePath.join(local, "a.txt"), "a\n");
+      commit(local);
+      NodeFS.symlinkSync(f.outputs, NodePath.join(f.source, "linked-folder"));
+      const manifest = yield* run((service) =>
+        service.inspect({ workspaceRoot: f.source, operationId, allowChanges: true }),
+      );
+      expect(manifest.repositories.map((entry) => entry.relativePath)).toEqual(["."]);
+    }),
+  );
   it.effect("preserves extra destination repositories when the source is a partial umbrella", () =>
     Effect.gen(function* () {
       const f = fixture();

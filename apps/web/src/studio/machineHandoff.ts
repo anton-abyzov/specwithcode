@@ -7,6 +7,10 @@ export const machineHandoff = {
     label: "machine-handoff:copy-scopes",
     tag: WS_METHODS.machineHandoffCopyScopes,
   }),
+  copyLeftBehind: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:copy-left-behind",
+    tag: WS_METHODS.machineHandoffCopyLeftBehind,
+  }),
   copyCapabilities: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "machine-handoff:copy-capabilities",
     tag: WS_METHODS.machineHandoffCopyCapabilities,

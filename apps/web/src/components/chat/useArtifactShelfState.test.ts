@@ -164,7 +164,6 @@ describe("useArtifactShelfState", () => {
     const entries = shelfEntries({
       artifacts: [file(`${ROOT_A}/a.md`), file(`${ROOT_A}/b.md`)],
       mentionedAt: () => 1_000,
-      pullRequests: new Map(),
       fileChecks: new Map(),
       pinned: new Set(),
       hidden: new Set([`file:${ROOT_A}/b.md`]),
@@ -253,7 +252,6 @@ describe("snapshots", () => {
     const [made] = shelfEntries({
       artifacts: [file(`${ROOT_A}/${"x".repeat(200)}-${index}.md`)],
       mentionedAt: () => index,
-      pullRequests: new Map(),
       fileChecks: new Map(),
       pinned: new Set(pinned ? [`file:${ROOT_A}/${"x".repeat(200)}-${index}.md`] : []),
       hidden: new Set(),

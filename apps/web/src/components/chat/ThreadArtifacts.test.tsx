@@ -13,7 +13,6 @@ const state = vi.hoisted(() => ({
   others: new Map<string, { messages: unknown[]; turnItems: unknown[] }>(),
   minted: [] as unknown[],
   openExternal: vi.fn(),
-  pullRequests: [] as unknown[],
   missing: new Set<string>(),
   checked: [] as Array<{ environmentId: unknown; paths: ReadonlyArray<string> }>,
   unreachable: new Set<string>(),
@@ -73,7 +72,6 @@ vi.mock("~/state/entities", () => ({
       projection: { messages: state.messages, turnItems: state.turnItems, thread: state.thread },
     };
   },
-  useThreadShell: () => ({ pullRequests: state.pullRequests }),
 }));
 vi.mock("~/state/environments", () => ({
   useEnvironment: (environmentId: string | null) =>
@@ -231,7 +229,6 @@ beforeEach(() => {
       },
     }),
   );
-  state.pullRequests = [];
   state.missing = new Set();
   state.thread = undefined;
   state.others = new Map();
@@ -253,7 +250,7 @@ beforeEach(() => {
       text: [
         "Cut `/tmp/promo/snap-18s-master.mp4`, cover `/tmp/promo/snap-cover.jpg`,",
         "the email `/tmp/promo/victoria_email.html` and notes `docs/plan.md`.",
-        "Bing is verified ([gitops #254](https://github.com/acme/gitops/pull/254)).",
+        "Bing is verified ([gitops #254](https://github.com/acme/gitops/pull/254), [gitops notes](https://example.com/gitops)).",
       ].join(" "),
     },
   ];
@@ -288,6 +285,20 @@ function item(name: string) {
   return button!;
 }
 
+it("shows nothing for a thread that only named a pull request", async () => {
+  state.messages = [
+    {
+      id: "a1",
+      role: "assistant",
+      createdAt: DateTime.makeUnsafe("2026-10-15T12:00:00.000Z"),
+      text: "Opened https://github.com/acme/repo/pull/12",
+    },
+  ];
+  state.turnItems = [];
+  await render();
+  expect(renderer!.toJSON()).toBeNull();
+});
+
 it("counts and lists what the thread produced, links and published pages included", async () => {
   await render();
   expect(
@@ -298,7 +309,7 @@ it("counts and lists what the thread produced, links and published pages include
     renderer!.root
       .findAll((node) => node.type === "button" && node.props["data-thread-artifact"])
       .map((node) => node.props["data-thread-artifact"]),
-  ).toEqual(["link", "html", "html", "markdown", "image", "video"]);
+  ).toEqual(["html", "html", "markdown", "image", "video", "link"]);
 });
 
 function sections() {
@@ -320,24 +331,13 @@ function action(name: string, kind: "pin" | "hide") {
   return row.find((node) => node.type === "button" && node.props["data-artifact-action"] === kind);
 }
 
-it("groups by type, folds a merged pull request and a missing file into Older", async () => {
-  state.pullRequests = [
-    {
-      host: "github.com",
-      repository: "acme/gitops",
-      number: 254,
-      url: "https://github.com/acme/gitops/pull/254",
-      source: "agent",
-      linkedAt: "2026-10-15T12:00:00.000Z",
-      snapshot: { state: "merged", title: "Verify Bing" },
-      stack: null,
-    },
-  ];
+it("groups by type, lists no pull request, and folds a missing file into Older", async () => {
   state.missing = new Set(["/tmp/promo/snap-cover.jpg"]);
   await render();
   expect(sections()).toEqual([
     ["reports", ["html", "html"]],
     ["files", ["markdown", "video"]],
+    ["links", ["link"]],
     ["older", []],
   ]);
   await act(async () =>
@@ -347,7 +347,7 @@ it("groups by type, folds a merged pull request and a missing file into Older", 
     renderer!.root
       .findAll((node) => node.type === "button" && node.props["data-artifact-aged"])
       .map((node) => node.props["data-artifact-aged"]),
-  ).toEqual(["merged", "missing"]);
+  ).toEqual(["missing"]);
 });
 
 it("pins to the top and hides from the list, and remembers both", async () => {
@@ -411,8 +411,8 @@ it("opens a published page and an HTML file sandboxed, and markdown as a documen
 
 it("opens a link in the browser, not the viewer", async () => {
   await render();
-  await act(async () => item("gitops #254").props.onClick());
-  expect(state.openExternal).toHaveBeenCalledWith("https://github.com/acme/gitops/pull/254");
+  await act(async () => item("gitops notes").props.onClick());
+  expect(state.openExternal).toHaveBeenCalledWith("https://example.com/gitops");
   expect(renderer!.root.findAll((node) => node.props["data-artifact-viewer"])).toHaveLength(0);
 });
 

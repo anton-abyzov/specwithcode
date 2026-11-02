@@ -38,7 +38,11 @@ export class HandoffGit extends Context.Service<
     readonly inspect: (input: {
       readonly operationId: string;
       readonly workspaceRoot: string;
+      /** Name what is checked out even with uncommitted changes: nothing is sent through Git. */
+      readonly allowChanges?: boolean;
     }) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
+    /** The destination's folder holds the same repository as the source's root. */
+    readonly verifyRootIdentity: (input: ManifestInput) => Effect.Effect<void, HandoffGitError>;
     readonly preflight: (input: ManifestInput) => Effect.Effect<void, HandoffGitError>;
     readonly verifyWorkerCheckpoints: (
       input: ManifestInput & {
@@ -322,11 +326,14 @@ const make = Effect.gen(function* () {
     function* (input) {
       if (!HANDOFF_OPERATION.test(input.operationId))
         return yield* blocked("inspect", "invalid-manifest");
-      const relativePaths = yield* discover(input.workspaceRoot, "inspect");
+      // A Git move continues in the destination's own checkout, identified by its root alone.
+      const relativePaths = input.allowChanges
+        ? ["."]
+        : yield* discover(input.workspaceRoot, "inspect");
       const repositories: Array<HandoffGitRepository> = [];
       for (const relativePath of relativePaths) {
         const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, "inspect");
-        yield* clean(cwd, "inspect");
+        if (!input.allowChanges) yield* clean(cwd, "inspect");
         const head = yield* text(cwd, ["rev-parse", "HEAD"], "inspect");
         if (!HANDOFF_HEAD.test(head)) return yield* blocked("inspect", "missing-repository");
         repositories.push({
@@ -345,6 +352,16 @@ const make = Effect.gen(function* () {
       return manifest;
     },
   );
+
+  const verifyRootIdentity: HandoffGit["Service"]["verifyRootIdentity"] = Effect.fn(
+    "HandoffGit.verifyRootIdentity",
+  )(function* (input) {
+    yield* checkManifest(input.manifest, "preflight");
+    const root = input.manifest.repositories.find((entry) => entry.relativePath === ".");
+    const cwd = yield* resolveRepository(input.workspaceRoot, ".", "preflight");
+    if (!root || (yield* identity(cwd, "preflight")) !== root.identity)
+      return yield* blocked("preflight", "identity-mismatch");
+  });
 
   const preflightAt = Effect.fn("HandoffGit.preflightAt")(function* (
     input: ManifestInput,
@@ -823,6 +840,7 @@ const make = Effect.gen(function* () {
 
   return HandoffGit.of({
     inspect,
+    verifyRootIdentity,
     preflight,
     verifyWorkerCheckpoints,
     reportWorkerCheckpoints,

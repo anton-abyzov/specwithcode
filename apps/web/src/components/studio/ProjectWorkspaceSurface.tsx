@@ -1315,7 +1315,6 @@ export function ProjectWorkspaceSurface({
     enabled: connected,
     threads: shells,
     designs: designs.designs,
-    pullRequests,
   });
   const [librarySection, setLibrarySection] = useLocalStorage<LibrarySection, LibrarySection>(
     LIBRARY_SECTION_STORAGE_KEY,

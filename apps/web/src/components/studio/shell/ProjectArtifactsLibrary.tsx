@@ -1,23 +1,35 @@
 /**
  * Library > Artifacts: every artifact of the project, pinned first, then most
- * recently updated, as a list (Name, Thread, Date modified, Size, Kind) or a
- * grid of the shelf's cards, with a Type filter and find.
+ * recently updated, as a list (Name, Thread, Date modified, Size) whose headers
+ * sort it or a grid of the shelf's cards, with a Type filter and find.
  */
 import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
-import { ChevronDownIcon, ExternalLinkIcon, LayoutGridIcon, ListIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ExternalLinkIcon,
+  LayoutGridIcon,
+  ListIcon,
+} from "lucide-react";
+import { type ReactNode, useState } from "react";
 
 import {
-  artifactKindLabel,
   artifactMatchesType,
   artifactTypesPresent,
   ARTIFACT_TYPE_FILTER_LABELS,
   ARTIFACT_TYPE_FILTERS,
+  DEFAULT_ARTIFACT_SORT,
+  formatArtifactDate,
+  nextArtifactSort,
   searchArtifacts,
+  sortArtifacts,
+  type ArtifactSort,
+  type ArtifactSortColumn,
   type ArtifactTypeFilter,
   type ProjectArtifact,
 } from "../../../studio/projectArtifacts";
-import { formatLibraryDate, formatLibrarySize } from "../../../studio/projectPaneModel";
+import { formatLibrarySize } from "../../../studio/projectPaneModel";
 import {
   Menu,
   MenuGroup,
@@ -33,11 +45,36 @@ import {
   ArtifactKindIcon,
   ArtifactMenu,
   ArtifactPinButton,
-  artifactCardMeta,
   canOpenArtifact,
   useArtifactOpener,
 } from "./ProjectArtifactShelf";
 import { Tip } from "./Tip";
+
+function SortHeader(props: {
+  readonly column: ArtifactSortColumn;
+  readonly label: string;
+  readonly sort: ArtifactSort;
+  readonly onSort: (column: ArtifactSortColumn) => void;
+}) {
+  const active = props.sort.column === props.column;
+  const Arrow = props.sort.descending ? ArrowDownIcon : ArrowUpIcon;
+  return (
+    <span
+      role="columnheader"
+      aria-sort={active ? (props.sort.descending ? "descending" : "ascending") : "none"}
+    >
+      <button
+        type="button"
+        className="sws-artifact-sort"
+        data-active={active || undefined}
+        onClick={() => props.onSort(props.column)}
+      >
+        {props.label}
+        {active ? <Arrow aria-hidden /> : null}
+      </button>
+    </span>
+  );
+}
 
 export function ProjectArtifactsLibrary(props: {
   readonly environmentId: EnvironmentId;
@@ -56,12 +93,17 @@ export function ProjectArtifactsLibrary(props: {
   const { open, viewer } = useArtifactOpener(props.environmentId, props.workspaceRoot);
   const present = artifactTypesPresent(props.artifacts);
   const type = present.has(props.type) ? props.type : "all";
-  const visible = searchArtifacts(
-    props.artifacts.filter((artifact) => artifactMatchesType(type, artifact)),
-    props.query,
+  const [sort, setSort] = useState(DEFAULT_ARTIFACT_SORT);
+  const onSort = (column: ArtifactSortColumn) =>
+    setSort((current) => nextArtifactSort(current, column));
+  const visible = sortArtifacts(
+    searchArtifacts(
+      props.artifacts.filter((artifact) => artifactMatchesType(type, artifact)),
+      props.query,
+    ),
+    sort,
   );
   const now = Date.now();
-  const nowDate = new Date(now);
 
   return (
     <>
@@ -126,7 +168,7 @@ export function ProjectArtifactsLibrary(props: {
             ? "Loading artifacts…"
             : props.query.trim() !== "" || type !== "all"
               ? "Nothing matches."
-              : "No artifacts yet. Reports, screenshots, pages, designs and pull requests the threads produce show here."}
+              : "No artifacts yet. Reports, screenshots, pages and designs the threads produce show here."}
         </p>
       ) : props.view === "grid" ? (
         <ul className="sws-artifact-grid" aria-label="Artifacts">
@@ -136,7 +178,7 @@ export function ProjectArtifactsLibrary(props: {
               artifact={artifact}
               environmentId={props.environmentId}
               workspaceRoot={props.workspaceRoot}
-              meta={artifactCardMeta(artifact, now)}
+              now={now}
               onOpen={() => open(artifact, visible)}
               onPin={(on) => props.onPin(artifact.id, on)}
               onOpenThread={props.onOpenThread}
@@ -147,11 +189,10 @@ export function ProjectArtifactsLibrary(props: {
       ) : (
         <div className="sws-library-table sws-artifact-table" role="grid" aria-label="Artifacts">
           <div className="sws-library-head" role="row">
-            <span role="columnheader">Name</span>
-            <span role="columnheader">Thread</span>
-            <span role="columnheader">Date modified</span>
-            <span role="columnheader">Size</span>
-            <span role="columnheader">Kind</span>
+            <SortHeader column="name" label="Name" sort={sort} onSort={onSort} />
+            <SortHeader column="thread" label="Thread" sort={sort} onSort={onSort} />
+            <SortHeader column="modified" label="Date modified" sort={sort} onSort={onSort} />
+            <SortHeader column="size" label="Size" sort={sort} onSort={onSort} />
             <span role="columnheader" className="sr-only">
               Actions
             </span>
@@ -174,6 +215,9 @@ export function ProjectArtifactsLibrary(props: {
                   <span className="sws-library-chevron" aria-hidden />
                   <ArtifactKindIcon artifact={artifact} />
                   <span className="sws-library-label">{artifact.title}</span>
+                  {artifact.missing ? (
+                    <span className="sws-artifact-missing-tag">Missing</span>
+                  ) : null}
                   {artifact.path === null && artifact.url !== null ? (
                     <ExternalLinkIcon aria-hidden className="sws-library-external" />
                   ) : null}
@@ -202,16 +246,9 @@ export function ProjectArtifactsLibrary(props: {
                   "--"
                 )}
               </span>
-              <span role="gridcell">
-                {artifact.updatedAt === null
-                  ? ""
-                  : formatLibraryDate(new Date(artifact.updatedAt).toISOString(), nowDate)}
-              </span>
+              <span role="gridcell">{formatArtifactDate(artifact.updatedAt)}</span>
               <span role="gridcell">
                 {artifact.byteLength === null ? "--" : formatLibrarySize(artifact.byteLength)}
-              </span>
-              <span role="gridcell">
-                {artifact.missing ? "Missing" : artifactKindLabel(artifact)}
               </span>
               <span role="gridcell" className="sws-artifact-row-actions">
                 <ArtifactPinButton

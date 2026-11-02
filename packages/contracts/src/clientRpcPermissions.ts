@@ -59,6 +59,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machineHandoffCopyOffer]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffCopyScopes]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopyCapabilities]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffCopyLeftBehind]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopySourceStatus]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopyDrift]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopySourceCancel]: AuthOrchestrationOperateScope,
@@ -193,6 +194,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsWorktreesRemove]: AuthSourceControlWriteScope,
+  // May clone missing checkouts into the project folder.
+  [WS_METHODS.projectsRepositoriesCheck]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRestoreThreadWorkspace]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
@@ -235,6 +238,7 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
   switch (method) {
     case WS_METHODS.machineHandoffCopyScopes:
     case WS_METHODS.machineHandoffCopyCapabilities:
+    case WS_METHODS.machineHandoffCopyLeftBehind:
     case WS_METHODS.machineHandoffCopySourceStatus:
     case WS_METHODS.machineHandoffCopyDrift:
     case WS_METHODS.machineHandoffCopyStatus:

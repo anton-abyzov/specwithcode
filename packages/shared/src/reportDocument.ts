@@ -191,6 +191,8 @@ export interface MarkdownDocument {
 
 // CommonMark: a closing `#` run counts only after a space, so `# Learn C#` keeps its `#`.
 const OPENING_TITLE = /^#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*(?:\n|$)/;
+/** Longer than any heading; a line past this is not one a reader takes as a title. */
+const OPENING_LINE_CHARS = 400;
 const YAML_KEY_LINE = /^[A-Za-z_][\w -]{0,40}:(?:[ \t]|$)/;
 
 /**
@@ -198,7 +200,9 @@ const YAML_KEY_LINE = /^[A-Za-z_][\w -]{0,40}:(?:[ \t]|$)/;
  * wraps words, code spans, links and escapes. `my_module`, `Vec<T>` and
  * `C#` stay as they are.
  */
-function headingText(markdown: string): string {
+export function headingText(markdown: string): string {
+  // Past a heading's length the markup scan costs more than it is worth, and nothing is cut.
+  if (markdown.length > OPENING_LINE_CHARS) return markdown.replace(/\s+/g, " ").trim();
   return markdown
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
@@ -212,6 +216,20 @@ function headingText(markdown: string): string {
 /** Drops the blank lines a body opens with, never the indentation of its first line. */
 function withoutLeadingBlankLines(markdown: string): string {
   return markdown.replace(/^(?:[ \t]*\n)+/, "");
+}
+
+/** The heading on a body's first line; one past any heading's length is not worth scanning. */
+function openingHeading(body: string): RegExpExecArray | null {
+  const end = body.indexOf("\n");
+  const firstLine = end === -1 ? body : body.slice(0, end);
+  return firstLine.length > OPENING_LINE_CHARS ? null : OPENING_TITLE.exec(firstLine);
+}
+
+/** The heading a file opens with, on its first line and outside any fence. */
+export function markdownOpeningTitle(markdown: string): string | null {
+  const firstLine = /^\uFEFF?(?:[ \t]*\r?\n)*([^\r\n]*)/.exec(markdown)?.[1] ?? "";
+  const opening = openingHeading(firstLine);
+  return opening ? headingText(opening[1]!) : null;
 }
 
 /**
@@ -239,7 +257,7 @@ export function markdownDocument(text: string): MarkdownDocument {
   const named = fields.find((field) => field.label === "Title")?.value;
   let title =
     typeof named === "string" && headingText(named).length > 0 ? headingText(named) : null;
-  const opening = OPENING_TITLE.exec(body);
+  const opening = openingHeading(body);
   if (opening) {
     const heading = headingText(opening[1]!);
     if (title === null || heading.toLowerCase() === title.toLowerCase()) {

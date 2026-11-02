@@ -1746,9 +1746,7 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
   }),
 );
 
-it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
-  const detail =
-    "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
+it.effect("starts from the local checkout when origin can't be fetched", () => {
   const harness = makeHarness({
     fetchRemote: () =>
       Effect.fail(
@@ -1756,7 +1754,8 @@ it.effect("shows the fetch diagnosis when preparing a worktree from origin fails
           operation: "GitVcsDriver.fetchRemote",
           command: "git",
           cwd: project.workspaceRoot,
-          detail,
+          detail:
+            "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.",
           exitCode: 128,
         }),
       ),
@@ -1772,44 +1771,35 @@ it.effect("shows the fetch diagnosis when preparing a worktree from origin fails
         workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
       }),
     );
-    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-      Stream.filter(
-        (stored) => stored.event.type === "run.updated" && stored.event.payload.status === "failed",
-      ),
-      Stream.runHead,
-    );
+    yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
     const projection = yield* threads.getThreadProjection(launched.threadId);
     assert.equal(projection.messages[0]?.text, "Start from origin");
-    assert.equal(projection.runs[0]?.status, "failed");
-    assert.equal(projection.thread.worktreePath, null);
-    assert.equal(
-      projection.turnItems.find((item) => item.type === "command_execution")?.status,
-      "failed",
-    );
-    assert.include(
-      projection.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
-      detail,
-    );
-    assert.equal(harness.createWorktree.mock.calls.length, 0);
-    assert.equal(harness.runSetup.mock.calls.length, 0);
+    assert.notEqual(projection.runs[0]?.status, "failed");
+    assert.isUndefined(projection.turnItems.find((item) => item.type === "error"));
   }).pipe(Effect.provide(harness.layer));
 });
 
 it.effect("retries a failed workspace preparation on the same run", () => {
-  let fetchFailures = 1;
+  let failures = 1;
   const harness = makeHarness({
-    fetchRemote: () =>
-      fetchFailures-- > 0
+    createWorktree: (input) =>
+      failures-- > 0
         ? Effect.fail(
             new GitCommandError({
-              operation: "GitVcsDriver.fetchRemote",
+              operation: "GitVcsDriver.createWorktree",
               command: "git",
               cwd: project.workspaceRoot,
               detail: "Git could not update a local reference.",
               exitCode: 1,
             }),
           )
-        : Effect.void,
+        : Effect.succeed({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              branch: input.newRefName ?? input.refName,
+              refName: input.newRefName ?? input.refName,
+            },
+          } as never),
   });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -1855,7 +1845,7 @@ it.effect("retries a failed workspace preparation on the same run", () => {
       retried.turnItems.find((item) => item.type === "command_execution")?.status,
       "completed",
     );
-    assert.equal(harness.createWorktree.mock.calls.length, 1);
+    assert.equal(harness.createWorktree.mock.calls.length, 2);
 
     // The run left preparation, so a second retry has nothing to do.
     const rejected = yield* launches

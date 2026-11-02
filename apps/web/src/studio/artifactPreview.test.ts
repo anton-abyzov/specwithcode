@@ -25,9 +25,6 @@ const artifact = (over: Partial<ProjectArtifact>): ProjectArtifact => ({
   thread: null,
   increment: null,
   design: null,
-  pullRequestState: null,
-  pullRequestNumber: null,
-  pullRequestRepository: null,
   missing: false,
   pinned: false,
   ...over,
@@ -43,7 +40,7 @@ describe("artifactPreviewFormat", () => {
   });
 
   it("reads nothing for what has no file, is gone, is too big or is outside the project", () => {
-    expect(artifactPreviewFormat(artifact({ kind: "pullRequest", path: null }))).toBeNull();
+    expect(artifactPreviewFormat(artifact({ kind: "link", path: null }))).toBeNull();
     expect(artifactPreviewFormat(artifact({ missing: true }))).toBeNull();
     expect(artifactPreviewFormat(artifact({ byteLength: 513 * 1024 }))).toBeNull();
     expect(artifactPreviewFormat(artifact({ path: "/tmp/a.md" }))).toBeNull();

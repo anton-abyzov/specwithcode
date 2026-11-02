@@ -23,7 +23,6 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { NATIVE_NO_LINK_NOTE, NATIVE_REMOTE_NOTE, nativeVersionLabel } from "~/nativeArtifacts";
 
-import { PULL_REQUEST_STATE_PRESENTATION, PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipPopup } from "../ui/tooltip";
 
@@ -331,7 +330,7 @@ function ShelfRow(props: {
         {...path.handlers}
       >
         <span className="flex w-full min-w-0 items-center gap-2 text-sm [&_svg]:size-4 [&_svg]:shrink-0">
-          <EntryGlyph entry={entry} Icon={Icon} />
+          <Icon aria-hidden />
           <span className="shrink-0 text-muted-foreground text-xs" data-artifact-kind="true">
             {entry.kindLabel}
           </span>
@@ -467,13 +466,4 @@ function RowAction(props: {
       {props.children}
     </button>
   );
-}
-
-/** A pull request drawn by its state, as everywhere else in the app; the rest by kind. */
-function EntryGlyph(props: { readonly entry: ShelfEntry; readonly Icon: EntryIcon }) {
-  if (props.entry.category !== "pullRequests") return <props.Icon aria-hidden />;
-  const state = props.entry.pullRequest?.state;
-  if (!state) return <PullRequestGlyph.pullRequest aria-hidden className="text-muted-foreground" />;
-  const { Icon, toneClassName } = PULL_REQUEST_STATE_PRESENTATION[state];
-  return <Icon aria-hidden className={toneClassName} />;
 }

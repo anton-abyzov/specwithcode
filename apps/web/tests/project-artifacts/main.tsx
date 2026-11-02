@@ -100,30 +100,6 @@ function artifacts(pinned: ReadonlySet<string>) {
         thread: { environmentId: env, threadId: "t3" },
       } as never,
     ],
-    pullRequests: [
-      {
-        key: "a",
-        number: 1101,
-        repository: "me/app",
-        url: "https://github.com/me/app/pull/1101",
-        title: "Project artifacts shelf and library",
-        state: "open",
-        updatedAt: ago(12),
-        threadId: "t1" as ThreadId,
-        threadTitle: "Build the artifacts shelf",
-      },
-      {
-        key: "b",
-        number: 1097,
-        repository: "me/app",
-        url: "https://github.com/me/app/pull/1097",
-        title: "Check gh sign-in with an API call",
-        state: "merged",
-        updatedAt: ago(60 * 8),
-        threadId: "t2" as ThreadId,
-        threadTitle: "Unify Connect sign-in",
-      },
-    ],
     threadArtifacts: [
       {
         thread: THREADS.t2!,
@@ -161,7 +137,6 @@ interface BenchManifest {
     readonly byteLength: number;
     readonly modifiedAt: string;
   }>;
-  readonly pullRequests: number;
 }
 
 function benchArtifacts(manifest: BenchManifest, pinned: ReadonlySet<string>) {
@@ -177,17 +152,6 @@ function benchArtifacts(manifest: BenchManifest, pinned: ReadonlySet<string>) {
       outputs: manifest.outputs.map((output) => ({ ...output, increment: null })),
     },
     designs: [],
-    pullRequests: Array.from({ length: manifest.pullRequests }, (_, index) => ({
-      key: `pr${index}`,
-      number: 2000 - index,
-      repository: "me/app",
-      url: `https://github.com/me/app/pull/${2000 - index}`,
-      title: `Pull request ${2000 - index} with a title about as long as a real one`,
-      state: (index % 9 === 0 ? "open" : index % 13 === 0 ? "closed" : "merged") as "merged",
-      updatedAt: ago(index * 37),
-      threadId: "t1" as ThreadId,
-      threadTitle: "Build the artifacts shelf",
-    })),
     threadArtifacts: [],
     threadOf: (id) => THREADS[id] ?? null,
     pinned,

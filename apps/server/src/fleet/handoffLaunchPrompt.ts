@@ -16,5 +16,10 @@ export const launchPrompt = (
   contextPath: string,
   workspacePath: string,
   scoped = false,
+  gitSync = false,
 ) =>
-  `${scoped ? `Read the destination path mapping at ${contextPath}-paths before using any historical path. It maps copied folders and worktrees to this machine; Paths without a destination mapping must not be assumed available here. Historical messages remain unchanged. ` : ""}First read the retained handoff context at ${contextPath}, before running any repository startup command. This workspace already contains the active received handoff ${operationId}. Resume only its current unfinished assignment. Do not run \`specweave pickup\` for startup discovery, fetch or apply another handoff, or select unrelated increments. Preserve the current user intent, applicable local repository instructions, command allowlists and permissions for that bounded assignment. Pass this context-first rule to delegated workers; delegate only the task retained here. ${previousApprovalLaunchPrompt(operationId, contextPath, workspacePath)}`;
+  `${scoped ? `Read the destination path mapping at ${contextPath}-paths before using any historical path. It maps copied folders and worktrees to this machine; Paths without a destination mapping must not be assumed available here. Historical messages remain unchanged. ` : ""}First read the retained handoff context at ${contextPath}, before running any repository startup command. This workspace already contains the active received handoff ${operationId}. Resume only its current unfinished assignment. Do not run \`specweave pickup\` for startup discovery, fetch or apply another handoff, or select unrelated increments. Preserve the current user intent, applicable local repository instructions, command allowlists and permissions for that bounded assignment. Pass this context-first rule to delegated workers; delegate only the task retained here. ${previousApprovalLaunchPrompt(operationId, contextPath, workspacePath)}${
+    gitSync
+      ? " This move went through Git, so the commits named in that file are what the source had, not a pin on this checkout: it may be ahead, behind or have local changes. Commits never pushed and uncommitted work stayed on the source."
+      : ""
+  }`;

@@ -7,6 +7,11 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  DEFAULT_ARTIFACT_SORT,
+  nextArtifactSort,
+  registeredArtifacts,
+  sortArtifacts,
+  type ArtifactSort,
   artifactAge,
   artifactKindOfFile,
   artifactMatchesType,
@@ -16,7 +21,6 @@ import {
   searchArtifacts,
   type ProjectArtifactsInput,
 } from "./projectArtifacts";
-import type { ProjectPullRequest } from "./projectPaneModel";
 
 const ROOT = "/Users/me/app";
 const env = "env-1" as EnvironmentId;
@@ -54,23 +58,10 @@ const design = (id: string, updatedAt: string, kind: "design" | "slides" = "desi
     thread: { environmentId: env, threadId: "t-design" },
   }) as unknown as DesignSummary;
 
-const pullRequest = (number: number, updatedAt: string): ProjectPullRequest => ({
-  key: `github.com/me/app#${number}`,
-  number,
-  repository: "me/app",
-  url: `https://github.com/me/app/pull/${number}`,
-  title: `Fix ${number}`,
-  state: "merged",
-  updatedAt,
-  threadId: "t-pr" as ThreadId,
-  threadTitle: "PR thread",
-});
-
 const input = (patch: Partial<ProjectArtifactsInput>): ProjectArtifactsInput => ({
   workspaceRoot: ROOT,
   library: null,
   designs: [],
-  pullRequests: [],
   threadArtifacts: [],
   pinned: new Set(),
   ...patch,
@@ -110,7 +101,6 @@ describe("collectProjectArtifacts", () => {
           ],
         }),
         designs: [design("d1", "2026-10-25T00:00:00.000Z", "slides")],
-        pullRequests: [pullRequest(7, "2026-10-28T00:00:00.000Z")],
         threadArtifacts: [
           {
             thread: thread("t1", "Screenshot thread"),
@@ -136,7 +126,6 @@ describe("collectProjectArtifacts", () => {
             ],
           },
         ],
-        threadOf: (id) => (id === "t-pr" ? thread("t-pr", "PR thread") : null),
         pinned: new Set(["file:.specweave/reports/notes.md"]),
       }),
     );
@@ -144,11 +133,10 @@ describe("collectProjectArtifacts", () => {
     expect(artifacts.map((item) => [item.id, item.kind, item.source])).toEqual([
       ["file:.specweave/reports/notes.md", "document", "registered"],
       ["file:.specweave/increments/1148-shelf/reports/light.png", "image", "output"],
-      ["pr:github.com/me/app#7", "pullRequest", "pullRequest"],
       ["design:d1", "slides", "design"],
       ["link:claude.ai/artifact/abc", "page", "thread"],
     ]);
-    const [notes, screenshot, pr] = artifacts;
+    const [notes, screenshot] = artifacts;
     // The registered title stays; the output's newer date and size are kept.
     expect(notes).toMatchObject({
       title: "Release notes",
@@ -162,7 +150,6 @@ describe("collectProjectArtifacts", () => {
       thread: { title: "Screenshot thread" },
       updatedAt: Date.parse("2026-10-30T00:00:00.000Z"),
     });
-    expect(pr).toMatchObject({ pullRequestState: "merged", thread: { title: "PR thread" } });
   });
 
   it("lists nothing for an empty project, and undated artifacts last", () => {
@@ -284,17 +271,11 @@ describe("artifact types", () => {
     const artifacts = collectProjectArtifacts(
       input({
         designs: [design("d3", "2026-10-01T00:00:00.000Z")],
-        pullRequests: [pullRequest(9, "2026-10-02T00:00:00.000Z")],
       }),
     );
     expect(artifacts.filter((item) => artifactMatchesType("designs", item))).toHaveLength(1);
-    expect([...artifactTypesPresent(artifacts)].toSorted()).toEqual([
-      "all",
-      "designs",
-      "pullRequests",
-    ]);
-    expect(searchArtifacts(artifacts, "fix 9").map((item) => item.title)).toEqual(["Fix 9"]);
-    expect(searchArtifacts(artifacts, "pr thread")).toHaveLength(0);
+    expect([...artifactTypesPresent(artifacts)].toSorted()).toEqual(["all", "designs"]);
+    expect(searchArtifacts(artifacts, "nothing like it")).toHaveLength(0);
   });
 });
 
@@ -316,5 +297,69 @@ describe("helpers", () => {
     expect(artifactAge(now - 3 * 3_600_000, now)).toBe("3h");
     expect(artifactAge(now - 2 * 86_400_000, now)).toBe("2d");
     expect(artifactAge(now - 14 * 86_400_000, now)).toBe("2w");
+  });
+
+  it("never lists a pull request, whichever source names it", () => {
+    const url = "https://github.com/me/app/pull/7";
+    const artifacts = collectProjectArtifacts(
+      input({
+        library: library({
+          artifacts: [
+            {
+              id: "h1",
+              title: "The PR",
+              location: url,
+              kind: "link",
+              intentId: null,
+              createdAt: "2026-10-28T00:00:00.000Z",
+              missing: false,
+            },
+          ],
+        }),
+        threadArtifacts: [
+          {
+            thread: thread("t1", "Thread"),
+            entries: [
+              { id: "pr:github.com/me/app#7", kind: "link", name: "#7", url },
+              { id: "native:x", kind: "native", name: "#7", url },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(artifacts).toEqual([]);
+  });
+
+  it("keeps pull requests out of the hub's registered list", () => {
+    const entry = (kind: string, location: string) => ({ kind, location });
+    expect(
+      registeredArtifacts([
+        entry("link", "https://github.com/me/app/pull/7"),
+        entry("link", "https://example.com/docs"),
+        entry("file", "pull/7"),
+      ]).map((item) => item.location),
+    ).toEqual(["https://example.com/docs", "pull/7"]);
+  });
+
+  it("sorts by a column, with pinned first and missing values last", () => {
+    const at = (day: number) => `2026-10-${day}T00:00:00.000Z`;
+    const artifacts = collectProjectArtifacts(
+      input({
+        library: library({
+          outputs: [
+            { path: "b.md", byteLength: 30, modifiedAt: at(10), increment: null },
+            { path: "a10.md", byteLength: 10, modifiedAt: at(12), increment: null },
+            { path: "a2.md", byteLength: 20, modifiedAt: at(11), increment: null },
+          ],
+        }),
+        pinned: new Set(["file:b.md"]),
+      }),
+    );
+    const titles = (sort: ArtifactSort) => sortArtifacts(artifacts, sort).map((a) => a.title);
+    expect(titles({ column: "name", descending: false })).toEqual(["b.md", "a2.md", "a10.md"]);
+    expect(titles({ column: "size", descending: true })).toEqual(["b.md", "a2.md", "a10.md"]);
+    expect(titles(DEFAULT_ARTIFACT_SORT)).toEqual(["b.md", "a10.md", "a2.md"]);
+    expect(nextArtifactSort(DEFAULT_ARTIFACT_SORT, "modified").descending).toBe(false);
+    expect(nextArtifactSort(DEFAULT_ARTIFACT_SORT, "name").descending).toBe(false);
   });
 });

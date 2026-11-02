@@ -194,3 +194,29 @@ project there:
 - **A project that is not shared** is matched by its repository: the same remote
   and the same place inside it, or the project chosen on that machine for this
   one.
+
+## Repositories in each copy
+
+A project folder can hold more Git repositories than its own root: an
+umbrella's `repositories/<owner>/<name>`, or clones anywhere else inside it,
+such as `apps/api`. The app keeps the list and shares it; it never copies or
+clones them for you.
+
+- **The list is a project note.** The app reads the clones in the coordinator's
+  folder and keeps them in the note `repositories.md`: each repository's name,
+  remote and path. Notes travel to every linked copy, so each machine knows the
+  list even when its folder never held the repositories. A repository the note
+  names but the folder lacks stays listed; delete its row to drop it.
+- **Workers clone what they need.** A worker started on another machine is
+  told the project's repositories and their remotes. It uses a clone that
+  machine already has, wherever it is, and clones one its task needs from the
+  remote, wherever suits that machine. It does not need the coordinator's
+  layout.
+- **Settings > Project > Machines** says, for every other copy, which
+  repositories it holds, compared by remote and found anywhere in that copy's
+  folder. **Clone from origin on <machine>** clones the missing ones there with
+  that machine's own Git sign-in, only when you click it.
+
+Code moves only through Git. A clone gets what is pushed to the remote;
+uncommitted or unpushed work stays on its machine. Clones without a remote
+cannot be cloned anywhere else.

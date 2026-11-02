@@ -73,6 +73,7 @@ import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { ProjectArtifactsLibrary } from "./ProjectArtifactsLibrary";
 import {
   LIBRARY_SECTIONS,
+  registeredArtifacts,
   type ArtifactTypeFilter,
   type LibrarySection,
 } from "../../../studio/projectArtifacts";
@@ -252,6 +253,7 @@ export function LibraryPane({
       return result;
     }
     const artifactsOpen = expanded.has(ARTIFACTS_ROW);
+    const registered = registeredArtifacts(data.artifacts);
     result.push({
       id: ARTIFACTS_ROW,
       name: "Artifacts",
@@ -261,10 +263,10 @@ export function LibraryPane({
       modifiedAt: data.hub?.updatedAt ?? undefined,
       expandable: true,
       expanded: artifactsOpen,
-      note: `${data.artifacts.length} registered`,
+      note: `${registered.length} registered`,
     });
     if (artifactsOpen) {
-      for (const artifact of data.artifacts) {
+      for (const artifact of registered) {
         result.push({
           id: `artifact:${artifact.id}`,
           name: artifact.title,

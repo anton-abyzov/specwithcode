@@ -1,10 +1,17 @@
 # Move a project to another machine
 
-SpecWithCode can copy a project folder from one of your machines to another and,
-if you want, transfer its coordinator context and responsibility there. The copy carries the folder as
-it is on disk: uncommitted edits, stashes, branches that were never pushed, new
-files and ignored project data such as reports. Nothing has to be pushed to a Git
-remote first.
+Git is how a project stays current across machines. When a thread starts, or a
+coordinator moves to a machine, SpecWithCode fetches every repository of the
+project and fast-forwards the ones where that is safe. A repository with uncommitted
+changes, on another branch, or that can't reach origin is left exactly as it is, and
+the thread still starts with a short notice saying what was skipped and why. An SSH
+origin that fails is retried over HTTPS with the machine's GitHub login, without
+changing the remote. Secrets and other uncommitted files stay where they are.
+
+**Copy local files** is the separate action for first setup and what Git can't
+carry: it copies a project folder from one of your machines to another as it is on
+disk, with uncommitted edits, stashes, branches that were never pushed, new files and
+ignored project data such as reports. Nothing has to be pushed to a Git remote first.
 
 Both machines must be in your private fleet. If they are not yet, follow
 [Add a machine](./add-a-machine.md) first.
@@ -14,13 +21,17 @@ Both machines must be in your private fleet. If they are not yet, follow
 1. Open the project on the machine that has it now (the **source**).
 2. Choose **Handoff** in the project header, then pick the other machine (the
    **destination**).
-3. Under the file method, pick one:
+3. A machine that already has the project opens on **Use Git, no file copy**. Moving
+   there pushes nothing and doesn't need a clean source. If any repository keeps work
+   Git won't carry, the dialog lists it first: unpushed commits, uncommitted changes
+   and local branches. Push it or use **Copy local files**; the move goes ahead either
+   way. Under the file method, pick one:
 
-| Method                                 | What happens                                                                                                  |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Copy from &lt;source&gt;** (default) | The destination pulls the folder from the source, with uncommitted and ignored files.                         |
-| **Use the folder as it is**            | The older path: committed work is pushed to Git remotes and an existing checkout on the destination advances. |
-| **Clone from origin per repository**   | Like a copy, but clean repositories are cloned from their remotes instead of being copied byte for byte.      |
+| Method                               | What happens                                                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| **Copy from &lt;source&gt;**         | The destination pulls the folder from the source, with uncommitted and ignored files.                    |
+| **Use Git, no file copy** (default)  | Continues in the folder already saved there, which updates from origin.                                  |
+| **Clone from origin per repository** | Like a copy, but clean repositories are cloned from their remotes instead of being copied byte for byte. |
 
 4. Check the source scope. When this repository belongs to a configured
    SpecWeave umbrella, the dialog offers the containing workspace and shows its
@@ -31,13 +42,13 @@ Both machines must be in your private fleet. If they are not yet, follow
    or missing folder gets a plain copy. A folder that already holds the project
    gets a preview first; see [Copying into an existing folder](#copying-into-an-existing-folder).
 5. Under **After the copy**, choose:
-   - **Copy files only**: the destination gets a copy and the coordinator stays
+   - **Copy local files**: the destination gets a copy and the coordinator stays
      on the source. The copy is then linked as a member that runs workers, as in
      [Shared projects](shared-projects.md#link-two-copies). If
      the link needs a choice (project notes that differ, or a refusal), the
      dialog says why and **Link…** opens the link review.
    - **Copy and transfer coordinator context**: files copy first. The copy is
-     captured the same way as **Copy files only**, so it needs temporary space
+     captured the same way as **Copy local files**, so it needs temporary space
      on the source for the selected bytes. Once the source is idle, its
      coordinator context and responsibility transfer to the destination. If
      files changed on the source after the copy, the dialog lists them first;
@@ -68,7 +79,7 @@ that work is still running.
 
 ## When a saved comparison is out of date
 
-For **Copy files only**, a new comparison captures the selected non-secret files
+For **Copy local files**, a new comparison captures the selected non-secret files
 on the source before it becomes ready. Review the captured-file timestamp and
 approve the comparison explicitly. Active agents can keep working: later edits,
 new files and changing project logs do not invalidate these captured bytes, even
@@ -307,7 +318,7 @@ For each conflict, pick one:
 
 ## Undo a copy
 
-After **Copy files only** finishes, choose **Undo…** to see what Undo would
+After **Copy local files** finishes, choose **Undo…** to see what Undo would
 restore. Files and branches go back to how they were before Apply. If you edited
 a file after the copy, Undo lists it and keeps your edit aside unless you confirm.
 Undo restores the folder only; the link stays until you unlink the copy in

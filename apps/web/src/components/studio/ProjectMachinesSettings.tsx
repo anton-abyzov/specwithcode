@@ -39,6 +39,7 @@ import {
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { CoordinatorStandbySettings } from "./CoordinatorStandbySettings";
 import { ProjectLocation } from "./ProjectLocation";
+import { ProjectCopyRepositories, useRepositoryInventory } from "./ProjectCopyRepositories";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { useHoldProjectKeyFollow } from "../settings/projectKeyFollow";
 import { useLinkMachines } from "./useLinkMachines";
@@ -136,6 +137,12 @@ export function ProjectMachinesSettings({
     members.find((member) => member.environmentId === primaryEnvironmentId && ready(member)) ??
     members.find(ready) ??
     members[0];
+  // Every other copy should hold the checkouts this one's folder holds.
+  const repositorySource = coordinator ?? anchor;
+  const inventory = useRepositoryInventory(
+    repositorySource,
+    repositorySource !== undefined && machines.connected(repositorySource.environmentId),
+  );
   const coordinatorLabel = coordinator ? machines.label(coordinator.environmentId) : null;
   const coordinatorConnected = coordinator ? machines.connected(coordinator.environmentId) : true;
   // Null while the coordinator is connected: nothing to take over.
@@ -357,6 +364,16 @@ export function ProjectMachinesSettings({
               <>
                 <ProjectLocation path={copy.project.workspaceRoot} />
                 <span className="block">{ROLE_TEXT[copy.role]}</span>
+                {repositorySource &&
+                (copy.project.environmentId !== repositorySource.environmentId ||
+                  copy.project.id !== repositorySource.id) ? (
+                  <ProjectCopyRepositories
+                    copy={copy.project}
+                    inventory={inventory}
+                    label={label}
+                    problem={problem}
+                  />
+                ) : null}
                 {copy.unfinished && (
                   <span className="block">
                     Joined, but {coordinatorLabel} does not list it yet. Finish linking so the

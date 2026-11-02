@@ -59,8 +59,10 @@ export const MachineHandoffDestination = Schema.Struct({
   /**
    * The folder arrived by folder copy (project-folder only): Git publication and
    * materialization are skipped, and the destination requires its applied copy.
+   * "git-sync" (project-folder only): the folder is already there and neither side's
+   * uncommitted work matters; the destination updates from origin at the first turn.
    */
-  transport: Schema.optional(Schema.Literal("folder-copy")),
+  transport: Schema.optional(Schema.Literals(["folder-copy", "git-sync"])),
 });
 export const MachineHandoffAcknowledgment = Schema.Struct({
   operationId: MachineHandoffOperationId,

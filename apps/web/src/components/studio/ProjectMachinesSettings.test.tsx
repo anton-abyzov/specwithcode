@@ -69,6 +69,11 @@ vi.mock("../../lib/machineLastSeen", () => ({
 }));
 // Automatic takeover has its own tests; this file covers the copies and links.
 vi.mock("./CoordinatorStandbySettings", () => ({ CoordinatorStandbySettings: () => null }));
+// Each copy's repositories have their own tests.
+vi.mock("./ProjectCopyRepositories", () => ({
+  ProjectCopyRepositories: () => null,
+  useRepositoryInventory: () => ({ status: "unavailable" }),
+}));
 vi.mock("./ProjectLinkDialog", () => ({
   ProjectLinkDialog: (props: Record<string, unknown>) => {
     state.dialog = props;

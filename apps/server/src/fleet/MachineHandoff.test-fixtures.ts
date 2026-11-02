@@ -105,6 +105,7 @@ const makeHarness = (
     text: options.text ?? "Continue the actual pending change",
     head: "a".repeat(40),
     pushes: 0,
+    inspects: [] as Array<{ readonly allowChanges?: boolean | undefined }>,
     publicationFailure: false,
     publicationFenceStates: [] as string[],
     materializations: 0,
@@ -421,16 +422,20 @@ const makeHarness = (
             (worker) => worker.branch !== null && state.unmergedBranches.includes(worker.branch),
           );
         }),
+      verifyRootIdentity: () => Effect.void,
       inspect: (input) =>
-        Effect.sync(() => ({
-          ...manifest,
-          operationId: input.operationId,
-          repositories: manifest.repositories.map((repo) => ({
-            ...repo,
-            head: state.head,
-            ref: `refs/heads/codex/handoff/${input.operationId}/${state.head}`,
-          })),
-        })),
+        Effect.sync(() => {
+          state.inspects.push({ allowChanges: input.allowChanges });
+          return {
+            ...manifest,
+            operationId: input.operationId,
+            repositories: manifest.repositories.map((repo) => ({
+              ...repo,
+              head: state.head,
+              ref: `refs/heads/codex/handoff/${input.operationId}/${state.head}`,
+            })),
+          };
+        }),
       preflight: () =>
         Effect.suspend(() => {
           state.preflights++;

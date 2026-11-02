@@ -45,6 +45,7 @@ import {
   MachineHandoffDialog,
   type MoveIntent,
 } from "./MachineHandoffDialog";
+import { HandoffLeftBehind } from "./HandoffLeftBehind";
 import type { MachineOption } from "../handoff/MachineOptionRows";
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
@@ -173,7 +174,7 @@ export function ProjectMachineHandoff({
     setBusyRefusal(null);
   };
   const [canRestart, setCanRestart] = useState(false);
-  // A safe copy of the folder is the default; Git-only handoff stays available.
+  // A machine that has the project updates through Git; a copy is for one that does not.
   const [method, setMethod] = useState<HandoffFolderMethod>("copy");
   // Opening the dialog means moving the project; "Copy files only" is the other choice.
   const [intent, setIntent] = useState<MoveIntent>("move");
@@ -292,6 +293,8 @@ export function ProjectMachineHandoff({
         environmentId: target.environmentId,
         projectId: target.id,
         executionMode: "project-folder" as const,
+        // The folder is already there: it updates from origin, whatever either side has open.
+        transport: "git-sync" as const,
         coordinatorThreadId:
           target.workspaceSettings?.coordinatorThreadId ??
           ThreadId.make(`project-coordinator:${target.id}`),
@@ -709,19 +712,41 @@ export function ProjectMachineHandoff({
                   const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
                   // An unfinished Git handoff resumes in the method that started it, an
                   // unfinished copy in the current one; otherwise every opening starts fresh.
-                  if (pending) setMethod("folder");
-                  else if (
+                  const copyPending =
                     localStorage.getItem(
                       folderCopyStorageKey(project.environmentId, project.id),
-                    ) === null
-                  )
-                    setMethod("copy");
+                    ) !== null;
+                  if (pending) setMethod("folder");
+                  else if (!copyPending) setMethod("copy");
                   const saved = readHandoffMachinePreference(preferenceKey);
                   setPreference(saved);
                   const preferred = pickHandoffMachine(machines, saved);
                   const preferredFolder = destinations.find(
                     (item) => item.environmentId === preferred && !item.unavailable,
                   );
+                  // A project inside a larger repository has no checkout of its own to continue in.
+                  const ownCheckout = (item: {
+                    readonly workspaceRoot: string;
+                    readonly repositoryIdentity?:
+                      | { readonly rootPath?: string | undefined }
+                      | null
+                      | undefined;
+                  }) =>
+                    (item.repositoryIdentity?.rootPath ?? item.workspaceRoot).replaceAll(
+                      "\\",
+                      "/",
+                    ) === item.workspaceRoot.replaceAll("\\", "/");
+                  const preferredProject = candidates.find(
+                    (item) => `${item.environmentId}:${item.id}` === preferredFolder?.key,
+                  );
+                  if (
+                    preferredProject &&
+                    ownCheckout(project) &&
+                    ownCheckout(preferredProject) &&
+                    !pending &&
+                    !copyPending
+                  )
+                    setMethod("folder");
                   // The preferred machine wins; without a saved folder there, the picker opens on it.
                   const choice =
                     pending?.targetKey ??
@@ -774,6 +799,17 @@ export function ProjectMachineHandoff({
           setMethod("copy");
         }}
         sourceChanges={sourceChanges}
+        leftBehind={
+          open ? (
+            <HandoffLeftBehind
+              // Reads again once a commit changes what stays behind.
+              key={`${sourceChanges?.state}:${sourceChanges?.state === "dirty" ? sourceChanges.fileCount : 0}`}
+              environmentId={project.environmentId}
+              projectId={project.id}
+              sourceLabel={source?.label ?? "this machine"}
+            />
+          ) : null
+        }
         method={method}
         onMethodChange={(next) => {
           if (discardPreview() === "failed") return;
@@ -862,6 +898,7 @@ export function ProjectMachineHandoff({
         preview={
           snapshot
             ? {
+                gitSync: snapshot.bundle.destination?.transport === "git-sync",
                 repositories: snapshot.bundle.manifest.repositories,
                 messageCount: snapshot.messageCount,
                 retention: retentionOf(snapshot.bundle),

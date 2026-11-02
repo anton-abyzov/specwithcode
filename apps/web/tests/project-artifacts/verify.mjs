@@ -82,14 +82,13 @@ try {
     // Pinned first, then newest.
     const shelf = await titles('[data-testid="threads-pane"]');
     assert.equal(shelf[0], "YC demo deck", "the pinned deck leads");
-    assert.deepEqual(shelf.slice(1, 4), [
-      "shelf-light.png",
-      "Project artifacts shelf and library",
-      "review.md",
-    ]);
-    assert.equal(shelf.length, 9, "every artifact once");
+    assert.equal(shelf[1], "shelf-light.png");
+    assert.equal(shelf.length, 7, "every artifact once, and no pull requests");
     const library = await titles('[data-testid="library-pane"]');
-    assert.deepEqual(library, shelf, "the Library lists the shelf's order");
+    assert.equal(library.length, shelf.length, "the Library lists the same artifacts");
+    assert.deepEqual(library.slice(0, 2), shelf.slice(0, 2), "in the shelf's order");
+    assert.equal(await page.locator('.sws-artifact-card[data-kind="pullRequest"]').count(), 0);
+    assert.equal(await page.getByText("Check gh sign-in with an API call").count(), 0);
     await page
       .locator('[data-testid="threads-pane"] img.sws-artifact-thumb-image')
       .first()
@@ -137,23 +136,26 @@ try {
       clip: { x: 0, y: 0, width: 480, height: 300 },
     });
     await row0.evaluate((node) => node.scrollTo({ left: 0 }));
+    // A Markdown file is a picture of its page, named by its own heading.
     const markdownCard = shelfPane.locator(
-      '.sws-artifact-card:has(.sws-artifact-title:text-is("review.md"))',
+      '.sws-artifact-card:has(.sws-artifact-title:text-is("Review of the artifacts shelf"))',
     );
     await markdownCard.scrollIntoViewIfNeeded();
-    assert.equal(
-      await markdownCard.locator(".sws-artifact-page-line[data-heading='1']").textContent(),
-      "Review of the artifacts shelf",
-    );
-    // A pull request says its state, number, title and repository, with a small icon.
-    const prCard = shelfPane.locator(
-      '.sws-artifact-card:has(.sws-artifact-title:text-is("Project artifacts shelf and library"))',
-    );
-    assert.equal(await prCard.locator(".sws-artifact-facts-label").textContent(), "Open");
-    assert.equal(await prCard.locator(".sws-artifact-facts-detail").textContent(), "#1101");
-    assert.equal(await prCard.locator(".sws-artifact-facts-foot").textContent(), "me/app");
-    const icon = await prCard.locator(".sws-artifact-facts-head svg").boundingBox();
-    assert.ok(icon.width <= 14, "the icon stays small");
+    const markdownImage = markdownCard.locator("img.sws-artifact-thumb-image");
+    await markdownImage.waitFor();
+    const markdownSrc = await markdownImage.getAttribute("src");
+    assert.match(markdownSrc, /^data:image\/webp/, "the Markdown page is a small raster");
+    assert.ok(markdownSrc.length < 60_000, `the raster stays small, got ${markdownSrc.length}`);
+    assert.deepEqual(outside, [], "a Markdown page loads nothing");
+    // Title and age share one line, and the card has a tint and a turned sheet behind the page.
+    const foot = await markdownCard.locator(".sws-artifact-foot").boundingBox();
+    assert.ok(foot.height <= 20, `one line, got ${foot.height}`);
+    assert.notEqual(await markdownCard.locator(".sws-artifact-age").textContent(), "");
+    const sheet = await markdownCard
+      .locator(".sws-artifact-thumb")
+      .evaluate((node) => getComputedStyle(node, "::before").transform);
+    assert.notEqual(sheet, "none", "the back sheet is turned");
+    await markdownCard.screenshot({ path: join(output, `markdown-card-${theme}.png`) });
     // View all is the row's last card and opens the Library's Artifacts view.
     const last = shelfPane.locator(".sws-artifact-row > li").last();
     assert.equal(await last.locator(".sws-artifact-title").textContent(), "View all");
@@ -163,7 +165,7 @@ try {
       clip: { x: 0, y: 0, width: 520, height: 330 },
     });
     await row.evaluate((node) => node.scrollTo({ left: 0 }));
-    checks.push(`${theme}: markdown page, HTML raster with no frame, PR facts; View all last`);
+    checks.push(`${theme}: Markdown and HTML rasters, no frame, one-line foot; View all last`);
 
     // The header folds the row and remembers it.
     const toggle = shelfPane.locator(".sws-artifact-shelf-toggle");
@@ -214,20 +216,48 @@ try {
     );
     checks.push(`${theme}: pin moves the artifact first`);
 
-    // The Type filter narrows; grid view shows cards.
-    await page.locator('[data-testid="library-pane"] .sws-library-filter').click();
-    await page.getByRole("menuitemradio", { name: "Pull requests" }).click();
-    assert.deepEqual(await titles('[data-testid="library-pane"]'), [
-      "Project artifacts shelf and library",
-      "Check gh sign-in with an API call",
+    // The list has Name, Thread, a full date and Size; headers sort, pinned stay first.
+    const pane = page.locator('[data-testid="library-pane"]');
+    assert.deepEqual(await pane.getByRole("columnheader").allInnerTexts(), [
+      "Name",
+      "Thread",
+      "Date modified",
+      "Size",
+      "Actions",
     ]);
+    assert.match(
+      await pane.locator(".sws-library-row").first().getByRole("gridcell").nth(2).innerText(),
+      /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M$/,
+    );
+    await pane.locator(".sws-artifact-sort", { hasText: "Name" }).click();
+    assert.equal(
+      await pane.getByRole("columnheader", { name: "Name" }).getAttribute("aria-sort"),
+      "ascending",
+    );
+    const byName = await titles('[data-testid="library-pane"]');
+    const pinnedCount = await pane.locator(".sws-library-row[data-pinned]").count();
+    const unpinned = byName.slice(pinnedCount);
+    assert.deepEqual(
+      unpinned,
+      unpinned.toSorted((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    );
+    await page.screenshot({ path: join(output, `library-list-sorted-${theme}.png`) });
+    await pane.locator(".sws-artifact-sort", { hasText: "Date modified" }).click();
+    checks.push(`${theme}: list columns, full dates, sorted headers`);
+
+    // The Type filter narrows, never offers pull requests; grid view shows cards.
+    await pane.locator(".sws-library-filter").click();
+    assert.equal(await page.getByRole("menuitemradio", { name: "Pull requests" }).count(), 0);
+    await page.getByRole("menuitemradio", { name: "Documents" }).click();
+    assert.ok((await titles('[data-testid="library-pane"]')).length >= 1);
     await page.keyboard.press("Escape");
-    await page.locator('[data-testid="library-pane"] [aria-label="Grid view"]').click();
-    await page.screenshot({ path: join(output, `library-grid-pull-requests-${theme}.png`) });
+    await pane.locator('[aria-label="Grid view"]').click();
+    await page.screenshot({ path: join(output, `library-grid-documents-${theme}.png`) });
     checks.push(`${theme}: Type filter and grid view`);
 
     await page.goto(`${origin}/?theme=${theme}&view=grid`);
     await page.locator(".sws-artifact-grid").waitFor();
+    await page.locator(".sws-artifact-grid img.sws-artifact-thumb-image").nth(2).waitFor();
     await page.screenshot({ path: join(output, `library-grid-${theme}.png`), fullPage: true });
     checks.push(`${theme}: grid view`);
   }

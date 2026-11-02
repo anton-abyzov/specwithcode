@@ -794,9 +794,34 @@ it("remembers the machine silently, only once a move succeeds", async () => {
   });
 });
 
+it("opens on Git where the project is already saved", async () => {
+  state.environments = machineEnvironments;
+  await mount();
+  expect(props().method).toBe("folder");
+  expect(props().selected).toBe("m1:target");
+});
+
+it("opens on a copy where the project has no saved folder", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [source];
+  await mount();
+  expect(props().method).toBe("copy");
+});
+
+it("asks a saved folder to update from Git, so uncommitted work never stops the move", async () => {
+  state.environments = machineEnvironments;
+  await mount();
+  await review();
+  expect(state.prepare.mock.calls.at(-1)?.[0]?.input.destination).toMatchObject({
+    executionMode: "project-folder",
+    transport: "git-sync",
+  });
+});
+
 it("remembers the copy flow's machine once its copy is done", async () => {
   state.environments = machineEnvironments;
   await mount();
+  await act(async () => props().onMethodChange!("copy"));
   const copy = () =>
     (props().copyFlow as { props: Record<string, (...args: never[]) => void> }).props;
   await act(async () =>
@@ -817,6 +842,8 @@ it("opens as a move, and switching the Git move to files only uses the copy flow
   state.environments = machineEnvironments;
   await mount();
   expect(props().intent).toBe("move");
+  expect(props().method).toBe("folder");
+  await act(async () => props().onMethodChange!("copy"));
   expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
     "copy-and-move",
   );
@@ -847,6 +874,7 @@ it("keeps the copy flow's machine when switching to Git", async () => {
   state.environments = machineEnvironments;
   state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
   await mount();
+  await act(async () => props().onMethodChange!("copy"));
   const copy = (props().copyFlow as { props: Record<string, (...args: never[]) => void> }).props;
   await act(async () =>
     copy.onChoicesChange!({ mode: "copy-and-move", machine: "m3", done: false } as never),
@@ -886,7 +914,7 @@ it("drops an unpublished review when a choice changes", async () => {
 
 it("starts over from the default choices after closing a review", async () => {
   await mount();
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("folder");
   await act(async () => props().onMethodChange!("folder"));
   await review();
   await act(async () => props().onOpenChange(false));
@@ -894,7 +922,7 @@ it("starts over from the default choices after closing a review", async () => {
   await act(async () => container.querySelector("button")!.click());
   expect(props().phase).toBe("choose");
   expect(props().preview).toBeNull();
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("folder");
 });
 
 it("keeps a published checkpoint frozen until it finishes or is recovered", async () => {
@@ -951,7 +979,7 @@ it("starts fresh after closing a review whose destination check failed", async (
   await act(async () => props().onOpenChange(false));
   expect(localStorage.getItem(key)).toBeNull();
   await act(async () => container.querySelector("button")!.click());
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("folder");
   expect(props().error).toBeNull();
 });
 
@@ -1050,6 +1078,7 @@ it("resolves a full saved copy registration only by destination machine and exac
     logicalProject: { id: "known-logical-project" },
   };
   await mount();
+  await act(async () => props().onMethodChange!("copy"));
   const resolve = (
     props().copyFlow as {
       props: {
@@ -1072,6 +1101,7 @@ it("lets a running folder copy close, keeps it, and watches it app wide until th
   resetCopyActivityForTests();
   state.environments = machineEnvironments;
   await mount();
+  await act(async () => props().onMethodChange!("copy"));
   expect(props().method).toBe("copy");
   const copy = () => (props().copyFlow as { props: Record<string, any> }).props;
   await act(async () => copy().onCloseLockChange(true));

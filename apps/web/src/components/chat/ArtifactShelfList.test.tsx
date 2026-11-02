@@ -58,7 +58,6 @@ function entries(artifacts: ThreadArtifact[], overrides: Partial<ShelfInput> = {
     artifacts,
     mentionedAt: () => new Date(2026, 9, 24, 9, 5).getTime(),
     source: () => ({ label: "Wrote the findings" }),
-    pullRequests: new Map(),
     fileChecks: new Map(),
     root: ROOT,
     pinned: new Set(),

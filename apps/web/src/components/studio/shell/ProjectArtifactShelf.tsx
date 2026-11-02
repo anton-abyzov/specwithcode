@@ -1,7 +1,8 @@
 /**
  * The project's artifacts above its Threads list, as a row of cards: a small
- * page of the document or a sheet of facts, the title and its age, a pin, a ... menu and View
- * all into the Library's Artifacts view. The pieces here (thumbnail, menu,
+ * picture of the document or a sheet of facts on a tinted card, the title and
+ * its age on one line, a pin, a ... menu and View all into the Library's
+ * Artifacts view. The pieces here (thumbnail, menu,
  * opener) are shared with that view.
  */
 import type { AssetResource, EnvironmentId, ThreadId } from "@specweave-studio/contracts";
@@ -26,6 +27,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  type CSSProperties,
   type ReactNode,
   type RefObject,
   useCallback,
@@ -47,21 +49,19 @@ import {
   artifactPreviewFormat,
   artifactPreviewKey,
   artifactPreviewSlots,
+  artifactTintIndex,
   type ArtifactPreview,
   type ArtifactPreviewFormat,
 } from "../../../studio/artifactPreview";
 import { documentPreview, imagePreview } from "../../../studio/artifactPreviewRaster";
 import {
   artifactAge,
-  artifactKindLabel,
   ARTIFACT_KIND_LABELS,
   ARTIFACT_SHELF_LIMIT,
-  PULL_REQUEST_STATE_WORDS,
   type ProjectArtifact,
   type ProjectArtifactKind,
 } from "../../../studio/projectArtifacts";
 import { useProjectFileReader } from "../../files/projectFilesQueryState";
-import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
@@ -76,7 +76,6 @@ const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
   video: FilmIcon,
   data: DatabaseIcon,
   code: CodeIcon,
-  pullRequest: PULL_REQUEST_STATE_PRESENTATION.open.Icon,
   link: LinkIcon,
 };
 
@@ -88,10 +87,6 @@ function extensionOf(artifact: ProjectArtifact): string | null {
 }
 
 export function ArtifactKindIcon({ artifact }: { artifact: ProjectArtifact }) {
-  if (artifact.kind === "pullRequest" && artifact.pullRequestState !== null) {
-    const { Icon, toneClassName } = PULL_REQUEST_STATE_PRESENTATION[artifact.pullRequestState];
-    return <Icon aria-hidden className={toneClassName} />;
-  }
   const Icon = KIND_ICON[artifact.kind];
   return <Icon aria-hidden />;
 }
@@ -279,6 +274,11 @@ function OriginalImage(props: {
   );
 }
 
+/** One key per file version, across the card and the preview it shows. */
+function previewKey(artifact: ProjectArtifact, environmentId: EnvironmentId, root: string) {
+  return artifactPreviewKey(artifact, `${environmentId}\u0000${root}`);
+}
+
 function PreviewPage({ preview }: { preview: ArtifactPreview }) {
   if (preview.type === "image") {
     return <img src={preview.src} alt="" className="sws-artifact-thumb-image" decoding="async" />;
@@ -307,7 +307,7 @@ function LazyPreview(props: {
   const [near, setNear] = useState(false);
   useEffect(() => observeNearView(ref.current!, setNear), []);
   const root = artifact.root ?? props.workspaceRoot;
-  const key = artifactPreviewKey(artifact, `${props.environmentId}\u0000${props.workspaceRoot}`);
+  const key = previewKey(artifact, props.environmentId, props.workspaceRoot);
   const preview = useSyncExternalStore(
     useCallback((listener) => artifactPreviewCache.subscribe(key, listener), [key]),
     () => artifactPreviewCache.peek(key),
@@ -318,9 +318,18 @@ function LazyPreview(props: {
   // Scroll away and the page goes; the cache still has it for coming back.
   const shown = near && (preview?.type === "image" || preview?.type === "lines");
   return (
-    <span ref={ref} className="sws-artifact-preview" data-ready={shown || undefined}>
+    <span
+      ref={ref}
+      className="sws-artifact-preview"
+      data-ready={shown || undefined}
+      style={
+        preview?.type === "image" && preview.tint
+          ? ({ "--sws-artifact-wash": preview.tint } as CSSProperties)
+          : undefined
+      }
+    >
       {shown ? (
-        <span className="sws-artifact-sheet" data-page>
+        <span className="sws-artifact-sheet" data-page data-format={format}>
           <PreviewPage preview={preview} />
         </span>
       ) : near && preview?.type === "original" && artifact.path !== null ? (
@@ -372,15 +381,6 @@ function factSheetContent(artifact: ProjectArtifact): {
   readonly detail: string | null;
   readonly footer: string | null;
 } {
-  if (artifact.kind === "pullRequest") {
-    return {
-      label: artifact.pullRequestState
-        ? PULL_REQUEST_STATE_WORDS[artifact.pullRequestState]
-        : "Pull request",
-      detail: artifact.pullRequestNumber === null ? null : `#${artifact.pullRequestNumber}`,
-      footer: artifact.pullRequestRepository,
-    };
-  }
   if (artifact.design) {
     const pages = artifact.design.pageCount;
     return {
@@ -432,7 +432,7 @@ export function ArtifactThumbnail(props: {
 
 /**
  * Opens an artifact where it belongs: a design in its editor, a file in the
- * app's viewer, a link or pull request in the browser. Returns the viewer to
+ * app's viewer, a link in the browser. Returns the viewer to
  * render beside the caller.
  */
 export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: string) {
@@ -587,13 +587,6 @@ export function ArtifactPinButton(props: {
   );
 }
 
-/** The card's subtitle: age, then where it came from. */
-export function artifactCardMeta(artifact: ProjectArtifact, now: number): string {
-  return [artifactAge(artifact.updatedAt, now), artifactKindLabel(artifact)]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 const SHELF_OPEN_STORAGE_KEY = "studio:project-artifacts-shelf-open:v1";
 
 export function ProjectArtifactShelf(props: {
@@ -662,7 +655,7 @@ export function ProjectArtifactShelf(props: {
             artifact={artifact}
             environmentId={props.environmentId}
             workspaceRoot={props.workspaceRoot}
-            meta={artifactCardMeta(artifact, props.now)}
+            now={props.now}
             onOpen={() => opener.open(artifact, shown)}
             onPin={(on) => props.onPin(artifact.id, on)}
             onOpenThread={props.onOpenThread}
@@ -674,9 +667,9 @@ export function ProjectArtifactShelf(props: {
             <span className="sws-artifact-thumb sws-artifact-view-all-thumb">
               <ArrowRightIcon aria-hidden />
             </span>
-            <span className="sws-artifact-title">View all</span>
-            <span className="sws-artifact-meta">
-              {artifacts.length === 1 ? "1 artifact" : `${artifacts.length} artifacts`}
+            <span className="sws-artifact-foot">
+              <span className="sws-artifact-title">View all</span>
+              <span className="sws-artifact-age">{artifacts.length}</span>
             </span>
           </button>
         </li>
@@ -686,11 +679,28 @@ export function ProjectArtifactShelf(props: {
   );
 }
 
+/** A file known only by its name reads by the heading inside it, once its page is drawn. */
+function useArtifactCardTitle(
+  artifact: ProjectArtifact,
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+): string {
+  const key = previewKey(artifact, environmentId, workspaceRoot);
+  const heading = useSyncExternalStore(
+    useCallback((listener) => artifactPreviewCache.subscribe(key, listener), [key]),
+    () => {
+      const preview = artifactPreviewCache.peek(key);
+      return preview?.type === "image" ? preview.title : undefined;
+    },
+  );
+  return heading && artifact.path?.endsWith(artifact.title) ? heading : artifact.title;
+}
+
 export function ArtifactCard(props: {
   readonly artifact: ProjectArtifact;
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string;
-  readonly meta: string;
+  readonly now: number;
   readonly onOpen: () => void;
   readonly onPin: (on: boolean) => void;
   readonly onOpenThread?: ((threadId: ThreadId, environmentId: EnvironmentId) => void) | undefined;
@@ -700,6 +710,10 @@ export function ArtifactCard(props: {
 }) {
   const { artifact, windowed = false } = props;
   const openable = canOpenArtifact(artifact);
+  const title = useArtifactCardTitle(artifact, props.environmentId, props.workspaceRoot);
+  const description = [artifact.path ?? artifact.url, artifact.thread?.title]
+    .filter(Boolean)
+    .join(" · ");
   const ref = useRef<HTMLLIElement>(null);
   const [inView, setInView] = useState(!windowed);
   // Focus stays where it is: a pinned card moves away, a menu opens from it.
@@ -726,13 +740,17 @@ export function ArtifactCard(props: {
         className="sws-artifact-open"
         disabled={!openable}
         onClick={props.onOpen}
-        aria-label={near ? undefined : artifact.title}
-        aria-description={artifact.path ?? artifact.url ?? undefined}
+        aria-label={near ? undefined : title}
+        aria-description={description || undefined}
       >
         <span
           className="sws-artifact-thumb"
           data-kind={artifact.kind}
-          data-state={artifact.pullRequestState ?? undefined}
+          data-tint={
+            artifact.kind === "document" || artifact.kind === "page"
+              ? artifactTintIndex(artifact.id)
+              : undefined
+          }
         >
           {near ? (
             <ArtifactThumbnail
@@ -743,17 +761,14 @@ export function ArtifactCard(props: {
           ) : null}
         </span>
         {near ? (
-          <>
-            <span className="sws-artifact-title" title={artifact.title}>
-              {artifact.title}
+          <span className="sws-artifact-foot">
+            <span className="sws-artifact-title" title={title}>
+              {title}
             </span>
-            <span className="sws-artifact-meta">
-              {artifact.missing ? "Missing" : props.meta}
-              {artifact.thread ? (
-                <span className="sws-artifact-thread"> · {artifact.thread.title}</span>
-              ) : null}
+            <span className="sws-artifact-age">
+              {artifact.missing ? "Missing" : artifactAge(artifact.updatedAt, props.now)}
             </span>
-          </>
+          </span>
         ) : (
           <span className="sws-artifact-far-lines" />
         )}

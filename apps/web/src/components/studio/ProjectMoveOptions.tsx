@@ -66,7 +66,7 @@ export function MoveIntentToggle({
       <Toggle value="move" disabled={!canMove}>
         Hand off and continue there
       </Toggle>
-      <Toggle value="copy">Copy files only</Toggle>
+      <Toggle value="copy">Copy local files</Toggle>
     </ToggleGroup>
   );
 }
@@ -118,8 +118,9 @@ const METHODS: ReadonlyArray<{
   },
   {
     value: "folder",
-    label: "Send committed work through Git only",
-    detail: "Pushes commits and continues in a folder already saved there. Nothing else is sent.",
+    label: "Use Git, no file copy",
+    detail:
+      "Continues in a folder already saved there, which updates from origin. Nothing else is sent.",
   },
 ];
 

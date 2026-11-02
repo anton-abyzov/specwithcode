@@ -7,6 +7,13 @@ import {
   ProjectEnvironmentImportPreview,
   ProjectEnvironmentImportInput,
 } from "./projectEnvironment.ts";
+import {
+  ProjectRepositoriesCheckInput,
+  ProjectRepositoriesCheckResult,
+  ProjectRepositoriesError,
+  ProjectRepositoriesReadInput,
+  ProjectRepositoriesReadResult,
+} from "./projectRepositories.ts";
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
@@ -105,6 +112,8 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentImportPreview: "projects.environmentImportPreview",
   projectsEnvironmentImport: "projects.environmentImport",
   projectsFolderCheck: "projects.folderCheck",
+  projectsRepositoriesRead: "projects.repositoriesRead",
+  projectsRepositoriesCheck: "projects.repositoriesCheck",
   projectsWorktreesRead: "projects.worktreesRead",
   projectsWorktreesRemove: "projects.worktreesRemove",
   projectsThreadsDelete: "projects.threadsDelete",
@@ -317,6 +326,17 @@ export const projectPlanningRpcs = [
     payload: ProjectFolderCheckInput,
     success: ProjectFolderCheck,
     error: Schema.Union([ProjectFolderCheckError, EnvironmentAuthorizationError]),
+  }),
+  // The checkouts inside a project folder, and whether another machine's copy has them.
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsRepositoriesRead, {
+    payload: ProjectRepositoriesReadInput,
+    success: ProjectRepositoriesReadResult,
+    error: Schema.Union([ProjectRepositoriesError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsRepositoriesCheck, {
+    payload: ProjectRepositoriesCheckInput,
+    success: ProjectRepositoriesCheckResult,
+    error: Schema.Union([ProjectRepositoriesError, EnvironmentAuthorizationError]),
   }),
   // A project's worktrees, read before deleting it and removed after.
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsWorktreesRead, {

@@ -78,10 +78,17 @@ export async function resolveUpdateFeed(input: {
   readonly platform: string;
   readonly arch: string;
   readonly channel: string;
+  /**
+   * electron-updater's private provider serves files as /releases/assets/<id>, with no extension,
+   * so DebUpdater finds no .deb, takes the AppImage and dpkg refuses it. A .deb reads without the
+   * sign-in. A private repository then fails at the check instead of installing the wrong file.
+   */
+  readonly isDebPackage: boolean;
   readonly fetchImpl?: FetchLike;
   readonly cache?: ReleaseFeedCache;
 }): Promise<{ readonly feed: ElectronUpdaterFeedUrl; readonly fallbackTag: string | null }> {
-  const { owner, repo, token } = input;
+  const { owner, repo } = input;
+  const token = input.isDebPackage ? null : input.token;
   const github = {
     feed: {
       provider: "github",

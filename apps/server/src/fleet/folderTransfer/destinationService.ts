@@ -839,6 +839,7 @@ export class DestinationCopies {
   async resume(): Promise<void> {
     this.startKeepalive();
     await this.discardExpiredBackups().catch(() => undefined);
+    void this.closeSupersededPreviews().catch(() => undefined);
     for (const saved of await this.list()) {
       const op = saved.operationId;
       if (this.running.has(op) || this.claimed.has(op)) continue;
@@ -1261,6 +1262,45 @@ export class DestinationCopies {
       const projectId = await this.hooks.register(current);
       await this.update(current.operationId, { projectId });
     }
+    void this.closeSupersededPreviews().catch(() => undefined);
+  }
+
+  /**
+   * A comparison left waiting for review is out of date once a later copy of the same
+   * folder from the same project finished: it would only ask about files already there.
+   * Only previews close; they have written nothing. Telling the source can wait on a slow
+   * network, so callers do not hold startup or a finished copy on it.
+   */
+  async closeSupersededPreviews(): Promise<ReadonlyArray<string>> {
+    const records = await this.list();
+    const closed: Array<string> = [];
+    for (const record of records) {
+      if (record.state !== "previewed" || this.running.has(record.operationId)) continue;
+      const finished = records.some(
+        (other) =>
+          other.state === "applied" &&
+          other.committed &&
+          other.targetFolder === record.targetFolder &&
+          other.sourceProjectId === record.sourceProjectId &&
+          // Started after this comparison last changed; a finished copy's updatedAt moves later.
+          Date.parse(other.createdAt) > Date.parse(record.updatedAt) &&
+          // It carried at least what this comparison asks about.
+          (record.mode === "copy-only" || other.mode === "copy-and-move") &&
+          record.selection.every((value) => other.selection.includes(value)),
+      );
+      if (!finished) continue;
+      // Someone may have started this comparison since the list was read.
+      const current = await this.read(record.operationId);
+      if (
+        current?.state !== "previewed" ||
+        current.updatedAt !== record.updatedAt ||
+        this.running.has(record.operationId)
+      )
+        continue;
+      await this.cancel(record.operationId, "A later copy of this folder finished.");
+      closed.push(record.operationId);
+    }
+    return closed;
   }
 }
 

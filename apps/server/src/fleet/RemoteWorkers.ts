@@ -56,6 +56,9 @@ import {
   type RemoteProjectMatch,
   translateModel,
 } from "./remoteWorkerMatching.ts";
+import { remoteRepositoryBrief } from "./remoteRepositories.ts";
+import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import * as WorkerEpochStore from "./WorkerEpochStore.ts";
 
@@ -519,6 +522,11 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  // Read here, not at each launch: a launch runs in its caller's context.
+  const identities = yield* Effect.serviceOption(
+    RepositoryIdentityResolver.RepositoryIdentityResolver,
+  );
+  const workspace = yield* Effect.serviceOption(ProjectWorkspaceService.ProjectWorkspaceService);
   const probes = yield* Ref.make<ReadonlyMap<string, Probe>>(new Map());
 
   const machines = targets.load.pipe(
@@ -890,6 +898,31 @@ const make = Effect.gen(function* () {
           translation.type === "unavailable" ? undefined : translation.modelSelection;
       }
 
+      // The worker is told which repositories the project uses; it clones
+      // one its task needs itself. Nothing is copied or cloned for it.
+      const brief =
+        input.localProject === undefined || input.message === undefined || Option.isNone(identities)
+          ? undefined
+          : yield* remoteRepositoryBrief(input.localProject).pipe(
+              Effect.provideService(
+                RepositoryIdentityResolver.RepositoryIdentityResolver,
+                identities.value,
+              ),
+              Option.isSome(workspace)
+                ? Effect.provideService(
+                    ProjectWorkspaceService.ProjectWorkspaceService,
+                    workspace.value,
+                  )
+                : (effect) => effect,
+            );
+      const message =
+        brief === undefined || input.message === undefined
+          ? input.message
+          : `${input.message}\n\n${brief}`;
+      // A prompt already at the launch limit goes as it was.
+      const briefed: RemoteLaunchInput =
+        message === undefined || message.length > 120_000 ? input : { ...input, message };
+
       const rowId = `rwt:${input.commandId}`;
       const startedAt = yield* isoNow;
       yield* writeRow(rowId, () => ({
@@ -916,9 +949,10 @@ const make = Effect.gen(function* () {
         // Kept so the lowered mode can be shown, not only logged.
         ...(clamped.loweredFrom === undefined ? {} : { loweredFrom: clamped.loweredFrom }),
       }));
-      return yield* follower.trackLaunch(rowId)(
-        sendAndRecord({ input, rowId, target, modelSelection, clamped }),
+      const launched = yield* follower.trackLaunch(rowId)(
+        sendAndRecord({ input: briefed, rowId, target, modelSelection, clamped }),
       );
+      return launched;
     });
 
   const sendAndRecord = ({

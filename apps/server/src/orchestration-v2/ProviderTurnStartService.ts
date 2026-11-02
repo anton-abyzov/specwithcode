@@ -10,6 +10,7 @@ import {
 } from "./ChildContinuationContext.ts";
 import * as Path from "effect/Path";
 import { makeEnvironmentSkipNotice } from "../project/ProjectEnvironmentNotice.ts";
+import { makeRepositorySyncRuntime } from "../project/ProjectRepositorySync.ts";
 import { makeEnvironmentRuntime } from "../project/ProjectEnvironmentRuntime.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
 import * as AgentSessionScanner from "../project/AgentSessionScanner.ts";
@@ -258,6 +259,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const environmentRuntime = yield* makeEnvironmentRuntime;
     const environmentSkipNotice = yield* makeEnvironmentSkipNotice;
+    const repositorySyncRuntime = yield* makeRepositorySyncRuntime;
     const fileSystem = yield* FileSystem.FileSystem;
     const projects = yield* ProjectService.ProjectService;
     const worktreeRestoreContext = yield* Effect.context<
@@ -1348,8 +1350,10 @@ export const layer: Layer.Layer<
       });
       // An answer to a question reads, for the agent, with the questions it answers.
       const userText = yield* withAskedQuestions(projectionStore, message, composedUserText);
+      // Inside the environment runtime: a fenced project or a moved folder is refused before
+      // anything here touches a repository.
       const environmentSession = environmentRuntime(
-        session,
+        repositorySyncRuntime(session, projects.getById, run.providerInstanceId),
         projects.getById,
         environmentSkipNotice(run.providerInstanceId),
       );

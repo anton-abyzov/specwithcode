@@ -479,11 +479,19 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(appUpdateYmlConfig)) return;
     const { provider, owner, repo } = appUpdateYmlConfig.value;
     if (provider !== "github" || !owner || !repo) return;
-    const token = yield* Effect.promise(() => updateTokenResolver.resolve());
+    const token = isDebPackage ? null : yield* Effect.promise(() => updateTokenResolver.resolve());
     const { channel } = yield* Ref.get(updateStateRef);
     const { platform, runtimeInfo } = environment;
     const { feed, fallbackTag } = yield* Effect.promise(() =>
-      resolveUpdateFeed({ owner, repo, token, channel, platform, arch: runtimeInfo.appArch }),
+      resolveUpdateFeed({
+        owner,
+        repo,
+        token,
+        channel,
+        platform,
+        arch: runtimeInfo.appArch,
+        isDebPackage,
+      }),
     );
     if (fallbackTag) yield* logUpdaterInfo("Latest has no feed here; using", { tag: fallbackTag });
     yield* electronUpdater.setFeedURL(feed);

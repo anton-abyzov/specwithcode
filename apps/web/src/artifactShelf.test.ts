@@ -64,7 +64,6 @@ function input(artifacts: ThreadArtifact[], overrides: Partial<ShelfInput> = {})
   return {
     artifacts,
     mentionedAt: () => NOW - DAY,
-    pullRequests: new Map(),
     fileChecks: new Map(),
     pinned: new Set(),
     hidden: new Set(),
@@ -97,44 +96,23 @@ describe("shelfEntries", () => {
   it("lists each thing once, newest mention first", () => {
     const entries = shelfEntries(
       input([
-        link("https://github.com/acme/app/pull/230/files", "pull/230", "new"),
-        link("https://github.com/acme/app/pull/230", "pull/230", "old"),
-        link("https://status.spec-weave.com/", "status"),
-        link("https://status.spec-weave.com", "status"),
+        link("https://status.spec-weave.com/", "status", "new"),
+        link("https://status.spec-weave.com", "status", "old"),
+        link("https://example.com/report", "report"),
       ]),
     );
-    expect(entries.map((entry) => entry.label)).toEqual(["app #230", "status"]);
+    expect(entries.map((entry) => entry.label)).toEqual(["status", "report"]);
     expect(entries[0]!.artifact.messageId).toBe("new");
   });
 
-  it("names a pull request linked by a subpage like any other link to it", () => {
+  it("lists no pull request, however it was linked", () => {
     const entries = shelfEntries(
       input([
-        link("https://github.com/acme/app/pull/1149/files", "1149/files", "new"),
-        link("https://github.com/acme/app/pull/1149", "pull/1149", "old"),
+        link("https://github.com/acme/app/pull/1149/files", "1149/files"),
         link("https://github.com/acme/app/pull/7/checks", "the checks run"),
       ]),
     );
-    expect(entries.map((entry) => entry.label)).toEqual(["app #1149", "the checks run"]);
-  });
-
-  it("names a pull request by its tracked title and folds it once merged or closed", () => {
-    const merged = "https://github.com/acme/app/pull/1";
-    const open = "https://github.com/acme/app/pull/2";
-    const entries = shelfEntries(
-      input([link(merged, "pull/1"), link(open, "pull/2")], {
-        mentionedAt: () => NOW - 30 * DAY,
-        pullRequests: new Map([
-          [canonicalLinkKey(merged), { state: "merged", title: "Ship pins" }],
-          [canonicalLinkKey(open), { state: "open", title: "Organize artifacts" }],
-        ]),
-      }),
-    );
-    expect(entries.map((entry) => [entry.label, entry.aged])).toEqual([
-      ["Ship pins", "merged"],
-      // Open stays current however long ago it was named.
-      ["Organize artifacts", null],
-    ]);
+    expect(entries).toEqual([]);
   });
 
   it("marks a file the host no longer has as missing, and a quiet one as stale", () => {
@@ -155,7 +133,8 @@ describe("organizeShelf", () => {
       input(
         [
           file("/Users/me/notes/STEPS.md"),
-          link("https://github.com/acme/app/pull/9", "pull/9"),
+          link("https://example.com/docs", "Docs"),
+          link("https://example.com/more", "More"),
           link("https://gittrend.io/x", "Gemini Nexus"),
           file("/tmp/report.html"),
           file("/tmp/hidden.md"),
@@ -173,13 +152,13 @@ describe("organizeShelf", () => {
       shelf.sections.map((section) => [section.id, section.total, section.entries.length]),
     ).toEqual([
       ["pinned", 1, 1],
-      ["pullRequests", 1, 1],
       ["files", 2, 2],
+      ["links", 2, 2],
       ["older", 1, 0],
       ["hidden", 1, 0],
     ]);
-    expect(shelf.visibleCount).toBe(5);
-    expect(shelf.sections[2]!.entries[0]!.detail).toBe("me/notes");
+    expect(shelf.visibleCount).toBe(6);
+    expect(shelf.sections[1]!.entries[0]!.detail).toBe("me/notes");
   });
 
   it("shows the newest few per section until the section is opened", () => {

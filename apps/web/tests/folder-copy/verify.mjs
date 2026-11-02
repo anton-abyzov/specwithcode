@@ -302,7 +302,7 @@ const choosing = async (page, w) => {
     title: COPY_TITLE,
   });
   NodeAssert.equal(await action("Cancel").count(), 1, "Where offers Cancel");
-  NodeAssert.equal(await intent(page), "Copy files only", "the dialog opened as a copy");
+  NodeAssert.equal(await intent(page), "Copy local files", "the dialog opened as a copy");
   await chooseFirst(page);
   await check("where-choose", {
     primary: "Copy to ministorm",

@@ -497,7 +497,7 @@ describe("shared handoff controls", () => {
     const changes = { state: "dirty", fileCount: 3, committing: false, error: null, onCommit };
     await handoff({ sourceChanges: changes as NonNullable<HandoffProps["sourceChanges"]> });
     const note = document.querySelector('[data-slot="handoff-source-changes"]')!;
-    expect(note.textContent).toContain("3 uncommitted files on MacBook M4.");
+    expect(note.textContent).toContain("3 uncommitted files stay on MacBook M4.");
     await click(button("Commit for me"));
     expect(onCommit).toHaveBeenCalledOnce();
     await handoff({
@@ -549,27 +549,31 @@ describe("handoff file method and intent", () => {
       "How files travel",
     );
     expect(methodRadio("Copy everything except secrets").getAttribute("aria-checked")).toBe("true");
-    await click(methodRadio("Send committed work through Git only"));
+    await click(methodRadio("Use Git, no file copy"));
     expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("folder");
     await handoff({ method: "folder", onMethodChange, copyFlow: undefined });
     const more = document.querySelector('[data-slot="handoff-more-options"]')!;
     expect(more.querySelector('[data-slot="handoff-method"]')).not.toBeNull();
-    expect(methodRadio("Send committed work through Git only").getAttribute("aria-checked")).toBe(
-      "true",
-    );
+    expect(methodRadio("Use Git, no file copy").getAttribute("aria-checked")).toBe("true");
     expect(button("Hand off to MacBook Pro")).toBeDefined();
     await click(methodRadio("Clone clean repositories from Git"));
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
   });
 
+  it("promises no push for a move the destination takes from origin", async () => {
+    await handoff({ phase: "review", preview: { ...preview, gitSync: true } });
+    const review = document.querySelector('[data-slot="handoff-git-review"]')!;
+    expect(review.textContent).toContain("Continue the project on MacBook Pro. Nothing is pushed.");
+    expect(review.textContent).toContain("Unpushed commits, uncommitted files");
+    expect(review.textContent).not.toContain("Push these commits");
+  });
+
   it("titles the dialog by intent and keeps Git for moves only", async () => {
     const onMethodChange = vi.fn();
     await handoff({ method: "copy", intent: "copy", onMethodChange, copyFlow });
-    expect(document.querySelector("h2")?.textContent).toBe("Copy Product");
-    expect(methodRadio("Send committed work through Git only").getAttribute("aria-disabled")).toBe(
-      "true",
-    );
-    await click(methodRadio("Send committed work through Git only"));
+    expect(document.querySelector("h2")?.textContent).toBe("Copy local files: Product");
+    expect(methodRadio("Use Git, no file copy").getAttribute("aria-disabled")).toBe("true");
+    await click(methodRadio("Use Git, no file copy"));
     expect(onMethodChange).not.toHaveBeenCalled();
     await handoff({ intent: "move" });
     expect(document.querySelector("h2")?.textContent).toBe("Hand off Product");
@@ -589,7 +593,7 @@ describe("handoff file method and intent", () => {
       "What to do",
     );
     expect(toggle("Hand off and continue there").getAttribute("aria-pressed")).toBe("true");
-    await click(toggle("Copy files only"));
+    await click(toggle("Copy local files"));
     expect(onIntentChange).toHaveBeenCalledExactlyOnceWith("copy");
   });
 
@@ -600,7 +604,7 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector('[data-slot="dialog-close"]')).toBeNull();
     await escape();
     expect(props.onOpenChange).not.toHaveBeenCalled();
-    await click(methodRadio("Send committed work through Git only"));
+    await click(methodRadio("Use Git, no file copy"));
     expect(onMethodChange).not.toHaveBeenCalled();
   });
 
@@ -620,7 +624,7 @@ describe("handoff file method and intent", () => {
       document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
         ?.disabled,
     ).toBe(false);
-    await click(methodRadio("Send committed work through Git only"));
+    await click(methodRadio("Use Git, no file copy"));
     expect(onMethodChange).not.toHaveBeenCalled();
     await escape();
     expect(props.onOpenChange).toHaveBeenCalledWith(false);

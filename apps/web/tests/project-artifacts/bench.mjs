@@ -54,10 +54,10 @@ function scanOutputs() {
 const all = scanOutputs();
 const previewable = all.filter((item) => PREVIEWED.test(item.path));
 const MIXES = {
-  // The server lists at most 120 outputs; the rest of 495 are pull requests.
-  typical: { outputs: all.slice(0, 120), pullRequests: TOTAL - 120 },
+  // The server lists at most 120 outputs.
+  typical: { outputs: all.slice(0, 120) },
   // The most this could cost: every card is a real document or image.
-  everyDocument: { outputs: previewable.slice(0, TOTAL), pullRequests: 0 },
+  everyDocument: { outputs: previewable.slice(0, TOTAL) },
 };
 
 let manifest = MIXES.typical;
@@ -276,9 +276,8 @@ async function run(mixName, shots) {
   await context.close();
   return {
     mix: mixName,
-    artifacts: manifest.outputs.length + manifest.pullRequests,
+    artifacts: manifest.outputs.length,
     files: manifest.outputs.length,
-    pullRequests: manifest.pullRequests,
     errors: errors.slice(0, 3),
     open: {
       firstPaintOfGridMs: mountMs,

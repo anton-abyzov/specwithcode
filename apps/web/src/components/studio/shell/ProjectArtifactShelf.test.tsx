@@ -66,19 +66,6 @@ function sample(pinned: ReadonlySet<string> = new Set()): ProjectArtifact[] {
       ],
     },
     designs: [],
-    pullRequests: [
-      {
-        key: "k",
-        number: 12,
-        repository: "me/app",
-        url: "https://github.com/me/app/pull/12",
-        title: "Add the shelf",
-        state: "open",
-        updatedAt: "2026-10-30T11:30:00.000Z",
-        threadId: "t1" as ThreadId,
-        threadTitle: "Shelf thread",
-      },
-    ],
     threadArtifacts: [],
     threadOf: (id) => ({ environmentId: env, threadId: id as ThreadId, title: "Shelf thread" }),
     pinned,
@@ -133,17 +120,15 @@ it("shows nothing when the project has no artifacts", async () => {
   expect(container.querySelector(".sws-artifact-shelf")).toBeNull();
 });
 
-it("lists cards newest first, pinned first, with age, kind and the thread", async () => {
+it("lists cards newest first, pinned first, each with its age", async () => {
   await render(sample());
   await dwell();
-  expect(titles()).toEqual(["Add the shelf", "light.png", "summary.md"]);
+  expect(titles()).toEqual(["light.png", "summary.md"]);
   expect(container.querySelector(".sws-artifact-thumb-image")?.getAttribute("src")).toBe(
     "blob:shot",
   );
-  const meta = [...container.querySelectorAll(".sws-artifact-meta")].map((n) => n.textContent);
-  expect(meta[0]).toBe("30m · Open PR · Shelf thread");
-  expect(meta[1]).toBe("1h · Image");
-  expect(meta[2]).toBe("2d · Document");
+  const ages = [...container.querySelectorAll(".sws-artifact-age")].map((n) => n.textContent);
+  expect(ages.slice(0, 2)).toEqual(["1h", "2d"]);
 
   await render(sample(new Set(["file:.specweave/reports/summary.md"])));
   expect(titles()[0]).toBe("summary.md");
@@ -152,7 +137,7 @@ it("lists cards newest first, pinned first, with age, kind and the thread", asyn
   ).toBe("Pin summary.md");
 });
 
-it("pins, opens files in the viewer, links in the browser, and View all", async () => {
+it("pins, opens files in the viewer, and View all", async () => {
   const onPin = vi.fn();
   const onViewAll = vi.fn();
   await render(sample(), { onPin, onViewAll });
@@ -161,13 +146,11 @@ it("pins, opens files in the viewer, links in the browser, and View all", async 
   expect(onPin).toHaveBeenCalledWith("file:.specweave/reports/summary.md", true);
 
   const open = [...container.querySelectorAll<HTMLButtonElement>(".sws-artifact-open")];
-  await act(async () => open[2]!.click());
+  await act(async () => open[1]!.click());
   expect(runtime.viewer).toHaveBeenCalledWith(".specweave/reports/summary.md");
-  await act(async () => open[0]!.click());
-  expect(runtime.openLink).toHaveBeenCalledWith("https://github.com/me/app/pull/12");
 
   const viewAll = container.querySelector<HTMLButtonElement>(".sws-artifact-view-all-card")!;
-  expect(viewAll.textContent).toBe("View all3 artifacts");
+  expect(viewAll.textContent).toBe("View all2");
   await act(async () => viewAll.click());
   expect(onViewAll).toHaveBeenCalled();
 });
@@ -187,16 +170,6 @@ it("previews a markdown report as a small page and folds the shelf", async () =>
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   expect(container.querySelector<HTMLUListElement>(".sws-artifact-row")!.hidden).toBe(true);
   expect(localStorage.getItem("studio:project-artifacts-shelf-open:v1")).toBe("false");
-});
-
-it("gives a pull request a sheet of its state, number, title and repository", async () => {
-  await render(sample());
-  const card = container.querySelector('.sws-artifact-card[data-kind="pullRequest"]')!;
-  expect(card.querySelector(".sws-artifact-thumb")?.getAttribute("data-state")).toBe("open");
-  expect(card.querySelector(".sws-artifact-facts-label")?.textContent).toBe("Open");
-  expect(card.querySelector(".sws-artifact-facts-detail")?.textContent).toBe("#12");
-  expect(card.querySelector(".sws-artifact-facts-title")?.textContent).toBe("Add the shelf");
-  expect(card.querySelector(".sws-artifact-facts-foot")?.textContent).toBe("me/app");
 });
 
 describe("with an observer", () => {
@@ -275,7 +248,7 @@ describe("with an observer", () => {
             artifact={sample()[0]!}
             environmentId={env}
             workspaceRoot="/work/app"
-            meta="30m"
+            now={Date.now()}
             onOpen={vi.fn()}
             onPin={vi.fn()}
             windowed
@@ -301,7 +274,7 @@ describe("with an observer", () => {
           artifact={artifact}
           environmentId={env}
           workspaceRoot="/work/app"
-          meta="30m"
+          now={Date.now()}
           onOpen={vi.fn()}
           onPin={vi.fn()}
           windowed
@@ -311,16 +284,14 @@ describe("with an observer", () => {
     await act(async () => root.render(card));
     const item = container.querySelector(".sws-artifact-card")!;
     expect(item.hasAttribute("data-far")).toBe(true);
-    expect(item.querySelector(".sws-artifact-open")?.getAttribute("aria-label")).toBe(
-      "Add the shelf",
-    );
+    expect(item.querySelector(".sws-artifact-open")?.getAttribute("aria-label")).toBe("light.png");
     expect(item.querySelector(".sws-artifact-title")).toBeNull();
     expect(item.querySelector(".sws-artifact-actions")).toBeNull();
 
     await act(async () => notify(true));
     expect(item.hasAttribute("data-far")).toBe(false);
-    expect(item.querySelector(".sws-artifact-title")?.textContent).toBe("Add the shelf");
-    expect(item.querySelector(".sws-artifact-facts-detail")?.textContent).toBe("#12");
+    expect(item.querySelector(".sws-artifact-title")?.textContent).toBe("light.png");
+    expect(item.querySelector(".sws-artifact-preview")).not.toBeNull();
     expect(item.querySelector(".sws-artifact-actions")).not.toBeNull();
   });
 

@@ -51,6 +51,8 @@ export interface HandoffSourceChanges {
 }
 
 export interface HandoffPreview {
+  /** The destination updates from origin and nothing is pushed. */
+  readonly gitSync?: boolean;
   readonly repositories: ReadonlyArray<{ readonly relativePath: string; readonly head: string }>;
   readonly messageCount: number;
   /** A large project's summary of what stays here; null when every transcript moves. */
@@ -103,6 +105,7 @@ export function MachineHandoffDialog({
   onBack,
   folderPicker,
   sourceChanges = null,
+  leftBehind = null,
   method = "folder",
   onMethodChange,
   copyFlow,
@@ -115,6 +118,8 @@ export function MachineHandoffDialog({
   readonly machinesLoading?: boolean;
   /** How the destination gets the files; the copy methods render `copyFlow` instead. */
   readonly method?: HandoffFolderMethod;
+  /** What stays on the source if the project moves; shown before a move. */
+  readonly leftBehind?: ReactNode;
   readonly onMethodChange?: (method: HandoffFolderMethod) => void;
   readonly copyFlow?: ReactNode;
   readonly copyBusy?: boolean;
@@ -199,14 +204,16 @@ export function MachineHandoffDialog({
                 ? `${projectTitle} ${intent === "copy" ? "is copied to" : "is on"} ${copyDoneOn}`
                 : complete
                   ? `${projectTitle} is on ${targetLabel}`
-                  : `${intent === "copy" ? "Copy" : "Hand off"} ${projectTitle}`}
+                  : `${intent === "copy" ? "Copy local files:" : "Hand off"} ${projectTitle}`}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}
             {!(copying && copyDoneOn) && (
               <DialogDescription className="wrap-anywhere">
                 {complete
                   ? `The coordinator now runs on ${targetLabel}.`
-                  : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}
+                  : intent === "copy"
+                    ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
+                    : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}
               </DialogDescription>
             )}
           </DialogHeader>
@@ -219,6 +226,7 @@ export function MachineHandoffDialog({
                 destinationWorktreeStorage={destinationWorktreeStorage}
               />
             )}
+            {intent === "move" && !complete && leftBehind}
             {copying ? (
               <HandoffCopyActionsTarget.Provider value={copyActionsTarget}>
                 {copyFlow}
@@ -276,7 +284,9 @@ export function MachineHandoffDialog({
               <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
                 {phase === "checking"
                   ? "Checking both machines…"
-                  : `Pushing commits and starting ${projectTitle} on ${targetLabel}…`}
+                  : preview?.gitSync
+                    ? `Starting ${projectTitle} on ${targetLabel}…`
+                    : `Pushing commits and starting ${projectTitle} on ${targetLabel}…`}
               </p>
             )}
           </DialogPanel>
@@ -538,7 +548,9 @@ function GitReview({
             {preview.messageCount} {preview.messageCount === 1 ? "message" : "messages"}.{" "}
           </>
         )}
-        Committed work only. Uncommitted files, sign-ins and running processes stay here.
+        {preview.gitSync
+          ? "The folder there updates from origin. Unpushed commits, uncommitted files, sign-ins and running processes stay here."
+          : "Committed work only. Uncommitted files, sign-ins and running processes stay here."}
       </p>
       {unmerged && (
         <div
@@ -588,7 +600,9 @@ function GitReview({
           <Checkbox checked={consent} disabled={busy} onCheckedChange={onConsent} />
         </span>
         <span className="min-w-0 wrap-anywhere leading-5">
-          Push these commits to their remotes and continue the project on {targetLabel}.
+          {preview.gitSync
+            ? `Continue the project on ${targetLabel}. Nothing is pushed.`
+            : `Push these commits to their remotes and continue the project on ${targetLabel}.`}
         </span>
       </label>
     </div>
@@ -607,7 +621,8 @@ function SourceChangesNote({
   if (!changes || changes.state === "unknown")
     return (
       <p className="text-sm text-muted-foreground" data-slot="handoff-source-changes">
-        Only committed work moves through Git. Commit your changes first.
+        Uncommitted work stays on {sourceLabel}. Commit and push it to take it through Git, or use
+        Copy local files.
       </p>
     );
   if (changes.state === "clean")
@@ -623,7 +638,8 @@ function SourceChangesNote({
     >
       <p className="wrap-anywhere">
         {changes.fileCount === 1 ? "1 uncommitted file" : `${changes.fileCount} uncommitted files`}{" "}
-        on {sourceLabel}. Only committed work moves through Git.
+        stay on {sourceLabel}. Commit and push them to take them through Git, or use Copy local
+        files.
       </p>
       {changes.onCommit && (
         <Button

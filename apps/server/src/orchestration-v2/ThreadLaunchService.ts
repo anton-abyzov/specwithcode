@@ -42,6 +42,7 @@ import {
   normalizeProjectPathForDispatch,
 } from "@specweave-studio/shared/path";
 
+import { fetchOrigin } from "../fleet/repositorySync.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -482,7 +483,15 @@ const make = Effect.gen(function* () {
               remoteName: "origin",
               refName: input.workspaceStrategy.baseRef,
             })
-            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+            .pipe(
+              // An unreachable origin never stops a thread: another address may answer, and
+              // otherwise it starts from what this machine has and the first turn says so.
+              Effect.catch(() =>
+                Effect.tryPromise((signal) => fetchOrigin(gitRoot.cwd, { signal })).pipe(
+                  Effect.orElseSucceed(() => null),
+                ),
+              ),
+            );
           const remoteBaseExists = yield* git
             .remoteBranchExists({
               cwd: gitRoot.cwd,

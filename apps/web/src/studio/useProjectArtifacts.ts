@@ -1,8 +1,8 @@
 /**
  * The project's artifacts for the shelf above Threads and the Library's
- * Artifacts view: the Library snapshot, designs, pull requests and what this
- * device's thread artifact lists recorded, with the person's pins. Pins live
- * on this device, per project, as a thread's artifact pins do.
+ * Artifacts view: the Library snapshot, designs and what this device's thread
+ * artifact lists recorded, with the person's pins. Pins live on this device,
+ * per project, as a thread's artifact pins do.
  */
 import type {
   DesignSummary,
@@ -23,7 +23,6 @@ import {
   type ProjectArtifactThread,
   type ProjectThreadArtifacts,
 } from "./projectArtifacts";
-import type { ProjectPullRequest } from "./projectPaneModel";
 import { projectWorkspace } from "./projectWorkspace";
 
 /** Prefix of the per-thread artifact list snapshots `readOriginSnapshot` reads. */
@@ -93,9 +92,8 @@ export function useProjectArtifacts(input: {
   readonly enabled: boolean;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly designs: ReadonlyArray<DesignSummary>;
-  readonly pullRequests: ReadonlyArray<ProjectPullRequest>;
 }): ProjectArtifacts {
-  const { environmentId, projectId, workspaceRoot, threads, designs, pullRequests } = input;
+  const { environmentId, projectId, workspaceRoot, threads, designs } = input;
   const query = useEnvironmentQuery(
     input.enabled ? projectWorkspace.library({ environmentId, input: { projectId } }) : null,
   );
@@ -154,12 +152,11 @@ export function useProjectArtifacts(input: {
         workspaceRoot: library?.workspaceRoot ?? workspaceRoot,
         library,
         designs,
-        pullRequests,
         threadArtifacts,
         threadOf: (threadId) => threadsById.get(threadId) ?? null,
         pinned,
       }),
-    [library, workspaceRoot, designs, pullRequests, threadArtifacts, threadsById, pinned],
+    [library, workspaceRoot, designs, threadArtifacts, threadsById, pinned],
   );
 
   return {

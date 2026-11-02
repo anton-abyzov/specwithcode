@@ -224,7 +224,6 @@ function FilesMenu(props: { onOpenFile: (artifact: ThreadFileArtifact) => void }
         inherited: (artifact) =>
           artifact.messageId === "message-inherited" ? { machineLabel: "Studio Mini" } : null,
         root: ROOT,
-        pullRequests: new Map(),
         fileChecks: checks,
         pinned,
         hidden,

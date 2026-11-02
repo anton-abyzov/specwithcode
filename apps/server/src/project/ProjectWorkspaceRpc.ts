@@ -33,6 +33,9 @@ import * as ProjectService from "./ProjectService.ts";
 import { applyWorkspaceImport } from "./ProjectEnvironmentAdoption.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectWorktreeCleanup from "./ProjectWorktreeCleanup.ts";
+import * as ProjectRepositoryPresence from "./ProjectRepositoryPresence.ts";
+import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 
 type ProjectMemoryDeleteInput = Parameters<
   ProjectWorkspaceService.ProjectWorkspaceService["Service"]["deleteMemory"]
@@ -111,7 +114,36 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
     const folders = yield* ProjectFolderService;
     const worktrees = yield* ProjectWorktreeCleanup.make;
     const projects = yield* ProjectService.ProjectService;
+    const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
+    const withRepositoryServices = <A, E>(
+      effect: Effect.Effect<
+        A,
+        E,
+        | ProjectService.ProjectService
+        | RepositoryIdentityResolver.RepositoryIdentityResolver
+        | SourceControlRepositoryService.SourceControlRepositoryService
+      >,
+    ) =>
+      effect.pipe(
+        Effect.provideService(ProjectService.ProjectService, projects),
+        Effect.provideService(RepositoryIdentityResolver.RepositoryIdentityResolver, identities),
+        Effect.provideService(
+          SourceControlRepositoryService.SourceControlRepositoryService,
+          repositories,
+        ),
+        // The repository list is kept as a project note.
+        Effect.provideService(ProjectWorkspaceService.ProjectWorkspaceService, workspace),
+      );
     return {
+      [WS_METHODS.projectsRepositoriesRead]: (
+        input: import("@specweave-studio/contracts").ProjectRepositoriesReadInput,
+      ) =>
+        withRepositoryServices(ProjectRepositoryPresence.readProjectRepositories(input.projectId)),
+      [WS_METHODS.projectsRepositoriesCheck]: (
+        input: import("@specweave-studio/contracts").ProjectRepositoriesCheckInput,
+      ) => withRepositoryServices(ProjectRepositoryPresence.checkProjectRepositories(input)),
       [WS_METHODS.projectsFolderCheck]: (
         input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
       ) => folders.check(input),

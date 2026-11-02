@@ -79,7 +79,13 @@ describe("selectFeedRelease", () => {
 });
 
 describe("resolveUpdateFeed", () => {
-  const base = { owner: "anton-abyzov", repo: "specwithcode", platform: "linux", arch: "x64" };
+  const base = {
+    owner: "anton-abyzov",
+    repo: "specwithcode",
+    platform: "linux",
+    arch: "x64",
+    isDebPackage: false,
+  };
 
   it("points the generic provider at the newest release with this platform's feed", async () => {
     const { calls, fetchImpl } = answering(200, [
@@ -125,6 +131,24 @@ describe("resolveUpdateFeed", () => {
       },
       fallbackTag: null,
     });
+  });
+
+  it("leaves the sign-in out of a .deb install's feed, on every channel", async () => {
+    const { fetchImpl } = answering(200, [apiRelease("v1.0.116", ["latest-linux.yml"])]);
+    for (const channel of ["latest", "nightly"]) {
+      const result = await resolveUpdateFeed({
+        ...base,
+        token: "gho_secret",
+        channel,
+        isDebPackage: true,
+        fetchImpl,
+        cache: createReleaseFeedCache(),
+      });
+      expect(result).toEqual({
+        feed: { provider: "github", owner: "anton-abyzov", repo: "specwithcode" },
+        fallbackTag: null,
+      });
+    }
   });
 
   it("keeps the github provider when the list cannot be read anonymously", async () => {
