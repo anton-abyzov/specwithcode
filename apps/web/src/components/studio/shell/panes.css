@@ -1170,12 +1170,15 @@ button.sws-subagent-row:focus-visible {
     0 1px 2px color-mix(in srgb, #000 8%, transparent),
     0 4px 12px color-mix(in srgb, #000 10%, transparent);
 }
-/* Paper in either theme; only a little quieter on a dark screen. */
+/* Drawn on paper once; a dark screen turns a document's page to light type on dark. */
 .sws-artifact-sheet[data-format="markdown"]:has(> img),
 .sws-artifact-sheet[data-format="html"]:has(> img) {
   background: #fff;
 }
-:root.dark .sws-artifact-sheet[data-format="markdown"]:has(> img),
+:root.dark .sws-artifact-sheet[data-format="markdown"]:has(> img) {
+  filter: invert(0.88) hue-rotate(180deg);
+}
+/* A web page keeps its own colours, only a little quieter. */
 :root.dark .sws-artifact-sheet[data-format="html"]:has(> img) {
   filter: brightness(0.92);
 }

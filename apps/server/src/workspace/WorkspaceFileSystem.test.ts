@@ -78,6 +78,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reads only the start of a file when a preview asks for it", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "long.md", "# Title\n\nA long report.\n");
+
+        const start = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "long.md",
+          maxBytes: 7,
+        });
+        expect(start.contents).toBe("# Title");
+        expect(start.byteLength).toBe(24);
+        expect(start.truncated).toBe(true);
+
+        const whole = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "long.md",
+          maxBytes: 1024,
+        });
+        expect(whole.contents).toBe("# Title\n\nA long report.\n");
+        expect(whole.truncated).toBe(false);
+      }),
+    );
+
     it.effect("reads host files outside the workspace root by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

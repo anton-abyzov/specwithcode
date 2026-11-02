@@ -203,5 +203,18 @@ describe("isLastingReadFailure", async () => {
     expect(isLastingReadFailure(failure("path_not_file"))).toBe(true);
     expect(isLastingReadFailure(failure("operation_failed"))).toBe(false);
     expect(isLastingReadFailure(new Error("socket closed"))).toBe(false);
+    const refused = { cwd: "/work", relativePath: "a.md", failure: "operation_failed" } as const;
+    // The file no longer resolves, or the server never reads it.
+    const missing = new ProjectReadFileError({ ...refused, operation: "realpath-target" });
+    expect(isLastingReadFailure(missing)).toBe(true);
+    const sweptWorktree = new ProjectReadFileError({
+      ...refused,
+      operation: "realpath-workspace-root",
+    });
+    expect(isLastingReadFailure(sweptWorktree)).toBe(true);
+    const secret = new ProjectReadFileError({ ...refused, reason: "protected" });
+    expect(isLastingReadFailure(secret)).toBe(true);
+    const busy = new ProjectReadFileError({ ...refused, operation: "open" });
+    expect(isLastingReadFailure(busy)).toBe(false);
   });
 });

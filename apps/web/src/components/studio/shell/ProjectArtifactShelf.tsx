@@ -45,6 +45,8 @@ import { useOpenLink } from "../../../browser/useOpenLink";
 import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import {
+  artifactExcerptBytes,
+  artifactFileEnvironment,
   artifactPreviewCache,
   artifactPreviewFormat,
   artifactPreviewKey,
@@ -198,12 +200,12 @@ function DocumentPreviewBuilder(props: {
   useEffect(() => {
     if (attempt === null) return;
     let live = true;
-    void read(environmentId, root, path).then(async (result) => {
+    void read(environmentId, root, path, artifactExcerptBytes(format)).then(async (result) => {
       if (!live) return;
       if (result._tag === "unavailable") return retry();
       const preview =
         result._tag === "gone"
-          ? ({ type: "none" } as const)
+          ? ({ type: "none", gone: true } as const)
           : await documentPreview(result.contents, format);
       if (live) artifactPreviewCache.set(cacheKey, preview);
     });
@@ -276,7 +278,8 @@ function OriginalImage(props: {
 
 /** One key per file version, across the card and the preview it shows. */
 function previewKey(artifact: ProjectArtifact, environmentId: EnvironmentId, root: string) {
-  return artifactPreviewKey(artifact, `${environmentId}\u0000${root}`);
+  const fileEnvironment = artifactFileEnvironment(artifact, environmentId);
+  return artifactPreviewKey(artifact, `${fileEnvironment}\u0000${root}`);
 }
 
 function PreviewPage({ preview }: { preview: ArtifactPreview }) {
@@ -307,6 +310,7 @@ function LazyPreview(props: {
   const [near, setNear] = useState(false);
   useEffect(() => observeNearView(ref.current!, setNear), []);
   const root = artifact.root ?? props.workspaceRoot;
+  const environmentId = artifactFileEnvironment(artifact, props.environmentId);
   const key = previewKey(artifact, props.environmentId, props.workspaceRoot);
   const preview = useSyncExternalStore(
     useCallback((listener) => artifactPreviewCache.subscribe(key, listener), [key]),
@@ -335,12 +339,12 @@ function LazyPreview(props: {
       ) : near && preview?.type === "original" && artifact.path !== null ? (
         <OriginalImage
           path={artifact.path}
-          environmentId={props.environmentId}
+          environmentId={environmentId}
           root={root}
-          fallback={<FactSheet artifact={artifact} />}
+          fallback={<NoPage artifact={artifact} />}
         />
       ) : (
-        <FactSheet artifact={artifact} />
+        <NoPage artifact={artifact} note={preview?.type === "none" && preview.gone === true} />
       )}
       {near && preview === undefined && artifact.path !== null ? (
         <PreviewAnchorContext value={ref}>
@@ -348,7 +352,7 @@ function LazyPreview(props: {
             <ImagePreviewBuilder
               cacheKey={key}
               path={artifact.path}
-              environmentId={props.environmentId}
+              environmentId={environmentId}
               root={root}
             />
           ) : (
@@ -356,7 +360,7 @@ function LazyPreview(props: {
               cacheKey={key}
               format={format}
               path={artifact.path}
-              environmentId={props.environmentId}
+              environmentId={environmentId}
               root={root}
             />
           )}
@@ -411,6 +415,16 @@ function FactSheet({ artifact }: { artifact: ProjectArtifact }) {
   );
 }
 
+/** A file that has a page, while it has none to show: its name, and why if it cannot be read. */
+function NoPage({ artifact, note = false }: { artifact: ProjectArtifact; note?: boolean }) {
+  return (
+    <span className="sws-artifact-sheet sws-artifact-facts" data-kind={artifact.kind}>
+      <span className="sws-artifact-facts-title">{artifact.title}</span>
+      {note ? <span className="sws-artifact-facts-foot">Not available on this machine</span> : null}
+    </span>
+  );
+}
+
 /** A document or image shows a small page of itself; everything else, its facts. */
 export function ArtifactThumbnail(props: {
   readonly artifact: ProjectArtifact;
@@ -441,6 +455,8 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
   const [opened, setOpened] = useState<{
     file: LibraryViewerFile;
     files: LibraryViewerFile[];
+    /** The machine that has the file. */
+    environmentId: EnvironmentId;
     /** A thread's worktree for a file not yet in the project. */
     root: string | null;
   } | null>(null);
@@ -459,6 +475,7 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
         name: item.title,
         modifiedAt: item.updatedAt === null ? undefined : new Date(item.updatedAt).toISOString(),
       });
+      const fileEnvironment = artifactFileEnvironment(artifact, environmentId);
       // The viewer steps through files of one folder: the project's, or this worktree's.
       const files = siblings
         .filter(
@@ -466,13 +483,15 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
             item.path !== null &&
             !item.missing &&
             item.design === null &&
-            item.root === artifact.root,
+            item.root === artifact.root &&
+            artifactFileEnvironment(item, environmentId) === fileEnvironment,
         )
         .map(asFile);
       const file = asFile(artifact);
       setOpened({
         file,
         files: files.some((item) => item.path === file.path) ? files : [file],
+        environmentId: fileEnvironment,
         root: artifact.root,
       });
       return;
@@ -483,7 +502,7 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
   };
   const viewer = opened ? (
     <LibraryFileViewer
-      environmentId={environmentId}
+      environmentId={opened.environmentId}
       workspaceRoot={opened.root ?? workspaceRoot}
       files={opened.files}
       path={opened.file.path}

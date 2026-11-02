@@ -682,6 +682,8 @@ export const ProjectReadFileInput = Schema.Struct({
   // Workspace-relative, or an absolute host path for a file outside the
   // workspace. Only workspace-relative paths can be written back.
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  // Reads only the start of the file, for a preview. An older server ignores it.
+  maxBytes: Schema.optional(PositiveInt),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 

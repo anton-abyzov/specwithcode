@@ -3,6 +3,8 @@
  * files get a page, the lines a text page shows, and a memory cache bounded
  * by bytes. Nothing here reads a file or touches the disk.
  */
+import type { EnvironmentId } from "@specweave-studio/contracts";
+
 import type { ProjectArtifact } from "./projectArtifacts";
 
 export type ArtifactPreviewFormat = "image" | "html" | "markdown" | "text";
@@ -15,7 +17,7 @@ export interface ArtifactPreviewLine {
 /**
  * A finished preview. `original` is an image that could not be scaled, shown
  * from a live URL because its URLs expire; `none` remembers that a file has
- * nothing to show.
+ * nothing to show, and `gone` that it could not be read at all.
  */
 export type ArtifactPreview =
   | {
@@ -32,25 +34,44 @@ export type ArtifactPreview =
       readonly mono: boolean;
       readonly lines: ReadonlyArray<ArtifactPreviewLine>;
     }
-  | { readonly type: "none" };
+  | { readonly type: "none"; readonly gone?: boolean | undefined };
 
-/** Documents small enough to read for a page on their card. */
-const TEXT_MAX_BYTES = 512 * 1024;
+/** A card reads only this much of a file, so a long one costs what a short one does. */
+const TEXT_EXCERPT_BYTES = 32 * 1024;
+/** A page's styles come first and can be long. */
+const HTML_EXCERPT_BYTES = 256 * 1024;
 /** Images are read whole to scale them, so the largest screenshots stay a plain card. */
 export const IMAGE_MAX_BYTES = 24 * 1024 * 1024;
 const PREVIEW_CHARS = 1600;
 const PREVIEW_LINES = 14;
 
+export function artifactExcerptBytes(format: ArtifactPreviewFormat): number {
+  return format === "html" ? HTML_EXCERPT_BYTES : TEXT_EXCERPT_BYTES;
+}
+
 function isRelative(path: string): boolean {
   return !path.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(path);
+}
+
+/**
+ * The machine that has an artifact's file. A worktree or a path outside the
+ * project belongs to the machine of the thread that wrote it; anything else is
+ * the project's own file.
+ */
+export function artifactFileEnvironment(
+  artifact: ProjectArtifact,
+  projectEnvironment: EnvironmentId,
+): EnvironmentId {
+  if (artifact.thread === null || artifact.path === null) return projectEnvironment;
+  return artifact.root !== null || !isRelative(artifact.path)
+    ? artifact.thread.environmentId
+    : projectEnvironment;
 }
 
 export function artifactPreviewFormat(artifact: ProjectArtifact): ArtifactPreviewFormat | null {
   if (artifact.path === null || artifact.missing) return null;
   const size = artifact.byteLength ?? 0;
   if (artifact.kind === "image") return size > IMAGE_MAX_BYTES ? null : "image";
-  // Files only the thread's own worktree has are read where they open, not here.
-  if (!isRelative(artifact.path) || size > TEXT_MAX_BYTES) return null;
   if (artifact.kind === "data" || artifact.kind === "code") return "text";
   if (artifact.kind !== "document" && artifact.kind !== "page") return null;
   if (/\.(md|markdown|mdx)$/i.test(artifact.path)) return "markdown";

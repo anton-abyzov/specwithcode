@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
+import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   ArtifactPreviewCache,
   ArtifactPreviewSlots,
+  artifactExcerptBytes,
+  artifactFileEnvironment,
   artifactPreviewFormat,
   artifactPreviewKey,
   markdownPreviewLines,
@@ -30,6 +33,21 @@ const artifact = (over: Partial<ProjectArtifact>): ProjectArtifact => ({
   ...over,
 });
 
+describe("artifactFileEnvironment", () => {
+  const project = "project" as EnvironmentId;
+  const worker = "worker" as EnvironmentId;
+  const thread = { environmentId: worker, threadId: "t" as ThreadId, title: "T" };
+
+  it("reads a worktree or outside file from the machine of the thread that wrote it", () => {
+    const of = (overrides: Partial<ProjectArtifact>) =>
+      artifactFileEnvironment(artifact({ thread, ...overrides }), project);
+    expect(of({ path: "/evidence/a.md" })).toBe(worker);
+    expect(of({ path: "a.md", root: "/worktree" })).toBe(worker);
+    expect(of({ path: "a.md" })).toBe(project);
+    expect(artifactFileEnvironment(artifact({ path: "/evidence/a.md" }), project)).toBe(project);
+  });
+});
+
 describe("artifactPreviewFormat", () => {
   it("names what a file previews as", () => {
     expect(artifactPreviewFormat(artifact({}))).toBe("markdown");
@@ -39,12 +57,17 @@ describe("artifactPreviewFormat", () => {
     expect(artifactPreviewFormat(artifact({ kind: "image", path: "a.png" }))).toBe("image");
   });
 
-  it("reads nothing for what has no file, is gone, is too big or is outside the project", () => {
+  it("previews a file outside the project and one of any size, from its start", () => {
+    expect(artifactPreviewFormat(artifact({ path: "/tmp/a.md" }))).toBe("markdown");
+    expect(artifactPreviewFormat(artifact({ path: "C:\\a.md" }))).toBe("markdown");
+    expect(artifactPreviewFormat(artifact({ byteLength: 5 * 1048576 }))).toBe("markdown");
+    expect(artifactExcerptBytes("markdown")).toBe(32 * 1024);
+    expect(artifactExcerptBytes("html")).toBe(256 * 1024);
+  });
+
+  it("reads nothing for what has no file, is gone, or has no page", () => {
     expect(artifactPreviewFormat(artifact({ kind: "link", path: null }))).toBeNull();
     expect(artifactPreviewFormat(artifact({ missing: true }))).toBeNull();
-    expect(artifactPreviewFormat(artifact({ byteLength: 513 * 1024 }))).toBeNull();
-    expect(artifactPreviewFormat(artifact({ path: "/tmp/a.md" }))).toBeNull();
-    expect(artifactPreviewFormat(artifact({ path: "C:\\a.md" }))).toBeNull();
     expect(artifactPreviewFormat(artifact({ path: "a.pdf" }))).toBeNull();
     expect(
       artifactPreviewFormat(artifact({ kind: "image", path: "a.png", byteLength: 25 * 1048576 })),

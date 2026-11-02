@@ -201,10 +201,14 @@ export type ProjectFileRead =
   | { readonly _tag: "unavailable" };
 
 export function isLastingReadFailure(cause: unknown): boolean {
+  if (!isProjectReadFileError(cause) || cause.failure === undefined) return false;
+  // A file or worktree that no longer resolves, or a file the server never reads, will not come
+  // back on a retry.
   return (
-    isProjectReadFileError(cause) &&
-    cause.failure !== undefined &&
-    cause.failure !== "operation_failed"
+    cause.failure !== "operation_failed" ||
+    cause.operation === "realpath-target" ||
+    cause.operation === "realpath-workspace-root" ||
+    cause.reason === "protected"
   );
 }
 
@@ -213,6 +217,7 @@ export function useProjectFileReader(): (
   environmentId: EnvironmentId,
   cwd: string,
   relativePath: string,
+  maxBytes?: number,
 ) => Promise<ProjectFileRead> {
   const read = useAtomQueryRunner(projectEnvironment.readFile, {
     reportFailure: false,
@@ -220,8 +225,11 @@ export function useProjectFileReader(): (
     refresh: true,
   });
   return useCallback(
-    async (environmentId, cwd, relativePath) => {
-      const result = await read({ environmentId, input: { cwd, relativePath } });
+    async (environmentId, cwd, relativePath, maxBytes) => {
+      const result = await read({
+        environmentId,
+        input: { cwd, relativePath, ...(maxBytes === undefined ? {} : { maxBytes }) },
+      });
       if (result._tag === "Success") return { _tag: "contents", contents: result.value.contents };
       return {
         _tag: isLastingReadFailure(squashAtomCommandFailure(result)) ? "gone" : "unavailable",

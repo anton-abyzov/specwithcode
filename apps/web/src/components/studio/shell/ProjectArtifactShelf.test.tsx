@@ -8,7 +8,9 @@ const runtime = vi.hoisted(() => ({
   navigate: vi.fn(),
   openLink: vi.fn(async () => undefined),
   viewer: vi.fn(),
+  viewerFrom: vi.fn(),
   reads: vi.fn(),
+  readFrom: vi.fn(),
   answer: vi.fn(),
   createUrl: vi.fn(async () => "blob:shot"),
 }));
@@ -20,20 +22,23 @@ vi.mock("../../../assets/assetUrls", () => ({
   useAssetUrlRefresh: () => runtime.createUrl,
 }));
 vi.mock("./LibraryFileViewer", () => ({
-  LibraryFileViewer: (props: { path: string }) => {
+  LibraryFileViewer: (props: { path: string; environmentId: unknown }) => {
     runtime.viewer(props.path);
+    runtime.viewerFrom(props.environmentId);
     return <div data-testid="viewer">{props.path}</div>;
   },
 }));
 vi.mock("../../files/projectFilesQueryState", () => ({
-  useProjectFileReader: () => async (_env: unknown, _cwd: string, path: string) => {
-    runtime.reads(path);
-    return runtime.answer(path);
-  },
+  useProjectFileReader:
+    () => async (env: unknown, _cwd: string, path: string, maxBytes?: number) => {
+      runtime.reads(path);
+      runtime.readFrom(env, maxBytes);
+      return runtime.answer(path);
+    },
 }));
 vi.mock("./Tip", () => ({ Tip: ({ children }: { children: unknown }) => children }));
 
-import { artifactPreviewCache } from "../../../studio/artifactPreview";
+import { artifactPreviewCache, artifactPreviewKey } from "../../../studio/artifactPreview";
 import { collectProjectArtifacts, type ProjectArtifact } from "../../../studio/projectArtifacts";
 import { ArtifactCard, ProjectArtifactShelf } from "./ProjectArtifactShelf";
 
@@ -195,6 +200,78 @@ describe("with an observer", () => {
     );
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it("draws a file outside the project from the machine that wrote it, an excerpt only", async () => {
+    runtime.readFrom.mockClear();
+    runtime.viewerFrom.mockClear();
+    runtime.answer.mockImplementation(async () => ({
+      _tag: "contents",
+      contents: "# Site checkout\n\nAll passed.",
+    }));
+    const worker = "worker" as EnvironmentId;
+    const outside: ProjectArtifact = {
+      ...sample()[0]!,
+      id: "file:/evidence/checkout.md",
+      kind: "document",
+      source: "thread",
+      title: "checkout.md",
+      path: "/evidence/checkout.md",
+      root: null,
+      thread: { environmentId: worker, threadId: "t" as ThreadId, title: "T" },
+    };
+    await render([outside]);
+    await act(async () => notify(true));
+    await dwell();
+    expect(runtime.readFrom).toHaveBeenCalledWith(worker, 32 * 1024);
+    expect(container.querySelector(".sws-artifact-page-line")?.textContent).toBe("Site checkout");
+    expect(container.textContent).not.toContain("Document");
+    await act(async () =>
+      container.querySelector<HTMLElement>(".sws-artifact-card button")?.click(),
+    );
+    expect(runtime.viewerFrom).toHaveBeenCalledWith(worker);
+  });
+
+  it("titles a card from another machine by the heading of its page", async () => {
+    const worker = "worker" as EnvironmentId;
+    const outside: ProjectArtifact = {
+      ...sample()[0]!,
+      id: "file:/evidence/checkout.md",
+      kind: "document",
+      source: "thread",
+      title: "checkout.md",
+      path: "/evidence/checkout.md",
+      root: null,
+      thread: { environmentId: worker, threadId: "t" as ThreadId, title: "T" },
+    };
+    artifactPreviewCache.set(artifactPreviewKey(outside, `${worker}\u0000/work/app`), {
+      type: "image",
+      src: "data:image/webp;base64,AA",
+      title: "Site checkout",
+    });
+    await render([outside]);
+    expect(titles()).toEqual(["Site checkout"]);
+  });
+
+  it("says so when a file cannot be read, and shows no kind label", async () => {
+    runtime.answer.mockImplementation(async () => ({ _tag: "gone" }));
+    const gone: ProjectArtifact = {
+      ...sample()[0]!,
+      id: "file:/evidence/removed.md",
+      kind: "document",
+      source: "thread",
+      title: "removed.md",
+      path: "/evidence/removed.md",
+      root: null,
+    };
+    await render([gone]);
+    expect(container.textContent).not.toContain("Document");
+    expect(container.textContent).not.toContain("Not available on this machine");
+    await act(async () => notify(true));
+    await dwell();
+    expect(container.textContent).toContain("removed.md");
+    expect(container.textContent).toContain("Not available on this machine");
+    expect(container.textContent).not.toContain("Document");
+  });
 
   it("treats no answer as temporary and a server refusal as final", async () => {
     runtime.answer.mockImplementation(async () => ({ _tag: "unavailable" }));

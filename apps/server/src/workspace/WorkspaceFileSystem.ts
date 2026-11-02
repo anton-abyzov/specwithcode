@@ -397,7 +397,8 @@ export const make = Effect.gen(function* () {
           }
 
           const size = Number(stat.size);
-          const bytesToRead = Math.min(size, PROJECT_READ_FILE_MAX_BYTES);
+          const limit = Math.min(input.maxBytes ?? Infinity, PROJECT_READ_FILE_MAX_BYTES);
+          const bytesToRead = Math.min(size, limit);
           const buffer = Buffer.alloc(bytesToRead);
           const { bytesRead } = yield* Effect.tryPromise({
             try: () => handle.read(buffer, 0, bytesToRead, 0),
@@ -424,7 +425,7 @@ export const make = Effect.gen(function* () {
             relativePath: target.relativePath,
             contents: new TextDecoder("utf-8").decode(fileBytes),
             byteLength: size,
-            truncated: size > PROJECT_READ_FILE_MAX_BYTES,
+            truncated: size > limit,
           };
         }),
       (handle) =>
