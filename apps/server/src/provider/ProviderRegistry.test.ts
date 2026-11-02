@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -2027,10 +2028,31 @@ it.layer(
             changedProviders.find((provider) => provider.instanceId === codexInstanceId),
             withBundledCompatibility(codexProvider),
           );
+
+          // A refresh answers with the same filtered list as a read.
+          const ruled = yield* registry.refresh().pipe(
+            Effect.provideService(
+              TeamRules,
+              teamRulesOf({
+                status: "active",
+                rules: { version: 1, owner: "Acme", ai: { providers: ["codex"] } },
+                fingerprint: "3a9f",
+                warnings: [],
+              }),
+            ),
+          );
+          assert.strictEqual(
+            ruled.find((provider) => provider.instanceId === openCodeInstanceId)?.enabled,
+            false,
+          );
+          assert.deepStrictEqual(
+            ruled.find((provider) => provider.instanceId === codexInstanceId),
+            withBundledCompatibility(codexProvider),
+          );
         }).pipe(Effect.provide(runtimeServices));
 
-        assert.strictEqual(yield* Ref.get(codexRefreshCalls), 2);
-        assert.strictEqual(yield* Ref.get(openCodeRefreshCalls), 2);
+        assert.strictEqual(yield* Ref.get(codexRefreshCalls), 3);
+        assert.strictEqual(yield* Ref.get(openCodeRefreshCalls), 3);
       }),
     );
 

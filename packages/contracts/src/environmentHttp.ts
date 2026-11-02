@@ -267,6 +267,8 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     reason: EnvironmentAuthInvalidReason,
     // Older servers do not send a DPoP failure category.
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    /** Why Team rules refused this. An older client ignores it and reads `reason`. */
+    teamRulesMessage: Schema.optionalKey(Schema.String),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
@@ -276,6 +278,7 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
   }
 
   override get message(): string {
+    if (this.teamRulesMessage !== undefined) return this.teamRulesMessage;
     return this.reason === "device_reapproval_required"
       ? "Approve this device again in SpecWithCode. Create a new pairing code on the receiving machine and sign in again."
       : `The environment rejected this client's credentials (${this.reason}).`;
@@ -1149,6 +1152,7 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
       payload: StudioFleetRedeemInput,
       success: StudioFleetRedeemResult,
       error: [
+        EnvironmentHttpForbiddenError,
         EnvironmentHttpBadRequestError,
         EnvironmentAuthInvalidError,
         EnvironmentRateLimitedError,

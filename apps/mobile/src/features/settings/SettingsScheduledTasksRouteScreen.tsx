@@ -51,6 +51,7 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { webhookAddress } from "@specweave-studio/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
+import { routineFailureText, teamRulesStateOf } from "../../state/teamRules";
 import { buildModelOptions } from "../../lib/modelOptions";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
@@ -75,6 +76,11 @@ import {
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
 import { routineCadenceLabel } from "@specweave-studio/shared/routineBrief";
+import {
+  teamRulesClampRoutineMode,
+  teamRulesReachRefusal,
+  teamRulesSetByLabel,
+} from "@specweave-studio/shared/teamRules";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
 import { scheduledTaskEditorSessionAtom } from "./scheduled-task-editor-state";
@@ -612,9 +618,12 @@ function TaskForm({
     (target) => target.environmentId === environmentId,
   );
 
+  const teamRules = teamRulesStateOf(config);
+  const webhooksRefusal = teamRulesReachRefusal(teamRules, "webhooks");
+
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Alert.alert(title, String(squashAtomCommandFailure(result)));
+      Alert.alert(title, routineFailureText(config, squashAtomCommandFailure(result)));
     }
   };
 
@@ -683,7 +692,8 @@ function TaskForm({
                 baseRef: draft.baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
-      runtimeMode: draft.runtimeMode,
+      // A mode above the limit is lowered here, like the picker shows it.
+      runtimeMode: teamRulesClampRoutineMode(teamRules, draft.runtimeMode),
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
@@ -877,7 +887,10 @@ function TaskForm({
             options={[
               { value: "fixed_time", label: "At a time" },
               { value: "interval", label: "Interval" },
-              { value: "webhook", label: "On webhook" },
+              // A routine already on a webhook keeps showing it, so it can be moved off.
+              ...(webhooksRefusal === null || draft.schedule.mode === "webhook"
+                ? [{ value: "webhook" as const, label: "On webhook" }]
+                : []),
               // A manual or monthly routine keeps its cadence unless another is picked.
               ...(draft.schedule.kept ? [{ value: "kept" as const, label: "As set" }] : []),
             ]}
@@ -894,6 +907,9 @@ function TaskForm({
               });
             }}
           />
+          {webhooksRefusal !== null ? (
+            <Text className="pt-2 text-sm text-foreground-muted">{webhooksRefusal.message}</Text>
+          ) : null}
         </View>
         {draft.schedule.mode === "fixed_time" ? (
           <>
@@ -1068,6 +1084,8 @@ function WebhookScheduleDetails({
     label: "scheduled task rotate webhook token",
     reportFailure: false,
   });
+  const config = useEnvironmentServerConfig(environmentId);
+  const rotateRefused = teamRulesReachRefusal(teamRulesStateOf(config), "webhooks") !== null;
   const preparedConnection = usePreparedConnection(environmentId);
   const httpBaseUrl =
     preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
@@ -1106,37 +1124,43 @@ function WebhookScheduleDetails({
           {resolved.note !== null ? (
             <Text className="text-sm text-foreground-muted">{resolved.note}</Text>
           ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: disabled || rotating }}
-            disabled={disabled || rotating}
-            onPress={() =>
-              Alert.alert("Rotate URL?", "The current URL stops working immediately.", [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Rotate",
-                  style: "destructive",
-                  onPress: () => {
-                    setRotating(true);
-                    void rotate({ environmentId, input: { id: task.id } }).then((result) => {
-                      setRotating(false);
-                      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                        Alert.alert(
-                          "Could not rotate URL",
-                          String(squashAtomCommandFailure(result)),
-                        );
-                      }
-                    });
-                  },
-                },
-              ])
-            }
-            className="min-h-11 justify-center active:opacity-70 disabled:opacity-50"
-          >
-            <Text className="text-base text-danger-foreground">
-              {rotating ? "Rotating…" : "Rotate URL"}
+          {rotateRefused ? (
+            <Text className="text-sm text-foreground-muted">
+              {`Rotating this URL is off. ${teamRulesSetByLabel(config?.teamRules?.owner)}.`}
             </Text>
-          </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: disabled || rotating }}
+              disabled={disabled || rotating}
+              onPress={() =>
+                Alert.alert("Rotate URL?", "The current URL stops working immediately.", [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Rotate",
+                    style: "destructive",
+                    onPress: () => {
+                      setRotating(true);
+                      void rotate({ environmentId, input: { id: task.id } }).then((result) => {
+                        setRotating(false);
+                        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                          Alert.alert(
+                            "Could not rotate URL",
+                            routineFailureText(config, squashAtomCommandFailure(result)),
+                          );
+                        }
+                      });
+                    },
+                  },
+                ])
+              }
+              className="min-h-11 justify-center active:opacity-70 disabled:opacity-50"
+            >
+              <Text className="text-base text-danger-foreground">
+                {rotating ? "Rotating…" : "Rotate URL"}
+              </Text>
+            </Pressable>
+          )}
         </>
       )}
       {signatureConfigured ? (
@@ -1183,7 +1207,10 @@ function EnvironmentTasks({
   });
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Alert.alert(title, String(squashAtomCommandFailure(result)));
+      Alert.alert(
+        title,
+        routineFailureText(environment.serverConfig, squashAtomCommandFailure(result)),
+      );
     }
   };
 

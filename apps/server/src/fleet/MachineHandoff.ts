@@ -1,4 +1,11 @@
-import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import {
+  teamRulesArrivingCarried,
+  teamRulesClampMode,
+  teamRulesClampToCarried,
+  teamRulesMachineLinkRefusal,
+  teamRulesOutgoingCarried,
+} from "@specweave-studio/shared/teamRules";
+import { FLEET_ORIGIN_APP_LABEL } from "../mcp/threadOrigin.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import {
@@ -337,12 +344,27 @@ const make = Effect.gen(function* () {
         const earlier = inherited && Schema.is(MachineHandoffBundle)(inherited) ? inherited : null;
         // The destination continues with the access the coordinator ran with here;
         // the project's saved mode stands in before the coordinator exists.
-        const runtimeMode =
-          candidates.find((t) => t.id === coordinatorId)?.runtimeMode ??
-          resolveProjectSettings(yield* serverSettings.getSettings, id, current).settings
-            .defaultRuntimeMode;
+        const coordinatorThread = candidates.find((t) => t.id === coordinatorId);
+        const carried = teamRulesOutgoingCarried(
+          yield* currentTeamRules,
+          coordinatorThread?.origin?.carried,
+          originEnvironmentId,
+        );
+        // Lowered here too, so a destination too old to hold the ceiling still starts inside it.
+        const runtimeMode = teamRulesClampToCarried(
+          coordinatorThread?.runtimeMode ??
+            resolveProjectSettings(yield* serverSettings.getSettings, id, current).settings
+              .defaultRuntimeMode,
+          carried,
+        );
         const { goal, instructions } = metadata.settings;
-        const base = { goal, instructions, runtimeMode, notes };
+        const base = {
+          goal,
+          instructions,
+          runtimeMode,
+          ...(carried === undefined ? {} : { carried }),
+          notes,
+        };
         let threads: ReadonlyArray<ContextThread> = [];
         // An earlier summary keeps summarizing, so what stayed behind stays named.
         if (chosen.length <= 100 && !(whole && earlier?.context.retention)) {
@@ -498,10 +520,17 @@ const make = Effect.gen(function* () {
         })),
       ),
     );
+  /** A folder leaves or arrives only where the rules let machines work together. */
+  const refuseCopyByTeamRules = Effect.gen(function* () {
+    if (teamRulesMachineLinkRefusal(yield* currentTeamRules) !== null) {
+      return yield* new FolderCopyError({ code: "refused" });
+    }
+  });
   const copyOffer: MachineHandoff["Service"]["copyOffer"] = (input) =>
     admission.withLock(
       input.projectId,
       Effect.gen(function* () {
+        yield* refuseCopyByTeamRules;
         const current = yield* project(input.projectId).pipe(Effect.mapError(asCopyError));
         const scope = yield* attempt(() => resolveCopyScope(current.workspaceRoot, input.copyRoot));
         const sourceEnvironmentId = yield* environment.getEnvironmentId;
@@ -593,6 +622,7 @@ const make = Effect.gen(function* () {
     });
   const copyStart: MachineHandoff["Service"]["copyStart"] = (input) =>
     Effect.gen(function* () {
+      yield* refuseCopyByTeamRules;
       if (input.sourceEnvironmentId === (yield* environment.getEnvironmentId))
         return yield* new FolderCopyError({ code: "invalid" });
       if (input.mode === "copy-and-move" && input.projectId === undefined)
@@ -684,19 +714,35 @@ const make = Effect.gen(function* () {
       );
     });
   const serveFolderTransfer: MachineHandoff["Service"]["serveFolderTransfer"] = (request) =>
-    Effect.flatMap(environment.getEnvironmentId, (environmentId) =>
-      Effect.promise(() => handleSourceRequest(sources, environmentId, request)),
-    );
+    Effect.gen(function* () {
+      const environmentId = yield* environment.getEnvironmentId;
+      if (teamRulesMachineLinkRefusal(yield* currentTeamRules) !== null) {
+        return {
+          status: 403,
+          contentType: "application/json",
+          body: new TextEncoder().encode('{"error":"team_rules"}'),
+        };
+      }
+      return yield* Effect.promise(() => handleSourceRequest(sources, environmentId, request));
+    });
   const folderCopyManifest = makeFolderCopyManifest(sources, idle);
   const folderCopyDecision = makeFolderCopyDriftDecision(sources);
   const copyContextAvailable = makeFolderCopyContextCheck(sources);
   const appliedCopy = makeAppliedFolderCopyCheck(copies, fs, path, idle);
+  /** A move crosses machines, so it stops where the rules stop that. */
+  const refuseMoveByTeamRules = Effect.gen(function* () {
+    const refused = teamRulesMachineLinkRefusal(yield* currentTeamRules);
+    if (refused !== null) {
+      return yield* new MachineHandoffError({ code: "invalid", teamRulesMessage: refused.message });
+    }
+  });
   const prepare: MachineHandoff["Service"]["prepare"] = (input) =>
     locks.withLock(
       `source:${input.operationId}`,
       admission.withLock(
         input.projectId,
         Effect.gen(function* () {
+          yield* refuseMoveByTeamRules;
           const current = yield* project(input.projectId, true);
           const sourceEnvironmentId = yield* environment.getEnvironmentId;
           const selected =
@@ -973,6 +1019,7 @@ const make = Effect.gen(function* () {
       admission.withLock(
         input.projectId,
         Effect.gen(function* () {
+          yield* refuseMoveByTeamRules;
           const metadata = yield* Effect.try({
             try: () => {
               if (input.mode === "start") checkBundle(input.bundle);
@@ -1323,6 +1370,10 @@ const make = Effect.gen(function* () {
               }),
               "launch_failed",
             );
+          const arrivingCarried = teamRulesArrivingCarried(
+            input.bundle.context.carried,
+            targetEnvironmentId,
+          );
           if (!saved?.configured) {
             const settings = yield* guarded(serverSettings.getSettings, "storage_failed");
             const resolved = resolveProjectSettings(settings, input.projectId, current).settings;
@@ -1330,7 +1381,10 @@ const make = Effect.gen(function* () {
             const carriedMode =
               input.bundle.context.runtimeMode === undefined
                 ? undefined
-                : teamRulesClampMode(yield* currentTeamRules, input.bundle.context.runtimeMode);
+                : teamRulesClampToCarried(
+                    teamRulesClampMode(yield* currentTeamRules, input.bundle.context.runtimeMode),
+                    arrivingCarried,
+                  );
             const patch = {
               projectSettingsOverrides: {
                 [projectId]: destinationModelPolicy(
@@ -1409,6 +1463,16 @@ const make = Effect.gen(function* () {
               projectId,
               commandId: CommandId.make(`machine-handoff-start:${input.operationId}`),
               prompt,
+              ...(arrivingCarried === undefined
+                ? {}
+                : {
+                    origin: {
+                      kind: "fleet_machine" as const,
+                      label: FLEET_ORIGIN_APP_LABEL,
+                      environmentId: arrivingCarried.from,
+                      carried: arrivingCarried,
+                    },
+                  }),
             }),
             "launch_failed",
           );

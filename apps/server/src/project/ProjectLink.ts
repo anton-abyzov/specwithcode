@@ -49,6 +49,8 @@ import {
   WS_METHODS,
   WsProjectLinkRpcGroup,
 } from "@specweave-studio/contracts";
+import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1044,12 +1046,23 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
         guard
           .releaseBefore({ ...before(input), changeAnyway: input.changeAnyway === true })
           .pipe(Effect.andThen(write(input)));
+    // Sharing a project across machines stops where the rules stop machines working together.
+    const whereRulesAllow =
+      <I, A, E, R>(run: (input: I) => Effect.Effect<A, E, R>) =>
+      (input: I) =>
+        Effect.gen(function* () {
+          const refused = teamRulesMachineLinkRefusal(yield* currentTeamRules);
+          if (refused !== null) {
+            return yield* new ProjectLinkError({ code: "invalid", detail: refused.message });
+          }
+          return yield* run(input);
+        });
     return {
       [WS_METHODS.projectsFingerprint]: link.fingerprint,
       [WS_METHODS.projectLinkPreview]: link.preview,
-      [WS_METHODS.projectLinkPrepare]: link.prepare,
-      [WS_METHODS.projectLinkAccept]: link.accept,
-      [WS_METHODS.projectLinkCommit]: link.commit,
+      [WS_METHODS.projectLinkPrepare]: whereRulesAllow(link.prepare),
+      [WS_METHODS.projectLinkAccept]: whereRulesAllow(link.accept),
+      [WS_METHODS.projectLinkCommit]: whereRulesAllow(link.commit),
       [WS_METHODS.projectUnlink]: released(
         (input: ProjectUnlinkInput) =>
           input.side === "coordinator"
@@ -1058,9 +1071,9 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
         link.unlink,
       ),
       [WS_METHODS.projectLinkDigest]: link.digest,
-      [WS_METHODS.projectLinkReplicate]: link.replicate,
-      [WS_METHODS.projectLinkMemoryExport]: memory.memoryExport,
-      [WS_METHODS.projectLinkMemoryMerge]: memory.memoryMerge,
+      [WS_METHODS.projectLinkReplicate]: whereRulesAllow(link.replicate),
+      [WS_METHODS.projectLinkMemoryExport]: whereRulesAllow(memory.memoryExport),
+      [WS_METHODS.projectLinkMemoryMerge]: whereRulesAllow(memory.memoryMerge),
       [WS_METHODS.projectTakeover]: link.takeover,
       [WS_METHODS.projectSupersede]: released(
         (input: ProjectSupersedeInput) => ({

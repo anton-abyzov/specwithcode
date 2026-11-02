@@ -43,6 +43,7 @@ export function RelayedMessage({
   timestampFormat,
   original,
   text,
+  addressedToAgent = false,
   detail = "normal",
   renderMarkdown,
   attachments,
@@ -59,6 +60,12 @@ export function RelayedMessage({
   original: string;
   /** The same message prepared for display, with thread links. */
   text: string;
+  /**
+   * Sent down to the agent that receives it (a parent's brief, the coordinator's
+   * order, a thread's note to itself). Its imperatives and questions are for
+   * that agent, so nothing is lifted out as if it asked the person.
+   */
+  addressedToAgent?: boolean;
   detail?: TimelineDetail;
   renderMarkdown: (text: string) => ReactNode;
   /** Files and images sent with it, shown while it is open. */
@@ -76,7 +83,10 @@ export function RelayedMessage({
   const { excerpt, clamp } = presentation;
   const long = excerpt !== null || clamp;
   const openByDefault = detail === "verbose";
-  const attention = useMemo(() => relayAttentionText(text), [text]);
+  const attention = useMemo(
+    () => (addressedToAgent ? null : relayAttentionText(text)),
+    [addressedToAgent, text],
+  );
   const [expanded, setExpanded] = useState(openByDefault);
   // The reader opened it: only then does "Show less" follow the reader down the message.
   const [openedByReader, setOpenedByReader] = useState(false);

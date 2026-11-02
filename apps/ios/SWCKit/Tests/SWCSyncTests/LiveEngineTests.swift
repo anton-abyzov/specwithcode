@@ -158,6 +158,55 @@ import SWCWire
     #expect(h.connector.connections.values.count == 1)
   }
 
+  @Test func noRulesShowNothing() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    #expect(h.model.machines.first?.teamRules == nil)
+    let session = h.model.session(for: .thread(ThreadRef(environmentId: env, threadId: "thr_1")))
+    h.engine.open(session)
+    #expect(await until { session.isLoaded })
+    #expect(session.teamRulesNotice == nil)
+  }
+
+  @Test func rulesFollowProviderStatuses() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    #expect(await until { h.machine.requests("subscribeServerConfig").count == 1 })
+    let streamId = try #require(h.machine.requests("subscribeServerConfig").last?["id"]?.intValue)
+    let socket = try #require(h.connector.connections.values.last)
+    let ref = ThreadRef(environmentId: env, threadId: "thr_1")
+    let session = h.model.session(for: .thread(ref))
+    h.engine.open(session)
+    #expect(await until { session.isLoaded })
+
+    // The rule arrives with the machine already connected: no reconnect, no refresh.
+    socket.push(FakeMachine.chunk(streamId, #"{"version":1,"type":"providerStatuses","payload":{"providers":[],"teamRules":{"status":"active","owner":"Acme","ceiling":"auto"}}}"#))
+    #expect(await until { h.model.machines.first?.teamRules?.owner == "Acme" })
+    #expect(h.model.machines.first?.teamRules?.ceiling == .auto)
+    // thr_1 runs in full access, above the new limit.
+    #expect(await until { session.teamRulesNotice?.switchTo == .auto })
+
+    try await h.engine.perform(.setRuntimeMode(.auto), on: ref)
+    let lowered = try #require(h.machine.payloads("orchestration.dispatchCommand").last)
+    #expect(lowered["type"] == .string("thread.runtime-mode.set"))
+    #expect(lowered["threadId"] == .string("thr_1"))
+    #expect(lowered["runtimeMode"] == .string("auto"))
+
+    // The same update without rules means they are gone.
+    socket.push(FakeMachine.chunk(streamId, #"{"version":1,"type":"providerStatuses","payload":{"providers":[]}}"#))
+    #expect(await until { h.model.machines.first?.teamRules == nil })
+    #expect(await until { session.teamRulesNotice == nil })
+    #expect(h.connector.connections.values.count == 1)
+  }
+
+  @Test func aRefusedSettingShowsTheMachinesWords() async throws {
+    let h = try await harness(failing: ["server.updateSettings": #"{"_tag":"ServerSettingsError","settingsPath":"settings.json","operation":"update","teamRulesRefusal":{"reason":"ceiling","message":"Acme's rules allow up to Auto, so Full access is not available."}}"#])
+    #expect(await loaded(h))
+    await #expect {
+      try await h.engine.saveMachineSettings(MachineSettings(defaultRuntimeMode: .fullAccess, defaultModel: nil), for: env)
+    } throws: { $0.localizedDescription == "Acme's rules allow up to Auto, so Full access is not available." }
+  }
+
   @Test func missingCoordinatorIsSubscribedAgainOnceTheShellListsIt() async throws {
     let h = try await harness()
     #expect(await loaded(h))

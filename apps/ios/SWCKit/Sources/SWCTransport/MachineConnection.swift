@@ -253,7 +253,25 @@ public actor MachineConnection {
     } catch {
       return
     }
+    if case .teamRules = await sessionRejection(token: credential.token, route: route) {
+      // Not a dead pairing: the supervisor's next attempt reports the refusal and keeps trying.
+      guard gen == generation else { return }
+      if let socket { Task { await socket.close() } }
+      return
+    }
+    guard gen == generation else { return }
     halt(.needsRepair, error: .needsRepair)
+  }
+
+  /// Why a token was rejected. `/api/auth/session` says only "not authenticated"
+  /// for a Team rules refusal too, and the ticket endpoint says which it is.
+  private func sessionRejection(token: String, route: MachineRoute) async -> TransportError {
+    do {
+      _ = try await http.websocketTicket(token: token, at: route.httpBase)
+    } catch let TransportError.teamRules(message) {
+      return .teamRules(message: message)
+    } catch {}
+    return .needsRepair
   }
 
   /// Posts bytes to a signed URL this machine issued, on the route in use.
@@ -575,9 +593,12 @@ public actor MachineConnection {
     let original = TransportError.upgradeFailed(status: status)
     do {
       let session = try await http.session(token: token, at: route.httpBase)
-      if !session.authenticated { return TransportError.needsRepair }
+      if !session.authenticated { return await sessionRejection(token: token, route: route) }
     } catch TransportError.needsRepair {
-      return TransportError.needsRepair
+      return await sessionRejection(token: token, route: route)
+    } catch let error as TransportError {
+      if case .teamRules = error { return error }
+      return original
     } catch {
       return original
     }

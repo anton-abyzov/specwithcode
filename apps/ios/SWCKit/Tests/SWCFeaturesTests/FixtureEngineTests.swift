@@ -349,3 +349,38 @@ struct FixtureDevicesTests {
     #expect(model.devices.isEmpty)
   }
 }
+
+@MainActor
+@Suite("Fixture team rules")
+struct FixtureTeamRulesTests {
+  private func make(_ scenario: FixtureScenario) -> AppModel {
+    let engine = FixtureEngine(scenario: scenario)
+    engine.latency = .zero
+    engine.streamDelay = .zero
+    return AppModel(engine: engine)
+  }
+
+  @Test func noRulesInTheDefaultScenario() {
+    let model = make(.default)
+    #expect(model.machines.allSatisfy { $0.teamRules == nil && $0.teamRulesRefusal == nil })
+  }
+
+  @Test func theTeamRulesScenarioCoversLimitHoldAndRefusal() throws {
+    let model = make(.teamRules)
+    let limited = try #require(model.machine("env-studio-mac")?.teamRules)
+    #expect(limited.ceiling == .autoAcceptEdits)
+    #expect(model.machine("env-build-box")?.teamRules?.isHold == true)
+    #expect(model.machine("env-travel-laptop")?.teamRulesRefusal != nil)
+  }
+
+  @Test func loweringAThreadClearsItsNotice() async throws {
+    let model = make(.teamRules)
+    let ref = ThreadRef(environmentId: "env-studio-mac", threadId: "t-release")
+    let session = model.session(for: .thread(ref))
+    model.openSession(session)
+    let notice = try #require(session.teamRulesNotice)
+    let mode = try #require(notice.switchTo)
+    try await model.engine.perform(.setRuntimeMode(mode), on: ref)
+    #expect(session.teamRulesNotice == nil)
+  }
+}

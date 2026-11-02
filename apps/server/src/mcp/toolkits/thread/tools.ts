@@ -157,7 +157,7 @@ const QueueReorderTool = Tool.make("studio_queue_reorder", {
 const QueuePromoteTool = Tool.make("studio_queue_promote_to_steer", {
   ...commandTool,
   description:
-    "Deliver a queued message as steering to the specified active run. Existing provider and run-state rules apply.",
+    "Deliver a queued message as steering to the specified active run. Existing provider and run-state rules apply. A person's message queued for another model cannot join the turn: this stops the turn and runs that message next on its model, in this thread.",
   parameters: Schema.Struct({ ...queueTarget, targetRunId: RunId }),
 }).annotate(Tool.Destructive, true);
 
@@ -233,10 +233,15 @@ const ThreadConfigurationTool = Tool.make("studio_thread_configuration", {
 const ThreadConfigureTool = Tool.make("studio_thread_configure", {
   ...commandTool,
   description:
-    "Set a thread's provider, model and options with the existing selection command. Omit threadId for this thread. This does not change permission modes. Use orchestrator_capabilities to choose a selection.",
+    "Set a thread's provider, model and options with the existing selection command. Omit threadId for this thread. This does not change permission modes. Use orchestrator_capabilities to choose a selection. When the user asks you to switch this thread's model, this is the way, not delegate_task: pass continueWith with what the next turn should do, then end your turn. Your turn finishes, and the next one runs on the new model in this same thread with the context handed over. Moving your own running turn to another provider without continueWith is refused, because it would stop you.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     modelSelection: ModelSelection,
+    continueWith: Schema.optional(TrimmedNonEmptyString).annotate({
+      description:
+        "This thread only: queues this message on the new model, to start after your current turn.",
+    }),
+    clientRequestId: Schema.optional(TrimmedNonEmptyString),
   }),
 }).annotate(Tool.Destructive, true);
 

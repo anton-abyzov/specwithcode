@@ -14,7 +14,15 @@ import {
   StudioFleetSkillError,
   StudioFleetUpdateError,
 } from "@specweave-studio/contracts";
+import type { TeamRulesRefusal } from "@specweave-studio/contracts";
+import {
+  teamRulesMachineLinkRefusal,
+  teamRulesReachOff,
+  teamRulesReachRefusal,
+  type TeamRulesState,
+} from "@specweave-studio/shared/teamRules";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
+import { currentTeamRules } from "./teamRules/TeamRules.ts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -83,6 +91,19 @@ import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
+
+const refusedConnect = (state: TeamRulesState) =>
+  teamRulesReachOff(state, "connect") ? teamRulesReachRefusal(state, "connect") : null;
+
+const refuseByTeamRules = (check: (state: TeamRulesState) => TeamRulesRefusal | null) =>
+  currentTeamRules.pipe(
+    Effect.flatMap((state) => {
+      const refused = check(state);
+      return refused === null
+        ? Effect.void
+        : Effect.fail(new EnvironmentHttpForbiddenError({ message: refused.message }));
+    }),
+  );
 
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
@@ -382,6 +403,7 @@ export const layer = HttpApiBuilder.group(
             yield* noStore;
             // Adding a machine stores a credential for it, like allowing workers there.
             yield* requireGrantManager;
+            yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
             const localEnvironmentId = yield* serverEnvironment.getEnvironmentId;
             return yield* Effect.tryPromise({
               try: () =>
@@ -414,6 +436,10 @@ export const layer = HttpApiBuilder.group(
             yield* noStore;
             // It mints an access-management session, like allowing workers.
             yield* requireGrantManager;
+            yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
+            if (payload.via === "connect") {
+              yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "connect"));
+            }
             // The line hands out the invite scopes, so only a caller holding all
             // of them may make one: never more than the maker holds.
             const principal = yield* requireEnvironmentScope(AuthAccessWriteScope);
@@ -463,6 +489,11 @@ export const layer = HttpApiBuilder.group(
             // The answer holds a management credential: never cached, never logged.
             yield* noStore;
             yield* gateRequest(request).pipe(Effect.catch(failEnvironmentRateLimited));
+            yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
+            // The tunnel takes a few seconds to stop, and this answer holds a credential.
+            yield* refuseByTeamRules((state) =>
+              arrivedOverConnect(request) ? refusedConnect(state) : null,
+            );
             const refused = (error: EnvironmentAuth.ServerAuthCredentialError) =>
               recordRequestFailure(request).pipe(
                 Effect.andThen(
@@ -564,6 +595,7 @@ export const layer = HttpApiBuilder.group(
           Effect.gen(function* () {
             yield* noStore;
             yield* requireGrantManager;
+            yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
             const workers = yield* grants
               .allow({
                 machineId: payload.id,
@@ -722,6 +754,7 @@ export const layer = HttpApiBuilder.group(
               AuthOrchestrationReadScope,
               "Linking a phone requires an authorized request.",
             );
+            yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "phones"));
             const sessions = yield* environmentAuth
               .listSessions()
               .pipe(Effect.mapError(authFailure));
@@ -769,6 +802,7 @@ export const layer = HttpApiBuilder.group(
               return yield* new EnvironmentHttpForbiddenError({
                 message: "Only this machine's owner can approve a phone here.",
               });
+            yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "phones"));
             const scopes = PhoneLinks.phoneCodeScopes(payload.scopes, principal.scopes);
             if (scopes === null)
               return yield* new EnvironmentHttpBadRequestError({

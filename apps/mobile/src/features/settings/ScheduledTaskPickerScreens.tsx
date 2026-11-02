@@ -1,5 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
+import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
 import { useMemo, useState } from "react";
 
 import { AppText as Text } from "../../components/AppText";
@@ -7,6 +8,7 @@ import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
+import { routineRuntimeModeLock, teamRulesStateOf } from "../../state/teamRules";
 import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -77,7 +79,9 @@ export function ScheduledTaskModelPickerRouteScreen() {
             : current,
         )
       }
-      runtimeMode={editor.draft.runtimeMode}
+      // Shows what saving sends: a mode above the limit is lowered then.
+      runtimeMode={teamRulesClampRoutineMode(teamRulesStateOf(config), editor.draft.runtimeMode)}
+      runtimeModeLock={routineRuntimeModeLock(config)}
       onUpdateRuntimeMode={(runtimeMode) =>
         setEditor((current) =>
           current

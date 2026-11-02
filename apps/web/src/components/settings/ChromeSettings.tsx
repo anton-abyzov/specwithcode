@@ -23,11 +23,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { teamRulesToolLock } from "../../teamRules/teamRulesView";
+import { useTeamRules } from "../../teamRules/useTeamRules";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { BrowserExtensionCard } from "./BrowserExtensionSettings";
+import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 
@@ -181,6 +184,8 @@ export function ChromeSettings() {
     ? [here, ...environments.filter((environment) => environment !== here)]
     : environments;
   const elsewhere = here !== undefined && selected !== undefined && selected !== here;
+  const { summary: teamRules } = useTeamRules(selected?.environmentId);
+  const teamRulesLock = teamRulesToolLock(teamRules, "chrome");
   return (
     <SettingsPageContainer width="wide">
       <SettingsSection title="Chrome for agents" icon={<ChromeIcon className="size-4" />}>
@@ -219,20 +224,24 @@ export function ChromeSettings() {
               })}
             </div>
           )}
+          {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
         </div>
       </SettingsSection>
       {selected && (
-        <BrowserExtensionCard
-          key={`extension-${selected.environmentId}`}
-          environmentId={selected.environmentId}
-          machine={selected.label}
-          thisComputer={elsewhere ? here.label : null}
-          onSwitchToThisComputer={
-            elsewhere ? () => selectScope({ ...search, machine: here.environmentId }) : undefined
-          }
-        />
+        <TeamRulesInert lock={teamRulesLock}>
+          <BrowserExtensionCard
+            key={`extension-${selected.environmentId}`}
+            environmentId={selected.environmentId}
+            machine={selected.label}
+            thisComputer={elsewhere ? here.label : null}
+            onSwitchToThisComputer={
+              elsewhere ? () => selectScope({ ...search, machine: here.environmentId }) : undefined
+            }
+          />
+        </TeamRulesInert>
       )}
-      {selected && (
+      {/* Claude's own route reaches Chrome past the extension, so the rule hides it outright. */}
+      {selected && teamRulesLock === null && (
         <ClaudeInChromeSection
           key={`claude-${selected.environmentId}`}
           environmentId={selected.environmentId}

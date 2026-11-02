@@ -263,6 +263,34 @@ function errorMessage(error: unknown): string | null {
   return typeof error === "string" ? error : null;
 }
 
+const TEAM_RULES_REFUSED_ERROR = "OrchestratorTeamRulesRefusedError";
+
+/**
+ * Team rules refused the command. The reason crosses the wire as the dispatch
+ * error's cause. The rules decide again on every attempt, so a retry only
+ * repeats the refusal until someone changes the message or the rules.
+ */
+export function isTeamRulesRefusal(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("_tag" in error)) return false;
+  if (error._tag !== "OrchestrationV2DispatchCommandError") return false;
+  let cause: unknown = (error as { readonly cause?: unknown }).cause;
+  for (let depth = 0; depth < 4 && typeof cause === "object" && cause !== null; depth++) {
+    const candidate = cause as {
+      readonly name?: unknown;
+      readonly _tag?: unknown;
+      readonly cause?: unknown;
+    };
+    if (
+      candidate.name === TEAM_RULES_REFUSED_ERROR ||
+      candidate._tag === TEAM_RULES_REFUSED_ERROR
+    ) {
+      return true;
+    }
+    cause = candidate.cause;
+  }
+  return false;
+}
+
 /**
  * Only a failure the server actually decided (`OrchestrationDispatchCommandError`,
  * or an authorization rejection) means the payload itself is bad. The other
@@ -274,6 +302,7 @@ function errorMessage(error: unknown): string | null {
  * pending task into a draft and it disappears from the list.
  */
 export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
+  if (isTeamRulesRefusal(error)) return false;
   if (typeof error === "object" && error !== null && "_tag" in error) {
     switch (error._tag) {
       case "OrchestrationDispatchCommandError":
@@ -299,12 +328,9 @@ export function resolveThreadOutboxFailureAction(input: {
   readonly error: unknown;
   readonly interrupted: boolean;
 }): ThreadOutboxFailureAction {
-  if (
-    input.stage === "settings-sync" ||
-    input.interrupted ||
-    shouldRetryThreadOutboxDelivery(input.error)
-  ) {
-    return "retry";
-  }
-  return "restore";
+  if (input.interrupted) return "retry";
+  if (isTeamRulesRefusal(input.error)) return "restore";
+  return input.stage === "settings-sync" || shouldRetryThreadOutboxDelivery(input.error)
+    ? "retry"
+    : "restore";
 }

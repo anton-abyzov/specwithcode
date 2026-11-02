@@ -24,6 +24,8 @@ import {
   type GoogleService,
   type ProjectId,
 } from "@specweave-studio/contracts";
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -387,8 +389,15 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  /** Team rules stop new sign-ins and token use. Disconnect stays, so access can always be removed. */
+  const refuseByTeamRules = Effect.gen(function* () {
+    const refused = teamRulesToolRefusal(yield* currentTeamRules, "google");
+    if (refused !== null) return yield* fail(refused.message);
+  });
+
   const startSignIn = (input: GoogleAccountStartSignInInput) =>
     Effect.gen(function* () {
+      yield* refuseByTeamRules;
       const client = yield* currentClient;
       if (Option.isNone(client)) return yield* fail(NO_CLIENT);
       const services = orderedServices(input.services);
@@ -432,6 +441,7 @@ const make = Effect.gen(function* () {
   const completeSignIn = (input: { readonly callbackUrl: string }) =>
     writes.withPermits(1)(
       Effect.gen(function* () {
+        yield* refuseByTeamRules;
         const params = parseCallback(input.callbackUrl);
         if (params.type === "invalid") {
           return yield* fail(
@@ -573,6 +583,7 @@ const make = Effect.gen(function* () {
   const accessToken = (forceRefresh: boolean) =>
     tokenLock.withPermits(1)(
       Effect.gen(function* () {
+        yield* refuseByTeamRules;
         const now = yield* Clock.currentTimeMillis;
         const cached = yield* Ref.get(accessRef);
         if (!forceRefresh && cached !== null && cached.expiresAt - 60_000 > now)

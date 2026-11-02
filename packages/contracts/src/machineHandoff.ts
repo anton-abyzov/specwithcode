@@ -1,3 +1,4 @@
+import { TeamRulesCarried } from "./teamRules.ts";
 import { LogicalProject, ProjectCoordinatorBinding } from "./logicalProject.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
@@ -181,6 +182,8 @@ export const MachineHandoffContext = Schema.Struct({
    * keep the destination's own default.
    */
   runtimeMode: Schema.optional(RuntimeMode),
+  /** The ceiling the work carries. The destination's new coordinator keeps it. */
+  carried: Schema.optional(TeamRulesCarried),
   notes: Schema.Array(
     Schema.Struct({ name: bounded(128), content: bounded(PROJECT_MEMORY_FILE_BYTES) }),
   ).check(Schema.isMaxLength(PROJECT_MEMORY_MAX_FILES)),
@@ -397,9 +400,12 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
     changes: Schema.optional(MachineHandoffSourceChanges),
     /** busy: which threads hold the project, from newer machines; older ones send none. */
     busy: Schema.optional(MachineHandoffBusyThreads),
+    /** Refused by Team rules, in words that name the owner. */
+    teamRulesMessage: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.teamRulesMessage !== undefined) return this.teamRulesMessage;
     return {
       not_found: "The handoff project or source chat is no longer available.",
       busy: this.busy?.total

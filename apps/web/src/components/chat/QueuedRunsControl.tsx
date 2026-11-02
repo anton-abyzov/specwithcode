@@ -13,7 +13,9 @@ import type {
   ChatAttachment as ContractChatAttachment,
   EnvironmentId,
   MessageId,
+  ProviderInstanceId,
   RunId,
+  ServerProvider,
   ThreadId,
 } from "@specweave-studio/contracts";
 import {
@@ -31,10 +33,12 @@ import {
 import { useId, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
+import { getProviderInstanceEntry } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { nowMinuteMs, useNowMinute } from "../../hooks/useNowMinute";
 import { epochMillis } from "../../studio/projectThreadMentions";
+import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { queuedAgeLabel, queuedRunOneLine } from "./queuedRunSummary";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
@@ -134,6 +138,18 @@ export interface QueuedRunsControlHandle {
   editLatest: (repeat: boolean) => boolean;
 }
 
+/** What the row runs on, as the picker names it; the slug when the provider is gone. */
+function pickedModelLabel(
+  providers: ReadonlyArray<ServerProvider>,
+  picked: { readonly instanceId: string; readonly model: string },
+): string {
+  const model = getProviderInstanceEntry(
+    providers,
+    picked.instanceId as ProviderInstanceId,
+  )?.models.find((candidate) => candidate.slug === picked.model);
+  return model === undefined ? picked.model : getTriggerDisplayModelName(model);
+}
+
 export function QueuedRunsControl({
   ref,
   ...props
@@ -160,6 +176,8 @@ export function QueuedRunsControl({
    * machine is not connected); null or absent when the row actions work.
    */
   readonly actionsUnavailableReason?: string | null | undefined;
+  /** Names a row's picked model; its slug shows without them. */
+  readonly providers?: ReadonlyArray<ServerProvider> | undefined;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -243,7 +261,17 @@ export function QueuedRunsControl({
   const items = [
     ...queued.map(
       (
-        { run, text, attachments, senderThreadId, summary, createdBy, automatic, steering },
+        {
+          run,
+          text,
+          attachments,
+          senderThreadId,
+          summary,
+          createdBy,
+          automatic,
+          steering,
+          pickedModel,
+        },
         serverIndex,
       ) => ({
         key: run.id,
@@ -256,6 +284,7 @@ export function QueuedRunsControl({
         queuedByYou: senderThreadId === undefined && createdBy === "user",
         automatic: automatic === true,
         steering: steering === true,
+        pickedModel: pickedModel ? pickedModelLabel(props.providers ?? [], pickedModel) : null,
         summary: summary ?? null,
         queuedAtMs: epochMillis(run.requestedAt),
         thumbnails: attachments
@@ -279,6 +308,7 @@ export function QueuedRunsControl({
       queuedByYou: true,
       automatic: false,
       steering: false,
+      pickedModel: null,
       summary: null,
       queuedAtMs: null,
       thumbnails: (message.attachments ?? [])
@@ -760,6 +790,14 @@ export function QueuedRunsControl({
                         {age}
                       </span>
                     ) : null}
+                    {item.pickedModel !== null ? (
+                      <span
+                        className="shrink-0 text-2xs text-muted-foreground"
+                        data-queued-picked-model
+                      >
+                        on {item.pickedModel}
+                      </span>
+                    ) : null}
                   </ComposerBanner.Content>
                   <ComposerBanner.Actions>
                     {item.automatic ? (
@@ -854,11 +892,14 @@ export function QueuedRunsControl({
                               }}
                             >
                               <CornerUpRightIcon />
-                              Steer now
+                              {item.pickedModel === null ? "Steer now" : "Run now"}
                             </Button>
                           </TooltipTrigger>
                           <TooltipPopup>
                             {rowSteerReason ??
+                              (item.pickedModel !== null
+                                ? `Stop this turn and run this message on ${item.pickedModel}, in this thread`
+                                : null) ??
                               `Send into the current turn now${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>

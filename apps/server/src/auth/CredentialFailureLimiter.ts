@@ -225,8 +225,14 @@ const GENUINE_BUT_STALE = new Set([
 /** Whether a refused credential counts toward the client's failure budget. */
 export function countsAsCredentialGuess(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
-  const tagged = error as { readonly _tag?: unknown; readonly cause?: unknown };
+  const tagged = error as {
+    readonly _tag?: unknown;
+    readonly cause?: unknown;
+    readonly teamRulesMessage?: unknown;
+  };
   if (tagged._tag !== "ServerAuthInvalidCredentialError") return false;
+  // A genuine credential a rule refuses: its address must not get locked out with it.
+  if (tagged.teamRulesMessage !== undefined) return false;
   const cause = tagged.cause as { readonly _tag?: unknown } | undefined;
   return !(typeof cause?._tag === "string" && GENUINE_BUT_STALE.has(cause._tag));
 }

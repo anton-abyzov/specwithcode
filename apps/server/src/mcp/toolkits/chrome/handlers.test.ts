@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off -- drives the chrome_* handlers with a fake extension and a fake fleet.
+import { TeamRules, teamRulesOf } from "../../../teamRules/TeamRules.ts";
 import {
   type ChromePeerInput,
   type ChromeToolName,
@@ -235,6 +236,25 @@ describe("Chrome on another machine", () => {
       expect(there.profiles).toEqual([]);
       expect(there.hint).toContain("Settings › Chrome on Studio B");
       expect(there.hint).toContain(OTHER_BROWSERS_LAST);
+    }),
+  );
+
+  it.effect("refuses the Chrome tools when the rules turn Chrome off", () =>
+    Effect.gen(function* () {
+      const a = machineA(null);
+      const off = Effect.provideService(
+        TeamRules,
+        teamRulesOf({
+          status: "active",
+          rules: { version: 1, owner: "Acme", tools: { chrome: false } },
+          fingerprint: "3a9f",
+          warnings: [],
+        }),
+      );
+      const opened = yield* a.exit("t1", "chrome_open", { url: "https://example.com/" }).pipe(off);
+      expect(JSON.stringify(opened)).toContain("Acme");
+      const named = yield* a.exit("t1", "chrome_tabs", { machine: "b" }).pipe(off);
+      expect(JSON.stringify(named)).toContain("Acme");
     }),
   );
 

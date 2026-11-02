@@ -409,6 +409,19 @@ describe("folded relay attention", () => {
     expect(relayAttentionText("No blockers. Receipt: /scratch/checks.json")).toBeNull();
     expect(relayAttentionText("**Blockers:** none. CI passed.")).toBeNull();
   });
+  it("never lifts a pasted script or a split abbreviation out of a brief", () => {
+    const script = `(()=>{ const a=r=>r?r.x:null; return a(1)||'started' })()`;
+    expect(relayAttentionText(`Run this in the tab:\n${script}\nThen report.`)).toBeNull();
+    expect(relayAttentionText("That includes the Acme, Inc. confirm messages.")).toBeNull();
+  });
+  it("keeps a question that quotes a command in a code span", () => {
+    const text = "Should I run `npm test && npm run build` next?";
+    expect(relayAttentionText(text)).toBe(text);
+  });
+  it("counts a question only where a sentence ends in one", () => {
+    expect(relayAttentionText("Used t?t.x here. All passed.")).toBeNull();
+    expect(relayAttentionText("Used t?t.x here. Merge it?")).toBe("Merge it?");
+  });
   it("does not promote code or JSON log questions into requests", () => {
     expect(relayAttentionText('```sh\necho "Approve?"\n```')).toBeNull();
     expect(relayAttentionText('{"log":"Approve?"}')).toBeNull();

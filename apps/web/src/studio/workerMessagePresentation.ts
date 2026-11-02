@@ -79,7 +79,7 @@ interface Block extends Span {
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const HEADING = /^ {0,3}#{1,6}\s/;
 const BLOCKERS = /^(?:\*\*|__)?blockers?:/i;
-const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs|cf)\.$/i;
+const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs|cf|inc|ltd|llc|corp)\.$/i;
 const QUESTION = /\?["'”’)*_]*$/;
 /**
  * A line that starts its own paragraph inside a run of lines: a list item at
@@ -87,6 +87,8 @@ const QUESTION = /\?["'”’)*_]*$/;
  */
 const OWN_PARAGRAPH_LINE = /^(?:[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)| {0,3}[|>#])/;
 const CLOSERS = new Set(['"', "'", "”", "’", ")", "*", "_"]);
+/** A line of a program pasted into prose, unfenced. English has no use for these tokens. */
+const CODE_LINE = /=>|&&|\|\||={2,}|!==?|\bconst\s+\w+\s*=|\blet\s+\w+\s*=|\bfunction\s*\(/;
 
 function isJsonText(text: string): boolean {
   const trimmed = text.trim();
@@ -262,6 +264,11 @@ function boldRunsOf(text: string, block: Span): Span[] {
   return runs;
 }
 
+/** The start of the line `index` is on. */
+function lineStart(text: string, index: number): number {
+  return text.lastIndexOf("\n", index - 1) + 1;
+}
+
 /** The end of the line `index` is on, within `end`. */
 function lineEnd(text: string, index: number, end: number): number {
   const newline = text.indexOf("\n", index);
@@ -373,12 +380,13 @@ function excerptFrom(
 
 /** Candidate attention stays visible even while an internal receipt folds.
  * Presentation only: this never creates a question, blocker or lifecycle state.
- * Prose questions and explicit user-action failures remain visible.
+ * Prose questions and explicit user-action failures remain visible. A question
+ * ends in `?`; a `?` inside a pasted script's ternary asks nobody anything.
  */
 export function relayAttentionText(text: string): string | null {
   const selected: Span[] = [];
   const action =
-    /\?|^(?:please\s+)?(?:approve|choose|confirm|sign in|log in|provide|decide|grant|retry|reconnect|unlock)\b|\b(?:please|you (?:must|need to|can))\s+(?:approve|choose|confirm|sign in|log in|provide|decide|grant|retry|reconnect|unlock)\b|(?:blockers?|action required|needs? your|waiting for you):?|\b(?:authentication failed|permission denied|insufficient credits?)\b/i;
+    /^(?:please\s+)?(?:approve|choose|confirm|sign in|log in|provide|decide|grant|retry|reconnect|unlock)\b|\b(?:please|you (?:must|need to|can))\s+(?:approve|choose|confirm|sign in|log in|provide|decide|grant|retry|reconnect|unlock)\b|(?:blockers?|action required|needs? your|waiting for you):?|\b(?:authentication failed|permission denied|insufficient credits?)\b/i;
   for (const block of blocksOf(text)) {
     if (block.kind === "json") continue;
     const sentences = sentencesOf(text, block);
@@ -394,7 +402,13 @@ export function relayAttentionText(text: string): string | null {
         )
       )
         return;
-      if (!action.test(prose)) return;
+      if (!QUESTION.test(prose) && !action.test(prose)) return;
+      // Code spans are how a person quotes a command in a question; only bare code counts.
+      const line = text.slice(
+        lineStart(text, sentence.start),
+        lineEnd(text, sentence.start, block.end),
+      );
+      if (CODE_LINE.test(line.replace(/`[^`]*`/g, ""))) return;
       // Keep the failure that explains a following action, without a routine lead.
       const previous = sentences[index - 1];
       if (

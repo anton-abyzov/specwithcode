@@ -28,6 +28,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("./settingsLayout", () => ({
+  TeamRulesLabel: ({ children }: { children: ReactNode }) => <em>{children}</em>,
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <main>{children}</main>,
   SettingsSection: ({
     title,
@@ -209,6 +210,64 @@ afterEach(async () => {
 });
 
 describe("Settings > Machines", () => {
+  it("adds no team rules line when no machine has rules", () => {
+    setUp();
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).not.toContain("Team rules");
+    expect(html).not.toContain("<em>");
+    expect(html).not.toContain("inert");
+  });
+
+  it("shows the fingerprint and flags drift once a machine has rules", () => {
+    setUp();
+    runtime.environments = [
+      {
+        ...environment(m4, "M4MAX"),
+        serverConfig: {
+          teamRules: {
+            status: "active",
+            owner: "Acme",
+            fingerprint: "aaaaaaaaaaaa",
+            reach: { machines: "same-rules" },
+          },
+        },
+      },
+      {
+        ...environment(m3, "MacBook Pro"),
+        serverConfig: {
+          teamRules: { status: "active", owner: "Acme", fingerprint: "aaaaaaaaaaaa" },
+        },
+      },
+    ];
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).toContain("Team rules");
+    expect(html).toContain("rules aaaaaaaa");
+    expect(html).toContain("Rules on this machine");
+    expect(html).toContain("Same rules");
+    // M1Max is reachable with no rules, so same-rules refuses it and its Connect is locked.
+    expect(html).toContain("No rules");
+    expect(html).toContain("Work refused.");
+    expect(html).toContain("Set by Acme");
+    expect(html).toContain("M1Max has different rules");
+    expect(html).toContain("inert");
+  });
+
+  it("replaces Connect both ways with the lock", () => {
+    const html = renderToStaticMarkup(
+      <ConnectBothWaysView
+        machineLabel="MacBook Pro"
+        canCreate
+        creating={false}
+        created={null}
+        teamRulesLock={{ setBy: "Set by Acme", message: "Acme's rules turn this off." }}
+        onCreate={vi.fn()}
+        onDone={vi.fn()}
+      />,
+    );
+    expect(html).toContain("Set by Acme");
+    expect(html).not.toContain("one-time link");
+  });
+
   it("shows each machine with visibility, workers, shared projects and accounts", () => {
     setUp();
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);

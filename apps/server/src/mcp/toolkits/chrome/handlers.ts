@@ -23,6 +23,8 @@ import {
   OrchestratorMcpFailure,
   type OrchestratorMcpMachineRef,
 } from "@specweave-studio/contracts";
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -47,14 +49,30 @@ const MAX_REMEMBERED = 500;
 /** The answer carries the image twice; this keeps it well under the fleet client's cap. */
 const MAX_PEER_SCREENSHOT_CHARS = 8 * 1024 * 1024;
 
-/** Browser access is the same per-thread switch the preview tools use. */
-const requireChromeAccess = McpInvocationContext.requireThreadMcpCapability("preview").pipe(
-  Effect.mapError(
-    () =>
-      new BrowserExtensionToolError({
-        code: "invalid_request",
-        reason: "Browser access is turned off for this thread. Ask the user to turn it on.",
-      }),
+/** Team rules that turn off Chrome stop it here, for this machine's threads and its peers. */
+const refuseChromeByTeamRules = Effect.gen(function* () {
+  const refused = teamRulesToolRefusal(yield* currentTeamRules, "chrome");
+  if (refused !== null) {
+    return yield* new BrowserExtensionToolError({
+      code: "invalid_request",
+      reason: refused.message,
+    });
+  }
+});
+
+/**
+ * Browser access is the same per-thread switch the preview tools use. Team rules
+ * check here rather than at that switch, which also runs the preview tools.
+ */
+const requireChromeAccess = refuseChromeByTeamRules.pipe(
+  Effect.andThen(McpInvocationContext.requireThreadMcpCapability("preview")),
+  Effect.mapError((error) =>
+    error._tag === "BrowserExtensionToolError"
+      ? error
+      : new BrowserExtensionToolError({
+          code: "invalid_request",
+          reason: "Browser access is turned off for this thread. Ask the user to turn it on.",
+        }),
   ),
 );
 
@@ -420,6 +438,7 @@ const notForAgents = new BrowserExtensionToolError({
  */
 const requirePeer = (caller: ChromePeerInput["caller"]) =>
   Effect.gen(function* () {
+    yield* refuseChromeByTeamRules;
     const scope = yield* McpInvocationContext.McpInvocationContext;
     const client = scope.client;
     if (

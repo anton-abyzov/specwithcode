@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import { expect, it } from "@effect/vitest";
 import {
   type ComputerUseActionResult,
@@ -35,6 +36,25 @@ const connectHost = (broker: ComputerUseBroker.ComputerUseBroker["Service"], pla
     if (connected.type !== "connected") throw new Error("expected a connected event first");
     return { hostId: connected.hostId, events, fiber };
   });
+
+it.effect("refuses every action when the rules turn computer use off", () =>
+  Effect.gen(function* () {
+    const broker = yield* ComputerUseBroker.make;
+    const refused = yield* broker.invoke({ kind: "screenshot" }).pipe(
+      Effect.provideService(
+        TeamRules,
+        teamRulesOf({
+          status: "active",
+          rules: { version: 1, owner: "Acme", tools: { computerUse: false } },
+          fingerprint: "3a9f",
+          warnings: [],
+        }),
+      ),
+      Effect.flip,
+    );
+    expect(refused.reason).toContain("Acme");
+  }),
+);
 
 it.effect("tells the agent to open the desktop app when no host is connected", () =>
   Effect.gen(function* () {

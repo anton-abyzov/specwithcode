@@ -5,9 +5,10 @@ import * as NodeURL from "node:url";
 
 const mocks = NodeURL.fileURLToPath(new URL("./mocks.tsx", import.meta.url));
 // Rows, locks and the composer notice are real; only environment state and routing are not.
-const owners = /(settingsLayout|useTeamRules)\.tsx?$/;
+const owners =
+  /(settingsLayout|useTeamRules|MachinesSettings|PairPhoneSettings|StudioFleetConnections)\.tsx?$/;
 const mocked =
-  /(\/state\/environments|\/state\/session|\/hooks\/useSettings|\/useScopedSettings|\/SettingInheritance|\/SettingsScopeSentence|\/scopedSettings|\/projectListVisibility|\/WorkspacePageContainer|^@tanstack\/react-router)$/;
+  /(\/state\/environments|\/state\/session|\/hooks\/useSettings|\/useScopedSettings|\/SettingInheritance|\/SettingsScopeSentence|\/scopedSettings|\/projectListVisibility|\/WorkspacePageContainer|\/machineNickname|\/RenameMachineDialog|\/HandoffModeSettings|\/MachineWorkGrants|\/usePrimaryFleet|\/HostLimits|\/state\/entities|\/environments\/primary|^@tanstack\/react-router)$/;
 export default defineConfig({
   root: NodeURL.fileURLToPath(new URL(".", import.meta.url)),
   plugins: [

@@ -32,6 +32,9 @@ private struct GlobalSettingsRoot: View {
         }
         machines
         if !model.machines.isEmpty { MachineDefaultsCard() }
+        ForEach(machinesWithRules) { machine in
+          TeamRulesCard(rules: machine.teamRules, machineName: model.machines.count > 1 ? machine.displayName : nil)
+        }
         appearance
         deviceName
         about
@@ -50,6 +53,8 @@ private struct GlobalSettingsRoot: View {
       }
     }
   }
+
+  private var machinesWithRules: [MachineSummary] { model.machines.filter { $0.teamRules != nil } }
 
   private var machines: some View {
     GroupedCard(label: "Machines", separatorInset: 56) {
@@ -134,6 +139,16 @@ private struct MachineDefaultsCard: View {
 
   private var machineId: String? { selectedMachine ?? model.machines.first(where: { $0.status.isOnline })?.id ?? model.machines.first?.id }
   private var machine: MachineSummary? { machineId.flatMap { model.machine($0) } }
+  private var rules: TeamRulesInfo? { machine?.teamRules }
+  /// Who locks the picker, when the rules narrow it.
+  private var modeLock: String? { rules.flatMap { $0.limitsModes ? $0.setByLabel : nil } }
+  private var modes: [RuntimeModeChoice] { rules?.allowedModes ?? RuntimeModeChoice.allCases }
+
+  /// What new threads really start with: a default above the limit is lowered to it.
+  private func shownMode(_ settings: MachineSettings) -> RuntimeModeChoice {
+    let mode = settings.defaultRuntimeMode ?? .approvalRequired
+    return rules?.clamped(mode) ?? mode
+  }
 
   var body: some View {
     GroupedCard(label: "Defaults", footer: footer, separatorInset: 56) {
@@ -151,7 +166,7 @@ private struct MachineDefaultsCard: View {
           .accessibilityLabel("Machine, \(machine?.displayName ?? "none")")
         }
       }
-      WeaveRow("New threads", stacksTrailing: true) {
+      WeaveRow("New threads", subtitle: modeLock, stacksTrailing: true) {
         WeaveRowSymbol("hand.raised")
       } trailing: {
         if loading {
@@ -159,15 +174,15 @@ private struct MachineDefaultsCard: View {
         } else if let settings {
           Menu {
             Picker("Approval mode", selection: Binding(
-              get: { settings.defaultRuntimeMode ?? .approvalRequired },
+              get: { shownMode(settings) },
               set: { save(mode: $0) }
             )) {
-              ForEach(RuntimeModeChoice.allCases, id: \.self) { Text($0.label).tag($0) }
+              ForEach(modes, id: \.self) { Text($0.label).tag($0) }
             }
           } label: {
-            menuLabel((settings.defaultRuntimeMode ?? .approvalRequired).label)
+            menuLabel(shownMode(settings).label)
           }
-          .accessibilityLabel("Approval mode for new threads, \((settings.defaultRuntimeMode ?? .approvalRequired).label)")
+          .accessibilityLabel("Approval mode for new threads, \(shownMode(settings).label)")
         } else {
           WeaveRowTrailingText("Unavailable")
         }

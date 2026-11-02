@@ -126,9 +126,10 @@ export function mapRemoteEnvironmentError(
       return new ConnectionBlockedError({
         reason: "authentication",
         detail:
-          error.reason === "device_reapproval_required"
+          error.teamRulesMessage ??
+          (error.reason === "device_reapproval_required"
             ? error.message
-            : "The environment credential is invalid.",
+            : "The environment credential is invalid."),
         ...(error.reason === "device_reapproval_required" ? { reapprovalRequired: true } : {}),
         traceId: error.traceId,
       });
@@ -198,7 +199,9 @@ export function mapRemoteDpopEnvironmentError(
   if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
     return new ConnectionBlockedError({
       reason: "authentication",
-      detail: dpopFailureMessage("The environment credential is invalid.", error.dpopFailureReason),
+      detail:
+        error.teamRulesMessage ??
+        dpopFailureMessage("The environment credential is invalid.", error.dpopFailureReason),
       traceId: error.traceId,
     });
   }

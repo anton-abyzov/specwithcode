@@ -1,6 +1,10 @@
 import { ProviderInstanceId, RunId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveHandoffEndpoints, type HandoffTimelineRun } from "./handoff.ts";
+import {
+  resolveHandoffEndpoints,
+  sameProviderModelChanges,
+  type HandoffTimelineRun,
+} from "./handoff.ts";
 
 const from = ProviderInstanceId.make("codex_personal");
 const to = ProviderInstanceId.make("claudeAgent");
@@ -61,5 +65,54 @@ describe("handoff endpoints shared by web and mobile", () => {
     expect(
       resolveHandoffEndpoints(item, [run("target", 2, from, "wrong-model")]).to.model,
     ).toBeUndefined();
+  });
+});
+
+describe("sameProviderModelChanges", () => {
+  const onRun = (
+    ordinal: number,
+    instanceId: ProviderInstanceId,
+    model: string,
+    extra: {
+      readonly status?: "queued" | "cancelled" | "completed";
+      readonly startedAt?: null;
+    } = {},
+  ) =>
+    ({
+      id: RunId.make(`run-${ordinal}`),
+      ordinal,
+      providerInstanceId: instanceId,
+      modelSelection: { instanceId, model },
+      userMessageId: `message-${ordinal}`,
+      status: "completed",
+      startedAt: "2026-11-02T00:00:00.000Z",
+      ...extra,
+    }) as never;
+
+  it("marks a model change within one provider at the message that started it", () => {
+    expect(sameProviderModelChanges([onRun(1, to, "opus"), onRun(2, to, "sonnet")])).toEqual([
+      {
+        runId: "run-2",
+        messageId: "message-2",
+        instanceId: to,
+        fromModel: "opus",
+        toModel: "sonnet",
+      },
+    ]);
+  });
+
+  it("leaves a move between providers to its handoff row", () => {
+    expect(sameProviderModelChanges([onRun(1, to, "opus"), onRun(2, from, "sol")])).toEqual([]);
+  });
+
+  it("ignores rows that never ran", () => {
+    expect(
+      sameProviderModelChanges([
+        onRun(1, to, "opus"),
+        onRun(2, to, "sonnet", { status: "cancelled", startedAt: null }),
+        onRun(3, to, "opus"),
+        onRun(4, to, "sonnet", { status: "queued" }),
+      ]),
+    ).toEqual([]);
   });
 });

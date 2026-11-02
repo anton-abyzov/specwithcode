@@ -209,7 +209,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments }, index) => {
+      {queuedRuns.map(({ run, text, attachments, pickedModel }, index) => {
         const layout = dragRows?.find((row) => row.id === run.id);
         const offset =
           sourceLayout?.y !== undefined &&
@@ -331,7 +331,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       ? [
                           {
                             id: "steer",
-                            title: "Steer now",
+                            title: pickedModel ? "Run now" : "Steer now",
                             attributes: { disabled: !controls.canSteer },
                             image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
                           },
@@ -389,13 +389,17 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     {workflow?.canPromoteToSteer ? (
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`Steer with message ${index + 1} now`}
+                        accessibilityLabel={
+                          pickedModel
+                            ? `Stop this turn and run message ${index + 1} on ${pickedModel.model}`
+                            : `Steer with message ${index + 1} now`
+                        }
                         disabled={!controls.canSteer}
                         onPress={() => void act(run.id, "steer")}
                         className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
                       >
                         <Text className="font-studio-medium text-xs text-primary-foreground">
-                          Steer
+                          {pickedModel ? "Run now" : "Steer"}
                         </Text>
                       </Pressable>
                     ) : null}

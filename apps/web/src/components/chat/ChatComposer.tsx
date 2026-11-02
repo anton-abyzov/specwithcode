@@ -274,7 +274,7 @@ import {
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomValue } from "@effect/atom-react";
-import { teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
+import { teamRulesThreadModeAllowed } from "@specweave-studio/shared/teamRules";
 import { TEAM_RULES_ABOVE_LIMIT, teamRulesFromSummary } from "~/teamRules/teamRulesView";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -2246,13 +2246,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     serverEnvironment.configValueAtom(environmentId),
   )?.teamRules;
   const teamRules = useMemo(() => teamRulesFromSummary(teamRulesSummary), [teamRulesSummary]);
+  // Work from another machine keeps that machine's ceiling, even with no rules here.
+  const carriedTeamRules = props.activeThreadShell?.source?.origin?.carried;
   const runtimeModeMenuOptions = useMemo(
     () =>
       compatibleRuntimeModeOptions.map((option) => ({
         ...option,
-        aboveTeamLimit: !teamRulesModeAllowed(teamRules.state, option.mode),
+        aboveTeamLimit: !teamRulesThreadModeAllowed(teamRules.state, carriedTeamRules, option.mode),
       })),
-    [compatibleRuntimeModeOptions, teamRules.state],
+    [carriedTeamRules, compatibleRuntimeModeOptions, teamRules.state],
   );
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
@@ -3143,7 +3145,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     canOperateThread &&
     compatibleRuntimeMode !== "full-access" &&
     compatibleRuntimeModeOptions.some((option) => option.mode === "full-access") &&
-    teamRulesModeAllowed(teamRules.state, "full-access") &&
+    teamRulesThreadModeAllowed(teamRules.state, carriedTeamRules, "full-access") &&
     (activePendingApproval.requestKind !== "mcp-elicitation" ||
       (activePendingApproval.options ?? []).some((option) => option.decision === "accept"));
   const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;

@@ -3,6 +3,8 @@ import {
   OrchestratorMcpFailure,
   type ProjectId,
 } from "@specweave-studio/contracts";
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
 import * as Effect from "effect/Effect";
 import * as Google from "../../../integrations/google/GoogleAccountService.ts";
 import * as Access from "../../McpToolAccess.ts";
@@ -14,6 +16,13 @@ import { GoogleToolkit } from "./tools.ts";
  * an outside MCP client, or a thread of another project, gets nothing.
  */
 const callerProject = Effect.fn("mcp.google.callerProject")(function* () {
+  const refused = teamRulesToolRefusal(yield* currentTeamRules, "google");
+  if (refused !== null) {
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message: refused.message,
+    });
+  }
   const context = yield* readCaller();
   if (!context.caller) {
     return yield* new OrchestratorMcpFailure({

@@ -84,6 +84,8 @@ import {
   type ResponseStyle,
 } from "@specweave-studio/contracts";
 
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -976,6 +978,8 @@ export function makeClaudeQueryOptions(input: {
    * agents ask the user to pick one.
    */
   readonly hideClaudeInChrome?: boolean;
+  /** Team rules turn Chrome off, which launch args cannot turn back on. */
+  readonly claudeInChromeRefused?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -1008,7 +1012,10 @@ export function makeClaudeQueryOptions(input: {
   // Launch args win; then a paired SpecWithCode Browser; then the user's
   // Claude Code default. `--no-chrome` is checked before CLAUDE_CODE_ENABLE_CFC
   // and the "Enabled by default" setting, so it also stops auto-enable.
-  if (!Object.hasOwn(extraArgs, "chrome") && !Object.hasOwn(extraArgs, "no-chrome")) {
+  if (input.claudeInChromeRefused === true) {
+    delete extraArgs.chrome;
+    extraArgs["no-chrome"] = null;
+  } else if (!Object.hasOwn(extraArgs, "chrome") && !Object.hasOwn(extraArgs, "no-chrome")) {
     if (input.hideClaudeInChrome === true) extraArgs["no-chrome"] = null;
     else if (input.claudeInChromeDefault === true) extraArgs.chrome = null;
   }
@@ -8083,15 +8090,23 @@ export function makeClaudeAdapterV2(
           // Only a thread that gets SpecWithCode's chrome_* tools (studio MCP attached, agent
           // browser access on) loses Claude in Chrome; otherwise it would have no browser.
           const pairingFile = adapterOptions.browserExtensionPairingFile;
+          // Team rules that turn off Chrome leave a thread no browser of that kind at all.
+          const claudeInChromeRefused =
+            teamRulesToolRefusal(yield* currentTeamRules, "chrome") !== null;
           const hideClaudeInChrome =
-            pairingFile !== undefined &&
-            turnInput.runtimePolicy.preferSpecWithCodeBrowser !== false &&
-            mcpOverrides.mcpServers !== undefined &&
-            McpProviderSession.readMcpProviderSession(turnInput.threadId, adapterOptions.instanceId)
-              ?.browserToolsAvailable === true &&
-            isPaired(
-              yield* fileSystem.readFileString(pairingFile).pipe(Effect.orElseSucceed(() => null)),
-            );
+            claudeInChromeRefused ||
+            (pairingFile !== undefined &&
+              turnInput.runtimePolicy.preferSpecWithCodeBrowser !== false &&
+              mcpOverrides.mcpServers !== undefined &&
+              McpProviderSession.readMcpProviderSession(
+                turnInput.threadId,
+                adapterOptions.instanceId,
+              )?.browserToolsAvailable === true &&
+              isPaired(
+                yield* fileSystem
+                  .readFileString(pairingFile)
+                  .pipe(Effect.orElseSucceed(() => null)),
+              ));
           const catalog = adapterOptions.modelCatalog?.() ?? BUNDLED_CLAUDE_MODEL_CATALOG;
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           const queryPolicyKey = stringifyJson([
@@ -8108,6 +8123,7 @@ export function makeClaudeAdapterV2(
             turnInput.projectAdditionalDirectories ?? [],
             claudeInChromeDefault,
             hideClaudeInChrome,
+            claudeInChromeRefused,
           ]);
           const projectAdditionalDirectories = turnInput.projectAdditionalDirectories ?? [];
           const queryCoreBaseKey = stringifyJson(
@@ -8253,6 +8269,7 @@ export function makeClaudeAdapterV2(
             subagentPromptFileContents,
             claudeInChromeDefault,
             hideClaudeInChrome,
+            claudeInChromeRefused,
             attachmentsDir,
             ...(adapterOptions.agentSecretDeny === undefined
               ? {}

@@ -1,3 +1,8 @@
+import {
+  teamRulesMachineLinkRefusal,
+  teamRulesMachineRefusal,
+} from "@specweave-studio/shared/teamRules";
+import { readMachineTeamRules } from "./teamRules/TeamRules.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - the fleet file needs exclusive create with mode 0600 and an atomic rename.
 import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - a random temp name keeps two writers from sharing one file.
@@ -290,6 +295,11 @@ export async function addFleetMachine(input: {
 }): Promise<FleetAddResult> {
   const invite = decodeFleetJoinCode(input.code);
   const fetcher = input.link ?? input.fetcher ?? fetch;
+  const rules =
+    (typeof input.link === "object" ? input.link.teamRules?.() : undefined) ??
+    readMachineTeamRules();
+  const linkRefused = teamRulesMachineLinkRefusal(rules);
+  if (linkRefused !== null) throw new FleetError("team-rules", linkRefused.message);
   const source = (await readFleetConfigSource(input.baseDir)) ?? { version: 1, machines: [] };
   parseFleetConfig(source);
   const document = source as Record<string, unknown> & {
@@ -332,6 +342,11 @@ export async function addFleetMachine(input: {
       ? makeFleetLink({ fetch: fetcher, baseDir: input.baseDir })
       : toFleetLink(fetcher);
   const reached = await reachFleetMachine(link, machine);
+  const peerRefused = teamRulesMachineRefusal(rules, {
+    label: reached.machineName ?? invite.label,
+    fingerprint: reached.peerRules?.teamRules?.fingerprint,
+  });
+  if (peerRefused !== null) throw new FleetError("team-rules", peerRefused.message);
   const label = (input.label ?? invite.label).trim() || reached.machineName || invite.label;
   const redeemed = isFleetJoinV2(invite)
     ? await redeemFleetInvitation({

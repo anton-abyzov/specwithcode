@@ -67,7 +67,7 @@ describe("launchOriginOf", () => {
       label: "Claude.ai",
     });
     expect(
-      launchOriginOf({ scope: scope(claude), caller: { id: "t" } }, fleetWork, {
+      launchOriginOf({ scope: scope(claude), caller: {} }, fleetWork, {
         clientLabel: "Fake",
       })?.label,
     ).toBe("SpecWithCode");

@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@specweave-studio/contracts";
+import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,6 +15,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
@@ -41,7 +43,10 @@ const withService = <A, E>(
     };
   },
   body: (input: {
-    readonly preferences: { readonly update: CloudLink.CloudLink["Service"]["updatePreferences"] };
+    readonly preferences: {
+      readonly update: CloudLink.CloudLink["Service"]["updatePreferences"];
+      readonly syncHeldWebhooks: CloudLink.CloudLink["Service"]["syncHeldWebhooksWithTeamRules"];
+    };
     readonly stored: Map<string, Uint8Array>;
     readonly relayCalls: Array<boolean>;
   }) => Effect.Effect<A, E, never>,
@@ -111,12 +116,59 @@ const withService = <A, E>(
     );
     return yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
+      return yield* body({
+        preferences: {
+          update: link.updatePreferences,
+          syncHeldWebhooks: link.syncHeldWebhooksWithTeamRules,
+        },
+        stored,
+        relayCalls,
+      });
     }).pipe(
       Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
   });
+
+const underRules = (reach: { readonly connect?: boolean; readonly webhooks?: boolean }) => {
+  const parsed = parseTeamRulesText(JSON.stringify({ version: 1, owner: "Acme", reach }));
+  if (!parsed.ok) throw new Error(parsed.issues.join());
+  return Effect.provideService(
+    TeamRules,
+    teamRulesOf({ status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] }),
+  );
+};
+const onHold = Effect.provideService(
+  TeamRules,
+  teamRulesOf({ status: "hold", issues: ["broken"], owner: "Acme" }),
+);
+
+it.effect("a hold leaves the relay's webhook setting as it was", () =>
+  withService({}, ({ preferences, stored, relayCalls }) =>
+    Effect.gen(function* () {
+      stored.set(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode("true"));
+      yield* preferences.syncHeldWebhooks.pipe(underRules({ webhooks: false }));
+      assert.deepEqual(relayCalls, [false]);
+      yield* preferences.syncHeldWebhooks.pipe(onHold);
+      assert.deepEqual(relayCalls, [false]);
+    }),
+  ),
+);
+
+it.effect("Connect off refuses turning activity on, not saving it unchanged", () =>
+  withService({}, ({ preferences, stored }) =>
+    Effect.gen(function* () {
+      const off = underRules({ connect: false });
+      const save = preferences
+        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: false })
+        .pipe(off);
+      const refused = yield* save.pipe(Effect.flip);
+      assert.include(JSON.stringify(refused), "Acme");
+      stored.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("true"));
+      yield* save;
+    }),
+  ),
+);
 
 it.effect("tells the relay before saving the hold setting locally", () =>
   withService({}, ({ preferences, stored, relayCalls }) =>

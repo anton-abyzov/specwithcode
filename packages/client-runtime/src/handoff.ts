@@ -62,3 +62,45 @@ function latestRunModelBefore(
   }
   return latest?.modelSelection.model;
 }
+
+/** A model change inside one provider: same native session or a fresh one, but no handoff item. */
+export interface SameProviderModelChange {
+  readonly runId: OrchestrationV2Run["id"];
+  /** The message that started the run on the new model; steered messages join it later. */
+  readonly messageId: OrchestrationV2Run["userMessageId"];
+  readonly instanceId: ProviderInstanceId;
+  readonly fromModel: string;
+  readonly toModel: string;
+}
+
+/**
+ * Where a thread's model changed within one provider. A move between providers
+ * has its own handoff row, and a row cancelled before it started ran on nothing.
+ */
+export function sameProviderModelChanges(
+  runs: ReadonlyArray<
+    HandoffTimelineRun & Partial<Pick<OrchestrationV2Run, "status" | "startedAt" | "userMessageId">>
+  >,
+): ReadonlyArray<SameProviderModelChange> {
+  const changes: Array<SameProviderModelChange> = [];
+  let previous: HandoffTimelineRun | undefined;
+  for (const run of runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
+    if (run.status === "queued" || (run.status === "cancelled" && run.startedAt == null)) continue;
+    if (
+      previous !== undefined &&
+      run.userMessageId !== undefined &&
+      previous.providerInstanceId === run.providerInstanceId &&
+      previous.modelSelection.model !== run.modelSelection.model
+    ) {
+      changes.push({
+        runId: run.id,
+        messageId: run.userMessageId,
+        instanceId: run.providerInstanceId,
+        fromModel: previous.modelSelection.model,
+        toModel: run.modelSelection.model,
+      });
+    }
+    previous = run;
+  }
+  return changes;
+}

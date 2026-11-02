@@ -3,6 +3,8 @@ import {
   type EnvironmentId,
   type LogicalProject,
   type ProjectCoordinatorBinding,
+  type TeamRulesPeerRules,
+  type TeamRulesSummary,
 } from "@specweave-studio/contracts";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import { isAutomatedProject } from "@specweave-studio/shared/projectOrigin";
@@ -16,6 +18,15 @@ import type {
 import { fleetMachineSaved } from "../../studio/fleetAutoConnect";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
 import type { HostLimitBlock } from "../../studio/hostLimitsModel";
+import {
+  teamRulesMachineLinkLock,
+  teamRulesMachineLock,
+  teamRulesOwnMachineView,
+  teamRulesPeerFromSummary,
+  teamRulesPeerMachineView,
+  type TeamRulesLock,
+  type TeamRulesMachineView,
+} from "../../teamRules/teamRulesView";
 import { workGrantProjectsSummary, workGrantStatus } from "./machineWorkGrants.logic";
 import { isShareablePairingUrl } from "./pairingUrls";
 
@@ -34,6 +45,9 @@ export interface MachineEnvironmentInput {
   readonly phase: string;
   /** The connection line the rest of the app shows, such as "Connecting…". */
   readonly statusText: string;
+  /** That machine's rules, once its config has arrived. */
+  readonly teamRules?: TeamRulesSummary | undefined;
+  readonly configKnown?: boolean | undefined;
 }
 
 /** The project fields the page reads, so tests need not build a full shell. */
@@ -123,6 +137,10 @@ export interface MachineRowModel {
   readonly accounts: readonly MachineAccount[] | null;
   /** A private machine this app sees, whose own app may not see this one yet. */
   readonly connectBothWays: boolean;
+  /** Rule fingerprint and drift; null when no machine here has rules, so the row stays as it was. */
+  readonly teamRules: TeamRulesMachineView | null;
+  /** Set when this machine's rules refuse connecting to that one. */
+  readonly connectLock: TeamRulesLock | null;
   /** This app sees the machine, but this server does not list it, so agents here cannot use it. */
   readonly canAddForAgents: boolean;
 }
@@ -309,6 +327,17 @@ function accountsOn(
   }));
 }
 
+/** A connected machine answers for itself; otherwise the primary server's last read of it. */
+function peerRulesOf(
+  environment: MachineEnvironmentInput | undefined,
+  machine: StudioFleetMachine | null | undefined,
+): { readonly peer: TeamRulesPeerRules | undefined; readonly known: boolean } {
+  if (environment?.phase === "connected" && environment.configKnown === true) {
+    return { peer: teamRulesPeerFromSummary(environment.teamRules), known: true };
+  }
+  return { peer: machine?.teamRules, known: machine?.status === "reachable" };
+}
+
 /**
  * The rows, this machine first, then the machines this app connects to in
  * catalog order, then private machines it cannot see yet in the server's order.
@@ -334,6 +363,27 @@ export function buildMachineRows(input: {
     fleetMachines.map((machine) => [machine.environmentId, machine] as const),
   );
   const saved = new Set<string>(input.environments.map((environment) => environment.environmentId));
+  const ownRules = input.environments.find(
+    (environment) => environment.environmentId === input.primaryEnvironmentId,
+  )?.teamRules;
+  const anyRules =
+    ownRules !== undefined ||
+    input.environments.some((environment) => environment.teamRules !== undefined) ||
+    fleetMachines.some((machine) => machine.teamRules !== undefined);
+  const peerRulesFields = (
+    label: string,
+    environment: MachineEnvironmentInput | undefined,
+    machine: StudioFleetMachine | null | undefined,
+  ) => {
+    const { peer, known } = peerRulesOf(environment, machine);
+    return {
+      teamRules: anyRules ? teamRulesPeerMachineView(ownRules, peer, known) : null,
+      // A machine that has not answered is not known to differ, so only a whole-fleet rule names it.
+      connectLock: known
+        ? teamRulesMachineLock(ownRules, { label, fingerprint: peer?.fingerprint })
+        : teamRulesMachineLinkLock(ownRules),
+    };
+  };
   const labels = new Map<string, string>([
     ...fleetMachines.map((machine) => [machine.environmentId, machine.label] as const),
     ...input.environments.map(
@@ -381,6 +431,13 @@ export function buildMachineRows(input: {
       projects: projectsOn(environment.environmentId, true, input.projects, nameOf, scratchRootFor),
       accounts: accountsOn(environment.environmentId, input.hostBlocks),
       connectBothWays: fleetMachine !== null && connected,
+      ...(isThisMachine
+        ? { teamRules: anyRules ? teamRulesOwnMachineView(ownRules) : null, connectLock: null }
+        : peerRulesFields(
+            environment.label,
+            environment,
+            fleetByEnvironment.get(environment.environmentId),
+          )),
       // Without a fleet answer yet, "not listed" means nothing.
       canAddForAgents:
         !isThisMachine &&
@@ -407,6 +464,7 @@ export function buildMachineRows(input: {
       projects: projectsOn(machine.environmentId, false, input.projects, nameOf, scratchRootFor),
       accounts: null,
       connectBothWays: false,
+      ...peerRulesFields(machine.label, undefined, machine),
       canAddForAgents: false,
     });
   }

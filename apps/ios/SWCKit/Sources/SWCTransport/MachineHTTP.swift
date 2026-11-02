@@ -240,6 +240,7 @@ public struct MachineHTTP: Sendable {
   private struct ErrorBody: Decodable {
     let code: String?
     let reason: String?
+    let teamRulesMessage: String?
   }
 
   func makeRequest(_ base: URL, _ path: String, timeout: Duration) throws -> URLRequest {
@@ -273,6 +274,10 @@ public struct MachineHTTP: Sendable {
     }
     guard (200..<300).contains(response.statusCode) else {
       let body = try? JSONDecoder().decode(ErrorBody.self, from: data)
+      // Team rules said no: the credential is fine, so this is never "pair again".
+      if let message = body?.teamRulesMessage, !message.isEmpty {
+        throw TransportError.teamRules(message: message)
+      }
       if authenticated, response.statusCode == 401, body?.reason == "invalid_credential" || body?.reason == nil {
         throw TransportError.needsRepair
       }

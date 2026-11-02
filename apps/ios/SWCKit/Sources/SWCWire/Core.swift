@@ -274,7 +274,9 @@ public struct ServerError: Error, Sendable, Hashable, CustomStringConvertible {
       switch cause {
       case let .fail(error):
         let tag = error["_tag"]?.stringValue ?? "UnknownError"
-        let message = error["message"]?.stringValue
+        // A tagged error's `message` is a getter, so it never crosses the wire:
+        // a Team rules refusal travels in its own field.
+        let message = error["teamRulesRefusal"]?["message"]?.stringValue ?? error["teamRulesMessage"]?.stringValue ?? error["message"]?.stringValue
         switch tag {
         case "EnvironmentAuthorizationError":
           let scope = error["requiredScope"]?.stringValue

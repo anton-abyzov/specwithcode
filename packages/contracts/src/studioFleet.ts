@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { AuthGrantScope } from "./auth.ts";
 import { AuthSessionId, EnvironmentId, IsoDateTime, ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { TeamRulesPeerRules } from "./teamRules.ts";
 
 export const StudioFleetMachineId = Schema.String.check(
   Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,47}$/),
@@ -68,6 +69,8 @@ export const StudioFleetMachine = Schema.Struct({
   /** Whether the saved management token is a plain bearer or bound to this machine's fleet key. */
   managementBinding: Schema.optionalKey(Schema.Literals(["bearer", "proof"])),
   status: Schema.Literals(["reachable", "unreachable", "identity-mismatch"]),
+  /** That machine's Team rules, read from it. Absent with none, when unreachable and from older servers. */
+  teamRules: Schema.optionalKey(TeamRulesPeerRules),
   pairingConfigured: Schema.Boolean,
   /** The machine's own name from its environment descriptor; absent when unreachable or on older servers. */
   machineName: Schema.optionalKey(Schema.String),

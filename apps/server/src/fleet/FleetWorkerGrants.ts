@@ -1,3 +1,5 @@
+import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as DateTime from "effect/DateTime";
 import type {
   StudioFleetWorkerAccess,
@@ -78,9 +80,15 @@ export const FleetWorkerGrantErrorReason = Schema.Literals([
 
 export class FleetWorkerGrantError extends Schema.TaggedError<FleetWorkerGrantError>()(
   "FleetWorkerGrantError",
-  { reason: FleetWorkerGrantErrorReason, cause: Schema.optional(Schema.Defect()) },
+  {
+    reason: FleetWorkerGrantErrorReason,
+    cause: Schema.optional(Schema.Defect()),
+    /** Refused by Team rules, in words that name the owner. */
+    teamRulesMessage: Schema.optional(Schema.String),
+  },
 ) {
   override get message(): string {
+    if (this.teamRulesMessage !== undefined) return this.teamRulesMessage;
     return {
       unknown_machine: "This machine is not configured.",
       not_allowed: "This server is not allowed to start workers on that machine.",
@@ -447,6 +455,13 @@ const make = Effect.gen(function* () {
 
   const allow: FleetWorkerGrants["Service"]["allow"] = (input) =>
     Effect.gen(function* () {
+      const ruled = teamRulesMachineLinkRefusal(yield* currentTeamRules);
+      if (ruled !== null) {
+        return yield* new FleetWorkerGrantError({
+          reason: "not_allowed",
+          teamRulesMessage: ruled.message,
+        });
+      }
       const target = yield* findTarget(input.machineId);
       const now = yield* Clock.currentTimeMillis;
       const rateLimited = yield* Ref.modify(lastMint, (current) => {

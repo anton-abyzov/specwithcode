@@ -27,13 +27,16 @@ import {
   LinkedMemoryMergeResult,
 } from "@specweave-studio/contracts";
 
+import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
 import * as FleetTargets from "../fleet/FleetTargets.ts";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   type FleetOrigin,
   fleetAddresses,
   fleetAuthorization,
   fleetMachineKey,
   reachFleetMachine,
+  fleetReachMayBeRemembered,
 } from "../fleet/fleetTransport.ts";
 import * as FleetWorkerGrants from "../fleet/FleetWorkerGrants.ts";
 import { stringifyJson } from "../json.ts";
@@ -251,6 +254,7 @@ export const make = Effect.gen(function* () {
       const cached = (yield* Ref.get(identities)).get(target.id);
       if (
         cached !== undefined &&
+        fleetReachMayBeRemembered(link) &&
         now - cached.checkedAt < IDENTITY_TTL_MS &&
         fleetAddresses(target).some((address) => address.origin === cached.address.origin)
       )
@@ -263,24 +267,32 @@ export const make = Effect.gen(function* () {
           return reachFleetMachine(link, target, { token: accessToken });
         },
         catch: (error) =>
-          error instanceof FleetError && error.kind === "identity-mismatch"
+          error instanceof FleetError && error.kind === "team-rules"
             ? new HandoffPeerError({
-                code: "invalid",
-                message: `${target.label} answered as a different machine.`,
+                code: "needs_grant",
+                message: error.message,
+                check: "grant",
                 uncertain: false,
                 local: true,
               })
-            : error instanceof FleetError && error.kind === "connect-unbound"
+            : error instanceof FleetError && error.kind === "identity-mismatch"
               ? new HandoffPeerError({
-                  code: "needs_grant",
-                  message: `${target.label} answers only through SpecWithCode Connect, and this machine's work grant there works only over Tailscale.`,
-                  check: "grant",
+                  code: "invalid",
+                  message: `${target.label} answered as a different machine.`,
                   uncertain: false,
                   local: true,
                 })
-              : // No address answered: the network between the two says nothing about
-                // this machine's setup, so it is no local failure.
-                unreachable(target.label, false),
+              : error instanceof FleetError && error.kind === "connect-unbound"
+                ? new HandoffPeerError({
+                    code: "needs_grant",
+                    message: `${target.label} answers only through SpecWithCode Connect, and this machine's work grant there works only over Tailscale.`,
+                    check: "grant",
+                    uncertain: false,
+                    local: true,
+                  })
+                : // No address answered: the network between the two says nothing about
+                  // this machine's setup, so it is no local failure.
+                  unreachable(target.label, false),
       });
       const address: FleetOrigin = { origin: reached.origin, transport: reached.transport };
       yield* Ref.update(identities, (current) =>
@@ -297,6 +309,21 @@ export const make = Effect.gen(function* () {
       return next;
     }).pipe(Effect.andThen(Effect.sync(() => link.book.forget(fleetMachineKey(target), origin))));
 
+  /** A machine too old to hold a carried ceiling would drop it on arrival. */
+  const refuseUncarried = (environmentId: EnvironmentId) =>
+    Effect.gen(function* () {
+      const target = yield* findTarget(environmentId);
+      const credential = yield* credentialFor(target);
+      yield* reachPeer(target, credential.accessToken);
+      if (link.book.peerRules?.(fleetMachineKey(target))?.carried === true) return;
+      return yield* new HandoffPeerError({
+        code: "invalid",
+        message: `Team rules travel with this thread, and ${target.label} runs a SpecWithCode too old to enforce them. Update SpecWithCode on ${target.label}.`,
+        uncertain: false,
+        local: true,
+      });
+    });
+
   const post = <A>(
     environmentId: EnvironmentId,
     path: PeerPath,
@@ -306,6 +333,19 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<A, HandoffPeerError> =>
     Effect.gen(function* () {
       const target = yield* findTarget(environmentId);
+      // Work leaves here only under readable rules: a broken file could be hiding `none`.
+      if (path === "replicate" || path === "takeover") {
+        const held = teamRulesHoldRefusal(yield* currentTeamRules);
+        if (held !== null) {
+          return yield* new HandoffPeerError({
+            code: "needs_grant",
+            message: held.message,
+            check: "grant",
+            uncertain: false,
+            local: true,
+          });
+        }
+      }
       const credential = yield* credentialFor(target);
       const address = yield* reachPeer(target, credential.accessToken);
       const url = `${address.origin}${HANDOFF_PEER_PREFIX}/${path}`;
@@ -390,6 +430,9 @@ export const make = Effect.gen(function* () {
             local: true,
           }),
       }).pipe(
+        Effect.tap(() =>
+          meta.carried === undefined ? Effect.void : refuseUncarried(environmentId),
+        ),
         Effect.flatMap((frame) =>
           post(environmentId, "replicate", frame, "application/octet-stream", decodeReplicate),
         ),

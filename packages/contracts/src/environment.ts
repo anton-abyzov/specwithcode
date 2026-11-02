@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { TeamRulesPeerRules } from "./teamRules.ts";
 import {
   EnvironmentId,
   ForwardCompatibleOptional,
@@ -177,6 +178,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   designSystemEditing: Schema.optionalKey(Schema.Boolean),
   /** Threads add_comment replies by parentId; older servers omit it and clients hide Reply. */
   designCommentReplies: Schema.optionalKey(Schema.Boolean),
+  /** Enforces a ceiling carried with work from another machine; older servers omit it. */
+  teamRulesCarried: Schema.optionalKey(Schema.Boolean),
   /** Accepts format `svg` on `design.export`; older servers omit it. */
   designSvgExport: Schema.optionalKey(Schema.Boolean),
   /** Server removes a private machine from its list (`removeFleetMachine`).
@@ -334,6 +337,8 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   /** Authoritative managed worktree root on this machine; absent on older servers. */
   defaultWorktreesDirectory: Schema.optionalKey(TrimmedNonEmptyString),
   capabilities: ExecutionEnvironmentCapabilities,
+  /** This machine's Team rules. Absent with no rules file and from older servers. */
+  teamRules: Schema.optionalKey(TeamRulesPeerRules),
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 

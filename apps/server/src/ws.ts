@@ -1,3 +1,5 @@
+import { teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "./teamRules/TeamRules.ts";
 import * as ProjectRuntimeAccess from "./project/ProjectRuntimeAccess.ts";
 import * as TemporaryProjects from "./project/TemporaryProjects.ts";
 import {
@@ -1416,6 +1418,16 @@ const layerWsRpc = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
+      // Older clients read this as a failed install, with the owner named in the message.
+      const refuseRelayClientInstall = Effect.gen(function* () {
+        const refused = teamRulesReachRefusal(yield* currentTeamRules, "connect");
+        if (refused !== null) {
+          return yield* new RelayClientInstallFailedError({
+            reason: "unsupported_platform",
+            message: refused.message,
+          });
+        }
+      });
       // RpcScopeAuthorization checks each RPC's declared scope before its handler
       // runs. This covers the one RPC whose scope depends on its input.
       const authorizeEffect = <A, E, R>(
@@ -2541,28 +2553,32 @@ const layerWsRpc = (
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,
         [WS_METHODS.cloudInstallRelayClient]: (_input) =>
           Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>((queue) =>
-            relayClient
-              .installWithProgress((event) => Queue.offer(queue, event).pipe(Effect.asVoid))
-              .pipe(
-                Effect.flatMap((status) =>
-                  Queue.offer(queue, {
-                    type: "complete",
-                    status,
-                  }),
+            refuseRelayClientInstall.pipe(
+              Effect.andThen(
+                relayClient.installWithProgress((event) =>
+                  Queue.offer(queue, event).pipe(Effect.asVoid),
                 ),
-                Effect.catchTags({
-                  RelayClientInstallError: (error) =>
-                    Queue.fail(
-                      queue,
-                      new RelayClientInstallFailedError({
-                        reason: error.reason,
-                        message: error.message,
-                      }),
-                    ),
-                }),
-                Effect.andThen(Queue.end(queue)),
-                Effect.forkScoped,
               ),
+              Effect.flatMap((status) =>
+                Queue.offer(queue, {
+                  type: "complete",
+                  status,
+                }),
+              ),
+              Effect.catchTags({
+                RelayClientInstallError: (error) =>
+                  Queue.fail(
+                    queue,
+                    new RelayClientInstallFailedError({
+                      reason: error.reason,
+                      message: error.message,
+                    }),
+                  ),
+                RelayClientInstallFailedError: (error) => Queue.fail(queue, error),
+              }),
+              Effect.andThen(Queue.end(queue)),
+              Effect.forkScoped,
+            ),
           ),
         [WS_METHODS.pullRequestsList]: (input) => pullRequests.list(input),
         [WS_METHODS.pullRequestsListStats]: (input) => pullRequests.listStats(input),
@@ -3326,6 +3342,7 @@ export const serveRpcWebSocket = <E, R>(
         failEnvironmentAuthInvalid(
           EnvironmentAuth.serverAuthCredentialReason(error),
           EnvironmentAuth.serverAuthDpopFailureReason(error),
+          EnvironmentAuth.serverAuthTeamRulesMessage(error),
         ),
       ),
       Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>

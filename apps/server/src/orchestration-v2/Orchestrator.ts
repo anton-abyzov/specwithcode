@@ -106,6 +106,7 @@ import {
   type ProviderSessionId,
   RunId,
   RuntimeMode,
+  type TeamRulesCarried,
   TeamRulesRefusal,
   ThreadExecutionRecord,
   ThreadLinkedPullRequest,
@@ -115,6 +116,7 @@ import {
 } from "@specweave-studio/contracts";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import {
+  teamRulesCarriedRefusal,
   teamRulesClampMode,
   teamRulesHoldRefusal,
   teamRulesInstanceDriver,
@@ -2957,6 +2959,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.threadId,
       runtimeMode,
       command.modelSelection,
+      command.origin?.carried,
     );
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
@@ -4472,9 +4475,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: ThreadId,
       runtimeMode: RuntimeMode,
       selection: ModelSelection,
+      carried: TeamRulesCarried | undefined,
     ) {
       const state = yield* currentTeamRules;
       yield* refuseByTeamRules(command, threadId, teamRulesModeRefusal(state, runtimeMode));
+      yield* refuseByTeamRules(command, threadId, teamRulesCarriedRefusal(carried, runtimeMode));
       yield* refuseByTeamRules(
         command,
         threadId,
@@ -4492,10 +4497,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: OrchestrationV2ServerCommand,
   ) {
     const state = yield* currentTeamRules;
-    if (state.status === "none") return;
     const threadId = commandThreadId(command);
+    // A carried ceiling holds with no rules file here, since the work came from one.
+    const carriedOf = projectionStore.getThreadShell(threadId).pipe(
+      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      Effect.map((shell) => shell?.origin?.carried),
+    );
     switch (command.type) {
       case "thread.runtime-mode.set":
+        yield* refuseByTeamRules(
+          command,
+          threadId,
+          teamRulesCarriedRefusal(yield* carriedOf, command.runtimeMode),
+        );
         return yield* refuseByTeamRules(
           command,
           threadId,
@@ -4503,6 +4517,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       case "thread.model-selection.set":
       case "provider.switch":
+        if (state.status === "none") return;
         return yield* refuseByTeamRules(
           command,
           threadId,
@@ -4516,6 +4531,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
         if (shell === null) return;
         yield* refuseByTeamRules(command, threadId, teamRulesModeRefusal(state, shell.runtimeMode));
+        yield* refuseByTeamRules(
+          command,
+          threadId,
+          teamRulesCarriedRefusal(shell.origin?.carried, shell.runtimeMode),
+        );
+        if (state.status === "none") return;
         const selection =
           (command.type === "message.dispatch" ? command.modelSelection : undefined) ??
           shell.modelSelection;
@@ -4665,6 +4686,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.targetThreadId,
       runtimeMode,
       targetThread.modelSelection,
+      targetThread.origin?.carried,
     );
     yield* emitEvent({
       type: "thread.created",
@@ -8003,6 +8025,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         childThreadId,
         runtimeMode,
         command.modelSelection,
+        parentProjection.thread.origin?.carried,
       );
       const childThread: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({
@@ -8976,6 +8999,54 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      // A person's row picked for another model cannot join this turn: steering it
+      // would drop the pick and put the words on the running model. It runs next on
+      // its pick instead, in this thread, and the queue carries on.
+      const targetRun = projection.runs.find((candidate) => candidate.id === command.targetRunId);
+      if (
+        targetRun !== undefined &&
+        queuedMessage.createdBy === "user" &&
+        queuedMessage.senderThreadId === undefined &&
+        (queuedRun.modelSelection.instanceId !== targetRun.modelSelection.instanceId ||
+          queuedRun.modelSelection.model !== targetRun.modelSelection.model)
+      ) {
+        // A held queue would not start after the stop: it waits for its own Resume.
+        if (projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This queue is held. Resume it to run this message on its model.",
+          });
+        }
+        const reorderable = queuedRunsInDeliveryOrder(projection).filter(
+          (run) => !isAutomaticCompletionRun(projection, run),
+        );
+        if (reorderable[0] !== undefined && reorderable[0].id !== queuedRun.id) {
+          yield* dispatchQueuedRunReorder(
+            {
+              type: "queued-run.reorder",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              runId: queuedRun.id,
+              beforeRunId: reorderable[0].id,
+            },
+            events,
+          );
+        }
+        return yield* dispatchRunInterrupt(
+          {
+            type: "run.interrupt",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            runId: targetRun.id,
+            reason: `Stopped to run the next message on ${queuedRun.modelSelection.model}`,
+            cause: command.commandId.startsWith("mcp:") ? "agent" : "user",
+          },
+          events,
+          effects,
+        );
+      }
+
       yield* dispatchSteerIntoRun({
         command,
         events,
@@ -9007,7 +9078,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           effect.request.type === "provider-turn.steer" &&
           effect.request.messageId === queuedMessage.id,
       );
-      if (steersActiveTurn) return;
+      if (steersActiveTurn) return undefined;
 
       // An interrupt-restart steer makes the message the restarted attempt's
       // prompt, so the queued row ends now.
@@ -9053,6 +9124,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: now,
         },
       });
+      return undefined;
     });
 
   const dispatchQueuedRunReorder = (
@@ -12673,7 +12745,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchProjectAdopt(command, events);
         break;
       case "queued-message.promote-to-steer":
-        yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);
+        cancelUnsettledEffects = yield* dispatchQueuedMessagePromoteToSteer(
+          command,
+          events,
+          effects,
+        );
         break;
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(

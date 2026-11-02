@@ -7,6 +7,7 @@ extension MachineSummary {
 
   public var recoveryTitle: String {
     if isDisconnected { return "Disconnected on this phone" }
+    if teamRulesRefusal != nil { return "Turned off by team rules" }
     if needsSignIn { return "Sign in again" }
     if isRefusingSignIns { return "\(displayName) is refusing sign-ins for now" }
     if status == .unsupported { return "Update needed" }
@@ -19,6 +20,9 @@ extension MachineSummary {
   public var recoveryMessage: String {
     if isDisconnected {
       return "Automatic retries are paused. Reconnect when you're ready. Your pairing, saved conversations and drafts stay on this phone."
+    }
+    if let teamRulesRefusal {
+      return "\(teamRulesRefusal) Your pairing stays on this phone, and the app connects again when the rule is removed."
     }
     if needsSignIn {
       return "Open SpecWithCode Connect below and sign in with the same account as your computer. A network outage does not require a new pairing."

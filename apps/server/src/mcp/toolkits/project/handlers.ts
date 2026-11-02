@@ -591,7 +591,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const launchFallbackFrom =
           standsInFor !== null && sameRunModel(routedModel, modelSelection) ? standsInFor : null;
         // The header badge names the outside client or machine that started it.
-        const origin = launchOriginOf(context, work, input.originHint);
+        const origin = launchOriginOf(context, work, input.originHint, input.delegation?.carried);
         // An explicit workspaceStrategy wins; otherwise the project's "Use worktrees" switch decides.
         // A new worktree in a project with the switch off needs the user's own ask:
         // agents otherwise fill the disk with checkouts the user turned off.

@@ -136,6 +136,21 @@ enum Captured {
     }
   }
 
+  @Test func aTeamRulesRefusalIsNotARepair() async throws {
+    let refused = #"{"_tag":"EnvironmentAuthInvalidError","code":"auth_invalid","reason":"invalid_credential","teamRulesMessage":"Acme's rules turn off phones on this machine.","traceId":"t"}"#
+    let message = "Acme's rules turn off phones on this machine."
+    let fake = FakeHTTP { _ in (401, refused) }
+    await #expect(throws: TransportError.teamRules(message: message)) {
+      try await MachineHTTP(transport: fake).websocketTicket(token: "tok", at: base)
+    }
+    // The same answer while pairing says why instead of blaming the code.
+    await #expect(throws: TransportError.teamRules(message: message)) {
+      try await MachineHTTP(transport: fake).exchangePairingCode("CODE", at: base, clientLabel: "iPhone")
+    }
+    #expect(TransportError.teamRules(message: message).localizedDescription == message)
+    #expect(!TransportError.teamRules(message: message).isPermanent)
+  }
+
   @Test func getsAWebSocketTicket() async throws {
     let fake = FakeHTTP { _ in (200, Captured.ticket) }
     let ticket = try await MachineHTTP(transport: fake).websocketTicket(token: "tok", at: base)

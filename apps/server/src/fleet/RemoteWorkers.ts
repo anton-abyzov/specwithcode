@@ -1,3 +1,5 @@
+import { teamRulesHoldRefusal, teamRulesStricterMode } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as DateTime from "effect/DateTime";
 import {
   EnvironmentId,
@@ -667,6 +669,13 @@ const make = Effect.gen(function* () {
             const probed = yield* probe(machine).pipe(Effect.result);
             if (probed._tag === "Failure") {
               const error = probed.failure;
+              if (error.remoteCode === RemoteStudioMcpClient.TEAM_RULES_REMOTE_CODE) {
+                return {
+                  ...row,
+                  reachable: false,
+                  teamRulesRefused: error.remoteMessage ?? error.message,
+                };
+              }
               status =
                 error.reason === "identity_mismatch"
                   ? "identity_mismatch"
@@ -840,18 +849,35 @@ const make = Effect.gen(function* () {
   const launch: RemoteWorkersShape["launch"] = (input) =>
     Effect.gen(function* () {
       const { machine } = input;
+      // Work leaves only under readable rules; a broken file could be hiding `none`.
+      const held = teamRulesHoldRefusal(yield* currentTeamRules);
+      if (held !== null) return yield* failure("capability_denied", held.message);
       const credential = yield* grants
         .credential(machine.id)
         .pipe(Effect.mapError((error) => grantFailure(machine, error)));
+      // A worker too old to hold a carried ceiling would drop it the moment it arrives.
+      const carried = input.delegation.carried;
+      if (carried !== undefined) {
+        const peer = yield* client
+          .peerRules(machine.id)
+          .pipe(Effect.mapError((error) => remoteFailure(machine, error)));
+        if (peer?.carried !== true)
+          return yield* failure(
+            "machine_unsupported",
+            `${carried.owner}'s rules travel with this work, and ${machine.label} runs a SpecWithCode too old to enforce them. Update SpecWithCode on ${machine.label}.`,
+          );
+      }
+      const ceiling =
+        teamRulesStricterMode(credential.access, carried?.ceiling) ?? credential.access;
       const clamped = clampRuntimeMode({
         started: input.runtimeMode,
         requested: input.requestedRuntimeMode,
-        ceiling: credential.access,
+        ceiling,
       });
       if (!clamped.ok)
         return yield* failure(
           "runtime_mode_escalation_denied",
-          `${machine.label} allows workers up to ${credential.access}; ${input.requestedRuntimeMode} is broader.`,
+          `${machine.label} allows workers up to ${ceiling}; ${input.requestedRuntimeMode} is broader.`,
         );
       const launcher = launcherFrom(input);
       if (launcher === undefined)

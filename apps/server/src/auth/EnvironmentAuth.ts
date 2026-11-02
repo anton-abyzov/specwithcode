@@ -8,6 +8,7 @@ import {
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
+  type TeamRulesRefusal,
   type AuthPrincipal,
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
@@ -24,6 +25,21 @@ import {
   type AuthWebSocketTicketResult,
 } from "@specweave-studio/contracts";
 import { encodeOAuthScope } from "@specweave-studio/shared/oauthScope";
+import {
+  teamRulesMachineLinkRefusal,
+  teamRulesReachOff,
+  teamRulesReachRefusal,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import {
+  callerFingerprint,
+  isPhoneSession,
+  type RuledSession,
+  sessionFollowsReachRules,
+  teamRulesSessionRefusal,
+  teamRulesOpenSessionRefusal,
+  isConnectSubject,
+} from "../teamRules/TeamRulesReach.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -91,6 +107,19 @@ export interface IssuedBearerSession {
  * A read-only grant holds `orchestration:read` alone. Any other grant also
  * holds `orchestration:operate` and carries its runtime-mode ceiling.
  */
+const TEAM_RULES_SOCKET_CHECK = "5 seconds";
+
+/**
+ * Settles when the reach rules turn this socket's session off. Only the sockets
+ * those rules could end wait here, so a machine with no phones or fleet does not.
+ */
+const untilTeamRulesRefuse = (session: RuledSession): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    while (teamRulesOpenSessionRefusal(yield* currentTeamRules, session) === null) {
+      yield* Effect.sleep(TEAM_RULES_SOCKET_CHECK);
+    }
+  });
+
 export const MCP_CLIENT_SUBJECT = "mcp-client";
 /** The subject of the management token a fleet invitation hands another machine. */
 export const FLEET_INVITATION_SUBJECT = "fleet-invitation";
@@ -117,6 +146,8 @@ export interface AuthenticatedSession extends PrincipalApproval {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  /** What the client said it is, for the rule about phones. */
+  readonly clientDeviceType?: string;
 }
 
 export * from "./EnvironmentAuthErrors.ts";
@@ -140,6 +171,7 @@ import {
   ServerAuthWebSocketTokenIssueError,
   isServerAuthCredentialError,
   serverAuthCredentialReason,
+  serverAuthTeamRulesMessage,
   type ServerAuthCredentialError,
   type ServerAuthInternalError,
   type ServerAuthInvalidRequestError,
@@ -298,7 +330,10 @@ export class EnvironmentAuth extends Context.Service<
      * token without renewing the session their open sockets are bound to.
      */
     readonly watchSessionEnd: (
-      session: Pick<AuthenticatedSession, "sessionId" | "method" | "expiresAt">,
+      session: Pick<
+        AuthenticatedSession,
+        "sessionId" | "method" | "expiresAt" | "subject" | "principal" | "clientDeviceType"
+      >,
     ) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
     readonly issueWebSocketTicket: (
       session: Pick<AuthenticatedSession, "sessionId">,
@@ -510,8 +545,83 @@ export const make = Effect.gen(function* () {
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        clientDeviceType: session.client.deviceType,
       })),
     );
+
+  const refusedByTeamRules = (refused: TeamRulesRefusal) =>
+    Effect.fail(
+      new ServerAuthInvalidCredentialError({
+        diagnostic: refused.message,
+        teamRulesMessage: refused.message,
+      }),
+    );
+
+  /** Reach rules decide on each request, so a rule change needs no session change. */
+  const refuseSessionByTeamRules = <S extends AuthenticatedSession>(
+    session: S,
+    request: HttpServerRequest.HttpServerRequest,
+  ) =>
+    Effect.gen(function* () {
+      const state = yield* currentTeamRules;
+      const refused =
+        teamRulesReachOff(state, "connect") && arrivedOverConnect(request)
+          ? teamRulesReachRefusal(state, "connect")
+          : teamRulesSessionRefusal(
+              state,
+              {
+                subject: session.subject,
+                deviceType: session.clientDeviceType,
+                coordinator: session.principal?.kind === "coordinator",
+              },
+              callerFingerprint(request.headers),
+            );
+      return refused === null ? session : yield* refusedByTeamRules(refused);
+    });
+
+  /** Refuses a new session the reach rules turn off, or that a hold could be hiding. */
+  const refuseNewSessionByTeamRules = (input: {
+    readonly subject?: string | undefined;
+    readonly deviceType: string | undefined;
+    readonly coordinator: boolean;
+    readonly overConnect: boolean | undefined;
+  }) =>
+    Effect.gen(function* () {
+      const state = yield* currentTeamRules;
+      if (state.status === "none") return;
+      // A Connect client renews through here, and a hold keeps what is already connected.
+      if (
+        state.status === "hold" &&
+        (input.subject === undefined || isConnectSubject(input.subject))
+      )
+        return;
+      const refused =
+        (input.overConnect === true ? teamRulesReachRefusal(state, "connect") : null) ??
+        (isPhoneSession({ subject: input.subject ?? "", deviceType: input.deviceType })
+          ? teamRulesReachRefusal(state, "phones")
+          : null) ??
+        (input.coordinator ? teamRulesMachineLinkRefusal(state) : null);
+      if (refused !== null) return yield* refusedByTeamRules(refused);
+    });
+
+  /** Refuses before the credential is spent, so it still works once the rules allow it. */
+  const refuseCredentialByTeamRules = (
+    credential: string,
+    deviceType: string | undefined,
+    overConnect: boolean | undefined,
+  ) =>
+    Effect.gen(function* () {
+      if ((yield* currentTeamRules).status === "none") return;
+      const pending = yield* bootstrapCredentials
+        .peek(credential)
+        .pipe(Effect.catch(() => Effect.succeed(undefined)));
+      yield* refuseNewSessionByTeamRules({
+        subject: pending?.subject,
+        deviceType,
+        coordinator: pending?.coordinator ?? false,
+        overConnect,
+      });
+    });
 
   const authenticateRequestCredential = (
     request: HttpServerRequest.HttpServerRequest,
@@ -536,6 +646,7 @@ export const make = Effect.gen(function* () {
       return Effect.fail(new ServerAuthMissingCredentialError({}));
     }
     return authenticateToken(credential.token).pipe(
+      Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
       Effect.flatMap((session) => {
         if (session.proofKeyThumbprint) {
           if (!dpopToken || dpopToken !== credential.token) {
@@ -637,6 +748,10 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const teamRulesMessageField = (error: ServerAuthCredentialError) => {
+    const message = serverAuthTeamRulesMessage(error);
+    return message === undefined ? {} : { message };
+  };
   const getSessionState: EnvironmentAuth["Service"]["getSessionState"] = (request) =>
     authenticateRequest(request).pipe(
       Effect.map(
@@ -655,6 +770,8 @@ export const make = Effect.gen(function* () {
           ...(serverAuthCredentialReason(error) === "device_reapproval_required"
             ? { reapprovalRequired: true, message: error.message }
             : {}),
+          // Why, in the owner's words: a client must not read this as a lost pairing.
+          ...teamRulesMessageField(error),
           auth: descriptor,
         } satisfies AuthSessionState),
       ),
@@ -712,6 +829,11 @@ export const make = Effect.gen(function* () {
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = Effect.fn(
     "EnvironmentAuth.createBrowserSession",
   )(function* (credential, requestMetadata, previousSessionToken, options) {
+    yield* refuseCredentialByTeamRules(
+      credential,
+      requestMetadata.deviceType,
+      options?.overConnect,
+    );
     if (devAuth?.matches(credential)) {
       return yield* sessions.verify(credential).pipe(
         mapSessionVerificationErrors,
@@ -748,6 +870,13 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(toBootstrapExchangeError));
     yield* refuseFleetRedeemGrant(grant);
     yield* refuseUnboundCoordinatorGrant(grant, options);
+    // The rules can change while the credential is spent; the check above is the one that keeps it.
+    yield* refuseNewSessionByTeamRules({
+      subject: grant.subject,
+      deviceType: requestMetadata.deviceType,
+      coordinator: grant.principal?.kind === "coordinator",
+      overConnect: options?.overConnect,
+    });
     if (
       grant.method === "one-time-token" &&
       !grant.principal &&
@@ -832,14 +961,27 @@ export const make = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
-      return resolveBootstrapGrant(credential, {
-        ...input,
-        ...(requestedScopes !== undefined ? { requestedScopes } : {}),
-      }).pipe(
+      return refuseCredentialByTeamRules(
+        credential,
+        requestMetadata.deviceType,
+        input?.overConnect,
+      ).pipe(
+        Effect.andThen(
+          resolveBootstrapGrant(credential, {
+            ...input,
+            ...(requestedScopes !== undefined ? { requestedScopes } : {}),
+          }),
+        ),
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
             yield* refuseFleetRedeemGrant(grant);
             yield* refuseUnboundCoordinatorGrant(grant, input);
+            yield* refuseNewSessionByTeamRules({
+              subject: grant.subject,
+              deviceType: requestMetadata.deviceType,
+              coordinator: grant.principal?.kind === "coordinator",
+              overConnect: input?.overConnect,
+            });
             if (
               grant.method === "one-time-token" &&
               !grant.principal &&
@@ -1213,7 +1355,9 @@ export const make = Effect.gen(function* () {
               method: session.method,
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+              clientDeviceType: session.client.deviceType,
             })),
+            Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
           );
         }
       }
@@ -1225,10 +1369,23 @@ export const make = Effect.gen(function* () {
   // Relay/mobile/hosted clients renew hourly DPoP tokens, and desktop clients cache
   // bearers. Their sockets end on revoke or replacement; reconnect needs a valid token.
   const watchSessionEnd: EnvironmentAuth["Service"]["watchSessionEnd"] = (session) =>
-    sessions.watchEnd({
-      sessionId: session.sessionId,
-      expiresAt: session.method === "browser-session-cookie" ? session.expiresAt : undefined,
-    });
+    sessions
+      .watchEnd({
+        sessionId: session.sessionId,
+        expiresAt: session.method === "browser-session-cookie" ? session.expiresAt : undefined,
+      })
+      .pipe(
+        Effect.map((ended) => {
+          const ruled = {
+            subject: session.subject,
+            deviceType: session.clientDeviceType,
+            coordinator: session.principal?.kind === "coordinator",
+          };
+          return sessionFollowsReachRules(ruled)
+            ? Effect.raceFirst(ended, untilTeamRulesRefuse(ruled))
+            : ended;
+        }),
+      );
 
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
     const bearer = parseBearerToken(request);
@@ -1314,6 +1471,7 @@ export const make = Effect.gen(function* () {
         (session) => session.method === "browser-session-cookie" && !session.proofKeyThumbprint,
         () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
       ),
+      Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
       Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
     );
   };

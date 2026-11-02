@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,6 +13,8 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import { RELAY_HOOK_DELIVERY_TYP, signRelayJwt } from "@specweave-studio/shared/relayJwt";
 import {
   EnvironmentHttpApi,
@@ -172,6 +175,32 @@ describe("webhook route", () => {
         }).pipe(Effect.ensuring(Effect.promise(() => dispose())));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it("refuses a webhook the rules turn off, and during a hold, before the service", async () => {
+    const parsed = parseTeamRulesText(
+      JSON.stringify({ version: 1, owner: "Acme", reach: { webhooks: false } }),
+    );
+    if (!parsed.ok) throw new Error(parsed.issues.join());
+    const states: ReadonlyArray<TeamRulesState> = [
+      { status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] },
+      { status: "hold", issues: ["broken"], owner: "Acme" },
+    ];
+    for (const state of states) {
+      const { handler, dispose } = handlerFor(() =>
+        Effect.die("A refused webhook must not reach the service"),
+      );
+      try {
+        const response = await handler(
+          post("/api/hooks/scheduled-task%3Ahook/tok", "{}", {}),
+          Context.make(TeamRules, teamRulesOf(state)),
+        );
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: "hook_disabled" });
+      } finally {
+        await dispose();
+      }
+    }
+  });
 
   it("passes the raw request to the service and answers 202 with the delivery id", async () => {
     let received: WebhookTriggerRequest | undefined;

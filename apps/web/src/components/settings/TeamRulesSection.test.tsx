@@ -34,4 +34,20 @@ describe("TeamRulesSectionView", () => {
     expect(markup).toContain("Agents are paused");
     expect(markup).toContain("version: expected 1");
   });
+
+  it("shows reach and tools the rules turn off", () => {
+    const markup = renderToStaticMarkup(
+      <TeamRulesSectionView
+        summary={{
+          status: "active",
+          owner: "Acme",
+          reach: { phones: false },
+          tools: { computerUse: false },
+        }}
+      />,
+    );
+    expect(markup).toContain("Phones");
+    expect(markup).toContain("Computer use");
+    expect(markup).not.toContain("Webhooks");
+  });
 });

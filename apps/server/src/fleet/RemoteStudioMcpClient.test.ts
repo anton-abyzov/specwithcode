@@ -15,11 +15,13 @@ import * as Layer from "effect/Layer";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
+import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
+
 import { nodePath as NodePath } from "../nodePath.ts";
 import { fakeStudioMcp } from "./fakeStudioMcp.testkit.ts";
 import { CONNECT_ORIGIN, ORIGIN, studioToken, target } from "./fleetMachine.testkit.ts";
 import { loadOrCreateFleetProofKey } from "./fleetProofKey.ts";
-import { makeFleetLink } from "./fleetTransport.ts";
+import { makeFleetLink, toFleetLink } from "./fleetTransport.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
@@ -217,6 +219,59 @@ describe("RemoteStudioMcpClient", () => {
       const error = yield* read(client).pipe(failureOnly);
       expect(error.reason).toBe("identity_mismatch");
       expect(remote.requests.every((request) => request.authorization === null)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps the shared session when one probe fails under same-rules", () => {
+    const offline = new Set<string>();
+    const remote = fakeStudioMcp({
+      origin: ORIGIN,
+      offline,
+      environmentId: "env-m1",
+      tokens: ["token-1"],
+      teamRules: { status: "active", fingerprint: "3a9f" },
+      tools: { studio_thread_read: () => ({ result: { thread: remoteThread } }) },
+    });
+    const parsed = parseTeamRulesText(
+      JSON.stringify({ version: 1, owner: "Acme", reach: { machines: "same-rules" } }),
+    );
+    if (!parsed.ok) throw new Error(parsed.issues.join());
+    const state = {
+      status: "active" as const,
+      rules: parsed.rules,
+      fingerprint: "3a9f",
+      warnings: [],
+    };
+    const layer = RemoteStudioMcpClient.layer.pipe(
+      Layer.provide(
+        Layer.mock(FleetWorkerGrants.FleetWorkerGrants)({
+          credential: () =>
+            Effect.succeed({
+              target,
+              accessToken: "token-1",
+              access: "auto" as const,
+              expiresAt: "2026-11-11T00:00:00.000Z",
+            }),
+          reportRejected: () => Effect.void,
+          reportAccepted: () => Effect.void,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(FleetTargets.FleetTargets, {
+          load: Effect.succeed({ version: 1 as const, machines: [target] }),
+          fetch: remote.fetcher,
+          link: { ...toFleetLink(remote.fetcher), teamRules: () => state },
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
+      yield* read(client);
+      offline.add(ORIGIN);
+      expect((yield* read(client).pipe(failureOnly)).reason).toBe("unreachable");
+      offline.clear();
+      yield* read(client);
+      expect(remote.initializations()).toBe(1);
     }).pipe(Effect.provide(layer));
   });
 

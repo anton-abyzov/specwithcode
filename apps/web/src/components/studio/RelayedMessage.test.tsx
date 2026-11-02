@@ -133,6 +133,30 @@ describe("RelayedMessage", () => {
     expect(textOf(renderer)).toContain(text);
     await act(() => renderer.unmount());
   });
+  it("lifts nothing out of a brief addressed to the receiving agent", async () => {
+    const brief = "Decide the structure yourself. Approve the labels? Confirm the counts.";
+    let renderer!: ReactTestRenderer;
+    await act(() => {
+      renderer = create(
+        <RelayedMessage
+          label="Message from Clean up"
+          source="thread"
+          view={null}
+          createdAt={undefined}
+          timestampFormat="locale"
+          original={brief}
+          text={brief}
+          addressedToAgent
+          renderMarkdown={(part) => <>{part}</>}
+        />,
+      );
+    });
+    expect(renderer.root.findAllByProps({ "data-relayed-attention": true })).toHaveLength(0);
+    expect(textOf(renderer)).not.toContain("Decide");
+    await act(() => renderer.root.findByProps({ "aria-expanded": false }).props.onClick());
+    expect(textOf(renderer)).toContain(brief);
+    await act(() => renderer.unmount());
+  });
   it("keeps short internal receipts behind a quiet disclosure", async () => {
     let renderer!: ReactTestRenderer;
     await act(() => {

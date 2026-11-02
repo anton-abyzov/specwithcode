@@ -1,4 +1,6 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@specweave-studio/contracts/relay";
+import { teamRulesReachOff } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as RelayClient from "@specweave-studio/shared/relayClient";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -522,9 +524,12 @@ export const make = Effect.gen(function* () {
   });
 
   const applyConfig = Effect.fn("CloudManagedEndpointRuntime.applyConfig")(
-    (config: RelayManagedEndpointRuntimeConfig | null) =>
+    (requested: RelayManagedEndpointRuntimeConfig | null) =>
       reconcileSemaphore.withPermits(1)(
         Effect.gen(function* () {
+          // Every path that starts the connector passes here, so the rule holds for all
+          // of them. The stored config stays, so removing the rule can start it again.
+          const config = teamRulesReachOff(yield* currentTeamRules, "connect") ? null : requested;
           // A real config change starts over with a fresh backoff. Recovery
           // that hands back the same tunnel and token must keep the delay, or
           // a crash-looping connector respawns on every recovery round trip.

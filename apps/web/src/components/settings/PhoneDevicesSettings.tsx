@@ -7,7 +7,10 @@ import type { RelayPhoneRecord } from "@specweave-studio/contracts/relay";
 import { useEffect, useState } from "react";
 
 import { removeManagedRelayPhoneCommand, useManagedRelayPhones } from "~/cloud/managedRelayState";
+import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { teamRulesReachLock } from "~/teamRules/teamRulesView";
+import { useTeamRules } from "~/teamRules/useTeamRules";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -28,7 +31,7 @@ import {
   removePhoneDialogCopy,
   visiblePhones,
 } from "./PhoneDevices.logic";
-import { SettingsRow } from "./settingsLayout";
+import { SettingsRow, TeamRulesLabel } from "./settingsLayout";
 
 /**
  * The phones signed in to this SpecWithCode Connect account, each removable.
@@ -37,6 +40,8 @@ import { SettingsRow } from "./settingsLayout";
  */
 export function PhoneDevicesSettings() {
   const phonesState = useManagedRelayPhones();
+  const { summary: teamRules } = useTeamRules(usePrimaryEnvironmentId());
+  const teamRulesLock = teamRulesReachLock(teamRules, "phones");
   const removePhone = useAtomCommand(removeManagedRelayPhoneCommand, { reportFailure: false });
   const [confirming, setConfirming] = useState<RelayPhoneRecord | null>(null);
   const [removingDeviceId, setRemovingDeviceId] = useState<string | null>(null);
@@ -121,7 +126,13 @@ export function PhoneDevicesSettings() {
       return (
         <SettingsRow
           title="No phones yet"
-          description="Sign in on the iPhone app with this account and it shows here."
+          description={
+            teamRulesLock?.message ??
+            "Sign in on the iPhone app with this account and it shows here."
+          }
+          status={
+            teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : undefined
+          }
         />
       );
     }
@@ -139,6 +150,8 @@ export function PhoneDevicesSettings() {
           </span>
         }
         description={phoneDetail(phone, nowMs)}
+        // Remove only takes access away, so the rule leaves it available.
+        status={teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : undefined}
         control={
           <Button
             size="sm"

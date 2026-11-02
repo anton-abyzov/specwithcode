@@ -63,6 +63,11 @@ export interface QueuedThreadRun {
   readonly automatic?: boolean;
   /** Steer now was accepted by the server and the provider has not taken it yet. */
   readonly steering?: boolean;
+  /**
+   * The model a person picked for this row, when it is not the running turn's.
+   * Steer now on it stops that turn and runs the row next on this model.
+   */
+  readonly pickedModel?: { readonly instanceId: string; readonly model: string };
 }
 
 /** Why the queue is not draining right now. */
@@ -306,6 +311,20 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       ...(message?.notification ? { summary: message.notification.summary } : {}),
       ...(automatic ? { automatic } : {}),
       ...(steering ? { steering } : {}),
+      ...(activeRun !== null &&
+      message?.createdBy === "user" &&
+      message.senderThreadId === undefined &&
+      run.modelSelection !== undefined &&
+      activeRun.modelSelection !== undefined &&
+      (run.modelSelection.instanceId !== activeRun.modelSelection.instanceId ||
+        run.modelSelection.model !== activeRun.modelSelection.model)
+        ? {
+            pickedModel: {
+              instanceId: run.modelSelection.instanceId,
+              model: run.modelSelection.model,
+            },
+          }
+        : {}),
     };
   });
   const unavailable = steerUnavailableReason({

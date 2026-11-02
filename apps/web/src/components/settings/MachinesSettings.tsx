@@ -52,7 +52,9 @@ import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { SettingsPageContainer, SettingsSection, TeamRulesLabel } from "./settingsLayout";
+import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
+import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
 
 export type { MachineRowModel } from "./machinesSettings.logic";
@@ -110,6 +112,8 @@ export function MachinesSettingsPanel() {
             ? machineStatus(environment.connection, true, isThisMachineTarget(environment.entry))
                 .text
             : "Not connected",
+          teamRules: environment.serverConfig?.teamRules,
+          configKnown: environment.serverConfig != null,
         })),
         primaryEnvironmentId: fleet.primaryEnvironmentId,
         fleet: fleet.snapshot,
@@ -410,17 +414,28 @@ export function MachineRow({
           onOpenChange={setRenaming}
         />
         {row.connect && row.fleetMachine ? (
-          <Button
-            className="shrink-0"
-            size="xs"
-            variant="outline"
-            disabled={pending !== null || !row.connect.enabled}
-            onClick={() => row.fleetMachine && onConnect(row.fleetMachine)}
-          >
-            {pending === row.environmentId ? "Connecting…" : row.connect.label}
-          </Button>
+          <>
+            {row.connectLock ? <TeamRulesLabel>{row.connectLock.setBy}</TeamRulesLabel> : null}
+            <TeamRulesInert lock={row.connectLock}>
+              <Button
+                className="shrink-0"
+                size="xs"
+                variant="outline"
+                disabled={pending !== null || !row.connect.enabled}
+                onClick={() => row.fleetMachine && onConnect(row.fleetMachine)}
+              >
+                {pending === row.environmentId ? "Connecting…" : row.connect.label}
+              </Button>
+            </TeamRulesInert>
+          </>
         ) : null}
       </div>
+
+      {row.connect && row.connectLock ? (
+        <div className="pl-7">
+          <p className="text-xs text-muted-foreground">{row.connectLock.message}</p>
+        </div>
+      ) : null}
 
       {row.workers ? (
         <DetailLine
@@ -450,6 +465,20 @@ export function MachineRow({
               {row.workHere.label}
             </Badge>
             <span>{row.workHere.detail}</span>
+          </p>
+        </DetailLine>
+      ) : null}
+
+      {row.teamRules ? (
+        <DetailLine label="Team rules">
+          <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <Badge size="sm" variant={row.teamRules.tone}>
+              {row.teamRules.label}
+            </Badge>
+            {row.teamRules.fingerprint ? (
+              <span className="font-mono">rules {row.teamRules.fingerprint}</span>
+            ) : null}
+            {row.teamRules.detail ? <span>{row.teamRules.detail}</span> : null}
           </p>
         </DetailLine>
       ) : null}
@@ -638,7 +667,7 @@ function ConnectBothWays({
   const [created, setCreated] = useState<CreatedLink | null>(null);
 
   async function create() {
-    if (creating || !canCreate) return;
+    if (creating || !canCreate || row.connectLock !== null) return;
     const scopes = AuthStandardClientScopes.filter((scope) =>
       readEnvironmentScope(primaryEnvironmentId, scope),
     );
@@ -685,6 +714,7 @@ function ConnectBothWays({
       canCreate={canCreate}
       creating={creating}
       created={created}
+      teamRulesLock={row.connectLock}
       onCreate={() => void create()}
       onDone={() => setCreated(null)}
     />
@@ -711,6 +741,7 @@ export function ConnectBothWaysView({
   canCreate,
   creating,
   created,
+  teamRulesLock = null,
   onCreate,
   onDone,
 }: {
@@ -718,12 +749,15 @@ export function ConnectBothWaysView({
   canCreate: boolean;
   creating: boolean;
   created: CreatedLink | null;
+  teamRulesLock?: TeamRulesLock | null;
   onCreate: () => void;
   onDone: () => void;
 }) {
   return (
     <DetailLine label="Connect both ways">
-      {created === null ? (
+      {teamRulesLock !== null ? (
+        <TeamRulesLockNote lock={teamRulesLock} />
+      ) : created === null ? (
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
             This app sees {machineLabel}. To let {machineLabel}&rsquo;s app see this machine, make a

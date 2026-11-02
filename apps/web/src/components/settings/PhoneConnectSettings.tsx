@@ -8,6 +8,8 @@ import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentScope } from "~/state/session";
 import { isMacPlatform } from "~/lib/utils";
+import { teamRulesReachLock } from "~/teamRules/teamRulesView";
+import { useTeamRules } from "~/teamRules/useTeamRules";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { Button } from "../ui/button";
 import {
@@ -17,7 +19,8 @@ import {
   shouldClearPending,
 } from "./PhoneConnect.logic";
 import { PhoneDevicesSettings } from "./PhoneDevicesSettings";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection, TeamRulesLabel } from "./settingsLayout";
+import { TeamRulesInert } from "./TeamRulesLock";
 
 function readPending(): boolean {
   try {
@@ -55,6 +58,10 @@ function ConfiguredPhoneConnectSettings() {
   const { isLoaded } = useAuth();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
+  const { summary: teamRules } = useTeamRules(primaryEnvironmentId);
+  // This card is a phone reaching the machine over Connect, so either rule stops it.
+  const teamRulesLock =
+    teamRulesReachLock(teamRules, "phones") ?? teamRulesReachLock(teamRules, "connect");
   const {
     isSignedIn,
     linkState,
@@ -88,21 +95,34 @@ function ConfiguredPhoneConnectSettings() {
   };
 
   useEffect(() => {
-    if (busy) return;
+    if (busy || teamRulesLock !== null) return;
     if (shouldAutoTurnOn(step, readPending())) {
       void turnOn();
     } else if (shouldClearPending(step)) {
       writePending(false);
     }
     // turnOn is recreated each render; the step change is the trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, busy]);
+  }, [step, busy, teamRulesLock]);
 
   if (step === "hidden") return null;
 
   // Linux and Windows desktops run this card too: name the machine they are on.
   const computer = isMacPlatform(navigator.platform) ? "Mac" : "computer";
   const row = (() => {
+    if (teamRulesLock !== null) {
+      return (
+        <SettingsRow
+          title={`Make this ${computer} reachable from your iPhone`}
+          description={teamRulesLock.message}
+          status={<TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel>}
+          control={
+            <TeamRulesInert lock={teamRulesLock}>
+              <Button size="sm">Turn on</Button>
+            </TeamRulesInert>
+          }
+        />
+      );
+    }
     switch (step) {
       case "loading":
         // A failed read leaves the link state unknown; show why instead of waiting forever.

@@ -25,6 +25,7 @@ import {
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useStudioFleet } from "../../studio/fleet";
+import { teamRulesMachineLinkLock, teamRulesMachineLock } from "../../teamRules/teamRulesView";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -35,7 +36,9 @@ import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsRow,
+  TeamRulesLabel,
 } from "./settingsLayout";
+import { TeamRulesInert } from "./TeamRulesLock";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -103,6 +106,19 @@ export function MachineFallbackSettings() {
   const { environments } = useNamedEnvironments();
   const environmentId = target?.environmentId ?? NO_ENVIRONMENT;
   const fleet = useStudioFleet(environmentId);
+  const teamRules = environments.find((environment) => environment.environmentId === environmentId)
+    ?.serverConfig?.teamRules;
+  const teamRulesLock = teamRulesMachineLinkLock(teamRules);
+  const teamRulesStatus = teamRulesLock ? (
+    <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel>
+  ) : undefined;
+  // An offline machine has not said which rules it runs, so it reads as offline.
+  const machineRefused = (machine: StudioFleetMachine | undefined) =>
+    machine?.status === "reachable" &&
+    teamRulesMachineLock(teamRules, {
+      label: machine.label,
+      fingerprint: machine.teamRules?.fingerprint,
+    }) !== null;
   const machines = (fleet.snapshot?.machines ?? []).filter(
     (machine) => machine.environmentId !== environmentId,
   );
@@ -123,7 +139,7 @@ export function MachineFallbackSettings() {
   const mixedUnknown = useScopedSettingsMixed(["providerLimitUnknownUsageEligible"]);
   const addMachine = (machineEnvironmentId: string) => {
     const machine = machines.find((entry) => entry.environmentId === machineEnvironmentId);
-    if (!machine) return;
+    if (!machine || machineRefused(machine)) return;
     const providers = providersOn(machine.environmentId);
     const selection = resolveDefaultProviderModelSelection(providers, null);
     if (!selection) return;
@@ -146,45 +162,61 @@ export function MachineFallbackSettings() {
         mixed={mixedTargets}
         id="provider-limit-machine-targets"
         title="Other machines"
-        description="Paired machines a limited thread can move to, best first. The thread resumes there from its last checkpoint. A machine counts only when its account differs from the one that ran out, its usage is below the switch threshold, it is online, signed in to the provider, and its work grant covers this project."
-        status={targets.length === 0 && !mixedTargets ? "This machine only" : undefined}
+        description={
+          teamRulesLock?.message ??
+          "Paired machines a limited thread can move to, best first. The thread resumes there from its last checkpoint. A machine counts only when its account differs from the one that ran out, its usage is below the switch threshold, it is online, signed in to the provider, and its work grant covers this project."
+        }
+        status={
+          teamRulesStatus ??
+          (targets.length === 0 && !mixedTargets ? "This machine only" : undefined)
+        }
         resetAction={
-          targets.length > 0 ? (
+          targets.length > 0 && teamRulesLock === null ? (
             <SettingResetButton label="other machines" onClick={() => saveTargets([])} />
           ) : null
         }
         control={
-          machines.length > 0 ? (
-            <Select
-              value={null}
-              onValueChange={(value) => {
-                if (typeof value === "string") addMachine(value);
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                aria-label="Add a machine"
-                disabled={targets.length >= MAX_FALLBACK_MODELS}
+          <TeamRulesInert lock={teamRulesLock}>
+            {machines.length > 0 ? (
+              <Select
+                value={null}
+                onValueChange={(value) => {
+                  if (typeof value === "string") addMachine(value);
+                }}
               >
-                <SelectValue>{() => (mixedTargets ? "Mixed" : "Add machine")}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {machines.map((machine) => (
-                  <SelectItem key={machine.environmentId} value={machine.environmentId}>
-                    {machine.status === "reachable" ? machine.label : `${machine.label} (offline)`}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          ) : (
-            <span className="text-sm text-muted-foreground">
-              {machinesKnown
-                ? "No paired machines"
-                : fleet.failed
-                  ? "Couldn't read paired machines"
-                  : "Checking paired machines"}
-            </span>
-          )
+                <SelectTrigger
+                  size="sm"
+                  aria-label="Add a machine"
+                  disabled={targets.length >= MAX_FALLBACK_MODELS}
+                >
+                  <SelectValue>{() => (mixedTargets ? "Mixed" : "Add machine")}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {machines.map((machine) => (
+                    <SelectItem
+                      key={machine.environmentId}
+                      value={machine.environmentId}
+                      disabled={machineRefused(machine)}
+                    >
+                      {machineRefused(machine)
+                        ? `${machine.label} (different rules)`
+                        : machine.status === "reachable"
+                          ? machine.label
+                          : `${machine.label} (offline)`}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : (
+              <span className="text-sm text-muted-foreground">
+                {machinesKnown
+                  ? "No paired machines"
+                  : fleet.failed
+                    ? "Couldn't read paired machines"
+                    : "Checking paired machines"}
+              </span>
+            )}
+          </TeamRulesInert>
         }
       >
         {targets.length > 0 ? (
@@ -197,6 +229,12 @@ export function MachineFallbackSettings() {
                 entry={entry}
                 machines={machines}
                 machinesKnown={machinesKnown}
+                refused={
+                  teamRulesLock === null &&
+                  machineRefused(
+                    machines.find((machine) => machine.environmentId === entry.environmentId),
+                  )
+                }
                 providers={providersOn(entry.environmentId)}
                 settings={settings}
                 onModel={(modelSelection, modelLabel) =>
@@ -234,9 +272,13 @@ export function MachineFallbackSettings() {
         mixed={mixedOrder}
         id="provider-limit-target-order"
         title="Try first"
-        description="Which list a limited thread tries first: other machines, or this machine's fallback order. When nothing qualifies, the thread waits and the limit banner names the reason for each machine."
+        description={
+          teamRulesLock?.message ??
+          "Which list a limited thread tries first: other machines, or this machine's fallback order. When nothing qualifies, the thread waits and the limit banner names the reason for each machine."
+        }
+        status={teamRulesStatus}
         resetAction={
-          order !== "other-machine-first" ? (
+          order !== "other-machine-first" && teamRulesLock === null ? (
             <SettingResetButton
               label="try first"
               onClick={() => updateSettings({ providerLimitTargetOrder: "other-machine-first" })}
@@ -244,30 +286,32 @@ export function MachineFallbackSettings() {
           ) : null
         }
         control={
-          <Select
-            value={mixedOrder ? null : order}
-            onValueChange={(value) => {
-              if (value === "other-machine-first" || value === "same-machine-first")
-                updateSettings({ providerLimitTargetOrder: value });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label="Try first">
-              <SelectValue>
-                {(value: string | null) =>
-                  value === "other-machine-first" || value === "same-machine-first"
-                    ? ORDER_LABELS[value]
-                    : "Mixed"
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {(Object.keys(ORDER_LABELS) as ProviderLimitTargetOrder[]).map((option) => (
-                <SelectItem key={option} value={option}>
-                  {ORDER_LABELS[option]}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+          <TeamRulesInert lock={teamRulesLock}>
+            <Select
+              value={mixedOrder ? null : order}
+              onValueChange={(value) => {
+                if (value === "other-machine-first" || value === "same-machine-first")
+                  updateSettings({ providerLimitTargetOrder: value });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Try first">
+                <SelectValue>
+                  {(value: string | null) =>
+                    value === "other-machine-first" || value === "same-machine-first"
+                      ? ORDER_LABELS[value]
+                      : "Mixed"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {(Object.keys(ORDER_LABELS) as ProviderLimitTargetOrder[]).map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {ORDER_LABELS[option]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          </TeamRulesInert>
         }
       />
       <SettingsRow
@@ -276,9 +320,13 @@ export function MachineFallbackSettings() {
         mixed={mixedUnknown}
         id="provider-limit-unknown-usage"
         title="Use machines with unknown usage"
-        description="Count a machine whose provider reports no usage as having room. Off by default: a machine that may be on the same account, or near its limit, is skipped."
+        description={
+          teamRulesLock?.message ??
+          "Count a machine whose provider reports no usage as having room. Off by default: a machine that may be on the same account, or near its limit, is skipped."
+        }
+        status={teamRulesStatus}
         resetAction={
-          settings.providerLimitUnknownUsageEligible ? (
+          settings.providerLimitUnknownUsageEligible && teamRulesLock === null ? (
             <SettingResetButton
               label="unknown usage"
               onClick={() => updateSettings({ providerLimitUnknownUsageEligible: false })}
@@ -286,13 +334,15 @@ export function MachineFallbackSettings() {
           ) : null
         }
         control={
-          <Switch
-            checked={settings.providerLimitUnknownUsageEligible}
-            onCheckedChange={(checked) =>
-              updateSettings({ providerLimitUnknownUsageEligible: Boolean(checked) })
-            }
-            aria-label="Use machines with unknown usage"
-          />
+          <TeamRulesInert lock={teamRulesLock}>
+            <Switch
+              checked={settings.providerLimitUnknownUsageEligible}
+              onCheckedChange={(checked) =>
+                updateSettings({ providerLimitUnknownUsageEligible: Boolean(checked) })
+              }
+              aria-label="Use machines with unknown usage"
+            />
+          </TeamRulesInert>
         }
       />
     </>
@@ -305,6 +355,8 @@ function MachineTargetRow(props: {
   readonly entry: ProviderLimitMachineTarget;
   readonly machines: ReadonlyArray<StudioFleetMachine>;
   readonly machinesKnown: boolean;
+  /** This machine's rules refuse this one, so it is skipped at a limit. */
+  readonly refused: boolean;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly settings: UnifiedSettings;
   readonly onModel: (selection: ModelSelection, label: string) => void;
@@ -328,7 +380,9 @@ function MachineTargetRow(props: {
       <span className="w-4 text-right text-xs text-muted-foreground tabular-nums">{index + 1}</span>
       <span className="min-w-0 flex-1 break-words">
         {label}
-        {!machinesKnown ? null : machine === undefined ? (
+        {props.refused ? (
+          <span className="ml-2 text-xs text-muted-foreground">different rules</span>
+        ) : !machinesKnown ? null : machine === undefined ? (
           <span className="ml-2 text-xs text-muted-foreground">not paired</span>
         ) : machine.status !== "reachable" ? (
           <span className="ml-2 text-xs text-muted-foreground">offline</span>

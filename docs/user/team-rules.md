@@ -29,6 +29,8 @@ variable names that look like credentials are an error.
     "pin": { "claudeAgent": { "environment": { "CLAUDE_CODE_USE_BEDROCK": "1" } } }
   },
   "agents": { "ceiling": "auto-accept-edits", "routines": "approval-required" },
+  "reach": { "phones": false, "connect": false, "machines": "same-rules", "webhooks": false },
+  "tools": { "chrome": false, "computerUse": false, "google": false, "telegram": false },
   "telemetry": { "export": false }
 }
 ```
@@ -41,10 +43,15 @@ variable names that look like credentials are an error.
 | `ai.providers`     | Providers that may start. Others stay listed as disabled                    |
 | `ai.models`        | Allowed model names; `*` matches any text                                   |
 | `ai.pin`           | Environment, launch arguments and binary path for a provider                |
+| `reach.phones`     | `false` refuses phone pairing and phones already paired                     |
+| `reach.connect`    | `false` refuses SpecWithCode Connect and stops a running tunnel             |
+| `reach.machines`   | `any`, `same-rules` or `none`: which machines this one works with           |
+| `reach.webhooks`   | `false` refuses webhooks and webhook routines                               |
+| `tools.*`          | `false` turns off `chrome`, `computerUse`, `google` or `telegram`           |
 | `telemetry.export` | `false` turns off OTLP export                                               |
 
-Unknown keys are errors. `reach`, `tools`, `connections`, `updates` and `zones` are validated and
-reported as declared, but this version does not enforce them.
+Unknown keys are errors. `connections`, `updates` and `zones` are validated and reported as declared,
+but this version does not enforce them.
 
 ## Commands
 
@@ -71,7 +78,39 @@ specweave-studio rules explain --provider codex --model gpt-5
 - **Routines**: a routine above the limit is refused at save and fails at run with a recorded reason.
   Rules are checked again at every run.
 
+- **Machines**: each reachable machine shows its rule fingerprint, and a machine with different rules,
+  no rules or a broken file is flagged.
+- **Phones, Connect, webhooks and tools**: the rows the rules turn off say "Set by Acme Engineering", and
+  older clients get a refusal naming the owner. Disconnecting a Google account or unpairing Telegram
+  stays available.
+
 Without a rules file, none of this appears.
+
+## Reach
+
+Turning off a path keeps its stored state. Phone sessions fail authentication and their sockets close,
+but nothing is revoked, so removing the rule brings the phone back and other machines keep it. A Connect
+tunnel stops within five seconds and link secrets stay. During a hold, existing tunnels, sessions and
+machine links keep running so the file can be repaired, while new pairings, links, webhooks, outgoing
+work and agent tools are refused. Work other machines send to this one keeps arriving during a hold, and
+its turns stay held until the file is fixed.
+
+`reach.machines: "none"` refuses every credentialed call between machines and every folder copy, project
+link, invite and join. `same-rules` allows a machine only when its fingerprint equals this one's, checked
+on both sides at each call. A machine with no rules, a hold or an older build counts as different. Probes
+without a credential still run, so Machines stays accurate. Fallback machine targets follow the same
+rule, and with none left the same-machine fallback runs as usual.
+
+## Work crossing machines
+
+Work sent to another machine carries a ceiling: the stricter of the sender's ceiling and any the thread
+already carries. The working machine enforces the stricter of its own rules and the carried ceiling, also
+with no rules file of its own, for the thread and its children. Back on the machine that set it, that
+machine's live rules decide.
+
+A coordinator with a ceiling refuses to send a thread to a machine too old to hold one. A project move
+lowers the mode at the source first, so an older destination starts inside the ceiling but does not keep
+it afterwards. A thread that carries a ceiling cannot schedule routines.
 
 ## Changing and repairing the file
 
@@ -106,5 +145,16 @@ session management stop in the same cases, and ACP endpoint changes are refused 
 - Host and login-shell environment, such as `ANTHROPIC_BASE_URL`, still reaches providers.
 - Version checks, account checks and the Chrome bridge can still run a stored binary path, including during a hold, though not for an agent turn.
 - Terminals run what the person types.
+- `same-rules` compares fingerprints a machine reports about itself. It catches drift, not a hostile
+  machine.
+- A client reports its own device type, so phone rules cannot catch a client that lies. Phone links are
+  always caught.
+- Links a person drives from a browser name no rules, so `same-rules` checks the machine they came through.
+- iPadOS Safari reports itself as a Mac, so `reach.phones` treats it as a desktop unless it paired through a phone link.
+- A machine's own browser sessions opened through a coordinator are checked against `same-rules` when they start, and folder copies check only `none` and a hold.
+- Codex's own browser and computer tools are not turned off by `tools.chrome` or `tools.computerUse`.
+- A machine with a grant can claim to have set a carried ceiling itself, which drops it there. Grant work only to machines you trust.
+- A carried ceiling limits the permission mode. The model list stays with each machine's own rules.
+- A restart during a hold restores a stored Connect tunnel. The rules stop it again once the file is fixed.
 - Older builds ignore the file. Device application control handles that.
 - Windows reads the default `C:\ProgramData` location, even when ProgramData has moved.

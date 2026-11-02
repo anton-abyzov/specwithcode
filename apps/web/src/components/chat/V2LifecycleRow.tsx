@@ -13,6 +13,7 @@ import { WorkLogRow } from "./WorkLog";
 import {
   resolveHandoffEndpoints,
   type HandoffTimelineRun,
+  type SameProviderModelChange,
 } from "@specweave-studio/client-runtime/handoff";
 import { Fragment } from "react";
 import { formatSubagentDisplayTitle } from "@specweave-studio/client-runtime/state/subagent-display";
@@ -564,6 +565,36 @@ function SubagentTimelineTooltip(
       childThread={child}
       parentProject={parentProject ?? undefined}
       childProject={childProject ?? undefined}
+    />
+  );
+}
+
+/** A model change inside one provider: no context crossed, so it has no handoff item. */
+export function SameProviderSwitchRow(props: {
+  readonly change: SameProviderModelChange;
+  readonly providerStatuses: ReadonlyArray<ServerProvider>;
+}) {
+  const { change } = props;
+  return (
+    <TimelineSystemDivider
+      label="Switched model"
+      icon={ArrowRightLeftIcon}
+      showDetailSeparator={false}
+      detail={
+        <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-1.5">
+          <HandoffEndpoint
+            providers={props.providerStatuses}
+            instanceId={change.instanceId}
+            model={change.fromModel}
+          />
+          <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
+          <HandoffEndpoint
+            providers={props.providerStatuses}
+            instanceId={change.instanceId}
+            model={change.toModel}
+          />
+        </span>
+      }
     />
   );
 }

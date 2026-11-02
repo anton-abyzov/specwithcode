@@ -18,6 +18,7 @@
  */
 import {
   teamRulesInstanceDriver,
+  teamRulesMachines,
   teamRulesSelectionRefusal,
 } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
@@ -399,6 +400,10 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       // A machine target is a fallback too, so it stays inside this machine's list.
       const teamRules = yield* currentTeamRules;
+      // Reach rules decide first: no target at all when work may not cross machines.
+      if (teamRulesMachines(teamRules) === "none") {
+        return [] as ReadonlyArray<MachineCandidateVerdict>;
+      }
       const targets = input.rule.providerLimitMachineTargets.filter(
         (target) =>
           teamRulesSelectionRefusal(teamRules, {
@@ -438,6 +443,18 @@ export const make = Effect.gen(function* () {
       };
       return targets.map((target) => {
         const machine = list.machines.find((row) => row.environmentId === target.environmentId);
+        if (machine?.teamRulesRefused !== undefined) {
+          const machineLabel = targetMachineLabel(target, machine);
+          return {
+            target,
+            machineLabel,
+            eligible: false,
+            reason: "refused" as const,
+            text: `${machineLabel}: ${machine.teamRulesRefused}`,
+            usedPercent: null,
+            resetsAt: null,
+          } satisfies MachineCandidateVerdict;
+        }
         const verdict = judgeMachineCandidate({
           target,
           machine,

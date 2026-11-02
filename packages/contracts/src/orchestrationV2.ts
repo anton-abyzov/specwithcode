@@ -1,3 +1,4 @@
+import { TeamRulesCarried } from "./teamRules.ts";
 import { LifecycleReceipt, LifecycleReceiptReport } from "./threadLifecycleEvidence.ts";
 import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
@@ -426,6 +427,8 @@ export const OrchestrationV2ThreadOrigin = Schema.Struct({
       threadId: ThreadId,
     }),
   ),
+  /** The ceiling the work brought from the machine it came from. */
+  carried: Schema.optional(TeamRulesCarried),
 });
 export type OrchestrationV2ThreadOrigin = typeof OrchestrationV2ThreadOrigin.Type;
 

@@ -160,6 +160,13 @@ const withoutBlockedStarts = (
  * What rules let each instance start with. Stored settings stay as they are.
  * Starting on a hold, nothing is known to be approved, so nothing starts.
  */
+/**
+ * What a sync should bring the registry to. A hold leaves providers as the last good
+ * rules set them: running turns finish, and a typo revives nothing those rules blocked.
+ */
+export const desiredInstances = (rules: TeamRulesState, settings: ServerSettings) =>
+  rules.status === "hold" ? null : withTeamRules(rules, deriveProviderInstanceConfigMap(settings));
+
 export const withTeamRules = (
   rules: TeamRulesState,
   configMap: ProviderInstanceConfigMap,
@@ -226,10 +233,8 @@ export const layerSettingsWatcher = (
         syncLock.withPermits(1)(
           Effect.gen(function* () {
             const rules = yield* currentTeamRules;
-            // A hold leaves providers as the last good rules set them: running turns
-            // finish, and a typo revives nothing those rules blocked.
-            if (rules.status === "hold") return new Set<string>();
-            const desired = withTeamRules(rules, deriveProviderInstanceConfigMap(settings));
+            const desired = desiredInstances(rules, settings);
+            if (desired === null) return new Set<string>();
             // A re-added id the registry still runs from before (a reconcile
             // that would have stopped it failed) is stopped first, so its old
             // sign-in is deleted before the new instance starts and never later.

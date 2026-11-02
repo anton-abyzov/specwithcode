@@ -15,6 +15,8 @@ import {
   formatStudioThreadLink,
   parseStudioThreadTarget,
 } from "@specweave-studio/shared/studioThreadLinks";
+import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -197,6 +199,11 @@ const assertGrantMayReach = (
       localEnvironmentId: context.scope.environmentId,
       targetEnvironmentId: machine.environmentId,
       origin: work.origin,
+      carried: teamRulesOutgoingCarried(
+        yield* currentTeamRules,
+        context.caller?.origin?.carried,
+        context.scope.environmentId,
+      ),
     });
     if (!outgoing.ok)
       return yield* new OrchestratorMcpFailure({

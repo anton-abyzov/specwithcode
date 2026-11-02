@@ -29,7 +29,9 @@ import {
   FLEET_REDEEM_WINDOW,
   fleetRedeemSubject,
 } from "./fleet/fleetRedemption.ts";
+import { teamRulesReachOff } from "@specweave-studio/shared/teamRules";
 import { checkIdentity, type FleetFetch } from "./studioFleet.ts";
+import { currentTeamRules } from "./teamRules/TeamRules.ts";
 import { encodeFleetJoinCode } from "./studioFleetJoin.ts";
 import type { PersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { publishOnTailscale, type TailscalePublishError } from "./tailscalePublish.ts";
@@ -146,7 +148,9 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
       };
     else tailscaleError = published.failure;
   }
-  const connectOrigin = yield* input.readConnectOrigin ?? Effect.succeed(null);
+  const connectOrigin = teamRulesReachOff(yield* currentTeamRules, "connect")
+    ? null
+    : yield* input.readConnectOrigin ?? Effect.succeed(null);
   let connect: string | null = null;
   let connectProblem: "not_linked" | "unreachable" | null = null;
   if (connectOrigin === null) connectProblem = "not_linked";

@@ -28,6 +28,8 @@ export const untilClientSessionEnds = <A, E, R>(
           sessionId: AuthSessionId.make(client.sessionId),
           // An MCP client's token expiry is not an end; only a revoke is.
           method: "bearer-access-token",
+          subject: EnvironmentAuth.MCP_CLIENT_SUBJECT,
+          ...(client.principal === undefined ? {} : { principal: client.principal }),
         });
         return yield* Effect.raceFirst(
           effect,

@@ -33,6 +33,7 @@ import {
   type ThreadId,
   ThreadSideEffect,
   type ThreadSideEffectKind,
+  TeamRulesCarried,
 } from "@specweave-studio/contracts";
 
 import {
@@ -108,6 +109,8 @@ export const HandoffIncomingDetail = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   transcript: Schema.Array(PeerTranscriptMessage),
   execution: Schema.NullOr(ThreadExecutionRecord),
+  /** The ceiling the thread carries; absent from copies sent before it existed. */
+  carried: Schema.optional(TeamRulesCarried),
   /** The epoch this machine continued the thread at, and what it answered. */
   takeoverEpoch: Schema.NullOr(NonNegativeInt),
   takeover: Schema.NullOr(TakeoverResponse),
@@ -544,6 +547,7 @@ export function upsertIncoming(
     interactionMode: meta.interactionMode,
     transcript: meta.transcript,
     execution: meta.execution,
+    ...(meta.carried === undefined ? {} : { carried: meta.carried }),
     takeoverEpoch: null,
     takeover: null,
     // A newer checkpoint keeps the designation the latest heartbeat gave.

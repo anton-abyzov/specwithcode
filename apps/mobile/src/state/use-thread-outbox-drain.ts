@@ -40,6 +40,7 @@ import {
   recordPendingThreadCreationOutcome,
 } from "./pending-thread-creation";
 import { serverEnvironment } from "./server";
+import { queuedTurnTeamRulesRefusal } from "./teamRules";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "./session";
 import {
   confirmThreadOutboxMessageQueued,
@@ -817,6 +818,10 @@ export function useThreadOutboxDrain(): void {
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
         );
       }
+      const refusalBeforeSync = queuedTurnTeamRulesRefusal(serverConfig, thread, settings);
+      if (refusalBeforeSync !== null) {
+        return restoreQueuedMessage(queuedMessage, refusalBeforeSync);
+      }
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
 
       if (settings.runtimeMode !== thread.runtimeMode) {
@@ -831,8 +836,10 @@ export function useThreadOutboxDrain(): void {
           },
         });
         if (AsyncResult.isFailure(runtimeResult)) {
-          reportFailure(runtimeResult, "settings-sync");
-          return false;
+          const failure = reportFailure(runtimeResult, "settings-sync");
+          return failure?.action === "restore"
+            ? restoreQueuedMessage(queuedMessage, failure.message)
+            : false;
         }
       }
 
@@ -848,8 +855,10 @@ export function useThreadOutboxDrain(): void {
           },
         });
         if (AsyncResult.isFailure(interactionResult)) {
-          reportFailure(interactionResult, "settings-sync");
-          return false;
+          const failure = reportFailure(interactionResult, "settings-sync");
+          return failure?.action === "restore"
+            ? restoreQueuedMessage(queuedMessage, failure.message)
+            : false;
         }
       }
 
@@ -904,6 +913,10 @@ export function useThreadOutboxDrain(): void {
         settings,
         currentConfig.providers,
       );
+      const refusalBeforeSend = queuedTurnTeamRulesRefusal(currentConfig, thread, sendSettings);
+      if (refusalBeforeSend !== null) {
+        return restoreQueuedMessage(persistedMessage, refusalBeforeSend);
+      }
       if (!hasAccess()) return true;
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
@@ -1046,6 +1059,10 @@ export function useThreadOutboxDrain(): void {
         settings,
         currentConfig.providers,
       );
+      const refusalBeforeSend = queuedTurnTeamRulesRefusal(currentConfig, null, sendSettings);
+      if (refusalBeforeSend !== null) {
+        return restoreQueuedMessage(persistedMessage, refusalBeforeSend);
+      }
       if (!hasAccess()) return true;
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,

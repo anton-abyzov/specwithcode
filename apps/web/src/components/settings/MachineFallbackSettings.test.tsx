@@ -13,10 +13,16 @@ const state = vi.hoisted(() => ({
   update: vi.fn(),
   machines: [] as unknown[],
   providers: [] as unknown[],
+  teamRules: undefined as unknown,
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
-    environments: [{ environmentId: "mac", serverConfig: { providers: state.providers } }],
+    environments: [
+      {
+        environmentId: "mac",
+        serverConfig: { providers: state.providers, teamRules: state.teamRules },
+      },
+    ],
   }),
 }));
 vi.mock("../../studio/machineNickname", () => ({
@@ -57,6 +63,7 @@ vi.mock("../ui/button", () => ({
   ),
 }));
 vi.mock("./settingsLayout", () => ({
+  TeamRulesLabel: ({ children }: { children: ReactNode }) => <em>{children}</em>,
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
   SettingsRow: (props: {
     title: string;
@@ -135,6 +142,7 @@ beforeEach(() => {
   state.update.mockReset();
   state.machines = [minis, m3, { environmentId: "mac", label: "M4", status: "reachable" }];
   state.providers = [claude];
+  state.teamRules = undefined;
 });
 afterEach(() => {
   act(() => renderer?.unmount());
@@ -142,6 +150,32 @@ afterEach(() => {
 });
 
 describe("MachineFallbackSettings", () => {
+  it("locks every row when the rules turn machines off", () => {
+    state.teamRules = { status: "active", owner: "Acme", reach: { machines: "none" } };
+    render();
+    for (const title of ["Other machines", "Try first", "Use machines with unknown usage"]) {
+      expect(section(title).findAll((node) => node.props.inert === true).length).toBeGreaterThan(0);
+    }
+  });
+  it("offers only machines with the same rules under same-rules", () => {
+    state.teamRules = {
+      status: "active",
+      owner: "Acme",
+      fingerprint: "aaaaaaaaaaaa",
+      reach: { machines: "same-rules" },
+    };
+    state.machines = [
+      { ...minis, teamRules: { status: "active", fingerprint: "aaaaaaaaaaaa" } },
+      m3,
+      { environmentId: "env-other", label: "Other", status: "reachable" },
+      { environmentId: "mac", label: "M4", status: "reachable" },
+    ];
+    render();
+    const options = section("Other machines")
+      .findAllByType("option")
+      .map((option) => option.props.children);
+    expect(options).toEqual(["Minis", "M3 (offline)", "Other (different rules)"]);
+  });
   it("defaults to this machine only, other machines first, unknown usage off", () => {
     render();
     expect(section("Other machines").props["data-status"]).toBe("This machine only");

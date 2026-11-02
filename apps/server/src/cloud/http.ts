@@ -54,6 +54,8 @@ const relayFailure = (error: RelayRequestError) => {
 
 const badRequest = (error: { readonly message: string }) =>
   Effect.fail(new EnvironmentHttpBadRequestError({ message: error.message }));
+const forbidden = (error: { readonly message: string }) =>
+  Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message }));
 const unauthorized = (error: { readonly message: string }) =>
   Effect.fail(new EnvironmentHttpUnauthorizedError({ message: error.message }));
 const conflict = (error: { readonly message: string }) =>
@@ -61,6 +63,7 @@ const conflict = (error: { readonly message: string }) =>
 
 /** How a connect route answers each CloudLink failure. Messages carry through unchanged. */
 const connectErrorCases = {
+  CloudLinkTeamRulesRefusedError: forbidden,
   CloudLinkRelayConfigInvalidError: badRequest,
   CloudLinkOriginInvalidError: badRequest,
   CloudLinkNotLinkedError: badRequest,

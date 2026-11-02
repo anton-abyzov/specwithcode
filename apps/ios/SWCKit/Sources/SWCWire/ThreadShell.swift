@@ -26,6 +26,8 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
   public var forkedFrom: JSONValue?
   public var activeProviderThreadId: String?
   public var historyOrigin: String?
+  /// Where the thread came from; holds the ceiling it brought from another machine.
+  public var origin: ThreadOriginSummary?
   public var latestRunId: String?
   public var latestRunRequestedAt: Date?
   public var latestRunStartedAt: Date?
@@ -86,7 +88,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
   enum CodingKeys: String, CodingKey {
     case createdBy, creationSource, id, projectId, title, providerInstanceId, modelSelection, modelIdentity, runtimeMode, interactionMode
     case branch, worktreePath, linkedPullRequest, pullRequests, branchPullRequest, lineage, forkedFrom
-    case activeProviderThreadId, historyOrigin, latestRunId, latestRunRequestedAt, latestRunStartedAt, latestRunCompletedAt
+    case activeProviderThreadId, historyOrigin, origin, latestRunId, latestRunRequestedAt, latestRunStartedAt, latestRunCompletedAt
     case activeRunId, activityRunStartedAt, activityRunStatus, activeWork, status, lastError, lastErrorClass, usageLimitResetAt
     case pendingRuntimeRequest, latestVisibleMessage, latestUserMessageAt, latestUserAuthoredMessageAt, hasActionableProposedPlan
     case planProgress, reportedBlocker, pendingBackgroundTasks, providerInstanceHistory, goal, heldQueuedCount
@@ -117,6 +119,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     forkedFrom = try c.decodeIfPresent(JSONValue.self, forKey: .forkedFrom).flatMap { $0.isNull ? nil : $0 }
     activeProviderThreadId = try c.decodeIfPresent(String.self, forKey: .activeProviderThreadId)
     historyOrigin = try c.decodeIfPresent(String.self, forKey: .historyOrigin)
+    origin = (try? c.decodeIfPresent(ThreadOriginSummary.self, forKey: .origin)) ?? nil
     latestRunId = try c.decodeIfPresent(String.self, forKey: .latestRunId)
     latestRunRequestedAt = try c.decodeIfPresent(Date.self, forKey: .latestRunRequestedAt)
     latestRunStartedAt = try c.decodeIfPresent(Date.self, forKey: .latestRunStartedAt)

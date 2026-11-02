@@ -24,6 +24,8 @@ import {
   RELAY_ACTIVITY_PUBLISH_TYP,
   signRelayJwt,
 } from "@specweave-studio/shared/relayJwt";
+import { teamRulesReachOff } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -426,6 +428,9 @@ export const make = Effect.gen(function* () {
 
   const readPublishAgentActivityEnabled = readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET).pipe(
     Effect.map(isAgentActivityPublishingEnabledValue),
+    Effect.flatMap((enabled) =>
+      currentTeamRules.pipe(Effect.map((state) => enabled && !teamRulesReachOff(state, "connect"))),
+    ),
   );
 
   const makeRelayClient = (relayConfig: {

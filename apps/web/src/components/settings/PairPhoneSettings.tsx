@@ -22,12 +22,15 @@ import {
   resolvePhonePairingAddress,
 } from "./PairPhone.logic";
 import { PhoneSetupDialog, type PhoneSetupCode } from "./PhoneSetupDialog";
+import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import {
   SettingsDisclosure,
   SettingsRow,
   SettingsSection,
+  TeamRulesLabel,
   scrollToSettingsTarget,
 } from "./settingsLayout";
+import { TeamRulesInert } from "./TeamRulesLock";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 
 const PHONE_LINK_LABEL = "iPhone";
@@ -64,6 +67,8 @@ type PairPhoneSettingsProps = {
   readonly onShowAccessSettings: () => void;
   /** Connect is the main way to reach the phone here, so fold direct pairing away. */
   readonly folded?: boolean;
+  /** Set when this machine's rules refuse new phones. */
+  readonly teamRulesLock?: TeamRulesLock | null;
 };
 
 /**
@@ -79,6 +84,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
   hasAccessControls,
   onShowAccessSettings,
   folded = false,
+  teamRulesLock = null,
 }: PairPhoneSettingsProps) {
   const address = useMemo(
     () =>
@@ -188,20 +194,23 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
     <>
       <SettingsRow
         title="Pair a phone"
-        description={description}
+        description={teamRulesLock?.message ?? description}
+        status={teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : undefined}
         control={
-          <Button
-            size="sm"
-            variant={folded ? "outline" : "default"}
-            disabled={!canPair}
-            onClick={() => changeOpen(true)}
-          >
-            Pair a phone
-          </Button>
+          <TeamRulesInert lock={teamRulesLock}>
+            <Button
+              size="sm"
+              variant={folded ? "outline" : "default"}
+              disabled={!canPair}
+              onClick={() => changeOpen(true)}
+            >
+              Pair a phone
+            </Button>
+          </TeamRulesInert>
         }
       />
       <PhoneSetupDialog
-        open={open}
+        open={open && teamRulesLock === null}
         onOpenChange={changeOpen}
         address={address}
         code={code}
@@ -246,7 +255,8 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
     </>
   );
 
-  if (folded) {
+  // A lock folded away would hide why the row is off, so it opens out.
+  if (folded && teamRulesLock === null) {
     return (
       <SettingsDisclosure
         {...searchableSetting(PAIR_PHONE_SETTING)}

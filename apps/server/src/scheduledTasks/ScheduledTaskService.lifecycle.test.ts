@@ -654,6 +654,46 @@ it("judges a person's first run by the project's saved mode, not the routine's",
   );
 });
 
+it.effect("refuses saving or enabling a check routine under a limit", () =>
+  Effect.gen(function* () {
+    const { run } = yield* harness;
+    const parsed = parseTeamRulesText(
+      JSON.stringify({ version: 1, owner: "Acme", agents: { ceiling: "auto" } }),
+    );
+    if (!parsed.ok) throw new Error(parsed.issues.join());
+    const tight = Effect.provideService(
+      TeamRules,
+      teamRulesOf({ status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] }),
+    );
+    yield* run((service) =>
+      Effect.gen(function* () {
+        const refused = yield* service
+          .upsert(
+            taskInput({
+              id: "checked-save",
+              runtimeMode: "approval-required",
+              check: { command: "true" },
+            }),
+          )
+          .pipe(tight, Effect.flip);
+        assert.include(refused.message, "Acme");
+        const { task } = yield* service.upsert(
+          taskInput({
+            id: "checked-enable",
+            runtimeMode: "approval-required",
+            check: { command: "true" },
+            enabled: false,
+          }),
+        );
+        const enabling = yield* service
+          .setEnabled({ id: task.id, enabled: true })
+          .pipe(tight, Effect.flip);
+        assert.include(enabling.message, "Acme");
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
 it.effect("runs no routine check unless the rules allow full access", () =>
   Effect.gen(function* () {
     const { run, state } = yield* harness;

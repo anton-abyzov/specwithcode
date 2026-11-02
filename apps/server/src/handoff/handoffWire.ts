@@ -27,6 +27,7 @@ import {
   PROJECT_INSTRUCTIONS_MAX_LENGTH,
   ProviderInteractionMode,
   RuntimeMode,
+  TeamRulesCarried,
   ThreadExecutionRecord,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -114,6 +115,8 @@ export const ReplicateMeta = Schema.Struct({
   execution: Schema.NullOr(ThreadExecutionRecord),
   protocolVersion: Schema.optional(NonNegativeInt),
   appVersion: Schema.optional(text(40)),
+  /** The ceiling the thread carries. The sender refuses a machine too old to hold it. */
+  carried: Schema.optional(TeamRulesCarried),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });

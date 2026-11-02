@@ -20,6 +20,9 @@ import { relativeLabel, scheduleLabel } from "../settings/ScheduledTasksSettings
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { teamRulesReachLock } from "../../teamRules/teamRulesView";
+import { useTeamRules } from "../../teamRules/useTeamRules";
+import { TeamRulesLabel } from "../settings/settingsLayout";
 
 import { readEnvironmentScope } from "../../state/session";
 import { Switch } from "../ui/switch";
@@ -62,6 +65,7 @@ export function ThreadAutomationsPanel(props: {
   const navigate = useNavigate();
   const returnTo = useLocation({ select: (location) => location.href });
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
+  const webhooksLock = teamRulesReachLock(useTeamRules(props.environmentId).summary, "webhooks");
 
   const boundTasks = (tasksQuery.data?.tasks ?? []).filter(
     (task) => task.threadId === props.threadId,
@@ -206,7 +210,11 @@ export function ThreadAutomationsPanel(props: {
               <TooltipPopup>Edit routine</TooltipPopup>
             </Tooltip>
             {/* A webhook task runs from its URL; there is no request to run it with. */}
-            {task.schedule.type === "webhook" ? null : (
+            {task.schedule.type === "webhook" ? (
+              webhooksLock ? (
+                <TeamRulesLabel>{webhooksLock.setBy}</TeamRulesLabel>
+              ) : null
+            ) : (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -229,7 +237,12 @@ export function ThreadAutomationsPanel(props: {
             )}
             <Switch
               checked={task.enabled}
-              disabled={!canOperate || busyTaskId !== null}
+              // Pausing stays available; the rules refuse only turning a webhook routine back on.
+              disabled={
+                !canOperate ||
+                busyTaskId !== null ||
+                (webhooksLock !== null && task.schedule.type === "webhook" && !task.enabled)
+              }
               aria-label={task.enabled ? `Pause ${task.title}` : `Resume ${task.title}`}
               onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
             />

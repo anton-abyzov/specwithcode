@@ -3,7 +3,10 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@specweave-studio/client-runtime/state/attachments";
-import { pastedTextDisposition, replaceTextSelection } from "@specweave-studio/client-runtime/text-paste";
+import {
+  pastedTextDisposition,
+  replaceTextSelection,
+} from "@specweave-studio/client-runtime/text-paste";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -63,6 +66,7 @@ import {
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
+import { threadRuntimeModeLock } from "../../state/teamRules";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 
 import { AppText as Text } from "../../components/AppText";
@@ -690,9 +694,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       },
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      runtimeModeLock: threadRuntimeModeLock(props.serverConfig, props.selectedThread),
     }),
     [
       currentModelSelection,
+      props.selectedThread,
+      props.serverConfig,
       props.reportedModelSelection,
       currentRuntimeMode,
       props.onUpdateModelSelection,

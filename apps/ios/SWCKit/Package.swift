@@ -28,7 +28,7 @@ let package = Package(
     .target(name: "SWCFeatures", dependencies: ["SWCSync", "Weave"], swiftSettings: mainActorUI),
     .testTarget(name: "SWCWireTests", dependencies: ["SWCWire"], resources: [.copy("Fixtures")]),
     .testTarget(name: "SWCTransportTests", dependencies: ["SWCTransport"]),
-    .testTarget(name: "SWCSyncTests", dependencies: ["SWCSync"]),
+    .testTarget(name: "SWCSyncTests", dependencies: ["SWCSync", "Weave"]),
     .testTarget(name: "SWCFeaturesTests", dependencies: ["SWCFeatures", "SWCSync"]),
   ]
 )

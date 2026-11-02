@@ -20,6 +20,7 @@ export type ChoiceRowProps = {
   readonly label: string;
   readonly description?: string;
   readonly selected: boolean;
+  readonly disabled?: boolean | undefined;
   readonly onPress: () => void;
   readonly isLast: boolean;
 };
@@ -119,12 +120,16 @@ export function ChoiceRowContent(props: ChoiceRowProps & RowSelectionProps) {
     <Pressable
       accessibilityLabel={props.description ? `${props.label}. ${props.description}` : props.label}
       accessibilityRole="radio"
-      accessibilityState={{ checked: props.selected }}
+      accessibilityState={
+        props.disabled ? { checked: props.selected, disabled: true } : { checked: props.selected }
+      }
+      disabled={props.disabled}
       onPress={props.onPress}
       style={props.minimumHeight === undefined ? undefined : { minHeight: props.minimumHeight }}
       className={cn(
         "min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3 active:bg-subtle",
         !props.isLast && "border-b border-border-subtle",
+        props.disabled && "opacity-50",
       )}
     >
       {props.leadingSelection}

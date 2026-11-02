@@ -127,6 +127,7 @@ export const layerFromProjectStore: Layer.Layer<
             instance?.driverKind ??
             teamRulesInstanceDriver(settings, input.modelSelection.instanceId),
           model: input.modelSelection.model,
+          carried: input.thread.origin?.carried,
         });
         if (teamRulesRefusal !== null) {
           return yield* new RuntimePolicyResolveError({

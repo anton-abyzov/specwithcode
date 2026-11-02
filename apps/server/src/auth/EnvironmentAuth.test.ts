@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
@@ -86,6 +87,90 @@ const requestMetadata = {
 };
 
 it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
+  it.effect("refuses a phone session under the rules, and brings it back without them", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const phoneMetadata = { ...requestMetadata, deviceType: "mobile" as const };
+      const off = Effect.provideService(
+        TeamRules,
+        teamRulesOf({
+          status: "active",
+          rules: { version: 1, owner: "Acme", reach: { phones: false } },
+          fingerprint: "3a9f",
+          warnings: [],
+        }),
+      );
+      const pairing = yield* serverAuth.issuePairingCredential({ scopes: ["orchestration:read"] });
+      const exchange = yield* serverAuth.createBrowserSession(pairing.credential, phoneMetadata);
+      const request = makeCookieRequest(sessions.cookieName, exchange.sessionToken);
+
+      const refused = yield* serverAuth.authenticateHttpRequest(request).pipe(off, Effect.flip);
+      expect(JSON.stringify(refused)).toContain("Acme");
+
+      // Nothing was revoked: removing the rule restores the phone.
+      const restored = yield* serverAuth.authenticateHttpRequest(request);
+      expect(restored.scopes).toEqual(["orchestration:read"]);
+
+      // A new phone cannot pair at all.
+      const second = yield* serverAuth.issuePairingCredential({ scopes: ["orchestration:read"] });
+      const denied = yield* serverAuth
+        .createBrowserSession(second.credential, phoneMetadata)
+        .pipe(off, Effect.flip);
+      expect(JSON.stringify(denied)).toContain("Acme");
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("lets a phone keep renewing during a hold, and refuses a new one", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const hold = Effect.provideService(
+        TeamRules,
+        teamRulesOf({ status: "hold", issues: ["broken"], owner: "Acme" }),
+      );
+      const phoneMetadata = { ...requestMetadata, deviceType: "mobile" as const };
+      const pairing = yield* serverAuth.createPairingLink({
+        scopes: ["orchestration:read"],
+        subject: "cloud-connect",
+      });
+      const renewed = yield* serverAuth
+        .createBrowserSession(pairing.credential, phoneMetadata, undefined, { overConnect: true })
+        .pipe(hold);
+      expect(renewed.sessionToken.length).toBeGreaterThan(0);
+      const fresh = yield* serverAuth.issuePairingCredential({ scopes: ["orchestration:read"] });
+      const denied = yield* serverAuth
+        .createBrowserSession(fresh.credential, phoneMetadata)
+        .pipe(hold, Effect.flip);
+      expect(JSON.stringify(denied)).toContain("team rules");
+      // The refusal did not spend the code: once the file is fixed it still works.
+      const afterRepair = yield* serverAuth.createBrowserSession(fresh.credential, phoneMetadata);
+      expect(afterRepair.sessionToken.length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("leaves a desktop session alone when phones are off", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const pairing = yield* serverAuth.issuePairingCredential({ scopes: ["orchestration:read"] });
+      const exchange = yield* serverAuth.createBrowserSession(pairing.credential, requestMetadata);
+      const session = yield* serverAuth
+        .authenticateHttpRequest(makeCookieRequest(sessions.cookieName, exchange.sessionToken))
+        .pipe(
+          Effect.provideService(
+            TeamRules,
+            teamRulesOf({
+              status: "active",
+              rules: { version: 1, owner: "Acme", reach: { phones: false } },
+              fingerprint: "3a9f",
+              warnings: [],
+            }),
+          ),
+        );
+      expect(session.scopes).toEqual(["orchestration:read"]);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
   it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

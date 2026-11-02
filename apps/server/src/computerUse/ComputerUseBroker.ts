@@ -12,6 +12,8 @@ import {
   WS_METHODS,
   WsComputerUseRpcGroup,
 } from "@specweave-studio/contracts";
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -140,6 +142,8 @@ export const make = Effect.gen(function* () {
   const invoke = (action: ComputerUseAction, options?: { readonly threadId?: string }) =>
     turn.withPermits(1)(
       Effect.gen(function* () {
+        const refused = teamRulesToolRefusal(yield* currentTeamRules, "computerUse");
+        if (refused !== null) return yield* new ComputerUseToolError({ reason: refused.message });
         const target = hosts.findLast((entry) =>
           isComputerUseSupportedHostPlatform(entry.platform),
         );

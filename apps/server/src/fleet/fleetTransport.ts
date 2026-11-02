@@ -10,7 +10,19 @@
  * An unbound token goes over the tailnet as a plain bearer, as it always has,
  * and never over Connect.
  */
+import {
+  TEAM_RULES_FINGERPRINT_HEADER,
+  type TeamRulesPeerRules,
+} from "@specweave-studio/contracts";
+import {
+  teamRulesMachineRefusal,
+  teamRulesMachines,
+  teamRulesReachOff,
+  type TeamRulesState,
+} from "@specweave-studio/shared/teamRules";
+
 import { checkIdentity, FleetError, type FleetFetch, type FleetTarget } from "../studioFleet.ts";
+import { readMachineTeamRules } from "../teamRules/TeamRules.ts";
 import { type FleetOrigin, parseFleetOrigin } from "./fleetOrigin.ts";
 import {
   type FleetProofKey,
@@ -35,11 +47,21 @@ export interface FleetAddressBook {
   readonly remember: (machineKey: string, origin: string, now: number) => void;
   readonly identityFresh: (machineKey: string, origin: string, now: number) => boolean;
   readonly forget: (machineKey: string, origin?: string) => void;
+  /** What the machine last said about its rules, for an address whose identity is still fresh. */
+  readonly peerRules?: (machineKey: string) => FleetPeerRules | undefined;
+  readonly rememberPeerRules?: (machineKey: string, rules: FleetPeerRules) => void;
+}
+
+/** A machine's rules as its descriptor gave them; `carried` says it enforces a carried ceiling. */
+export interface FleetPeerRules {
+  readonly teamRules?: TeamRulesPeerRules;
+  readonly carried: boolean;
 }
 
 export function makeFleetAddressBook(ttlMs = FLEET_ADDRESS_TTL_MS): FleetAddressBook {
   const answered = new Map<string, { readonly origin: string; readonly at: number }>();
   const identities = new Map<string, number>();
+  const peers = new Map<string, FleetPeerRules>();
   const identityKey = (machineKey: string, origin: string) => `${machineKey}\u0000${origin}`;
   return {
     preferred: (machineKey, now) => {
@@ -58,6 +80,10 @@ export function makeFleetAddressBook(ttlMs = FLEET_ADDRESS_TTL_MS): FleetAddress
       const at = identities.get(identityKey(machineKey, origin));
       return at !== undefined && now - at < ttlMs;
     },
+    peerRules: (machineKey) => peers.get(machineKey),
+    rememberPeerRules: (machineKey, rules) => {
+      peers.set(machineKey, rules);
+    },
     forget: (machineKey, origin) => {
       const entry = answered.get(machineKey);
       if (origin === undefined || entry?.origin === origin) answered.delete(machineKey);
@@ -75,9 +101,20 @@ export interface FleetLink {
   readonly proofKey: () => Promise<FleetProofKey | null>;
   readonly book: FleetAddressBook;
   readonly now?: () => number;
+  /** The rules this machine runs under. Tests provide another value. */
+  readonly teamRules?: () => TeamRulesState;
 }
 
 const noKey = async () => null;
+
+const linkRules = (link: FleetLink) => (link.teamRules ?? readMachineTeamRules)();
+
+/**
+ * Whether an earlier reach of a machine still stands. Under a machine rule each
+ * credentialed call goes through `reachFleetMachine`, which is where the rule is checked.
+ */
+export const fleetReachMayBeRemembered = (link: FleetLink) =>
+  teamRulesMachines(linkRules(link)) === "any";
 
 /** A bare fetch is a link with no proof key and its own address book (tests, one-off calls). */
 export const toFleetLink = (value: FleetLink | FleetFetch): FleetLink =>
@@ -129,7 +166,11 @@ export function fleetAddresses(
 }
 
 /** An address that answered as the machine; `machineName` when its identity was read just now. */
-export type FleetReached = FleetOrigin & { readonly machineName?: string };
+export type FleetReached = FleetOrigin & {
+  readonly machineName?: string;
+  /** What it says about its rules, read just now or remembered with its identity. */
+  readonly peerRules?: FleetPeerRules;
+};
 
 /** The address book's key for a machine: its pinned environment id. */
 export const fleetMachineKey = (target: Pick<FleetTarget, "environmentId">) =>
@@ -162,8 +203,20 @@ export async function reachFleetMachine(
   const link = toFleetLink(value);
   const now = (link.now ?? Date.now)();
   const key = machineKeyOf(target);
+  // A credential is about to leave this machine. A probe with none still runs,
+  // so the Machines page stays truthful under any rule.
+  const rules = options.token === undefined ? undefined : linkRules(link);
+  const machines = rules === undefined ? "any" : teamRulesMachines(rules);
+  if (rules !== undefined && machines === "none") {
+    throw new FleetError(
+      "team-rules",
+      teamRulesMachineRefusal(rules, { fingerprint: undefined })?.message,
+    );
+  }
+  const connectOff = teamRulesReachOff(linkRules(link), "connect");
   const configured = fleetAddresses(target).filter(
-    (address) => !options.exclude?.has(address.origin),
+    (address) =>
+      !options.exclude?.has(address.origin) && !(connectOff && address.transport === "connect"),
   );
   const preferred = link.book.preferred(key, now);
   const ordered = [
@@ -182,22 +235,38 @@ export async function reachFleetMachine(
         continue;
       }
     }
-    if (link.book.identityFresh(key, address.origin, now)) return address;
+    // `same-rules` asks every time: a machine that changed its rules counts at once.
+    if (machines !== "same-rules" && link.book.identityFresh(key, address.origin, now)) {
+      const remembered = link.book.peerRules?.(key);
+      return remembered === undefined ? address : { ...address, peerRules: remembered };
+    }
     let machineName: string;
+    let peerRules: FleetPeerRules;
     try {
-      machineName = (
-        await checkIdentity(link.fetch, {
-          url: address.origin,
-          environmentId: target.environmentId,
-        })
-      ).label;
+      const descriptor = await checkIdentity(link.fetch, {
+        url: address.origin,
+        environmentId: target.environmentId,
+      });
+      machineName = descriptor.label;
+      peerRules = {
+        ...(descriptor.teamRules === undefined ? {} : { teamRules: descriptor.teamRules }),
+        carried: descriptor.capabilities.teamRulesCarried === true,
+      };
     } catch (error) {
       if (error instanceof FleetError && error.kind === "identity-mismatch") mismatch = true;
       link.book.forget(key, address.origin);
       continue;
     }
     link.book.remember(key, address.origin, (link.now ?? Date.now)());
-    return { ...address, machineName };
+    link.book.rememberPeerRules?.(key, peerRules);
+    if (rules !== undefined) {
+      const refused = teamRulesMachineRefusal(rules, {
+        label: machineName,
+        fingerprint: peerRules.teamRules?.fingerprint,
+      });
+      if (refused !== null) throw new FleetError("team-rules", refused.message);
+    }
+    return { ...address, machineName, peerRules };
   }
   if (mismatch) throw new FleetError("identity-mismatch");
   if (refusal === "connect-key-missing") throw new FleetError(refusal);
@@ -238,13 +307,18 @@ export async function fleetAuthorization(
   const link = toFleetLink(value);
   if (new URL(url).origin !== address.origin) throw new FleetError("unreachable");
   const bound = tokenProofThumbprint(token);
+  // Names this machine's rules, for a machine that allows only the same ones.
+  const rules = linkRules(link);
+  const named =
+    rules.status === "active" ? { [TEAM_RULES_FINGERPRINT_HEADER]: rules.fingerprint } : {};
   if (bound === undefined) {
     if (address.transport !== "tailnet") throw new FleetError("connect-unbound");
-    return { authorization: `Bearer ${token}` };
+    return { ...named, authorization: `Bearer ${token}` };
   }
   const key = await link.proofKey().catch(() => null);
   if (key === null || key.thumbprint !== bound) throw new FleetError("connect-key-missing");
   return {
+    ...named,
     authorization: `DPoP ${token}`,
     dpop: await key.proof({ method: method.toUpperCase(), url, accessToken: token }),
   };

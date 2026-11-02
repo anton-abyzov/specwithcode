@@ -1139,9 +1139,9 @@ export const layer = Layer.effect(
 
     // Rules narrow what every consumer sees, not what is stored, so removing
     // them brings the models back. A change republishes the list to clients.
-    const ruledProviders = Effect.gen(function* () {
-      return teamRulesFilterProviders(yield* currentTeamRules, yield* Ref.get(providersRef));
-    });
+    const ruled = (providers: ReadonlyArray<ServerProvider>) =>
+      Effect.map(currentTeamRules, (rules) => teamRulesFilterProviders(rules, providers));
+    const ruledProviders = Ref.get(providersRef).pipe(Effect.flatMap(ruled));
     yield* watchTeamRules(() =>
       ruledProviders.pipe(
         Effect.flatMap((providers) => PubSub.publish(changesPubSub, providers)),
@@ -1154,11 +1154,17 @@ export const layer = Layer.effect(
     return {
       getProviders: ruledProviders,
       refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure), Effect.flatMap(ruled)),
       refreshInstance: (instanceId: ProviderInstanceId, options?: { readonly fresh?: boolean }) =>
-        refreshInstance(instanceId, options).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshInstance(instanceId, options).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(ruled),
+        ),
       refreshWorkspaceSnapshot: (input) =>
-        refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshWorkspaceSnapshot(input).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(ruled),
+        ),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

@@ -531,6 +531,9 @@ private struct ChatScreen: View {
       if let notice = connectionNotice {
         Banner(notice.message, kind: notice.kind, actionTitle: notice.action == nil ? nil : notice.actionTitle, action: notice.action, lineLimit: isShort ? 2 : nil)
       }
+      if let notice = session.teamRulesNotice {
+        Banner(notice.message, title: notice.title, kind: .warn, actionTitle: notice.switchTitle, action: notice.switchTo == nil ? nil : { lowerMode(notice) }, lineLimit: isShort ? 2 : nil)
+      }
       if let error = session.lastError {
         Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
       }
@@ -669,6 +672,17 @@ private struct ChatScreen: View {
         case let .success(image): router.attachmentDrafts[target, default: []].append(image)
         case let .failure(error): session.lastError = error.localizedDescription
         }
+      }
+    }
+  }
+
+  private func lowerMode(_ notice: ChatTeamRulesNotice) {
+    guard let thread = notice.thread, let mode = notice.switchTo else { return }
+    Task {
+      do {
+        try await model.engine.perform(.setRuntimeMode(mode), on: thread)
+      } catch {
+        session.lastError = error.localizedDescription
       }
     }
   }

@@ -9,6 +9,10 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@specweave-studio/shared/model";
+import {
+  teamRulesFilterProviders,
+  teamRulesStateFromSummary,
+} from "@specweave-studio/shared/teamRules";
 
 export type ModelOption = {
   readonly key: string;
@@ -162,7 +166,10 @@ export function buildModelOptions(
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
 
-  for (const provider of config?.providers ?? []) {
+  for (const provider of teamRulesFilterProviders(
+    teamRulesStateFromSummary(config?.teamRules),
+    config?.providers ?? [],
+  )) {
     if (
       (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
       !provider.enabled ||

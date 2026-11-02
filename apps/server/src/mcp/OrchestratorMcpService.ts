@@ -2182,6 +2182,14 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         yield* refuseGrantRoutines(scope, parent);
+        // A routine holds no origin, so it would outlive the ceiling this work carries.
+        const carried = parent?.thread.origin?.carried;
+        if (carried !== undefined) {
+          return yield* failure(
+            "capability_denied",
+            `This work came from a machine under ${carried.owner}'s rules, so it can't schedule routines here.`,
+          );
+        }
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const project = yield* requireProject(projectId);

@@ -4,6 +4,8 @@
  * loopback WebSocket route every paired Chrome profile keeps open, the
  * Settings › Chrome RPCs, and the hub the `chrome_*` MCP tools drive.
  */
+import { teamRulesToolOff, teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules, watchTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import {
   BROWSER_EXTENSION_STORE_ID,
@@ -14,6 +16,8 @@ import {
   type BrowserExtensionStatus,
   WS_METHODS,
   WsBrowserExtensionRpcGroup,
+  AuthAccessWriteScope,
+  EnvironmentAuthorizationError,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -360,11 +364,21 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     // The popup names this computer as the app does (its computer name), not by its host name.
     const { label } = yield* (yield* ServerEnvironment.ServerEnvironment).getDescriptor;
-    return makeBrowserExtension({
+    const extension = makeBrowserExtension({
       stateDir: config.stateDir,
       port: config.port,
       machineName: label,
     });
+    // A paired profile stops at once when the rules turn Chrome off; the relay refuses its return.
+    yield* watchTeamRules((state) =>
+      Effect.sync(() => {
+        // Not on a hold: a closed extension backs off for minutes, and the file may be a typo.
+        if (teamRulesToolOff(state, "chrome")) {
+          extension.hub.disconnectAll("team rules");
+        }
+      }),
+    ).pipe(Effect.forkScoped);
+    return extension;
   }),
 );
 
@@ -389,6 +403,8 @@ const relayHandler = (extension: BrowserExtensionShape) =>
       })
     )
       return HttpServerResponse.text("Forbidden", { status: 403 });
+    const ruled = teamRulesToolRefusal(yield* currentTeamRules, "chrome");
+    if (ruled !== null) return HttpServerResponse.text(ruled.message, { status: 403 });
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const socket = yield* request.upgrade;
@@ -462,7 +478,16 @@ export const layerRpcHandlers = WsBrowserExtensionRpcGroup.middleware(RpcInstrum
     return {
       [WS_METHODS.browserExtensionStatus]: () => Effect.sync(() => extension.status()),
       [WS_METHODS.browserExtensionPairing]: (payload) =>
-        Effect.sync(() => extension.pairing(payload.reset === true)),
+        Effect.gen(function* () {
+          const refused = teamRulesToolRefusal(yield* currentTeamRules, "chrome");
+          if (refused !== null) {
+            return yield* new EnvironmentAuthorizationError({
+              message: refused.message,
+              requiredScope: AuthAccessWriteScope,
+            });
+          }
+          return extension.pairing(payload.reset === true);
+        }),
       [WS_METHODS.browserExtensionTest]: () =>
         Effect.promise(() => extension.check().catch(failed)),
       [WS_METHODS.browserExtensionReconnect]: () =>

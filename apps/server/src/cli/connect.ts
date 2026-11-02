@@ -5,6 +5,9 @@ import {
 } from "@specweave-studio/contracts";
 import { RelayOkResponse } from "@specweave-studio/contracts/relay";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
+import { CloudLinkTeamRulesRefusedError } from "../cloud/CloudLink.ts";
+import { readMachineTeamRules } from "../teamRules/TeamRules.ts";
 import * as RelayClient from "@specweave-studio/shared/relayClient";
 import { withRelayClientTracing } from "@specweave-studio/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -394,6 +397,14 @@ const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
   }
 });
 
+/** Team rules that turn Connect off stop it being set up from here too; `status` and `unlink` stay. */
+const refuseConnectFromCli = Effect.suspend(() => {
+  const refused = teamRulesReachRefusal(readMachineTeamRules(), "connect");
+  return refused === null
+    ? Effect.void
+    : Effect.fail(new CloudLinkTeamRulesRefusedError({ refusal: refused.message }));
+});
+
 const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E>(
   flags: { readonly baseDir: Option.Option<string> },
   run: Effect.Effect<
@@ -504,6 +515,7 @@ const connectLinkCommand = Command.make("link", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* refuseConnectFromCli;
         yield* Console.log("SpecWithCode Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
@@ -580,6 +592,7 @@ const connectPublishCommand = Command.make("publish", {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         const enabled = !flags.disable;
+        if (enabled) yield* refuseConnectFromCli;
         yield* secrets.set(
           PUBLISH_AGENT_ACTIVITY_SECRET,
           stringToBytes(enabled ? "true" : "false"),
@@ -660,6 +673,7 @@ export const connectCommand = Command.make("connect", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* refuseConnectFromCli;
         yield* Console.log("SpecWithCode Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (!linked) {

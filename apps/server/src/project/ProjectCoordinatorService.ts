@@ -1,4 +1,4 @@
-import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { teamRulesClampMode, teamRulesClampToCarried } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
@@ -14,6 +14,7 @@ import {
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type OrchestrationV2ThreadOrigin,
 } from "@specweave-studio/contracts";
 import {
   coordinatorSelectionProblem,
@@ -73,7 +74,10 @@ export class ProjectCoordinatorService extends Context.Service<
       input: ProjectCoordinatorStartInput,
     ) => Effect.Effect<ProjectCoordinatorResult, ProjectWorkspaceError>;
     readonly send: (
-      input: ProjectCoordinatorSendInput,
+      input: ProjectCoordinatorSendInput & {
+        /** Set only by a project move; the RPC schema cannot carry it. */
+        readonly origin?: OrchestrationV2ThreadOrigin | undefined;
+      },
     ) => Effect.Effect<ProjectCoordinatorResult, ProjectWorkspaceError>;
     /**
      * A request another project's agent routed here (the personal assistant):
@@ -121,7 +125,11 @@ const make = Effect.gen(function* () {
   const locks = yield* KeyedLock.make<ProjectId>();
   const fail = (projectId: ProjectId, code: ProjectWorkspaceError["code"]) =>
     new ProjectWorkspaceError({ projectId, code });
-  const ensure = (input: ProjectCoordinatorStartInput) =>
+  const ensure = (
+    input: ProjectCoordinatorStartInput & {
+      readonly origin?: OrchestrationV2ThreadOrigin | undefined;
+    },
+  ) =>
     locks
       .withLock(
         input.projectId,
@@ -215,11 +223,15 @@ const make = Effect.gen(function* () {
             projectId: input.projectId,
             title: `${project.title} coordinator`,
             modelSelection,
-            runtimeMode: teamRulesClampMode(yield* currentTeamRules, defaults.defaultRuntimeMode),
+            runtimeMode: teamRulesClampToCarried(
+              teamRulesClampMode(yield* currentTeamRules, defaults.defaultRuntimeMode),
+              input.origin?.carried,
+            ),
             interactionMode: "default",
             workspaceStrategy: { type: "root" },
             createdBy: "user",
             creationSource: "web",
+            ...(input.origin === undefined ? {} : { origin: input.origin }),
           });
           return { threadId, created: true };
         }),
@@ -361,7 +373,9 @@ const make = Effect.gen(function* () {
    * text from the message ID.
    */
   const deliver = <E>(
-    input: ProjectCoordinatorSendInput,
+    input: ProjectCoordinatorSendInput & {
+      readonly origin?: OrchestrationV2ThreadOrigin | undefined;
+    },
     sender: {
       readonly threadId: ThreadId | undefined;
       readonly check: Effect.Effect<void, E>;
@@ -402,7 +416,7 @@ const make = Effect.gen(function* () {
         }),
       );
     });
-  const send = (input: ProjectCoordinatorSendInput) => {
+  const send: ProjectCoordinatorService["Service"]["send"] = (input) => {
     const sourceThreadId = input.sourceThreadId;
     return deliver(input, {
       threadId: sourceThreadId,

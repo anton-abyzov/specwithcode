@@ -305,6 +305,79 @@ describe("connect both ways", () => {
       "On MacBook Pro, open Settings > Connections > Add environment > Remote link and paste this link.",
     );
   });
+
+  it("leaves every row as it was with no rules anywhere", () => {
+    const rows = buildMachineRows({
+      environments: [env(m4, "M4MAX"), env(m3, "MacBook Pro")],
+      primaryEnvironmentId: m4,
+      fleet: fleet([fleetMachine(m3, "MacBook Pro"), fleetMachine(m1, "M1Max")]),
+      canPair: true,
+      projects: [],
+      hostBlocks: [],
+    });
+    expect(rows.map((row) => row.teamRules)).toEqual([null, null, null]);
+    expect(rows.map((row) => row.connectLock)).toEqual([null, null, null]);
+  });
+
+  it("flags drift on each machine once this one has rules, and locks what it refuses", () => {
+    const rows = buildMachineRows({
+      environments: [
+        {
+          ...env(m4, "M4MAX"),
+          configKnown: true,
+          teamRules: {
+            status: "active",
+            owner: "Acme",
+            fingerprint: "aaaaaaaaaaaa",
+            reach: { machines: "same-rules" },
+          },
+        },
+        {
+          ...env(m3, "MacBook Pro"),
+          configKnown: true,
+          teamRules: { status: "active", owner: "Acme", fingerprint: "aaaaaaaaaaaa" },
+        },
+      ],
+      primaryEnvironmentId: m4,
+      fleet: fleet([
+        fleetMachine(m3, "MacBook Pro"),
+        fleetMachine(m1, "M1Max"),
+        fleetMachine(laptop, "Laptop", { teamRules: { status: "hold" } }),
+        fleetMachine(EnvironmentId.make("env-off"), "Off", { status: "unreachable" }),
+      ]),
+      canPair: true,
+      projects: [],
+      hostBlocks: [],
+    });
+    expect(rows.map((row) => [row.label, row.teamRules?.label, row.connectLock !== null])).toEqual([
+      ["M4MAX", "Rules on this machine", false],
+      ["MacBook Pro", "Same rules", false],
+      ["M1Max", "No rules", true],
+      ["Laptop", "On hold", true],
+      ["Off", "Rules unknown", false],
+    ]);
+  });
+
+  it("flags a peer's rules on a machine that has none, without locking anything", () => {
+    const rows = buildMachineRows({
+      environments: [env(m4, "M4MAX")],
+      primaryEnvironmentId: m4,
+      fleet: fleet([
+        fleetMachine(m3, "MacBook Pro", {
+          teamRules: { status: "active", fingerprint: "bbbbbbbbbbbb" },
+        }),
+        fleetMachine(m1, "M1Max"),
+      ]),
+      canPair: true,
+      projects: [],
+      hostBlocks: [],
+    });
+    expect(rows.map((row) => [row.teamRules?.label, row.connectLock])).toEqual([
+      ["No rules", null],
+      ["Different rules", null],
+      ["No rules", null],
+    ]);
+  });
 });
 
 describe("buildMachineRows project lists", () => {

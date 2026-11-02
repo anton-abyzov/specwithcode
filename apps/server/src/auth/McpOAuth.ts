@@ -16,6 +16,11 @@ import {
   AuthOrchestrationReadScope,
 } from "@specweave-studio/contracts";
 import { encodeOAuthScope } from "@specweave-studio/shared/oauthScope";
+import { teamRulesReachOff, teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
+import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { callerFingerprint, teamRulesSessionRefusal } from "../teamRules/TeamRulesReach.ts";
+import { arrivedOverConnect } from "./CredentialFailureLimiter.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -523,6 +528,10 @@ const make = Effect.gen(function* () {
             "This worker name does not match the approved machine. Approve this device again with a code for that machine.",
         });
       }
+      if (principal?.kind === "coordinator") {
+        const refused = teamRulesMachineLinkRefusal(yield* currentTeamRules);
+        if (refused !== null) return yield* new McpOAuthPageError({ description: refused.message });
+      }
       const code = yield* mintCode(
         input.authorization,
         decision.access,
@@ -650,13 +659,33 @@ export const layerMcpClientAuthenticator = Layer.effect(
           Effect.flatMap((client) =>
             workGrants.forClient(client).pipe(
               Effect.flatMap((grant) =>
-                grant?.revoked === true
-                  ? Effect.fail(
-                      new EnvironmentAuth.ServerAuthInvalidCredentialError({
-                        diagnostic: "This machine revoked that machine's work here.",
-                      }),
-                    )
-                  : Effect.succeed(client),
+                Effect.gen(function* () {
+                  if (grant?.revoked === true) {
+                    return yield* new EnvironmentAuth.ServerAuthInvalidCredentialError({
+                      diagnostic: "This machine revoked that machine's work here.",
+                    });
+                  }
+                  const state = yield* currentTeamRules;
+                  const refused =
+                    teamRulesReachOff(state, "connect") && arrivedOverConnect(request)
+                      ? teamRulesReachRefusal(state, "connect")
+                      : teamRulesSessionRefusal(
+                          state,
+                          {
+                            subject: EnvironmentAuth.MCP_CLIENT_SUBJECT,
+                            label: client.label,
+                            coordinator:
+                              grant !== undefined || client.principal?.kind === "coordinator",
+                          },
+                          callerFingerprint(request.headers),
+                        );
+                  if (refused !== null) {
+                    return yield* new McpHttpServer.McpTeamRulesRefused({
+                      refusal: refused.message,
+                    });
+                  }
+                  return client;
+                }),
               ),
             ),
           ),
@@ -687,8 +716,11 @@ export const layerMcpClientAuthenticator = Layer.effect(
               error,
             ): Effect.Effect<
               undefined,
-              McpHttpServer.McpDeviceReapprovalRequired | McpHttpServer.McpCredentialStale
+              | McpHttpServer.McpDeviceReapprovalRequired
+              | McpHttpServer.McpCredentialStale
+              | McpHttpServer.McpTeamRulesRefused
             > => {
+              if (error._tag === "McpTeamRulesRefused") return Effect.fail(error);
               if (!EnvironmentAuth.isServerAuthCredentialError(error))
                 return Effect.logWarning("MCP client authentication failed.", {
                   cause: error,

@@ -1,6 +1,8 @@
 import {
   teamRulesInstanceDriver,
+  teamRulesCarriedRefusal,
   teamRulesClampMode,
+  teamRulesReachRefusal,
   teamRulesRoutineRefusal,
   teamRulesSelectionRefusal,
   type TeamRulesState,
@@ -819,11 +821,30 @@ export const layer = Layer.effect(
               );
         // A check runs a shell command with no approval, so it needs full access
         // whatever mode the thread runs in.
+        const finalSelection = boundThread?.modelSelection ?? active.modelSelection;
         const teamRulesRefusal =
           teamRulesRoutineRefusal(teamRules, boundThread?.runtimeMode ?? firstRunMode) ??
+          teamRulesCarriedRefusal(
+            boundThread?.origin?.carried,
+            boundThread?.runtimeMode ?? firstRunMode,
+          ) ??
           (active.check === null || active.check === undefined
             ? null
-            : teamRulesRoutineRefusal(teamRules, "full-access"));
+            : teamRulesRoutineRefusal(teamRules, "full-access")) ??
+          (teamRules.status !== "active"
+            ? null
+            : teamRulesSelectionRefusal(teamRules, {
+                driver:
+                  serverSettings === undefined
+                    ? finalSelection.instanceId
+                    : teamRulesInstanceDriver(
+                        yield* serverSettings.getSettings.pipe(
+                          Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+                        ),
+                        finalSelection.instanceId,
+                      ),
+                model: finalSelection.model,
+              }));
         const check = teamRulesRefusal === null ? (active.check ?? null) : null;
         const checked =
           check === null
@@ -1339,10 +1360,26 @@ export const layer = Layer.effect(
         // A turned-off routine runs nothing, so one saved before the rules can
         // still be edited or switched off. Every enabled save is judged.
         const rules = yield* currentTeamRules;
+        // A save that leaves `check` out keeps the one the task has.
+        const savedCheck =
+          input.check !== undefined || input.id === undefined || rules.status !== "active"
+            ? input.check
+            : (yield* loadTask(input.id).pipe(Effect.orElseSucceed(() => null)))?.check;
+        // A hold refuses a new webhook too: the file could be hiding `false`.
+        const heldWebhook =
+          rules.status === "hold" && input.enabled && input.schedule.type === "webhook"
+            ? teamRulesReachRefusal(rules, "webhooks")
+            : null;
         const refused =
           rules.status !== "active" || !input.enabled
-            ? null
+            ? heldWebhook
             : (teamRulesRoutineRefusal(rules, input.runtimeMode) ??
+              (savedCheck === null || savedCheck === undefined
+                ? null
+                : teamRulesRoutineRefusal(rules, "full-access")) ??
+              (input.schedule.type === "webhook"
+                ? teamRulesReachRefusal(rules, "webhooks")
+                : null) ??
               (input.modelPinned === true
                 ? teamRulesSelectionRefusal(rules, {
                     driver:
@@ -1499,7 +1536,15 @@ export const layer = Layer.effect(
         const existing = yield* loadTask(input.id);
         if (existing.enabled === input.enabled) return { task: existing };
         if (input.enabled) {
-          const refused = teamRulesRoutineRefusal(yield* currentTeamRules, existing.runtimeMode);
+          const rules = yield* currentTeamRules;
+          const refused =
+            teamRulesRoutineRefusal(rules, existing.runtimeMode) ??
+            (existing.check === null || existing.check === undefined
+              ? null
+              : teamRulesRoutineRefusal(rules, "full-access")) ??
+            (existing.schedule.type === "webhook"
+              ? teamRulesReachRefusal(rules, "webhooks")
+              : null);
           if (refused !== null) return yield* taskError(refused.message);
         }
         const now = yield* localNow;
@@ -1600,6 +1645,8 @@ export const layer = Layer.effect(
         if (task.schedule.type !== "webhook") {
           return yield* taskError("Only webhook tasks have a URL token.", { taskId: input.id });
         }
+        const webhooksRefused = teamRulesReachRefusal(yield* currentTeamRules, "webhooks");
+        if (webhooksRefused !== null) return yield* taskError(webhooksRefused.message);
         const token = yield* newWebhookToken;
         const now = yield* localNow;
         // Matching created_at keeps a rotation from landing on a task deleted

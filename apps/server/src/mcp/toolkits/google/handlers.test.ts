@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../../../teamRules/TeamRules.ts";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -61,6 +62,31 @@ const fixture = () => {
     layer: Access.HandlersLayer.layer(Handlers.layer).pipe(Layer.provideMerge(deps)),
   };
 };
+
+it.effect("refuses Google tools when the rules turn them off", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    yield* Effect.gen(function* () {
+      const toolkit = yield* GoogleToolkit;
+      const exit = yield* toolkit.handle("studio_google_status", {}).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.provideService(
+          TeamRules,
+          teamRulesOf({
+            status: "active",
+            rules: { version: 1, owner: "Acme", tools: { google: false } },
+            fingerprint: "3a9f",
+            warnings: [],
+          }),
+        ),
+        Effect.exit,
+      );
+      expect(JSON.stringify(exit)).toContain("Acme");
+      expect(f.calls).toEqual([]);
+    }).pipe(Effect.provide(f.layer));
+  }),
+);
 
 it.effect("reads Google data for the calling thread's own project only", () =>
   Effect.gen(function* () {

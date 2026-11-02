@@ -187,6 +187,44 @@ afterEach(() => {
   state.cleanups.splice(0).forEach((cleanup) => cleanup());
 });
 
+describe("Team rules refusals", () => {
+  const refusedError = () => {
+    const cause = new Error("Refused.");
+    cause.name = "OrchestratorTeamRulesRefusedError";
+    return Object.assign(new Error("Acme IT's rules allow up to Auto."), {
+      _tag: "OrchestrationV2DispatchCommandError",
+      cause,
+    });
+  };
+
+  afterEach(() => {
+    delete (state.config as { teamRules?: unknown }).teamRules;
+  });
+
+  it("takes a refused settings update off the queue instead of retrying it", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.runtime.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(refusedError())));
+    await state.manager.enqueue(message({ runtimeMode: "auto" }));
+    await runDrain();
+    expect(state.runtime).toHaveBeenCalledOnce();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(remaining()).toEqual([]);
+  });
+
+  it("refuses from the machine's rules without sending any command", async () => {
+    state.grantedEnvironments.add("secondary");
+    // The mocked config atom holds this object, so the rules go on it in place.
+    Object.assign(state.config, {
+      teamRules: { status: "active", owner: "Acme IT", ceiling: "auto" },
+    });
+    await state.manager.enqueue(message());
+    await runDrain();
+    expect(state.runtime).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(remaining()).toEqual([]);
+  });
+});
+
 describe("queued task operation access", () => {
   it("parks a connected read-only target, then delivers its unchanged queue after a grant", async () => {
     const queued = message();

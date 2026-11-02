@@ -53,7 +53,10 @@ import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
 import { MachineTerminal, MachineTerminalButton, useCloseMachineTerminal } from "./MachineTerminal";
 import { ConnectionReason } from "./ConnectionReason";
 import { ProvisionMachineButton } from "./ProvisionMachineSheet";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection, TeamRulesLabel } from "./settingsLayout";
+import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
+import type { TeamRulesSummary } from "@specweave-studio/contracts";
+import { teamRulesMachineLinkLock, teamRulesMachineLock } from "../../teamRules/teamRulesView";
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
 import {
@@ -255,6 +258,8 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   const [invitation, setInvitation] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const { environments } = useEnvironments();
+  const teamRules = environments.find((environment) => environment.environmentId === environmentId)
+    ?.serverConfig?.teamRules;
   // A machine saved here only at an address it has left reads as not saved,
   // so Connect machine adds its new address. So does one whose server turned
   // down the saved credential: Approve again pairs it anew.
@@ -416,6 +421,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   return (
     <StudioFleetRoster
       banner={<ConnectReachBanner machines={unreachable} />}
+      teamRules={teamRules}
       snapshot={snapshot}
       loading={loading}
       failed={failed}
@@ -562,7 +568,10 @@ export function StudioFleetRoster({
   machineStatuses = NO_MACHINE_STATUSES,
   canCheckReadiness = false,
   banner = null,
+  teamRules,
 }: {
+  /** This machine's rules, which refuse new links and machines they do not match. */
+  teamRules?: TeamRulesSummary | undefined;
   snapshot: StudioFleetSnapshot | null;
   loading: boolean;
   failed: boolean;
@@ -609,6 +618,7 @@ export function StudioFleetRoster({
   const [readinessFor, setReadinessFor] = useState<string | null>(null);
   const [terminalFor, setTerminalFor] = useState<string | null>(null);
   const closeMachineTerminal = useCloseMachineTerminal();
+  const linkLock = teamRulesMachineLinkLock(teamRules);
   return (
     <SettingsSection
       id="private-machines"
@@ -626,6 +636,11 @@ export function StudioFleetRoster({
       }
     >
       {banner}
+      {linkLock ? (
+        <div className="px-3 py-2.5 sm:px-4">
+          <TeamRulesLockNote lock={linkLock} />
+        </div>
+      ) : null}
       {failed ? (
         <p role="status" className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           Private machines could not be checked. Refresh to retry.
@@ -670,6 +685,15 @@ export function StudioFleetRoster({
                 ? "Pairing permission required"
                 : null;
             const reinvite = fleetMachineNeedsReinvite(machine);
+            // Stop and Remove only take access away, so the rules leave them available.
+            const machineLock = current
+              ? null
+              : reachable
+                ? teamRulesMachineLock(teamRules, {
+                    label: machine.label,
+                    fingerprint: machine.teamRules?.fingerprint,
+                  })
+                : linkLock;
             return (
               <li
                 key={machine.id}
@@ -700,6 +724,9 @@ export function StudioFleetRoster({
                     {reinvite ? (
                       <p className="text-xs text-warning-foreground">{reinvite}</p>
                     ) : null}
+                    {machineLock && !linkLock ? (
+                      <p className="text-xs text-muted-foreground">{machineLock.message}</p>
+                    ) : null}
                     {own?.reason ? (
                       <ConnectionReason
                         environmentId={machine.environmentId}
@@ -717,6 +744,8 @@ export function StudioFleetRoster({
                         }
                         className="size-3.5 text-muted-foreground"
                       />
+                    ) : machineLock ? (
+                      <TeamRulesLabel>{machineLock.setBy}</TeamRulesLabel>
                     ) : pairNote && pending !== machine.id ? (
                       <span className="text-xs text-muted-foreground">{pairNote}</span>
                     ) : (
@@ -778,14 +807,16 @@ export function StudioFleetRoster({
                 </div>
                 {!current && onWorkers && onWorkerDraftChange && machine.workers ? (
                   <div className="pl-7">
-                    <FleetWorkersRow
-                      machine={machine}
-                      disabled={busy}
-                      canManage={canManageWorkers}
-                      draft={fleetWorkerDraft(machine, workerDrafts, defaultWorkerDraft)}
-                      onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
-                      onAction={(action) => onWorkers(machine, action)}
-                    />
+                    <TeamRulesInert lock={machineLock}>
+                      <FleetWorkersRow
+                        machine={machine}
+                        disabled={busy}
+                        canManage={canManageWorkers}
+                        draft={fleetWorkerDraft(machine, workerDrafts, defaultWorkerDraft)}
+                        onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
+                        onAction={(action) => onWorkers(machine, action)}
+                      />
+                    </TeamRulesInert>
                   </div>
                 ) : null}
                 {connected ? (
@@ -886,11 +917,13 @@ export function StudioFleetRoster({
               Pair with reachable machines when SpecWithCode opens. Saved on this device.
             </span>
           </span>
-          <Switch
-            checked={autoConnect}
-            onCheckedChange={onAutoConnectChange}
-            aria-label="Connect private machines automatically"
-          />
+          <TeamRulesInert lock={linkLock}>
+            <Switch
+              checked={autoConnect}
+              onCheckedChange={onAutoConnectChange}
+              aria-label="Connect private machines automatically"
+            />
+          </TeamRulesInert>
         </label>
       ) : null}
       {onAddMachine && onInvitationChange ? (
@@ -945,30 +978,32 @@ export function StudioFleetRoster({
               .
             </span>
           </span>
-          <div className="flex min-w-0 gap-2 sm:w-96 sm:shrink-0">
-            <input
-              aria-label="Invitation from the other machine"
-              className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
-              placeholder="swc-machine-…"
-              autoComplete="off"
-              spellCheck={false}
-              value={invitation}
-              disabled={pending !== null || !canManageWorkers}
-              onChange={(event) => onInvitationChange(event.target.value)}
-            />
-            <Button
-              type="submit"
-              size="xs"
-              variant="outline"
-              disabled={pending !== null || !canManageWorkers || !invitation.trim()}
-            >
-              {pending === "add-machine"
-                ? "Adding…"
-                : canManageWorkers
-                  ? "Add machine"
-                  : "Manage access required"}
-            </Button>
-          </div>
+          <TeamRulesInert lock={linkLock}>
+            <div className="flex min-w-0 gap-2 sm:w-96 sm:shrink-0">
+              <input
+                aria-label="Invitation from the other machine"
+                className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
+                placeholder="swc-machine-…"
+                autoComplete="off"
+                spellCheck={false}
+                value={invitation}
+                disabled={pending !== null || !canManageWorkers}
+                onChange={(event) => onInvitationChange(event.target.value)}
+              />
+              <Button
+                type="submit"
+                size="xs"
+                variant="outline"
+                disabled={pending !== null || !canManageWorkers || !invitation.trim()}
+              >
+                {pending === "add-machine"
+                  ? "Adding…"
+                  : canManageWorkers
+                    ? "Add machine"
+                    : "Manage access required"}
+              </Button>
+            </div>
+          </TeamRulesInert>
         </form>
       ) : null}
       {onInvite ? (
@@ -984,15 +1019,17 @@ export function StudioFleetRoster({
                 machine.
               </span>
             </span>
-            <Button
-              className="shrink-0 self-start sm:self-auto"
-              size="xs"
-              variant="outline"
-              disabled={pending !== null || !canManageWorkers}
-              onClick={onInvite}
-            >
-              {canManageWorkers ? "Make a join line" : "Manage access required"}
-            </Button>
+            <TeamRulesInert lock={linkLock}>
+              <Button
+                className="shrink-0 self-start sm:self-auto"
+                size="xs"
+                variant="outline"
+                disabled={pending !== null || !canManageWorkers}
+                onClick={onInvite}
+              >
+                {canManageWorkers ? "Make a join line" : "Manage access required"}
+              </Button>
+            </TeamRulesInert>
           </div>
           {inviteDialog}
         </div>

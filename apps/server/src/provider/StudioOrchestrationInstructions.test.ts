@@ -52,7 +52,8 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // tokens) asks SpecWeave projects to bind each launched worker. The file
     // line (about 70 tokens) stops workers improvising when a file is elsewhere.
     // The Chrome line (about 35 tokens) outranks a skill that names another browser.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_400);
+    // The model line (about 30 tokens) stops agents delegating to change model.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_550);
   });
 
   it("asks for an increment on launches in a SpecWeave project and a link to its spec", () => {

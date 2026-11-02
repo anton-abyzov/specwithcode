@@ -1,5 +1,7 @@
 import type { ProviderOptionDescriptor, RuntimeMode } from "@specweave-studio/contracts";
 
+import type { RuntimeModeLock } from "../../state/teamRules";
+
 /**
  * Desktop-oriented effort keywords that don't belong in the phone picker.
  * Prompt-injected values (ultrathink and friends) are filtered from the
@@ -42,6 +44,25 @@ export function runtimeModeChoicesForSupportedModes(
   return supportedRuntimeModes && supportedRuntimeModes.length > 0
     ? RUNTIME_MODE_CHOICES.filter((choice) => supportedRuntimeModes.includes(choice.mode))
     : RUNTIME_MODE_CHOICES;
+}
+
+/**
+ * Keeps modes above the rules visible but locked, so the picker says who set the
+ * limit and a thread already above it can still show its mode and move down.
+ */
+export function limitRuntimeModeChoices<
+  Choice extends { readonly mode: RuntimeMode; readonly description: string },
+>(
+  choices: ReadonlyArray<Choice>,
+  lock: RuntimeModeLock | undefined,
+): ReadonlyArray<Choice & { readonly lockedBy?: string }> {
+  if (lock === undefined) return choices;
+  return choices.map((choice) => {
+    const lockedBy = lock(choice.mode);
+    return lockedBy === null
+      ? choice
+      : { ...choice, lockedBy, description: `${lockedBy}. Above your team's limit.` };
+  });
 }
 
 export function compatibleRuntimeModeForChoices(

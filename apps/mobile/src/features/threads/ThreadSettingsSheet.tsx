@@ -64,6 +64,8 @@ import {
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { useEnvironmentServerConfig } from "../../state/entities";
+import { threadRuntimeModeLock, type RuntimeModeLock } from "../../state/teamRules";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
@@ -80,6 +82,7 @@ import {
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
   compatibleRuntimeModeForChoices,
+  limitRuntimeModeChoices,
   runtimeModeChoicesForSupportedModes,
   selectableChoices,
 } from "./thread-settings-options";
@@ -251,6 +254,8 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  /** Absent when no rules limit this picker. */
+  readonly runtimeModeLock?: RuntimeModeLock | undefined;
 };
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
@@ -302,7 +307,11 @@ type ThreadSettingsSessionValue = {
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly runtimeMode: RuntimeMode;
-  readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
+  readonly runtimeModeChoices: ReadonlyArray<
+    ReturnType<typeof runtimeModeChoicesForSupportedModes>[number] & {
+      readonly lockedBy?: string;
+    }
+  >;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly displayedModelSelection: ModelSelection | null;
@@ -400,8 +409,9 @@ function ThreadSettingsSessionProvider(
       null,
     [isApplied, pendingModel, props.providerGroups],
   );
-  const runtimeModeChoices = runtimeModeChoicesForSupportedModes(
-    displayedModel?.supportedRuntimeModes,
+  const runtimeModeChoices = limitRuntimeModeChoices(
+    runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
+    props.runtimeModeLock,
   );
   const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
     props.runtimeMode,
@@ -732,7 +742,9 @@ function ThreadSettingsOptionsItem(props: {
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
       <ChatGptSharingStatus provider={selectedProvider} />
-      <Text className="px-5 pb-2 pt-2 text-sm font-studio-medium text-foreground-muted">Options</Text>
+      <Text className="px-5 pb-2 pt-2 text-sm font-studio-medium text-foreground-muted">
+        Options
+      </Text>
       <Animated.View
         className="mx-4 overflow-hidden rounded-2xl bg-grouped-card"
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
@@ -995,6 +1007,7 @@ function ThreadSettingsChoiceContent(props: {
             label: choice.label,
             description: choice.description,
             selected: choice.mode === session.runtimeMode,
+            disabled: choice.lockedBy !== undefined,
             onPress: () => {
               void Haptics.selectionAsync();
               session.onUpdateRuntimeMode(choice.mode);
@@ -1008,6 +1021,7 @@ function ThreadSettingsChoiceContent(props: {
               id: choice.id,
               label: choice.label,
               description: undefined,
+              disabled: false,
               selected:
                 choice.id ===
                 getProviderOptionCurrentValue(
@@ -1052,6 +1066,7 @@ function ThreadSettingsChoiceContent(props: {
             isLast={index === submenuContent.rows.length - 1}
             label={row.label}
             selected={row.selected}
+            disabled={row.disabled}
             onPress={row.onPress}
           />
         ))}
@@ -1419,6 +1434,7 @@ export function ExistingThreadSettingsRouteScreen() {
 export function NewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
+  const serverConfig = useEnvironmentServerConfig(flow.selectedEnvironmentId);
   const optionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({
@@ -1439,6 +1455,7 @@ export function NewTaskThreadSettingsRouteScreen() {
       onUpdateOptionSelections={flow.setSelectedModelOptions}
       runtimeMode={flow.runtimeMode}
       onUpdateRuntimeMode={flow.setRuntimeMode}
+      runtimeModeLock={threadRuntimeModeLock(serverConfig, null)}
       onClose={() => navigation.goBack()}
     />
   );

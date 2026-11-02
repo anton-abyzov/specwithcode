@@ -1,6 +1,7 @@
 import { assertPersonalChatBoundary } from "../../personalChatBoundary.ts";
 import {
-  type CommandId,
+  CommandId,
+  MessageId,
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -11,6 +12,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@specweave-studio/shared/model";
+import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/threadReport";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -238,6 +240,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   studio_thread_configure: writesThread((input) =>
     Effect.gen(function* () {
       const {
+        caller,
         threads,
         projection: { thread },
       } = yield* readThread(input.threadId);
@@ -246,6 +249,56 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         yield* workGrantOf(yield* readCaller()),
         input.modelSelection.instanceId,
       );
+      // The thread stays one thread: the message queues on the new model, so this
+      // turn ends as it was going to and the next runs there with the context.
+      if (input.continueWith !== undefined) {
+        // Another thread takes its work through studio_thread_send and its checks.
+        if (caller?.id !== thread.id)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "continueWith is for this thread's own next turn. Use studio_thread_send.",
+          });
+        const squashed = findSquashedText(input.continueWith);
+        if (squashed !== null)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: squashedTextMessage(squashed),
+          });
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const key = `${scope.requestNamespace}:${input.clientRequestId ?? (yield* newCommandId())}`;
+        const sent = yield* threads
+          .sendToThread({
+            projectId: thread.projectId,
+            commandId: CommandId.make(`mcp:model-switch:${thread.id}:${key}`),
+            threadId: thread.id,
+            senderThreadId: caller.id,
+            messageId: MessageId.make(`message:model-switch:${thread.id}:${key}`),
+            text: input.continueWith,
+            attachments: [],
+            mode: "queue",
+            modelSelection: input.modelSelection,
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: `Unable to queue the next turn: ${error.message}`,
+                }),
+            ),
+          );
+        return { sequence: sent.dispatch.sequence };
+      }
+      // Moving the running turn's own session to another provider would stop the
+      // agent that asked, with nothing left to carry the work on.
+      if (caller?.id === thread.id && thread.providerInstanceId !== input.modelSelection.instanceId)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "This would stop your own turn. Pass continueWith with what the next turn should do, then end your turn: it runs on the new model in this thread.",
+        });
       const type = modelSelectionCommandType(thread.providerInstanceId, input.modelSelection);
       const result = yield* threads
         .dispatch({

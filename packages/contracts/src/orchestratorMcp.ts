@@ -1,3 +1,4 @@
+import { TeamRulesCarried } from "./teamRules.ts";
 import { LifecycleGoal } from "./threadLifecycleEvidence.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -104,6 +105,8 @@ export const OrchestratorMcpDelegation = Schema.Struct({
     Schema.isMaxLength(ORCHESTRATOR_MCP_DELEGATION_MAX_PATH),
   ),
   hops: PositiveInt.check(Schema.isLessThanOrEqualTo(ORCHESTRATOR_MCP_DELEGATION_MAX_PATH)),
+  /** The ceiling the work carries. An older machine ignores it, so the sender checks first. */
+  carried: Schema.optional(TeamRulesCarried),
 }).annotate({
   description:
     "Set by SpecWithCode between machines; agents never pass it. The machines this launch came through and its hop count.",
@@ -1019,6 +1022,8 @@ export const OrchestratorMcpMachine = Schema.Struct({
   providers: Schema.optional(Schema.Array(OrchestratorMcpMachineProvider)),
   /** Whether the machine answered just now; absent when it was not asked (no usable grant). */
   reachable: Schema.optional(Schema.Boolean),
+  /** Why this machine's Team rules refuse working with that one. */
+  teamRulesRefused: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpMachine = typeof OrchestratorMcpMachine.Type;
 

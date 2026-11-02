@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import {
   MessageId,
   ProjectId,
@@ -320,6 +321,33 @@ it.effect("pairs the chat that sends the code, then forwards and answers", () =>
       assert.strictEqual(harness.secrets.size, 0);
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect("stops polling and refuses pairing with Telegram off, while unpair stays", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const off = Effect.provideService(
+      TeamRules,
+      teamRulesOf({
+        status: "active",
+        rules: { version: 1, owner: "Acme", tools: { telegram: false } },
+        fingerprint: "3a9f",
+        warnings: [],
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const channel = yield* TelegramChannel.TelegramChannel;
+      const refused = yield* channel
+        .configure({ botToken: TOKEN, projectId: PROJECT_ID, enabled: true })
+        .pipe(off, Effect.flip);
+      assert.include(refused.detail, "Acme");
+      yield* channel.start().pipe(off);
+      yield* TestClock.withLive(Effect.sleep(Duration.millis(20)));
+      yield* TestClock.adjust("20 seconds");
+      yield* TestClock.withLive(Effect.sleep(Duration.millis(20)));
+      assert.strictEqual(harness.polls.count, 0);
+    }).pipe(Effect.scoped, Effect.provide(harness.layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("does not ask Telegram for messages until an update install's gate is cleared", () =>

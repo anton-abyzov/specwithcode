@@ -372,9 +372,14 @@ import {
   SubagentAvatar,
   SubagentElapsed,
   SubagentNotificationLink,
+  SameProviderSwitchRow,
   V2LifecycleRow,
   type HandoffTimelineRun,
 } from "./V2LifecycleRow";
+import {
+  sameProviderModelChanges,
+  type SameProviderModelChange,
+} from "@specweave-studio/client-runtime/handoff";
 import { ThinkingMark } from "./ThinkingMark";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { ThreadDecisionCard } from "./ThreadDecisionCard";
@@ -454,6 +459,8 @@ interface TimelineRowSharedState {
   providerStatuses: ReadonlyArray<ServerProvider>;
   /** Projection runs, for recovering handoff models on legacy items. */
   runs: ReadonlyArray<HandoffTimelineRun>;
+  /** Same-provider model changes, each shown before the message that started it. */
+  modelChanges: ReadonlyArray<SameProviderModelChange>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
@@ -622,7 +629,8 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 // ---------------------------------------------------------------------------
 
 /** A run as the timeline reads it; its status, when given, disables Open diff while it is live. */
-export type TimelineRun = HandoffTimelineRun & Partial<Pick<OrchestrationV2Run, "status">>;
+export type TimelineRun = HandoffTimelineRun &
+  Partial<Pick<OrchestrationV2Run, "status" | "startedAt" | "userMessageId">>;
 
 export type TimelineProviderSession = Pick<
   OrchestrationV2ProviderSession,
@@ -1150,6 +1158,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const liveRuns = useStableLiveRuns(runsProp);
+  const modelChanges = useStableModelChanges(runsProp);
   const activeThreadId = citationThreadRef?.threadId ?? null;
   const resolvedSubagentDiffTarget = useMemo(() => {
     if (subagentParent === null || activeThreadId === null) return null;
@@ -1564,6 +1573,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       openPullRequest,
       onOpenTurnDiff,
       liveRuns,
+      modelChanges,
       subagentDiffTarget: resolvedSubagentDiffTarget,
       subagentDiffUnavailableReason,
       loadedSubagentEditItems,
@@ -1615,6 +1625,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       openPullRequest,
       onOpenTurnDiff,
       liveRuns,
+      modelChanges,
       resolvedSubagentDiffTarget,
       subagentDiffUnavailableReason,
       loadedSubagentEditItems,
@@ -2301,6 +2312,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold-end" ? <TurnFoldEndTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? (
+        <ModelChangeDivider messageId={row.message.id} />
+      ) : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -2427,6 +2441,13 @@ function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
 
+function ModelChangeDivider({ messageId }: { readonly messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  const change = ctx.modelChanges.find((candidate) => candidate.messageId === messageId);
+  if (change === undefined) return null;
+  return <SameProviderSwitchRow change={change} providerStatuses={ctx.providerStatuses} />;
+}
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const projectRouting = useProjectMessageRouting();
   const ctx = use(TimelineRowCtx);
@@ -2437,6 +2458,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ? scopeThreadRef(ctx.activeThreadEnvironmentId, senderThreadId)
       : null,
   );
+  const receivingShell = useThreadShell(senderThreadId === undefined ? null : ctx.threadRef);
   const resources = useMemo(
     () => selectMessageImageResources(row.message.attachments),
     [row.message.attachments],
@@ -2775,6 +2797,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   // quiet relayed note on the left, so the person's own messages stay primary.
   if (relayFrom !== null) {
     const fromCoordinator = relayFrom === "coordinator";
+    const addressedToAgent =
+      fromCoordinator ||
+      (senderThreadId !== undefined &&
+        (senderThreadId === ctx.threadRef?.threadId ||
+          senderThreadId === receivingShell?.lineage.parentThreadId));
     return (
       <div data-relayed-row="">
         <RelayedMessage
@@ -2799,6 +2826,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           timestampFormat={ctx.timestampFormat}
           original={row.message.text}
           text={resolvedContext.text}
+          addressedToAgent={addressedToAgent}
           detail={ctx.timelineDetail}
           renderMarkdown={(part) => (
             <div onCopyCapture={onBodyCopyCapture}>
@@ -5979,6 +6007,23 @@ function useStableHandoffRuns(
       providerInstanceId: run.providerInstanceId,
       modelSelection: run.modelSelection,
     }));
+    prev.current = { signature, value };
+    return value;
+  }, [runs]);
+}
+
+/** The same-provider model changes; the reference changes only when one is added. */
+function useStableModelChanges(
+  runs: ReadonlyArray<TimelineRun>,
+): ReadonlyArray<SameProviderModelChange> {
+  const prev = useRef<{
+    signature: string;
+    value: ReadonlyArray<SameProviderModelChange>;
+  }>({ signature: "", value: [] });
+  return useMemo(() => {
+    const value = sameProviderModelChanges(runs);
+    const signature = JSON.stringify(value);
+    if (signature === prev.current.signature) return prev.current.value;
     prev.current = { signature, value };
     return value;
   }, [runs]);

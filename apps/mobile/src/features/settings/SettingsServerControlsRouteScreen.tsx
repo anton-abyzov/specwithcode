@@ -17,8 +17,9 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
+import { limitRuntimeModeChoices, RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
 import { serverEnvironment } from "../../state/server";
+import { chromeOffNote, sharedRuntimeModeLock } from "../../state/teamRules";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
@@ -30,6 +31,7 @@ import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
+import { TeamRulesSection } from "./components/TeamRulesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
   planMobileScopedSettingsClear,
@@ -232,6 +234,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       !PROJECT_SCOPED_SERVER_SETTING_KEYS.includes(
         key as (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number],
       ));
+  const targetConfigs = targets.map((target) => target.environment.serverConfig);
+  const defaultModeChoices = limitRuntimeModeChoices(
+    RUNTIME_MODE_CHOICES,
+    sharedRuntimeModeLock(targetConfigs),
+  );
+  const chromeNote = chromeOffNote(targetConfigs);
+  const ruledTargets = selectedTargets.filter((target) => target.serverConfig.teamRules);
 
   return (
     <>
@@ -255,6 +264,17 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             </Text>
           ) : (
             <>
+              {props.page === "new-threads" || props.page === "agent-behavior"
+                ? ruledTargets.map((target) =>
+                    target.serverConfig.teamRules ? (
+                      <TeamRulesSection
+                        key={target.environmentId}
+                        summary={target.serverConfig.teamRules}
+                        {...(selectedTargets.length > 1 ? { environmentLabel: target.label } : {})}
+                      />
+                    ) : null,
+                  )
+                : null}
               {projectSelected ? (
                 <SettingsProjectOverridesSection
                   projectLabel={selectedProject?.label ?? "Unavailable project"}
@@ -332,14 +352,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       ) : null
                     }
                   >
-                    {RUNTIME_MODE_CHOICES.map((choice, index) => (
+                    {defaultModeChoices.map((choice, index) => (
                       <SettingsChoiceRow
                         key={choice.mode}
                         label={choice.label}
                         description={choice.description}
                         selected={uniform("defaultRuntimeMode") === choice.mode}
                         separated={index > 0}
-                        disabled={disabledFor("defaultRuntimeMode")}
+                        disabled={
+                          disabledFor("defaultRuntimeMode") || choice.lockedBy !== undefined
+                        }
                         onPress={() => write({ defaultRuntimeMode: choice.mode })}
                       />
                     ))}
@@ -418,7 +440,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <SettingsSwitchRow
                       icon="globe"
                       label="Agent browser access"
-                      subtitle="Allow agents to use the in-app preview browser."
+                      subtitle={
+                        chromeNote === null
+                          ? "Allow agents to use the in-app preview browser."
+                          : `Allow agents to use the in-app preview browser. ${chromeNote}`
+                      }
                       value={uniform("enableAgentBrowserAccess")}
                       disabled={disabledFor("enableAgentBrowserAccess")}
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}

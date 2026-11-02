@@ -289,10 +289,13 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
   {
     diagnostic: Schema.optional(Schema.String),
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    /** Why Team rules refused this, in words a client can show. */
+    teamRulesMessage: Schema.optionalKey(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.teamRulesMessage !== undefined) return this.teamRulesMessage;
     return this.diagnostic === "device_reapproval_required"
       ? "Approve this device again in SpecWithCode."
       : "Server authentication credential is invalid.";
@@ -313,6 +316,9 @@ export const serverAuthCredentialReason = (
     : error.diagnostic === "device_reapproval_required"
       ? "device_reapproval_required"
       : "invalid_credential";
+
+export const serverAuthTeamRulesMessage = (error: ServerAuthCredentialError): string | undefined =>
+  error._tag === "ServerAuthInvalidCredentialError" ? error.teamRulesMessage : undefined;
 
 export const serverAuthDpopFailureReason = (
   error: ServerAuthCredentialError,

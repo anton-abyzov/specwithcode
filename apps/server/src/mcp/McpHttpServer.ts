@@ -1,5 +1,6 @@
 import { ProjectConnectionsToolkit } from "./toolkits/projectConnections/tools.ts";
 import { GoogleToolkit } from "./toolkits/google/tools.ts";
+import { TEAM_RULES_REFUSED_HEADER } from "@specweave-studio/contracts";
 import * as GoogleHandlers from "./toolkits/google/handlers.ts";
 import * as ProjectConnectionsHandlers from "./toolkits/projectConnections/handlers.ts";
 import { ProjectPlanToolkit } from "./toolkits/projectPlan/tools.ts";
@@ -182,6 +183,12 @@ export class McpCredentialStale extends Schema.TaggedError<McpCredentialStale>()
   {},
 ) {}
 
+/** This machine's Team rules refuse that machine, whatever credential it holds. */
+export class McpTeamRulesRefused extends Schema.TaggedError<McpTeamRulesRefused>()(
+  "McpTeamRulesRefused",
+  { refusal: Schema.String },
+) {}
+
 export class McpClientAuthenticator extends Context.Service<
   McpClientAuthenticator,
   {
@@ -189,7 +196,7 @@ export class McpClientAuthenticator extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       McpInvocationContext.McpInvocationScope | undefined,
-      McpDeviceReapprovalRequired | McpCredentialStale
+      McpDeviceReapprovalRequired | McpCredentialStale | McpTeamRulesRefused
     >;
   }
 >()("specweave-studio/mcp/McpHttpServer/McpClientAuthenticator") {}
@@ -247,8 +254,15 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
               Effect.succeed("reapproval" as const),
             ),
             Effect.catchTag("McpCredentialStale", () => Effect.succeed("stale" as const)),
+            Effect.catchTag("McpTeamRulesRefused", (error) => Effect.succeed(error)),
           )
         : undefined);
+    if (typeof resolved === "object" && "_tag" in resolved) {
+      return HttpServerResponse.jsonUnsafe(
+        { error: "team_rules", message: resolved.refusal },
+        { status: 403, headers: { [TEAM_RULES_REFUSED_HEADER]: "1" } },
+      );
+    }
     const invocation = resolved === "stale" ? undefined : resolved;
     if (invocation === "reapproval")
       return unauthorized({

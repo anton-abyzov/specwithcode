@@ -10985,9 +10985,10 @@ export default function ChatView(props: ChatViewProps) {
   const teamRulesSummary = useAtomValue(
     serverEnvironment.configValueAtom(environmentId),
   )?.teamRules;
+  const carriedTeamRules = activeThreadShell?.source?.origin?.carried;
   const teamRulesNotice = useMemo(
-    () => teamRulesThreadNotice(teamRulesSummary, runtimeMode),
-    [runtimeMode, teamRulesSummary],
+    () => teamRulesThreadNotice(teamRulesSummary, runtimeMode, carriedTeamRules),
+    [carriedTeamRules, runtimeMode, teamRulesSummary],
   );
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const teamRulesItems: ComposerBannerStackItem[] =
@@ -15837,6 +15838,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isServerThread && activeThread ? (
                                   <QueuedRunsControl
                                     ref={queuedRunsControlRef}
+                                    providers={providerStatuses as ServerProvider[]}
                                     steerShortcutLabel={shortcutLabelForCommand(
                                       keybindings,
                                       "thread.steerQueuedMessage",

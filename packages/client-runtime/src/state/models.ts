@@ -194,6 +194,8 @@ export interface EnvironmentThreadShell {
   readonly title: string;
   /** Who started the thread: an agent's own threads are project work, not the user's chats. */
   readonly createdBy?: OrchestrationV2ThreadShell["createdBy"];
+  /** Where the thread came from; a carried Team rules ceiling travels here. */
+  readonly origin?: OrchestrationV2ThreadShell["origin"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly modelSelection: OrchestrationV2ThreadShell["modelSelection"];
   readonly modelIdentity?: OrchestrationV2ThreadShell["modelIdentity"];
@@ -406,6 +408,7 @@ export function presentThreadShell(
         ? formatSubagentDisplayTitle(thread.title)
         : thread.title,
     createdBy: thread.createdBy,
+    ...(thread.origin === undefined ? {} : { origin: thread.origin }),
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
     ...(thread.modelIdentity === undefined ? {} : { modelIdentity: thread.modelIdentity }),

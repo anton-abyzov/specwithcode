@@ -168,6 +168,57 @@ describe("thread workflows", () => {
     ).toBe(false);
   });
 
+  it("names a person's row picked for another model, not an agent's or an options change", () => {
+    const opus = { instanceId: "claudeAgent", model: "opus" };
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      runs: [
+        {
+          id: "active",
+          status: "running",
+          providerThreadId: "provider-thread",
+          activeAttemptId: "attempt",
+          ordinal: 1,
+          modelSelection: opus,
+        },
+        {
+          id: "picked",
+          status: "queued",
+          userMessageId: "picked",
+          ordinal: 2,
+          modelSelection: { instanceId: "muse", model: "wonder" },
+        },
+        {
+          id: "agent",
+          status: "queued",
+          userMessageId: "agent",
+          ordinal: 3,
+          modelSelection: { instanceId: "muse", model: "wonder" },
+        },
+        {
+          id: "effort",
+          status: "queued",
+          userMessageId: "effort",
+          ordinal: 4,
+          modelSelection: { ...opus, options: [{ id: "effort", value: "high" }] },
+        },
+      ],
+      messages: [
+        { id: "picked", createdBy: "user", text: "a", attachments: [] },
+        { id: "agent", createdBy: "agent", text: "b", attachments: [] },
+        { id: "effort", createdBy: "user", text: "c", attachments: [] },
+      ],
+      providerTurns: [],
+      providerThreads: [],
+      providerSessions: [],
+    } as never);
+    expect(state.queuedRuns.map((row) => row.pickedModel?.model)).toEqual([
+      "wonder",
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("sorts queued messages and gates reorder and promotion from capabilities", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },

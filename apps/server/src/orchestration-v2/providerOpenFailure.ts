@@ -146,7 +146,8 @@ export interface ApiCreditOrigin {
  * `LIMIT_FALLBACK_MESSAGE_PREFIX` the same for a `switch` fallback.
  */
 export function apiCreditOrigin(
-  thread: Pick<OrchestrationV2ThreadShell, "id" | "providerInstanceId">,
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "providerInstanceId"> &
+    Partial<Pick<OrchestrationV2ThreadShell, "modelSelection">>,
   runs: ReadonlyArray<
     Pick<
       OrchestrationV2Run,
@@ -156,7 +157,8 @@ export function apiCreditOrigin(
       | "modelSelection"
       | "userMessageId"
       | "startMessageId"
-    >
+    > &
+      Partial<Pick<OrchestrationV2Run, "status" | "startedAt">>
   >,
   messagePrefix: string = API_CREDIT_MESSAGE_PREFIX,
   depth = 0,
@@ -166,8 +168,13 @@ export function apiCreditOrigin(
   // A steer into the continuation restarts the run under its own message;
   // the message that started it still names the move.
   const started = orchestrationV2RunStartMessageId;
+  // A pick of another model on the same provider is a person's move too.
+  const model = thread.modelSelection?.model;
   for (const run of latestFirst) {
+    // A row cancelled before it started ran nowhere, so it does not end the fallback.
+    if (run.status === "cancelled" && run.startedAt === null) continue;
     if (run.providerInstanceId !== thread.providerInstanceId) return null;
+    if (model !== undefined && run.modelSelection.model !== model) return null;
     if (!started(run).startsWith(prefix)) continue;
     // A continuation that itself stopped and was continued again leads back
     // through each one to the subscription run the first of them continued.

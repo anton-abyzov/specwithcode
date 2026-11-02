@@ -46,7 +46,12 @@ import {
   TeamRulesLabel,
 } from "./settingsLayout";
 import { teamRulesClampMode, teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
-import { TEAM_RULES_ABOVE_LIMIT, teamRulesFromSummary } from "../../teamRules/teamRulesView";
+import {
+  TEAM_RULES_ABOVE_LIMIT,
+  teamRulesFromSummary,
+  teamRulesToolLock,
+} from "../../teamRules/teamRulesView";
+import { TeamRulesInert } from "./TeamRulesLock";
 import { useMemo } from "react";
 import {
   useScopedSettings,
@@ -84,6 +89,7 @@ export function ProjectDefaultsSettings({
   const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const teamRulesSummary = representative?.serverConfig?.teamRules;
   const teamRules = useMemo(() => teamRulesFromSummary(teamRulesSummary), [teamRulesSummary]);
+  const computerUseLock = teamRulesToolLock(teamRulesSummary, "computerUse");
   // What a new thread would get: a default from before the rules is lowered at use, never rewritten.
   const effectiveRuntimeMode = teamRulesClampMode(teamRules.state, settings.defaultRuntimeMode);
   const selection = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
@@ -702,10 +708,19 @@ export function ProjectDefaultsSettings({
               mixed={mixedComputer}
               id={searchableSetting("agent-computer-access").id}
               title="Agent computer access"
-              description="Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. Available on macOS only for now; Windows and Linux are not supported yet. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts."
+              description={
+                computerUseLock?.message ??
+                "Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. Available on macOS only for now; Windows and Linux are not supported yet. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts."
+              }
+              status={
+                computerUseLock ? (
+                  <TeamRulesLabel>{computerUseLock.setBy}</TeamRulesLabel>
+                ) : undefined
+              }
               resetAction={
+                computerUseLock === null &&
                 settings.enableAgentComputerAccess !==
-                DEFAULT_SERVER_SETTINGS.enableAgentComputerAccess ? (
+                  DEFAULT_SERVER_SETTINGS.enableAgentComputerAccess ? (
                   <SettingResetButton
                     label="default computer access"
                     onClick={() =>
@@ -718,17 +733,21 @@ export function ProjectDefaultsSettings({
                 ) : null
               }
               control={
-                <Switch
-                  aria-label="Agent computer access"
-                  mixed={mixedComputer}
-                  checked={mixedComputer ? false : settings.enableAgentComputerAccess}
-                  onCheckedChange={(enabled) =>
-                    updateSettings({ enableAgentComputerAccess: enabled })
-                  }
-                />
+                <TeamRulesInert lock={computerUseLock}>
+                  <Switch
+                    aria-label="Agent computer access"
+                    mixed={mixedComputer}
+                    checked={
+                      mixedComputer || computerUseLock ? false : settings.enableAgentComputerAccess
+                    }
+                    onCheckedChange={(enabled) =>
+                      updateSettings({ enableAgentComputerAccess: enabled })
+                    }
+                  />
+                </TeamRulesInert>
               }
             >
-              {settings.enableAgentComputerAccess && !mixedComputer ? (
+              {settings.enableAgentComputerAccess && !mixedComputer && computerUseLock === null ? (
                 <ComputerUsePermissionSetup environmentId={target?.environmentId ?? null} />
               ) : null}
             </SettingsRow>

@@ -248,6 +248,15 @@ extension LiveEngine {
     schedulePublish()
   }
 
+  func teamRulesChanged(_ entry: MachineEntry, _ rules: TeamRulesSummary?) {
+    guard machines[entry.environmentId] === entry, entry.teamRules != rules else { return }
+    entry.teamRules = rules
+    for controller in controllers.values where controller.environmentId == entry.environmentId {
+      refreshMeta(controller)
+    }
+    schedulePublish()
+  }
+
   /// Follows the machine's settings on this socket, so a rename made on any
   /// machine shows at once. A failed stream on an open socket subscribes again
   /// with backoff; a closed socket leaves it to the next one.
@@ -262,8 +271,13 @@ extension LiveEngine {
             switch try? await Self.decode(ServerConfigStreamItem.self, from: value) {
             case let .snapshot(config)?:
               if let settings = config.settings { settingsChanged(entry, settings) }
+              teamRulesChanged(entry, config.teamRules)
             case let .settingsUpdated(settings)?:
               settingsChanged(entry, settings)
+            case let .providerStatuses(providers, teamRules)?:
+              // Rules decide what the machine offers, so the list changes with them.
+              if entry.teamRules != teamRules { entry.config?.providers = providers }
+              teamRulesChanged(entry, teamRules)
             case .other?, nil:
               break
             }

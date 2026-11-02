@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../../teamRules/TeamRules.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -71,6 +72,16 @@ function layerResolver(
 // own toolchain or its PATH syntax. Nothing is spawned through this path.
 const resolveOnlyNpm = (command: string) =>
   command === "npm" ? "/fake-toolchain/bin/npm" : undefined;
+
+const hostWithRules = Effect.provideService(
+  TeamRules,
+  teamRulesOf({
+    status: "active",
+    rules: { version: 1, owner: "Acme", ai: { providers: ["codex"] } },
+    fingerprint: "3a9f",
+    warnings: [],
+  }),
+);
 
 const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolchain")(function* (
   rootDirectory: string,
@@ -1032,6 +1043,36 @@ describe("AcpRegistrySupport", () => {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("refuses to prepare an agent the rules leave out, before asking the registry", () => {
+    let requests = 0;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-rules-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const refused = yield* resolver
+        .prepare({ agentId: "example-agent" })
+        .pipe(hostWithRules, Effect.flip);
+      expect(refused.reason).toBe("provider_configuration_failed");
+      expect(refused.detail).toContain("Acme");
+      expect(requests).toBe(0);
+    }).pipe(
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.sync(() => {
+            requests += 1;
+            return HttpClientResponse.fromWeb(request, new Response("{}"));
+          }),
         ),
       ),
     );

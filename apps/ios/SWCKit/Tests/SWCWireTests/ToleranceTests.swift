@@ -183,6 +183,58 @@ struct ToleranceTests {
     }
   }
 
+  @Test func teamRulesAreOptional() throws {
+    let base = #""environment":{"environmentId":"e","label":"Mac","platform":{"os":"darwin","arch":"arm64"},"orchestrationProtocolVersion":2,"capabilities":{}}"#
+    #expect(try decodeJSON(ServerConfig.self, "{\(base)}").teamRules == nil)
+    // Malformed rules read as absent instead of losing the whole config.
+    #expect(try decodeJSON(ServerConfig.self, #"{\#(base),"teamRules":"soon"}"#).teamRules == nil)
+    #expect(try decodeJSON(ServerConfig.self, #"{\#(base),"teamRules":{"owner":"no status"}}"#).teamRules == nil)
+
+    let rules = try #require(try decodeJSON(ServerConfig.self, #"""
+    {\#(base),"teamRules":{"status":"active","owner":"Acme","fingerprint":"abc","ceiling":"auto","providers":["codex"],
+     "reach":{"phones":false,"machines":"same-rules","teleport":true},"tools":{"chrome":false,"futureTool":false},"brandNew":{"a":1}}}
+    """#).teamRules)
+    #expect(rules.owner == "Acme")
+    #expect(rules.ceiling == .auto)
+    #expect(rules.reach?.phones == false)
+    #expect(rules.reach?.machines == "same-rules")
+    #expect(rules.reach?.connect == nil)
+    #expect(rules.tools?.chrome == false)
+
+    // One field in a newer shape costs only that field.
+    let lossy = try decodeJSON(TeamRulesSummary.self, #"{"status":"hold","owner":7,"issues":["broken"],"reach":"none"}"#)
+    #expect(lossy.status == "hold")
+    #expect(lossy.owner == nil)
+    #expect(lossy.reach == nil)
+    #expect(lossy.issues == ["broken"])
+  }
+
+  @Test func providerStatusesCarryTheRules() throws {
+    let on = try decodeJSON(ServerConfigStreamItem.self, #"{"version":1,"type":"providerStatuses","payload":{"providers":[{"instanceId":"codex","driver":"codex"},{"nope":1}],"teamRules":{"status":"active","owner":"Acme"}}}"#)
+    guard case let .providerStatuses(providers, rules) = on else { Issue.record("Expected provider statuses"); return }
+    #expect(providers.map(\.instanceId) == ["codex"])
+    #expect(rules?.owner == "Acme")
+
+    let off = try decodeJSON(ServerConfigStreamItem.self, #"{"version":1,"type":"providerStatuses","payload":{"providers":[]}}"#)
+    guard case let .providerStatuses(_, none) = off else { Issue.record("Expected provider statuses"); return }
+    #expect(none == nil)
+  }
+
+  @Test func aTeamRulesRefusalIsReadable() {
+    let refused: JSONValue = .object([
+      "_tag": .string("ServerSettingsError"),
+      "settingsPath": .string("settings.json"),
+      "operation": .string("update"),
+      "teamRulesRefusal": .object(["reason": .string("ceiling"), "message": .string("Acme's rules allow up to Auto, so Full access is not available.")]),
+    ])
+    let error = ServerError.from(causes: [.fail(refused)])
+    #expect(error.kind == .serverSettings)
+    #expect(error.message == "Acme's rules allow up to Auto, so Full access is not available.")
+
+    let plain: JSONValue = .object(["_tag": .string("ServerSettingsError"), "settingsPath": .string("settings.json")])
+    #expect(ServerError.from(causes: [.fail(plain)]).message == "The setting could not be saved.")
+  }
+
   @Test func forwardCompatibleArrays() throws {
     let config = try decodeJSON(ServerConfig.self, #"""
     {"environment":{"environmentId":"e","label":"Mac","platform":{"os":"darwin","arch":"arm64"},"orchestrationProtocolVersion":2,"capabilities":{"threadPinning":true,"fileAttachments":{"maxUploadBytes":1024}}},

@@ -25,6 +25,7 @@ import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { TeamRulesSection } from "./components/TeamRulesSection";
 import {
   canMaintainEnvironment,
   canUpdateEnvironmentProvider,
@@ -227,6 +228,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config ? (
               <>
+                {config.teamRules ? <TeamRulesSection summary={config.teamRules} /> : null}
                 <SettingsSection title="SpecWithCode">
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Version {version}</Text>

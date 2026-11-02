@@ -16,6 +16,8 @@
  */
 import { EnvironmentId, PortSchema } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
+import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
+import { readMachineTeamRules } from "../teamRules/TeamRules.ts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -185,6 +187,9 @@ const inviteCommand = Command.make("invite", {
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
+      const refused = teamRulesMachineLinkRefusal(readMachineTeamRules());
+      if (refused !== null)
+        return yield* Effect.fail(new FleetError("team-rules", refused.message));
       const logLevel = Option.getOrElse(yield* GlobalFlag.LogLevel, () => "Warn" as const);
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
       const config = yield* makePairServerConfig({ target, logLevel });

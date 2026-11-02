@@ -4,9 +4,15 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   TEAM_RULES_ABOVE_LIMIT,
   teamRulesDecisionModelLock,
+  teamRulesMachineLinkLock,
+  teamRulesMachineLock,
+  teamRulesOwnMachineView,
+  teamRulesPeerMachineView,
   teamRulesProviderLock,
+  teamRulesReachLock,
   teamRulesRows,
   teamRulesThreadNotice,
+  teamRulesToolLock,
 } from "./teamRulesView";
 
 const active: TeamRulesSummary = {
@@ -78,5 +84,151 @@ describe("team rules view", () => {
     ]);
     expect(teamRulesRows(active)[3]?.value).toContain("Fallback at a usage limit");
     expect(teamRulesRows({ status: "active", owner: "Acme" })).toEqual([]);
+  });
+
+  it("locks no row without rules", () => {
+    expect(teamRulesReachLock(undefined, "phones")).toBeNull();
+    expect(teamRulesReachLock(undefined, "connect")).toBeNull();
+    expect(teamRulesReachLock(undefined, "webhooks")).toBeNull();
+    expect(teamRulesToolLock(undefined, "chrome")).toBeNull();
+    expect(teamRulesToolLock(undefined, "google")).toBeNull();
+    expect(teamRulesMachineLinkLock(undefined)).toBeNull();
+    expect(teamRulesMachineLock(undefined, { fingerprint: undefined })).toBeNull();
+    expect(teamRulesRows({ status: "active", owner: "Acme", reach: {}, tools: {} })).toEqual([]);
+  });
+
+  it("names the owner and the refusal on a path or tool the rules turn off", () => {
+    const summary: TeamRulesSummary = {
+      status: "active",
+      owner: "Acme",
+      reach: { phones: false, webhooks: true },
+      tools: { computerUse: false },
+    };
+    expect(teamRulesReachLock(summary, "phones")).toEqual({
+      setBy: "Set by Acme",
+      message: "Acme's rules turn off phones on this machine.",
+    });
+    expect(teamRulesReachLock(summary, "webhooks")).toBeNull();
+    expect(teamRulesToolLock(summary, "computerUse")?.setBy).toBe("Set by Acme");
+    expect(teamRulesToolLock(summary, "telegram")).toBeNull();
+  });
+
+  it("refuses what is new during a hold, because the file could be hiding a false", () => {
+    const hold: TeamRulesSummary = { status: "hold", issues: ["bad"] };
+    expect(teamRulesReachLock(hold, "connect")?.setBy).toBe("Set by your team");
+    expect(teamRulesToolLock(hold, "chrome")).not.toBeNull();
+    expect(teamRulesMachineLinkLock(hold)).not.toBeNull();
+  });
+
+  it("decides machines as a whole for none and per peer for same-rules", () => {
+    const none: TeamRulesSummary = { status: "active", owner: "Acme", reach: { machines: "none" } };
+    expect(teamRulesMachineLinkLock(none)).not.toBeNull();
+
+    const same: TeamRulesSummary = {
+      status: "active",
+      owner: "Acme",
+      fingerprint: "aaaaaaaaaaaa",
+      reach: { machines: "same-rules" },
+    };
+    expect(teamRulesMachineLinkLock(same)).toBeNull();
+    expect(teamRulesMachineLock(same, { fingerprint: "aaaaaaaaaaaa" })).toBeNull();
+    expect(
+      teamRulesMachineLock(same, { label: "Laptop", fingerprint: undefined })?.message,
+    ).toContain("Laptop has different rules");
+  });
+
+  it("shows reach and tools only when the rules restrict them", () => {
+    const titles = teamRulesRows({
+      status: "active",
+      owner: "Acme",
+      reach: { phones: false, connect: true, machines: "same-rules", webhooks: false },
+      tools: { chrome: false, computerUse: true, google: false, telegram: false },
+    }).map((row) => row.title);
+    expect(titles).toEqual([
+      "Phones",
+      "Other machines",
+      "Webhooks",
+      "Chrome",
+      "Google account",
+      "Telegram",
+    ]);
+    expect(teamRulesRows({ status: "active", reach: { machines: "any" } })).toEqual([]);
+  });
+
+  it("applies a carried ceiling to a chat, even with no rules here", () => {
+    const carried = { ceiling: "approval-required", owner: "Acme" } as never;
+    const notice = teamRulesThreadNotice(undefined, "full-access", carried);
+    expect(notice).toMatchObject({
+      kind: "above-ceiling",
+      switchTo: "approval-required",
+      switchLabel: "Switch to Supervised",
+    });
+    expect(notice?.description).toContain("came from a machine where Acme's rules");
+    expect(teamRulesThreadNotice(undefined, "approval-required", carried)).toBeNull();
+  });
+
+  it("switches a chat down to the stricter of the local and carried limits", () => {
+    const carried = { ceiling: "approval-required", owner: "Acme" } as never;
+    const local: TeamRulesSummary = {
+      status: "active",
+      owner: "Beta",
+      ceiling: "auto-accept-edits",
+    };
+    expect(teamRulesThreadNotice(local, "full-access", carried)).toMatchObject({
+      switchTo: "approval-required",
+    });
+  });
+
+  it("flags each way a peer can differ", () => {
+    const own: TeamRulesSummary = {
+      status: "active",
+      owner: "Acme",
+      fingerprint: "aaaaaaaaaaaa",
+      reach: { machines: "same-rules" },
+    };
+    expect(
+      teamRulesPeerMachineView(own, { status: "active", fingerprint: "aaaaaaaaaaaa" }, true),
+    ).toMatchObject({ status: "same", label: "Same rules", fingerprint: "aaaaaaaa", detail: null });
+    expect(
+      teamRulesPeerMachineView(own, { status: "active", fingerprint: "bbbbbbbbbbbb" }, true),
+    ).toMatchObject({
+      status: "different",
+      label: "Different rules",
+      fingerprint: "bbbbbbbb",
+      detail: "Work refused.",
+    });
+    expect(teamRulesPeerMachineView(own, undefined, true)).toMatchObject({
+      status: "different",
+      label: "No rules",
+      tone: "warning",
+    });
+    expect(teamRulesPeerMachineView(own, { status: "hold" }, true)).toMatchObject({
+      status: "hold",
+      label: "On hold",
+    });
+    expect(teamRulesPeerMachineView(own, undefined, false)).toMatchObject({
+      status: "unknown",
+      label: "Rules unknown",
+    });
+  });
+
+  it("does not call a silent machine rule-free, and refuses nothing without a reach rule", () => {
+    expect(teamRulesPeerMachineView(undefined, undefined, false).status).toBe("unknown");
+    expect(teamRulesPeerMachineView(undefined, undefined, true)).toMatchObject({
+      status: "none",
+      label: "No rules",
+      detail: null,
+    });
+    expect(
+      teamRulesPeerMachineView(undefined, { status: "active", fingerprint: "bbbb" }, true),
+    ).toMatchObject({ status: "different", detail: null });
+  });
+
+  it("describes this machine's own rules", () => {
+    expect(teamRulesOwnMachineView(undefined).label).toBe("No rules");
+    expect(teamRulesOwnMachineView({ status: "hold" }).label).toBe("On hold");
+    expect(
+      teamRulesOwnMachineView({ status: "active", fingerprint: "aaaaaaaaaaaa" }).fingerprint,
+    ).toBe("aaaaaaaa");
   });
 });

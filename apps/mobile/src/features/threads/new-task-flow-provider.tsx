@@ -26,6 +26,8 @@ import {
 import { sanitizeNewRefName } from "@specweave-studio/shared/git";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { parseStudioProjectFile } from "@specweave-studio/shared/studioProjectFile";
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { teamRulesStateOf } from "../../state/teamRules";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -567,7 +569,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin;
   const defaultRuntimeMode = editingPendingTask
     ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
-    : projectSettings.settings.defaultRuntimeMode;
+    : // A default stored before the rules arrived starts this task inside them.
+      teamRulesClampMode(
+        teamRulesStateOf(selectedEnvironmentServerConfig),
+        projectSettings.settings.defaultRuntimeMode,
+      );
   const runtimeMode = selectedProjectDraft.runtimeMode ?? defaultRuntimeMode;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change

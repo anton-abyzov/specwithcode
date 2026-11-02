@@ -23,6 +23,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { teamRulesToolLock } from "../../teamRules/teamRulesView";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -37,6 +38,7 @@ import {
 } from "./googleAccountSettings.logic";
 import { MORNING_BRIEFING_TEMPLATE } from "./scheduledTasksSettings.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 
 const SERVICE_LABELS: Record<GoogleService, string> = {
   gmail: "Gmail",
@@ -55,6 +57,8 @@ export function GoogleAccountSettingsPanel() {
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const configs = useServerConfigs();
   const config = environmentId === null ? undefined : configs.get(environmentId);
+  // Disconnect stays outside every lock below, so access can always be removed.
+  const teamRulesLock = teamRulesToolLock(config?.teamRules, "google");
   const supported = config?.environment.capabilities.googleAccount === true;
   const query = useEnvironmentQuery(
     environmentId === null || !canRead || !supported
@@ -283,44 +287,46 @@ export function GoogleAccountSettingsPanel() {
             <span className="text-muted-foreground"> (personal)</span>
           ) : null}
         </span>
-        <div className="flex flex-wrap items-center gap-4">
-          {GOOGLE_SERVICES.map((service) => {
-            const granted = status.services.includes(service);
-            return (
-              <label
-                key={service}
-                className="flex items-center gap-1.5 text-muted-foreground text-xs"
+        <TeamRulesInert lock={teamRulesLock}>
+          <div className="flex flex-wrap items-center gap-4">
+            {GOOGLE_SERVICES.map((service) => {
+              const granted = status.services.includes(service);
+              return (
+                <label
+                  key={service}
+                  className="flex items-center gap-1.5 text-muted-foreground text-xs"
+                >
+                  <Switch
+                    size="sm"
+                    checked={granted && enabled.includes(service)}
+                    disabled={!canWrite || busy || !granted}
+                    aria-label={`${SERVICE_LABELS[service]} for ${project.title}`}
+                    onCheckedChange={(on) => toggleService(project.id, service, on)}
+                  />
+                  {SERVICE_LABELS[service]}
+                </label>
+              );
+            })}
+            {enabled.length > 0 ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                render={
+                  <Link
+                    to="/settings/scheduled-tasks"
+                    search={{
+                      template: MORNING_BRIEFING_TEMPLATE,
+                      projectId: project.id,
+                      returnTo,
+                    }}
+                  />
+                }
               >
-                <Switch
-                  size="sm"
-                  checked={granted && enabled.includes(service)}
-                  disabled={!canWrite || busy || !granted}
-                  aria-label={`${SERVICE_LABELS[service]} for ${project.title}`}
-                  onCheckedChange={(on) => toggleService(project.id, service, on)}
-                />
-                {SERVICE_LABELS[service]}
-              </label>
-            );
-          })}
-          {enabled.length > 0 ? (
-            <Button
-              size="xs"
-              variant="ghost-muted"
-              render={
-                <Link
-                  to="/settings/scheduled-tasks"
-                  search={{
-                    template: MORNING_BRIEFING_TEMPLATE,
-                    projectId: project.id,
-                    returnTo,
-                  }}
-                />
-              }
-            >
-              Morning briefing
-            </Button>
-          ) : null}
-        </div>
+                Morning briefing
+              </Button>
+            ) : null}
+          </div>
+        </TeamRulesInert>
       </li>
     );
   };
@@ -350,6 +356,7 @@ export function GoogleAccountSettingsPanel() {
             a project nothing until you turn it on below. Only your Personal project starts with
             access.
           </p>
+          {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
         </div>
 
         {config !== undefined && !supported ? (
@@ -363,7 +370,7 @@ export function GoogleAccountSettingsPanel() {
           <p className="px-3 py-3 text-destructive-foreground text-sm sm:px-4">{query.error}</p>
         ) : null}
 
-        {status !== null && showClientForm ? (
+        {status !== null && showClientForm && teamRulesLock === null ? (
           <div className="flex flex-col gap-3 border-t px-3 py-4 sm:px-4">
             <div className="flex flex-col gap-1">
               <span className="font-medium text-sm">Your own OAuth client</span>
@@ -420,21 +427,23 @@ export function GoogleAccountSettingsPanel() {
           </div>
         ) : null}
 
-        {status?.clientConfigured && !showClientForm ? (
+        {status?.clientConfigured && (!showClientForm || teamRulesLock !== null) ? (
           <div className="flex flex-col gap-3 border-t px-3 py-4 sm:px-4">
             {usesOwnClient ? (
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="min-w-0 truncate text-muted-foreground">
                   Your OAuth client <span className="font-mono text-xs">{status.clientId}</span>
                 </span>
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  disabled={!canWrite || busy}
-                  onClick={() => setReplacingClient(true)}
-                >
-                  Replace client
-                </Button>
+                <TeamRulesInert lock={teamRulesLock}>
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={!canWrite || busy}
+                    onClick={() => setReplacingClient(true)}
+                  >
+                    Replace client
+                  </Button>
+                </TeamRulesInert>
               </div>
             ) : null}
 
@@ -459,31 +468,35 @@ export function GoogleAccountSettingsPanel() {
               </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-4">
-              {GOOGLE_SERVICES.map((service) => (
-                <label key={service} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={wanted.has(service)}
-                    disabled={!canWrite || busy}
-                    aria-label={`Ask Google for ${SERVICE_LABELS[service]}`}
-                    onCheckedChange={(checked) =>
-                      setChoices((current) => new Map(current).set(service, checked === true))
-                    }
-                  />
-                  {SERVICE_LABELS[service]}
-                </label>
-              ))}
-            </div>
+            <TeamRulesInert lock={teamRulesLock}>
+              <div className="flex flex-wrap items-center gap-4">
+                {GOOGLE_SERVICES.map((service) => (
+                  <label key={service} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={wanted.has(service)}
+                      disabled={!canWrite || busy}
+                      aria-label={`Ask Google for ${SERVICE_LABELS[service]}`}
+                      onCheckedChange={(checked) =>
+                        setChoices((current) => new Map(current).set(service, checked === true))
+                      }
+                    />
+                    {SERVICE_LABELS[service]}
+                  </label>
+                ))}
+              </div>
+            </TeamRulesInert>
 
             <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant={status.connected ? "outline" : "default"}
-                disabled={!canWrite || busy || wanted.size === 0}
-                onClick={beginSignIn}
-              >
-                {status.connected ? "Reconnect" : "Connect Google"}
-              </Button>
+              <TeamRulesInert lock={teamRulesLock}>
+                <Button
+                  size="sm"
+                  variant={status.connected ? "outline" : "default"}
+                  disabled={!canWrite || busy || wanted.size === 0}
+                  onClick={beginSignIn}
+                >
+                  {status.connected ? "Reconnect" : "Connect Google"}
+                </Button>
+              </TeamRulesInert>
               {status.connected ? (
                 <Button
                   size="sm"
@@ -508,7 +521,7 @@ export function GoogleAccountSettingsPanel() {
               </span>
             ) : null}
 
-            {status.signIn ? (
+            {status.signIn && teamRulesLock === null ? (
               <div className="flex flex-col gap-2 rounded-md border bg-muted/40 p-3 text-sm">
                 <span>
                   Finish in the{" "}

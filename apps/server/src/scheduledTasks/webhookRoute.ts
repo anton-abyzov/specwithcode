@@ -1,4 +1,6 @@
 import { EnvironmentHttpApi } from "@specweave-studio/contracts";
+import { teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -55,6 +57,13 @@ export const layer = HttpApiBuilder.group(
               status: 503,
               headers: { [WEBHOOK_OUTCOME_HEADER]: "service_updating", "retry-after": "60" },
             },
+          );
+        }
+        // Refused before the body is read. A hold refuses too: the file could be hiding `false`.
+        if (teamRulesReachRefusal(yield* currentTeamRules, "webhooks") !== null) {
+          return HttpServerResponse.jsonUnsafe(
+            { error: "hook_disabled" },
+            { status: 409, headers: { [WEBHOOK_OUTCOME_HEADER]: "disabled" } },
           );
         }
         const contentLength = Number(request.headers["content-length"] ?? "0");

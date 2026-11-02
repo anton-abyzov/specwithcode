@@ -1,3 +1,6 @@
+import { TEAM_RULES_REFUSED_HEADER } from "@specweave-studio/contracts";
+import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { parseJson } from "../json.ts";
 import * as Data from "effect/Data";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -21,6 +24,8 @@ import {
   fleetAuthorization,
   fleetMachineKey,
   reachFleetMachine,
+  type FleetPeerRules,
+  fleetReachMayBeRemembered,
 } from "./fleetTransport.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import {
@@ -58,6 +63,16 @@ export const REMOTE_TOOL_ALLOWLIST = [
   "studio_coordinator_claim_epoch",
 ] as const;
 export type RemoteTool = (typeof REMOTE_TOOL_ALLOWLIST)[number];
+
+const REMOTE_WORK_TOOLS: ReadonlySet<string> = new Set<RemoteTool>([
+  "studio_project_clone",
+  "studio_project_create",
+  "studio_project_link_accept",
+  "studio_thread_launch",
+  "studio_thread_send",
+  "studio_file_offer",
+  "studio_file_chunk",
+]);
 
 // A Chrome screenshot comes back as base64, twice (structured and text); chrome_peer
 // refuses images past 8 MiB of base64 so its answers fit.
@@ -106,6 +121,15 @@ export class RemoteMcpError extends Schema.TaggedError<RemoteMcpError>()("Remote
   }
 }
 
+/** Team rules refused this call, on either machine. Nothing is wrong with the grant. */
+export const TEAM_RULES_REMOTE_CODE = "team_rules";
+const teamRulesRefused = (message: string) =>
+  new RemoteMcpError({
+    reason: "tool_failure",
+    remoteCode: TEAM_RULES_REMOTE_CODE,
+    remoteMessage: message,
+  });
+
 interface Session {
   readonly client: Client;
   readonly transport: StreamableHTTPClientTransport;
@@ -114,6 +138,8 @@ interface Session {
   readonly origin: string;
   identityCheckedAt: number;
   rejected: boolean;
+  /** That machine's Team rules refused this one, in its words. */
+  teamRulesRefused: string | undefined;
   /**
    * The coordinator epochs this machine names there, refreshed before each
    * call: a worker machine that saw a newer coordinator claim a linked
@@ -132,6 +158,10 @@ export class RemoteStudioMcpClient extends Context.Service<
       readonly arguments: Record<string, unknown>;
       readonly timeoutMs?: number | undefined;
     }) => Effect.Effect<unknown, RemoteMcpError>;
+    /** What a machine says about Team rules, from reaching it now. */
+    readonly peerRules: (
+      machineId: string,
+    ) => Effect.Effect<FleetPeerRules | undefined, RemoteMcpError>;
     /** Drops a machine's open session, as after its grant changed. */
     readonly forget: (machineId: string) => Effect.Effect<void>;
   }
@@ -224,13 +254,15 @@ const make = Effect.gen(function* () {
         return reachFleetMachine(link, credential.target, { token: credential.accessToken });
       },
       catch: (error) =>
-        new RemoteMcpError({
-          reason:
-            error instanceof FleetError && error.kind === "identity-mismatch"
-              ? "identity_mismatch"
-              : "unreachable",
-          cause: error,
-        }),
+        error instanceof FleetError && error.kind === "team-rules"
+          ? teamRulesRefused(error.message)
+          : new RemoteMcpError({
+              reason:
+                error instanceof FleetError && error.kind === "identity-mismatch"
+                  ? "identity_mismatch"
+                  : "unreachable",
+              cause: error,
+            }),
     }).pipe(Effect.map(({ origin, transport }): FleetOrigin => ({ origin, transport })));
 
   const open = (credential: FleetWorkerGrants.WorkerCredential, address: FleetOrigin) =>
@@ -267,6 +299,23 @@ const make = Effect.gen(function* () {
             throw error;
           });
         if (response.status === 401 && holder.session) holder.session.rejected = true;
+        // The other machine's rules refuse this one: nothing is wrong with the grant.
+        if (
+          response.status === 403 &&
+          holder.session &&
+          response.headers.has(TEAM_RULES_REFUSED_HEADER)
+        ) {
+          const answer = (await response
+            .clone()
+            .json()
+            .catch(() => null)) as {
+            readonly message?: unknown;
+          } | null;
+          holder.session.teamRulesRefused =
+            typeof answer?.message === "string"
+              ? answer.message
+              : "That machine's Team rules refuse this one.";
+        }
         return capped(response);
       };
       const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
@@ -283,6 +332,7 @@ const make = Effect.gen(function* () {
         origin,
         identityCheckedAt: now,
         rejected: false,
+        teamRulesRefused: undefined,
         coordinatorEpochs: undefined,
       };
       holder.session = session;
@@ -291,11 +341,13 @@ const make = Effect.gen(function* () {
         // repo's exactOptionalPropertyTypes rejects; the transport is the SDK's own.
         try: () => client.connect(transport as Transport, { timeout: CONNECT_TIMEOUT_MS }),
         catch: (cause) =>
-          new RemoteMcpError({
-            reason: session.rejected ? "not_authorized" : "unreachable",
-            ...(session.rejected ? { grant: "revoked" as const } : {}),
-            cause,
-          }),
+          session.teamRulesRefused !== undefined
+            ? teamRulesRefused(session.teamRulesRefused)
+            : new RemoteMcpError({
+                reason: session.rejected ? "not_authorized" : "unreachable",
+                ...(session.rejected ? { grant: "revoked" as const } : {}),
+                cause,
+              }),
       }).pipe(
         Effect.tapError(() => close(session)),
         Effect.tapError((error) =>
@@ -319,11 +371,20 @@ const make = Effect.gen(function* () {
         !existing.rejected &&
         fleetAddresses(credential.target).some((address) => address.origin === existing.origin)
       ) {
-        if (now - existing.identityCheckedAt <= Duration.toMillis(IDENTITY_TTL))
+        if (
+          now - existing.identityCheckedAt <= Duration.toMillis(IDENTITY_TTL) &&
+          fleetReachMayBeRemembered(link)
+        )
           return { session: existing, credential };
         // Every few minutes: identity again, and Connect first again.
+        // Under a machine rule this runs on every call, and a wait may be using the session:
+        // one failed probe fails only this call.
         const address = yield* reach(credential, existing.origin).pipe(
-          Effect.tapError(() => forget(machineId)),
+          Effect.tapError((error) =>
+            error.reason === "unreachable" && !fleetReachMayBeRemembered(link)
+              ? Effect.void
+              : forget(machineId),
+          ),
         );
         if (address.origin === existing.origin) {
           existing.identityCheckedAt = now;
@@ -342,6 +403,11 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       if (!(REMOTE_TOOL_ALLOWLIST as ReadonlyArray<string>).includes(input.tool))
         return yield* new RemoteMcpError({ reason: "refused" });
+      // A broken rules file could be hiding `none`, so work stops leaving; reads go on.
+      if (REMOTE_WORK_TOOLS.has(input.tool)) {
+        const held = teamRulesHoldRefusal(yield* currentTeamRules);
+        if (held !== null) return yield* teamRulesRefused(held.message);
+      }
       const { session, credential } = yield* sessionFor(input.machineId);
       session.coordinatorEpochs = encodeCoordinatorEpochs(
         yield* epochSource.epochsFor(credential.target.environmentId),
@@ -365,6 +431,10 @@ const make = Effect.gen(function* () {
               !session.rejected &&
               cause instanceof McpError &&
               cause.code !== ErrorCode.ConnectionClosed;
+            if (session.teamRulesRefused !== undefined) {
+              yield* retire(input.machineId, session);
+              return yield* teamRulesRefused(session.teamRulesRefused);
+            }
             if (!sessionStillGood) yield* retire(input.machineId, session);
             if (session.rejected) {
               yield* grants.reportRejected(input.machineId, credential.accessToken);
@@ -406,13 +476,20 @@ const make = Effect.gen(function* () {
       });
     });
 
+  const peerRules: RemoteStudioMcpClient["Service"]["peerRules"] = (machineId) =>
+    Effect.gen(function* () {
+      const credential = yield* grants.credential(machineId).pipe(Effect.mapError(grantError));
+      yield* reach(credential);
+      return link.book.peerRules?.(fleetMachineKey(credential.target));
+    });
+
   yield* Effect.addFinalizer(() =>
     Ref.get(sessions).pipe(
       Effect.flatMap((current) => Effect.forEach(current.values(), close, { discard: true })),
     ),
   );
 
-  return RemoteStudioMcpClient.of({ call, forget });
+  return RemoteStudioMcpClient.of({ call, forget, peerRules });
 });
 
 export const layer = Layer.effect(RemoteStudioMcpClient, make);

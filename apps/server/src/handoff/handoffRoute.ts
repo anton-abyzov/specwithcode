@@ -12,6 +12,8 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { callerFingerprint, teamRulesSessionRefusal } from "../teamRules/TeamRulesReach.ts";
 import { parseJson } from "../json.ts";
 import { clientRuntimeModeCeiling } from "../mcp/McpInvocationContext.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
@@ -101,6 +103,14 @@ export const layer = HttpRouter.add(
         code: "needs_grant",
         check: "grant",
       });
+    }
+    const ruled = teamRulesSessionRefusal(
+      yield* currentTeamRules,
+      { subject: EnvironmentAuth.MCP_CLIENT_SUBJECT, coordinator: true },
+      callerFingerprint(request.headers),
+    );
+    if (ruled !== null) {
+      return refusal(403, ruled.message, { code: "needs_grant", check: "grant" });
     }
     const caller: ReceiverCaller = {
       sourceEnvironmentId: grant.value.coordinatorEnvironmentId,

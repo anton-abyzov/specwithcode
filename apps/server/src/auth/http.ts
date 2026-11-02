@@ -160,6 +160,7 @@ export function annotateEnvironmentRequest(endpoint: string) {
 export function failEnvironmentAuthInvalid(
   reason: EnvironmentAuthInvalidReason,
   dpopFailureReason?: DpopFailureReason,
+  teamRulesMessage?: string,
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -168,6 +169,7 @@ export function failEnvironmentAuthInvalid(
           code: "auth_invalid",
           reason,
           ...(dpopFailureReason === undefined ? {} : { dpopFailureReason }),
+          ...(teamRulesMessage === undefined ? {} : { teamRulesMessage }),
           traceId,
         }),
       ),
@@ -238,6 +240,7 @@ export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
             return yield* failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthTeamRulesMessage(error),
             );
           }
           return yield* failEnvironmentInternal("internal_error", error);
@@ -257,7 +260,7 @@ const SESSION_ENDED_CLOSE_GRACE = Duration.seconds(1);
 
 type WatchedSession = Pick<
   EnvironmentAuth.AuthenticatedSession,
-  "sessionId" | "method" | "expiresAt"
+  "sessionId" | "method" | "expiresAt" | "subject" | "principal" | "clientDeviceType"
 >;
 
 /**
@@ -423,6 +426,7 @@ export const layerAuthenticatedAuth = Layer.effect(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthTeamRulesMessage(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -537,6 +541,7 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthTeamRulesMessage(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -567,6 +572,7 @@ export const layer = HttpApiBuilder.group(
                         failEnvironmentAuthInvalid(
                           "invalid_credential",
                           EnvironmentAuth.serverAuthDpopFailureReason(error),
+                          EnvironmentAuth.serverAuthTeamRulesMessage(error),
                         ),
                       ),
                     ),
@@ -603,6 +609,7 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthTeamRulesMessage(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>

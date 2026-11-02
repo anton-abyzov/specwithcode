@@ -7,6 +7,8 @@ import {
   managedEndpointHashFor,
   splitManagedEndpointLabel,
 } from "@specweave-studio/shared/managedEndpoint";
+import { teamRulesReachOff } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -61,6 +63,7 @@ export const readAgentActivityPublishingActive = (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
 ): Effect.Effect<boolean> =>
   Effect.gen(function* () {
+    if (teamRulesReachOff(yield* currentTeamRules, "connect")) return false;
     const readSecretString = (name: string) =>
       secrets
         .get(name)

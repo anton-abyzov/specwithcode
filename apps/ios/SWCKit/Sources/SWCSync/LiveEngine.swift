@@ -309,6 +309,7 @@ public final class LiveEngine: AppEngine {
       let config = try await Self.decode(ServerConfig.self, from: value)
       guard machines[entry.environmentId] === entry else { return }
       entry.config = config
+      teamRulesChanged(entry, config.teamRules)
       if let settings = config.settings {
         entry.settings = settings
         rememberAide(entry)
@@ -516,6 +517,8 @@ public final class LiveEngine: AppEngine {
     )
     result.isDisconnected = !entry.record.enabled
     if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
+    if case let .teamRules(message)? = entry.status.lastError { result.teamRulesRefusal = message }
+    result.teamRules = entry.teamRules.map(TeamRulesInfo.init)
     return result
   }
 
@@ -568,6 +571,8 @@ final class MachineEntry {
   var status = MachineConnection.Status(state: .offline)
   var config: ServerConfig?
   var settings: ServerSettings?
+  /// Last known Team rules: `config`'s, then whatever the settings stream says.
+  var teamRules: TeamRulesSummary?
   var snapshot: ShellSnapshot?
   /// The thread list saved on the phone, shown until the live one arrives.
   var cachedSnapshot: ShellSnapshot?

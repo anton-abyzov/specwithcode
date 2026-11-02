@@ -89,6 +89,10 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   /// The computer is refusing sign-ins from this network for a while after
   /// too many failed attempts, usually from another device on the same Wi-Fi.
   public var isRefusingSignIns: Bool = false
+  /// The machine's Team rules. Nil with no rules, which changes nothing on any screen.
+  public var teamRules: TeamRulesInfo? = nil
+  /// Why the machine's Team rules refuse this phone right now, in the machine's words.
+  public var teamRulesRefusal: String? = nil
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)
@@ -266,6 +270,8 @@ public struct PlanProgress: Hashable, Sendable {
 public enum ThreadAction: Sendable, Hashable {
   case pin, unpin, resolve, unresolve, archive, delete, markUnread
   case rename(String)
+  /// Takes effect on the next turn, without stopping work in progress.
+  case setRuntimeMode(RuntimeModeChoice)
 }
 
 // MARK: - Transcript
@@ -358,6 +364,8 @@ public final class ChatSession: Identifiable {
   public var machineOnline: Bool
   /// When set, the composer is disabled and shows this reason.
   public var sendBlockedReason: String?
+  /// Team rules pause this chat's machine, or it runs above a limit.
+  public var teamRulesNotice: ChatTeamRulesNotice?
   /// Last send error, shown inline above the composer.
   public var lastError: String?
   /// The conversation could not be loaded; `AppEngine.reload` tries again.

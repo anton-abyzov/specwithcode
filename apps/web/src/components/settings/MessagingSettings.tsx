@@ -25,6 +25,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { teamRulesToolLock } from "../../teamRules/teamRulesView";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -33,6 +34,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 
 function pollingBadge(status: TelegramChannelStatus) {
   if (!status.enabled) return { label: "Off", variant: "secondary" as const };
@@ -48,6 +50,8 @@ export function MessagingSettingsPanel() {
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const configs = useServerConfigs();
   const config = environmentId === null ? undefined : configs.get(environmentId);
+  // Unpair and Remove stay outside the lock below, so the channel can always be taken away.
+  const teamRulesLock = teamRulesToolLock(config?.teamRules, "telegram");
   const supported = config?.environment.capabilities.telegramChannel === true;
   const query = useEnvironmentQuery(
     environmentId === null || !canRead || !supported
@@ -183,6 +187,7 @@ export function MessagingSettingsPanel() {
             that sends the pairing code can reach the coordinator, and approvals still happen in
             SpecWithCode. Answers arrive while this machine is awake.
           </p>
+          {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
         </div>
 
         {config !== undefined && !supported ? (
@@ -198,97 +203,101 @@ export function MessagingSettingsPanel() {
 
         {supported ? (
           <div className="flex flex-col gap-4 border-t px-3 py-4 sm:px-4">
-            <label className="flex flex-col gap-1.5">
-              <span className="font-medium text-sm">Bot token</span>
-              <Input
-                size="sm"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                aria-label="Telegram bot token"
-                placeholder={
-                  status?.configured
-                    ? `Saved for @${status.botUsername ?? "your bot"}. Paste a new token to replace it.`
-                    : "123456789:AA..."
-                }
-                value={token}
-                disabled={!canWrite || busy}
-                onChange={(event) => setToken(event.target.value)}
-              />
-              <span className="text-muted-foreground text-xs">
-                {tokenLooksValid
-                  ? "In Telegram, message @BotFather, send /newbot and paste the token it gives you. It stays on this machine."
-                  : "That does not look like a bot token. It has digits, a colon, then letters."}
-              </span>
-            </label>
-
-            <div className="flex flex-col gap-1.5">
-              <span className="font-medium text-sm">Project</span>
-              <Select
-                value={projectId}
-                onValueChange={(value) => setProjectId(value as ProjectId | null)}
-              >
-                <SelectTrigger
+            <TeamRulesInert lock={teamRulesLock} className="flex flex-col gap-4">
+              <label className="flex flex-col gap-1.5">
+                <span className="font-medium text-sm">Bot token</span>
+                <Input
                   size="sm"
-                  aria-label="Project for the Telegram channel"
-                  className="max-w-sm"
-                >
-                  <SelectValue>
-                    {() =>
-                      selectedProject
-                        ? `${selectedProject.title}${selectedProject.workspaceSettings?.kind === "personal" ? " (personal)" : ""}`
-                        : "Choose a project"
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup alignItemWithTrigger={false}>
-                  {unavailableProject ? (
-                    <SelectItem value={unavailableProject.project.id} disabled>
-                      {unavailableProject.project.title}
-                      <span className="ms-2 text-muted-foreground text-xs">
-                        {ineligibleProjectLabel(unavailableProject.reason)}
-                      </span>
-                    </SelectItem>
-                  ) : null}
-                  {projectChoices.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.title}
-                      {project.workspaceSettings?.kind === "personal" ? " (personal)" : ""}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-              <span className="text-muted-foreground text-xs">
-                {unavailableProject
-                  ? `${ineligibleProjectLabel(unavailableProject.reason)}. Choose another project to save, or turn the channel off. `
-                  : null}
-                Messages go to this project&apos;s coordinator.{" "}
-                {aideEnabled
-                  ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
-                  : "A code project works for checking on builds from your phone."}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex flex-col">
-                <span className="font-medium text-sm">On</span>
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="Telegram bot token"
+                  placeholder={
+                    status?.configured
+                      ? `Saved for @${status.botUsername ?? "your bot"}. Paste a new token to replace it.`
+                      : "123456789:AA..."
+                  }
+                  value={token}
+                  disabled={!canWrite || busy}
+                  onChange={(event) => setToken(event.target.value)}
+                />
                 <span className="text-muted-foreground text-xs">
-                  Off stops listening; the pairing is kept.
+                  {tokenLooksValid
+                    ? "In Telegram, message @BotFather, send /newbot and paste the token it gives you. It stays on this machine."
+                    : "That does not look like a bot token. It has digits, a colon, then letters."}
+                </span>
+              </label>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="font-medium text-sm">Project</span>
+                <Select
+                  value={projectId}
+                  onValueChange={(value) => setProjectId(value as ProjectId | null)}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    aria-label="Project for the Telegram channel"
+                    className="max-w-sm"
+                  >
+                    <SelectValue>
+                      {() =>
+                        selectedProject
+                          ? `${selectedProject.title}${selectedProject.workspaceSettings?.kind === "personal" ? " (personal)" : ""}`
+                          : "Choose a project"
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup alignItemWithTrigger={false}>
+                    {unavailableProject ? (
+                      <SelectItem value={unavailableProject.project.id} disabled>
+                        {unavailableProject.project.title}
+                        <span className="ms-2 text-muted-foreground text-xs">
+                          {ineligibleProjectLabel(unavailableProject.reason)}
+                        </span>
+                      </SelectItem>
+                    ) : null}
+                    {projectChoices.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.title}
+                        {project.workspaceSettings?.kind === "personal" ? " (personal)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <span className="text-muted-foreground text-xs">
+                  {unavailableProject
+                    ? `${ineligibleProjectLabel(unavailableProject.reason)}. Choose another project to save, or turn the channel off. `
+                    : null}
+                  Messages go to this project&apos;s coordinator.{" "}
+                  {aideEnabled
+                    ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
+                    : "A code project works for checking on builds from your phone."}
                 </span>
               </div>
-              <Switch
-                size="sm"
-                checked={enabled}
-                disabled={!canWrite || busy}
-                aria-label="Telegram channel on"
-                onCheckedChange={setEnabled}
-              />
-            </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col">
+                  <span className="font-medium text-sm">On</span>
+                  <span className="text-muted-foreground text-xs">
+                    Off stops listening; the pairing is kept.
+                  </span>
+                </div>
+                <Switch
+                  size="sm"
+                  checked={enabled}
+                  disabled={!canWrite || busy}
+                  aria-label="Telegram channel on"
+                  onCheckedChange={setEnabled}
+                />
+              </div>
+            </TeamRulesInert>
 
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" disabled={!canSave} onClick={save}>
-                {status?.configured ? "Save" : "Connect bot"}
-              </Button>
+              <TeamRulesInert lock={teamRulesLock}>
+                <Button size="sm" disabled={!canSave} onClick={save}>
+                  {status?.configured ? "Save" : "Connect bot"}
+                </Button>
+              </TeamRulesInert>
               {status?.paired ? (
                 <Button
                   size="sm"
@@ -333,7 +342,7 @@ export function MessagingSettingsPanel() {
           </div>
         ) : null}
 
-        {status?.configured && !status.paired ? (
+        {status?.configured && !status.paired && teamRulesLock === null ? (
           <div className="flex flex-col gap-3 border-t px-3 py-4 sm:flex-row sm:items-center sm:px-4">
             {deepLink ? (
               <div className="shrink-0 rounded-md bg-white p-2">

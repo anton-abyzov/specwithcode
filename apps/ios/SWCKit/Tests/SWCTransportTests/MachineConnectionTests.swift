@@ -103,6 +103,37 @@ import Testing
     await connection.setActive(false)
   }
 
+  private static let phonesOff = #"{"code":"auth_invalid","reason":"invalid_credential","teamRulesMessage":"Acme's rules turn off phones on this machine.","traceId":"t"}"#
+
+  @Test func aTeamRulesRefusalKeepsThePairingAndKeepsTrying() async throws {
+    let fake = http(Server(ticket: { (401, Self.phonesOff) }))
+    let connection = MachineConnection(record: record(), credentials: credentials(), http: MachineHTTP(transport: fake), connector: FakeConnector(), configuration: configuration())
+    await connection.setActive(true)
+    #expect(await eventually { fake.requests(path: "/api/auth/websocket-ticket").count >= 3 })
+    #expect(await connection.status.state != .needsRepair)
+    #expect(await connection.status.lastError == .teamRules(message: "Acme's rules turn off phones on this machine."))
+    await connection.setActive(false)
+  }
+
+  /// A socket closed by the rule comes back on a cached ticket, and the session
+  /// endpoint says only "not authenticated". That must not read as a dead pairing.
+  @Test func aRefusedUpgradeUnderTeamRulesIsNotARepair() async throws {
+    let tickets = Recorder<Int>()
+    let fake = http(Server(
+      ticket: {
+        tickets.append(1)
+        return tickets.values.count == 1 ? (200, #"{"ticket":"tk.sig","expiresAt":"2026-10-18T06:23:32.519Z"}"#) : (401, Self.phonesOff)
+      },
+      session: { (200, Captured.anonymousSession) }
+    ))
+    let connector = FakeConnector([.fail(.upgradeFailed(status: 401))])
+    let connection = MachineConnection(record: record(), credentials: credentials(), http: MachineHTTP(transport: fake), connector: connector, configuration: configuration())
+    await connection.setActive(true)
+    #expect(await eventually { await connection.status.lastError == .teamRules(message: "Acme's rules turn off phones on this machine.") })
+    #expect(await connection.status.state != .needsRepair)
+    await connection.setActive(false)
+  }
+
   @Test func missingOrExpiredTokenNeedsRepair() async throws {
     let fake = http(Server())
     let missing = MachineConnection(record: record(), credentials: InMemoryCredentialStore(), http: MachineHTTP(transport: fake), connector: FakeConnector(), configuration: configuration())

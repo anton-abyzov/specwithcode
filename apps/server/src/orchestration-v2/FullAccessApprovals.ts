@@ -21,7 +21,10 @@
  *
  * @module FullAccessApprovals
  */
-import { teamRulesAllowsFullAccessApprovals } from "@specweave-studio/shared/teamRules";
+import {
+  teamRulesAllowsFullAccessApprovals,
+  teamRulesCarriedRefusal,
+} from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
@@ -313,6 +316,8 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
               Effect.gen(function* () {
                 if (seen.has(child.id)) return;
                 seen.add(child.id);
+                // Work this machine holds for another one stays under that machine's ceiling.
+                if (teamRulesCarriedRefusal(child.origin?.carried, "full-access") !== null) return;
                 // The provider's own subagents ask under this thread's turn.
                 if (isProviderNativeSubagentThread(child)) {
                   return yield* acceptPending(child.id, "full-access");

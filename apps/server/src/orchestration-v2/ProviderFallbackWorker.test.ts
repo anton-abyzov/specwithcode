@@ -846,6 +846,28 @@ describe("Claude API credits", () => {
     run("r3", 3, apiId, "m3"),
   ];
 
+  it("does not undo a pick of another model on the fallback's provider", () => {
+    const home = { ...onApi, modelSelection: { instanceId: apiId, model: "opus" } };
+    expect(apiCreditOrigin(home, moved)).toMatchObject({ stoppedRunId: "r1" });
+    expect(
+      apiCreditOrigin({ ...onApi, modelSelection: { instanceId: apiId, model: "sonnet" } }, moved),
+    ).toBeNull();
+    const pickedRun = {
+      ...run("r4", 4, apiId, "m4"),
+      modelSelection: { instanceId: apiId, model: "sonnet" },
+    };
+    expect(apiCreditOrigin(home, [...moved, pickedRun])).toBeNull();
+  });
+
+  it("is not ended by a row cancelled before it started", () => {
+    const removed = {
+      ...run("r4", 4, claudeId, "m4"),
+      status: "cancelled" as const,
+      startedAt: null,
+    };
+    expect(apiCreditOrigin(onApi, [...moved, removed])).toMatchObject({ continuedByRunId: "r2" });
+  });
+
   it("finds the subscription run the rule continued, and nothing for a thread a person moved", () => {
     expect(apiCreditOrigin(onApi, moved)).toEqual({
       stoppedRunId: "r1",

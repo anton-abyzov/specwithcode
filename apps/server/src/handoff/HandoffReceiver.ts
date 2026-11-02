@@ -10,8 +10,13 @@
  * Every request names its source; a remote request arrives with the source's
  * work grant, and a project joins only through an explicit link (0948).
  */
-import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import {
+  teamRulesArrivingCarried,
+  teamRulesClampToCarried,
+  teamRulesClampMode,
+} from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { FLEET_ORIGIN_APP_LABEL } from "../mcp/threadOrigin.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -631,7 +636,11 @@ export const make = Effect.gen(function* () {
       const grantedMode = clamped?.ok === true ? clamped.mode : detail.runtimeMode;
       // The thread must exist here to be repaired, so this machine's ceiling
       // lowers it on arrival and records that it did.
-      const runtimeMode = teamRulesClampMode(yield* currentTeamRules, grantedMode);
+      const carried = teamRulesArrivingCarried(detail.carried, handoff.environmentId);
+      const runtimeMode = teamRulesClampToCarried(
+        teamRulesClampMode(yield* currentTeamRules, grantedMode),
+        carried,
+      );
       const loweredFrom =
         runtimeMode !== detail.runtimeMode
           ? detail.runtimeMode
@@ -704,6 +713,17 @@ export const make = Effect.gen(function* () {
             ...(resume ? { initialMessage: { text: seed, attachments: [] } } : {}),
             createdBy: "system",
             creationSource: "server",
+            ...(carried === undefined
+              ? {}
+              : {
+                  origin: {
+                    kind: "fleet_machine" as const,
+                    label: FLEET_ORIGIN_APP_LABEL,
+                    machineLabel: replica.sourceLabel,
+                    environmentId: caller.sourceEnvironmentId,
+                    carried,
+                  },
+                }),
           })
           .pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
       }).pipe(

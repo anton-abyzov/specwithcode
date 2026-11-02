@@ -5,6 +5,7 @@ import {
   ORCHESTRATOR_MCP_DELEGATION_MAX_PATH,
   type OrchestratorMcpDelegation,
   type ProviderInstanceId,
+  type TeamRulesCarried,
 } from "@specweave-studio/contracts";
 import {
   type StudioWorkGrantAccounts,
@@ -125,6 +126,8 @@ export function outgoingDelegation(input: {
   readonly localEnvironmentId: EnvironmentId;
   readonly targetEnvironmentId: EnvironmentId;
   readonly origin: WorkOrigin | undefined;
+  /** The ceiling the work carries there, if any. */
+  readonly carried?: TeamRulesCarried | undefined;
 }):
   | { readonly ok: true; readonly delegation: OrchestratorMcpDelegation }
   | {
@@ -141,7 +144,10 @@ export function outgoingDelegation(input: {
     hops > ORCHESTRATOR_MCP_DELEGATION_MAX_PATH
   )
     return { ok: false, code: "delegation_limit", path };
-  return { ok: true, delegation: { path, hops } };
+  return {
+    ok: true,
+    delegation: { path, hops, ...(input.carried === undefined ? {} : { carried: input.carried }) },
+  };
 }
 
 /** The message a refused launch carries, naming the path. */

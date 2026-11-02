@@ -4,6 +4,8 @@
  * and mint requests, and keeping the managed tunnel registered, recovered and
  * released. HTTP handlers, server startup and shutdown all go through it.
  */
+import { teamRulesReachOff, teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createPublicKey.
 import * as NodeCrypto from "node:crypto";
 import {
@@ -166,6 +168,34 @@ export class CloudLinkRelayConfigInvalidError extends Schema.TaggedError<CloudLi
  * that did not reach this server directly on loopback (`endpoint`), or a local
  * origin that is not a bare http(s) origin (`local`).
  */
+/** Team rules turn off SpecWithCode Connect on this machine. */
+export class CloudLinkTeamRulesRefusedError extends Schema.TaggedError<CloudLinkTeamRulesRefusedError>()(
+  "CloudLinkTeamRulesRefusedError",
+  { refusal: Schema.String },
+) {
+  override get message(): string {
+    return this.refusal;
+  }
+}
+
+/** Opening Connect: a hold refuses too. What is already running is left to `reachOff`. */
+const refuseConnectByTeamRules = Effect.gen(function* () {
+  const refused = teamRulesReachRefusal(yield* currentTeamRules, "connect");
+  if (refused !== null) {
+    return yield* new CloudLinkTeamRulesRefusedError({ refusal: refused.message });
+  }
+});
+
+/** Serving Connect: only rules that say so refuse, so a hold keeps a machine reachable. */
+const refuseConnectInUse = Effect.gen(function* () {
+  const state = yield* currentTeamRules;
+  if (teamRulesReachOff(state, "connect")) {
+    return yield* new CloudLinkTeamRulesRefusedError({
+      refusal: teamRulesReachRefusal(state, "connect")!.message,
+    });
+  }
+});
+
 export class CloudLinkOriginInvalidError extends Schema.TaggedError<CloudLinkOriginInvalidError>()(
   "CloudLinkOriginInvalidError",
   { origin: Schema.Literals(["endpoint", "local"]) },
@@ -440,6 +470,7 @@ export type CloudLinkError =
   | CloudLinkProofRejectedError
   | CloudLinkProofReplayedError
   | CloudLinkRelayConfigInvalidError
+  | CloudLinkTeamRulesRefusedError
   | CloudLinkTunnelSupersededError;
 
 /** Failures of the link work that talks to the relay: linking, recovery and shutdown. */
@@ -472,7 +503,10 @@ export class CloudLink extends Context.Service<
       httpRequest: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       RelayEnvironmentLinkProof,
-      CloudLinkOriginInvalidError | CloudLinkInternalError | EnvironmentAuth.ServerAuthInternalError
+      | CloudLinkOriginInvalidError
+      | CloudLinkInternalError
+      | CloudLinkTeamRulesRefusedError
+      | EnvironmentAuth.ServerAuthInternalError
     >;
     /** Installs the link the relay returned and, for a managed tunnel, confirms its origin. */
     readonly applyRelayConfig: (
@@ -484,6 +518,7 @@ export class CloudLink extends Context.Service<
       | CloudLinkInternalError
       | CloudLinkOriginInvalidError
       | CloudLinkRelayConfigInvalidError
+      | CloudLinkTeamRulesRefusedError
       | CloudLinkTunnelSupersededError
       | EnvironmentAuth.ServerAuthInternalError
       | RelayRequestError
@@ -505,13 +540,14 @@ export class CloudLink extends Context.Service<
       input: EnvironmentCloudPreferencesRequest,
     ) => Effect.Effect<
       EnvironmentCloudLinkStateResult,
-      CloudLinkNotLinkedError | CloudLinkInternalError
+      CloudLinkNotLinkedError | CloudLinkInternalError | CloudLinkTeamRulesRefusedError
     >;
     /** Answers the relay's signed health check once per proof. */
     readonly answerHealthRequest: (
       request: RelayCloudEnvironmentHealthRequest,
     ) => Effect.Effect<
       RelayEnvironmentHealthResponse,
+      | CloudLinkTeamRulesRefusedError
       | CloudLinkProofRejectedError
       | CloudLinkProofReplayedError
       | CloudLinkInternalError
@@ -522,6 +558,7 @@ export class CloudLink extends Context.Service<
       request: RelayCloudMintCredentialRequest,
     ) => Effect.Effect<
       RelayEnvironmentMintResponse,
+      | CloudLinkTeamRulesRefusedError
       | CloudLinkProofRejectedError
       | CloudLinkProofReplayedError
       | CloudLinkInternalError
@@ -576,6 +613,8 @@ export class CloudLink extends Context.Service<
       | CloudLinkOriginInvalidError
       | ServerSecretStore.SecretStoreError
     >;
+    /** Stops the relay holding webhooks while Team rules turn them off. */
+    readonly syncHeldWebhooksWithTeamRules: Effect.Effect<void>;
     /** Deletes a CLI-managed tunnel when this server goes offline for good. */
     readonly releaseManagedTunnelOnShutdown: () => Effect.Effect<
       boolean,
@@ -695,6 +734,7 @@ const make = Effect.gen(function* () {
 
   const linkProof = Effect.fn("environment.cloud.linkProof")(
     function* (request: RelayLinkProofRequest, httpRequest: HttpServerRequest.HttpServerRequest) {
+      yield* refuseConnectByTeamRules;
       const requestUrl = requestAbsoluteUrl(httpRequest);
       if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
         return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
@@ -770,6 +810,7 @@ const make = Effect.gen(function* () {
   const startManagedTunnelIfOriginConfirmed = Effect.fn(
     "environment.cloud.startManagedCloudTunnelIfOriginConfirmed",
   )(function* (localOrigin: string, options?: { readonly requireConfirmedOrigin?: boolean }) {
+    if (teamRulesReachOff(yield* currentTeamRules, "connect")) return false;
     const requireConfirmedOrigin = options?.requireConfirmedOrigin ?? true;
     const parsedOrigin = yield* Effect.try({
       try: () => parseManagedEndpointLocalOrigin(localOrigin),
@@ -1224,6 +1265,7 @@ const make = Effect.gen(function* () {
 
   const applyRelayConfig = Effect.fn("environment.cloud.relayConfig")(
     function* (payload: RelayEnvironmentConfigRequest) {
+      yield* refuseConnectByTeamRules;
       const result = yield* applyCloudRelayConfig(payload);
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
@@ -1419,6 +1461,24 @@ const make = Effect.gen(function* () {
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("remove-relay-config")),
   );
 
+  /**
+   * Tells the relay what Team rules allow. The stored preference is untouched, so
+   * removing the rule puts it back. An unlinked machine has nothing to tell.
+   */
+  const syncHeldWebhooksWithTeamRules = Effect.fn("CloudPreferences.syncHeldWebhooksWithTeamRules")(
+    function* () {
+      const state = yield* currentTeamRules;
+      // A hold names no rules, so it leaves the relay as the last good rules set it.
+      if (state.status === "hold") return;
+      const off = teamRulesReachOff(state, "webhooks");
+      const stored = yield* secrets
+        .get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)
+        .pipe(Effect.catch(internalError("read-preferences")));
+      if (Option.isNone(stored) || bytesToString(stored.value) !== "true") return;
+      yield* pushHoldWebhooksWhileOffline(!off);
+    },
+  );
+
   const pushHoldWebhooksWhileOffline = Effect.fn("CloudPreferences.pushHoldWebhooksWhileOffline")(
     function* (holdWebhooksWhileOffline: boolean) {
       const connection = yield* readRelayConnection.pipe(withSecrets);
@@ -1453,6 +1513,16 @@ const make = Effect.gen(function* () {
       const readCurrent = (name: string) =>
         secrets.get(name).pipe(Effect.catch(internalError("read-preferences")));
       const previousActivity = yield* readCurrent(PUBLISH_AGENT_ACTIVITY_SECRET);
+      // Only turning it on is refused, so a client can still save the other setting.
+      const activityWasOn =
+        Option.isSome(previousActivity) && bytesToString(previousActivity.value) === "true";
+      if (input.publishAgentActivity && !activityWasOn) yield* refuseConnectByTeamRules;
+      if (input.holdWebhooksWhileOffline === true) {
+        const refused = teamRulesReachRefusal(yield* currentTeamRules, "webhooks");
+        if (refused !== null) {
+          return yield* new CloudLinkTeamRulesRefusedError({ refusal: refused.message });
+        }
+      }
       const previousHold = yield* readCurrent(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET);
       yield* savePreference(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       if (input.holdWebhooksWhileOffline !== undefined) {
@@ -1497,6 +1567,7 @@ const make = Effect.gen(function* () {
 
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
     function* (request: RelayCloudEnvironmentHealthRequest) {
+      yield* refuseConnectInUse;
       const cloudMintPublicKey = yield* secrets
         .get(CLOUD_MINT_PUBLIC_KEY)
         .pipe(
@@ -1601,6 +1672,7 @@ const make = Effect.gen(function* () {
 
   const mintCredential = Effect.fn("environment.cloud.mintCredential")(
     function* (request: RelayCloudMintCredentialRequest) {
+      yield* refuseConnectInUse;
       const cloudMintPublicKey = yield* secrets
         .get(CLOUD_MINT_PUBLIC_KEY)
         .pipe(
@@ -1719,6 +1791,11 @@ const make = Effect.gen(function* () {
     registerManagedTunnelRecovery,
     recoverManagedTunnel,
     startManagedTunnelIfOriginConfirmed,
+    syncHeldWebhooksWithTeamRules: syncHeldWebhooksWithTeamRules().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not tell the relay about held webhooks", { cause }),
+      ),
+    ),
     releaseManagedTunnelOnShutdown,
   });
 });

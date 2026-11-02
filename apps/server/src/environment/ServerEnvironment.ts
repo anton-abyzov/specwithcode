@@ -5,6 +5,8 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@specweave-studio/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { teamRulesPeerRules } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -298,6 +300,7 @@ export const make = Effect.gen(function* () {
       questionAttachments: true,
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
+      teamRulesCarried: true,
       pullRequestChecks: true,
       inlineMessageContext: true,
       requiredWorktreeBootstrap: true,
@@ -387,10 +390,18 @@ export const make = Effect.gen(function* () {
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     getDescriptor: agentActivityPublishingActive.pipe(
-      Effect.map((agentActivityPublishing) => ({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
+      Effect.flatMap((agentActivityPublishing) =>
+        currentTeamRules.pipe(
+          Effect.map((state) => {
+            const teamRules = teamRulesPeerRules(state);
+            return {
+              ...descriptor,
+              capabilities: { ...descriptor.capabilities, agentActivityPublishing },
+              ...(teamRules === undefined ? {} : { teamRules }),
+            };
+          }),
+        ),
+      ),
     ),
   });
 });

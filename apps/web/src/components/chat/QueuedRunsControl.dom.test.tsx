@@ -119,6 +119,26 @@ const button = (name: string, index = 0): HTMLButtonElement => {
 const alertText = () => container.querySelector('[role="alert"]')?.textContent ?? null;
 
 describe("QueuedRunsControl command outcomes", () => {
+  it("names a row's picked model and says Run now, still promoting that row", async () => {
+    state.workflow = {
+      activeRun: { id: "run:active" },
+      canPromoteToSteer: true,
+      canReorder: true,
+      waitReason: "turn",
+      steerUnavailableReason: null,
+      queuedRuns: [row("a", { pickedModel: { instanceId: "muse", model: "muse-wonder-1.0" } })],
+    };
+    await render();
+    expect(container.querySelector("[data-queued-picked-model]")?.textContent).toBe(
+      "on muse-wonder-1.0",
+    );
+    await act(async () => button("Run now").click());
+    expect(state.calls[0]?.input).toMatchObject({
+      queuedRunId: "run:a",
+      targetRunId: "run:active",
+    });
+  });
+
   it("shows the server's refusal of Steer now next to the drawer and clears it on success", async () => {
     state.workflow = {
       activeRun: { id: "run:active" },

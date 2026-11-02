@@ -58,6 +58,9 @@ it.effect.each([
   // 1048 review F-03: the turn ends while the provider still holds the steer.
   // The queue must not deliver the row then, or an accepted steer sends it twice.
   "accepted after the turn was interrupted",
+  // 1182: a person's row picked for another model stops the turn and runs on its pick.
+  "row picked for another model",
+  "row differing only in options",
   // F-05: a row the person removed while it was steering stays removed.
   "refused after the person removed it",
 ] as const)("promote-to-steer keeps the queued row until the steer is %s", (outcome) =>
@@ -150,6 +153,7 @@ it.effect.each([
                   steered.push(turn.message.messageId);
                   if (
                     outcome === "accepted" ||
+                    outcome === "row differing only in options" ||
                     outcome === "acceptance receipt write failed" ||
                     outcome === "process lost while steer unresolved"
                   )
@@ -217,16 +221,28 @@ it.effect.each([
         const first = started[0]!;
 
         const queuedMessageId = MessageId.make("message:queued");
+        const pickedRow =
+          outcome === "row picked for another model" || outcome === "row differing only in options";
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("queued"),
           threadId,
           messageId: queuedMessageId,
-          text: "report from a worker",
+          text: pickedRow ? "carry on on the cheaper model" : "report from a worker",
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
+          ...(outcome === "row picked for another model"
+            ? { modelSelection: { instanceId, model: "cheaper-model" } }
+            : outcome === "row differing only in options"
+              ? {
+                  modelSelection: {
+                    ...modelSelection,
+                    options: [{ id: "effort", value: "high" }],
+                  },
+                }
+              : {}),
+          createdBy: pickedRow ? "user" : "agent",
+          creationSource: pickedRow ? "web" : "server",
         });
         const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
           (run) => run.status === "queued",
@@ -240,6 +256,38 @@ it.effect.each([
           queuedRunId: queuedRun.id,
           targetRunId: first.runId,
         });
+        if (outcome === "row picked for another model") {
+          yield* worker.drain();
+          const stopping = yield* orchestrator.getThreadProjection(threadId);
+          assert.isEmpty(steered, "the words never join the running model's turn");
+          assert.equal(
+            stopping.messages.find((message) => message.id === queuedMessageId)?.runId,
+            queuedRun.id,
+          );
+          assert.equal(
+            stopping.runs.find((run) => run.id === first.runId)?.status,
+            "interrupted",
+            "the interrupt ends the turn the row was waiting on",
+          );
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          const moved = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(moved.thread.modelSelection.model, "cheaper-model");
+          assert.equal(moved.thread.id, threadId);
+          const kept = moved.runs.find((run) => run.id === queuedRun.id);
+          assert.equal(kept?.modelSelection.model, "cheaper-model");
+          assert.notEqual(kept?.status, "cancelled");
+          assert.deepEqual(
+            started.map((turn) => turn.message.messageId),
+            [MessageId.make("message:first"), queuedMessageId],
+          );
+          return;
+        }
+        if (outcome === "row differing only in options") {
+          yield* worker.drain();
+          assert.deepEqual(steered, [queuedMessageId]);
+          return;
+        }
         // Before the provider has the message, the row is still queued.
         const pending = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(pending.runs.find((run) => run.id === queuedRun.id)?.status, "queued");

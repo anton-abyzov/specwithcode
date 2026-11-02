@@ -31,13 +31,15 @@ const page = await browser.newPage({ viewport: { width: 1000, height: 820 } });
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 const base = `http://127.0.0.1:${server.address().port}/`;
-const open = async (view, theme = "light") => {
-  await page.goto(`${base}?view=${view}&theme=${theme}`);
+const open = async (view, theme = "light", rules = "") => {
+  await page.goto(`${base}?view=${view}&theme=${theme}${rules ? `&rules=${rules}` : ""}`);
   await page.waitForFunction(() => document.getElementById("root").childElementCount > 0);
   await page.evaluate(() => document.fonts.ready);
 };
 const shot = (name) => page.screenshot({ path: NodePath.join(output, `${name}.png`) });
 const text = () => page.evaluate(() => document.body.innerText);
+const lockMarks = () =>
+  page.evaluate(() => document.querySelectorAll('[inert], [data-slot="team-rules-set-by"]').length);
 
 await open("settings");
 let body = await text();
@@ -79,6 +81,83 @@ body = await text();
 assert.ok(body.includes("Agents are paused"));
 assert.ok(body.includes("agents.ceiling"));
 await shot("team-rules-safe-hold");
+
+await open("settings");
+body = await text();
+for (const expected of ["Phones", "SpecWithCode Connect", "Other machines", "Webhooks"]) {
+  assert.ok(body.includes(expected), `settings reach: ${expected}`);
+}
+for (const expected of ["Chrome", "Computer use", "Google account", "Telegram"]) {
+  assert.ok(body.includes(expected), `settings tools: ${expected}`);
+}
+await page.setViewportSize({ width: 1000, height: 1100 });
+await shot("team-rules-settings-reach-tools");
+await page.setViewportSize({ width: 1000, height: 820 });
+
+await open("reach");
+body = await text();
+assert.ok(body.includes("rules turn off phones"));
+assert.ok(body.includes("rules turn off SpecWithCode Connect"));
+assert.ok(body.includes("rules turn off webhooks"));
+assert.ok(body.includes("has different rules"), "same-rules names the machine it refuses");
+assert.ok((await page.locator("[inert]").count()) >= 3);
+await page.setViewportSize({ width: 1000, height: 1500 });
+await shot("team-rules-reach-locks");
+await page.setViewportSize({ width: 1000, height: 820 });
+
+await open("tools");
+body = await text();
+for (const expected of ["agent use of Chrome", "agent use of this computer", "Telegram"]) {
+  assert.ok(body.includes(expected), `tools: ${expected}`);
+}
+assert.equal(await page.locator("[inert]").count(), 4);
+assert.equal(
+  await page
+    .getByRole("button", { name: "Disconnect" })
+    .evaluate((node) => node.closest("[inert]") === null),
+  true,
+  "disconnect stays available",
+);
+await shot("team-rules-tools-locks");
+
+await open("drift");
+body = await text();
+for (const expected of [
+  "Rules on this machine",
+  "Same rules",
+  "No rules",
+  "On hold",
+  "Rules unknown",
+  "Work refused.",
+  "rules fixture0",
+]) {
+  assert.ok(body.includes(expected), `drift: ${expected}`);
+}
+await page.setViewportSize({ width: 1000, height: 1300 });
+await shot("team-rules-machines-drift");
+await open("drift", "dark");
+await shot("team-rules-machines-drift-dark");
+await page.setViewportSize({ width: 1000, height: 820 });
+
+await open("carried");
+body = await text();
+assert.ok(body.includes("came from a machine where Acme Engineering's rules"));
+assert.equal(await page.locator('[role="option"][aria-disabled="true"]').count(), 2);
+assert.ok(body.includes("Switch to Auto-accept edits"));
+await shot("team-rules-carried-ceiling");
+
+// A machine without a rules file: nothing added, nothing locked.
+for (const view of ["reach", "tools", "drift"]) {
+  await open(view, "light", "none");
+  body = await text();
+  assert.equal(await lockMarks(), 0, `no locks without rules: ${view}`);
+  for (const absent of ["Team rules", "Same rules", "Rules unknown", "Work refused", "Set by "]) {
+    assert.ok(!body.includes(absent), `${view} without rules shows ${absent}`);
+  }
+}
+await page.setViewportSize({ width: 1000, height: 1300 });
+await open("drift", "light", "none");
+await shot("team-rules-machines-no-rules");
 
 assert.deepEqual(errors, []);
 await browser.close();

@@ -447,6 +447,7 @@ extension LiveEngine {
     guard let entry = machines[controller.environmentId] else {
       assign(session, \.machineOnline, false)
       assign(session, \.sendBlockedReason, SyncError.unknownMachine.localizedDescription)
+      assign(session, \.teamRulesNotice, nil)
       assign(session, \.isStale, controller.projection != nil)
       return
     }
@@ -474,6 +475,12 @@ extension LiveEngine {
     let threadDeleted = controller.projection?.thread.deletedAt != nil
     let threadArchived = shell?.isArchived ?? (controller.projection?.thread.archivedAt != nil)
     assign(session, \.sendBlockedReason, blockedReason(controller.target, entry: entry, project: project, threadArchived: threadArchived, threadDeleted: threadDeleted))
+    assign(session, \.teamRulesNotice, ChatTeamRulesNotice.make(
+      rules: entry.teamRules.map(TeamRulesInfo.init),
+      carried: shell?.origin?.carried,
+      mode: shell.flatMap { RuntimeModeChoice(rawValue: $0.runtimeMode.rawValue) },
+      thread: shell.map { ThreadRef(environmentId: entry.environmentId, threadId: $0.id) }
+    ))
   }
 
   /// Why the composer is disabled, or nil when sending is possible.
@@ -701,6 +708,14 @@ extension LiveEngine {
       let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !clean.isEmpty else { throw SyncError.emptyTitle }
       command = .threadMetadataUpdate(ThreadMetadataUpdateCommand(commandId: commandId, threadId: id, title: clean))
+    case let .setRuntimeMode(mode):
+      command = .other(.object([
+        "type": .string("thread.runtime-mode.set"),
+        "commandId": .string(commandId),
+        "threadId": .string(id),
+        "runtimeMode": .string(mode.rawValue),
+        "applyOnNextTurn": .bool(true),
+      ]))
     }
     try await dispatch(command, on: thread.environmentId)
   }

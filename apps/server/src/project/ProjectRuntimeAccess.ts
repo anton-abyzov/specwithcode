@@ -1,5 +1,9 @@
 /** Project permission saves update current chats and the default for new chats. */
-import { teamRulesClampMode, teamRulesModeRefusal } from "@specweave-studio/shared/teamRules";
+import {
+  teamRulesClampMode,
+  teamRulesClampToCarried,
+  teamRulesModeRefusal,
+} from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeCrypto from "node:crypto";
 import {
@@ -88,10 +92,13 @@ export const make = Effect.gen(function* () {
                 isProviderNativeSubagentThread(thread)
               )
                 continue;
-              const runtimeMode = teamRulesClampMode(
-                rules,
-                saved.projectSettingsOverrides[thread.projectId]?.defaultRuntimeMode ??
-                  saved.defaultRuntimeMode,
+              const runtimeMode = teamRulesClampToCarried(
+                teamRulesClampMode(
+                  rules,
+                  saved.projectSettingsOverrides[thread.projectId]?.defaultRuntimeMode ??
+                    saved.defaultRuntimeMode,
+                ),
+                thread.origin?.carried,
               );
               if (thread.runtimeMode === runtimeMode) continue;
               yield* orchestrator

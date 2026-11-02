@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   type ProviderInstanceConfig,
   ProviderInstanceId,
 } from "@specweave-studio/contracts";
@@ -24,6 +25,22 @@ import {
   type TeamRulesState,
   teamRulesTurnRefusal,
   canonicalTeamRules,
+  teamRulesArrivingCarried,
+  teamRulesCarriedRefusal,
+  teamRulesClampToCarried,
+  teamRulesDrift,
+  teamRulesMachineLinkRefusal,
+  teamRulesMachineRefusal,
+  teamRulesOutgoingCarried,
+  teamRulesOutgoingWorkRefusal,
+  teamRulesPeerRules,
+  teamRulesReachOff,
+  teamRulesReachRefusal,
+  teamRulesStateFromSummary,
+  teamRulesStricterMode,
+  teamRulesThreadModeAllowed,
+  teamRulesToolOff,
+  teamRulesToolRefusal,
 } from "./teamRules.ts";
 
 const active = (body: Record<string, unknown>): TeamRulesState => {
@@ -55,7 +72,7 @@ describe("parseTeamRulesText", () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.warnings.filter((line) => line.includes("does not enforce"))).toHaveLength(5);
+    expect(parsed.warnings.filter((line) => line.includes("does not enforce"))).toHaveLength(3);
   });
 
   it.each([
@@ -471,5 +488,139 @@ describe("summary", () => {
       owner: "Acme",
       issues: ["broken"],
     });
+  });
+});
+
+describe("Team rules phase 2", () => {
+  const here = EnvironmentId.make("env-here");
+  const there = EnvironmentId.make("env-there");
+  const hold: TeamRulesState = { status: "hold", issues: ["broken"], owner: "Acme" };
+  const carried = { ceiling: "approval-required", owner: "Acme", from: there } as const;
+
+  it("reach refuses the turned-off path and, during a hold, anything new", () => {
+    const state = active({ reach: { phones: false } });
+    expect(teamRulesReachOff(state, "phones")).toBe(true);
+    expect(teamRulesReachRefusal(state, "phones")?.reason).toBe("reach");
+    expect(teamRulesReachRefusal(state, "phones")?.message).toContain("Acme");
+    expect(teamRulesReachRefusal(state, "connect")).toBeNull();
+    expect(teamRulesReachOff(hold, "phones")).toBe(false);
+    expect(teamRulesReachRefusal(hold, "phones")?.reason).toBe("hold");
+    expect(teamRulesReachRefusal(TEAM_RULES_NONE, "phones")).toBeNull();
+  });
+
+  it("tools refuse when off and during a hold", () => {
+    const state = active({ tools: { chrome: false } });
+    expect(teamRulesToolOff(state, "chrome")).toBe(true);
+    expect(teamRulesToolRefusal(state, "chrome")?.reason).toBe("tools");
+    expect(teamRulesToolRefusal(state, "google")).toBeNull();
+    expect(teamRulesToolRefusal(hold, "google")?.reason).toBe("hold");
+    expect(teamRulesToolRefusal(TEAM_RULES_NONE, "chrome")).toBeNull();
+  });
+
+  it("same-rules takes only the same fingerprint; none takes nothing", () => {
+    const same = active({ reach: { machines: "same-rules" } });
+    const own = same.status === "active" ? same.fingerprint : "";
+    expect(teamRulesMachineRefusal(same, { fingerprint: own })).toBeNull();
+    expect(
+      teamRulesMachineRefusal(same, { label: "Mac M1", fingerprint: "other" })?.message,
+    ).toContain("Mac M1");
+    expect(teamRulesMachineRefusal(same, { fingerprint: undefined })?.reason).toBe("machines");
+    const none = active({ reach: { machines: "none" } });
+    expect(teamRulesMachineRefusal(none, { fingerprint: "any" })?.reason).toBe("machines");
+    expect(teamRulesMachineLinkRefusal(none)?.reason).toBe("machines");
+    expect(teamRulesMachineLinkRefusal(same)).toBeNull();
+    expect(teamRulesMachineLinkRefusal(hold)?.reason).toBe("hold");
+    expect(teamRulesMachineRefusal(hold, { fingerprint: undefined })).toBeNull();
+    expect(teamRulesOutgoingWorkRefusal(hold, { fingerprint: undefined })?.reason).toBe("hold");
+    expect(teamRulesMachineRefusal(TEAM_RULES_NONE, { fingerprint: undefined })).toBeNull();
+  });
+
+  it("a carried ceiling refuses above it, with the sending machine's owner", () => {
+    expect(teamRulesCarriedRefusal(undefined, "full-access")).toBeNull();
+    expect(teamRulesCarriedRefusal(carried, "approval-required")).toBeNull();
+    const refused = teamRulesCarriedRefusal(carried, "full-access");
+    // An existing reason, so an older client still decodes the refusal.
+    expect(refused?.reason).toBe("ceiling");
+    expect(refused?.message).toContain("Acme");
+    expect(teamRulesClampToCarried("full-access", carried)).toBe("approval-required");
+    expect(teamRulesClampToCarried("full-access", undefined)).toBe("full-access");
+    expect(
+      teamRulesTurnRefusal(TEAM_RULES_NONE, {
+        driver: "codex",
+        model: "gpt-5",
+        runtimeMode: "full-access",
+        carried,
+      })?.reason,
+    ).toBe("ceiling");
+    expect(teamRulesThreadModeAllowed(TEAM_RULES_NONE, carried, "full-access")).toBe(false);
+    expect(teamRulesThreadModeAllowed(TEAM_RULES_NONE, undefined, "full-access")).toBe(true);
+  });
+
+  it("outgoing work carries the stricter ceiling, and full access never travels", () => {
+    const edits = active({ agents: { ceiling: "auto-accept-edits" } });
+    expect(teamRulesOutgoingCarried(TEAM_RULES_NONE, undefined, here)).toBeUndefined();
+    expect(
+      teamRulesOutgoingCarried(active({ agents: { ceiling: "full-access" } }), undefined, here),
+    ).toBeUndefined();
+    expect(teamRulesOutgoingCarried(TEAM_RULES_NONE, carried, here)).toEqual(carried);
+    expect(teamRulesOutgoingCarried(edits, undefined, here)).toEqual({
+      ceiling: "auto-accept-edits",
+      owner: "Acme",
+      from: here,
+    });
+    // The thread's own ceiling is stricter, so it stays.
+    expect(teamRulesOutgoingCarried(edits, carried, here)).toEqual(carried);
+    // This machine's is stricter than what the thread brought.
+    expect(
+      teamRulesOutgoingCarried(edits, { ...carried, ceiling: "full-access" }, here)?.from,
+    ).toBe(here);
+    expect(teamRulesStricterMode("full-access", "approval-required")).toBe("approval-required");
+    expect(teamRulesStricterMode(undefined, "full-access")).toBe("full-access");
+  });
+
+  it("a ceiling back on the machine that set it gives way to its live rules", () => {
+    expect(teamRulesArrivingCarried(carried, there)).toBeUndefined();
+    expect(teamRulesArrivingCarried(carried, here)).toEqual(carried);
+    expect(teamRulesArrivingCarried(undefined, here)).toBeUndefined();
+  });
+
+  it("drift stays silent with no rules on either machine", () => {
+    const state = active({ agents: { ceiling: "auto-accept-edits" } });
+    const fingerprint = state.status === "active" ? state.fingerprint : "";
+    expect(teamRulesPeerRules(TEAM_RULES_NONE)).toBeUndefined();
+    expect(teamRulesPeerRules(hold)).toEqual({ status: "hold" });
+    expect(teamRulesPeerRules(state)).toEqual({ status: "active", fingerprint });
+    expect(teamRulesDrift(TEAM_RULES_NONE, undefined, true)).toBe("none");
+    expect(teamRulesDrift(TEAM_RULES_NONE, undefined, false)).toBe("none");
+    expect(teamRulesDrift(state, { status: "active", fingerprint }, true)).toBe("same");
+    expect(teamRulesDrift(state, { status: "active", fingerprint: "x" }, true)).toBe("different");
+    expect(teamRulesDrift(state, { status: "hold" }, true)).toBe("hold");
+    expect(teamRulesDrift(state, undefined, true)).toBe("different");
+    expect(teamRulesDrift(state, undefined, false)).toBe("unknown");
+    expect(teamRulesDrift(TEAM_RULES_NONE, { status: "active", fingerprint }, true)).toBe(
+      "different",
+    );
+  });
+
+  it("a client asks the same questions from the summary", () => {
+    const state = active({
+      reach: { phones: false, machines: "none" },
+      tools: { telegram: false },
+    });
+    const copy = teamRulesStateFromSummary(summarizeTeamRules(state));
+    expect(teamRulesReachOff(copy, "phones")).toBe(true);
+    expect(teamRulesToolOff(copy, "telegram")).toBe(true);
+    expect(teamRulesMachineLinkRefusal(copy)?.reason).toBe("machines");
+  });
+
+  it("refuses turning on computer access under tools.computerUse", () => {
+    const state = active({ tools: { computerUse: false } });
+    expect(
+      teamRulesSettingsRefusal(
+        state,
+        { ...DEFAULT_SERVER_SETTINGS, enableAgentComputerAccess: false },
+        { ...DEFAULT_SERVER_SETTINGS, enableAgentComputerAccess: true },
+      )?.reason,
+    ).toBe("telemetry");
   });
 });

@@ -231,6 +231,15 @@ export class PairingGrantStore extends Context.Service<
     >;
     readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
     readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
+    /** What a usable credential would grant, without spending it. */
+    readonly peek: (credential: string) => Effect.Effect<
+      | {
+          readonly subject: string;
+          readonly coordinator: boolean;
+        }
+      | undefined,
+      BootstrapCredentialInternalError
+    >;
     readonly consume: (
       credential: string,
       input?: {
@@ -480,6 +489,36 @@ export const make = Effect.gen(function* () {
     return issued;
   });
 
+  const peek: PairingGrantStore["Service"]["peek"] = Effect.fn("PairingGrantStore.peek")(
+    function* (credential) {
+      const now = yield* DateTime.now;
+      if (consumeRotatingDesktopToken(credential, now.epochMilliseconds)) {
+        return { subject: "desktop-bootstrap", coordinator: false };
+      }
+      const seeded = (yield* Ref.get(seededGrantsRef)).get(credential);
+      if (seeded) return { subject: seeded.subject, coordinator: false };
+      const matching = yield* pairingLinks
+        .getByCredential({
+          credential: PAIRING_TOKEN_PATTERN.test(credential)
+            ? credential.toUpperCase()
+            : credential,
+        })
+        .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
+      if (
+        Option.isNone(matching) ||
+        matching.value.revokedAt !== null ||
+        matching.value.consumedAt !== null ||
+        DateTime.isGreaterThanOrEqualTo(now, matching.value.expiresAt)
+      ) {
+        return undefined;
+      }
+      return {
+        subject: matching.value.subject,
+        coordinator: matching.value.principal?.kind === "coordinator",
+      };
+    },
+  );
+
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
       const now = yield* DateTime.now;
@@ -673,6 +712,7 @@ export const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    peek,
     consume,
   });
 });

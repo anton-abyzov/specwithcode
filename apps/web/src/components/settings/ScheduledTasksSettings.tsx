@@ -26,7 +26,9 @@ import {
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
+import { teamRulesReachLock, type TeamRulesLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
+import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -290,9 +292,11 @@ export function ScheduledTasksSettings(target: {
 function WebhookEndpointField({
   environmentId,
   task,
+  teamRulesLock,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly teamRulesLock: TeamRulesLock | null;
 }) {
   const canRotate = useAtomValue(
     serverEnvironment.rotateScheduledTaskWebhookToken.permissionAtom(environmentId),
@@ -304,6 +308,8 @@ function WebhookEndpointField({
   });
   const [rotating, setRotating] = useState(false);
   const endpoint = task?.webhook;
+  // The rule hides the address too: a URL nobody can call is not worth copying.
+  if (teamRulesLock !== null) return <TeamRulesLockNote lock={teamRulesLock} />;
   if (!task || !endpoint) {
     return <p className="text-sm text-muted-foreground">The URL appears after you save.</p>;
   }
@@ -402,6 +408,7 @@ function ScheduledTaskEditorDialog({
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
   const teamRules = useTeamRules(environmentId);
+  const webhooksLock = teamRulesReachLock(teamRules.summary, "webhooks");
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -881,7 +888,9 @@ function ScheduledTaskEditorDialog({
                   <Toggle value="once">Once</Toggle>
                   <Toggle value="fixed">At a time</Toggle>
                   <Toggle value="interval">Every interval</Toggle>
-                  <Toggle value="webhook">On webhook</Toggle>
+                  <Toggle value="webhook" disabled={webhooksLock !== null}>
+                    On webhook
+                  </Toggle>
                   <Toggle value="manual">When I ask</Toggle>
                   <Toggle value="monthly">Monthly</Toggle>
                 </ToggleGroup>
@@ -889,115 +898,121 @@ function ScheduledTaskEditorDialog({
 
               {draft.scheduleMode === "webhook" ? (
                 <div className="space-y-4">
-                  <WebhookEndpointField environmentId={environmentId} task={liveTask} />
-                  <p className="text-xs text-muted-foreground">
-                    {
-                      "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
-                    }
-                  </p>
-                  <Field
-                    label="Skip requests older than"
-                    hint="minutes, optional"
-                    htmlFor="scheduled-task-max-age"
-                  >
-                    <Input
-                      id="scheduled-task-max-age"
-                      type="number"
-                      nativeInput
-                      min={1}
-                      max={MAX_WEBHOOK_DELIVERY_AGE_MINUTES}
-                      placeholder="Run every request"
-                      value={draft.maxDeliveryAgeMinutes}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          maxDeliveryAgeMinutes: event.target.value,
-                        }))
+                  <WebhookEndpointField
+                    environmentId={environmentId}
+                    task={liveTask}
+                    teamRulesLock={webhooksLock}
+                  />
+                  <TeamRulesInert lock={webhooksLock} className="space-y-4">
+                    <p className="text-xs text-muted-foreground">
+                      {
+                        "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
                       }
-                    />
-                  </Field>
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0 space-y-1">
-                      <Label htmlFor="scheduled-task-signature">Require signature</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Reject requests without a valid HMAC-SHA256 signature of the body.
-                      </p>
+                    </p>
+                    <Field
+                      label="Skip requests older than"
+                      hint="minutes, optional"
+                      htmlFor="scheduled-task-max-age"
+                    >
+                      <Input
+                        id="scheduled-task-max-age"
+                        type="number"
+                        nativeInput
+                        min={1}
+                        max={MAX_WEBHOOK_DELIVERY_AGE_MINUTES}
+                        placeholder="Run every request"
+                        value={draft.maxDeliveryAgeMinutes}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            maxDeliveryAgeMinutes: event.target.value,
+                          }))
+                        }
+                      />
+                    </Field>
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0 space-y-1">
+                        <Label htmlFor="scheduled-task-signature">Require signature</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Reject requests without a valid HMAC-SHA256 signature of the body.
+                        </p>
+                      </div>
+                      <Switch
+                        id="scheduled-task-signature"
+                        checked={draft.signatureEnabled}
+                        onCheckedChange={(signatureEnabled) =>
+                          setDraft((current) => ({ ...current, signatureEnabled }))
+                        }
+                      />
                     </div>
-                    <Switch
-                      id="scheduled-task-signature"
-                      checked={draft.signatureEnabled}
-                      onCheckedChange={(signatureEnabled) =>
-                        setDraft((current) => ({ ...current, signatureEnabled }))
-                      }
-                    />
-                  </div>
-                  {draft.signatureEnabled ? (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <Field label="Header" htmlFor="scheduled-task-signature-header">
-                        <Input
-                          id="scheduled-task-signature-header"
-                          value={draft.signatureHeader}
-                          onChange={(event) =>
-                            setDraft((current) => ({
-                              ...current,
-                              signatureHeader: event.target.value,
-                            }))
-                          }
-                        />
-                      </Field>
-                      <Field label="Prefix" htmlFor="scheduled-task-signature-prefix">
-                        <Input
-                          id="scheduled-task-signature-prefix"
-                          value={draft.signaturePrefix}
-                          placeholder="None"
-                          onChange={(event) =>
-                            setDraft((current) => ({
-                              ...current,
-                              signaturePrefix: event.target.value,
-                            }))
-                          }
-                        />
-                      </Field>
-                      <Field label="Encoding" htmlFor="scheduled-task-signature-encoding">
-                        <Select
-                          value={draft.signatureEncoding}
-                          onValueChange={(value) =>
-                            setDraft((current) => ({
-                              ...current,
-                              signatureEncoding: value === "base64" ? "base64" : "hex",
-                            }))
-                          }
-                        >
-                          <SelectTrigger size="sm" id="scheduled-task-signature-encoding">
-                            <SelectValue>{draft.signatureEncoding}</SelectValue>
-                          </SelectTrigger>
-                          <SelectPopup>
-                            <SelectItem value="hex">hex</SelectItem>
-                            <SelectItem value="base64">base64</SelectItem>
-                          </SelectPopup>
-                        </Select>
-                      </Field>
-                      <Field label="Secret" htmlFor="scheduled-task-signature-secret">
-                        <Input
-                          id="scheduled-task-signature-secret"
-                          type="password"
-                          autoComplete="off"
-                          value={draft.signatureSecret}
-                          placeholder={
-                            liveTask?.schedule.type === "webhook" && liveTask.webhook?.hasSecret
-                              ? "Unchanged"
-                              : "Shared secret"
-                          }
-                          onChange={(event) =>
-                            setDraft((current) => ({
-                              ...current,
-                              signatureSecret: event.target.value,
-                            }))
-                          }
-                        />
-                      </Field>
-                    </div>
-                  ) : null}
+                    {draft.signatureEnabled ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label="Header" htmlFor="scheduled-task-signature-header">
+                          <Input
+                            id="scheduled-task-signature-header"
+                            value={draft.signatureHeader}
+                            onChange={(event) =>
+                              setDraft((current) => ({
+                                ...current,
+                                signatureHeader: event.target.value,
+                              }))
+                            }
+                          />
+                        </Field>
+                        <Field label="Prefix" htmlFor="scheduled-task-signature-prefix">
+                          <Input
+                            id="scheduled-task-signature-prefix"
+                            value={draft.signaturePrefix}
+                            placeholder="None"
+                            onChange={(event) =>
+                              setDraft((current) => ({
+                                ...current,
+                                signaturePrefix: event.target.value,
+                              }))
+                            }
+                          />
+                        </Field>
+                        <Field label="Encoding" htmlFor="scheduled-task-signature-encoding">
+                          <Select
+                            value={draft.signatureEncoding}
+                            onValueChange={(value) =>
+                              setDraft((current) => ({
+                                ...current,
+                                signatureEncoding: value === "base64" ? "base64" : "hex",
+                              }))
+                            }
+                          >
+                            <SelectTrigger size="sm" id="scheduled-task-signature-encoding">
+                              <SelectValue>{draft.signatureEncoding}</SelectValue>
+                            </SelectTrigger>
+                            <SelectPopup>
+                              <SelectItem value="hex">hex</SelectItem>
+                              <SelectItem value="base64">base64</SelectItem>
+                            </SelectPopup>
+                          </Select>
+                        </Field>
+                        <Field label="Secret" htmlFor="scheduled-task-signature-secret">
+                          <Input
+                            id="scheduled-task-signature-secret"
+                            type="password"
+                            autoComplete="off"
+                            value={draft.signatureSecret}
+                            placeholder={
+                              liveTask?.schedule.type === "webhook" && liveTask.webhook?.hasSecret
+                                ? "Unchanged"
+                                : "Shared secret"
+                            }
+                            onChange={(event) =>
+                              setDraft((current) => ({
+                                ...current,
+                                signatureSecret: event.target.value,
+                              }))
+                            }
+                          />
+                        </Field>
+                      </div>
+                    ) : null}
+                  </TeamRulesInert>
                 </div>
               ) : draft.scheduleMode === "manual" ? (
                 <p className="text-sm text-muted-foreground">

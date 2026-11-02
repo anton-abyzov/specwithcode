@@ -1,3 +1,5 @@
+import { teamRulesReachOff, teamRulesReachRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules, watchTeamRules } from "./teamRules/TeamRules.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
 import * as InactiveThreadArchive from "./orchestration-v2/InactiveThreadArchive.ts";
 import * as InactiveThreadArchiveGuard from "./orchestration-v2/InactiveThreadArchiveGuard.ts";
@@ -19,6 +21,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
+import * as Ref from "effect/Ref";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -539,7 +542,11 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
         secrets.get(RELAY_URL_SECRET),
         secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
-      if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig)) {
+      if (
+        Option.isNone(relayUrl) ||
+        Option.isNone(tunnelConfig) ||
+        teamRulesReachRefusal(yield* currentTeamRules, "webhooks") !== null
+      ) {
         return { relayHookBaseUrl: null };
       }
       const config = decodeRuntimeConfig(new TextDecoder().decode(tunnelConfig.value));
@@ -1190,21 +1197,52 @@ const layerMakeServer = Layer.unwrap(
               Stream.runForEach(recoverManagedTunnel),
               Effect.forkScoped,
             );
+            // Team rules follow the file: the tunnel stops when Connect turns off and
+            // comes back when it returns. Link secrets stay, so nothing needs relinking.
+            // The relay call comes after the rules are read, so a change during it is not lost.
+            yield* cloudLink.syncHeldWebhooksWithTeamRules;
+            const connectWasOff = yield* Ref.make(
+              teamRulesReachOff(yield* currentTeamRules, "connect"),
+            );
+            yield* watchTeamRules((state) =>
+              Effect.gen(function* () {
+                const off = teamRulesReachOff(state, "connect");
+                const changed =
+                  state.status !== "hold" && off !== (yield* Ref.getAndSet(connectWasOff, off));
+                yield* cloudLink.syncHeldWebhooksWithTeamRules;
+                if (!changed) return;
+                if (off) {
+                  yield* endpointRuntime.applyConfig(null);
+                  return;
+                }
+                const mode = yield* CloudCliState.readCliDesiredLinkMode;
+                if (mode !== "publish_only") {
+                  yield* cloudLink.startManagedTunnelIfOriginConfirmed(localOrigin);
+                }
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Cause.hasInterrupts(cause)
+                    ? Effect.interrupt
+                    : Effect.logWarning("Could not apply Team rules to Studio Connect", { cause }),
+                ),
+              ),
+            ).pipe(Effect.forkScoped);
             // No settling delay before the first attempt: routes are already
             // serving by the time activation opens this gate (the startup
             // sequence awaits routesReady), and the retry schedule below
             // covers anything this sleep used to hedge against. Every
             // millisecond here is dead time on the path to remote
             // reachability after a restart.
-            const wantsCliLink = hasCloudPublicConfig
-              ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Failed to read the desired Studio Connect link", {
-                      cause,
-                    }).pipe(Effect.as(false)),
-                  ),
-                )
-              : false;
+            const wantsCliLink =
+              hasCloudPublicConfig && !(yield* Ref.get(connectWasOff))
+                ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Failed to read the desired Studio Connect link", {
+                        cause,
+                      }).pipe(Effect.as(false)),
+                    ),
+                  )
+                : false;
             // A failed read must not end this fiber before it registers
             // recovery and starts consuming recovery requests. "managed" is
             // what a missing value means, so it is the safe fallback.

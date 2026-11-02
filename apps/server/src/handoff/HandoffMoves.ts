@@ -16,6 +16,8 @@
  * Connect (its own network is down): a sleeping replica machine is silent
  * too, and must not stop the work here (1128).
  */
+import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeFSP from "node:fs/promises";
 
 import {
@@ -252,6 +254,11 @@ export const make = Effect.gen(function* () {
         .getThread(shell.id)
         .pipe(Effect.mapError(() => failed("failed", "Could not read the thread.")));
       const record = yield* recordOf(shell.id).pipe(Effect.mapError((error) => error));
+      const carried = teamRulesOutgoingCarried(
+        yield* currentTeamRules,
+        shell.origin?.carried,
+        self,
+      );
       const meta: ReplicateMeta = {
         sourceEnvironmentId: self,
         sourceLabel: selfLabel.slice(0, 120),
@@ -268,6 +275,7 @@ export const make = Effect.gen(function* () {
         execution: thread.execution ?? null,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: HANDOFF_APP_VERSION,
+        ...(carried === undefined ? {} : { carried }),
       };
       const now = yield* nowIso;
       const label = yield* peerLabel(destination);

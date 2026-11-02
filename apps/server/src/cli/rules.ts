@@ -54,8 +54,22 @@ const CANNOT_DO = [
   "Host and login-shell environment, such as ANTHROPIC_BASE_URL, still reaches providers.",
   "Version checks, account checks and the Chrome bridge can still run a stored binary path, including during a hold, though not for an agent turn.",
   "Terminals run what the person types.",
+  "same-rules compares fingerprints a machine reports about itself. It catches drift, not a hostile machine.",
+  "A client reports its own device type, so phone rules cannot catch a client that lies; phone links are always caught.",
+  "Links a person drives from a browser name no rules, so same-rules checks the machine they came through.",
+  "iPadOS Safari reports itself as a Mac, so reach.phones treats it as a desktop unless it paired through a phone link.",
+  "Browser sessions opened through a coordinator meet same-rules when they start, and folder copies check only none and a hold.",
+  "Codex's own browser and computer tools are not turned off by tools.chrome or tools.computerUse.",
+  "A machine with a grant can claim to have set a carried ceiling itself, which drops it there. Grant work only to machines you trust.",
+  "A carried ceiling limits the permission mode. The model list stays with each machine's own rules.",
+  "A restart during a hold restores a stored Connect tunnel; the rules stop it again once the file is fixed.",
   "Older builds ignore these rules. Device application control handles that.",
 ];
+
+const describeSwitches = (section: object) =>
+  Object.entries(section)
+    .map(([name, value]) => `${name} ${value === false ? "off" : value === true ? "on" : value}`)
+    .join(", ");
 
 const describeRules = (path: string, state: TeamRulesState): ReadonlyArray<string> => {
   if (state.status === "none") {
@@ -83,6 +97,8 @@ const describeRules = (path: string, state: TeamRulesState): ReadonlyArray<strin
     `Approved providers: ${rules.ai?.providers?.join(", ") ?? "any"}`,
     `Approved models: ${rules.ai?.models?.join(", ") ?? "any"}`,
     `Pinned providers: ${Object.keys(rules.ai?.pin ?? {}).join(", ") || "none"}`,
+    ...(rules.reach === undefined ? [] : [`Reach: ${describeSwitches(rules.reach)}`]),
+    ...(rules.tools === undefined ? [] : [`Tools: ${describeSwitches(rules.tools)}`]),
     ...(teamRulesOwnsProviderLaunch(state, "")
       ? [
           "Provider launch: launch arguments, environment and binary path come only from these rules, so an instance's own values, API keys included, are ignored.",

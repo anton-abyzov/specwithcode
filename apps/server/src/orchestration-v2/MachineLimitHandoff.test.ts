@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
@@ -772,6 +773,41 @@ describe("limit handoff in the fallback sweep", () => {
       expect(asked).toEqual([]);
       expect(result.dispatched).toEqual([]);
       expect(result.shown?.waiting).toBe(PAUSED_OFFLINE_REFUSAL);
+    }),
+  );
+
+  itEffect.effect("offers no machine under reach.machines none; the local step still runs", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        settings: { providerLimitMachineTargets: [target(minis, "Minis")] },
+        machines: [machine(minis, "Minis")],
+      }).pipe(
+        Effect.provideService(
+          TeamRules,
+          teamRulesOf({
+            status: "active",
+            rules: { version: 1, owner: "Acme", reach: { machines: "none" } },
+            fingerprint: "3a9f",
+            warnings: [],
+          }),
+        ),
+      );
+      expect(result.requests).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("skips a machine the rules refuse, naming it, and takes the next", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        settings: { providerLimitMachineTargets: [target(minis, "Minis"), target(m3, "M3")] },
+        machines: [
+          machine(minis, "Minis", {
+            teamRulesRefused: "Acme allow only machines with the same rules.",
+          }),
+          machine(m3, "M3"),
+        ],
+      });
+      expect(result.requests.map((request) => request.destinationEnvironmentId)).toEqual([m3]);
     }),
   );
 

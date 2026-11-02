@@ -3,6 +3,7 @@ import { TEAM_RULES_NONE, type TeamRulesState } from "@specweave-studio/shared/t
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  desiredInstances,
   deriveProviderInstanceConfigMap,
   withTeamRules,
 } from "./ProviderInstanceRegistryHydration.ts";
@@ -27,6 +28,18 @@ const settings = {
     acpRegistry_agent: { driver: "acpRegistry", config: { source: "registry" } },
   },
 } as unknown as ServerSettings;
+
+describe("desiredInstances", () => {
+  it("changes nothing during a hold, so a typo revives nothing", () => {
+    expect(desiredInstances({ status: "hold", issues: ["broken"] }, settings)).toBeNull();
+  });
+
+  it("follows the rules otherwise", () => {
+    expect(desiredInstances(TEAM_RULES_NONE, settings)).toEqual(
+      deriveProviderInstanceConfigMap(settings),
+    );
+  });
+});
 
 describe("withTeamRules", () => {
   it("changes nothing with no rules", () => {

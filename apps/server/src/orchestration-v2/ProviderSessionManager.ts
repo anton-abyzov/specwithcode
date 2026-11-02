@@ -1,4 +1,6 @@
 import { providerThreadLoadKey } from "./ProviderSessionPolicy.ts";
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
@@ -591,7 +593,10 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
-                if (computerToolsAvailable) capabilities.add("computer");
+                const computerAllowed =
+                  computerToolsAvailable &&
+                  teamRulesToolRefusal(yield* currentTeamRules, "computerUse") === null;
+                if (computerAllowed) capabilities.add("computer");
                 // Only this instance's own credential is reused or replaced:
                 // another provider's session for the thread keeps its own.
                 const existing = McpProviderSession.readMcpProviderSession(
@@ -622,7 +627,7 @@ export const layerWithOptions = (
                     // credential reuse: rotate so the new scope reflects it.
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
-                    resolved.capabilities.has("computer") === computerToolsAvailable
+                    resolved.capabilities.has("computer") === computerAllowed
                   ) {
                     // The thread's next lookup without an instance (a
                     // provider reading its slot) gets this instance's again.

@@ -2,12 +2,12 @@
  * Team rules: limits a company sets for everyone using the app on a machine.
  *
  * Capabilities, not settings paths, so a rename inside the app never silently
- * unlocks a rule. `reach`, `tools`, `connections`, `updates` and `zones` are
- * validated now and enforced by later releases; `rules show` says which.
+ * unlocks a rule. `connections`, `updates` and `zones` are validated now and
+ * enforced by later releases; `rules show` says which.
  */
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
 export const TEAM_RULES_VERSION = 1;
@@ -48,19 +48,26 @@ export const TeamRulesTelemetry = Schema.Struct({
   export: Schema.optionalKey(Schema.Boolean),
 });
 
+export const TeamRulesMachines = Schema.Literals(["any", "same-rules", "none"]);
+export type TeamRulesMachines = typeof TeamRulesMachines.Type;
+
+/** What may reach this machine, and what it may reach. False or `none` turns a path off. */
 export const TeamRulesReach = Schema.Struct({
   phones: Schema.optionalKey(Schema.Boolean),
   connect: Schema.optionalKey(Schema.Boolean),
-  machines: Schema.optionalKey(Schema.Literals(["any", "same-rules", "none"])),
+  machines: Schema.optionalKey(TeamRulesMachines),
   webhooks: Schema.optionalKey(Schema.Boolean),
 });
+export type TeamRulesReach = typeof TeamRulesReach.Type;
 
+/** Tools agents may drive. False stops the tool here, whoever asks. */
 export const TeamRulesTools = Schema.Struct({
   chrome: Schema.optionalKey(Schema.Boolean),
   computerUse: Schema.optionalKey(Schema.Boolean),
   google: Schema.optionalKey(Schema.Boolean),
   telegram: Schema.optionalKey(Schema.Boolean),
 });
+export type TeamRulesTools = typeof TeamRulesTools.Type;
 
 export const TeamRulesConnections = Schema.Struct({
   allow: Schema.optionalKey(Schema.Array(RuleText)),
@@ -107,6 +114,8 @@ export const TeamRulesSummary = Schema.Struct({
   /** Launch args, environment and binary path come from the rules. */
   ownsProviderLaunch: Schema.optionalKey(Schema.Boolean),
   telemetryExport: Schema.optionalKey(Schema.Boolean),
+  reach: Schema.optionalKey(TeamRulesReach),
+  tools: Schema.optionalKey(TeamRulesTools),
   /** Why the rules are on hold. */
   issues: Schema.optionalKey(Schema.Array(Schema.String)),
 });
@@ -120,6 +129,9 @@ export const TeamRulesRefusalReason = Schema.Literals([
   "model",
   "provider-launch",
   "telemetry",
+  "reach",
+  "machines",
+  "tools",
 ]);
 export type TeamRulesRefusalReason = typeof TeamRulesRefusalReason.Type;
 
@@ -132,3 +144,30 @@ export const TeamRulesRefusal = Schema.Struct({
   allowedMode: Schema.optionalKey(RuntimeMode),
 });
 export type TeamRulesRefusal = typeof TeamRulesRefusal.Type;
+
+/**
+ * The ceiling a thread brought from another machine. The machine doing the work
+ * enforces the stricter of its own and this one, even with no rules of its own.
+ */
+export const TeamRulesCarried = Schema.Struct({
+  ceiling: RuntimeMode,
+  /** Who set it, for the refusal's wording. */
+  owner: RuleText,
+  contact: Schema.optional(RuleText),
+  /** The machine whose rules set it. Back there, its live rules apply instead. */
+  from: EnvironmentId,
+});
+export type TeamRulesCarried = typeof TeamRulesCarried.Type;
+
+/** A machine's rules as other machines read them, from its environment descriptor. */
+export const TeamRulesPeerRules = Schema.Struct({
+  status: Schema.Literals(["active", "hold"]),
+  fingerprint: Schema.optionalKey(Schema.String),
+});
+export type TeamRulesPeerRules = typeof TeamRulesPeerRules.Type;
+
+/** The header a machine names its rules with on a call to another machine. */
+export const TEAM_RULES_FINGERPRINT_HEADER = "x-specwithcode-team-rules";
+
+/** On a machine's refusal, so the caller reads it as a rule rather than a dead credential. */
+export const TEAM_RULES_REFUSED_HEADER = "x-specwithcode-team-rules-refused";

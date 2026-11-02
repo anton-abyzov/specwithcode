@@ -134,6 +134,8 @@ public struct ServerConfig: Codable, Hashable, Sendable {
   public var environment: EnvironmentDescriptor
   public var directEndpoints: [DirectEndpoint]
   public var settings: ServerSettings?
+  /// The machine's Team rules. Absent with no rules, and on servers that predate them.
+  public var teamRules: TeamRulesSummary?
   public var providers: [ServerProviderSummary]
   public var shellResumeCompletionMarker: Bool?
   public var threadResumeCompletionMarker: Bool?
@@ -141,10 +143,11 @@ public struct ServerConfig: Codable, Hashable, Sendable {
   public var newProjectsRoot: String?
   public var scratchWorkspaceRoot: String?
 
-  public init(environment: EnvironmentDescriptor, directEndpoints: [DirectEndpoint] = [], settings: ServerSettings? = nil, providers: [ServerProviderSummary] = [], shellResumeCompletionMarker: Bool? = nil, threadResumeCompletionMarker: Bool? = nil, threadSnapshotPagination: Bool? = nil, newProjectsRoot: String? = nil, scratchWorkspaceRoot: String? = nil) {
+  public init(environment: EnvironmentDescriptor, directEndpoints: [DirectEndpoint] = [], settings: ServerSettings? = nil, teamRules: TeamRulesSummary? = nil, providers: [ServerProviderSummary] = [], shellResumeCompletionMarker: Bool? = nil, threadResumeCompletionMarker: Bool? = nil, threadSnapshotPagination: Bool? = nil, newProjectsRoot: String? = nil, scratchWorkspaceRoot: String? = nil) {
     self.environment = environment
     self.directEndpoints = directEndpoints
     self.settings = settings
+    self.teamRules = teamRules
     self.providers = providers
     self.shellResumeCompletionMarker = shellResumeCompletionMarker
     self.threadResumeCompletionMarker = threadResumeCompletionMarker
@@ -154,7 +157,7 @@ public struct ServerConfig: Codable, Hashable, Sendable {
   }
 
   enum CodingKeys: String, CodingKey {
-    case environment, directEndpoints, settings, providers, shellResumeCompletionMarker, threadResumeCompletionMarker
+    case environment, directEndpoints, settings, teamRules, providers, shellResumeCompletionMarker, threadResumeCompletionMarker
     case threadSnapshotPagination, newProjectsRoot, scratchWorkspaceRoot
   }
 
@@ -163,6 +166,7 @@ public struct ServerConfig: Codable, Hashable, Sendable {
     environment = try c.decode(EnvironmentDescriptor.self, forKey: .environment)
     directEndpoints = try c.decodeLossyArray(DirectEndpoint.self, forKey: .directEndpoints)
     settings = try c.decodeIfPresent(ServerSettings.self, forKey: .settings)
+    teamRules = (try? c.decodeIfPresent(TeamRulesSummary.self, forKey: .teamRules)) ?? nil
     providers = try c.decodeLossyArray(ServerProviderSummary.self, forKey: .providers)
     shellResumeCompletionMarker = try c.decodeIfPresent(Bool.self, forKey: .shellResumeCompletionMarker)
     threadResumeCompletionMarker = try c.decodeIfPresent(Bool.self, forKey: .threadResumeCompletionMarker)
@@ -240,17 +244,19 @@ public struct ServerProviderModel: Codable, Hashable, Sendable {
   }
 }
 
-/// Items of the `subscribeServerConfig` stream. Only the snapshot and settings
-/// updates are modelled.
+/// Items of the `subscribeServerConfig` stream. Only the snapshot, settings and
+/// provider status updates are modelled.
 public enum ServerConfigStreamItem: Decodable, Sendable, Hashable {
   case snapshot(ServerConfig)
   /// The server's settings after any change, such as a machine rename.
   case settingsUpdated(ServerSettings)
+  /// The provider list and the rules that shape it. No rules means none now.
+  case providerStatuses(providers: [ServerProviderSummary], teamRules: TeamRulesSummary?)
   /// Any other update, such as `usageLimitSourcesUpdated`.
   case other(type: String, raw: JSONValue)
 
   enum CodingKeys: String, CodingKey { case type, config, payload }
-  enum PayloadKeys: String, CodingKey { case settings }
+  enum PayloadKeys: String, CodingKey { case settings, providers, teamRules }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -261,6 +267,12 @@ public enum ServerConfigStreamItem: Decodable, Sendable, Hashable {
     case "settingsUpdated":
       let payload = try c.nestedContainer(keyedBy: PayloadKeys.self, forKey: .payload)
       self = .settingsUpdated(try payload.decode(ServerSettings.self, forKey: .settings))
+    case "providerStatuses":
+      let payload = try c.nestedContainer(keyedBy: PayloadKeys.self, forKey: .payload)
+      self = .providerStatuses(
+        providers: try payload.decodeLossyArray(ServerProviderSummary.self, forKey: .providers),
+        teamRules: (try? payload.decodeIfPresent(TeamRulesSummary.self, forKey: .teamRules)) ?? nil
+      )
     default:
       self = .other(type: type, raw: try JSONValue(from: decoder))
     }

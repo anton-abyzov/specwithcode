@@ -4,6 +4,8 @@ import {
   type ComputerUseActionResult,
   ComputerUseToolError,
 } from "@specweave-studio/contracts";
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
 import * as Effect from "effect/Effect";
 
 import * as ComputerUseBroker from "../../../computerUse/ComputerUseBroker.ts";
@@ -23,6 +25,10 @@ const requireComputerAccess = McpInvocationContext.requireThreadMcpCapability("c
 
 const run = (action: ComputerUseAction) =>
   Effect.gen(function* () {
+    // Team rules come first: with them off the capability is gone too, and the
+    // project's switch is not what the user should go looking for.
+    const refused = teamRulesToolRefusal(yield* currentTeamRules, "computerUse");
+    if (refused !== null) return yield* new ComputerUseToolError({ reason: refused.message });
     const scope = yield* requireComputerAccess;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
     return yield* broker.invoke(action, { threadId: scope.thread.threadId });

@@ -15,6 +15,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { RelayManagedEndpointRuntimeConfig } from "@specweave-studio/contracts/relay";
 import * as RelayClient from "@specweave-studio/shared/relayClient";
 
+import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as RelayProcessOwnership from "./RelayProcessOwnership.ts";
@@ -152,6 +154,41 @@ describe("CloudManagedEndpointRuntime", () => {
         ["clear", 700, "generation-1"],
       ]);
       expect(JSON.stringify(calls)).not.toContain(config.connectorToken);
+    }),
+  );
+
+  it.effect("starts no tunnel with Connect off, and stops the running one", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      let spawned = 0;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.sync(() => {
+          spawned += 1;
+          return makeHandle({ pid: 700, onKill: () => {} });
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner, layerRelayClientAvailable, {
+        publish: () => Effect.succeed("generation-1"),
+        clear: (pid) => Effect.sync(() => void calls.push(["clear", pid])),
+      });
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "private-fixture-token",
+      };
+      const parsed = parseTeamRulesText(
+        JSON.stringify({ version: 1, owner: "Acme", reach: { connect: false } }),
+      );
+      if (!parsed.ok) throw new Error(parsed.issues.join());
+      const off = Effect.provideService(
+        TeamRules,
+        teamRulesOf({ status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] }),
+      );
+      expect((yield* runtime.applyConfig(config).pipe(off)).status).not.toBe("running");
+      expect(spawned).toBe(0);
+      expect((yield* runtime.applyConfig(config)).status).toBe("running");
+      expect(spawned).toBe(1);
+      expect((yield* runtime.applyConfig(config).pipe(off)).status).not.toBe("running");
+      expect(calls).toEqual([["clear", 700]]);
     }),
   );
 

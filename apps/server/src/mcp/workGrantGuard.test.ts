@@ -147,6 +147,10 @@ const setup = (prefix: string, options: { readonly projections?: boolean } = {})
             ? Effect.succeed({ thread: shells.get(threadId)! })
             : reach(threadId)) as never,
         dispatch: (command) => reach(`dispatch:${command.type}`) as never,
+        sendToThread: (input) =>
+          reach(
+            `send:${input.mode}:${input.modelSelection?.instanceId}:${input.senderThreadId}:${input.text}`,
+          ) as never,
       }),
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
@@ -386,6 +390,27 @@ describe("M-01: thread reads and writes keep to the grant", () => {
         modelSelection: selection(codex),
       });
       expect(world.reached).toEqual(["dispatch:thread.model-selection.set"]);
+    }).pipe(Effect.provide(world.layer));
+  });
+
+  it.live("a thread moves itself by queueing its next turn, never by stopping its own", () => {
+    const world = setup("studio-grant-guard-self-switch-", { projections: true });
+    return Effect.gen(function* () {
+      yield* world.ownedByM4;
+      const own = world.threadScope(linkedOwned);
+      const other = ProviderInstanceId.make("codex-second");
+      const refused = yield* world.call("thread", "studio_thread_configure", own, {
+        modelSelection: selection(other),
+      });
+      expect(JSON.stringify(refused)).toContain("continueWith");
+      expect(world.reached).toEqual([]);
+      yield* world.call("thread", "studio_thread_configure", own, {
+        modelSelection: selection(other),
+        continueWith: "Carry on with the labels.",
+      });
+      expect(world.reached).toEqual([
+        `send:queue:codex-second:${linkedOwned}:Carry on with the labels.`,
+      ]);
     }).pipe(Effect.provide(world.layer));
   });
 

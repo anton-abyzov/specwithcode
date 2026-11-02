@@ -1,3 +1,4 @@
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -30,6 +31,51 @@ import {
 } from "./remoteWorkers.testkit.ts";
 
 describe("RemoteWorkers", () => {
+  it.live("refuses carried work on a machine too old to hold it, and sends nothing", () => {
+    const { remote, layer } = setup({ studio_thread_launch: () => ({ result: launchAnswer }) });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const refused = yield* workers
+        .launch(
+          launchInput({
+            delegation: {
+              path: [EnvironmentId.make("env-m4")],
+              hops: 1,
+              carried: {
+                ceiling: "auto-accept-edits",
+                owner: "Acme",
+                from: EnvironmentId.make("env-m4"),
+              },
+            },
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("machine_unsupported");
+      expect(refused.message).toContain("Acme");
+      expect(remote.toolCalls.some((call) => call.name === "studio_thread_launch")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sends no work during a hold", () => {
+    const { remote, layer } = setup({ studio_thread_launch: () => ({ result: launchAnswer }) });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const refused = yield* workers
+        .launch(launchInput())
+        .pipe(
+          Effect.provideService(
+            TeamRules,
+            teamRulesOf({ status: "hold", issues: ["broken"], owner: "Acme" }),
+          ),
+          Effect.flip,
+        );
+      expect(refused.code).toBe("capability_denied");
+      expect(remote.toolCalls.some((call) => call.name === "studio_thread_launch")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("sends the delegation path and says when that machine is too old to check it", () => {
     let answer: Record<string, unknown> = launchAnswer;
     const { remote, layer } = setup({ studio_thread_launch: () => ({ result: answer }) });

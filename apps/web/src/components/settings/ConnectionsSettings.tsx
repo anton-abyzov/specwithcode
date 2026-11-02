@@ -96,6 +96,7 @@ import {
 import {
   SettingsPageContainer,
   SettingsRow,
+  TeamRulesLabel,
   SettingsSection,
   scrollToSettingsTarget,
   useRelativeTimeTick,
@@ -117,6 +118,9 @@ import {
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { isPhoneConnectShown, PhoneConnectSettings } from "./PhoneConnectSettings";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
+import { TeamRulesInert } from "./TeamRulesLock";
+import { teamRulesReachLock } from "../../teamRules/teamRulesView";
+import { useTeamRules } from "../../teamRules/useTeamRules";
 import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
 import { PairPhoneSettings } from "./PairPhoneSettings";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
@@ -1827,6 +1831,12 @@ function CloudLinkSwitch({
 
 function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { summary: teamRules } = useTeamRules(primaryEnvironmentId);
+  const connectLock = teamRulesReachLock(teamRules, "connect");
+  const webhooksLock = teamRulesReachLock(teamRules, "webhooks");
+  const connectLockLabel = connectLock ? (
+    <TeamRulesLabel>{connectLock.setBy}</TeamRulesLabel>
+  ) : null;
   const {
     isSignedIn,
     linkState: primaryCloudLinkState,
@@ -1920,11 +1930,17 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       {isSignedIn === false && !isPhoneConnectShown() ? (
         <SettingsRow
           title="SpecWithCode Connect account"
-          description="Optional. Sign in to reach your machines from anywhere and to change the settings below."
+          description={
+            connectLock?.message ??
+            "Optional. Sign in to reach your machines from anywhere and to change the settings below."
+          }
+          status={connectLockLabel ?? undefined}
           control={
-            <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-              Sign in
-            </Button>
+            <TeamRulesInert lock={connectLock}>
+              <Button size="sm" variant="outline" onClick={openAuthPrompt}>
+                Sign in
+              </Button>
+            </TeamRulesInert>
           }
         />
       ) : null}
@@ -1932,14 +1948,42 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         <SettingsRow
           title={searchableSetting("studio-connect").title}
           description={
-            managedTunnelActive
+            connectLock?.message ??
+            (managedTunnelActive
               ? "This environment is available to your other devices through SpecWithCode Connect."
-              : "Make this environment available to your other devices through SpecWithCode Connect."
+              : "Make this environment available to your other devices through SpecWithCode Connect.")
           }
-          status={operationError ?? primaryCloudLinkState.error}
+          status={connectLockLabel ?? operationError ?? primaryCloudLinkState.error}
           control={
+            <TeamRulesInert lock={connectLock}>
+              <CloudLinkSwitch
+                checked={managedTunnelActive}
+                disabled={
+                  !canManageRelay ||
+                  !isSignedIn ||
+                  primaryCloudLinkState.data === null ||
+                  primaryCloudLinkState.isPending ||
+                  isBusy
+                }
+                disabledReason={disabledReason}
+                onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
+              />
+            </TeamRulesInert>
+          }
+        />
+      ) : null}
+      <SettingsRow
+        title={searchableSetting("publish-agent-activity").title}
+        description={
+          connectLock?.message ??
+          "Send activity to mobile notifications and Live Activities without SpecWithCode Connect."
+        }
+        status={connectLockLabel ?? undefined}
+        control={
+          <TeamRulesInert lock={connectLock}>
             <CloudLinkSwitch
-              checked={managedTunnelActive}
+              ariaLabel="Publish agent activity to mobile clients"
+              checked={publishAgentActivity}
               disabled={
                 !canManageRelay ||
                 !isSignedIn ||
@@ -1948,42 +1992,31 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
                 isBusy
               }
               disabledReason={disabledReason}
-              onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
+              onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
             />
-          }
-        />
-      ) : null}
-      <SettingsRow
-        title={searchableSetting("publish-agent-activity").title}
-        description="Send activity to mobile notifications and Live Activities without SpecWithCode Connect."
-        control={
-          <CloudLinkSwitch
-            ariaLabel="Publish agent activity to mobile clients"
-            checked={publishAgentActivity}
-            disabled={
-              !canManageRelay ||
-              !isSignedIn ||
-              primaryCloudLinkState.data === null ||
-              primaryCloudLinkState.isPending ||
-              isBusy
-            }
-            disabledReason={disabledReason}
-            onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
-          />
+          </TeamRulesInert>
         }
       />
       {managedTunnelActive ? (
         <SettingsRow
           title={searchableSetting("hold-webhooks-while-offline").title}
-          description="Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: SpecWithCode Connect only forwards requests and stores nothing."
+          description={
+            webhooksLock?.message ??
+            "Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: SpecWithCode Connect only forwards requests and stores nothing."
+          }
+          status={webhooksLock ? <TeamRulesLabel>{webhooksLock.setBy}</TeamRulesLabel> : undefined}
           control={
-            <CloudLinkSwitch
-              ariaLabel="Hold webhook requests while this environment is offline"
-              checked={holdWebhooksWhileOffline}
-              disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
-              disabledReason={disabledReason}
-              onCheckedChange={(enabled) => void updateHoldWebhooks(enabled)}
-            />
+            <TeamRulesInert lock={webhooksLock}>
+              <CloudLinkSwitch
+                ariaLabel="Hold webhook requests while this environment is offline"
+                checked={holdWebhooksWhileOffline}
+                disabled={
+                  !canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy
+                }
+                disabledReason={disabledReason}
+                onCheckedChange={(enabled) => void updateHoldWebhooks(enabled)}
+              />
+            </TeamRulesInert>
           }
         />
       ) : null}
@@ -1998,12 +2031,18 @@ function CloudLinkRow({
   readonly canReadRelay: boolean;
   readonly canManageRelay: boolean;
 }) {
+  const { summary: teamRules } = useTeamRules(usePrimaryEnvironmentId());
   if (!hasCloudPublicConfig()) return null;
   if (!canReadRelay) {
+    const lock = teamRulesReachLock(teamRules, "connect");
     return (
       <SettingsRow
         title="SpecWithCode Connect"
-        description="To edit these settings, pair this connection with both View relay and Manage relay permissions."
+        description={
+          lock?.message ??
+          "To edit these settings, pair this connection with both View relay and Manage relay permissions."
+        }
+        status={lock ? <TeamRulesLabel>{lock.setBy}</TeamRulesLabel> : undefined}
       />
     );
   }
@@ -4186,6 +4225,7 @@ export function ConnectionsSettings() {
           hasAccessControls={canManageLocalBackend && desktopBridge !== undefined}
           onShowAccessSettings={() => scrollToSettingsTarget("connections-environment")}
           folded={isPhoneConnectShown()}
+          teamRulesLock={teamRulesReachLock(primaryServerConfig?.teamRules, "phones")}
         />
       ) : null}
       <ConnectionsLibrarySettings />

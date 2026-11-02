@@ -28,6 +28,9 @@ public enum TransportError: Error, Sendable, Hashable {
   case invalidResponse(String)
   /// SpecWithCode Connect could not hand out access to the machine.
   case connect(ConnectError)
+  /// The machine's Team rules refuse this phone or route. Nothing was revoked,
+  /// so the app keeps trying and connects again once the rule is removed.
+  case teamRules(message: String)
 
   /// The failure will not go away by retrying.
   public var isPermanent: Bool {
@@ -70,6 +73,8 @@ extension TransportError: LocalizedError {
       "The computer sent an answer the app could not read."
     case let .connect(error):
       error.errorDescription
+    case let .teamRules(message):
+      message
     }
   }
 }

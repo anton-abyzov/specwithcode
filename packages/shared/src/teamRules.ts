@@ -12,7 +12,10 @@ import {
   type RuntimeMode,
   type ServerSettings,
   TEAM_RULES_MAX_BYTES,
+  type TeamRulesCarried,
   TeamRulesFile,
+  type TeamRulesMachines,
+  type TeamRulesPeerRules,
   type TeamRulesProviderPin,
   type TeamRulesRefusal,
   type TeamRulesSummary,
@@ -56,13 +59,7 @@ const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
 export const teamRulesModeLabel = (mode: RuntimeMode) => RUNTIME_MODE_LABELS[mode];
 
 /** Sections this version validates but does not enforce yet. */
-export const TEAM_RULES_DECLARED_ONLY = [
-  "reach",
-  "tools",
-  "connections",
-  "updates",
-  "zones",
-] as const;
+export const TEAM_RULES_DECLARED_ONLY = ["connections", "updates", "zones"] as const;
 
 /** Providers whose agents the app knows how to run, for spotting a typo in `ai.providers`. */
 export const TEAM_RULES_KNOWN_PROVIDERS: ReadonlyArray<string> = [
@@ -347,20 +344,233 @@ export function teamRulesSelectionRefusal(
   return null;
 }
 
-/** The one check every turn passes: hold, then mode, then the final model. */
+/** The one check every turn passes: hold, then mode, then the carried ceiling, then the final model. */
 export function teamRulesTurnRefusal(
   state: TeamRulesState,
   turn: {
     readonly runtimeMode: RuntimeMode;
     readonly driver: string;
     readonly model: string;
+    readonly carried?: TeamRulesCarried | undefined;
   },
 ): TeamRulesRefusal | null {
   return (
     teamRulesHoldRefusal(state) ??
     teamRulesModeRefusal(state, turn.runtimeMode) ??
+    teamRulesCarriedRefusal(turn.carried, turn.runtimeMode) ??
     teamRulesSelectionRefusal(state, turn)
   );
+}
+
+/** Refuses a mode above the ceiling a thread brought from another machine. */
+export function teamRulesCarriedRefusal(
+  carried: TeamRulesCarried | undefined,
+  mode: RuntimeMode,
+): TeamRulesRefusal | null {
+  if (carried === undefined || modeRank(mode) <= modeRank(carried.ceiling)) return null;
+  const contact = carried.contact === undefined ? "" : ` See ${carried.contact}.`;
+  return {
+    reason: "ceiling",
+    message: `This work came from a machine where ${carried.owner}'s rules allow up to ${teamRulesModeLabel(carried.ceiling)}, so ${teamRulesModeLabel(mode)} is not available.${contact}`,
+    owner: carried.owner,
+    ...(carried.contact === undefined ? {} : { contact: carried.contact }),
+    allowedMode: carried.ceiling,
+  };
+}
+
+/** Lowers a mode that must exist to be repaired, such as a thread arriving here. */
+export function teamRulesClampToCarried(
+  mode: RuntimeMode,
+  carried: TeamRulesCarried | undefined,
+): RuntimeMode {
+  return carried !== undefined && modeRank(mode) > modeRank(carried.ceiling)
+    ? carried.ceiling
+    : mode;
+}
+
+/** The tighter of two modes; undefined means no limit. */
+export function teamRulesStricterMode(
+  left: RuntimeMode | undefined,
+  right: RuntimeMode | undefined,
+): RuntimeMode | undefined {
+  if (left === undefined) return right;
+  if (right === undefined) return left;
+  return modeRank(right) < modeRank(left) ? right : left;
+}
+
+/**
+ * What work leaving this machine carries: the stricter of this machine's ceiling
+ * and the one the thread already brought. Full access limits nothing, so it never travels.
+ */
+export function teamRulesOutgoingCarried(
+  state: TeamRulesState,
+  inherited: TeamRulesCarried | undefined,
+  environmentId: TeamRulesCarried["from"],
+): TeamRulesCarried | undefined {
+  const own = teamRulesCeiling(state);
+  if (!limits(own) || state.status !== "active") return inherited;
+  if (inherited !== undefined && modeRank(inherited.ceiling) <= modeRank(own!)) return inherited;
+  return {
+    ceiling: own!,
+    owner: state.rules.owner,
+    ...(state.rules.contact === undefined ? {} : { contact: state.rules.contact }),
+    from: environmentId,
+  };
+}
+
+/**
+ * The carried ceiling a thread keeps when it arrives. Back on the machine that
+ * set it, that machine's live rules decide, so removing them restores the thread.
+ */
+export function teamRulesArrivingCarried(
+  carried: TeamRulesCarried | undefined,
+  environmentId: TeamRulesCarried["from"],
+): TeamRulesCarried | undefined {
+  return carried?.from === environmentId ? undefined : carried;
+}
+
+/** Whether this thread's next mode fits; the same answer a menu needs. */
+export function teamRulesThreadModeAllowed(
+  state: TeamRulesState,
+  carried: TeamRulesCarried | undefined,
+  mode: RuntimeMode,
+): boolean {
+  return (
+    teamRulesModeRefusal(state, mode) === null && teamRulesCarriedRefusal(carried, mode) === null
+  );
+}
+
+export type TeamRulesReachPath = "phones" | "connect" | "webhooks";
+export type TeamRulesTool = "chrome" | "computerUse" | "google" | "telegram";
+
+const REACH_LABELS: Record<TeamRulesReachPath, string> = {
+  phones: "phones",
+  connect: "SpecWithCode Connect",
+  webhooks: "webhooks",
+};
+
+const TOOL_LABELS: Record<TeamRulesTool, string> = {
+  chrome: "agent use of Chrome",
+  computerUse: "agent use of this computer",
+  google: "Google accounts",
+  telegram: "Telegram",
+};
+
+/** Whether valid rules turn this path off. A hold says nothing, so what exists keeps working. */
+export function teamRulesReachOff(state: TeamRulesState, path: TeamRulesReachPath): boolean {
+  return state.status === "active" && state.rules.reach?.[path] === false;
+}
+
+/** Refuses opening this path. A broken file could be hiding a `false`, so a hold refuses too. */
+export function teamRulesReachRefusal(
+  state: TeamRulesState,
+  path: TeamRulesReachPath,
+): TeamRulesRefusal | null {
+  if (!teamRulesReachOff(state, path)) return teamRulesPairingHoldRefusal(state);
+  return refusal(state, "reach", `${setBy(state)} turn off ${REACH_LABELS[path]} on this machine.`);
+}
+
+/** Nothing new opens during a hold; what is already connected stays so it can be repaired. */
+function teamRulesPairingHoldRefusal(state: TeamRulesState): TeamRulesRefusal | null {
+  if (state.status !== "hold") return null;
+  return refusal(
+    state,
+    "hold",
+    "The team rules file has an error, so nothing new can connect until it is fixed. Run specweave-studio rules check to see it.",
+  );
+}
+
+/** Whether valid rules turn this tool off. */
+export function teamRulesToolOff(state: TeamRulesState, tool: TeamRulesTool): boolean {
+  return state.status === "active" && state.rules.tools?.[tool] === false;
+}
+
+/** Refuses an agent tool. A hold refuses too: a running turn can reach a tool the file may ban. */
+export function teamRulesToolRefusal(
+  state: TeamRulesState,
+  tool: TeamRulesTool,
+): TeamRulesRefusal | null {
+  if (state.status === "hold") return teamRulesHoldRefusal(state);
+  if (!teamRulesToolOff(state, tool)) return null;
+  return refusal(state, "tools", `${setBy(state)} turn off ${TOOL_LABELS[tool]} on this machine.`);
+}
+
+/** The machine rule in force; `any` with no rules. */
+export function teamRulesMachines(state: TeamRulesState): TeamRulesMachines {
+  return state.status === "active" ? (state.rules.reach?.machines ?? "any") : "any";
+}
+
+const machineName = (label: string | undefined) => label ?? "that machine";
+
+/**
+ * Refuses a call between this machine and another. `same-rules` compares
+ * fingerprints: no rules, a hold, or a build too old to say are all different.
+ * Self-reported, so it catches drift rather than a hostile machine.
+ */
+export function teamRulesMachineRefusal(
+  state: TeamRulesState,
+  peer: { readonly label?: string | undefined; readonly fingerprint: string | undefined },
+): TeamRulesRefusal | null {
+  const rule = teamRulesMachines(state);
+  if (rule === "any" || state.status !== "active") return null;
+  if (rule === "none") {
+    return refusal(state, "machines", `${setBy(state)} turn off working across machines here.`);
+  }
+  if (peer.fingerprint === state.fingerprint) return null;
+  return refusal(
+    state,
+    "machines",
+    `${setBy(state)} allow only machines with the same rules, and ${machineName(peer.label)} has different rules.`,
+  );
+}
+
+/** Refuses a new machine link, where the other machine is not known yet. A hold refuses too. */
+export function teamRulesMachineLinkRefusal(state: TeamRulesState): TeamRulesRefusal | null {
+  if (teamRulesMachines(state) === "none") {
+    return refusal(state, "machines", `${setBy(state)} turn off working across machines here.`);
+  }
+  return teamRulesPairingHoldRefusal(state);
+}
+
+/** Refuses sending work out while the file is broken: it could be hiding `none`. */
+export function teamRulesOutgoingWorkRefusal(
+  state: TeamRulesState,
+  peer: { readonly label?: string | undefined; readonly fingerprint: string | undefined },
+): TeamRulesRefusal | null {
+  return teamRulesHoldRefusal(state) ?? teamRulesMachineRefusal(state, peer);
+}
+
+/** How another machine's rules compare with this machine's, for the Machines page. */
+export type TeamRulesDrift = "none" | "same" | "different" | "hold" | "unknown";
+
+const ownKey = (state: TeamRulesState) =>
+  state.status === "active" ? state.fingerprint : state.status;
+
+/**
+ * `none` when neither machine has rules, so a fleet without them shows nothing.
+ * `unknown` is a machine that did not say: older, or not reachable right now.
+ */
+export function teamRulesDrift(
+  state: TeamRulesState,
+  peer: TeamRulesPeerRules | undefined,
+  peerKnown: boolean,
+): TeamRulesDrift {
+  if (peer?.status === "hold") return "hold";
+  if (peer === undefined) {
+    if (state.status === "none") return "none";
+    return peerKnown ? "different" : "unknown";
+  }
+  return peer.fingerprint !== undefined && peer.fingerprint === ownKey(state)
+    ? "same"
+    : "different";
+}
+
+/** What this machine tells others about its rules. Undefined with no file. */
+export function teamRulesPeerRules(state: TeamRulesState): TeamRulesPeerRules | undefined {
+  if (state.status === "none") return undefined;
+  return state.status === "active"
+    ? { status: "active", fingerprint: state.fingerprint }
+    : { status: "hold" };
 }
 
 /** Whether a coordinator's Full access may raise workers and answer their prompts. */
@@ -582,6 +792,12 @@ export function teamRulesSettingsRefusal(
     }
   }
 
+  if (!current.enableAgentComputerAccess && next.enableAgentComputerAccess) {
+    const refused = teamRulesToolRefusal(state, "computerUse");
+    // A settings error reaches builds that decode only the earlier reasons, and they read the message.
+    if (refused !== null) return { ...refused, reason: "telemetry" };
+  }
+
   if (state.rules.telemetry?.export === false) {
     const urls = (settings: ServerSettings) => JSON.stringify(settings.observability);
     const cleared =
@@ -642,6 +858,8 @@ export function summarizeTeamRules(state: TeamRulesState): TeamRulesSummary | un
       ? { ownsProviderLaunch: true }
       : {}),
     ...(rules.telemetry?.export === undefined ? {} : { telemetryExport: rules.telemetry.export }),
+    ...(rules.reach === undefined ? {} : { reach: rules.reach }),
+    ...(rules.tools === undefined ? {} : { tools: rules.tools }),
   };
 }
 
@@ -675,6 +893,8 @@ export function teamRulesStateFromSummary(summary: TeamRulesSummary | undefined)
       ...(summary.telemetryExport === undefined
         ? {}
         : { telemetry: { export: summary.telemetryExport } }),
+      ...(summary.reach === undefined ? {} : { reach: summary.reach }),
+      ...(summary.tools === undefined ? {} : { tools: summary.tools }),
     } as TeamRulesFile,
   };
 }

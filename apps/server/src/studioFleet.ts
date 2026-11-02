@@ -14,6 +14,9 @@ import {
   reachFleetMachine,
   toFleetLink,
 } from "./fleet/fleetTransport.ts";
+import type { TeamRulesPeerRules } from "@specweave-studio/contracts";
+import type { TeamRulesState } from "@specweave-studio/shared/teamRules";
+import { readMachineTeamRules } from "./teamRules/TeamRules.ts";
 import { join } from "./nodePath.ts";
 import {
   AuthAccessWriteScope,
@@ -50,8 +53,14 @@ export interface FleetConfig {
   /** Machine lines skipped by a tolerant read; absent when every line parsed. */
   readonly invalidEntries?: ReadonlyArray<FleetConfigInvalidEntry>;
 }
-export const fleetConnectPermission = (config: FleetConfig | null) =>
-  config?.allowConnectFrom ?? AuthAccessWriteScope;
+/** Team rules on machines keep this decision with whoever manages access, whatever the file says. */
+export const fleetConnectPermission = (
+  config: FleetConfig | null,
+  rules: TeamRulesState = readMachineTeamRules(),
+) =>
+  rules.status === "active" && rules.rules.reach?.machines !== undefined
+    ? AuthAccessWriteScope
+    : (config?.allowConnectFrom ?? AuthAccessWriteScope);
 export class FleetError extends Error {
   readonly kind:
     | "config"
@@ -64,29 +73,32 @@ export class FleetError extends Error {
     | "forbidden"
     | "connect-unbound"
     | "connect-key-missing"
-    | "connect-browser-unsupported";
-  constructor(kind: FleetError["kind"]) {
+    | "connect-browser-unsupported"
+    | "team-rules";
+  constructor(kind: FleetError["kind"], detail?: string) {
     super(
-      {
-        config: "Private machine configuration could not be read securely.",
-        "unknown-machine": "This machine is not configured.",
-        unreachable: "This machine is unavailable. Check its private connection and retry.",
-        "identity-mismatch":
-          "This address belongs to a different machine. Ask the server owner to check its configuration.",
-        "pairing-unavailable":
-          "Pairing is unavailable. Ask the server owner to renew this machine's connection permission.",
-        "invitation-limited":
-          "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Join a main machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
-        "reapproval-required":
-          "That machine no longer accepts the invitation saved here: its update asks every machine that manages it to be approved again. On that machine, choose Join a main machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine.",
-        forbidden: "This connection cannot pair with that machine.",
-        "connect-unbound":
-          "This machine answers only through SpecWithCode Connect, and the invitation saved here works only over Tailscale. On that machine choose Join a main machine again and add the new line here.",
-        "connect-key-missing":
-          "This machine's fleet key is missing or unreadable, so the invitation saved for that machine cannot be used. On that machine choose Join a main machine again and add the new line here.",
-        "connect-browser-unsupported":
-          "That machine answers only through SpecWithCode Connect right now, and opening it in this window needs Tailscale. Work you send to it still goes through.",
-      }[kind],
+      detail ??
+        {
+          config: "Private machine configuration could not be read securely.",
+          "unknown-machine": "This machine is not configured.",
+          unreachable: "This machine is unavailable. Check its private connection and retry.",
+          "identity-mismatch":
+            "This address belongs to a different machine. Ask the server owner to check its configuration.",
+          "pairing-unavailable":
+            "Pairing is unavailable. Ask the server owner to renew this machine's connection permission.",
+          "invitation-limited":
+            "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Join a main machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+          "reapproval-required":
+            "That machine no longer accepts the invitation saved here: its update asks every machine that manages it to be approved again. On that machine, choose Join a main machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine.",
+          forbidden: "This connection cannot pair with that machine.",
+          "connect-unbound":
+            "This machine answers only through SpecWithCode Connect, and the invitation saved here works only over Tailscale. On that machine choose Join a main machine again and add the new line here.",
+          "connect-key-missing":
+            "This machine's fleet key is missing or unreadable, so the invitation saved for that machine cannot be used. On that machine choose Join a main machine again and add the new line here.",
+          "connect-browser-unsupported":
+            "That machine answers only through SpecWithCode Connect right now, and opening it in this window needs Tailscale. Work you send to it still goes through.",
+          "team-rules": "Team rules do not allow this connection.",
+        }[kind],
     );
     this.kind = kind;
   }
@@ -410,10 +422,12 @@ export async function discoverFleet(
         // The name the machine gives itself; a relayed address does not show it.
         let machineName: string | undefined;
         let transport: "tailnet" | "connect" | undefined;
+        let teamRules: TeamRulesPeerRules | undefined;
         try {
           const address = await reachFleetMachine(link, target);
           transport = address.transport;
           machineName = address.machineName;
+          teamRules = address.peerRules?.teamRules;
         } catch (error) {
           status =
             error instanceof FleetError && error.kind === "identity-mismatch"
@@ -433,6 +447,7 @@ export async function discoverFleet(
           status,
           pairingConfigured: Boolean(target.managementToken),
           ...(machineName === undefined ? {} : { machineName }),
+          ...(teamRules === undefined ? {} : { teamRules }),
         };
       }),
     ),

@@ -1,3 +1,5 @@
+import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
@@ -64,6 +66,54 @@ const makeStubRegistry = (
 };
 
 describe("TextGeneration.make", () => {
+  it.effect("refuses a model outside the rules before any provider call", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateThreadTitle: () => Effect.die("A refused call must not reach the provider"),
+        }),
+      );
+      const generation = yield* TextGeneration.make.pipe(
+        Effect.provide(
+          Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+        ),
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([instance]),
+        ),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("Unused"),
+          }),
+        ),
+      );
+      const title = (state: TeamRulesState) =>
+        generation
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Anything",
+            modelSelection: createModelSelection(instanceId, "gpt-5"),
+          })
+          .pipe(Effect.provideService(TeamRules, teamRulesOf(state)), Effect.flip);
+      const parsed = parseTeamRulesText(
+        JSON.stringify({ version: 1, owner: "Acme", ai: { models: ["claude-*"] } }),
+      );
+      if (!parsed.ok) throw new Error(parsed.issues.join());
+      const outside = yield* title({
+        status: "active",
+        rules: parsed.rules,
+        fingerprint: "3a9f",
+        warnings: [],
+      });
+      expect(outside._tag).toBe("TextGenerationError");
+      expect(outside.detail).toContain("Acme");
+      const held = yield* title({ status: "hold", issues: ["broken"], owner: "Acme" });
+      expect(held.detail).toContain("rules");
+    }),
+  );
+
   it.effect("retains supplied subject context in the provider prompt", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");

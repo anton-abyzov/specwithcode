@@ -42,6 +42,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Like `default`, signed in to SpecWithCode Connect with this iPhone and
   /// two more phones on the account.
   case connect
+  /// Like `default`, with Team rules: a limit on the Office Mac, a broken rules
+  /// file on the build box, and the travel laptop refusing phones.
+  case teamRules = "team-rules"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -62,6 +65,8 @@ public final class FixtureEngine: AppEngine {
   private var queued: [ChatTarget: Int] = [:]
   private var projectSettings: [ProjectRef: ProjectSettingsDraft] = [:]
   private var machineSettings: [String: MachineSettings] = [:]
+  /// Threads lowered from their fixture mode under Team rules.
+  private var threadModes: [ThreadRef: RuntimeModeChoice] = [:]
   /// Machines that stay offline when asked to reconnect.
   private var unreachable: Set<String> = []
   /// When the phone last had each offline machine connected.
@@ -169,6 +174,10 @@ public final class FixtureEngine: AppEngine {
       return
     }
     model.machines = FixtureSample.machines
+    if scenario == .teamRules {
+      model.machines = FixtureTeamRules.apply(to: model.machines, limited: FixtureSample.studio, broken: FixtureSample.buildBox, refusing: FixtureSample.travel)
+      machineSettings[FixtureSample.studio] = MachineSettings(defaultRuntimeMode: .fullAccess, defaultModel: nil)
+    }
     unreachable = [FixtureSample.travel]
     lastSeen = [FixtureSample.travel: now.addingTimeInterval(-26 * 3600)]
     model.aide = aideEnabled ? FixtureSample.aide : nil
@@ -406,6 +415,9 @@ public final class FixtureEngine: AppEngine {
     case .resolve: updateThread(thread) { $0.isResolved = true }
     case .unresolve: updateThread(thread) { $0.isResolved = false }
     case .markUnread: updateThread(thread) { $0.isUnread = true }
+    case let .setRuntimeMode(mode):
+      threadModes[thread] = mode
+      refresh(.thread(thread))
     case let .rename(title):
       let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !clean.isEmpty else { throw FixtureFailure("A thread needs a name.") }
@@ -492,6 +504,11 @@ public final class FixtureEngine: AppEngine {
 
   // MARK: State
 
+  private func teamRulesNotice(for target: ChatTarget, machine: MachineSummary?) -> ChatTeamRulesNotice? {
+    guard scenario == .teamRules, case let .thread(ref) = target else { return nil }
+    return ChatTeamRulesNotice.make(rules: machine?.teamRules, carried: nil, mode: threadModes[ref] ?? .fullAccess, thread: ref)
+  }
+
   private func recompute() {
     guard let model else { return }
     let online = Dictionary(model.machines.map { ($0.id, $0.status.isOnline) }, uniquingKeysWith: { a, _ in a })
@@ -555,6 +572,7 @@ public final class FixtureEngine: AppEngine {
     session.isStale = !online
     session.sendBlockedReason = online ? nil : "\(machine?.label ?? "This machine") is offline. You can send again when it reconnects."
     if case let .thread(ref) = target, continuedThreads[ref] != nil { session.sendBlockedReason = LiveEngine.handedOffReason }
+    session.teamRulesNotice = teamRulesNotice(for: target, machine: machine)
     switch target {
     case let .aide(ref), let .project(ref):
       if let project = model.project(ref) { session.title = project.title }

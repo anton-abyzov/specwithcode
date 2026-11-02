@@ -8,6 +8,10 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({ allowed: true, toggle: vi.fn(), run: vi.fn() }));
+vi.mock("../../teamRules/useTeamRules", () => ({
+  useTeamRules: () => ({ summary: undefined }),
+}));
+vi.mock("../settings/settingsLayout", () => ({ TeamRulesLabel: () => null }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => state.allowed,
   readEnvironmentScope: () => state.allowed,

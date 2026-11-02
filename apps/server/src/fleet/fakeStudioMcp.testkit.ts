@@ -37,6 +37,8 @@ export function fakeStudioMcp(input: {
   readonly origin: string;
   /** More addresses the machine answers on (its SpecWithCode Connect address). */
   readonly alsoAnswersOn?: ReadonlyArray<string>;
+  /** What the machine's identity says about its Team rules. */
+  readonly teamRules?: { readonly status: "active"; readonly fingerprint: string };
   /** Addresses that throw like a network that is down. */
   readonly offline?: ReadonlySet<string>;
   readonly environmentId: string;
@@ -130,6 +132,7 @@ export function fakeStudioMcp(input: {
         platform: { os: "darwin", arch: "arm64" },
         serverVersion: "0.2.11",
         capabilities: { repositoryIdentity: true },
+        ...(input.teamRules ? { teamRules: input.teamRules } : {}),
       });
     if (url.pathname !== "/mcp") return new Response("not found", { status: 404 });
     const [scheme, token = ""] = (headers.get("authorization") ?? "").split(" ");

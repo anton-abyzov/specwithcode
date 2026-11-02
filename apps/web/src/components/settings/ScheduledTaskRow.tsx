@@ -26,6 +26,8 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { teamRulesReachLock } from "../../teamRules/teamRulesView";
+import { useTeamRules } from "../../teamRules/useTeamRules";
 import { readEnvironmentScope } from "../../state/session";
 import {
   routineDestinationLabel,
@@ -53,7 +55,7 @@ import { Label } from "../ui/label";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { SettingsRow } from "./settingsLayout";
+import { SettingsRow, TeamRulesLabel } from "./settingsLayout";
 
 const STATE_BADGE: Record<RoutineTone, "success" | "error" | "info" | "outline"> = {
   active: "success",
@@ -101,6 +103,7 @@ export function ScheduledTaskRow({
   const [busy, setBusy] = useState(false);
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
   const isWebhook = task.schedule.type === "webhook";
+  const webhooksLock = teamRulesReachLock(useTeamRules(environmentId).summary, "webhooks");
   const toggle = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
   });
@@ -209,9 +212,11 @@ export function ScheduledTaskRow({
       }
       control={
         <div className="flex items-center gap-1.5">
+          {isWebhook && webhooksLock ? <TeamRulesLabel>{webhooksLock.setBy}</TeamRulesLabel> : null}
           <Switch
             checked={task.enabled}
-            disabled={busy || !canOperate}
+            // Pausing stays available; the rules refuse only turning a webhook routine back on.
+            disabled={busy || !canOperate || (isWebhook && webhooksLock !== null && !task.enabled)}
             aria-label={`Enable ${task.title}`}
             onCheckedChange={() => void act("toggle")}
           />

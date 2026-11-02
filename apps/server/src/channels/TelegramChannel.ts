@@ -27,6 +27,8 @@ import {
   type TelegramChannelStatus,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules, watchTeamRules } from "../teamRules/TeamRules.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -201,6 +203,11 @@ const make = Effect.gen(function* () {
   const configure: TelegramChannel["Service"]["configure"] = (input) =>
     writes.withPermits(1)(
       Effect.gen(function* () {
+        const ruled = teamRulesToolRefusal(yield* currentTeamRules, "telegram");
+        // Turning it off stays available under any rule.
+        if (ruled !== null && input.enabled !== false) {
+          return yield* new TelegramChannelError({ detail: ruled.message });
+        }
         const project = yield* projects
           .get(input.projectId)
           .pipe(
@@ -300,6 +307,7 @@ const make = Effect.gen(function* () {
     );
 
   const activeProject = Effect.gen(function* () {
+    if (teamRulesToolRefusal(yield* currentTeamRules, "telegram") !== null) return null;
     const state = yield* Ref.get(stateRef);
     if (!state.enabled || state.chatId === null || state.projectId === null) return null;
     const project = yield* projects.get(ProjectId.make(state.projectId)).pipe(Effect.option);
@@ -382,6 +390,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const message = update.message;
       if (message === undefined) return;
+      // A batch already fetched when the rule arrived goes no further.
+      if (teamRulesToolRefusal(yield* currentTeamRules, "telegram") !== null) return;
       const state = yield* Ref.get(stateRef);
       const action = classifyInbound(state, message, yield* Clock.currentTimeMillis);
       switch (action.type) {
@@ -439,6 +449,13 @@ const make = Effect.gen(function* () {
   let failures = 0;
   const pollOnce = Effect.gen(function* () {
     if (yield* updateHold.isHeld) return yield* waitForChange("5 seconds");
+    // Nothing is read or forwarded while the rules forbid it. The pairing stays,
+    // so removing the rule brings the channel back.
+    const ruled = teamRulesToolRefusal(yield* currentTeamRules, "telegram");
+    if (ruled !== null) {
+      yield* setHealth("stopped", ruled.message);
+      return yield* waitForChange("60 seconds");
+    }
     const state = yield* Ref.get(stateRef);
     const token = yield* Ref.get(tokenRef);
     if (!state.enabled || Option.isNone(token) || state.projectId === null) {
@@ -530,6 +547,8 @@ const make = Effect.gen(function* () {
 
   const start: TelegramChannel["Service"]["start"] = () =>
     Effect.gen(function* () {
+      // A rules change abandons a long poll, so a new `false` takes effect within one check.
+      yield* forkParked(watchTeamRules(() => Queue.offer(wake, undefined).pipe(Effect.asVoid)));
       yield* forkParked(Effect.forever(pollOnce));
       yield* forkParked(
         Stream.runForEach(threads.streamDomainEvents, (event) =>
