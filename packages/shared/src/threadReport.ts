@@ -30,7 +30,8 @@ export function asksForReport(request: string | null | undefined): boolean {
  * Whether a reply reads as a document, shown as a report card, rather than an
  * answer, shown inline. Short and direct answers stay in the chat; a reply
  * becomes a report when it has several headed sections, runs past about 600
- * words or well past a screen, or answers a request for a report.
+ * words or well past a screen, or answers a request for a report with a
+ * headed document. Merely mentioning a report does not make an answer one.
  */
 export function shouldCollapseReport(
   text: string,
@@ -40,7 +41,6 @@ export function shouldCollapseReport(
   if (trimmed.length === 0) return false;
   const words = reportWordCount(trimmed);
   if (words > MAX_REPORT_WORDS) return true;
-  if (options.requested === true && words >= MIN_REQUESTED_REPORT_WORDS) return true;
 
   let lines = 0;
   let headings = 0;
@@ -55,6 +55,8 @@ export function shouldCollapseReport(
     if (inFence) continue;
     if (HEADING.test(line)) headings += 1;
   }
+  if (options.requested === true && words >= MIN_REQUESTED_REPORT_WORDS && headings > 0)
+    return true;
   return lines > MAX_REPORT_LINES || headings >= MAX_REPORT_HEADINGS;
 }
 
@@ -155,6 +157,8 @@ export function reportFrontmatter(text: string): {
 }
 
 const LABELED_LINE = /^\s*(?:\*\*[^*\n]{1,40}?:?\*\*:?|[A-Z][A-Za-z]*(?: [A-Za-z]+){0,2}:)\s/;
+/** A report that opens with a bolded sentence, `**No, it can't.** Because…`. */
+const BOLD_OPENING = /^\s*\*\*([^*\n]+?)\*\*[ \t]*/;
 
 /** The report's own first heading, or its first line, or the fallback. */
 export function reportTitle(text: string, fallback: string): string {
@@ -181,15 +185,45 @@ export function reportTitle(text: string, fallback: string): string {
     !heading &&
     first !== undefined &&
     (/^\s*(?:[-*+]|\d+[.)]|\|)\s/.test(first) || LABELED_LINE.test(first));
-  const raw = heading ? heading.replace(/^\s{0,3}#{1,6}\s+/, "") : unnamed ? "" : (first ?? "");
+  // Its opening sentence names an answer better than the thread does, and differs per turn.
+  const bold = first === undefined ? null : BOLD_OPENING.exec(first);
+  const raw = heading
+    ? heading.replace(/^\s{0,3}#{1,6}\s+/, "")
+    : unnamed
+      ? ""
+      : (bold?.[1] ?? first ?? "");
   const title = plain(raw).replace(/[:.]$/, "");
   if (title.length === 0 || (!heading && title.length > 90)) return fallback.trim() || "Report";
   return title.length > 120 ? `${title.slice(0, 119).trimEnd()}…` : title;
 }
 
+/**
+ * The report's body without the opening words its title was taken from, so
+ * whatever shows the title beside the body says them once.
+ */
+export function reportBodyAfterTitle(text: string): string {
+  const { body } = reportFrontmatter(text);
+  const title = reportTitle(text, "");
+  if (!/[\p{L}\p{N}]/u.test(title)) return body;
+  const end = body.indexOf("\n");
+  const firstLine = end === -1 ? body : body.slice(0, end);
+  // A plain title loses links, code and characters like `_`, so only words it says exactly go.
+  const named = (line: string) =>
+    line
+      .replace(/^\s{0,3}#{1,6}\s+/, "")
+      .trim()
+      .replace(/[:.]$/, "") === title;
+  const bold = BOLD_OPENING.exec(firstLine);
+  if (bold && named(bold[1]!)) return body.slice(bold[0].length).trimStart();
+  // The first line of a wrapped paragraph is only part of a sentence.
+  const rest = end === -1 ? "" : body.slice(end + 1);
+  const whole = HEADING.test(firstLine) || /^\s*(?:\n|$)/.test(rest);
+  return whole && named(firstLine) ? rest.trimStart() : body;
+}
+
 /** The opening paragraph as plain text, for the card. */
 export function reportSummary(text: string, maxLength = 280): string {
-  const paragraphs = reportFrontmatter(text).body.split(/\n\s*\n/);
+  const paragraphs = reportBodyAfterTitle(text).split(/\n\s*\n/);
   let inFence = false;
   for (const paragraph of paragraphs) {
     const lines = paragraph.split("\n");

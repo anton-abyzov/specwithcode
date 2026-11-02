@@ -62,7 +62,13 @@ describe("shouldCollapseReport", () => {
   });
 
   it("shows a requested report as a card once it has some substance", () => {
-    expect(shouldCollapseReport(words(MIN_REQUESTED_REPORT_WORDS), { requested: true })).toBe(true);
+    const headed = `## Outage\n${words(MIN_REQUESTED_REPORT_WORDS)}`;
+    expect(shouldCollapseReport(headed, { requested: true })).toBe(true);
+    expect(shouldCollapseReport(headed, { requested: false })).toBe(false);
+    // An answer to a message that only mentions a report is still an answer.
+    expect(shouldCollapseReport(words(MIN_REQUESTED_REPORT_WORDS), { requested: true })).toBe(
+      false,
+    );
     expect(shouldCollapseReport(words(MIN_REQUESTED_REPORT_WORDS), { requested: false })).toBe(
       false,
     );

@@ -1506,9 +1506,10 @@ describe("MessagesTimeline", () => {
   });
 
   it("shows a reply to a request for a report as a report card", () => {
-    const report = Array.from({ length: 40 }, (_, i) => `Finding ${i + 1} holds up well.`).join(
-      " ",
-    );
+    const report = `## Outage\n\n${Array.from(
+      { length: 40 },
+      (_, i) => `Finding ${i + 1} holds up well.`,
+    ).join(" ")}`;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -1522,6 +1523,28 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-report-artifact="true"');
     expect(markup).toContain("Open report");
+  });
+
+  it("keeps an answer inline when the question only mentions a report", () => {
+    const answer = `**No. A link alone doesn't control a coordinator.** ${Array.from(
+      { length: 40 },
+      (_, i) => `Finding ${i + 1} holds up well.`,
+    ).join(" ")}`;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        collapseLongReports
+        reportFallbackTitle="How MCP and Connect work"
+        timelineEntries={[
+          buildUserTimelineEntry("Another question for the same report: does a link do this?"),
+          { ...buildAssistantTimelineEntry(answer), id: "entry-2" },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain('data-report-artifact="true"');
+    expect(markup).not.toContain("How MCP and Connect work");
+    expect(markup).toContain("Finding 40 holds up well.");
   });
 
   it("keeps long assistant messages whole in ordinary chats", () => {

@@ -207,7 +207,7 @@ describe("Settings > Machines", () => {
     expect(html).toContain("This app cannot see it");
     expect(html).toContain("Workers allowed");
     expect(html).toContain("EasyChamp");
-    expect(html).toContain("Runs workers");
+    expect(html).toContain("Runs workers only");
     expect(html).toContain("/Users/a/easychamp");
     expect(html).toContain("someone@example.com · also on M4MAX");
     expect(html).toContain("Connect to see its accounts.");

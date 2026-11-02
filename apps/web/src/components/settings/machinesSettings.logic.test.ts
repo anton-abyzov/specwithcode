@@ -190,11 +190,11 @@ describe("machine rows", () => {
         key: "logical-easychamp",
         title: "EasyChamp",
         role: "coordinator",
-        roleLabel: "Coordinator",
+        roleLabel: "Main copy",
         folder: "/Users/a/Projects/sw-easychamp",
       },
     ]);
-    expect(rows[1]?.sharedProjects.map((project) => project.roleLabel)).toEqual(["Runs workers"]);
+    expect(rows[1]?.sharedProjects.map((project) => project.roleLabel)).toEqual(["Runs workers only"]);
 
     const hidden = buildMachineRows({
       environments: [env(m4, "M4MAX")],
@@ -204,7 +204,7 @@ describe("machine rows", () => {
       projects: [easyChamp(m4, "p-m4", "/Users/a/Projects/sw-easychamp", "transferring")],
       hostBlocks: [],
     });
-    expect(hidden[0]?.sharedProjects[0]?.roleLabel).toBe("Handoff pending");
+    expect(hidden[0]?.sharedProjects[0]?.roleLabel).toBe("Moving main copy");
     expect(hidden[1]?.sharedProjects).toEqual([
       {
         key: "logical-easychamp",

@@ -353,11 +353,17 @@ export function MachineRow({
 
       <DetailLine label="Shared projects">
         {row.sharedProjects.length > 0 ? (
-          <ul className="space-y-1">
-            {row.sharedProjects.map((project) => (
-              <SharedProjectItem key={project.key} project={project} />
-            ))}
-          </ul>
+          <>
+            <p className="mb-1 text-xs text-muted-foreground">
+              Only projects with a copy on more than one machine. The main copy runs that
+              project&rsquo;s coordinator.
+            </p>
+            <ul className="space-y-1">
+              {row.sharedProjects.map((project) => (
+                <SharedProjectItem key={project.key} project={project} />
+              ))}
+            </ul>
+          </>
         ) : (
           <p className="text-xs text-muted-foreground">
             {seen ? "No shared projects." : "Connect to see its projects."}

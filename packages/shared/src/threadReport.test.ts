@@ -6,6 +6,7 @@ import {
   reportIncrementCandidates,
   reportKey,
   reportKeyFromFileName,
+  reportBodyAfterTitle,
   reportSummary,
   reportThreadKey,
   reportTitle,
@@ -114,6 +115,58 @@ describe("reportTitle for labeled reports", () => {
     ).toBe("Harness");
     expect(reportTitle("Outcome: Rows show the harness.", "Harness")).toBe("Harness");
     expect(reportTitle("Rows show the harness.", "Harness")).toBe("Rows show the harness");
+  });
+});
+
+describe("words the title came from", () => {
+  const answer =
+    "**No. A link alone doesn't control a coordinator.** With a grant it can read.\n\n- One.";
+
+  it("titles a report by its bolded opening sentence", () => {
+    expect(reportTitle(answer, "How MCP works")).toBe(
+      "No. A link alone doesn't control a coordinator",
+    );
+  });
+
+  it("does not repeat the title in the summary or the body", () => {
+    expect(reportSummary(answer)).toBe("With a grant it can read.");
+    expect(reportBodyAfterTitle(answer)).toBe("With a grant it can read.\n\n- One.");
+    expect(reportSummary("Tests pass.\n\nThe rest of it.")).toBe("The rest of it.");
+    expect(reportBodyAfterTitle("## Budget\n\nBody")).toBe("Body");
+  });
+
+  it("keeps an opening line whose link or code a plain title would lose", () => {
+    const linked = "Fixed in [PR 1](https://x.test/1) and `a.ts`.\n\n**Outcome:** Done.";
+    expect(reportBodyAfterTitle(linked)).toBe(linked);
+    const heading = "## [Release notes](https://x.test/r)\n\nBody";
+    expect(reportBodyAfterTitle(heading)).toBe(heading);
+    const bold = "**See [the PR](https://x.test/1) for this one please.** Rest.";
+    expect(reportBodyAfterTitle(bold)).toBe(bold);
+  });
+
+  it("keeps an opening line whose characters a plain title would lose", () => {
+    for (const text of [
+      "Renamed use_case to usecase everywhere\n\nDetails below.",
+      "Copied ~/Library/Logs/x.log to /tmp\n\nDone.",
+      "Fixed src/*.ts globbing\n\nBody here.",
+      "## Fixed my_file_name.ts\n\nBody here.",
+      "**Fixed the read_only_mode flag in config_loader and tests** Rest.",
+    ]) {
+      expect(reportBodyAfterTitle(text)).toBe(text);
+    }
+  });
+
+  it("does not split a wrapped opening paragraph", () => {
+    const wrapped = "The deploy finished on all three\nplatforms today.\n\nNext step: tag it.";
+    expect(reportBodyAfterTitle(wrapped)).toBe(wrapped);
+    expect(reportSummary(wrapped)).toBe("The deploy finished on all three platforms today.");
+    expect(reportBodyAfterTitle("# Title\nBody here")).toBe("Body here");
+  });
+
+  it("keeps a body whose opening is not the title", () => {
+    const long = `${"word ".repeat(30).trim()}\n\nNext.`;
+    expect(reportBodyAfterTitle(long)).toBe(long);
+    expect(reportBodyAfterTitle("**Outcome:** Done.\n\nMore.")).toBe("**Outcome:** Done.\n\nMore.");
   });
 });
 

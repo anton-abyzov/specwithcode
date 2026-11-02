@@ -111,9 +111,9 @@ export interface MachineRowModel {
 }
 
 const ROLE_LABELS: Readonly<Record<SharedProjectRole, string>> = {
-  coordinator: "Coordinator",
-  "runs-workers": "Runs workers",
-  "handoff-pending": "Handoff pending",
+  coordinator: "Main copy",
+  "runs-workers": "Runs workers only",
+  "handoff-pending": "Moving main copy",
 };
 
 /** A copy coordinates unless it handed the coordinator on or is handing it on now. */

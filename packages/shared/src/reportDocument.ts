@@ -7,7 +7,7 @@
  * tested and shared.
  */
 
-import { FRONTMATTER, reportFrontmatter } from "./threadReport.ts";
+import { FRONTMATTER, reportBodyAfterTitle, reportFrontmatter } from "./threadReport.ts";
 
 export interface ReportDocumentPart {
   readonly label: string;
@@ -131,12 +131,12 @@ function asValue(body: string): string {
 
 /**
  * The report as a document, or null when it has no labeled parts and is best
- * shown as written. A leading `# Title` is dropped; the reader shows the title.
+ * shown as written. The words the title came from are dropped; the reader
+ * shows the title.
  */
 export function reportDocument(text: string): ReportDocument | null {
   const frontmatter = reportFrontmatter(text);
-  const all = blocks(frontmatter.body);
-  if (all.length > 0 && /^\s{0,3}#\s/.test(all[0]!) && !all[0]!.includes("\n")) all.shift();
+  const all = blocks(reportBodyAfterTitle(text));
 
   const leadBlocks: string[] = [];
   const parts: Array<{ label: string; body: string[]; heading: boolean }> = [];
